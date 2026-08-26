@@ -4,6 +4,12 @@
       <el-button type="primary" size="small" @click="openCreate">
         <el-icon><Plus /></el-icon>&nbsp;生成签到码
       </el-button>
+      <el-tooltip placement="top"
+                  content="只发给还没签到的已确认志愿者；场次开始前 30 分钟系统会自动发一次">
+        <el-button size="small" :loading="reminding" @click="sendReminder">
+          <el-icon><Bell /></el-icon>&nbsp;补发签到提醒
+        </el-button>
+      </el-tooltip>
       <span class="dim">同一签到码：第一次扫=签到，第二次扫=签退；场次结束2小时后未签退，自动按场次结束时间计</span>
     </div>
 
@@ -295,6 +301,17 @@ function copyLink() {
   navigator.clipboard.writeText(scanUrl.value)
   ElMessage.success('已复制')
 }
+const reminding = ref(false)
+
+// 手动催场：自动提醒在开始前 30 分钟发过一次，这个按钮补发给还没到岗的人
+async function sendReminder() {
+  reminding.value = true
+  try {
+    const d = await api.post(`/api/staff/groups/${props.group.id}/checkin-reminder`)
+    ElMessage.success(`已向 ${d.count} 位未签到志愿者发送签到提醒`)
+  } finally { reminding.value = false }
+}
+
 async function toggle(row) {
   await api.patch(`/api/staff/checkin-tasks/${row.id}`, { active: !row.active })
   loadTasks(); loadBoard()

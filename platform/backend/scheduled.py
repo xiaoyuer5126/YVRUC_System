@@ -1,0 +1,103 @@
+"""定时任务：候补清扫、活动状态自动流转、签到提醒。
+
+由 main.py 的协程每分钟驱动一次。三件事互不依赖，一件出错不影响其余两件——
+任何一件长期不跑都没有外部表现，直到有人发现名额空转或提醒没发出去。
+"""
+from __future__ import annotations
+
+import logging
+from datetime import timedelta
+
+from sqlalchemy.orm import Session as OrmSession
+
+from . import config
+from .audit import log as audit_log
+from .enroll_logic import expire_stale_promotions
+from .models import Activity, PositionGroup, now
+from .notify import notify_checkin, notify_enrolled
+
+logger = logging.getLogger(__name__)
+
+REMINDER_LEAD = timedelta(minutes=config.CHECKIN_REMINDER_MINUTES)
+
+
+def run_once(db: OrmSession) -> dict[str, int]:
+    """跑一轮。每件事单独兜异常，返回各自处理的条数。"""
+    result = {}
+    for name, job in (("promotions", expire_stale_promotions),
+                      ("advanced", auto_advance_activities),
+                      ("reminders", send_checkin_reminders)):
+        try:
+            result[name] = job(db)
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            logger.exception("定时任务 %s 出错", name)
+            result[name] = 0
+    return result
+
+
+# ======================= 活动状态自动流转 =======================
+
+def _advance(db: OrmSession, act: Activity, target: str, action: str,
+             summary: str) -> None:
+    act.status = target
+    audit_log(db, actor=None, action=action, target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=summary)
+
+
+def auto_advance_activities(db: OrmSession) -> int:
+    """报名截止 → 已截止；全部场次结束 → 已结束。
+
+    没有这一步的话，活动会永远停在「报名中」，广场上靠展示层按时间猜状态，
+    而报名接口只认数据库里的状态——于是页面显示「已结束」却还能报名。
+    筹备中的活动不自动流转：它还没公开，进度由老师自己掌握。
+    """
+    t = now()
+    changed = 0
+    rows = (db.query(Activity)
+            .filter(Activity.status.in_(("published", "closed"))).all())
+    for act in rows:
+        span = act.time_span()
+        if act.status == "published":
+            deadline = act.reg_end or (span[0] if span else None)
+            if deadline and t > deadline:
+                _advance(db, act, "closed", "close",
+                         f"报名截止时间（{deadline:%m-%d %H:%M}）已到，系统自动截止报名")
+                changed += 1
+        # 同一轮里接着判：截止后场次也已结束的，一次到位，不用等下一分钟
+        if act.status == "closed" and span and t > span[1]:
+            _advance(db, act, "finished", "finish",
+                     f"全部场次已于 {span[1]:%m-%d %H:%M} 结束，系统自动结束活动")
+            notify_enrolled(db, act, "activity_changed", activity=act.title,
+                            change_summary="活动已结束，感谢您的参与！时长将陆续录入。")
+            changed += 1
+    if changed:
+        db.commit()
+    return changed
+
+
+# ======================= 签到提醒 =======================
+
+def send_checkin_reminders(db: OrmSession) -> int:
+    """场次开始前 CHECKIN_REMINDER_MINUTES 分钟推一次签到提醒。
+
+    只推一次（reminder_sent_at 落库），且只推还没开始的场次——服务停过一段时间
+    再起来，不该把早就结束的场次的提醒补发出去。
+    """
+    t = now()
+    groups = (db.query(PositionGroup)
+              .join(Activity, PositionGroup.activity_id == Activity.id)
+              .filter(PositionGroup.reminder_sent_at.is_(None),
+                      PositionGroup.start_time > t,
+                      PositionGroup.start_time <= t + REMINDER_LEAD,
+                      Activity.status.in_(("published", "closed"))).all())
+    sent = 0
+    for g in groups:
+        n = notify_checkin(db, g)
+        g.reminder_sent_at = t
+        sent += n
+        logger.info("场次「%s」签到提醒已发送 %d 人", g.name, n)
+    if groups:
+        db.commit()
+    return sent

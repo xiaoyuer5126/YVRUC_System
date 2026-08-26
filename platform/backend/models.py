@@ -215,6 +215,8 @@ class PositionGroup(Base):
     mode: Mapped[str] = mapped_column(String(12), default="fine")  # single / assign / fine
     note: Mapped[str] = mapped_column(String(512), default="")
     sort: Mapped[int] = mapped_column(Integer, default=0)
+    # 签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     activity: Mapped[Activity] = relationship(back_populates="groups")
     stations: Mapped[list["Station"]] = relationship(

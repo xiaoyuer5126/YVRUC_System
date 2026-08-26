@@ -25,6 +25,7 @@ from ..audit import diff_changes, log as audit_log
 from ..database import db_session
 from ..deps import require_manager
 from ..locks import group_lock
+from ..notify import notify_enrolled
 from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, managed_activity_ids,
                      remove_manager)
@@ -221,21 +222,6 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
     return {"ok": True, "changes": changes}
 
 
-def _notify_enrolled(db: OrmSession, act: Activity, template: str, **kw):
-    # 两步查询：先 DISTINCT user_id（避免对含 JSON 列的整行做相等比较，
-    # PostgreSQL 的 json 类型不支持等号运算符），再取用户实体
-    ids = (db.query(Enrollment.user_id)
-           .filter(Enrollment.activity_id == act.id,
-                   Enrollment.status.in_(("confirmed", "waitlisted",
-                                          "pending_confirm")))
-           .distinct().all())
-    for (uid_,) in ids:
-        u = db.get(User, uid_)
-        if u is None:
-            continue
-        wecom.send_user(db, u, template, **kw)
-
-
 def _notify_activity_bg(activity_id: str, template: str, **kw):
     """后台任务入口：自带数据库会话，避免拖慢接口响应。
 
@@ -247,7 +233,7 @@ def _notify_activity_bg(activity_id: str, template: str, **kw):
     try:
         act = db.get(Activity, activity_id)
         if act is not None:
-            _notify_enrolled(db, act, template, **kw)
+            notify_enrolled(db, act, template, **kw)
             db.commit()
     finally:
         db.close()

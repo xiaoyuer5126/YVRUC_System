@@ -17,9 +17,8 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, locks
+from . import config, locks, scheduled
 from .database import SessionLocal, init_db
-from .enroll_logic import expire_stale_promotions
 from .routers import all_routers
 
 logger = logging.getLogger(__name__)
@@ -28,27 +27,28 @@ WEB_DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
 SWEEP_INTERVAL_SECONDS = 60
 
 
-def _sweep_once() -> int:
+def _sweep_once() -> dict[str, int]:
     db = SessionLocal()
     try:
-        return expire_stale_promotions(db)
+        return scheduled.run_once(db)
     finally:
         db.close()
 
 
-async def _promotion_sweeper():
-    """候补转正超时未确认 → 记放弃 + 顺延下一位。
+async def _sweeper():
+    """定时任务循环：候补清扫、活动状态流转、签到提醒（见 scheduled.py）。
 
-    一次异常不能让循环退出：它一停，超时的候补就永远卡在「待确认」，
-    后面排队的人再也等不到名额，而这件事没有任何外部表现。
+    一次异常不能让循环退出：它一停，超时的候补永远卡在「待确认」、活动永远
+    停在「报名中」、签到提醒再也不发，而这些都没有任何外部表现。
     """
     while True:
         try:
-            expired = await asyncio.to_thread(_sweep_once)
-            if expired:
-                logger.info("清理了 %d 条超时未确认的候补转正", expired)
+            done = await asyncio.to_thread(_sweep_once)
+            if any(done.values()):
+                logger.info("定时任务：候补清理 %(promotions)d、状态流转 %(advanced)d、"
+                            "签到提醒 %(reminders)d", done)
         except Exception:  # noqa: BLE001
-            logger.exception("候补清扫出错")
+            logger.exception("定时任务循环出错")
         await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
 
 
@@ -61,7 +61,7 @@ async def lifespan(_app: FastAPI):
     if config.DEMO_LOGIN_PASSWORD:
         logger.warning("演示登录已启用（口令登录）。接入统一身份认证后请清空 "
                        "RUCVA_DEMO_PASSWORD")
-    task = asyncio.create_task(_promotion_sweeper())
+    task = asyncio.create_task(_sweeper())
     yield
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):

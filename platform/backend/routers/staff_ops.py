@@ -17,6 +17,7 @@ from ..deps import require_manager, require_manager_download
 from ..exporter import build_activity_workbook
 from ..perm import ensure_activity_manager
 from ..integrations import checkin_gateway, shuzhi
+from ..notify import notify_checkin
 from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
                       HoursRecord, PositionGroup, Station, User, iso, now, uid)
 
@@ -108,6 +109,30 @@ def toggle_task(task_id: str, body: dict,
         task.active = bool(body["active"])
     db.commit()
     return {"ok": True, "active": task.active}
+
+
+@router.post("/groups/{group_id}/checkin-reminder")
+def send_reminder(group_id: str, db: OrmSession = Depends(db_session),
+                  user: User = Depends(require_manager)):
+    """手动补发签到提醒。
+
+    自动提醒在场次开始前 30 分钟发一次；这个按钮用于临时催场——
+    只发给还没签到的已确认志愿者，已经到岗的不再打扰。
+    """
+    g = db.get(PositionGroup, group_id)
+    if g is None:
+        raise HTTPException(404, "岗位组不存在")
+    ensure_activity_manager(db, user, g.activity_id)
+    n = notify_checkin(db, g)
+    if not n:
+        raise HTTPException(400, "该场次没有需要提醒的人（未签到的已确认志愿者为 0）")
+    g.reminder_sent_at = now()
+    audit_log(db, actor=user, action="update", target_type="notify",
+              target_id=g.id, target_label=g.name, activity_id=g.activity_id,
+              summary=f"手动补发签到提醒：{n} 人（未签到的已确认志愿者）",
+              visible=False)
+    db.commit()
+    return {"ok": True, "count": n}
 
 
 @router.get("/checkin-tasks/{task_id}/board")
