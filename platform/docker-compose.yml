@@ -10,6 +10,7 @@
 #   cloudflared：固定域名隧道，公网域名在 Cloudflare Zero Trust 控制台绑定。
 #
 # 数据库与 Redis 端口只绑 127.0.0.1：调试用得上，公网碰不到。
+# 宿主机端口可在 .env 里改——同一台机器上别的项目也可能占着这些端口。
 x-backend-build: &backend_build
   context: ..
   dockerfile: platform/backend/Dockerfile
@@ -31,7 +32,7 @@ services:
       POSTGRES_DB: rucva
       TZ: Asia/Shanghai
     ports:
-      - "127.0.0.1:5433:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - rucva_pgdata:/var/lib/postgresql/data
     restart: unless-stopped
@@ -47,7 +48,7 @@ services:
     # 抢报锁与限流计数都是可重建的瞬时状态，不做持久化
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
-      - "127.0.0.1:6380:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -61,7 +62,7 @@ services:
     container_name: rucva-backend
     environment: *backend_env
     ports:
-      - "127.0.0.1:8000:8000"    # 本机直连 API 调试用，公网只走 web 反代
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"   # 本机直连 API 调试用，公网只走 web 反代
     volumes:
       - rucva_uploads:/app/platform/data/uploads   # 活动二维码等上传件持久化
     depends_on:
@@ -84,7 +85,7 @@ services:
       dockerfile: platform/web/Dockerfile
     container_name: rucva-web
     ports:
-      - "8080:80"
+      - "${WEB_HOST_PORT:-8080}:80"
     depends_on:
       backend:
         condition: service_healthy

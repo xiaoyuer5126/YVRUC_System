@@ -17,10 +17,10 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta
 
-from .database import SessionLocal, init_db
+from .database import Base, SessionLocal, engine, init_db
 from .models import (Activity, ActivityManager, AuditLog, CheckinRecord,
                      CheckinTask, CreditLog, Enrollment, HoursRecord,
-                     Notification, PositionGroup, Session, Station, User, uid)
+                     Notification, PositionGroup, Station, User, uid)
 
 random.seed(42)
 
@@ -55,16 +55,12 @@ def dt(days=0, hours=0, minutes=0, base=None):
 
 
 def main() -> None:
+    # 整库重建而不是逐表 delete：模型改了字段时，只删数据会留下旧结构的表，
+    # 表现是插入报「column ... does not exist」，很难往这上面想。
+    Base.metadata.drop_all(engine)
     init_db()
     db = SessionLocal()
     try:
-        # ---------- 清空 ----------
-        for table in (Session, ActivityManager, AuditLog, Notification,
-                      CreditLog, HoursRecord,
-                      CheckinRecord, CheckinTask, Enrollment, Station,
-                      PositionGroup, Activity, User):
-            db.query(table).delete()
-        db.commit()
 
         t0 = datetime.now().replace(minute=0, second=0, microsecond=0)
 
