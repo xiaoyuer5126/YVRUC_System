@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>debug-login</title></head>
+<body>
+<pre id="log">booting...</pre>
+<script>
+// 开发辅助：?sid=学号&next=路径 —— 自动登录并跳转，供无头浏览器验证页面用
+const log = (m) => { document.getElementById('log').textContent += '\n' + m }
+window.onerror = (msg, src, line, col, err) => {
+  log('WINDOW ERROR: ' + msg + ' @ ' + (src||'') + ':' + line)
+  document.title = 'JS_ERROR'
+}
+window.addEventListener('unhandledrejection', e => {
+  log('UNHANDLED REJECTION: ' + (e.reason && e.reason.message || e.reason))
+  document.title = 'REJECTION'
+})
+const _origErr = console.error
+console.error = (...args) => {
+  const msg = args.map(a => {
+    if (a instanceof Error) return a.message + '\n' + (a.stack || '').slice(0, 400)
+    if (typeof a === 'string') return a.slice(0, 600)
+    try { return JSON.stringify(a).slice(0, 300) } catch { return String(a) }
+  }).join(' | ')
+  log('[console.error] ' + msg)
+  document.title = 'CONSOLE_ERROR'
+  _origErr(...args)
+}
+
+const boot = async () => {
+  try {
+    const p = new URLSearchParams(location.search)
+    const sid = p.get('sid') || '2025001'
+    const next = p.get('next') || '/'
+    const r = await fetch('/api/auth/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ student_id: sid })
+    })
+    const d = await r.json()
+    localStorage.setItem('rucva_token', d.token)
+    localStorage.setItem('rucva_user', JSON.stringify(d.user))
+    // 默认视角取最高身份（与 store.pickDefaultIdentity 同规则）
+    const roles = d.user.roles || []
+    const active = roles.includes('admin') ? 'admin'
+      : roles.includes('teacher') ? 'teacher'
+      : roles.includes('qingxie') ? 'qingxie' : 'student'
+    localStorage.setItem('rucva_active_identity', active)
+    log('logged in as ' + d.user.name + ' (' + active + '), redirecting to ' + next)
+    location.href = '/#' + next
+  } catch (e) {
+    log('LOGIN FAILED: ' + e.message)
+  }
+}
+boot()
+</script>
+</body>
+</html>

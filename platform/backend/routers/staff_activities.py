@@ -1,0 +1,924 @@
+"""教师/青协端：活动筹备（活动与岗位树 CRUD）、报名名单、二次分配。
+
+岗位树校验（《设计方案》二）：
+  · 二级工位时间必须被包裹在一级岗位时间范围内；
+  · 一级岗位总人数需大于等于下属二级工位人数之和。
+所有增删改走审计留痕；影响志愿者的时间/地点类修改会推送「活动变更警告」，
+附变更前后对比摘要。
+"""
+from __future__ import annotations
+
+import re
+from datetime import datetime
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
+                     UploadFile)
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session as OrmSession
+
+from .. import enroll_logic as logic
+from .. import scheduler_adapter
+from ..audit import ACTION_LABELS, diff_changes, log as audit_log
+from ..database import db_session
+from ..deps import current_user, require_manager
+from ..perm import (activity_manager_ids, add_manager,
+                     ensure_activity_manager, managed_activity_ids,
+                     remove_manager)
+from ..integrations import wecom
+from ..models import (Activity, ActivityManager, CheckinRecord, Enrollment,
+                      PositionGroup, Station, User, iso, now, uid)
+from ..serializers import activity_brief
+
+router = APIRouter(prefix="/api/staff", tags=["staff"])
+
+ACTIVITY_FIELDS = {
+    "title": "名称", "type": "类型", "intro": "简介", "location": "地点",
+    "contact_info": "公示联系方式", "contacts": "公示联系人",
+    "qa_group_qr": "答疑群二维码",
+    "reg_start": "报名开始", "reg_end": "报名截止",
+}
+
+
+def _act(db: OrmSession, activity_id: str) -> Activity:
+    act = db.get(Activity, activity_id)
+    if act is None:
+        raise HTTPException(404, "活动不存在")
+    return act
+
+
+def _group(db: OrmSession, gid: str) -> PositionGroup:
+    g = db.get(PositionGroup, gid)
+    if g is None:
+        raise HTTPException(404, "岗位组不存在")
+    return g
+
+
+def _parse_dt(v) -> datetime | None:
+    if not v:
+        return None
+    try:
+        return datetime.fromisoformat(str(v))
+    except ValueError:
+        raise HTTPException(400, f"时间格式不合法：{v}")
+
+
+def _notify_assignment_bg(items: list[dict]):
+    """后台发送岗位分配通知（apply_plan 收集，路由层调度）。"""
+    from ..database import SessionLocal
+    from ..models import Activity as Ac, PositionGroup as Pg, Station as St
+    db = SessionLocal()
+    try:
+        for it in items:
+            u = db.get(User, it["user_id"])
+            st = db.get(St, it["station_id"])
+            g = db.get(Pg, it["group_id"])
+            if not (u and st and g):
+                continue
+            try:
+                wecom.send_user(u, "assignment",
+                                activity=db.get(Ac, g.activity_id).title,
+                                group=g.name, station=st.name,
+                                station_time=st.time_text(),
+                                station_loc=st.location or "待定")
+            except Exception:
+                pass
+    finally:
+        db.close()
+
+
+# ======================= 活动列表与基本信息 =======================
+
+@router.get("/activities")
+def list_all(db: OrmSession = Depends(db_session),
+             user: User = Depends(require_manager)):
+    managed = managed_activity_ids(db, user)
+    q = db.query(Activity).order_by(Activity.created_at.desc())
+    if managed is not None:
+        q = q.filter(Activity.id.in_(managed or ['__none__']))
+    acts = q.all()
+    out = []
+    for a in acts:
+        item = activity_brief(db, a)
+        wl = 0
+        for g in a.groups:
+            wl += logic.waitlist_rows(db, g.id).__len__()
+        item["waitlist_count"] = wl
+        out.append(item)
+    return out
+
+
+class ActivityBody(BaseModel):
+    title: str = Field(max_length=128)
+    type: str = "A"
+    intro: str = ""
+    location: str = ""
+    contact_info: str = ""
+    contacts: list[dict] = []
+    qa_group_qr: str = ""
+    cover_hue: int = 0
+    reg_start: str | None = None
+    reg_end: str | None = None
+
+
+def _clean_contacts(raw: list[dict]) -> list[dict]:
+    """清洗公示联系人名单：至少一位，且每位的姓名与电话均非空。"""
+    contacts = []
+    for c in raw or []:
+        name = str(c.get("name") or "").strip() if isinstance(c, dict) else ""
+        phone = str(c.get("phone") or "").strip() if isinstance(c, dict) else ""
+        if not name:
+            raise HTTPException(400, "请填写每位联系人的姓名")
+        if not phone:
+            raise HTTPException(400, f"请填写联系人「{name}」的电话/微信")
+        contacts.append({"name": name, "phone": phone})
+    if not contacts:
+        raise HTTPException(400, "请至少添加一位公示联系人（姓名+电话）")
+    return contacts
+
+
+@router.post("/activities")
+def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
+                    user: User = Depends(require_manager)):
+    # 创建活动信息完整性校验：全部必填
+    if not body.title.strip():
+        raise HTTPException(400, "请填写活动名称")
+    if body.type not in config_types():
+        raise HTTPException(400, "活动类型必须是 A/B/C/D")
+    if not body.location.strip():
+        raise HTTPException(400, "请填写活动地点")
+    contacts = _clean_contacts(body.contacts)
+    if not body.intro.strip():
+        raise HTTPException(400, "请填写活动简介")
+    if not body.qa_group_qr.strip():
+        raise HTTPException(400, "请上传答疑群二维码")
+    reg_start, reg_end = _parse_dt(body.reg_start), _parse_dt(body.reg_end)
+    if reg_start is None or reg_end is None:
+        raise HTTPException(400, "请选择报名开始与截止时间")
+    act = Activity(id=uid("act"), title=body.title.strip(), type=body.type,
+                   intro=body.intro.strip(), location=body.location.strip(),
+                   contact_info=body.contact_info.strip(),
+                   qa_group_qr=body.qa_group_qr, cover_hue=body.cover_hue,
+                   reg_start=reg_start, reg_end=reg_end,
+                   created_by=user.id, status="draft")
+    act.contacts = contacts
+    db.add(act)
+    db.flush()
+    # 创建者自动成为本活动管理者（多人共管的基础，见 perm.add_manager 同款逻辑）
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                           user_id=user.id, added_by=user.id))
+    audit_log(db, actor=user, action="create", target_type="activity",
+              target_id=act.id, target_label=act.title,
+              activity_id=act.id, summary=f"创建活动「{act.title}」")
+    db.commit()
+    return {"id": act.id}
+
+
+def config_types():
+    from .. import config
+    return set(config.ACTIVITY_TYPES)
+
+
+@router.patch("/activities/{activity_id}")
+def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
+                    db: OrmSession = Depends(db_session),
+                    user: User = Depends(require_manager)):
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    before = {k: getattr(act, k) for k in ACTIVITY_FIELDS}
+    before["type"] = act.type
+    for key in ACTIVITY_FIELDS:
+        if key not in body:
+            continue
+        value = body[key]
+        if key in ("reg_start", "reg_end"):
+            setattr(act, key, _parse_dt(value))
+        else:
+            if key == "type" and value not in config_types():
+                raise HTTPException(400, "活动类型必须是 A/B/C/D")
+            setattr(act, key, value)
+    changes = diff_changes(
+        {k: (iso(v) if isinstance(v, datetime) else v) for k, v in before.items()},
+        {k: (iso(getattr(act, k)) if isinstance(getattr(act, k), datetime)
+             else getattr(act, k)) for k in ACTIVITY_FIELDS},
+        ACTIVITY_FIELDS)
+    if not changes:
+        return {"ok": True, "changes": []}
+
+    # 活动变更警告（带前后对比摘要），对已报名志愿者推送 —— 《设计方案》四.3
+    if act.status != "draft":
+        summary = "；".join(f"{c['label']}：{c['old']}→{c['new']}"
+                            for c in changes[:6])
+        bg.add_task(_notify_activity_bg, act.id, "activity_changed",
+                    activity=act.title, change_summary=summary)
+    audit_log(db, actor=user, action="update", target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=f"修改活动信息：{'、'.join(c['label'] for c in changes)}",
+              changes=changes)
+    db.commit()
+    return {"ok": True, "changes": changes}
+
+
+def _notify_enrolled(db: OrmSession, act: Activity, template: str, **kw):
+    # 两步查询：先 DISTINCT user_id（避免对含 JSON 列的整行做相等比较，
+    # PostgreSQL 的 json 类型不支持等号运算符），再取用户实体
+    ids = (db.query(Enrollment.user_id)
+           .filter(Enrollment.activity_id == act.id,
+                   Enrollment.status.in_(("confirmed", "waitlisted",
+                                          "pending_confirm")))
+           .distinct().all())
+    for (uid_,) in ids:
+        u = db.get(User, uid_)
+        if u is None:
+            continue
+        try:
+            wecom.send_user(u, template, **kw)
+        except Exception:
+            pass
+
+
+def _notify_activity_bg(activity_id: str, template: str, **kw):
+    """后台任务入口：自带数据库会话，避免拖慢接口响应。
+
+    变更通知要遍历全部报名者逐个落库，人多时耗时数秒——放后台，
+    接口先返回，前端按钮立刻恢复。
+    """
+    from ..database import SessionLocal
+    db = SessionLocal()
+    try:
+        act = db.get(Activity, activity_id)
+        if act is not None:
+            _notify_enrolled(db, act, template, **kw)
+    finally:
+        db.close()
+
+
+# ======================= 状态流转 =======================
+
+@router.post("/activities/{activity_id}/publish")
+def publish(activity_id: str, db: OrmSession = Depends(db_session),
+            user: User = Depends(require_manager)):
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    if not act.groups:
+        raise HTTPException(400, "请先至少创建一个一级岗位（场次）再发布")
+    if act.status != "draft":
+        raise HTTPException(409, f"当前状态为「{act.label_status()}」，不能发布")
+    act.status = "published"
+    if act.reg_start is None:
+        act.reg_start = now()
+    audit_log(db, actor=user, action="publish", target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=f"发布活动，开始报名", visible=False)
+    db.commit()
+    return {"ok": True}
+
+
+def _transition(activity_id: str, target: str, action: str, summary: str,
+                allowed_from: tuple[str, ...], db: OrmSession, user: User,
+                bg: BackgroundTasks):
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    if act.status not in allowed_from:
+        raise HTTPException(409,
+                            f"当前状态为「{act.label_status()}」，不允许该操作")
+    act.status = target
+    audit_log(db, actor=user, action=action, target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=summary)
+    db.commit()
+    if action == "finish":
+        bg.add_task(_notify_activity_bg, act.id, "activity_changed",
+                    activity=act.title,
+                    change_summary="活动已结束，感谢您的参与！时长将陆续录入。")
+    return {"ok": True}
+
+
+@router.post("/activities/{activity_id}/close")
+def close(activity_id: str, bg: BackgroundTasks,
+          db: OrmSession = Depends(db_session),
+          user: User = Depends(require_manager)):
+    return _transition(activity_id, "closed", "close", "截止报名",
+                       ("published",), db, user, bg)
+
+
+@router.post("/activities/{activity_id}/finish")
+def finish(activity_id: str, bg: BackgroundTasks,
+           db: OrmSession = Depends(db_session),
+           user: User = Depends(require_manager)):
+    return _transition(activity_id, "finished", "finish", "结束活动",
+                       ("published", "closed"), db, user, bg)
+
+
+@router.delete("/activities/{activity_id}")
+def delete_activity(activity_id: str, db: OrmSession = Depends(db_session),
+                    user: User = Depends(require_manager)):
+    """仅草稿可删——发布过的活动承载着报名记录与留痕，不允许物理删除。"""
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    if act.status != "draft":
+        raise HTTPException(409, f"仅「筹备中」的活动可以删除；"
+                                 f"已发布的活动请使用「结束活动」归档")
+    label = act.title
+    db.delete(act)
+    audit_log(db, actor=user, action="delete", target_type="activity",
+              target_id=activity_id, target_label=label, activity_id=None,
+              summary=f"删除草稿活动「{label}」", visible=False)
+    db.commit()
+    return {"ok": True}
+
+
+# ======================= 一级岗位组 =======================
+
+GROUP_MODES = ("single", "assign", "fine")
+
+
+class GroupBody(BaseModel):
+    name: str = Field(max_length=128)
+    start_time: str
+    end_time: str
+    capacity: int = Field(ge=0)
+    mode: str = "fine"          # single 仅一级 / assign 二级待定 / fine 直接定二级
+    note: str = ""
+    waitlist_quota: int = Field(default=3, ge=0)   # 候补队列人数上限
+
+
+def _validate_group_times(start: datetime, end: datetime):
+    if end <= start:
+        raise HTTPException(400, "结束时间必须晚于开始时间")
+
+
+def _apply_group_mode(g: PositionGroup, mode: str):
+    """设置岗位模式并同步兼容字段 need_assign。"""
+    if mode not in GROUP_MODES:
+        raise HTTPException(400, "岗位模式必须是 single/assign/fine")
+    if mode == "single" and g.stations:
+        raise HTTPException(400, f"该场次下还有 {len(g.stations)} 个二级工位，"
+                                 f"请先删除工位才能切换为「仅一级」")
+    g.mode = mode
+    g.need_assign = (mode == "assign")
+
+
+@router.post("/activities/{activity_id}/groups")
+def create_group(activity_id: str, body: GroupBody, bg: BackgroundTasks,
+                 db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_manager)):
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    start, end = _parse_dt(body.start_time), _parse_dt(body.end_time)
+    _validate_group_times(start, end)
+    g = PositionGroup(id=uid("g"), activity_id=act.id, name=body.name.strip(),
+                      start_time=start, end_time=end, capacity=body.capacity,
+                      note=body.note.strip(), sort=len(act.groups),
+                      waitlist_quota=body.waitlist_quota)
+    _apply_group_mode(g, body.mode)
+    db.add(g)
+    db.flush()
+    audit_log(db, actor=user, action="create", target_type="group",
+              target_id=g.id, target_label=f"{act.title}·{g.name}",
+              activity_id=act.id,
+              summary=f"新建一级岗位「{g.name}」（{g.span_text()}，"
+                      f"{g.mode_label()}，上限{body.capacity}人）")
+    db.commit()
+    if act.status != "draft":
+        bg.add_task(_notify_activity_bg, act.id, "activity_changed",
+                    activity=act.title,
+                    change_summary=f"新增场次「{g.name}」{g.span_text()}")
+    return {"id": g.id}
+
+
+GROUP_FIELDS = {"name": "场次名", "start_time": "开始时间", "end_time": "结束时间",
+                "capacity": "人数上限", "mode": "岗位模式", "note": "备注",
+                "waitlist_quota": "候补名额"}
+
+
+@router.patch("/groups/{group_id}")
+def update_group(group_id: str, body: dict, bg: BackgroundTasks,
+                 db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_manager)):
+    g = _group(db, group_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = db.get(Activity, g.activity_id)
+    before_raw = {k: getattr(g, k) for k in GROUP_FIELDS}
+    for key in GROUP_FIELDS:
+        if key not in body:
+            continue
+        v = body[key]
+        if key in ("start_time", "end_time"):
+            setattr(g, key, _parse_dt(v))
+        elif key == "mode":
+            _apply_group_mode(g, v)   # 校验 + 同步 need_assign
+        else:
+            setattr(g, key, v)
+    _validate_group_times(g.start_time, g.end_time)
+    if g.mode == "fine":
+        quota_sum = g.station_quota_sum()
+        if quota_sum > g.capacity:
+            raise HTTPException(
+                400, f"二级工位人数之和({quota_sum})超过一级岗位总上限({g.capacity})")
+
+    def fmt(v):
+        if isinstance(v, datetime):
+            return v.strftime("%m-%d %H:%M")
+        return v
+    changes = diff_changes({k: fmt(v) for k, v in before_raw.items()},
+                           {k: fmt(getattr(g, k)) for k in GROUP_FIELDS},
+                           GROUP_FIELDS)
+    time_or_place = any(c["field"] in ("start_time", "end_time", "name", "note")
+                        for c in changes)
+    if changes and act.status != "draft" and time_or_place:
+        summary = "；".join(f"{c['label']}：{c['old']}→{c['new']}" for c in changes)
+        bg.add_task(_notify_activity_bg, act.id, "activity_changed",
+                    activity=act.title,
+                    change_summary=f"{g.name} 场次调整：{summary}")
+    audit_log(db, actor=user, action="update", target_type="group",
+              target_id=g.id, target_label=f"{act.title}·{g.name}",
+              activity_id=act.id,
+              summary=f"修改场次「{g.name}」："
+                      f"{'、'.join(c['label'] for c in changes) or '无实质变化'}",
+              changes=changes)
+    db.commit()
+    return {"ok": True, "changes": changes}
+
+
+@router.delete("/groups/{group_id}")
+def delete_group(group_id: str, force: int = 0, bg: BackgroundTasks = None,
+                 db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_manager)):
+    g = _group(db, group_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = db.get(Activity, g.activity_id)
+    n_active = db.query(Enrollment).filter(
+        Enrollment.group_id == g.id,
+        Enrollment.status.in_(logic.ACTIVE)).count()
+    if n_active and not force:
+        raise HTTPException(409, f"该场次已有 {n_active} 人有效报名，"
+                                 f"删除需强制执行（force=1），全部记录将被取消")
+    if n_active and force:
+        (db.query(Enrollment).filter(Enrollment.group_id == g.id)
+         .update({"status": "cancelled", "cancel_type": "group_deleted"},
+                 synchronize_session=False))
+        bg.add_task(_notify_activity_bg, act.id, "activity_changed",
+                    activity=act.title,
+                    change_summary=f"场次「{g.name}」已被取消，相关报名记录失效")
+    label = f"{act.title}·{g.name}"
+    db.delete(g)
+    audit_log(db, actor=user, action="delete", target_type="group",
+              target_id=g.id, target_label=label, activity_id=act.id,
+              summary=f"删除场次「{g.name}」" +
+                      (f"（强制，含{n_active}条报名记录）" if n_active else ""))
+    db.commit()
+    return {"ok": True}
+
+
+# ======================= 二级工位 =======================
+
+class StationBody(BaseModel):
+    """二级工位不再设置时间：职责/地点/名额/要求，时间随场次。"""
+    name: str = Field(max_length=128)
+    location: str = ""
+    quota: int = Field(ge=0)
+    requirement_tags: dict = {}
+    requirement_note: str = ""
+    training_note: str = ""
+
+
+STATION_FIELDS = {"name": "工位名", "location": "地点", "quota": "名额",
+                  "requirement_tags": "条件要求", "requirement_note": "要求原文",
+                  "training_note": "培训内容"}
+
+
+def _validate_station(db: OrmSession, g: PositionGroup, s: Station):
+    if g.mode == "single":
+        raise HTTPException(400, "「仅一级岗位」模式下没有二级工位，"
+                                 "请先把场次切换为「二级待定」或「直接定二级」")
+    if False:  # 工位不再设置时间（时间归场次），旧校验保留占位
+        raise HTTPException(400, "工位结束时间必须晚于开始时间")
+    if False:
+        raise HTTPException(400, f"工位时间必须被包裹在场次时间内"
+                                 f"（{g.span_text()}）——《设计方案》核心校验")
+    quota_sum = sum(x.quota for x in g.stations if x.id != s.id) + s.quota
+    if quota_sum > g.capacity:
+        raise HTTPException(
+            400, f"二级工位人数之和({quota_sum})将超过一级岗位总上限"
+                 f"({g.capacity})，请调低工位名额或提高场次数上限")
+
+
+@router.post("/groups/{group_id}/stations")
+def create_station(group_id: str, body: StationBody,
+                   db: OrmSession = Depends(db_session),
+                   user: User = Depends(require_manager)):
+    g = _group(db, group_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = db.get(Activity, g.activity_id)
+    s = Station(id=uid("s"), group_id=g.id, name=body.name.strip(),
+                location=body.location.strip(), quota=body.quota,
+                requirement_tags=body.requirement_tags or {},
+                requirement_note=body.requirement_note.strip(),
+                training_note=body.training_note.strip(),
+                sort=len(g.stations))
+    _validate_station(db, g, s)
+    db.add(s)
+    db.flush()   # 让 group 关系可用，供 time_text() 使用
+    audit_log(db, actor=user, action="create", target_type="station",
+              target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
+              activity_id=act.id,
+              summary=f"新建二级工位「{s.name}」（{s.time_text()}，"
+                      f"{s.location or '地点待定'}，{s.quota}人）")
+    db.commit()
+    return {"id": s.id}
+
+
+@router.patch("/stations/{station_id}")
+def update_station(station_id: str, body: dict, bg: BackgroundTasks,
+                   db: OrmSession = Depends(db_session),
+                   user: User = Depends(require_manager)):
+    s = db.get(Station, station_id)
+    if s is None:
+        raise HTTPException(404, "工位不存在")
+    g = _group(db, s.group_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = db.get(Activity, g.activity_id)
+    before_raw = {k: getattr(s, k) for k in STATION_FIELDS}
+    for key in STATION_FIELDS:
+        if key not in body:
+            continue
+        setattr(s, key, body[key])
+    _validate_station(db, g, s)
+
+    def fmt(v):
+        if isinstance(v, datetime):
+            return v.strftime("%m-%d %H:%M")
+        return v
+    changes = diff_changes({k: fmt(v) for k, v in before_raw.items()},
+                           {k: fmt(getattr(s, k)) for k in STATION_FIELDS},
+                           STATION_FIELDS)
+    if changes and act.status != "draft":
+        affected = (db.query(Enrollment.user_id)
+                    .filter(Enrollment.station_id == s.id,
+                            Enrollment.status == "confirmed").all())
+        for (uid_,) in affected:
+            bg.add_task(_notify_assignment_bg,
+                        [{"user_id": uid_, "station_id": s.id,
+                          "group_id": g.id}])
+        summary = "；".join(f"{c['label']}：{c['old']}→{c['new']}"
+                            for c in changes if c["field"] != "requirement_tags")
+        if summary:
+            bg.add_task(_notify_activity_bg, act.id, "activity_changed",
+                        activity=act.title,
+                        change_summary=f"工位「{s.name}」调整：{summary}")
+    audit_log(db, actor=user, action="update", target_type="station",
+              target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
+              activity_id=act.id,
+              summary=f"修改工位「{s.name}」："
+                      f"{'、'.join(c['label'] for c in changes) or '无实质变化'}",
+              changes=changes)
+    db.commit()
+    return {"ok": True, "changes": changes}
+
+
+@router.delete("/stations/{station_id}")
+def delete_station(station_id: str,
+                   db: OrmSession = Depends(db_session),
+                   user: User = Depends(require_manager)):
+    s = db.get(Station, station_id)
+    if s is None:
+        raise HTTPException(404, "工位不存在")
+    g = _group(db, s.group_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = db.get(Activity, g.activity_id)
+    n = db.query(Enrollment).filter(Enrollment.station_id == s.id,
+                                    Enrollment.status == "confirmed").count()
+    if n:
+        raise HTTPException(409, f"该工位仍有 {n} 人已确认，请先在分配面板调整")
+    label = f"{act.title}·{g.name}·{s.name}"
+    db.delete(s)
+    audit_log(db, actor=user, action="delete", target_type="station",
+              target_id=s.id, target_label=label, activity_id=act.id,
+              summary=f"删除工位「{s.name}」")
+    db.commit()
+    return {"ok": True}
+
+
+# ======================= 活动管理者 =======================
+
+@router.get("/activities/{activity_id}/managers")
+def list_managers(activity_id: str, db: OrmSession = Depends(db_session),
+                  user: User = Depends(require_manager)):
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    ids = activity_manager_ids(db, activity_id)
+    users = [db.get(User, i) for i in ids]
+    return [{
+        "id": u.id, "name": u.name, "student_id": u.student_id,
+        "college": u.college, "roles": u.roles or [],
+        "role_label": u.active_role_label(),
+        "is_creator": u.id == act.created_by,
+    } for u in users if u]
+
+
+class ManagerBody(BaseModel):
+    student_id: str
+
+
+@router.post("/activities/{activity_id}/managers")
+def add_activity_manager(activity_id: str, body: ManagerBody,
+                         db: OrmSession = Depends(db_session),
+                         user: User = Depends(require_manager)):
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    target = db.query(User).filter(
+        User.student_id == body.student_id.strip()).first()
+    if target is None:
+        raise HTTPException(404, f"学号 {body.student_id} 不存在")
+    row = add_manager(db, activity_id, target, user)
+    audit_log(db, actor=user, action="update", target_type="activity",
+              target_id=activity_id, target_label=act.title,
+              activity_id=activity_id,
+              summary=f"添加活动管理者：{target.name}（{target.student_id}）",
+              visible=False)
+    db.commit()
+    return {"ok": True, "id": row.id}
+
+
+@router.delete("/activities/{activity_id}/managers/{user_id}")
+def remove_activity_manager(activity_id: str, user_id: str,
+                            db: OrmSession = Depends(db_session),
+                            user: User = Depends(require_manager)):
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    if user_id == user.id:
+        raise HTTPException(400, "不能移除自己的管理权限；"
+                                 "如需退出管理，请由其他管理者操作")
+    target = db.get(User, user_id)
+    remove_manager(db, activity_id, user_id, act.created_by)
+    audit_log(db, actor=user, action="update", target_type="activity",
+              target_id=activity_id, target_label=act.title,
+              activity_id=activity_id,
+              summary=f"移除活动管理者：{target.name if target else user_id}",
+              visible=False)
+    db.commit()
+    return {"ok": True}
+
+
+# ======================= 志愿者通知 =======================
+
+class NotifyBody(BaseModel):
+    scope: str = "all"      # all 全部志愿者 / group 指定场次 / not_checked_in 场次未到岗
+    group_id: str = ""
+    title: str = Field(max_length=128)
+    content: str
+
+
+@router.post("/activities/{activity_id}/notify")
+def notify_volunteers(activity_id: str, body: NotifyBody,
+                      db: OrmSession = Depends(db_session),
+                      user: User = Depends(require_manager)):
+    """向该活动 status=confirmed 的报名者发送自定义通知。
+
+    scope=group：再按 group_id 过滤；scope=not_checked_in：按 group_id 过滤
+    且排除已在该场次有签到记录的人。Mock 模式下消息落 notifications 表。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    title, content = body.title.strip(), body.content.strip()
+    if not title:
+        raise HTTPException(400, "请填写通知标题")
+    if not content:
+        raise HTTPException(400, "请填写通知内容")
+    if body.scope not in ("all", "group", "not_checked_in"):
+        raise HTTPException(400, "通知范围不合法")
+    group_id = ""
+    if body.scope != "all":
+        if not body.group_id:
+            raise HTTPException(400, "请选择场次")
+        g = _group(db, body.group_id)
+        if g.activity_id != act.id:
+            raise HTTPException(400, "所选场次不属于该活动")
+        group_id = g.id
+    # 两步查询：先 DISTINCT user_id（JSON 列在 PG 上无相等运算符，不能整行去重）
+    ids = (db.query(Enrollment.user_id)
+           .filter(Enrollment.activity_id == act.id,
+                   Enrollment.status == "confirmed"))
+    if group_id:
+        ids = ids.filter(Enrollment.group_id == group_id)
+    ids = [r[0] for r in ids.distinct().all()]
+    users = [db.get(User, i) for i in ids]
+    users = [u for u in users if u]
+    if body.scope == "not_checked_in":
+        checked = {r[0] for r in db.query(CheckinRecord.user_id)
+                   .filter(CheckinRecord.group_id == group_id).all()}
+        users = [u for u in users if u.id not in checked]
+    n = 0
+    for u in users:
+        try:
+            wecom.send_user(u, "custom", title=title, content=content)
+            n += 1
+        except Exception:
+            pass
+    audit_log(db, actor=user, action="update", target_type="notify",
+              target_id=act.id, target_label=act.title,
+              activity_id=act.id,
+              summary=f"向{n}位志愿者发送通知：{title}", visible=False)
+    db.commit()
+    return {"ok": True, "count": n}
+
+
+# ======================= 报名名单 =======================
+
+@router.get("/groups/{group_id}/roster")
+def roster(group_id: str, db: OrmSession = Depends(db_session),
+           user: User = Depends(require_manager)):
+    g = _group(db, group_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = db.get(Activity, g.activity_id)
+    stations = sorted(g.stations, key=lambda s: s.sort)
+    checked_ids = {r[0] for r in db.query(CheckinRecord.user_id)
+                   .filter(CheckinRecord.group_id == g.id).all()}
+
+    def user_row(e: Enrollment) -> dict:
+        u = db.get(User, e.user_id)
+        st = db.get(Station, e.station_id) if e.station_id else None
+        return {
+            "enrollment_id": e.id,
+            "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
+                     "college": u.college, "gender": u.gender, "phone": u.phone,
+                     "grade": u.grade, "credit_score": u.credit_score},
+            "station_id": e.station_id,
+            "station_name": st.name if st else "",
+            "assign_forced": e.assign_forced,
+            "source": e.source,
+            "joined_at": iso(e.joined_at),
+            "checked_in": u.id in checked_ids,
+            "confirm_deadline": iso(e.confirm_deadline),
+            "status": e.status,
+        }
+
+    confirmed = [user_row(e) for e in db.query(Enrollment)
+                 .filter(Enrollment.group_id == g.id,
+                         Enrollment.status == "confirmed")
+                 .order_by(Enrollment.joined_at).all()]
+    waitlist = []
+    for i, e in enumerate(logic.waitlist_rows(db, g.id), start=1):
+        row = user_row(e)
+        row["queue_position"] = i
+        waitlist.append(row)
+    cancelled = [user_row(e) for e in db.query(Enrollment)
+                 .filter(Enrollment.group_id == g.id,
+                         Enrollment.status == "cancelled")
+                 .order_by(Enrollment.joined_at.desc()).limit(20).all()]
+    return {
+        "group": {"id": g.id, "name": g.name, "time_text": g.span_text(),
+                  "capacity": g.capacity, "need_assign": g.need_assign,
+                  "activity_id": act.id, "activity_title": act.title,
+                  "start_time": iso(g.start_time)},
+        "stations": [{"id": s.id, "name": s.name, "quota": s.quota,
+                      "time_text": s.time_text(), "location": s.location,
+                      "confirmed": logic.station_confirmed_count(db, s.id)}
+                     for s in stations],
+        "confirmed": confirmed,
+        "waitlist": waitlist,
+        "cancelled": cancelled,
+        "checked_in_count": len(checked_ids),
+    }
+
+
+# ======================= 二次分配（排班程序） =======================
+
+class PreviewBody(BaseModel):
+    preset: str = ""
+    rules: dict | None = None      # 高级自定义规则（与排班程序 rules 配置同构）
+
+
+@router.post("/groups/{group_id}/assign/preview")
+def assign_preview(group_id: str, body: PreviewBody,
+                   db: OrmSession = Depends(db_session),
+                   user: User = Depends(require_manager)):
+    g = _group(db, group_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    if not g.stations:
+        raise HTTPException(400, "请先在该场次下创建二级工位，再运行智能排班")
+    try:
+        result = scheduler_adapter.preview(db, g, body.preset, body.rules)
+    except Exception as exc:   # 规则配置非法时给出可读错误
+        db.rollback()
+        raise HTTPException(400, f"规则配置无效：{exc}")
+    result["presets"] = scheduler_adapter.PRESETS_FOR_UI
+    return result
+
+
+class ApplyPlanBody(BaseModel):
+    plan: list[dict]
+    source: str = "assign"
+
+
+@router.post("/groups/{group_id}/assign/apply")
+def assign_apply(group_id: str, body: ApplyPlanBody, bg: BackgroundTasks,
+                 db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_manager)):
+    g = _group(db, group_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    if not body.plan:
+        raise HTTPException(400, "空方案")
+    notify_items: list[dict] = []
+    try:
+        result = scheduler_adapter.apply_plan(db, g, user, body.plan,
+                                              source=body.source,
+                                              notify_out=notify_items)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc))
+    if notify_items:
+        bg.add_task(_notify_assignment_bg, notify_items)
+    return result
+
+
+@router.post("/groups/{group_id}/add-walkin")
+def add_walkin(group_id: str, body: dict,
+               db: OrmSession = Depends(db_session),
+               user: User = Depends(require_manager)):
+    """管理员直接添加志愿者（现场补录）。冲突时允许但留痕。"""
+    g = _group(db, group_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    sid = (body.get("student_id") or "").strip()
+    u = db.query(User).filter(User.student_id == sid).first()
+    if u is None:
+        raise HTTPException(404, f"学号 {sid} 不存在")
+    if u.user_type == "teacher":
+        raise HTTPException(400, "老师类型用户不参与志愿报名，无法补录")
+    exists = (db.query(Enrollment)
+              .filter(Enrollment.group_id == g.id, Enrollment.user_id == u.id,
+                      Enrollment.status.in_(logic.ACTIVE)).first())
+    if exists:
+        raise HTTPException(409, f"{u.name} 已在该场次中")
+    clashes = logic.time_conflicts(db, u, g)
+    forced = bool(clashes) and bool(body.get("force"))
+    if clashes and not forced:
+        c = clashes[0]
+        raise HTTPException(409, f"{u.name} 与「{c['activity_title']}」"
+                                 f"{c['group_name']} 时间冲突，确认添加请勾选强制")
+    enr = Enrollment(id=uid("enr"), activity_id=g.activity_id, group_id=g.id,
+                     user_id=u.id, source="admin", joined_at=now(),
+                     status="confirmed")
+    if body.get("station_id"):
+        st = db.get(Station, body["station_id"])
+        if st and st.group_id == g.id:
+            enr.station_id = st.id
+            enr.assigned_at = now()
+            enr.assign_forced = forced
+    db.add(enr)
+    audit_log(db, actor=user, action="force_assign" if forced else "create",
+              target_type="enrollment", target_id=enr.id,
+              target_label=f"{u.name}", activity_id=g.activity_id,
+              summary=f"管理员补录 {u.name}（{sid}）至场次「{g.name}」"
+                      + ("（时段冲突，强制加入）" if forced else ""))
+    db.commit()
+    return {"ok": True, "enrollment_id": enr.id}
+
+
+# ======================= 图片上传 / 媒体访问 =======================
+
+UPLOAD_DIR = Path(__file__).resolve().parents[1] / "data" / "uploads"
+IMAGE_EXTS = {"png": "image/png", "jpg": "image/jpeg",
+              "jpeg": "image/jpeg", "webp": "image/webp"}
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+
+
+@router.post("/upload-image")
+async def upload_image(file: UploadFile = File(...),
+                       user: User = Depends(require_manager)):
+    """上传答疑群二维码等图片（png/jpg/jpeg/webp，≤2MB），返回访问链接。"""
+    ext = Path(file.filename or "").suffix.lower().lstrip(".")
+    if ext not in IMAGE_EXTS:
+        raise HTTPException(400, "仅支持 png/jpg/jpeg/webp 格式的图片")
+    data = await file.read()
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(400, "图片大小不能超过 2MB")
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"qr_{uuid4().hex}.{ext}"
+    (UPLOAD_DIR / filename).write_bytes(data)
+    return {"url": f"/api/media/{filename}"}
+
+
+# 媒体路由不带 /api/staff 前缀：单独构建路由对象后把已生成的
+# 路由表并入上方 router（main.py 只 include 本模块的 router，无需改动）。
+media_router = APIRouter(tags=["staff"])
+
+
+@media_router.get("/api/media/{name}")
+def media_file(name: str):
+    """读取上传的图片。文件名仅允许字母数字下划线点，防止目录穿越。"""
+    if (not name or ".." in name or name.startswith(".")
+            or not re.fullmatch(r"[A-Za-z0-9_.]+", name)):
+        raise HTTPException(404, "文件不存在")
+    path = UPLOAD_DIR / name
+    if not path.is_file():
+        raise HTTPException(404, "文件不存在")
+    media_type = IMAGE_EXTS.get(path.suffix.lower().lstrip("."),
+                                "application/octet-stream")
+    return FileResponse(path, media_type=media_type)
+
+
+router.routes.extend(media_router.routes)

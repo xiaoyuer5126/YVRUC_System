@@ -1,0 +1,101 @@
+# 人大校青协志愿服务管理平台 · Docker 全栈编排
+#
+#   docker compose up -d                          # 启动全套（db+后端+前端+隧道）
+#   docker compose --profile seed run --rm seed   # 重置演示数据
+#   docker logs rucva-cloudflared --tail 20       # 查看隧道连接状态
+#
+# 服务拓扑：
+#   web(nginx:80) ──/api──▶ backend(uvicorn:8000) ──▶ postgres(5432)
+#     ▲ 端口 8080                                    端口 5433（宿主机调试用）
+#   cloudflared：固定域名隧道（学校分配的 token 已写入下方 command；
+#   公网域名在 Cloudflare Zero Trust 控制台该隧道的 Public Hostname 中绑定）。
+x-backend-build: &backend_build
+  context: ..
+  dockerfile: platform/docker/backend.Dockerfile
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rucva-postgres
+    environment:
+      POSTGRES_USER: rucva
+      POSTGRES_PASSWORD: rucva_dev
+      POSTGRES_DB: rucva
+      TZ: Asia/Shanghai
+    ports:
+      - "5433:5432"
+    volumes:
+      - rucva_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rucva -d rucva"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  backend:
+    build: *backend_build
+    image: rucva-backend:local
+    container_name: rucva-backend
+    environment:
+      # 容器网络内直连服务名；database.py 探测失败会降级 SQLite，故必须显式指定
+      RUCVA_DATABASE_URL: postgresql+psycopg://rucva:rucva_dev@postgres:5432/rucva
+      TZ: Asia/Shanghai
+    ports:
+      - "8000:8000"          # 直连 API（scripts/ 下测试脚本仍指向 127.0.0.1:8000）
+    volumes:
+      - rucva_uploads:/app/platform/data/uploads   # 活动二维码等上传件持久化
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request as u;u.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  web:
+    build:
+      context: ..
+      dockerfile: platform/docker/web.Dockerfile
+    container_name: rucva-web
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: rucva-cloudflared
+    # 固定域名隧道：token 存于 platform/.env 的 CLOUDFLARE_TOKEN（勿提交/外传）。
+    # 公网域名在 Cloudflare Zero Trust 控制台该隧道的 Public Hostname 中绑定；
+    # 官方镜像为 distroless（无 shell），故命令必须直接可执行、不能做条件分支。
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TOKEN}"]
+    depends_on:
+      - web
+    restart: unless-stopped
+
+  # 一次性任务：重置演示数据（不会随 up -d 启动）
+  #   docker compose --profile seed run --rm seed
+  seed:
+    profiles: ["seed"]
+    build: *backend_build
+    image: rucva-backend:local
+    container_name: rucva-seed
+    environment:
+      RUCVA_DATABASE_URL: postgresql+psycopg://rucva:rucva_dev@postgres:5432/rucva
+      TZ: Asia/Shanghai
+    entrypoint: ["python", "-X", "utf8", "-m", "backend.seed"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  rucva_pgdata:
+  rucva_uploads:

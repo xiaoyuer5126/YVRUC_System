@@ -1,0 +1,36 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# ===== Node / 前端构建产物（npm install / npm run build 可再生）=====
+node_modules/
+platform/web/dist/
+
+# ===== 运行时数据（演示库 / 上传件；Docker 部署由命名卷接管）=====
+platform/data/
+*.db
+*.sqlite3
+
+# ===== 环境变量与密钥（.env.example 为模板，允许提交）=====
+.env
+.env.*
+!.env.example
+
+# ===== 日志 / 临时文件 =====
+*.log
+*.tmp
+tmp/
+
+# ===== 验证截图 =====
+platform/shots/
+
+# ===== IDE / 操作系统 =====
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store

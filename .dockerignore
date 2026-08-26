@@ -1,0 +1,11 @@
+# 构建上下文只保留代码，别把本地产物塞进镜像层
+.git
+**/__pycache__
+**/*.pyc
+**/node_modules
+platform/web/dist
+platform/data
+platform/shots
+*.db
+*.log
+.env
