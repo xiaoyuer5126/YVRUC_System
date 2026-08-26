@@ -31,12 +31,9 @@ def apply_delta(db: OrmSession, user: User, delta: int, reason: str, *,
         user.credit_frozen_until = until
         extra_note = f"\n⚠️ 信用分已低于{config.CREDIT_FREEZE_BELOW}分，" \
                      f"报名权限冻结至 {until:%Y-%m-%d}。"
-    try:
-        wecom.send_user(user, "credit_penalty", delta=delta, score=after,
-                        reason=reason + ("（系统自动）" if operator_id is None else ""),
-                        extra=extra_note)
-    except Exception:
-        pass
+    wecom.send_user(db, user, "credit_penalty", delta=delta, score=after,
+                    reason=reason + ("（系统自动）" if operator_id is None else ""),
+                    extra=extra_note)
     return after
 
 

@@ -10,11 +10,15 @@ HttpWecom：生产实现占位——学校提供 corp_id/agent_id/secret 后，
 from __future__ import annotations
 
 import json
+import logging
 import urllib.request
 
-from ..database import SessionLocal
+from sqlalchemy.orm import Session as OrmSession
+
 from ..models import Notification, User, uid
 from . import get_config, is_mock
+
+log = logging.getLogger(__name__)
 
 # 模板库：key → (标题模板, 正文模板)。{xx} 为占位符。
 TEMPLATES: dict[str, tuple[str, str]] = {
@@ -63,34 +67,25 @@ def render(template_key: str, extra: str = "", **kw) -> tuple[str, str]:
     return title_tpl.format_map(_Safe(kw)), body_tpl.format_map(_Safe(kw))
 
 
-class WecomResult(dict):
-    """发送结果：delivered 是否送达；mock 标记演示模式。"""
+def send_user(db: OrmSession, user: User, template_key: str,
+              data: dict | None = None, **fields) -> None:
+    """向单个用户发模板消息，并把送达记录写进调用方的事务。
 
-
-def send_user(user: User, template_key: str, data: dict | None = None,
-              **fields) -> WecomResult:
-    """向单个用户发模板消息。任何异常都不影响主业务流程。"""
+    消息与触发它的业务变更同生共死：业务回滚了，通知也不该留下。
+    真实推送失败只标记 delivered=False，不打断业务。
+    """
     title, content = render(template_key, **fields)
-    payload = {"data": data or {}}
     delivered = True
-    if is_mock("wecom_work"):
-        pass  # Mock：仅落库
-    else:
+    if not is_mock("wecom_work"):
         try:
             delivered = _http_send(user.student_id, title, content)
-        except Exception:
+        except Exception:  # noqa: BLE001  外部接口不可用不能拖垮业务
+            log.warning("企业微信推送失败：%s → %s", user.student_id, title,
+                        exc_info=True)
             delivered = False
-    db = SessionLocal()
-    try:
-        db.add(Notification(id=uid("ntf"), user_id=user.id,
-                            template_key=template_key,
-                            title=title, content=content, data=payload["data"],
-                            delivered=delivered))
-        db.commit()
-    finally:
-        db.close()
-    return WecomResult(delivered=delivered, mock=is_mock("wecom_work"),
-                       title=title, content=content)
+    db.add(Notification(id=uid("ntf"), user_id=user.id,
+                        template_key=template_key, title=title,
+                        content=content, data=data or {}, delivered=delivered))
 
 
 def _http_send(student_id: str, title: str, content: str) -> bool:

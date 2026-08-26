@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .enroll_logic import (group_confirmed_count, station_confirmed_count,
+from .enroll_logic import (group_confirmed_count, group_held_count,
+                           group_occupied_count, station_confirmed_count,
                            time_conflicts, waitlist_position, waitlist_rows)
 from .models import Activity, AuditLog, Enrollment, PositionGroup, Station, iso, now
 
@@ -43,6 +44,7 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
     groups = sorted(act.groups, key=lambda g: g.sort)
     total_cap = sum(g.capacity for g in groups)
     total_conf = sum(group_confirmed_count(db, g.id) for g in groups)
+    total_used = sum(group_occupied_count(db, g.id) for g in groups)
     span = act.time_span()
     ds_code, ds_label = display_status(act)
     return {
@@ -53,7 +55,8 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
         "display_status": ds_code, "display_label": ds_label,
         "groups_count": len(groups),
         "total_capacity": total_cap, "total_confirmed": total_conf,
-        "remaining": max(0, total_cap - total_conf),
+        # 剩余名额扣掉临近退选扣留的占位，不然广场上显示有位、点进去报不了
+        "remaining": max(0, total_cap - total_used),
         "time_text": (f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}"
                       if span else "待定"),
         "reg_start": iso_of(act.reg_start), "reg_end": iso_of(act.reg_end),
@@ -87,15 +90,17 @@ def station_out(db: OrmSession, st: Station) -> dict:
 def group_out(db: OrmSession, g: PositionGroup, user=None) -> dict:
     stations = sorted(g.stations, key=lambda s: s.sort)
     confirmed = group_confirmed_count(db, g.id)
+    held = group_held_count(db, g.id)
     out = {
         "id": g.id, "name": g.name,
         "activity_id": g.activity_id,
         "start_time": iso_of(g.start_time), "end_time": iso_of(g.end_time),
         "time_text": g.span_text(),
         "capacity": g.capacity, "confirmed": confirmed,
-        "remaining": max(0, g.capacity - confirmed),
+        "held_seats": held,
+        "remaining": max(0, g.capacity - group_occupied_count(db, g.id)),
         "waitlist_quota": g.waitlist_quota,
-        "need_assign": g.need_assign,
+        "needs_assign": g.needs_assign(),
         "mode": g.mode,
         "mode_label": g.mode_label(),
         "note": g.note, "sort": g.sort,
@@ -113,6 +118,7 @@ def group_out(db: OrmSession, g: PositionGroup, user=None) -> dict:
             out["my_enrollment"] = {
                 "enrollment_id": enr.id, "status": enr.status,
                 "station_id": enr.station_id,
+                "allow_reassign": enr.allow_reassign,
                 "confirm_deadline": iso_of(enr.confirm_deadline),
                 "waitlist_position": (waitlist_position(db, enr)
                                       if enr.status != "confirmed" else 0),

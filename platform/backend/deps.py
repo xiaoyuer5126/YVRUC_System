@@ -1,5 +1,9 @@
 """FastAPI 依赖：会话鉴权与权限。
 
+令牌只从 Authorization 头读。浏览器直链下载（导出 Excel）没法带头，
+单独用 current_user_download 依赖，只有那一个路由接受 ?token=——
+放开全站会让令牌进 nginx 访问日志、浏览器历史和外链 Referer。
+
 权限模型（两层）：
   · 身份（User.roles，可多个）：管理员 / 老师 / 青协 / 学生
       - 工作台入口：老师 / 青协 / 管理员
@@ -10,28 +14,25 @@
 from __future__ import annotations
 
 import secrets
+from datetime import timedelta
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session as OrmSession
 
+from . import config
 from .database import db_session
-from .models import MANAGER_ROLES, Session, User
+from .models import Session, User, now
 
 
-def _token_from(request: Request) -> str:
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        return auth[7:].strip()
-    return request.query_params.get("token", "").strip()
-
-
-def current_user(request: Request,
-                 db: OrmSession = Depends(db_session)) -> User:
-    token = _token_from(request)
+def _authorize(db: OrmSession, token: str) -> User:
     if not token:
         raise HTTPException(401, "未登录")
     row = db.get(Session, token)
     if row is None:
+        raise HTTPException(401, "登录已过期，请重新登录")
+    if row.expires_at <= now():
+        db.delete(row)
+        db.commit()
         raise HTTPException(401, "登录已过期，请重新登录")
     user = db.get(User, row.user_id)
     if user is None:
@@ -39,8 +40,36 @@ def current_user(request: Request,
     return user
 
 
+def _bearer(request: Request) -> str:
+    auth = request.headers.get("Authorization", "")
+    return auth[7:].strip() if auth.startswith("Bearer ") else ""
+
+
+def current_token(request: Request) -> str:
+    """当前请求所用的令牌（退出登录时只吊销这一个会话）。"""
+    return _bearer(request)
+
+
+def current_user(request: Request,
+                 db: OrmSession = Depends(db_session)) -> User:
+    return _authorize(db, _bearer(request))
+
+
+def current_user_download(request: Request,
+                          db: OrmSession = Depends(db_session)) -> User:
+    """仅供浏览器直链下载的路由使用：额外接受 ?token=。"""
+    return _authorize(db, _bearer(request)
+                      or request.query_params.get("token", "").strip())
+
+
 def require_manager(user: User = Depends(current_user)) -> User:
     """工作台入口：老师 / 青协 / 管理员身份。"""
+    if not user.is_manager_identity():
+        raise HTTPException(403, "需要 老师/青协/管理员 身份")
+    return user
+
+
+def require_manager_download(user: User = Depends(current_user_download)) -> User:
     if not user.is_manager_identity():
         raise HTTPException(403, "需要 老师/青协/管理员 身份")
     return user
@@ -61,6 +90,7 @@ def require_users_page(user: User = Depends(current_user)) -> User:
 
 def create_session(db: OrmSession, user: User) -> str:
     token = secrets.token_urlsafe(32)
-    db.add(Session(token=token, user_id=user.id))
+    db.add(Session(token=token, user_id=user.id,
+                   expires_at=now() + timedelta(hours=config.SESSION_HOURS)))
     db.commit()
     return token

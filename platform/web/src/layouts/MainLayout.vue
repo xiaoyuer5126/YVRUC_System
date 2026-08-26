@@ -84,43 +84,16 @@
     </el-container>
 
     <!-- 资料完善对话框：未完善的学生登录时强制弹出；也可从右上角菜单进入修改 -->
-    <el-dialog v-model="profileDlg.visible"
-               :title="profileDlg.forced ? '完善个人信息' : '修改个人信息'"
-               width="460px"
-               :close-on-click-modal="false"
-               :close-on-press-escape="!profileDlg.forced"
-               :show-close="!profileDlg.forced">
-      <el-alert v-if="profileDlg.forced" type="warning" :closable="false"
-                style="margin-bottom:14px"
-                title="数智人大无法同步您的联系方式，请先补全以下信息，否则不能报名志愿活动" />
-      <el-form label-width="82px">
-        <el-form-item label="手机号" required>
-          <el-input v-model="profileForm.phone" placeholder="请输入手机号" maxlength="20" />
-        </el-form-item>
-        <el-form-item label="微信号" required>
-          <el-input v-model="profileForm.wechat" placeholder="请输入微信号" maxlength="64" />
-        </el-form-item>
-        <el-form-item label="身份证号" required>
-          <el-input v-model="profileForm.id_card" placeholder="请输入15~18位身份证号" maxlength="18" />
-        </el-form-item>
-      </el-form>
-      <p class="dim" style="margin:0;font-size:12px;line-height:1.7">
-        信息仅用于志愿服务组织联络与保险登记；身份证号仅存储、不对外展示。</p>
-      <template #footer>
-        <el-button v-if="!profileDlg.forced"
-                   @click="profileDlg.visible = false">取消</el-button>
-        <el-button type="primary" :loading="profileSaving" @click="saveProfile">保存</el-button>
-      </template>
-    </el-dialog>
+    <ProfileDialog ref="profileDialog" />
   </el-container>
 </template>
 
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { auth, canSee, clearAuth, setActiveIdentity, ROLE_LABELS } from '../store'
+import ProfileDialog from '../components/ProfileDialog.vue'
 
 const router = useRouter()
 const unread = ref(0)
@@ -134,50 +107,8 @@ async function poll() {
   } catch { /* 静默 */ }
 }
 
-// —— 资料完善（手机号/微信号/身份证号） ——
-const profileDlg = ref({ visible: false, forced: false })
-const profileForm = ref({ phone: '', wechat: '', id_card: '' })
-const profileSaving = ref(false)
-
-function openProfileDialog(forced = false) {
-  profileForm.value = {
-    phone: auth.user?.phone || '',
-    wechat: auth.user?.wechat || '',
-    id_card: auth.user?.id_card || '',
-  }
-  profileDlg.value = { visible: true, forced }
-}
-
-function applyProfileUser(u) {
-  // 更新内存登录态并同步 localStorage（rucva_user）
-  auth.user = u
-  localStorage.setItem('rucva_user', JSON.stringify(u))
-}
-
-async function saveProfile() {
-  const f = profileForm.value
-  const phone = f.phone.trim()
-  const wechat = f.wechat.trim()
-  const idCard = f.id_card.trim()
-  if (!phone || !wechat || !idCard) {
-    return ElMessage.warning('手机号、微信号、身份证号均为必填项')
-  }
-  if (idCard.length < 15 || idCard.length > 18) {
-    return ElMessage.warning('身份证号长度应为15~18位')
-  }
-  profileSaving.value = true
-  try {
-    const d = await api.put('/api/me/profile',
-                            { phone, wechat, id_card: idCard })
-    applyProfileUser(d.user)
-    const wasForced = profileDlg.value.forced
-    profileDlg.value.visible = false
-    ElMessage.success(wasForced ? '个人资料已完善，现在可以报名志愿活动了'
-                                : '个人信息已更新')
-  } finally {
-    profileSaving.value = false
-  }
-}
+const profileDialog = ref(null)
+const openProfileDialog = (forced = false) => profileDialog.value.open(forced)
 
 onMounted(() => {
   poll(); timer = setInterval(poll, 30000)

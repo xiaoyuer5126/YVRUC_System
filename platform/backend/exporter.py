@@ -20,8 +20,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session as OrmSession
 
-from .models import (Activity, CheckinRecord, Enrollment, PositionGroup,
-                     Station, User)
+from .models import Activity, CheckinRecord, Enrollment, User
 
 HEADER_FILL = PatternFill("solid", fgColor="9E2235")   # 人大红
 HEADER_FONT = Font(name="微软雅黑", bold=True, color="FFFFFF")
@@ -89,8 +88,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
                              Enrollment.status == "confirmed").scalar() or 0)
         here = (db.query(func.count(func.distinct(CheckinRecord.user_id)))
                 .filter(CheckinRecord.group_id == g.id).scalar() or 0)
-        overview.append([g.name, g.span_text(),
-                         "待分配（宽泛）" if g.need_assign else "精细化",
+        overview.append([g.name, g.span_text(), g.mode_label(),
                          f"{confirmed}/{g.capacity}", here])
     overview["A1"].font = Font(name="微软雅黑", bold=True, size=14)
     _style_header(overview, 5)
@@ -110,7 +108,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         ws = wb.create_sheet(_safe_sheet_name(g.name, used_names))
         has_stations = bool(stations)
         header = ["姓名", "学号", "学院", "手机号", "场次时间"]
-        header += (["二级工位", "服务地点"] if has_stations else [])
+        header += (["二级工位", "服务地点", "接受调剂"] if has_stations else [])
         header += ["签到状态", "签退时间"]
         ws.append(header)
         _style_header(ws, len(header))
@@ -120,21 +118,18 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
             st = stations.get(enr.station_id) if enr.station_id else None
             if has_stations:
                 line += [st.name if st else "待分配",
-                         st.location if st else "—"]
+                         st.location if st else "—",
+                         "是" if enr.allow_reassign else "否"]
             rec = checked.get(u.id)
             line += ["已到岗 ✓" if rec else "未签到"]
             line += [rec.checkout_at.strftime("%m-%d %H:%M")
                      if rec and rec.checkout_at else "—"]
             ws.append(line)
 
-        widths = (12, 14, 16, 15, 18)
-        for idx, w in enumerate(widths, start=1):
+        for idx, w in enumerate((12, 14, 16, 15, 18), start=1):
             ws.column_dimensions[get_column_letter(idx)].width = w
-        if has_stations:
-            for idx in range(len(widths) + 1, len(widths) + 3):
-                ws.column_dimensions[get_column_letter(idx)].width = 16
-        ws.column_dimensions[get_column_letter(len(header) - 1)].width = 12
-        ws.column_dimensions[get_column_letter(len(header))].width = 14
+        for idx in range(6, len(header) + 1):
+            ws.column_dimensions[get_column_letter(idx)].width = 14
 
         # 未分配名单（有工位且有人没分到时才有意义）
         if has_stations:

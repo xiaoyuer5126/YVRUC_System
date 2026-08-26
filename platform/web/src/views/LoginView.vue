@@ -4,30 +4,49 @@
       <div class="head">
         <div class="logo">志</div>
         <h2>人大校青协志愿服务管理平台</h2>
-        <p class="dim">通过微人大统一身份认证登录（演示环境为模拟认证）</p>
+        <p class="dim">
+          {{ mode === 'demo' ? '统一身份认证尚未接通，当前为开发组内测登录'
+                             : '通过微人大统一身份认证登录' }}
+        </p>
       </div>
 
-      <el-form @submit.prevent>
+      <!-- 真实 SSO：一个跳转按钮，账号口令都在学校那边 -->
+      <template v-if="mode !== 'demo'">
+        <el-button type="primary" size="large" style="width:100%"
+                   :disabled="!loginUrl" @click="gotoSso">
+          {{ loginUrl ? '前往统一身份认证登录' : '登录方式未配置，请联系管理员' }}
+        </el-button>
+      </template>
+
+      <!-- 内测登录：学号 + 组内共享口令 -->
+      <el-form v-else @submit.prevent>
         <el-input v-model="sid" size="large" placeholder="学号 / 工号"
-                  clearable @keyup.enter="doLogin">
+                  clearable @keyup.enter="focusPassword">
           <template #prefix><el-icon><User /></el-icon></template>
+        </el-input>
+        <el-input ref="passwordInput" v-model="password" size="large" type="password"
+                  placeholder="内测口令" show-password clearable
+                  style="margin-top:10px" @keyup.enter="doLogin">
+          <template #prefix><el-icon><Lock /></el-icon></template>
         </el-input>
         <el-button type="primary" size="large" style="width:100%;margin-top:14px"
                    :loading="loading" @click="doLogin">
-          统一身份认证登录
+          登录
         </el-button>
       </el-form>
 
-      <el-divider>演示快捷入口</el-divider>
-      <div class="quick">
-        <el-button v-for="a in accounts" :key="a.student_id" size="small"
-                   plain @click="sid = a.student_id; doLogin()">
-          {{ a.label }}
-        </el-button>
-      </div>
+      <template v-if="mode === 'demo' && accounts.length">
+        <el-divider>体验账号（仍需口令）</el-divider>
+        <div class="quick">
+          <el-button v-for="a in accounts" :key="a.student_id" size="small"
+                     plain @click="pick(a.student_id)">
+            {{ a.label }}
+          </el-button>
+        </div>
+      </template>
 
       <p class="foot dim">
-        生产环境将接入 OAuth2.0/CAS 单点登录；<br />
+        正式上线后由微人大 OAuth2.0/CAS 单点登录接管，内测口令入口将一并移除；<br />
         身份信息由「数智人大」只读接口提供，平台不留存多余数据。
       </p>
     </el-card>
@@ -44,18 +63,37 @@ import { setAuth } from '../store'
 const router = useRouter()
 const route = useRoute()
 const sid = ref('')
+const password = ref('')
+const passwordInput = ref(null)
 const loading = ref(false)
 const accounts = ref([])
+const mode = ref('')
+const loginUrl = ref('')
 
 onMounted(async () => {
-  try { accounts.value = await api.get('/api/auth/demo-accounts', { silent: true }) } catch {}
+  const m = await api.get('/api/auth/sso-mode', { silent: true })
+  mode.value = m.mode
+  loginUrl.value = m.login_url
+  if (mode.value === 'demo') {
+    accounts.value = await api.get('/api/auth/demo-accounts', { silent: true })
+  }
 })
+
+function gotoSso() { location.href = loginUrl.value }
+
+function pick(studentId) {
+  sid.value = studentId
+  focusPassword()
+}
+function focusPassword() { passwordInput.value?.focus() }
 
 async function doLogin() {
   if (!sid.value.trim()) return ElMessage.warning('请输入学号/工号')
+  if (!password.value) return ElMessage.warning('请输入内测口令')
   loading.value = true
   try {
-    const d = await api.post('/api/auth/login', { student_id: sid.value.trim() })
+    const d = await api.post('/api/auth/demo-login',
+                             { student_id: sid.value.trim(), password: password.value })
     setAuth(d.token, d.user)
     ElMessage.success(`欢迎，${d.user.name}`)
     router.push(route.query.next || '/')

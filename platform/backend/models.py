@@ -11,10 +11,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Integer,
-                        String, Text)
+from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Index,
+                        Integer, String, Text, text)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from . import config
@@ -124,10 +124,12 @@ class User(Base):
 
 
 class Session(Base):
+    """登录会话。expires_at 到点即失效，由 deps.current_user 校验并清理。"""
     __tablename__ = "sessions"
     token: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
 # ======================= 活动与岗位树 =======================
@@ -208,10 +210,9 @@ class PositionGroup(Base):
     name: Mapped[str] = mapped_column(String(128))
     start_time: Mapped[datetime] = mapped_column(DateTime)
     end_time: Mapped[datetime] = mapped_column(DateTime)
-    capacity: Mapped[int] = mapped_column(Integer, default=0)      # 总人数上限
+    capacity: Mapped[int] = mapped_column(Integer)                 # 总人数上限，至少 1
     waitlist_quota: Mapped[int] = mapped_column(Integer, default=3)  # 候补队列上限
     mode: Mapped[str] = mapped_column(String(12), default="fine")  # single / assign / fine
-    need_assign: Mapped[bool] = mapped_column(Boolean, default=False)  # = (mode=='assign')，兼容保留
     note: Mapped[str] = mapped_column(String(512), default="")
     sort: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -235,18 +236,21 @@ class PositionGroup(Base):
     def mode_label(self) -> str:
         return self.MODE_LABELS.get(self.mode, self.mode)
 
+    def needs_assign(self) -> bool:
+        """二级待定：报名只锁时段，工位由调配期统一分配。"""
+        return self.mode == "assign"
+
 
 class Station(Base):
-    """二级工位：同一场次下的职责/地点划分。**不再有自己的时间**——
-    时间由一级岗位统一负责；同场次内工位之间默认互斥（一人只占一个）。"""
+    """二级工位：同一场次下的职责/地点划分。
+
+    工位没有自己的时间——时间统一由一级岗位负责，同场次内的工位互斥
+    （一人只占一个），因此把人分进工位不会产生新的时段冲突。"""
     __tablename__ = "stations"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     group_id: Mapped[str] = mapped_column(ForeignKey("position_groups.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
-    # 历史兼容列：二级工位不再设置时间，新代码不读写（时间看 group）
-    start_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     location: Mapped[str] = mapped_column(String(128), default="")
     quota: Mapped[int] = mapped_column(Integer, default=1)
     # 结构化必选条件 {标签: 值或值列表}，转成排班程序的条件树；空 = 不限
@@ -272,9 +276,22 @@ class Enrollment(Base):
       waitlisted       候补排队（按 joined_at 先后）
       pending_confirm  候补转正，等待用户在 confirm_deadline 前确认
       cancelled        已退选（cancel_type: normal 正常 / late 临近扣分 /
-                                     expired 放弃候补超时 / abandoned 主动放弃候补）
+                                     expired 放弃候补超时 / abandoned 主动放弃候补 /
+                                     group_deleted 场次被删除）
+
+    seat_held：临近退选（开始前 24 小时内）扣分且**名额不再释放**，
+    该记录虽已 cancelled 但仍占着一个名额，防止有人临期退了、别人补进来、
+    再退一次，把现场人数搅乱。
     """
     __tablename__ = "enrollments"
+    __table_args__ = (
+        # 一人在一个场次只能有一条有效记录（含占位不释放的临近退选记录）。
+        # 这是并发抢报的兜底：Redis 锁没拿住也插不进第二条。
+        Index("uq_enrollment_live", "group_id", "user_id", unique=True,
+              postgresql_where=text(
+                  "status IN ('confirmed', 'waitlisted', 'pending_confirm')"
+                  " OR seat_held")),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
@@ -283,6 +300,11 @@ class Enrollment(Base):
 
     status: Mapped[str] = mapped_column(String(24), default="confirmed", index=True)
     cancel_type: Mapped[str] = mapped_column(String(16), default="")
+    seat_held: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    # 志愿者报名时表态：是否接受管理者把自己调到别的工位。
+    # **只是参考**——管理者依然可以调，界面上会提示「本人不接受调剂」。
+    allow_reassign: Mapped[bool] = mapped_column(Boolean, default=True)
 
     station_id: Mapped[str | None] = mapped_column(
         ForeignKey("stations.id"), nullable=True)          # 二级工位（见类注释）

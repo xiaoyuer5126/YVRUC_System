@@ -14,6 +14,7 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session as OrmSession
 
+from .. import config
 from ..database import db_session
 from ..deps import current_user
 from ..integrations import checkin_gateway
@@ -24,7 +25,7 @@ from ..qrcodes import qr_svg
 router = APIRouter(prefix="/api/checkin", tags=["checkin"])
 
 # 场次结束后可自行签退的宽限时长
-CHECKOUT_GRACE = timedelta(hours=2)
+CHECKOUT_GRACE = timedelta(hours=config.CHECKOUT_GRACE_HOURS)
 
 
 def _load_task(db: OrmSession, token: str) -> tuple[CheckinTask, Activity, PositionGroup]:

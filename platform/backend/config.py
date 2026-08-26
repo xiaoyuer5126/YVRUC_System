@@ -1,12 +1,11 @@
 """平台全局配置。
 
-数据库默认用 Docker 容器里的 PostgreSQL（platform/docker-compose.yml，
-端口 5433，账号 rucva/rucva_dev）。可用环境变量 RUCVA_DATABASE_URL 覆盖；
-Postgres 不可达时自动降级 SQLite（data/rucva.db），保证演示不因环境中断。
+运行方式统一为 Docker Compose（platform/docker-compose.yml）：
+后端连容器内的 PostgreSQL 与 Redis，两者都是硬依赖，连不上直接启动失败——
+半可用的服务比起不来更难排查。
 
-所有与外部系统（数智人大 / 企业微信 / 签到系统 / SSO）的对接参数不写死在这里，
-存数据库 integration_configs 表，管理员可在「集成设置」页在线修改——
-换真实接口时不用改代码、不用重启。
+与外部系统（数智人大 / 企业微信 / 签到系统 / SSO）的对接参数不写死在这里，
+存数据库 integration_configs 表，管理员可在「集成设置」页在线修改。
 """
 from __future__ import annotations
 
@@ -17,17 +16,23 @@ PLATFORM_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = PLATFORM_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-PG_URL = "postgresql+psycopg://rucva:rucva_dev@127.0.0.1:5433/rucva"
-SQLITE_URL = f"sqlite:///{(DATA_DIR / 'rucva.db').as_posix()}"
-
-# 演示库：环境变量 > 容器 Postgres（database.py 里做可达性探测与降级）
-DATABASE_URL = os.environ.get("RUCVA_DATABASE_URL", PG_URL)
+# —— 基础设施 ——
+DATABASE_URL = os.environ["RUCVA_DATABASE_URL"]
+REDIS_URL = os.environ["RUCVA_REDIS_URL"]
 
 # schedule 排班程序所在目录（复用其求解器 core.solve）
 SCHEDULE_DIR = PLATFORM_DIR.parent / "schedule"
 
-# 会话令牌有效期（天）。演示够用；接 SSO 后由统一身份认证接管。
-SESSION_DAYS = 7
+# —— 会话 ——
+SESSION_HOURS = 24          # 令牌有效期；接 SSO 后由统一身份认证接管
+
+# —— 演示登录 ——
+# 仅在 SSO 未接通时开放，且必须配置共享口令；未配置则整个演示登录接口不存在。
+# 学校 SSO 接通后删除 routers/auth.py 里的 demo 分支与这一项。
+DEMO_LOGIN_PASSWORD = os.environ.get("RUCVA_DEMO_PASSWORD", "").strip()
+
+# 接口文档（/docs、/openapi.json）仅在显式打开时暴露
+EXPOSE_API_DOCS = os.environ.get("RUCVA_EXPOSE_DOCS", "").strip() == "1"
 
 # —— 业务规则常量（与《志愿者服务规范.docx》《设计方案》对齐） ——
 CREDIT_FULL = 100          # 信用分满分
@@ -38,6 +43,9 @@ LATE_CANCEL_HOURS = 24     # 「临近」阈值（小时）
 PROMOTE_CONFIRM_HOURS = 2  # 候补转正确认窗口（小时）
 MAX_ABANDON_TIMES = 3      # 连续放弃候补次数上限，超过暂停本学期候补资格
 ABANDON_BAN_DAYS = 120     # 「本学期」按 120 天近似
+
+# 签退宽限：场次结束后这么久内仍可自行签退，超时按场次结束时间兜底并标记待核
+CHECKOUT_GRACE_HOURS = 2
 
 # 活动类型（《志愿者服务规范》限制准入标准第一节）
 ACTIVITY_TYPES = {

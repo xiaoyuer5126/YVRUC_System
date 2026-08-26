@@ -19,8 +19,8 @@ from ..credit import apply_delta
 from ..database import db_session
 from ..deps import require_admin, require_manager, require_users_page
 from ..integrations import all_configs, save_config
-from ..models import (Activity, AuditLog, CheckinRecord, CreditLog,
-                      Enrollment, HoursRecord, User, iso, now)
+from ..models import (Activity, AuditLog, CheckinRecord, Enrollment,
+                      HoursRecord, User, iso, now)
 from ..perm import managed_activity_ids
 
 router = APIRouter(prefix="/api/staff", tags=["staff-admin"])

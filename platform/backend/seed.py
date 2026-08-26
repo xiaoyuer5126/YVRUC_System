@@ -37,6 +37,17 @@ NAMES = [
 GENDERS = ["女", "男"]
 
 
+ID_WEIGHTS = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
+ID_CHECK = "10X98765432"
+
+
+def fake_id_card(birth: str, seq: int) -> str:
+    """生成校验位正确的 18 位身份证号（routers/me.py 会校验末位）。"""
+    body = f"110101{birth}{seq % 1000:03d}"
+    total = sum(int(c) * w for c, w in zip(body, ID_WEIGHTS))
+    return body + ID_CHECK[total % 11]
+
+
 def dt(days=0, hours=0, minutes=0, base=None):
     """相对时间工具：支持小数小时（如 10.5 → 10:30）。"""
     b = base or datetime.now().replace(second=0, microsecond=0)
@@ -95,8 +106,9 @@ def main() -> None:
                      phone="138" + str(random.randint(10000000, 99999999)),
                      email=f"ruc{grade}_{i}@163.com",
                      wechat=f"wx{i}",
-                     id_card=f"110101{grade}{'05' if GENDERS[i % 2] == '女' else '11'}"
-                             f"{(i % 27) + 1:02d}{random.randint(1000, 9999)}X",
+                     id_card=fake_id_card(
+                         f"{grade}{'05' if GENDERS[i % 2] == '女' else '11'}"
+                         f"{(i % 27) + 1:02d}", i),
                      user_type="student", roles=["student"])
             db.add(u)
             students.append(u)
@@ -138,11 +150,15 @@ def main() -> None:
             return s
 
         def enr(user, act, group, days_ago, status="confirmed", station=None,
-                assigned=True):
+                assigned=True, allow_reassign=None):
             e = Enrollment(id=uid("enr"), activity_id=act.id,
                            group_id=group.id, user_id=user.id,
                            station_id=station.id if station else None,
                            status=status, source="self",
+                           # 约四分之一的人不接受调剂，分配面板上能看到提示
+                           allow_reassign=(random.random() > 0.25
+                                           if allow_reassign is None
+                                           else allow_reassign),
                            joined_at=dt(days=-days_ago,
                                         minutes=random.randint(-50, 50)))
             if status == "confirmed" and assigned and station:
@@ -167,12 +183,12 @@ def main() -> None:
         m1 = PositionGroup(id=uid("g"), activity_id=sport.id, name="上午场",
                            start_time=dt(days=3, base=t0.replace(hour=8)),
                            end_time=dt(days=3, base=t0.replace(hour=12)),
-                           capacity=26, mode="fine", need_assign=False,
+                           capacity=26, mode="fine",
                            waitlist_quota=3, sort=0)
         m2 = PositionGroup(id=uid("g"), activity_id=sport.id, name="下午场",
                            start_time=dt(days=3, base=t0.replace(hour=14)),
                            end_time=dt(days=3, base=t0.replace(hour=17, minute=30)),
-                           capacity=16, mode="fine", need_assign=False,
+                           capacity=16, mode="fine",
                            waitlist_quota=3, sort=1)
         db.add_all([m1, m2])
         db.flush()
@@ -223,6 +239,18 @@ def main() -> None:
         e_pc.promoted_at = dt(hours=-1)
         e_pc.confirm_deadline = dt(hours=1)   # 演示：还有1小时确认窗口
 
+        # 一名临近退选：扣分且名额被扣留不释放（roster 里显示为占位）
+        late_user = take()
+        late_enr = enr(late_user, sport, m1, 1, status="cancelled",
+                       station=s_check, assigned=False)
+        late_enr.cancel_type = "late"
+        late_enr.seat_held = True
+        late_user.credit_score = 95
+        db.add(CreditLog(id=uid("crd"), user_id=late_user.id, delta=-5,
+                         after_score=95,
+                         reason="临近退选：距「校运动会开幕式志愿服务·上午场」开始不足24小时",
+                         created_at=dt(hours=-5)))
+
         # 下午场 13人
         for _ in range(6):
             enr(take(), sport, m2, 2, station=o_order)
@@ -246,7 +274,7 @@ def main() -> None:
         b1 = PositionGroup(id=uid("g"), activity_id=book.id, name="周六全天场",
                            start_time=dt(days=5, base=t0.replace(hour=9)),
                            end_time=dt(days=5, base=t0.replace(hour=17)),
-                           capacity=20, mode="assign", need_assign=True,
+                           capacity=20, mode="assign",
                            waitlist_quota=3,
                            note="具体工位（分拣/搬运/上架）报名截止后由排班程序统一分配",
                            sort=0)
@@ -260,6 +288,7 @@ def main() -> None:
             db.add(Enrollment(id=uid("enr"), activity_id=book.id,
                               group_id=b1.id, user_id=u.id, status="confirmed",
                               source="self",
+                              allow_reassign=random.random() > 0.25,
                               joined_at=dt(days=-2, minutes=cnt * 7)))
             cnt += 1
 
@@ -277,7 +306,7 @@ def main() -> None:
         f1 = PositionGroup(id=uid("g"), activity_id=fair.id, name="下午讲解场",
                            start_time=dt(days=5, base=t0.replace(hour=13)),
                            end_time=dt(days=5, base=t0.replace(hour=17)),
-                           capacity=10, mode="single", need_assign=False,
+                           capacity=10, mode="single",
                            waitlist_quota=3, sort=0)
         db.add(f1)
         db.flush()
@@ -313,7 +342,7 @@ def main() -> None:
         c1 = PositionGroup(id=uid("g"), activity_id=gala.id, name="晚会当日班",
                            start_time=dt(base=t0.replace(hour=8, minute=0)),
                            end_time=dt(base=t0.replace(hour=23, minute=30)),
-                           capacity=12, mode="fine", need_assign=False,
+                           capacity=12, mode="fine",
                            waitlist_quota=3, sort=0)
         db.add(c1)
         db.flush()
@@ -364,7 +393,7 @@ def main() -> None:
         e1 = PositionGroup(id=uid("g"), activity_id=elder.id, name="上周六场",
                            start_time=dt(days=-7, base=t0.replace(hour=9)),
                            end_time=dt(days=-7, base=t0.replace(hour=12)),
-                           capacity=10, mode="single", need_assign=False,
+                           capacity=10, mode="single",
                            waitlist_quota=3, sort=0)
         db.add(e1)
         db.flush()

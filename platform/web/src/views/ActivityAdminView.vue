@@ -61,6 +61,12 @@
             <span class="dim">{{ g.start_time.slice(5,16).replace('T',' ') }}
               ~ {{ g.end_time.slice(5,16).replace('T',' ') }}</span>
             <span>上限 {{ g.capacity }} · 工位合计 {{ sumQuota(g) }}</span>
+            <el-tooltip v-if="g.held_seats" placement="top"
+                        content="临近退选（开始前24小时内）扣留的名额，按规则不再释放给任何人">
+              <el-tag size="small" type="warning" effect="plain">
+                扣留 {{ g.held_seats }}
+              </el-tag>
+            </el-tooltip>
             <span style="margin-left:auto">
               <el-button size="small" @click="openGroup(g)">编辑</el-button>
               <el-button v-if="g.mode !== 'single'" size="small" type="primary" plain
@@ -79,7 +85,7 @@
               </template>
             </el-table-column>
             <el-table-column prop="location" label="服务地点" min-width="120" />
-            <el-table-column label="名额/已确认" width="110">
+            <el-table-column label="名额/已确认" width="130">
               <template #default="{row}">{{ row.quota }} / {{ row.confirmed }}</template>
             </el-table-column>
             <el-table-column prop="requirement_desc" label="要求" min-width="140" />
@@ -156,6 +162,14 @@
                 <el-table-column prop="user.student_id" label="学号" width="110" />
                 <el-table-column prop="user.college" label="学院" width="130" />
                 <el-table-column prop="user.phone" label="手机号" width="120" />
+                <el-table-column label="调剂意愿" width="100">
+                  <template #default="{row}">
+                    <el-tag size="small" effect="plain"
+                            :type="row.allow_reassign ? 'success' : 'info'">
+                      {{ row.allow_reassign ? '接受' : '不接受' }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
                 <el-table-column label="工位" min-width="130">
                   <template #default="{row}">
                     {{ row.station_name || '待分配' }}
@@ -209,7 +223,11 @@
           <el-button type="primary" plain :disabled="!hoursSel.length" @click="confirmSelectedHours">
             {{ hoursSel.length ? `确认选中时长（${hoursSel.length} 人）` : '确认选中时长' }}
           </el-button>
-          <el-button type="primary" :disabled="!hours.length" @click="confirmAllHours">确认全部</el-button>
+          <el-tooltip content="只确认正常签退的记录；未签退/自动兜底的需逐条核对后确认" placement="top">
+            <el-button type="primary" :disabled="!hours.length" @click="confirmAllHours">
+              确认正常签退的
+            </el-button>
+          </el-tooltip>
           <el-button type="success" @click="uploadHours" :disabled="!confirmedCount">回传数智人大</el-button>
           <el-tag size="small" effect="plain">对接状态见「集成设置」（当前为演示回执）</el-tag>
         </div>
@@ -230,8 +248,9 @@
               <el-tooltip v-if="row.pending" content="未签退，暂按当前时间估算；场次结束2小时后自动按场次结束时间计">
                 <el-tag size="small" type="warning" effect="plain">待签退</el-tag>
               </el-tooltip>
-              <el-tooltip v-else-if="row.auto_checkout" content="超时未签退，已按场次结束时间兜底">
-                <el-tag size="small" type="info" effect="plain">自动兜底</el-tag>
+              <el-tooltip v-else-if="row.auto_checkout"
+                          content="超时未签退，已按场次结束时间兜底——到场扫码即走的人也会算满时长，需人工核对">
+                <el-tag size="small" type="danger" effect="plain">待核·自动兜底</el-tag>
               </el-tooltip>
               <span v-else class="dim">正常签退</span>
             </template>
@@ -247,7 +266,8 @@
           </el-table-column>
         </el-table>
         <p class="dim" style="margin-top:8px">
-          时长 = 签退 − 签到，向上取整至 0.5 小时；可勾选后修改数值单独确认，或直接确认全部。
+          时长 = 签退 − 签到，向上取整至 0.5 小时。<b>未签退与自动兜底的记录标为「待核」</b>，
+          一键确认会跳过它们——请核对实际服务情况后，勾选并修改数值再单独确认。
         </p>
 
         <!-- 手动添加时长 -->
@@ -350,7 +370,7 @@
           <el-date-picker v-model="groupForm.end_time" type="datetime" style="width:100%" />
         </el-form-item>
         <el-form-item label="人数上限" required>
-          <el-input-number v-model="groupForm.capacity" :min="0" />
+          <el-input-number v-model="groupForm.capacity" :min="1" />
         </el-form-item>
         <el-form-item label="候补名额">
           <el-input-number v-model="groupForm.waitlist_quota" :min="0" />
@@ -409,6 +429,8 @@
         <el-descriptions-item label="岗位模式">{{ gdData.mode_label }}</el-descriptions-item>
         <el-descriptions-item label="时间">{{ gdData.time_text }}</el-descriptions-item>
         <el-descriptions-item label="人数">已确认 {{ gdData.confirmed }} / {{ gdData.capacity }}
+          <span v-if="gdData.held_seats" style="color:#e6a23c">
+            · {{ gdData.held_seats }} 个名额因临近退选被扣留（不再释放）</span>
           <span class="dim">（候补 {{ gdData.waitlist_count }} 人）</span></el-descriptions-item>
         <el-descriptions-item label="说明">{{ gdData.note || '—' }}</el-descriptions-item>
       </el-descriptions>
@@ -857,7 +879,7 @@ async function confirmSelectedHours() {
 async function confirmAllHours() {
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/hours/confirm`, {})
-    ElMessage.success(`已确认全部 ${d.count} 名志愿者的时长`)
+    ElMessage.success(d.message || `已确认 ${d.count} 名志愿者的时长`)
     hoursPreview(true)
   } catch { /* toast by api */ }
 }

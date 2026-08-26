@@ -109,6 +109,18 @@
         <el-table-column label="原工位" width="100">
           <template #default="{row}">{{ stationName(row.current_station_id) || '未分配' }}</template>
         </el-table-column>
+        <el-table-column label="本人意愿" width="100">
+          <template #default="{row}">
+            <el-tooltip placement="top"
+                        :content="row.allow_reassign ? '本人报名时表示接受岗位调剂'
+                                                     : '本人报名时表示不接受调剂；仍可调整，会计入留痕'">
+              <el-tag size="small" effect="plain"
+                      :type="row.allow_reassign ? 'success' : 'info'">
+                {{ row.allow_reassign ? '接受调剂' : '不接受' }}
+              </el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column label="建议工位" min-width="200">
           <template #default="{row}">
             <el-select v-model="row.target" size="small" clearable placeholder="未分配">
@@ -122,7 +134,10 @@
             <el-tag v-if="!row.target" size="small" type="danger" effect="plain">不排</el-tag>
             <el-tag v-else-if="row.target === row.current_station_id" size="small" type="success" effect="plain">保持</el-tag>
             <el-tag v-else-if="!row.current_station_id" size="small" type="primary" effect="plain">新排入</el-tag>
-            <el-tag v-else size="small" type="warning" effect="plain">调整</el-tag>
+            <el-tag v-else size="small" :type="row.allow_reassign ? 'warning' : 'danger'"
+                    effect="plain">
+              {{ row.allow_reassign ? '调整' : '调整(违意愿)' }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="超额强制" width="90">
@@ -141,6 +156,11 @@
               style="margin-right:8px;margin-bottom:4px">
         {{ u.user.name }}（{{ u.user.student_id }}）· {{ u.reason }}
       </el-tag>
+
+      <el-alert v-if="unwillingMoved" type="warning" :closable="false"
+                style="margin-top:12px"
+                :title="`有 ${unwillingMoved} 人报名时选择了不接受调剂，本方案仍会调换其工位`"
+                description="可以继续发布——这只是提醒，操作会连同姓名一起记入留痕日志。" />
 
       <div style="margin-top:14px;text-align:right">
         <el-button @click="resetEdit">还原为系统建议</el-button>
@@ -163,8 +183,13 @@
             <el-option v-for="s in stationOpts" :key="s.value" :value="s.value" :label="s.label" />
           </el-select>
         </el-form-item>
+        <el-form-item label="调剂意愿">
+          <el-checkbox v-model="walkin.allowReassign">本人接受岗位调剂</el-checkbox>
+        </el-form-item>
         <el-form-item label="">
-          <el-checkbox v-model="walkin.force">时间冲突时强制加入（计入留痕）</el-checkbox>
+          <el-checkbox v-model="walkin.force">
+            时段冲突或名额已满时强制加入（计入留痕）
+          </el-checkbox>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -195,7 +220,7 @@ const advOpen = ref([])
 const preview = ref(null)
 const rows = ref([])
 const walkinVisible = ref(false)
-const walkin = ref({ sid: '', station: '', force: false })
+const walkin = ref({ sid: '', station: '', force: false, allowReassign: true })
 
 const presets = [
   { key: 'balanced', label: '均衡（推荐）', hint: '所有人拿到第1个岗位之前，没人拿第2个；适合大多数活动' },
@@ -228,7 +253,7 @@ const addCandidate = ref('')
 
 // 精细化模式且人人有岗 → 提示即可，不禁止试算
 const fineModeAllAssigned = computed(() =>
-  !props.group.need_assign && props.unassignedCount === 0)
+  !props.group.needs_assign && props.unassignedCount === 0)
 
 const stationOpts = computed(() =>
   props.group.stations.map(s => ({
@@ -240,6 +265,11 @@ function stationName(sid) {
   const s = props.group.stations.find(x => x.id === sid)
   return s ? s.name : ''
 }
+
+// 本人不接受调剂、方案又把他挪出原工位的人数（只提示，不拦）
+const unwillingMoved = computed(() => rows.value.filter(
+  r => !r.allow_reassign && r.current_station_id && r.target
+       && r.target !== r.current_station_id).length)
 
 function onPresetChange() {
   if (preset.value !== 'custom') {
@@ -351,15 +381,16 @@ async function addWalkin() {
   try {
     await api.post(`/api/staff/groups/${props.group.id}/add-walkin`, {
       student_id: walkin.value.sid, station_id: walkin.value.station || '',
+      allow_reassign: walkin.value.allowReassign,
       force: walkin.value.force })
     ElMessage.success('补录成功')
     walkinVisible.value = false
-    walkin.value = { sid: '', station: '', force: false }
+    walkin.value = { sid: '', station: '', force: false, allowReassign: true }
     emit('reload')
   } catch (e) {
-    if ((e.message || '').includes('时间冲突')) {
+    // 冲突/超额都需要显式勾选强制，替用户把勾打上并提示重试
+    if ((e.message || '').includes('强制')) {
       walkin.value.force = true
-      ElMessage.warning(e.message + '（可勾选强制后重试）')
     }
   }
 }

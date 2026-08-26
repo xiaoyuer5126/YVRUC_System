@@ -18,6 +18,19 @@
           <div v-else-if="row.status === 'confirmed'" class="dim">工位待分配</div>
         </template>
       </el-table-column>
+      <el-table-column label="岗位调剂" width="120">
+        <template #default="{ row }">
+          <el-tooltip v-if="isActive(row)" placement="top"
+                      content="点击切换。仅供负责老师排班时参考，不代表岗位不会被调整">
+            <el-tag size="small" effect="plain" style="cursor:pointer"
+                    :type="row.allow_reassign ? 'success' : 'info'"
+                    @click="toggleReassign(row)">
+              {{ row.allow_reassign ? '接受' : '不接受' }}
+            </el-tag>
+          </el-tooltip>
+          <span v-else class="dim">—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="190">
         <template #default="{ row }">
           <el-tag v-if="row.status === 'confirmed'" type="success">已报名</el-tag>
@@ -29,7 +42,10 @@
               <template #prefix><el-tag type="danger">转正确认剩</el-tag>&nbsp;</template>
             </el-countdown>
           </template>
-          <el-tag v-else-if="row.cancel_type === 'late'" type="danger">临近退选(扣分)</el-tag>
+          <template v-else-if="row.cancel_type === 'late'">
+            <el-tag type="danger">临近退选(扣分)</el-tag>
+            <div v-if="row.seat_held" class="dim checkout-time">名额已扣留，不可再报</div>
+          </template>
           <el-tag v-else type="info">{{ cancelLabel(row) }}</el-tag>
         </template>
       </el-table-column>
@@ -59,7 +75,7 @@
     <el-alert type="info" :closable="false" style="margin-top:16px">
       <p style="margin:0;font-size:12.5px;line-height:1.9">
         信用规则：开始前 <b>24 小时以上</b>退选无惩罚，名额自动递补给候补；
-        <b>24 小时内</b>退选扣除信用分 5 分且名额不释放；放弃候补连续 3 次暂停本学期候补资格；
+        <b>24 小时内</b>退选扣除信用分 5 分，该名额被扣留、不再释放（本人也无法再报该场次）；放弃候补连续 3 次暂停本学期候补资格；
         信用分低于 60 分冻结报名 30 天。
       </p>
     </el-alert>
@@ -97,12 +113,20 @@ async function confirm(row) {
   load()
 }
 
+async function toggleReassign(row) {
+  const d = await api.patch(`/api/activities/enrollments/${row.id}/reassign-pref`,
+                            { allow_reassign: !row.allow_reassign })
+  row.allow_reassign = d.allow_reassign
+  ElMessage.success(d.allow_reassign ? '已设为接受岗位调剂' : '已设为不接受岗位调剂')
+}
+
 async function cancel(row) {
   const g = row.group
   const start = new Date(g.start_time.replace(' ', 'T'))
   const late = Date.now() > start.getTime() - 24 * 3600e3
   await ElMessageBox.confirm(
-    late ? '距开始不足24小时：退选将扣信用分5分，名额不释放给候补。确定吗？'
+    late ? '距开始不足24小时：退选将扣信用分5分，该名额会被扣留、不再释放给任何人，'
+           + '你本人之后也无法再报名这个场次。确定吗？'
          : '正常退选不扣分，名额将自动递补候补队列。确定退选吗？',
     '退选确认', { type: 'warning' })
   const d = await api.del(`/api/activities/enrollments/${row.id}`)

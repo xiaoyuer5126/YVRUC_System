@@ -1,45 +1,43 @@
 # 人大校青协志愿服务管理平台
 
-FastAPI + SQLAlchemy（PostgreSQL/SQLite）+ Vue3 / Element Plus / ECharts（Vite 构建）。
+FastAPI + SQLAlchemy（PostgreSQL）+ Redis + Vue3 / Element Plus / ECharts（Vite 构建）。
 覆盖「活动发布 → 选课式报名 → 候补流转 → 智能调配 → 扫码签到签退 → 时长回传」全链路；
 排班引擎复用 `../schedule` 求解器（深度2主段超时自动降级深度1）。
 
 ## 一、快速启动
 
-### 方式 A · Docker 全栈（推荐）
-
-```powershell
-cd platform
-docker compose up -d                          # web(nginx):8080 + backend:8000 + db:5433 + cloudflared
-docker compose --profile seed run --rm seed   # 可选：重置演示数据
-docker logs rucva-cloudflared 2>&1 | Select-String trycloudflare   # 取公网演示地址
-```
-
-- 入口 **http://127.0.0.1:8080**（nginx 托管前端并同源反代 `/api`，无跨域）；
-  API 也可直连 http://127.0.0.1:8000（scripts/ 下测试脚本无需改动）。
-- cloudflared 已配置**固定域名隧道**：token 存于 `platform/.env` 的 `CLOUDFLARE_TOKEN`（该文件勿提交/外传）；
-  公网域名在 Cloudflare Zero Trust 控制台该隧道的 Public Hostname 中绑定，`docker logs rucva-cloudflared` 可看连接状态。
-- 镜像：`platform/docker/backend.Dockerfile`（Python3.12 + 内置 `../schedule` 求解器）、
-  `platform/docker/web.Dockerfile`（Node 构建 → nginx）。上传的活动二维码存命名卷 `rucva_uploads`。
-
-### 方式 B · 本机直跑
-
-```powershell
-.\start.bat            # 等价 start.ps1；参数 -RebuildDB 重置演示数据、-BuildWeb 强制重建前端
-```
-
-或手动（Docker 只起数据库）：
+统一用 Docker 跑（后端依赖 PostgreSQL 与 Redis 两个服务，不再支持本机直跑）。
 
 ```bash
-docker compose up -d postgres   # PostgreSQL 16 @127.0.0.1:5433（rucva/rucva_dev，卷持久化）
-cd web && npm install && npm run build   # 产物输出 web/dist，由 FastAPI 托管
-python -m backend.seed # 清库重建演示数据（日期相对当天生成，任何一天跑都是"活的"）
-python -m uvicorn backend.main:app --port 8000
+cd platform
+cp .env.example .env          # 填 POSTGRES_PASSWORD、RUCVA_DEMO_PASSWORD
+docker compose up -d --build                    # postgres + redis + backend + web + cloudflared
+docker compose --profile seed run --rm seed     # 重置演示数据
+docker compose --profile test run --rm tests    # 跑回归测试（独立的 rucva_test 库）
 ```
 
-- 引擎创建时探测 Postgres 不可达 → 自动降级 SQLite（`data/rucva.db`）；`RUCVA_DATABASE_URL` 可覆盖。
-- 访问 http://127.0.0.1:8000 ；登录页可一键选择演示账号；`web/public/debug-login.html?sid=学号&next=路径`
-  免交互自动登录（无头浏览器验证用）。进程内带候补转正清扫协程（60s/轮）。
+- 入口 **http://127.0.0.1:8080**（nginx 托管前端并同源反代 `/api`，无跨域）。
+- 数据库 5433 / Redis 6380 / 后端 8000 都只绑 `127.0.0.1`，调试用得上、公网碰不到；
+  对外只有 web 的 8080 与 cloudflared 隧道。
+- cloudflared 固定域名隧道：token 存 `.env` 的 `CLOUDFLARE_TOKEN`，公网域名在
+  Cloudflare Zero Trust 控制台绑定，`docker logs rucva-cloudflared` 看连接状态。
+- 上传的活动二维码存命名卷 `rucva_uploads`，数据库存 `rucva_pgdata`。
+
+### 环境变量（platform/.env）
+
+| 变量 | 说明 |
+|---|---|
+| `POSTGRES_PASSWORD` | 数据库口令，必填；公网部署务必改掉示例值 |
+| `RUCVA_DEMO_PASSWORD` | 内测登录共享口令。**留空则整个演示登录接口不存在**；SSO 接通后必须留空 |
+| `RUCVA_EXPOSE_DOCS` | 设为 `1` 才暴露 `/docs` 与 `/openapi.json`，默认关闭 |
+| `CLOUDFLARE_TOKEN` | 隧道令牌，勿提交/外传 |
+
+### 登录方式
+
+学校统一身份认证（微人大 OAuth2/CAS）是唯一正式入口，参数在「集成设置」页配置。
+接通之前，开发小组用 `POST /api/auth/demo-login`（学号 + `RUCVA_DEMO_PASSWORD` 共享口令）
+登录；口令连错 10 次锁该来源 IP 5 分钟。会话 24 小时过期，令牌只认 `Authorization` 头，
+唯一的例外是 Excel 导出这一个直链下载路由。
 
 ## 二、权限体系
 
@@ -72,11 +70,18 @@ python -m uvicorn backend.main:app --port 8000
 ## 四、报名 / 候补 / 信用
 
 - 报名粗粒度冲突拦截：与本人在所有活动的有效报名区间重叠即拒绝（409 附冲突明细）。
+  **候补中的场次同样算已占用时段**——排了队就等于预留了这段时间。
 - 名额判断含两层：场次总容量 +（fine 模式）所选工位名额；满员进候补队列（按报名时间排序）。
+  容量判断与落库整段持 Redis 场次锁串行化，配合 `enrollments` 的部分唯一索引，
+  杜绝抢报瞬间的超卖与重复报名（见 `backend/locks.py`）。
+- 报名时可勾选**是否接受岗位调剂**（`allow_reassign`），随时可改。这只是给管理者的参考：
+  名单、分配面板与导出表都会显示，管理者仍可调换工位，但违背本人意愿的调换会连同姓名写进留痕。
 - 正常退选释放名额 → 队首转正 pending_confirm，开 **2 小时确认窗口**（清扫协程+惰性判定双保险），
   超时记一次"放弃"并顺延下一位；主动放弃同理。**连续 3 次放弃暂停候补资格**（约一学期），
   转正确认成功即清零计数。
-- 开始前 **24h 内退选扣信用分 5 分**且名额不释放给候补；分数 **<60 自动冻结报名 30 天**。
+- 开始前 **24h 内退选扣信用分 5 分**，且该名额被**扣留**（`seat_held`）：不释放给候补、
+  不回到公共名额池，本人也无法再报同一场次。分数 **<60 自动冻结报名 30 天**。
+- 「连续 3 次放弃候补」惩罚的只是排队资格：有空位时照常可以正常报名，只有满员需要排队时才拦。
 - 限制准入（《志愿者服务规范》）：不得参与 A/B/C/D 中若干类活动 + 截止日；
   「招募在限内、活动已出限」的允许报名。
 
@@ -87,6 +92,8 @@ python -m uvicorn backend.main:app --port 8000
   `/#/checkin/{token}`；管理端实时大屏（前端 5s 轮询）显示到岗/离岗率。
 - 签退宽限：场次结束 **+2 小时**内可自行扫码签退；超时未签退由系统**按场次结束时间兜底**（auto 标记）。
 - 时长 = 签退 − 签到，**向上取整至 0.5 小时**；宽限期内未签退标 pending（暂按估算展示）。
+- 未签退（pending）与超时兜底（auto）的记录标为**待核**：到场扫个码就走的人会和全程服务的人
+  算出一样的时长，所以「确认正常签退的」会跳过它们，需管理者逐条核对数值后单独确认。
 - 管理端批量签到/签退/取消签到/取消签退（manual 操作全留痕）；支持手动添加时长，
   与签到统计的一键确认时长一并**回传数智人大**（保存回执号，已回传记录不可删除）。
 
@@ -111,23 +118,21 @@ python -m uvicorn backend.main:app --port 8000
 
 ```
 platform/
-├── start.bat / start.ps1       一键启动（-RebuildDB / -BuildWeb）
-├── docker-compose.yml          全栈编排：postgres + backend + web + cloudflared（+seed 任务）
-├── docker/                     容器化：backend.Dockerfile / web.Dockerfile / nginx.conf
-├── scripts/
-│   ├── e2e_test.py             后端端到端自测（TestClient，不启服务）
-│   ├── perm_test.py            权限矩阵/共管边界断言
-│   ├── checkout_test.py        签退/时长闭环断言
-│   ├── self_removal_test.py    自移/移除创建者拦截断言
-│   ├── patch_guards.py / patch_seed.py   历史补丁脚本
-│   └── shot.mjs                CDP 直连 Edge 的截图/点击工具（Node≥22，无第三方依赖）
+├── docker-compose.yml          全栈编排：postgres + redis + backend + web + cloudflared
+│                               （+ seed / tests 两个一次性任务 profile）
+├── .env.example                环境变量模板（口令、演示登录、隧道令牌）
+├── pytest.ini / requirements-dev.txt
+├── tests/                      回归测试：登录会话、报名闸门与并发、管理端权限与留痕、签到闭环
+├── scripts/shot.mjs            CDP 直连 Edge 的截图/点击工具（Node≥22，无第三方依赖）
 ├── backend/
+│   ├── Dockerfile              base → test（跑 pytest）/ runtime（跑 uvicorn）两个 target
 │   ├── main.py                 FastAPI 入口：API + SPA 托管 + 候补清扫协程
-│   ├── config.py / database.py 业务常量；PG 探测失败降级 SQLite
+│   ├── config.py / database.py 业务常量与环境变量；PostgreSQL 连接
+│   ├── locks.py                ★ Redis 场次锁与登录失败计数
 │   ├── models.py / serializers.py   全部表结构与出参组装
 │   ├── deps.py                 会话鉴权（require_admin / require_users_page …）
 │   ├── perm.py                 activity_managers 多人共管规则
-│   ├── enroll_logic.py / credit.py  冲突检测、候补流转、信用规则
+│   ├── enroll_logic.py / credit.py  冲突检测、名额账本、候补流转、信用规则
 │   ├── scheduler_adapter.py    ★ 平台数据 ⇄ schedule 求解器适配（预览/应用/强排）
 │   ├── exporter.py / qrcodes.py / audit.py
 │   ├── seed.py                 演示数据种子（python -m backend.seed）
@@ -135,38 +140,8 @@ platform/
 │   │                           staff_activities / staff_ops / staff_admin
 │   └── integrations/           shuzhi / wecom / checkin_gateway / sso
 └── web/                        Vue3 + Element Plus + ECharts（Vite）
-    ├── public/debug-login.html 免交互自动登录调试页
+    ├── Dockerfile / nginx.conf Node 构建 → nginx 托管并反代 /api
     └── src/views/              学生端6页 + 工作台6页 + 登录/扫码落地页
-        src/components/         AssignPanel（智能排班）/ CheckinPanel（签到大屏）
+        src/components/         AssignPanel（智能排班）/ CheckinPanel（签到大屏）/
+                                ProfileDialog（完善个人信息）
 ```
-
-## 九、演示账号矩阵
-
-| 学号 | 姓名 | 类型 · 身份 | 演示点 |
-|---|---|---|---|
-| 2025001 | 王砚秋 | 老师 · 管理员+老师 | 后台全功能，可见全部活动 |
-| 2025002 | 李慕清 | 老师 · 老师 | 仅见自己管理的运动会/敬老院 |
-| 2025003 | 张远航 | 学生 · 青协+学生 | 切换工作台/个人双视角；共管3个活动+用户与信用 |
-| 202302126 | 严望舒 | 学生 · 学生 | 登录即有**候补转正确认倒计时**待处理 |
-| 202401111 | 褚天翼 | 学生 · 学生 | 信用 55 分冻结中，报名被拦截 |
-
-另有 49 名覆盖各学院的学生：张启铭（限制准入 C/D）、喻言（已连续弃候补 2 次）等为规则触发素材。
-
-## 十、演示动线（15 分钟讲完五阶段）
-
-| 阶段 | 页面 | 讲什么 |
-|---|---|---|
-| ①筹备期 | 活动管理→运动会→岗位树 | 场次三模式建组；工位无独立时间；Σ名额≤容量校验；操作全留痕 |
-| ②报名期 | 活动广场→运动会详情 | **选课式表格**：展开场次选工位（互斥置灰）、满员一键候补、跨活动时间冲突拦截；用严望舒确认转正倒计时；用褚天翼看冻结拦截 |
-| ③调配期 | 图书整理周→报名与调配 | assign 模式：现场建工位→选规则预设→**智能排班试算**→冲突红色高亮→强制分配留痕→发布专属通知 |
-| ④执行期 | 校庆晚会→签到管理 | 统一码 GALA01 / 分工位码 BACK02、二维码大屏实时到岗率；手机扫码体验：第一次扫=签到、第二次扫=签退 |
-| ⑤收尾期 | 敬老院→导出与时长 | 按一级岗位分 Sheet 的 Excel（可直接点名）；基于签到一键确认时长（0.5h 取整）→回传数智人大拿回执号 |
-
-配套亮点页：审计日志中心（谁动了我的岗位）、用户与信用（限制准入 A/B/C/D）、集成设置（四系统在线切换）。
-
-## 十一、已知边界（演示版）
-
-- 高并发抢报为事务级乐观控制，未引入 Redis 分布式锁；正式上线前补充。
-- Excel 加密导出依赖企业微信通道，当前明文下载 + 审计留痕（代码注释已预留说明）。
-- 封面使用色相渐变色卡而非图片上传；答疑群二维码仅作图片链接展示容器。
-- 签到系统真实对接的 create_task/verify_scan 为 NotImplementedError 占位，等待学校接口文档。

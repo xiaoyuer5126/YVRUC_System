@@ -5,9 +5,9 @@
   · 该组已确认报名的学生映射为 Volunteer（标签：性别/学院/年级）；
   · 学生 × 全部工位生成 SignupItem——模式B报名时未选工位，视为"任何工位均可"，
     由求解器按规则配置（先到先得/摊平/保底等）统一分配；
-  · 工位间时间重叠 → 写入冲突图，保证同一人不会被分进两个重叠工位；
-  · 求解结果回填 Enrollment.station_id；与该生**其他活动**时段冲突的行
-    红色高亮警告，允许管理员强制分配（留痕）。
+  · 同场次的工位两两互斥 → 写入冲突图，保证一人只占一个工位；
+  · 求解结果回填 Enrollment.station_id；本人勾了「不接受调剂」却被方案挪了位的行
+    高亮提示，管理者仍可执行（留痕）。
 
 求解器本体零依赖（schedule/app/core.py），直接以原算法复用：
 深度2主段超时自动降级深度1——与原工具行为一致。
@@ -18,7 +18,7 @@ import sys
 
 from sqlalchemy.orm import Session as OrmSession
 
-from . import config, enroll_logic
+from . import config
 from .models import Activity, Enrollment, PositionGroup, Station, User, iso, now
 
 # —— 挂载 schedule 排班程序 ——
@@ -132,15 +132,11 @@ def preview(db: OrmSession, group: PositionGroup,
     for a in assignments:
         suggest.setdefault(a.vol_key, a.pid)
 
-    # 细粒度冲突高亮：建议工位的时间 与 该生其他活动安排 重叠？
     rows = []
     for key, u in users.items():
         enr = enr_of_key[key]
         target = suggest.get(key)
-        warning = ""
-        if target:
-            st = db.get(Station, target)
-            warning = enroll_logic.station_conflict_warning(db, u, group, st)
+        moved = bool(target and enr.station_id and target != enr.station_id)
         rows.append({
             "enrollment_id": enr.id,
             "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
@@ -149,7 +145,10 @@ def preview(db: OrmSession, group: PositionGroup,
             "current_station_id": enr.station_id,
             "suggested_station_id": target,
             "keep_current": bool(target and target == enr.station_id),
-            "warning": warning,
+            "allow_reassign": enr.allow_reassign,
+            # 本人报名时勾了「不接受调剂」，方案又把他挪了位——只提示，不拦
+            "warning": ("本人报名时选择不接受调剂，此方案将其调换工位"
+                        if moved and not enr.allow_reassign else ""),
         })
 
     # 未分配名单 + 原因（复用求解器自己的判据）
@@ -239,7 +238,8 @@ def apply_plan(db: OrmSession, group: PositionGroup, actor: User,
                 f"工位「{stations[sid].name}」超出名额（{cnt}>{stations[sid].quota}），"
                 f"如确需超额请对相应人员使用强制分配")
 
-    # 第二遍落库
+    # 第二遍落库。旧工位必须在改写之前取出来，否则留痕里的「旧值」会等于新值——
+    # 「谁动了我的岗位」这条记录就白记了。
     forced_rows = []
     for row in plan:
         enr = db.get(Enrollment, row["enrollment_id"])
@@ -255,39 +255,42 @@ def apply_plan(db: OrmSession, group: PositionGroup, actor: User,
         enr.assigned_by = actor.id
         if force:
             forced_rows.append(enr)
-        changed.append((enr, new_station, force))
+        changed.append((enr, old_station, new_station, force))
 
-    for enr, st, force in changed:
+    for enr, _old, st, force in changed:
         if st is None:
             continue
         if notify_out is not None:
             notify_out.append({"user_id": enr.user_id, "station_id": st.id,
                                "group_id": group.id})
             continue
-        try:
-            from .integrations import wecom
-            wecom.send_user(db.get(User, enr.user_id), "assignment",
-                            activity=db.get(Activity, group.activity_id).title,
-                            group=group.name, station=st.name,
-                            station_time=st.time_text(),
-                            station_loc=st.location or "待定")
-        except Exception:
-            pass
+        from .integrations import wecom
+        wecom.send_user(db, db.get(User, enr.user_id), "assignment",
+                        activity=db.get(Activity, group.activity_id).title,
+                        group=group.name, station=st.name,
+                        station_time=st.time_text(),
+                        station_loc=st.location or "待定")
 
+    # 被挪出原工位、但本人报名时勾了「不接受调剂」的人：允许调，但要写进留痕，
+    # 事后有人来问「凭什么把我换了」时查得到
+    unwilling = [e for e, old, st, _f in changed
+                 if old is not None and st is not None and old.id != st.id
+                 and not e.allow_reassign]
     if not changed:
         summary = "所有人员岗位未发生变化（方案与现状一致）"
     else:
         summary = (f"{len(changed)} 人完成岗位分配"
                    f"（其中强制分配 {len(forced_rows)} 人）")
-    changes = [{"field": "enrollment", "label": "报名记录",
-                "old": f"{db.get(User, e.user_id).name}→{db.get(Station, e.station_id).name if e.station_id else '未分配'}",
-                "new": f"{db.get(User, e.user_id).name}→{st.name if st else '未分配'}"
-                       + ("（强制）" if f_ else "")}
-               for e, st, f_ in changed]
+        if unwilling:
+            names = "、".join(db.get(User, e.user_id).name for e in unwilling[:8])
+            summary += f"；{len(unwilling)} 人本人未接受调剂仍被调换工位：{names}"
+    changes = [{"field": "enrollment",
+                "label": db.get(User, e.user_id).name,
+                "old": old.name if old else "未分配",
+                "new": (st.name if st else "未分配") + ("（强制）" if f_ else "")}
+               for e, old, st, f_ in changed]
     if source == "manual":
-        action, label = "assign_manual", "手动调岗"
-        if forced_rows:
-            action, label = "force_assign", "强制分配"
+        action = "force_assign" if forced_rows else "assign_manual"
         audit_log(db, actor=actor, action=action, target_type="assignment",
                   target_id=group.id, target_label=f"{group.name}",
                   activity_id=group.activity_id, summary=summary, changes=changes)
@@ -299,9 +302,12 @@ def apply_plan(db: OrmSession, group: PositionGroup, actor: User,
 
     return {
         "applied": len(changed), "forced": len(forced_rows),
+        "unwilling_moved": len(unwilling),
         "summary": summary,
         "rows": [{"enrollment_id": e.id, "user_name": db.get(User, e.user_id).name,
                   "station_id": st.id if st else "",
                   "station_name": st.name if st else "未分配",
-                  "warning": "", "forced": f_} for e, st, f_ in changed],
+                  "from_station_name": old.name if old else "未分配",
+                  "allow_reassign": e.allow_reassign,
+                  "forced": f_} for e, old, st, f_ in changed],
     }

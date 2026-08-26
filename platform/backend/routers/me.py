@@ -1,6 +1,8 @@
 """学生端「我的」：报名记录、消息通知、信用分、志愿时长。"""
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -14,6 +16,21 @@ from ..models import (Activity, CheckinRecord, CreditLog, Enrollment,
 from ..serializers import iso_of
 
 router = APIRouter(prefix="/api/me", tags=["me"])
+
+ID_CARD_WEIGHTS = (7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2)
+ID_CARD_CHECK = "10X98765432"
+
+
+def valid_id_card(value: str) -> bool:
+    """18 位居民身份证号校验（含末位校验码）。
+
+    在校学生均为 18 位号，不放行 15 位旧号——填错一位就是一条对不上人的记录，
+    而这个号会跟着时长回传到数智人大。
+    """
+    if not re.fullmatch(r"\d{17}[\dX]", value):
+        return False
+    total = sum(int(c) * w for c, w in zip(value[:17], ID_CARD_WEIGHTS))
+    return value[17] == ID_CARD_CHECK[total % 11]
 
 
 def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
@@ -33,6 +50,8 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "station": ({"id": st.id, "name": st.name, "time_text": st.time_text(),
                      "location": st.location} if st else None),
         "status": enr.status, "cancel_type": enr.cancel_type,
+        "seat_held": enr.seat_held,
+        "allow_reassign": enr.allow_reassign,
         "joined_at": iso_of(enr.joined_at),
         "confirm_deadline": iso_of(enr.confirm_deadline),
         "checked_in": rec is not None,
@@ -133,11 +152,13 @@ def update_profile(body: ProfileBody,
     """
     phone = (body.phone or "").strip()
     wechat = (body.wechat or "").strip()
-    id_card = (body.id_card or "").strip()
+    id_card = (body.id_card or "").strip().upper()
     if not (phone and wechat and id_card):
         raise HTTPException(400, "手机号、微信号、身份证号均为必填项")
-    if not 15 <= len(id_card) <= 18:
-        raise HTTPException(400, "身份证号长度应为15~18位")
+    if not re.fullmatch(r"1[3-9]\d{9}", phone):
+        raise HTTPException(400, "手机号格式不正确")
+    if not valid_id_card(id_card):
+        raise HTTPException(400, "身份证号不合法，请核对后重填")
     user.phone = phone
     user.wechat = wechat
     user.id_card = id_card

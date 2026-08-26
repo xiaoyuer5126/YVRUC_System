@@ -1,6 +1,7 @@
 """教师/青协端：签到任务、导出中心、时长录入与回传。"""
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,8 +11,9 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from ..audit import log as audit_log
+from .. import config
 from ..database import db_session
-from ..deps import require_manager
+from ..deps import require_manager, require_manager_download
 from ..exporter import build_activity_workbook
 from ..perm import ensure_activity_manager
 from ..integrations import checkin_gateway, shuzhi
@@ -234,8 +236,6 @@ def batch_op(task_id: str, body: dict,
            "student_ids": ["2023…", …]}
     全部计入留痕。
     """
-    import math
-
     task = db.get(CheckinTask, task_id)
     if task is None:
         raise HTTPException(404, "任务不存在")
@@ -319,7 +319,7 @@ def batch_op(task_id: str, body: dict,
 
 @router.get("/activities/{activity_id}/export.xlsx")
 def export(activity_id: str, db: OrmSession = Depends(db_session),
-           user: User = Depends(require_manager)):
+           user: User = Depends(require_manager_download)):
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     buf = build_activity_workbook(db, act)
@@ -342,12 +342,11 @@ def export(activity_id: str, db: OrmSession = Depends(db_session),
 
 # ======================= 时长录入与回传 =======================
 
-CHECKOUT_GRACE = timedelta(hours=2)   # 场次结束后可自行签退的宽限
+CHECKOUT_GRACE = timedelta(hours=config.CHECKOUT_GRACE_HOURS)
 
 
 def _round_half_up(hours: float) -> float:
     """向上取整至 0.5 的倍数：2h13m → 2.5h。"""
-    import math
     return math.ceil(max(0.0, hours) * 2) / 2
 
 
@@ -368,9 +367,10 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
     """基于签到/签退记录计算时长：签退 - 签到，向上取整至 0.5 小时。
 
     未签退且在宽限期内 → 标记 pending（暂按当前时间估算展示）；
-    超过宽限未签退 → 自动按场次结束时间兜底。
+    超过宽限未签退 → 按场次结束时间兜底，并标记 auto_checkout **待核**：
+    到场扫个码就走的人和全程服务的人算出来一样多，这类记录必须由管理者
+    过目——「确认全部」会跳过它们，见 hours_confirm。
     """
-    import math
     t = now()
     records = (db.query(CheckinRecord)
                .filter(CheckinRecord.activity_id == act.id).all())
@@ -546,15 +546,26 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
         items = compute_hours(db, act)
         if not items:
             raise HTTPException(400, "暂无签到数据，无法确认时长")
-        for it in items:
+        # 未签退（宽限期内）与超时自动兜底的记录不在此列：时长存疑，
+        # 需要管理者在表格里逐条核对数值后单独确认
+        clear = [it for it in items
+                 if not it["pending"] and not it["auto_checkout"]]
+        review = [it for it in items if it not in clear]
+        if not clear:
+            raise HTTPException(
+                400, f"{len(review)} 条记录未正常签退，时长待核，"
+                     f"请在表格中逐条核对后确认")
+        for it in clear:
             upsert(it["user"]["id"], it["hours"])
-        count = len(items)
-        summary = f"确认 {count} 人志愿时长（依据签到记录）"
+        count = len(clear)
+        summary = (f"确认 {count} 人志愿时长（依据签到签退记录）"
+                   + (f"；{len(review)} 人未正常签退、时长待核未确认"
+                      if review else ""))
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=summary)
     db.commit()
-    return {"ok": True, "count": count}
+    return {"ok": True, "count": count, "message": summary}
 
 
 @router.post("/activities/{activity_id}/hours/upload")

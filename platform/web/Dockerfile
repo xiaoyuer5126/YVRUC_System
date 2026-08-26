@@ -11,7 +11,7 @@ RUN npm run build
 
 FROM nginx:1.27-alpine
 
-COPY platform/docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY platform/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/web/dist /usr/share/nginx/html
 
 EXPOSE 80

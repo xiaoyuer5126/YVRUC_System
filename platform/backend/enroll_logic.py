@@ -1,19 +1,23 @@
-"""报名核心逻辑：冲突检测、容量判断、候补流转。
+"""报名核心逻辑：冲突检测、名额账本、候补流转。
 
-对应《设计方案》阶段二/阶段三的关键机制：
-  · 报名时（粗粒度）：只比一级岗位时间区间，重叠即拦截；
-  · 分配时（细粒度）：工位时间与已分配工位重叠 → 警告但允许强制；
-  · 候补按 joined_at 排队，正常退选释放名额 → 队首转正，2小时确认窗口。
+《设计方案》阶段二/阶段三的关键机制：
+  · 时段冲突：只比一级岗位的时间区间，重叠即拦截（跨活动，含候补中的场次——
+    排了队就等于预留了这段时间）；
+  · 名额账本：已确认 + 临近退选占位（seat_held），后者不释放给任何人；
+  · 候补按 joined_at 排队，正常退选释放名额 → 队首转正，2 小时确认窗口。
+
+调用容量相关函数前必须持有 locks.group_lock(group_id)，见 locks.py。
 """
 from __future__ import annotations
 
 from datetime import timedelta
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session as OrmSession
 
 from . import config, credit
 from .integrations import wecom
-from .models import Activity, Enrollment, PositionGroup, User, iso, now
+from .models import Activity, Enrollment, PositionGroup, Station, User, now
 
 ACTIVE = ("confirmed", "waitlisted", "pending_confirm")
 
@@ -25,7 +29,7 @@ def overlaps(a1, a2, b1, b2) -> bool:
 
 def time_conflicts(db: OrmSession, user: User,
                    target: PositionGroup) -> list[dict]:
-    """该用户有效报名中与 target 组时间段重叠的记录（粗粒度，跨活动）。"""
+    """该用户有效报名中与 target 组时间段重叠的记录（跨活动）。"""
     rows = (db.query(Enrollment, PositionGroup, Activity)
             .join(PositionGroup, Enrollment.group_id == PositionGroup.id)
             .join(Activity, Enrollment.activity_id == Activity.id)
@@ -39,35 +43,42 @@ def time_conflicts(db: OrmSession, user: User,
                 "enrollment_id": enr.id, "activity_id": act.id,
                 "activity_title": act.title, "group_name": g.name,
                 "time": g.span_text(), "status": enr.status,
-                "station_id": enr.station_id,
+                "waiting": enr.status != "confirmed",
             })
     return out
 
 
-def confirmed_elsewhere(db: OrmSession, user: User,
-                        exclude_group: str) -> list[tuple[Enrollment, PositionGroup]]:
-    """除 exclude_group 外的已确认报名（用于分配期细粒度冲突警告）。"""
-    return (db.query(Enrollment, PositionGroup)
-            .filter(Enrollment.user_id == user.id,
-                    Enrollment.status == "confirmed",
-                    Enrollment.group_id != exclude_group)
-            .join(PositionGroup, Enrollment.group_id == PositionGroup.id).all())
+def conflict_message(clashes: list[dict]) -> str:
+    parts = []
+    for c in clashes[:3]:
+        tail = "（候补中）" if c["waiting"] else ""
+        parts.append(f"「{c['activity_title']}」{c['group_name']}"
+                     f"（{c['time']}）{tail}")
+    return "；".join(parts)
 
 
-def station_conflict_warning(db: OrmSession, user: User, group: PositionGroup,
-                             station) -> str:
-    """分配期细粒度冲突检查。
-
-    二级工位不再携带时间（时间归一级岗位），且同场次工位默认互斥——
-    把人分进某工位不会再产生新的时段冲突，恒返回空。
-    保留函数签名以兼容调用方。
-    """
-    return ""
-
+# ======================= 名额账本 =======================
 
 def group_confirmed_count(db: OrmSession, group_id: str) -> int:
+    """正式报名人数（用于展示「已确认 N 人」）。"""
     return db.query(Enrollment).filter(
-        Enrollment.group_id == group_id, Enrollment.status == "confirmed").count()
+        Enrollment.group_id == group_id,
+        Enrollment.status == "confirmed").count()
+
+
+def group_held_count(db: OrmSession, group_id: str) -> int:
+    """临近退选后不再释放的占位名额。"""
+    return db.query(Enrollment).filter(
+        Enrollment.group_id == group_id,
+        Enrollment.seat_held.is_(True)).count()
+
+
+def group_occupied_count(db: OrmSession, group_id: str) -> int:
+    """已消耗的名额 = 正式报名 + 占位不释放。判断容量一律用它。"""
+    return db.query(Enrollment).filter(
+        Enrollment.group_id == group_id,
+        or_(Enrollment.status == "confirmed",
+            Enrollment.seat_held.is_(True))).count()
 
 
 def station_confirmed_count(db: OrmSession, station_id: str) -> int:
@@ -75,6 +86,17 @@ def station_confirmed_count(db: OrmSession, station_id: str) -> int:
         Enrollment.station_id == station_id,
         Enrollment.status == "confirmed").count()
 
+
+def has_room(db: OrmSession, group: PositionGroup, station=None) -> bool:
+    """还有没有正式名额：场次容量 +（选定工位时）该工位名额。"""
+    if group_occupied_count(db, group.id) >= group.capacity:
+        return False
+    if station is not None and station_confirmed_count(db, station.id) >= station.quota:
+        return False
+    return True
+
+
+# ======================= 候补队列 =======================
 
 def waitlist_rows(db: OrmSession, group_id: str) -> list[Enrollment]:
     """候补队列：waitlisted + pending_confirm，按排队时间先后。"""
@@ -92,18 +114,13 @@ def waitlist_position(db: OrmSession, enr: Enrollment) -> int:
     return 0
 
 
-def has_room(db: OrmSession, group: PositionGroup,
-             station=None) -> bool:
-    """还有没有正式名额：组容量 + （模式A时）所选工位名额。"""
-    if group_confirmed_count(db, group.id) >= group.capacity > 0:
-        return False
-    if station is not None and station_confirmed_count(db, station.id) >= station.quota:
-        return False
-    return True
-
-
 def promote_head(db: OrmSession, group: PositionGroup) -> Enrollment | None:
-    """把候补队首转为“待确认”，开 2 小时确认窗口并通知。"""
+    """有名额释放时，把候补队首转为「待确认」，开 2 小时确认窗并通知。
+
+    只在确实空出名额时才提升：临近退选是占位不释放的，队列原地不动。
+    """
+    if not has_room(db, group):
+        return None
     head = next((r for r in waitlist_rows(db, group.id)
                  if r.status == "waitlisted"), None)
     if head is None:
@@ -113,20 +130,18 @@ def promote_head(db: OrmSession, group: PositionGroup) -> Enrollment | None:
     head.confirm_deadline = now() + timedelta(hours=config.PROMOTE_CONFIRM_HOURS)
     user = db.get(User, head.user_id)
     activity = db.get(Activity, head.activity_id)
-    try:
-        wecom.send_user(user, "waitlist_promoted",
-                        activity=activity.title, group=group.name,
-                        deadline=f"{head.confirm_deadline:%m-%d %H:%M}")
-    except Exception:
-        pass
+    wecom.send_user(db, user, "waitlist_promoted",
+                    activity=activity.title, group=group.name,
+                    deadline=f"{head.confirm_deadline:%m-%d %H:%M}")
     return head
 
 
 def confirm_promotion(db: OrmSession, enr: Enrollment, user: User) -> Enrollment:
-    """确认候补转正：即成为正式报名；有二级工位的场次自动挑剩余名额最多的工位
-    （工位之间默认互斥且无独立时间，无需再做时段过滤）。"""
-    from .models import Station
+    """确认候补转正：成为正式报名。
 
+    有二级工位的场次自动挑剩余名额最多的工位——工位之间互斥且无独立时间，
+    不需要再做时段过滤。
+    """
     group = db.get(PositionGroup, enr.group_id)
     enr.status = "confirmed"
     enr.confirm_deadline = None
@@ -140,37 +155,46 @@ def confirm_promotion(db: OrmSession, enr: Enrollment, user: User) -> Enrollment
         enr.assigned_at = now()
         enr.assign_forced = False
 
-    # 发送岗位通知（若有工位）
     if enr.station_id:
         station = db.get(Station, enr.station_id)
         activity = db.get(Activity, enr.activity_id)
-        try:
-            wecom.send_user(
-                user, "assignment", activity=activity.title, group=group.name,
-                station=station.name, station_time=station.time_text(),
-                station_loc=station.location or "待定")
-        except Exception:
-            pass
+        wecom.send_user(db, user, "assignment", activity=activity.title,
+                        group=group.name, station=station.name,
+                        station_time=station.time_text(),
+                        station_loc=station.location or "待定")
     return enr
 
 
 def expire_stale_promotions(db: OrmSession) -> int:
-    """扫掉超时未确认的转正：记放弃 → 计数 → 顺延下一位。惰性触发+定时线程。"""
+    """扫掉超时未确认的转正：记放弃 → 计数 → 顺延下一位。
+
+    由 main.py 的后台协程每分钟调用；学生打开「我的报名」时也会顺手触发一次，
+    让页面上看到的状态和实际一致。
+    """
+    from .locks import group_lock
+
     expired = (db.query(Enrollment)
                .filter(Enrollment.status == "pending_confirm",
                        Enrollment.confirm_deadline < now()).all())
+    if not expired:
+        return 0
+
     n = 0
-    touched_groups: set[str] = set()
+    touched: set[str] = set()
     for enr in expired:
-        user = db.get(User, enr.user_id)
-        credit.register_abandon(db, user)
-        enr.status = "cancelled"
-        enr.cancel_type = "expired"
-        touched_groups.add(enr.group_id)
-        n += 1
-    if n:
-        db.commit()
-        for gid in touched_groups:
+        with group_lock(enr.group_id):
+            fresh = db.get(Enrollment, enr.id)
+            db.refresh(fresh)
+            if fresh.status != "pending_confirm" or fresh.confirm_deadline >= now():
+                continue      # 用户在这一瞬间点了确认
+            credit.register_abandon(db, db.get(User, fresh.user_id))
+            fresh.status = "cancelled"
+            fresh.cancel_type = "expired"
+            db.commit()
+            touched.add(fresh.group_id)
+            n += 1
+    for gid in touched:
+        with group_lock(gid):
             promote_head(db, db.get(PositionGroup, gid))
             db.commit()
     return n

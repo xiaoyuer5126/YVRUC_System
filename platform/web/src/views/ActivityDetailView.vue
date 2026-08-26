@@ -124,6 +124,17 @@
             <el-table-column label="操作" width="230" align="right">
               <template #default="{ row }">
                 <template v-if="row.my_enrollment">
+                  <!-- 调剂意愿：点一下即可改，只作为负责老师排班时的参考 -->
+                  <div style="margin-bottom:4px">
+                    <el-tooltip content="点击切换。仅供负责老师参考，不代表岗位不会被调整"
+                                placement="top">
+                      <el-tag size="small" effect="plain" style="cursor:pointer"
+                              :type="row.my_enrollment.allow_reassign ? 'success' : 'info'"
+                              @click="toggleReassign(row)">
+                        {{ row.my_enrollment.allow_reassign ? '接受调剂' : '不接受调剂' }}
+                      </el-tag>
+                    </el-tooltip>
+                  </div>
                   <!-- 直接定二级 -->
                   <template v-if="row.mode === 'fine'">
                     <!-- 有工位：状态标签（退选/确认在对应工位行原地操作） -->
@@ -250,7 +261,10 @@
         <el-descriptions-item label="人数">
           已确认 {{ groupDetail.data.confirmed }} / {{ groupDetail.data.capacity }}
           <span v-if="groupDetail.data.waitlist_count" class="dim">（候补 {{ groupDetail.data.waitlist_count }} 人）</span>
+          <span v-if="groupDetail.data.held_seats" class="dim">
+            · 另有 {{ groupDetail.data.held_seats }} 个名额因临近退选被扣留，不再释放</span>
         </el-descriptions-item>
+        <el-descriptions-item label="剩余名额">{{ groupDetail.data.remaining }}</el-descriptions-item>
         <el-descriptions-item label="说明">{{ groupDetail.data.note || '—' }}</el-descriptions-item>
       </el-descriptions>
     </el-dialog>
@@ -270,42 +284,66 @@
       </el-descriptions>
     </el-dialog>
 
-    <!-- 报名被拦截时的资料完善对话框（与右上角菜单入口提交同一接口） -->
-    <el-dialog v-model="profileVisible" title="完善个人信息" width="460px"
-               :close-on-click-modal="false">
-      <el-alert type="warning" :closable="false" style="margin-bottom:14px"
-                title="报名志愿者需先完善联系方式：手机号、微信号与身份证号缺一不可" />
-      <el-form label-width="82px">
-        <el-form-item label="手机号" required>
-          <el-input v-model="profileForm.phone" placeholder="请输入手机号" maxlength="20" />
-        </el-form-item>
-        <el-form-item label="微信号" required>
-          <el-input v-model="profileForm.wechat" placeholder="请输入微信号" maxlength="64" />
-        </el-form-item>
-        <el-form-item label="身份证号" required>
-          <el-input v-model="profileForm.id_card" placeholder="请输入15~18位身份证号" maxlength="18" />
-        </el-form-item>
-      </el-form>
-      <p class="dim" style="margin:0 0 10px;font-size:12px;line-height:1.7">
-        信息仅用于志愿服务组织联络与保险登记；保存后可在右上角头像菜单「完善个人信息」中修改。</p>
+    <!-- 报名确认：确认时段 + 表态是否接受岗位调剂 -->
+    <el-dialog v-model="enrollDlg.visible" title="确认报名" width="480px">
+      <template v-if="enrollDlg.group">
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item label="场次">
+            {{ enrollDlg.group.name }}（{{ enrollDlg.group.time_text }}）
+          </el-descriptions-item>
+          <el-descriptions-item label="工位">
+            {{ enrollDlg.station ? enrollDlg.station.name
+               : (enrollDlg.group.mode === 'assign' ? '报名截止后由青协统一分配' : '无需选择') }}
+          </el-descriptions-item>
+          <el-descriptions-item label="结果">
+            <el-tag :type="willWaitlist ? 'warning' : 'success'" size="small">
+              {{ willWaitlist ? '名额已满，将加入候补队列' : '名额充足，报名即生效' }}
+            </el-tag>
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <div class="reassign-box">
+          <el-checkbox v-model="enrollDlg.allowReassign">接受岗位调剂</el-checkbox>
+          <p class="dim">
+            勾选表示你愿意被安排到本场次的其他工位。这只是给负责老师的参考——
+            实际排班仍由他们决定，不勾选也可能被调整，但会在名单上标注你的意愿。
+          </p>
+        </div>
+
+        <el-alert v-if="needLateWarn(enrollDlg.group)" type="warning" :closable="false"
+                  style="margin-top:10px"
+                  title="距该场次开始已不足 24 小时：报名后再退选将扣除信用分，且名额不再释放" />
+      </template>
       <template #footer>
-        <el-button @click="profileVisible = false">取消</el-button>
-        <el-button type="primary" :loading="profileSaving" @click="saveProfile">保存</el-button>
+        <el-button @click="enrollDlg.visible = false">再想想</el-button>
+        <el-button type="primary" :loading="enrollDlg.submitting" @click="submitEnroll">
+          确认{{ willWaitlist ? '加入候补' : '报名' }}
+        </el-button>
       </template>
     </el-dialog>
+
+    <ProfileDialog ref="profileDialog" />
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT } from '../api'
-import { TYPE_COLORS, auth } from '../store'
+import { TYPE_COLORS } from '../store'
+import ProfileDialog from '../components/ProfileDialog.vue'
 
 const route = useRoute()
 const act = ref(null)
 const groupDetail = ref({ visible: false, data: null })
+const enrollDlg = ref({ visible: false, group: null, station: null,
+                        allowReassign: true, submitting: false })
+const willWaitlist = computed(() => {
+  const { group: g, station } = enrollDlg.value
+  if (!g) return false
+  return station ? station.remaining <= 0 : g.remaining <= 0
+})
 const stationDetail = ref({ visible: false, data: null, groupName: '', groupTime: '' })
 
 const typeColor = t => TYPE_COLORS[t]?.color
@@ -352,26 +390,28 @@ async function load() {
 }
 onMounted(load)
 
-async function doEnroll(g, station) {
+function doEnroll(g, station) {
   if (g.mode === 'fine' && g.stations.length && !station) {
     return ElMessage.warning('请先展开该场次，选择一个二级工位')
   }
+  enrollDlg.value = { visible: true, group: g, station, allowReassign: true,
+                      submitting: false }
+}
+
+async function submitEnroll() {
+  const { group: g, station, allowReassign } = enrollDlg.value
+  enrollDlg.value.submitting = true
   try {
-    if (needLateWarn(g)) {
-      await ElMessageBox.confirm(
-        '距离该场次开始已不足24小时：报名后若临近退选将扣除信用分。确定继续吗？',
-        '临近开始提醒', { type: 'warning',
-                          confirmButtonText: '继续报名', cancelButtonText: '再想想' })
-    }
     const d = await api.post(
       `/api/activities/${act.value.id}/groups/${g.id}/enroll`,
-      { station_id: station ? station.id : null })
+      { station_id: station ? station.id : null, allow_reassign: allowReassign })
+    enrollDlg.value.visible = false
     ElMessage.success(d.message)
     load()
   } catch (e) {
-    if (e === 'cancel' || e?.message === 'cancel') return
     // 资料未完善被拦截：提示后弹出资料表单，补全后即可报名
     if (e?.message?.includes('完善个人信息')) {
+      enrollDlg.value.visible = false
       try {
         await ElMessageBox.alert(
           '报名前需先完善个人信息（手机号/微信号/身份证号），请在接下来的弹窗中填写并保存。',
@@ -382,12 +422,26 @@ async function doEnroll(g, station) {
       return
     }
     if (e.data && e.data.conflicts) {
+      enrollDlg.value.visible = false
       const list = e.data.conflicts
-        .map(c => `「${c.activity_title}」${c.group_name}（${c.time}）`).join('<br>')
+        .map(c => `「${c.activity_title}」${c.group_name}（${c.time}）`
+                  + (c.waiting ? '　<i>候补中</i>' : '')).join('<br>')
       ElMessageBox.alert(list, '与已有报名时间冲突',
                          { dangerouslyUseHTMLString: true, type: 'error' })
     }
+  } finally {
+    enrollDlg.value.submitting = false
   }
+}
+
+// 调剂意愿随时可改：它只是给负责老师的参考
+async function toggleReassign(g) {
+  const enr = g.my_enrollment
+  const d = await api.patch(
+    `/api/activities/enrollments/${enr.enrollment_id}/reassign-pref`,
+    { allow_reassign: !enr.allow_reassign })
+  enr.allow_reassign = d.allow_reassign
+  ElMessage.success(d.allow_reassign ? '已设为接受岗位调剂' : '已设为不接受岗位调剂')
 }
 
 async function cancelEnroll(g) {
@@ -395,7 +449,8 @@ async function cancelEnroll(g) {
   const late = !canCancel(g)
   try {
     await ElMessageBox.confirm(
-      late ? '距开始不足24小时，退选将扣除信用分5分且名额不释放给候补，确定退选吗？'
+      late ? '距开始不足24小时：退选将扣除信用分5分，且该名额会被扣留、不再释放给任何人，'
+             + '你本人之后也无法再报名这个场次。确定退选吗？'
            : '正常退选不扣信用分，名额将按候补顺序自动递补。',
       '确认退选', { type: 'warning', confirmButtonText: '确定退选', cancelButtonText: '取消' })
   } catch { return }
@@ -411,47 +466,15 @@ async function confirmPromo(g) {
   load()
 }
 
-// —— 资料完善（与 MainLayout 的对话框提交同一接口 PUT /api/me/profile） ——
-const profileVisible = ref(false)
-const profileForm = ref({ phone: '', wechat: '', id_card: '' })
-const profileSaving = ref(false)
-
-function openProfileDialog() {
-  profileForm.value = {
-    phone: auth.user?.phone || '',
-    wechat: auth.user?.wechat || '',
-    id_card: auth.user?.id_card || '',
-  }
-  profileVisible.value = true
-}
-
-async function saveProfile() {
-  const f = profileForm.value
-  const phone = f.phone.trim()
-  const wechat = f.wechat.trim()
-  const idCard = f.id_card.trim()
-  if (!phone || !wechat || !idCard) {
-    return ElMessage.warning('手机号、微信号、身份证号均为必填项')
-  }
-  if (idCard.length < 15 || idCard.length > 18) {
-    return ElMessage.warning('身份证号长度应为15~18位')
-  }
-  profileSaving.value = true
-  try {
-    const d = await api.put('/api/me/profile', { phone, wechat, id_card: idCard })
-    auth.user = d.user
-    localStorage.setItem('rucva_user', JSON.stringify(d.user))
-    profileVisible.value = false
-    ElMessage.success('个人信息已保存，现在可以继续报名了')
-  } finally {
-    profileSaving.value = false
-  }
-}
+const profileDialog = ref(null)
+const openProfileDialog = () => profileDialog.value.open(true)
 </script>
 
 <style scoped>
 .group-card { margin-bottom: 14px; border-radius: 12px; }
 .g-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.reassign-box { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #f7f8fa; }
+.reassign-box .dim { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
 
 /* 仅一级岗位：没有可展开的二级工位，隐藏展开箭头 */
 :deep(.no-expand-row .el-table__expand-icon) { visibility: hidden; }

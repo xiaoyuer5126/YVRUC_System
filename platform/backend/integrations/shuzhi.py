@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ..database import SessionLocal
 from ..models import HoursRecord, User
