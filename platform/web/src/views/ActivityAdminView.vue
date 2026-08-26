@@ -273,11 +273,21 @@
         <!-- 手动添加时长 -->
         <div class="section-title" style="margin-top:18px">手动添加时长（不依赖签到，如场外支援/补录）</div>
         <el-card shadow="never">
-          <div class="toolbar" style="margin-bottom:8px">
-            <el-input v-model="mh.sid" placeholder="学号" style="width:150px" />
+          <div class="toolbar" style="margin-bottom:8px;align-items:flex-start">
+            <el-select v-model="mh.userIds" multiple filterable collapse-tags
+                       collapse-tags-tooltip placeholder="选择志愿者（可多选）"
+                       style="width:320px">
+              <el-option v-for="v in rosterOptions" :key="v.student_id"
+                         :value="v.student_id"
+                         :label="`${v.name}（${v.student_id}）${v.group_name}`" />
+            </el-select>
             <el-input-number v-model="mh.hours" :min="0.5" :step="0.5" style="width:120px" />
             <el-input v-model="mh.note" placeholder="备注（如：场外支援）" style="width:220px" />
-            <el-button type="primary" @click="addManualHours">添加</el-button>
+            <el-button type="primary" :disabled="!mh.userIds.length"
+                       @click="addManualHours">
+              批量添加{{ mh.userIds.length ? `（${mh.userIds.length} 人）` : '' }}
+            </el-button>
+            <span class="dim">同一时长与备注一次性写给所选志愿者</span>
           </div>
           <el-table v-if="manualHours.length" :data="manualHours" size="small">
             <el-table-column prop="name" label="姓名" width="100" />
@@ -589,7 +599,22 @@ const hours = ref([])
 const hoursLoading = ref(false)
 const hoursSel = ref([])                       // 时长表勾选行
 const manualHours = ref([])                    // 手动添加的时长记录
-const mh = ref({ sid: '', hours: 0.5, note: '' })
+const mh = ref({ userIds: [], hours: 0.5, note: '' })
+
+// 手动加时长的候选人 = 本活动全部场次的已确认志愿者（含未签到的）
+const rosterOptions = computed(() => {
+  const seen = new Set()
+  const out = []
+  for (const g of groups.value) {
+    for (const row of g._roster?.confirmed || []) {
+      if (seen.has(row.user.student_id)) continue
+      seen.add(row.user.student_id)
+      out.push({ name: row.user.name, student_id: row.user.student_id,
+                 group_name: `· ${g.name}` })
+    }
+  }
+  return out
+})
 const logs = ref([])
 const ACTION_LABELS = {
   create: '创建', update: '修改', delete: '删除', publish: '发布', close: '截止',
@@ -884,14 +909,15 @@ async function confirmAllHours() {
   } catch { /* toast by api */ }
 }
 
-// 手动添加时长（不依赖签到，如场外支援/补录）
+// 手动添加时长（不依赖签到，如场外支援/补录）。批量：一次给多人写同一条时长
 async function addManualHours() {
-  if (!mh.value.sid.trim()) return ElMessage.warning('请输入学号')
+  const { userIds, hours, note } = mh.value
+  if (!userIds.length) return ElMessage.warning('请先选择志愿者')
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/hours/manual`,
-      { items: [{ student_id: mh.value.sid.trim(), hours: mh.value.hours, note: mh.value.note }] })
-    ElMessage.success(`已添加 ${d.count} 条手动时长`)
-    mh.value = { sid: '', hours: 0.5, note: '' }
+      { items: userIds.map(sid => ({ student_id: sid, hours, note })) })
+    ElMessage.success(`已为 ${d.count} 位志愿者添加时长`)
+    mh.value = { userIds: [], hours: 0.5, note: '' }
     hoursPreview(true)
   } catch { /* toast by api */ }
 }
