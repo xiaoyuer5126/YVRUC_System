@@ -397,6 +397,30 @@ class HoursRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+class ViolationRecord(Base):
+    """违规记录（《志愿者服务规范》「限制准入名单」的一行）。
+
+    规范要求每一条违规单独作一行、活动结束后由负责人填写。系统按累计次数
+    给出限制准入建议，最终生效的类型与截止日由操作者确认后写入 User。
+    """
+    __tablename__ = "violation_records"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    activity_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    activity_title: Mapped[str] = mapped_column(String(128), default="")
+    activity_type: Mapped[str] = mapped_column(String(2))     # A/B/C/D
+    kind: Mapped[str] = mapped_column(String(16))             # violations.KINDS
+    detail: Mapped[str] = mapped_column(String(512), default="")   # 违规情况简述
+    has_proof: Mapped[bool] = mapped_column(Boolean, default=False)  # 请假是否有证明
+    # 本次登记实际生效的限制（操作者确认后的值）
+    applied_types: Mapped[list] = mapped_column(JSON, default=list)
+    applied_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    basis: Mapped[str] = mapped_column(String(256), default="")    # 依据条文
+    operator_id: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
 class AuditLog(Base):
     """操作留痕中心。老师/青协的增删改全记这里，志愿者可在活动页看到摘要。
 

@@ -42,6 +42,7 @@
           <template #default="{row}">
             <el-button size="small" link type="primary"
                        @click="openCredit(row)">调整信用</el-button>
+            <el-button size="small" link type="danger" @click="openViolation(row)">登记违规</el-button>
             <el-button size="small" link @click="openRestrict(row)">限制准入</el-button>
           </template>
         </el-table-column>
@@ -63,6 +64,69 @@
       <template #footer>
         <el-button @click="creditDlg.visible = false">取消</el-button>
         <el-button type="primary" @click="saveCredit">确认调整</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 违规登记：按《规范》算建议，人工确认后生效 -->
+    <el-dialog v-model="vioDlg.visible" title="登记违规（《志愿者服务规范》限制准入名单）"
+               width="620" @closed="vio.suggest = null">
+      <p>对象：<b>{{ vioDlg.user?.name }}</b>（{{ vioDlg.user?.student_id }}）</p>
+      <el-form label-width="96px">
+        <el-form-item label="所属活动" required>
+          <el-select v-model="vio.activity_id" filterable placeholder="选择活动"
+                     style="width:100%" @change="refreshSuggest">
+            <el-option v-for="a in finishedActs" :key="a.id" :value="a.id"
+                       :label="`${a.type}类 · ${a.title}`" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="违规类型" required>
+          <el-radio-group v-model="vio.kind" @change="refreshSuggest">
+            <el-radio-button v-for="(label, code) in kinds" :key="code" :value="code">
+              {{ label }}
+            </el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="vio.kind === 'leave'" label="请假证明">
+          <el-checkbox v-model="vio.has_proof" @change="refreshSuggest">
+            有证明（病假／事假，参照学校请假标准）
+          </el-checkbox>
+        </el-form-item>
+        <el-form-item label="情况简述" required>
+          <el-input v-model="vio.detail" type="textarea" :rows="2"
+                    placeholder="记录具体情况；违规类型为「其他」时请尽量详细" />
+        </el-form-item>
+      </el-form>
+
+      <template v-if="vio.suggest">
+        <div class="suggest">
+          <div class="suggest-head">
+            规范建议 · 该志愿者同类违规第 <b>{{ vio.suggest.history_count }}</b> 次
+          </div>
+          <p class="basis">{{ vio.suggest.basis }}</p>
+          <p v-for="(n, i) in vio.suggest.notes" :key="i" class="note">需人工判断：{{ n }}</p>
+          <el-form label-width="96px" style="margin-top:10px">
+            <el-form-item label="限制类型">
+              <el-checkbox-group v-model="vio.types">
+                <el-checkbox v-for="(t, k) in types" :key="k" :value="k">
+                  {{ k }} {{ t.name }}
+                </el-checkbox>
+              </el-checkbox-group>
+            </el-form-item>
+            <el-form-item label="限制至">
+              <el-date-picker v-model="vio.until" type="date" style="width:100%" />
+            </el-form-item>
+          </el-form>
+          <div class="dim">
+            默认按规范填好，可按实际情形增减后再提交；生效口径以此处为准，全程留痕。
+          </div>
+        </div>
+      </template>
+
+      <template #footer>
+        <el-button @click="vioDlg.visible = false">取消</el-button>
+        <el-button type="primary" :disabled="!vio.suggest" @click="saveViolation">
+          登记并生效
+        </el-button>
       </template>
     </el-dialog>
 
@@ -102,6 +166,12 @@ const creditDlg = ref({ visible: false, user: null })
 const creditForm = ref({ delta: -5, reason: '' })
 const restrictDlg = ref({ visible: false, user: null })
 const restrictForm = ref({ types: [], until: '' })
+const vioDlg = ref({ visible: false, user: null })
+const vio = ref({ activity_id: '', kind: 'late', has_proof: false, detail: '',
+                  types: [], until: '', suggest: null })
+const kinds = ref({})
+const types = ref({})
+const finishedActs = ref([])
 
 async function load() {
   loading.value = true
@@ -111,9 +181,50 @@ async function load() {
   } finally { loading.value = false }
 }
 onMounted(async () => {
-  colleges.value = (await api.get('/api/auth/constants')).colleges
+  const c = await api.get('/api/auth/constants')
+  colleges.value = c.colleges
+  kinds.value = c.violation_kinds
+  types.value = c.activity_types
   load()
 })
+
+// —— 违规登记 ——
+function openViolation(row) {
+  vioDlg.value = { visible: true, user: row }
+  vio.value = { activity_id: '', kind: 'late', has_proof: false, detail: '',
+                types: [], until: '', suggest: null }
+  loadActivities()
+}
+
+async function loadActivities() {
+  // 违规在活动结束后登记，但已截止的活动也可能需要（如报名后失联）
+  const all = await api.get('/api/staff/activities')
+  finishedActs.value = all.filter(a => a.status !== 'draft')
+}
+
+// 活动/类型/证明任一变化都重算建议：累计次数与活动类型都会改变结论
+async function refreshSuggest() {
+  if (!vio.value.activity_id || !vio.value.kind) return
+  const d = await api.post('/api/staff/violations/preview', {
+    user_id: vioDlg.value.user.id, activity_id: vio.value.activity_id,
+    kind: vio.value.kind, has_proof: vio.value.has_proof })
+  vio.value.suggest = d
+  vio.value.types = [...d.suggest_types]
+  vio.value.until = d.suggest_until
+}
+
+async function saveViolation() {
+  const v = vio.value
+  if (!v.detail.trim()) return ElMessage.warning('请填写违规情况简述')
+  await api.post('/api/staff/violations', {
+    user_id: vioDlg.value.user.id, activity_id: v.activity_id, kind: v.kind,
+    has_proof: v.has_proof, detail: v.detail, types: v.types,
+    until: v.until ? new Date(v.until).toISOString().slice(0, 10) : null,
+  })
+  ElMessage.success('已登记违规并更新限制准入')
+  vioDlg.value.visible = false
+  load()
+}
 
 function openCredit(row) {
   creditDlg.value = { visible: true, user: row }
@@ -144,4 +255,8 @@ async function saveRestrict() {
 
 <style scoped>
 .toolbar { display:flex; gap:12px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+.suggest { border:1px solid var(--el-border-color); border-radius:8px; padding:12px 14px; }
+.suggest-head { font-weight:600; margin-bottom:6px; }
+.basis { margin:0 0 4px; color:var(--el-color-primary); font-size:13px; }
+.note { margin:2px 0; font-size:12.5px; color:#e6a23c; line-height:1.7; }
 </style>

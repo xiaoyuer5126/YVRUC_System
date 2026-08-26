@@ -67,7 +67,9 @@ ACTIVITY_TYPES = {
 def type_name(code: str) -> str:
     return ACTIVITY_TYPES.get(code, {}).get("name", code)
 
-VIOLATION_TYPES = ["迟到早退", "无故请假", "无法取得联系", "消极志愿", "其他"]
+# 限制准入的统一时长（月）。《规范》正文只显式写了「三个月内不得参与X类」，
+# 基础限制的时长在原文里是一张图片、提取不到，与青协确认后按三个月执行。
+RESTRICTION_MONTHS = 3
 
 # 学院清单（演示用，覆盖主要书院/学院）
 COLLEGES = [

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import config
 from ..database import db_session
 from ..deps import create_session, current_token, current_user
+from .. import violations
 from ..integrations import sso
 from ..locks import clear_failures, failure_count, note_failure
 from ..models import Session, User
@@ -132,7 +133,8 @@ def constants(user: User = Depends(current_user)):
     from ..integrations import DEFAULTS
     return {
         "activity_types": config.ACTIVITY_TYPES,
-        "violation_types": config.VIOLATION_TYPES,
+        "violation_kinds": violations.KINDS,
+        "restriction_months": config.RESTRICTION_MONTHS,
         "colleges": config.COLLEGES,
         "credit": {
             "full": config.CREDIT_FULL,
