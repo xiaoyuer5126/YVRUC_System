@@ -487,7 +487,7 @@
         <el-form-item label="名称"><el-input v-model="baseForm.title" /></el-form-item>
         <el-form-item label="类型">
           <el-radio-group v-model="baseForm.type">
-            <el-radio-button v-for="(v, k) in types" :key="k" :value="k">{{ k }}类</el-radio-button>
+            <el-radio-button v-for="(t, k) in types" :key="k" :value="k">{{ k }}类·{{ t.name }}</el-radio-button>
           </el-radio-group>
         </el-form-item>
         <el-form-item label="地点"><el-input v-model="baseForm.location" /></el-form-item>

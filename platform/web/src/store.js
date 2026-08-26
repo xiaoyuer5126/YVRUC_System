@@ -63,6 +63,7 @@ export const canSee = {
   personal: () => true,
 }
 
+// 颜色是前端的事；名称与释义以后端 /api/auth/constants 为准，别在这里抄第二份
 export const TYPE_COLORS = {
   A: { label: 'A类·常规单次', color: '#67c23a' },
   B: { label: 'B类·常规长期', color: '#409eff' },

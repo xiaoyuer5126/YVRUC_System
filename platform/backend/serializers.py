@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session as OrmSession
 from .enroll_logic import (group_confirmed_count, group_held_count,
                            group_occupied_count, station_confirmed_count,
                            time_conflicts, waitlist_position, waitlist_rows)
+from . import config
 from .models import Activity, AuditLog, Enrollment, PositionGroup, Station, iso, now
 
 
@@ -49,7 +50,7 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
     ds_code, ds_label = display_status(act)
     return {
         "id": act.id, "title": act.title, "type": act.type,
-        "type_label": f"{act.type}类", "status": act.status,
+        "type_label": f"{act.type}类·{config.type_name(act.type)}", "status": act.status,
         "status_label": act.label_status(), "location": act.location,
         "intro": act.intro[:120], "cover_hue": act.cover_hue,
         "display_status": ds_code, "display_label": ds_label,

@@ -67,12 +67,13 @@
         </el-form-item>
         <el-form-item label="活动类型" required>
           <el-radio-group v-model="form.type">
-            <el-radio-button v-for="(label, key) in types" :key="key" :value="key">
-              {{ key }}类·{{ label.slice(3) }}
+            <el-radio-button v-for="(t, key) in types" :key="key" :value="key">
+              {{ key }}类·{{ t.name }}
             </el-radio-button>
           </el-radio-group>
-          <div class="dim" style="margin-top:4px">
-            依据《志愿者服务规范》：C/D 类对志愿者时间纪律与临场表现要求更高
+          <div class="dim" style="margin-top:6px;line-height:1.8">
+            <b>{{ form.type }}类·{{ types[form.type]?.full }}</b>：{{ types[form.type]?.desc }}<br />
+            类型决定违规后的限制准入口径（《志愿者服务规范》），请按活动实际性质选择。
           </div>
         </el-form-item>
         <el-form-item label="活动地点" required>
