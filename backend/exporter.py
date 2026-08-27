@@ -108,7 +108,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         ws = wb.create_sheet(_safe_sheet_name(g.name, used_names))
         has_positions = bool(positions)
         header = ["姓名", "学号", "学院", "手机号", "场次时间"]
-        header += (["岗位", "组长", "服务地点", "接受调剂"]
+        header += (["岗位组", "岗位", "组长", "服务地点", "接受调剂"]
                    if has_positions else [])
         header += ["签到状态", "签退时间"]
         ws.append(header)
@@ -118,7 +118,8 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
             line = [u.name, u.student_id, u.college, u.phone, g.span_text()]
             st = positions.get(enr.position_id) if enr.position_id else None
             if has_positions:
-                line += [st.name if st else "待分配",
+                line += [(st.group_name if st and st.group_name else "—"),
+                         st.name if st else "待分配",
                          "组长 ★" if enr.is_leader else "",
                          st.location if st else "—",
                          "是" if enr.allow_reassign else "否"]

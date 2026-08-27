@@ -285,6 +285,9 @@ class Position(Base):
     training_note: Mapped[str] = mapped_column(String(512), default="")
     # 需要组长：报名时志愿者可表态愿意担任，先到先得，管理者可改判
     needs_leader: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 岗位组：同一场次内组名相同的岗位共用一名组长（如「东门片区」下的
+    # 引导/检录/医疗点）。留空 = 该岗位自成一组，行为与从前一致。
+    group_name: Mapped[str] = mapped_column(String(64), default="")
     sort: Mapped[int] = mapped_column(Integer, default=0)
 
     shift: Mapped[Shift] = relationship(back_populates="positions")

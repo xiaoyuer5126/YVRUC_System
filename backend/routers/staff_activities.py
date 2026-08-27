@@ -618,6 +618,7 @@ class PositionBody(BaseModel):
     location: str = ""
     quota: int = Field(gt=0)
     waitlist_quota: int = Field(default=3, ge=0)
+    group_name: str = ""
     requirement_tags: dict = {}
     requirement_note: str = ""
     training_note: str = ""
@@ -625,6 +626,7 @@ class PositionBody(BaseModel):
 
 
 POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
+                   "group_name": "岗位组",
                    "waitlist_quota": "候补名额", "needs_leader": "需要组长",
                    "requirement_tags": "条件要求",
                    "requirement_note": "要求原文", "training_note": "培训内容"}
@@ -698,6 +700,7 @@ def create_position(shift_id: str, body: PositionBody,
                 location=body.location.strip(), quota=body.quota,
                 waitlist_quota=body.waitlist_quota,
                 needs_leader=body.needs_leader,
+                group_name=body.group_name.strip(),
                 requirement_tags=body.requirement_tags or {},
                 requirement_note=body.requirement_note.strip(),
                 training_note=body.training_note.strip(),
@@ -1012,6 +1015,7 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
                      "grade": u.grade, "credit_score": u.credit_score},
             "position_id": e.position_id,
             "position_name": st.name if st else "",
+            "position_group": st.group_name if st else "",
             "is_leader": e.is_leader,
             "leader_willing": e.leader_willing,
             "assign_forced": e.assign_forced,
@@ -1039,7 +1043,10 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
                  .filter(Enrollment.shift_id == g.id,
                          Enrollment.status == "cancelled")
                  .order_by(Enrollment.joined_at.desc()).limit(20).all()]
+    deadline = logic.auto_promote_deadline(db, g)
     return {
+        "auto_promote_deadline": iso(deadline),
+        "auto_promote_over": now() > deadline,
         "shift": {"id": g.id, "name": g.name, "time_text": g.span_text(),
                   "capacity": g.total_capacity(), "needs_assign": g.needs_assign(),
                   "mode": g.mode, "mode_label": g.mode_label(),
@@ -1057,6 +1064,40 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
         "cancelled": cancelled,
         "checked_in_count": len(checked_ids),
     }
+
+
+@router.post("/enrollments/{enrollment_id}/promote")
+def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
+                     user: User = Depends(require_manager)):
+    """管理者手动把候补转为正式。
+
+    自动转正在「报名截止」与「活动开始前 24 小时」的较晚者之后就停了——
+    那之后转正的人只剩不到一天准备，且他再退选还要扣分。要不要补人由
+    负责老师判断，所以这里不走 2 小时确认窗，直接落实并通知本人。
+    """
+    enr = db.get(Enrollment, enrollment_id)
+    if enr is None:
+        raise HTTPException(404, "报名记录不存在")
+    ensure_activity_manager(db, user, enr.activity_id)
+    if enr.status not in ("waitlisted", "pending_confirm"):
+        raise HTTPException(409, "该记录不在候补队列中")
+    g = _shift(db, enr.shift_id)
+    position = db.get(Position, enr.position_id) if enr.position_id else None
+    with shift_lock(g.id):
+        if not logic.has_room(db, g, position):
+            where = f"岗位「{position.name}」" if position else f"场次「{g.name}」"
+            raise HTTPException(409, f"{where}没有空余名额；"
+                                     f"如确需增加，请先在编辑态调高名额")
+        target = db.get(User, enr.user_id)
+        logic.promote_directly(db, enr, target)
+        audit_log(db, actor=user, action="update", target_type="enrollment",
+                  target_id=enr.id, target_label=target.name,
+                  activity_id=enr.activity_id,
+                  summary=f"手动将 {target.name} 从候补转为正式"
+                          f"（{position.name if position else g.name}）")
+        db.commit()
+    return {"ok": True, "status": enr.status,
+            "position_id": enr.position_id}
 
 
 class LeaderBody(BaseModel):
@@ -1081,25 +1122,28 @@ def set_leader(enrollment_id: str, body: LeaderBody,
     if not enr.position_id:
         raise HTTPException(409, "该志愿者还没有岗位，请先分配岗位")
     position = db.get(Position, enr.position_id)
-    if not position.needs_leader:
-        raise HTTPException(409, f"岗位「{position.name}」未设置组长，"
+    siblings = logic.group_positions(db, position)
+    if not logic.group_needs_leader(siblings):
+        raise HTTPException(409, f"岗位「{position.name}」所在的组未设置组长，"
                                  f"请先在岗位设置里勾选「需要组长」")
     target = db.get(User, enr.user_id)
 
     if body.is_leader:
+        sibling_ids = [x.id for x in logic.group_positions(db, position)]
         previous = (db.query(Enrollment)
-                    .filter(Enrollment.position_id == position.id,
+                    .filter(Enrollment.position_id.in_(sibling_ids),
                             Enrollment.is_leader.is_(True),
                             Enrollment.id != enr.id).all())
         for row in previous:
             row.is_leader = False
         enr.is_leader = True
         was = "、".join(db.get(User, r.user_id).name for r in previous)
-        summary = (f"指定 {target.name} 为岗位「{position.name}」组长"
+        scope = logic.leader_scope_label(siblings, position)
+        summary = (f"指定 {target.name} 为「{scope}」组长"
                    + (f"（原组长 {was} 已卸任）" if was else ""))
         wecom.send_user(db, target, "leader_appointed",
                         activity=db.get(Activity, enr.activity_id).title,
-                        position=position.name,
+                        position=scope,
                         position_time=position.time_text(),
                         position_loc=position.location or "待定")
     else:

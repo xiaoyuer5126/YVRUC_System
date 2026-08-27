@@ -122,6 +122,14 @@
           </div>
 
           <el-table v-if="g.positions.length" :data="g.positions" size="small">
+            <el-table-column label="岗位组" width="120">
+              <template #default="{row}">
+                <el-tag v-if="row.group_name" size="small" effect="plain" type="warning">
+                  {{ row.group_name }}
+                </el-tag>
+                <span v-else class="dim">—</span>
+              </template>
+            </el-table-column>
             <el-table-column label="岗位" min-width="130">
               <template #default="{row}">
                 <el-link type="primary" :underline="false"
@@ -180,14 +188,35 @@
             <template v-if="currentShift">
               <el-card shadow="never" class="wl-card">
                 <template #header><b>候补队列</b>
-                  <span class="dim">（按报名时间排序，正常退选自动递补）</span></template>
+                  <span class="dim">（按报名时间排序，同一岗位内排队）</span></template>
+                <el-alert v-if="roster.auto_promote_over" type="warning" show-icon
+                          :closable="false" style="margin-bottom:10px">
+                  <template #title>
+                    自动递补已停止（{{ fmtDT(roster.auto_promote_deadline) }} 起）
+                  </template>
+                  <div style="line-height:1.7">
+                    报名截止与活动开始前 24 小时都已过：此时转正的人只剩不到一天准备，
+                    他再退选还要扣分，所以不再自动递补。确需补人请逐个「转正」。
+                  </div>
+                </el-alert>
                 <div v-for="w in roster.waitlist" :key="w.enrollment_id" class="wl-row">
                   <el-tag size="small" circle>{{ w.queue_position }}</el-tag>
                   {{ w.user.name }}
                   <span class="dim">{{ w.user.student_id }}</span>
+                  <el-tag v-if="w.position_name" size="small" effect="plain">
+                    {{ w.position_name }}
+                  </el-tag>
                   <el-tag v-if="w.status === 'pending_confirm'" size="small" type="danger">
                     待确认 {{ w.confirm_deadline?.slice(11,16) }} 前
                   </el-tag>
+                  <el-popconfirm
+                      :title="`把 ${w.user.name} 直接转为正式（不再等本人确认）？`"
+                      @confirm="promoteManually(w)">
+                    <template #reference>
+                      <el-button size="small" link type="primary"
+                                 style="margin-left:auto">转正</el-button>
+                    </template>
+                  </el-popconfirm>
                 </div>
                 <el-empty v-if="!roster.waitlist.length" description="暂无候补" :image-size="50" />
               </el-card>
@@ -229,8 +258,12 @@
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="岗位" min-width="130">
+                <el-table-column label="岗位" min-width="150">
                   <template #default="{row}">
+                    <el-tag v-if="row.position_group" size="small" effect="plain"
+                            type="warning" style="margin-right:4px">
+                      {{ row.position_group }}
+                    </el-tag>
                     {{ row.position_name || '待分配' }}
                     <el-tag v-if="row.assign_forced" size="small" type="danger">强制</el-tag>
                   </template>
@@ -544,8 +577,16 @@
           <el-input-number v-model="stationForm.waitlist_quota" :min="0" />
           <span class="dim" style="margin-left:10px">满员后可排队的人数，0 = 不设候补</span>
         </el-form-item>
+        <el-form-item label="岗位组">
+          <el-input v-model="stationForm.group_name" style="width:220px"
+                    placeholder="如：东门片区（选填）" />
+          <div class="dim" style="margin-top:4px;line-height:1.7">
+            同一场次内<b>组名相同的岗位共用一名组长</b>——东门的引导、检录、
+            医疗点现场本来就是一个人在协调。留空则本岗位自成一组。
+          </div>
+        </el-form-item>
         <el-form-item label="组长">
-          <el-checkbox v-model="stationForm.needs_leader">本岗位需要一名组长</el-checkbox>
+          <el-checkbox v-model="stationForm.needs_leader">本组需要一名组长</el-checkbox>
           <div class="dim">报名时志愿者可表态愿意担任，按报名先后自动产生；
             组长退选或被调走时自动从其余有意愿的人里递补。</div>
         </el-form-item>
@@ -1017,11 +1058,13 @@ function openStation(st, g) {
   stationForm.value = st ? {
     name: st.name, location: st.location, quota: st.quota,
     waitlist_quota: st.waitlist_quota, needs_leader: st.needs_leader,
+    group_name: st.group_name || '',
     genderReq: (st.requirement_tags?.性别) || '',
     collegeReq: st.requirement_tags?.学院 || [],
     requirement_note: st.requirement_note, training_note: st.training_note,
   } : {
     name: '', location: '', quota: 2, waitlist_quota: 3, needs_leader: false,
+    group_name: '',
     genderReq: '', collegeReq: [],
     requirement_note: '', training_note: '',
   }
@@ -1042,6 +1085,7 @@ async function saveStation() {
     const body = {
       name: f.name, quota: f.quota, location: f.location,
       waitlist_quota: f.waitlist_quota, needs_leader: f.needs_leader,
+      group_name: f.group_name || '',
       requirement_tags: tags, requirement_note: f.requirement_note,
       training_note: f.training_note,
     }
@@ -1273,6 +1317,13 @@ async function setLeader(row, on) {
                        : `已取消 ${row.user.name} 的组长身份，由下一位有意愿者接任`)
   loadAll()
   return d
+}
+
+// 自动递补停了之后手动补人；名额不够时后端会拦，提示去调岗位名额
+async function promoteManually(w) {
+  await api.post(`/api/staff/enrollments/${w.enrollment_id}/promote`)
+  ElMessage.success(`${w.user.name} 已转为正式，通知已发送`)
+  loadAll()
 }
 
 async function applyMove(row) {

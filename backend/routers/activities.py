@@ -233,12 +233,15 @@ class ReassignPrefBody(BaseModel):
 def set_reassign_pref(enrollment_id: str, body: ReassignPrefBody,
                       db: OrmSession = Depends(db_session),
                       user: User = Depends(current_user)):
-    """志愿者改自己的调剂意愿。只是给管理者的参考，随时可改。"""
+    """志愿者改自己的调剂意愿。只是给管理者的参考，活动开始前随时可改。"""
     enr = db.get(Enrollment, enrollment_id)
     if enr is None or enr.user_id != user.id:
         raise HTTPException(404, "报名记录不存在")
     if enr.status not in logic.ACTIVE:
         raise HTTPException(409, "该报名记录已失效")
+    if enr.status == "waitlisted":
+        raise HTTPException(409, "候补期间必须接受调剂——"
+                                 "有空位的岗位才好把排队的人调过去")
     enr.allow_reassign = body.allow_reassign
     db.commit()
     return {"ok": True, "allow_reassign": enr.allow_reassign}

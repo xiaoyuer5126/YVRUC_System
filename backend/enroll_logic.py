@@ -10,7 +10,7 @@
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session as OrmSession
@@ -125,16 +125,38 @@ def unmet_requirements(user: User, position: Position) -> list[str]:
 
 # ======================= 组长 =======================
 
+def group_positions(db: OrmSession, position: Position) -> list[Position]:
+    """与该岗位同组的全部岗位（含自己）。
+
+    组名相同即同组；没填组名的岗位自成一组。分组是为了让相邻岗位共用一名
+    组长——「东门片区」的引导、检录、医疗点现场本来就是一个人在协调。
+    """
+    if not (position.group_name or "").strip():
+        return [position]
+    return (db.query(Position)
+            .filter(Position.shift_id == position.shift_id,
+                    Position.group_name == position.group_name)
+            .order_by(Position.sort).all())
+
+
+def group_needs_leader(positions: list[Position]) -> bool:
+    """组里只要有一个岗位标了需要组长，这个组就要有组长。"""
+    return any(p.needs_leader for p in positions)
+
+
 def elect_leader(db: OrmSession, position: Position) -> Enrollment | None:
-    """按报名先后从有意愿的人里选出组长。已有组长则不动。
+    """按报名先后从有意愿的人里选出**本组**组长。已有组长则不动。
 
     组长退选、被调剂走、或岗位刚需要组长时都走这里；一个都没有就返回 None，
-    名单页会显红标提示老师手动指定。
+    名单页会显红标提示老师手动指定。组长本人照常占一个岗位名额——
+    他也是来服务的，不是纯协调。
     """
-    if not position.needs_leader:
+    positions = group_positions(db, position)
+    if not group_needs_leader(positions):
         return None
+    ids = [p.id for p in positions]
     rows = (db.query(Enrollment)
-            .filter(Enrollment.position_id == position.id,
+            .filter(Enrollment.position_id.in_(ids),
                     Enrollment.status == "confirmed")
             .order_by(Enrollment.joined_at).all())
     if any(r.is_leader for r in rows):
@@ -145,11 +167,28 @@ def elect_leader(db: OrmSession, position: Position) -> Enrollment | None:
     head.is_leader = True
     user = db.get(User, head.user_id)
     activity = db.get(Activity, head.activity_id)
+    own = db.get(Position, head.position_id)
     wecom.send_user(db, user, "leader_appointed", activity=activity.title,
-                    position=position.name,
-                    position_time=position.time_text(),
-                    position_loc=position.location or "待定")
+                    position=leader_scope_label(positions, own),
+                    position_time=own.time_text(),
+                    position_loc=own.location or "待定")
     return head
+
+
+def leader_scope_label(positions: list[Position], own: Position) -> str:
+    """通知里怎么称呼组长的管辖范围。"""
+    if len(positions) <= 1:
+        return own.name
+    names = "、".join(p.name for p in positions)
+    return f"{positions[0].group_name}（{names}）"
+
+
+def group_leader(db: OrmSession, position: Position) -> Enrollment | None:
+    ids = [p.id for p in group_positions(db, position)]
+    return (db.query(Enrollment)
+            .filter(Enrollment.position_id.in_(ids),
+                    Enrollment.is_leader.is_(True),
+                    Enrollment.status == "confirmed").first())
 
 
 def refill_leader(db: OrmSession, position_id: str | None) -> None:
@@ -187,13 +226,30 @@ def waitlist_position(db: OrmSession, enr: Enrollment) -> int:
     return 0
 
 
+def auto_promote_deadline(db: OrmSession, shift: Shift) -> datetime:
+    """自动候补转正的截止点：报名截止时间与「活动开始前 24 小时」取更晚的那个。
+
+    过了这个点还自动转正是坑人：转正的人只剩不到一天准备，而他此时再退选
+    就要按临近退选扣分。之后要不要补人由负责老师看着办，手动转。
+    """
+    act = db.get(Activity, shift.activity_id)
+    cutoff = shift.start_time - timedelta(hours=config.LATE_CANCEL_HOURS)
+    if act is not None and act.reg_end and act.reg_end > cutoff:
+        cutoff = act.reg_end
+    # 再晚也不能晚于活动开始——报名截止时间填到活动之后时兜住
+    return min(cutoff, shift.start_time)
+
+
 def promote_head(db: OrmSession, shift: Shift,
                  position: Position | None = None) -> Enrollment | None:
     """有名额释放时，把候补队首转为「待确认」，开 2 小时确认窗并通知。
 
     只在确实空出名额时才提升：临近退选是占位不释放的，队列原地不动。
     pick 模式下队列是按岗位分的，只提升该岗位的队首。
+    过了自动转正截止点就不再自动提升，改由管理者手动转。
     """
+    if now() > auto_promote_deadline(db, shift):
+        return None
     if not has_room(db, shift, position):
         return None
     rows = waitlist_rows(db, shift.id)
@@ -213,6 +269,41 @@ def promote_head(db: OrmSession, shift: Shift,
     return head
 
 
+def promote_directly(db: OrmSession, enr: Enrollment, user: User) -> Enrollment:
+    """管理者手动把候补转为正式（不走 2 小时确认窗）。
+
+    自动转正截止之后才用得上：那时活动近在眼前，再给两小时确认窗
+    只会让名额继续空着。所以直接落实，并把结果通知本人。
+    """
+    enr.status = "confirmed"
+    enr.confirm_deadline = None
+    enr.promoted_at = now()
+    credit.reset_abandon_if_confirmed(user)
+    shift = db.get(Shift, enr.shift_id)
+    _settle_position(db, enr, user, shift)
+    return enr
+
+
+def _settle_position(db: OrmSession, enr: Enrollment, user: User,
+                     shift: Shift) -> None:
+    """转正后落实岗位并通知：assign 模式候补时没选岗位，这里挑一个。"""
+    if not enr.position_id and shift.positions:
+        ok = [p for p in shift.positions if not unmet_requirements(user, p)]
+        if ok:
+            best = max(ok, key=lambda p: p.quota - position_occupied_count(db, p.id))
+            enr.position_id = best.id
+            enr.assigned_at = now()
+            enr.assign_forced = False
+    if enr.position_id:
+        position = db.get(Position, enr.position_id)
+        activity = db.get(Activity, enr.activity_id)
+        wecom.send_user(db, user, "assignment", activity=activity.title,
+                        shift=shift.name, position=position.name,
+                        position_time=position.time_text(),
+                        position_loc=position.location or "待定")
+        elect_leader(db, position)
+
+
 def confirm_promotion(db: OrmSession, enr: Enrollment, user: User) -> Enrollment:
     """确认候补转正：成为正式报名。
 
@@ -223,24 +314,7 @@ def confirm_promotion(db: OrmSession, enr: Enrollment, user: User) -> Enrollment
     enr.status = "confirmed"
     enr.confirm_deadline = None
     credit.reset_abandon_if_confirmed(user)
-
-    # assign 模式候补时还没有岗位：挑一个还满足其硬性条件、剩余名额最多的
-    if not enr.position_id and shift.positions:
-        ok = [p for p in shift.positions if not unmet_requirements(user, p)]
-        if ok:
-            best = max(ok, key=lambda p: p.quota - position_occupied_count(db, p.id))
-            enr.position_id = best.id
-            enr.assigned_at = now()
-            enr.assign_forced = False
-
-    if enr.position_id:
-        position = db.get(Position, enr.position_id)
-        activity = db.get(Activity, enr.activity_id)
-        wecom.send_user(db, user, "assignment", activity=activity.title,
-                        shift=shift.name, position=position.name,
-                        position_time=position.time_text(),
-                        position_loc=position.location or "待定")
-        elect_leader(db, position)
+    _settle_position(db, enr, user, shift)
     return enr
 
 
@@ -283,6 +357,7 @@ def promote_all(db: OrmSession, shift: Shift) -> int:
     """把该场次所有空出名额的队列各提升一位。
 
     pick 模式下队列按岗位分，得逐个岗位看；assign 模式只有一条队。
+    过了自动转正截止点整个不动（见 auto_promote_deadline）。
     """
     if shift.needs_assign():
         return 1 if promote_head(db, shift) else 0

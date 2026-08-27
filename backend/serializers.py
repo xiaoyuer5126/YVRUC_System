@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .enroll_logic import (position_confirmed_count,
+from .enroll_logic import (group_leader, group_needs_leader, group_positions,
+                           position_confirmed_count,
                            position_occupied_count,
                            shift_confirmed_count, shift_occupied_count,
                            time_conflicts, unmet_requirements,
@@ -102,6 +103,7 @@ def position_out(db: OrmSession, p: Position, user=None, *,
         "requirement_tags": p.requirement_tags or {},
         "requirement_desc": p.requirement_desc() or "不限",
         "requirement_note": p.requirement_note,
+        "group_name": p.group_name,
         "sort": p.sort,
     }
     visible = enrolled or manager
@@ -109,10 +111,11 @@ def position_out(db: OrmSession, p: Position, user=None, *,
     out["training_note"] = p.training_note if visible else ""
     out["attachments"] = attachments_out(db, "position", p.id) if visible else []
     out["material_count"] = attachment_count(db, "position", p.id)
-    leader = (db.query(Enrollment)
-              .filter(Enrollment.position_id == p.id,
-                      Enrollment.is_leader.is_(True),
-                      Enrollment.status == "confirmed").first())
+    # 组长按「组」取：同组岗位共用一名组长
+    siblings = group_positions(db, p)
+    out["group_positions"] = [x.name for x in siblings] if len(siblings) > 1 else []
+    out["needs_leader"] = group_needs_leader(siblings)
+    leader = group_leader(db, p)
     out["leader_name"] = ((db.get(User, leader.user_id).name if leader else "")
                           if visible else "")
     if user is not None:

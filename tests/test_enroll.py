@@ -14,51 +14,6 @@ from backend.models import (Activity, ActivityManager, Enrollment, Position,
 from conftest import ADMIN, POSITION_TEXT, editing, login, student_row
 
 
-@pytest.fixture
-def open_group(db):
-    """一个报名中的活动 + 一个空场次，名额由用例自己定。
-
-    每次调用把场次往后挪一天：用例之间的场次不能重叠，否则同一个学生
-    在别处占的时段会把这里的报名挡掉。需要重叠的用例自己指定 day_offset。
-    """
-    seq = iter(range(30, 300))
-
-    def _make(capacity: int, *, mode: str = "pick", waitlist_quota: int = 3,
-              day_offset: int | None = None, start_in_hours: float = 4,
-              requirement_tags: dict | None = None, needs_leader: bool = False):
-        start = timedelta(days=day_offset if day_offset is not None
-                          else next(seq), hours=start_in_hours)
-        admin = db.query(User).filter(User.student_id == ADMIN).one()
-        act = Activity(id=uid("act"), title=f"测试活动 {uid('t')}", type="A",
-                       intro="用例生成", location="测试地点",
-                       contacts=[{"name": "测试", "phone": "13900000000"}],
-                       qa_group_qr="x", status="published",
-                       reg_start=now() - timedelta(days=1),
-                       reg_end=now() + timedelta(days=365),
-                       created_by=admin.id)
-        db.add(act)
-        db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
-                               user_id=admin.id, added_by=admin.id))
-        g = Shift(id=uid("g"), activity_id=act.id, name="测试场次",
-                  start_time=now() + start,
-                  end_time=now() + start + timedelta(hours=3),
-                  capacity=capacity, mode=mode,
-                  waitlist_quota=waitlist_quota, sort=0)
-        db.add(g)
-        db.flush()
-        # 名额在岗位上，所以每个测试场次都带一个岗位；assign 模式的场次
-        # 报名时不选岗位，名额看场次自己的 capacity。
-        p = Position(id=uid("p"), shift_id=g.id, name="测试岗位",
-                     quota=capacity, waitlist_quota=waitlist_quota,
-                     requirement_tags=requirement_tags or {},
-                     needs_leader=needs_leader, sort=0, **POSITION_TEXT)
-        db.add(p)
-        db.commit()
-        g.test_position_id = p.id
-        return act, g
-    return _make
-
-
 def enroll(client, headers, act, g, **body):
     """pick 模式必须带岗位；用例没指定就用场次自带的那个测试岗位。"""
     if "position_id" not in body and not g.needs_assign():
