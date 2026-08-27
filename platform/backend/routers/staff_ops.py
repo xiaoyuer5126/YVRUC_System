@@ -19,7 +19,7 @@ from ..perm import ensure_activity_manager
 from ..integrations import checkin_gateway, shuzhi
 from ..notify import notify_checkin
 from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
-                      HoursRecord, PositionGroup, Station, User, iso, now, uid)
+                      HoursRecord, Shift, Position, User, iso, now, uid)
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
 
@@ -34,30 +34,30 @@ def _act(db: OrmSession, activity_id: str) -> Activity:
 # ======================= 签到任务 =======================
 
 class TaskBody(BaseModel):
-    mode: str = "group"                 # group 统一签到 / station 分时分工位
-    station_id: str | None = None
+    mode: str = "shift"                 # group 统一签到 / position 分岗位
+    position_id: str | None = None
     valid_from: str | None = None
     valid_to: str | None = None
 
 
-@router.post("/groups/{group_id}/checkin-tasks")
-def create_task(group_id: str, body: TaskBody,
+@router.post("/shifts/{shift_id}/checkin-tasks")
+def create_task(shift_id: str, body: TaskBody,
                 db: OrmSession = Depends(db_session),
                 user: User = Depends(require_manager)):
-    g = db.get(PositionGroup, group_id)
+    g = db.get(Shift, shift_id)
     if g is None:
-        raise HTTPException(404, "岗位组不存在")
+        raise HTTPException(404, "场次不存在")
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
-    station = None
-    if body.mode == "station":
-        station = db.get(Station, body.station_id or "")
-        if station is None or station.group_id != g.id:
-            raise HTTPException(400, "分时分工位签到必须指定本场次下的二级工位")
+    position = None
+    if body.mode == "position":
+        position = db.get(Position, body.position_id or "")
+        if position is None or position.shift_id != g.id:
+            raise HTTPException(400, "分岗位签到必须指定本场次下的岗位")
     token = checkin_gateway.create_task(body.mode, g.id,
-                                        station.id if station else "")
-    task = CheckinTask(id=uid("tsk"), activity_id=act.id, group_id=g.id,
-                       station_id=station.id if station else None,
+                                        position.id if position else "")
+    task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+                       position_id=position.id if position else None,
                        mode=body.mode, token=token,
                        valid_from=(datetime.fromisoformat(body.valid_from)
                                    if body.valid_from else g.start_time),
@@ -65,11 +65,11 @@ def create_task(group_id: str, body: TaskBody,
                                  if body.valid_to else g.end_time),
                        created_by=user.id)
     db.add(task)
-    label = f"{station.name}" if station else f"{g.name}·统一签到"
+    label = f"{position.name}" if position else f"{g.name}·统一签到"
     audit_log(db, actor=user, action="checkin_task", target_type="checkin",
               target_id=task.id, target_label=f"{act.title}·{label}",
               activity_id=act.id,
-              summary=f"生成签到码 {token}（{'工位' if station else '统一'}模式，"
+              summary=f"生成签到码 {token}（{'岗位' if position else '统一'}模式，"
                       f"有效 {task.valid_from:%H:%M}~{task.valid_to:%H:%M}）")
     db.commit()
     return {"id": task.id, "token": token}
@@ -85,13 +85,13 @@ def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
              .order_by(CheckinTask.created_at.desc()).all())
     out = []
     for t in tasks:
-        g = db.get(PositionGroup, t.group_id)
-        st = db.get(Station, t.station_id) if t.station_id else None
+        g = db.get(Shift, t.shift_id)
+        st = db.get(Position, t.position_id) if t.position_id else None
         n = (db.query(func.count(CheckinRecord.id))
              .filter(CheckinRecord.task_id == t.id).scalar() or 0)
         out.append({"id": t.id, "token": t.token, "mode": t.mode,
-                    "group_name": g.name,
-                    "station_name": st.name if st else "",
+                    "shift_name": g.name,
+                    "position_name": st.name if st else "",
                     "valid_from": iso(t.valid_from), "valid_to": iso(t.valid_to),
                     "active": t.active, "count": n})
     return out
@@ -111,17 +111,17 @@ def toggle_task(task_id: str, body: dict,
     return {"ok": True, "active": task.active}
 
 
-@router.post("/groups/{group_id}/checkin-reminder")
-def send_reminder(group_id: str, db: OrmSession = Depends(db_session),
+@router.post("/shifts/{shift_id}/checkin-reminder")
+def send_reminder(shift_id: str, db: OrmSession = Depends(db_session),
                   user: User = Depends(require_manager)):
     """手动补发签到提醒。
 
     自动提醒在场次开始前 30 分钟发一次；这个按钮用于临时催场——
     只发给还没签到的已确认志愿者，已经到岗的不再打扰。
     """
-    g = db.get(PositionGroup, group_id)
+    g = db.get(Shift, shift_id)
     if g is None:
-        raise HTTPException(404, "岗位组不存在")
+        raise HTTPException(404, "场次不存在")
     ensure_activity_manager(db, user, g.activity_id)
     n = notify_checkin(db, g)
     if not n:
@@ -143,35 +143,35 @@ def board(task_id: str, db: OrmSession = Depends(db_session),
     if task is None:
         raise HTTPException(404, "任务不存在")
     ensure_activity_manager(db, user, task.activity_id)
-    g = db.get(PositionGroup, task.group_id)
+    g = db.get(Shift, task.shift_id)
     act = db.get(Activity, task.activity_id)
 
     roster = (db.query(Enrollment, User)
               .join(User, Enrollment.user_id == User.id)
-              .filter(Enrollment.group_id == g.id,
+              .filter(Enrollment.shift_id == g.id,
                       Enrollment.status == "confirmed")
               .order_by(User.college, User.name).all())
     recs = (db.query(CheckinRecord)
-            .filter(CheckinRecord.group_id == g.id).all())
+            .filter(CheckinRecord.shift_id == g.id).all())
     rec_by_user: dict[str, CheckinRecord] = {r.user_id: r for r in recs}
 
     items = []
     checked = checked_out = 0
-    by_station: dict[str, int] = {}   # 到岗统计只基于有签到记录的
+    by_position: dict[str, int] = {}   # 到岗统计只基于有签到记录的
     for enr, u in roster:
-        st = db.get(Station, enr.station_id) if enr.station_id else None
+        st = db.get(Position, enr.position_id) if enr.position_id else None
         rec = rec_by_user.get(u.id)
         if rec:
             checked += 1
             if rec.checkout_at:
                 checked_out += 1
-            key = rec.station_id or "_group"
-            by_station[key] = by_station.get(key, 0) + 1
+            key = rec.position_id or "_shift"
+            by_position[key] = by_position.get(key, 0) + 1
         items.append({
             "record_id": rec.id if rec else "",
             "name": u.name, "student_id": u.student_id,
             "college": u.college or "",
-            "station": st.name if st else "待分配",
+            "position": st.name if st else "待分配",
             "checked_in": bool(rec),
             "method": rec.method if rec else "",
             "time": (rec.checkin_at.strftime("%H:%M:%S") if rec else ""),
@@ -179,31 +179,31 @@ def board(task_id: str, db: OrmSession = Depends(db_session),
                             if rec and rec.checkout_at else ""),
             "checkout_method": (rec.checkout_method or "") if rec else "",
         })
-    stations = [{"id": s.id, "name": s.name, "quota": s.quota,
-                 "checked": by_station.get(s.id, 0)}
-                for s in sorted(g.stations, key=lambda x: x.sort)]
+    positions = [{"id": s.id, "name": s.name, "quota": s.quota,
+                 "checked": by_position.get(s.id, 0)}
+                for s in sorted(g.positions, key=lambda x: x.sort)]
     return {
         "task": {"id": task.id, "token": task.token, "mode": task.mode,
                  "active": task.active},
-        "activity_title": act.title, "group_name": g.name,
+        "activity_title": act.title, "shift_name": g.name,
         "expected": len(roster), "checked": checked,
         "checked_out": checked_out,
-        "stations": stations, "records": items[:500],
+        "positions": positions, "records": items[:500],
     }
 
 
-@router.get("/groups/{group_id}/board")
-def group_board(group_id: str, db: OrmSession = Depends(db_session),
+@router.get("/shifts/{shift_id}/board")
+def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
                 user: User = Depends(require_manager)):
     """按场次聚合的签到实时大屏（不依赖激活的签到任务，
     任务关闭/不存在时仍可查看到场名单）。前端 5s 轮询。
 
     以已确认报名（Enrollment.status=confirmed）join User 为主表，
-    左连该场次的 CheckinRecord（user_id+group_id 匹配，一人至多一条）。
+    左连该场次的 CheckinRecord（user_id+shift_id 匹配，一人至多一条）。
     """
-    g = db.get(PositionGroup, group_id)
+    g = db.get(Shift, shift_id)
     if g is None:
-        raise HTTPException(404, "岗位组不存在")
+        raise HTTPException(404, "场次不存在")
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
 
@@ -211,27 +211,27 @@ def group_board(group_id: str, db: OrmSession = Depends(db_session),
             .join(User, Enrollment.user_id == User.id)
             .outerjoin(CheckinRecord,
                        (CheckinRecord.user_id == Enrollment.user_id)
-                       & (CheckinRecord.group_id == Enrollment.group_id))
-            .filter(Enrollment.group_id == g.id,
+                       & (CheckinRecord.shift_id == Enrollment.shift_id))
+            .filter(Enrollment.shift_id == g.id,
                     Enrollment.status == "confirmed")
             .order_by(User.college, User.name).all())
 
     items = []
     checked = checked_out = 0
-    by_station: dict[str, int] = {}   # 到岗统计只基于有签到记录者
+    by_position: dict[str, int] = {}   # 到岗统计只基于有签到记录者
     for enr, u, rec in rows:
-        st = db.get(Station, enr.station_id) if enr.station_id else None
+        st = db.get(Position, enr.position_id) if enr.position_id else None
         if rec:
             checked += 1
             if rec.checkout_at:
                 checked_out += 1
-            key = rec.station_id or "_group"
-            by_station[key] = by_station.get(key, 0) + 1
+            key = rec.position_id or "_shift"
+            by_position[key] = by_position.get(key, 0) + 1
         items.append({
             "record_id": rec.id if rec else "",
             "name": u.name, "student_id": u.student_id,
             "college": u.college or "",
-            "station": st.name if st else "待分配",
+            "position": st.name if st else "待分配",
             "checked_in": bool(rec),
             "method": rec.method if rec else "",
             "time": (rec.checkin_at.strftime("%H:%M:%S") if rec else ""),
@@ -239,15 +239,15 @@ def group_board(group_id: str, db: OrmSession = Depends(db_session),
                             if rec and rec.checkout_at else ""),
             "checkout_method": (rec.checkout_method or "") if rec else "",
         })
-    stations = [{"id": s.id, "name": s.name, "quota": s.quota,
-                 "checked": by_station.get(s.id, 0)}
-                for s in sorted(g.stations, key=lambda x: x.sort)]
+    positions = [{"id": s.id, "name": s.name, "quota": s.quota,
+                 "checked": by_position.get(s.id, 0)}
+                for s in sorted(g.positions, key=lambda x: x.sort)]
     return {
         "activity_id": act.id, "activity_title": act.title,
-        "group_id": g.id, "group_name": g.name,
+        "shift_id": g.id, "shift_name": g.name,
         "expected": len(rows), "checked": checked,
         "checked_out": checked_out,
-        "stations": stations, "records": items[:500],
+        "positions": positions, "records": items[:500],
     }
 
 
@@ -265,7 +265,7 @@ def batch_op(task_id: str, body: dict,
     if task is None:
         raise HTTPException(404, "任务不存在")
     ensure_activity_manager(db, user, task.activity_id)
-    g = db.get(PositionGroup, task.group_id)
+    g = db.get(Shift, task.shift_id)
     action = body.get("action")
     sids = [s.strip() for s in (body.get("student_ids") or []) if s.strip()]
     if action not in ("checkin", "checkout", "cancel_checkin", "cancel_checkout"):
@@ -280,7 +280,7 @@ def batch_op(task_id: str, body: dict,
             skipped.append(f"{sid}（学号不存在）")
             continue
         enr = (db.query(Enrollment)
-               .filter(Enrollment.group_id == task.group_id,
+               .filter(Enrollment.shift_id == task.shift_id,
                        Enrollment.user_id == u.id,
                        Enrollment.status == "confirmed").first())
         if enr is None:
@@ -288,7 +288,7 @@ def batch_op(task_id: str, body: dict,
             continue
         rec = (db.query(CheckinRecord)
                .filter(CheckinRecord.user_id == u.id,
-                       CheckinRecord.group_id == task.group_id).first())
+                       CheckinRecord.shift_id == task.shift_id).first())
 
         if action == "checkin":
             if rec:
@@ -296,8 +296,8 @@ def batch_op(task_id: str, body: dict,
                 continue
             db.add(CheckinRecord(id=uid("ckr"), task_id=task.id,
                                  activity_id=task.activity_id,
-                                 group_id=task.group_id,
-                                 station_id=enr.station_id, user_id=u.id,
+                                 shift_id=task.shift_id,
+                                 position_id=enr.position_id, user_id=u.id,
                                  method="manual", by_user=user.id))
             done.append(u.name)
         elif action == "checkout":
@@ -375,7 +375,7 @@ def _round_half_up(hours: float) -> float:
     return math.ceil(max(0.0, hours) * 2) / 2
 
 
-def effective_checkout(rec: CheckinRecord, g: PositionGroup):
+def effective_checkout(rec: CheckinRecord, g: Shift):
     """签退时间判定：
        · 已签退 → 实际签退时间；
        · 未签退但已超过「场次结束+2小时」→ 按场次结束时间兜底；
@@ -402,7 +402,7 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
     per_user: dict[str, float] = {}
     flags: dict[str, set] = {}
     for rec in records:
-        g = db.get(PositionGroup, rec.group_id)
+        g = db.get(Shift, rec.shift_id)
         if g is None:
             continue
         checkout, kind = effective_checkout(rec, g)

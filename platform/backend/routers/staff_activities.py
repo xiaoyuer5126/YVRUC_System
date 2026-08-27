@@ -1,8 +1,8 @@
 """教师/青协端：活动筹备（活动与岗位树 CRUD）、报名名单、二次分配。
 
 岗位树校验（《设计方案》二）：
-  · 二级工位时间必须被包裹在一级岗位时间范围内；
-  · 一级岗位总人数需大于等于下属二级工位人数之和。
+  · 岗位时间必须被包裹在场次时间范围内；
+  · 场次总人数需大于等于下属岗位人数之和。
 所有增删改走审计留痕；影响志愿者的时间/地点类修改会推送「活动变更警告」，
 附变更前后对比摘要。
 """
@@ -24,14 +24,14 @@ from .. import scheduler_adapter
 from ..audit import diff_changes, log as audit_log
 from ..database import db_session
 from ..deps import require_manager
-from ..locks import group_lock
+from ..locks import shift_lock
 from ..notify import notify_enrolled
 from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, managed_activity_ids,
                      remove_manager)
 from ..integrations import wecom
 from ..models import (Activity, ActivityManager, CheckinRecord, Enrollment,
-                      PositionGroup, Station, User, iso, now, uid)
+                      Shift, Position, User, iso, now, uid)
 from ..serializers import activity_brief
 
 router = APIRouter(prefix="/api/staff", tags=["staff"])
@@ -51,10 +51,10 @@ def _act(db: OrmSession, activity_id: str) -> Activity:
     return act
 
 
-def _group(db: OrmSession, gid: str) -> PositionGroup:
-    g = db.get(PositionGroup, gid)
+def _group(db: OrmSession, gid: str) -> Shift:
+    g = db.get(Shift, gid)
     if g is None:
-        raise HTTPException(404, "岗位组不存在")
+        raise HTTPException(404, "场次不存在")
     return g
 
 
@@ -74,15 +74,15 @@ def _notify_assignment_bg(items: list[dict]):
     try:
         for it in items:
             u = db.get(User, it["user_id"])
-            st = db.get(Station, it["station_id"])
-            g = db.get(PositionGroup, it["group_id"])
+            st = db.get(Position, it["position_id"])
+            g = db.get(Shift, it["shift_id"])
             if not (u and st and g):
                 continue
             wecom.send_user(db, u, "assignment",
                             activity=db.get(Activity, g.activity_id).title,
-                            group=g.name, station=st.name,
-                            station_time=st.time_text(),
-                            station_loc=st.location or "待定")
+                            group=g.name, position=st.name,
+                            position_time=st.time_text(),
+                            position_loc=st.location or "待定")
         db.commit()
     finally:
         db.close()
@@ -102,7 +102,7 @@ def list_all(db: OrmSession = Depends(db_session),
     for a in acts:
         item = activity_brief(db, a)
         wl = 0
-        for g in a.groups:
+        for g in a.shifts:
             wl += logic.waitlist_rows(db, g.id).__len__()
         item["waitlist_count"] = wl
         out.append(item)
@@ -246,8 +246,8 @@ def publish(activity_id: str, db: OrmSession = Depends(db_session),
             user: User = Depends(require_manager)):
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    if not act.groups:
-        raise HTTPException(400, "请先至少创建一个一级岗位（场次）再发布")
+    if not act.shifts:
+        raise HTTPException(400, "请先至少创建一个场次（场次）再发布")
     if act.status != "draft":
         raise HTTPException(409, f"当前状态为「{act.label_status()}」，不能发布")
     act.status = "published"
@@ -314,75 +314,75 @@ def delete_activity(activity_id: str, db: OrmSession = Depends(db_session),
     return {"ok": True}
 
 
-# ======================= 一级岗位组 =======================
+# ======================= 一级场次 =======================
 
-GROUP_MODES = ("single", "assign", "fine")
+SHIFT_MODES = ("pick", "assign")
 
 
-class GroupBody(BaseModel):
+class ShiftBody(BaseModel):
     name: str = Field(max_length=128)
     start_time: str
     end_time: str
-    capacity: int = Field(gt=0)     # 0 人的场次没有意义，报名逻辑也无从判断
-    mode: str = "fine"          # single 仅一级 / assign 二级待定 / fine 直接定二级
+    mode: str = "pick"          # pick 报名即选岗位 / assign 截止后统一分配
+    # 只有 assign 模式用得上：报名时还没有岗位可选，名额只能记在场次上
+    capacity: int = Field(default=0, ge=0)
     note: str = ""
     waitlist_quota: int = Field(default=3, ge=0)   # 候补队列人数上限
 
 
-def _validate_group_times(start: datetime, end: datetime):
+def _validate_shift_times(start: datetime, end: datetime):
     if end <= start:
         raise HTTPException(400, "结束时间必须晚于开始时间")
 
 
-def _validate_group_capacity(db: OrmSession, g: PositionGroup):
-    """容量不能低于已经消耗掉的名额，否则场次当场超员。"""
+def _validate_shift_capacity(db: OrmSession, g: Shift):
+    """assign 模式的场次总名额校验。pick 模式名额在岗位上，这里不管。"""
+    if not g.needs_assign():
+        return
     if g.capacity <= 0:
-        raise HTTPException(400, "人数上限必须大于 0")
-    used = logic.group_occupied_count(db, g.id)
+        raise HTTPException(400, "「截止后统一分配」的场次必须填写人数上限")
+    used = logic.shift_occupied_count(db, g.id)
     if g.capacity < used:
         raise HTTPException(
             400, f"人数上限不能小于已占用名额（{used} 人：含已确认报名与"
                  f"临近退选扣留的名额）")
 
 
-def _apply_group_mode(db: OrmSession, g: PositionGroup, mode: str):
-    """切换岗位模式，并把与新模式矛盾的既有分配清理干净。"""
-    if mode not in GROUP_MODES:
-        raise HTTPException(400, "岗位模式必须是 single/assign/fine")
-    if mode == "single" and g.stations:
-        raise HTTPException(400, f"该场次下还有 {len(g.stations)} 个二级工位，"
-                                 f"请先删除工位才能切换为「仅一级」")
+def _apply_shift_mode(db: OrmSession, g: Shift, mode: str):
+    """切换场次模式，并把与新模式矛盾的既有分配清理干净。"""
+    if mode not in SHIFT_MODES:
+        raise HTTPException(400, "场次模式必须是 pick 或 assign")
     if mode == "assign" and g.mode != "assign":
-        # 二级待定：工位由调配期统一分配，先前报名时选定的工位一律作废，
-        # 否则分配面板里会混着一批"已经有工位"的人，谁也说不清是谁定的
+        # 二级待定：岗位由调配期统一分配，先前报名时选定的岗位一律作废，
+        # 否则分配面板里会混着一批"已经有岗位"的人，谁也说不清是谁定的
         (db.query(Enrollment)
-         .filter(Enrollment.group_id == g.id,
-                 Enrollment.station_id.isnot(None))
-         .update({"station_id": None, "assigned_at": None,
+         .filter(Enrollment.shift_id == g.id,
+                 Enrollment.position_id.isnot(None))
+         .update({"position_id": None, "assigned_at": None,
                   "assigned_by": None, "assign_forced": False},
                  synchronize_session=False))
     g.mode = mode
 
 
-@router.post("/activities/{activity_id}/groups")
-def create_group(activity_id: str, body: GroupBody, bg: BackgroundTasks,
+@router.post("/activities/{activity_id}/shifts")
+def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager)):
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     start, end = _parse_dt(body.start_time), _parse_dt(body.end_time)
-    _validate_group_times(start, end)
-    g = PositionGroup(id=uid("g"), activity_id=act.id, name=body.name.strip(),
+    _validate_shift_times(start, end)
+    g = Shift(id=uid("g"), activity_id=act.id, name=body.name.strip(),
                       start_time=start, end_time=end, capacity=body.capacity,
-                      note=body.note.strip(), sort=len(act.groups),
+                      note=body.note.strip(), sort=len(act.shifts),
                       waitlist_quota=body.waitlist_quota)
-    _apply_group_mode(db, g, body.mode)
+    _apply_shift_mode(db, g, body.mode)
     db.add(g)
     db.flush()
     audit_log(db, actor=user, action="create", target_type="group",
               target_id=g.id, target_label=f"{act.title}·{g.name}",
               activity_id=act.id,
-              summary=f"新建一级岗位「{g.name}」（{g.span_text()}，"
+              summary=f"新建场次「{g.name}」（{g.span_text()}，"
                       f"{g.mode_label()}，上限{body.capacity}人）")
     db.commit()
     if act.status != "draft":
@@ -392,43 +392,39 @@ def create_group(activity_id: str, body: GroupBody, bg: BackgroundTasks,
     return {"id": g.id}
 
 
-GROUP_FIELDS = {"name": "场次名", "start_time": "开始时间", "end_time": "结束时间",
+SHIFT_FIELDS = {"name": "场次名", "start_time": "开始时间", "end_time": "结束时间",
                 "capacity": "人数上限", "mode": "岗位模式", "note": "备注",
                 "waitlist_quota": "候补名额"}
 
 
-@router.patch("/groups/{group_id}")
-def update_group(group_id: str, body: dict, bg: BackgroundTasks,
+@router.patch("/shifts/{shift_id}")
+def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager)):
-    g = _group(db, group_id)
+    g = _group(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
-    before_raw = {k: getattr(g, k) for k in GROUP_FIELDS}
-    for key in GROUP_FIELDS:
+    before_raw = {k: getattr(g, k) for k in SHIFT_FIELDS}
+    for key in SHIFT_FIELDS:
         if key not in body:
             continue
         v = body[key]
         if key in ("start_time", "end_time"):
             setattr(g, key, _parse_dt(v))
         elif key == "mode":
-            _apply_group_mode(db, g, v)
+            _apply_shift_mode(db, g, v)
         else:
             setattr(g, key, v)
-    _validate_group_times(g.start_time, g.end_time)
-    _validate_group_capacity(db, g)
-    quota_sum = g.station_quota_sum()
-    if quota_sum > g.capacity:
-        raise HTTPException(
-            400, f"二级工位人数之和({quota_sum})超过一级岗位总上限({g.capacity})")
+    _validate_shift_times(g.start_time, g.end_time)
+    _validate_shift_capacity(db, g)
 
     def fmt(v):
         if isinstance(v, datetime):
             return v.strftime("%m-%d %H:%M")
         return v
     changes = diff_changes({k: fmt(v) for k, v in before_raw.items()},
-                           {k: fmt(getattr(g, k)) for k in GROUP_FIELDS},
-                           GROUP_FIELDS)
+                           {k: fmt(getattr(g, k)) for k in SHIFT_FIELDS},
+                           SHIFT_FIELDS)
     time_or_place = any(c["field"] in ("start_time", "end_time", "name", "note")
                         for c in changes)
     if changes and act.status != "draft" and time_or_place:
@@ -446,22 +442,22 @@ def update_group(group_id: str, body: dict, bg: BackgroundTasks,
     return {"ok": True, "changes": changes}
 
 
-@router.delete("/groups/{group_id}")
-def delete_group(group_id: str, force: int = 0, bg: BackgroundTasks = None,
+@router.delete("/shifts/{shift_id}")
+def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager)):
-    g = _group(db, group_id)
+    g = _group(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
     n_active = db.query(Enrollment).filter(
-        Enrollment.group_id == g.id,
+        Enrollment.shift_id == g.id,
         Enrollment.status.in_(logic.ACTIVE)).count()
     if n_active and not force:
         raise HTTPException(409, f"该场次已有 {n_active} 人有效报名，"
                                  f"删除需强制执行（force=1），全部记录将被取消")
     if n_active and force:
         # 场次没了，扣留的占位名额也一并失效——这不是志愿者的责任
-        (db.query(Enrollment).filter(Enrollment.group_id == g.id)
+        (db.query(Enrollment).filter(Enrollment.shift_id == g.id)
          .update({"status": "cancelled", "cancel_type": "group_deleted",
                   "seat_held": False},
                  synchronize_session=False))
@@ -478,128 +474,138 @@ def delete_group(group_id: str, force: int = 0, bg: BackgroundTasks = None,
     return {"ok": True}
 
 
-# ======================= 二级工位 =======================
+# ======================= 岗位 =======================
 
-class StationBody(BaseModel):
-    """二级工位不再设置时间：职责/地点/名额/要求，时间随场次。"""
+class PositionBody(BaseModel):
+    """岗位没有时间——时间随场次。名额、候补、条件、组长都在这一层。"""
     name: str = Field(max_length=128)
     location: str = ""
     quota: int = Field(gt=0)
+    waitlist_quota: int = Field(default=3, ge=0)
     requirement_tags: dict = {}
     requirement_note: str = ""
     training_note: str = ""
+    needs_leader: bool = False
 
 
-STATION_FIELDS = {"name": "工位名", "location": "地点", "quota": "名额",
-                  "requirement_tags": "条件要求", "requirement_note": "要求原文",
-                  "training_note": "培训内容"}
+POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
+                   "waitlist_quota": "候补名额", "needs_leader": "需要组长",
+                   "requirement_tags": "条件要求",
+                   "requirement_note": "要求原文", "training_note": "培训内容"}
 
 
-def _validate_station(db: OrmSession, g: PositionGroup, s: Station):
-    if g.mode == "single":
-        raise HTTPException(400, "「仅一级岗位」模式下没有二级工位，"
-                                 "请先把场次切换为「二级待定」或「直接定二级」")
+def _validate_position(db: OrmSession, g: Shift, s: Position):
+    """岗位自带名额，不再受场次总数约束——场次只管时间。
+
+    assign 模式例外：那时名额记在场次上，各岗位之和不能超过它，
+    否则一键分配会分出比报名人数更多的坑位。
+    """
     if s.quota <= 0:
-        raise HTTPException(400, "工位名额必须大于 0")
-    quota_sum = sum(x.quota for x in g.stations if x.id != s.id) + s.quota
-    if quota_sum > g.capacity:
-        raise HTTPException(
-            400, f"二级工位人数之和({quota_sum})将超过一级岗位总上限"
-                 f"({g.capacity})，请调低工位名额或提高场次数上限")
+        raise HTTPException(400, "岗位名额必须大于 0")
+    used = logic.position_occupied_count(db, s.id) if s.id else 0
+    if s.quota < used:
+        raise HTTPException(400, f"岗位名额不能小于已占用的 {used} 人")
+    if g.needs_assign():
+        quota_sum = sum(x.quota for x in g.positions if x.id != s.id) + s.quota
+        if quota_sum > g.capacity:
+            raise HTTPException(
+                400, f"各岗位名额之和({quota_sum})超过场次人数上限({g.capacity})")
 
 
-@router.post("/groups/{group_id}/stations")
-def create_station(group_id: str, body: StationBody,
+@router.post("/shifts/{shift_id}/positions")
+def create_position(shift_id: str, body: PositionBody,
                    db: OrmSession = Depends(db_session),
                    user: User = Depends(require_manager)):
-    g = _group(db, group_id)
+    g = _group(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
-    s = Station(id=uid("s"), group_id=g.id, name=body.name.strip(),
+    s = Position(id=uid("s"), shift_id=g.id, name=body.name.strip(),
                 location=body.location.strip(), quota=body.quota,
+                waitlist_quota=body.waitlist_quota,
+                needs_leader=body.needs_leader,
                 requirement_tags=body.requirement_tags or {},
                 requirement_note=body.requirement_note.strip(),
                 training_note=body.training_note.strip(),
-                sort=len(g.stations))
-    _validate_station(db, g, s)
+                sort=len(g.positions))
+    _validate_position(db, g, s)
     db.add(s)
     db.flush()   # 让 group 关系可用，供 time_text() 使用
-    audit_log(db, actor=user, action="create", target_type="station",
+    audit_log(db, actor=user, action="create", target_type="position",
               target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
               activity_id=act.id,
-              summary=f"新建二级工位「{s.name}」（{s.time_text()}，"
+              summary=f"新建岗位「{s.name}」（{s.time_text()}，"
                       f"{s.location or '地点待定'}，{s.quota}人）")
     db.commit()
     return {"id": s.id}
 
 
-@router.patch("/stations/{station_id}")
-def update_station(station_id: str, body: dict, bg: BackgroundTasks,
+@router.patch("/positions/{position_id}")
+def update_position(position_id: str, body: dict, bg: BackgroundTasks,
                    db: OrmSession = Depends(db_session),
                    user: User = Depends(require_manager)):
-    s = db.get(Station, station_id)
+    s = db.get(Position, position_id)
     if s is None:
-        raise HTTPException(404, "工位不存在")
-    g = _group(db, s.group_id)
+        raise HTTPException(404, "岗位不存在")
+    g = _group(db, s.shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
-    before_raw = {k: getattr(s, k) for k in STATION_FIELDS}
-    for key in STATION_FIELDS:
+    before_raw = {k: getattr(s, k) for k in POSITION_FIELDS}
+    for key in POSITION_FIELDS:
         if key not in body:
             continue
         setattr(s, key, body[key])
-    _validate_station(db, g, s)
+    _validate_position(db, g, s)
 
     def fmt(v):
         if isinstance(v, datetime):
             return v.strftime("%m-%d %H:%M")
         return v
     changes = diff_changes({k: fmt(v) for k, v in before_raw.items()},
-                           {k: fmt(getattr(s, k)) for k in STATION_FIELDS},
-                           STATION_FIELDS)
+                           {k: fmt(getattr(s, k)) for k in POSITION_FIELDS},
+                           POSITION_FIELDS)
     if changes and act.status != "draft":
         affected = (db.query(Enrollment.user_id)
-                    .filter(Enrollment.station_id == s.id,
+                    .filter(Enrollment.position_id == s.id,
                             Enrollment.status == "confirmed").all())
         for (uid_,) in affected:
             bg.add_task(_notify_assignment_bg,
-                        [{"user_id": uid_, "station_id": s.id,
-                          "group_id": g.id}])
+                        [{"user_id": uid_, "position_id": s.id,
+                          "shift_id": g.id}])
         summary = "；".join(f"{c['label']}：{c['old']}→{c['new']}"
                             for c in changes if c["field"] != "requirement_tags")
         if summary:
             bg.add_task(_notify_activity_bg, act.id, "activity_changed",
                         activity=act.title,
-                        change_summary=f"工位「{s.name}」调整：{summary}")
-    audit_log(db, actor=user, action="update", target_type="station",
+                        change_summary=f"岗位「{s.name}」调整：{summary}")
+    audit_log(db, actor=user, action="update", target_type="position",
               target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
               activity_id=act.id,
-              summary=f"修改工位「{s.name}」："
+              summary=f"修改岗位「{s.name}」："
                       f"{'、'.join(c['label'] for c in changes) or '无实质变化'}",
               changes=changes)
     db.commit()
     return {"ok": True, "changes": changes}
 
 
-@router.delete("/stations/{station_id}")
-def delete_station(station_id: str,
+@router.delete("/positions/{position_id}")
+def delete_position(position_id: str,
                    db: OrmSession = Depends(db_session),
                    user: User = Depends(require_manager)):
-    s = db.get(Station, station_id)
+    s = db.get(Position, position_id)
     if s is None:
-        raise HTTPException(404, "工位不存在")
-    g = _group(db, s.group_id)
+        raise HTTPException(404, "岗位不存在")
+    g = _group(db, s.shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
-    n = db.query(Enrollment).filter(Enrollment.station_id == s.id,
+    n = db.query(Enrollment).filter(Enrollment.position_id == s.id,
                                     Enrollment.status == "confirmed").count()
     if n:
-        raise HTTPException(409, f"该工位仍有 {n} 人已确认，请先在分配面板调整")
+        raise HTTPException(409, f"该岗位仍有 {n} 人已确认，请先在分配面板调整")
     label = f"{act.title}·{g.name}·{s.name}"
     db.delete(s)
-    audit_log(db, actor=user, action="delete", target_type="station",
+    audit_log(db, actor=user, action="delete", target_type="position",
               target_id=s.id, target_label=label, activity_id=act.id,
-              summary=f"删除工位「{s.name}」")
+              summary=f"删除岗位「{s.name}」")
     db.commit()
     return {"ok": True}
 
@@ -669,7 +675,7 @@ def remove_activity_manager(activity_id: str, user_id: str,
 
 class NotifyBody(BaseModel):
     scope: str = "all"      # all 全部志愿者 / group 指定场次 / not_checked_in 场次未到岗
-    group_id: str = ""
+    shift_id: str = ""
     title: str = Field(max_length=128)
     content: str
 
@@ -680,7 +686,7 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
                       user: User = Depends(require_manager)):
     """向该活动 status=confirmed 的报名者发送自定义通知。
 
-    scope=group：再按 group_id 过滤；scope=not_checked_in：按 group_id 过滤
+    scope=group：再按 shift_id 过滤；scope=not_checked_in：按 shift_id 过滤
     且排除已在该场次有签到记录的人。Mock 模式下消息落 notifications 表。
     """
     ensure_activity_manager(db, user, activity_id)
@@ -692,26 +698,26 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
         raise HTTPException(400, "请填写通知内容")
     if body.scope not in ("all", "group", "not_checked_in"):
         raise HTTPException(400, "通知范围不合法")
-    group_id = ""
+    shift_id = ""
     if body.scope != "all":
-        if not body.group_id:
+        if not body.shift_id:
             raise HTTPException(400, "请选择场次")
-        g = _group(db, body.group_id)
+        g = _group(db, body.shift_id)
         if g.activity_id != act.id:
             raise HTTPException(400, "所选场次不属于该活动")
-        group_id = g.id
+        shift_id = g.id
     # 两步查询：先 DISTINCT user_id（JSON 列在 PG 上无相等运算符，不能整行去重）
     ids = (db.query(Enrollment.user_id)
            .filter(Enrollment.activity_id == act.id,
                    Enrollment.status == "confirmed"))
-    if group_id:
-        ids = ids.filter(Enrollment.group_id == group_id)
+    if shift_id:
+        ids = ids.filter(Enrollment.shift_id == shift_id)
     ids = [r[0] for r in ids.distinct().all()]
     users = [db.get(User, i) for i in ids]
     users = [u for u in users if u]
     if body.scope == "not_checked_in":
         checked = {r[0] for r in db.query(CheckinRecord.user_id)
-                   .filter(CheckinRecord.group_id == group_id).all()}
+                   .filter(CheckinRecord.shift_id == shift_id).all()}
         users = [u for u in users if u.id not in checked]
     for u in users:
         wecom.send_user(db, u, "custom", title=title, content=content)
@@ -726,26 +732,26 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
 
 # ======================= 报名名单 =======================
 
-@router.get("/groups/{group_id}/roster")
-def roster(group_id: str, db: OrmSession = Depends(db_session),
+@router.get("/shifts/{shift_id}/roster")
+def roster(shift_id: str, db: OrmSession = Depends(db_session),
            user: User = Depends(require_manager)):
-    g = _group(db, group_id)
+    g = _group(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
-    stations = sorted(g.stations, key=lambda s: s.sort)
+    positions = sorted(g.positions, key=lambda s: s.sort)
     checked_ids = {r[0] for r in db.query(CheckinRecord.user_id)
-                   .filter(CheckinRecord.group_id == g.id).all()}
+                   .filter(CheckinRecord.shift_id == g.id).all()}
 
     def user_row(e: Enrollment) -> dict:
         u = db.get(User, e.user_id)
-        st = db.get(Station, e.station_id) if e.station_id else None
+        st = db.get(Position, e.position_id) if e.position_id else None
         return {
             "enrollment_id": e.id,
             "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
                      "college": u.college, "gender": u.gender, "phone": u.phone,
                      "grade": u.grade, "credit_score": u.credit_score},
-            "station_id": e.station_id,
-            "station_name": st.name if st else "",
+            "position_id": e.position_id,
+            "position_name": st.name if st else "",
             "assign_forced": e.assign_forced,
             "allow_reassign": e.allow_reassign,
             "source": e.source,
@@ -758,7 +764,7 @@ def roster(group_id: str, db: OrmSession = Depends(db_session),
         }
 
     confirmed = [user_row(e) for e in db.query(Enrollment)
-                 .filter(Enrollment.group_id == g.id,
+                 .filter(Enrollment.shift_id == g.id,
                          Enrollment.status == "confirmed")
                  .order_by(Enrollment.joined_at).all()]
     waitlist = []
@@ -767,7 +773,7 @@ def roster(group_id: str, db: OrmSession = Depends(db_session),
         row["queue_position"] = i
         waitlist.append(row)
     cancelled = [user_row(e) for e in db.query(Enrollment)
-                 .filter(Enrollment.group_id == g.id,
+                 .filter(Enrollment.shift_id == g.id,
                          Enrollment.status == "cancelled")
                  .order_by(Enrollment.joined_at.desc()).limit(20).all()]
     return {
@@ -778,10 +784,10 @@ def roster(group_id: str, db: OrmSession = Depends(db_session),
                   "occupied": logic.group_occupied_count(db, g.id),
                   "activity_id": act.id, "activity_title": act.title,
                   "start_time": iso(g.start_time)},
-        "stations": [{"id": s.id, "name": s.name, "quota": s.quota,
+        "positions": [{"id": s.id, "name": s.name, "quota": s.quota,
                       "time_text": s.time_text(), "location": s.location,
-                      "confirmed": logic.station_confirmed_count(db, s.id)}
-                     for s in stations],
+                      "confirmed": logic.position_confirmed_count(db, s.id)}
+                     for s in positions],
         "confirmed": confirmed,
         "waitlist": waitlist,
         "cancelled": cancelled,
@@ -796,14 +802,14 @@ class PreviewBody(BaseModel):
     rules: dict | None = None      # 高级自定义规则（与排班程序 rules 配置同构）
 
 
-@router.post("/groups/{group_id}/assign/preview")
-def assign_preview(group_id: str, body: PreviewBody,
+@router.post("/shifts/{shift_id}/assign/preview")
+def assign_preview(shift_id: str, body: PreviewBody,
                    db: OrmSession = Depends(db_session),
                    user: User = Depends(require_manager)):
-    g = _group(db, group_id)
+    g = _group(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
-    if not g.stations:
-        raise HTTPException(400, "请先在该场次下创建二级工位，再运行智能排班")
+    if not g.positions:
+        raise HTTPException(400, "请先在该场次下创建岗位，再运行智能排班")
     try:
         result = scheduler_adapter.preview(db, g, body.preset, body.rules)
     except Exception as exc:   # 规则配置非法时给出可读错误
@@ -818,11 +824,11 @@ class ApplyPlanBody(BaseModel):
     source: str = "assign"
 
 
-@router.post("/groups/{group_id}/assign/apply")
-def assign_apply(group_id: str, body: ApplyPlanBody, bg: BackgroundTasks,
+@router.post("/shifts/{shift_id}/assign/apply")
+def assign_apply(shift_id: str, body: ApplyPlanBody, bg: BackgroundTasks,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager)):
-    g = _group(db, group_id)
+    g = _group(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     if not body.plan:
         raise HTTPException(400, "空方案")
@@ -839,8 +845,8 @@ def assign_apply(group_id: str, body: ApplyPlanBody, bg: BackgroundTasks,
     return result
 
 
-@router.post("/groups/{group_id}/add-walkin")
-def add_walkin(group_id: str, body: dict,
+@router.post("/shifts/{shift_id}/add-walkin")
+def add_walkin(shift_id: str, body: dict,
                db: OrmSession = Depends(db_session),
                user: User = Depends(require_manager)):
     """管理员直接添加志愿者（现场补录）。
@@ -848,7 +854,7 @@ def add_walkin(group_id: str, body: dict,
     时段冲突、名额超出都拦一道，勾选强制才放行——补录是常规操作，
     不该顺手把场次搞超员；真要超也得是明确按下去的，且留痕。
     """
-    g = _group(db, group_id)
+    g = _group(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     sid = (body.get("student_id") or "").strip()
     u = db.query(User).filter(User.student_id == sid).first()
@@ -859,9 +865,9 @@ def add_walkin(group_id: str, body: dict,
 
     force = bool(body.get("force"))
     reasons: list[str] = []
-    with group_lock(g.id):
+    with shift_lock(g.id):
         live = (db.query(Enrollment)
-                .filter(Enrollment.group_id == g.id, Enrollment.user_id == u.id)
+                .filter(Enrollment.shift_id == g.id, Enrollment.user_id == u.id)
                 .filter((Enrollment.status.in_(logic.ACTIVE))
                         | (Enrollment.seat_held.is_(True))).first())
         if live is not None:
@@ -878,15 +884,15 @@ def add_walkin(group_id: str, body: dict,
             raise HTTPException(409, f"{u.name}：{'；'.join(reasons)}。"
                                      f"确认添加请勾选强制")
 
-        enr = Enrollment(id=uid("enr"), activity_id=g.activity_id, group_id=g.id,
+        enr = Enrollment(id=uid("enr"), activity_id=g.activity_id, shift_id=g.id,
                          user_id=u.id, source="admin", joined_at=now(),
                          status="confirmed",
                          allow_reassign=bool(body.get("allow_reassign", True)))
-        if body.get("station_id"):
-            st = db.get(Station, body["station_id"])
-            if st is None or st.group_id != g.id:
-                raise HTTPException(400, "二级工位无效")
-            enr.station_id = st.id
+        if body.get("position_id"):
+            st = db.get(Position, body["position_id"])
+            if st is None or st.shift_id != g.id:
+                raise HTTPException(400, "岗位无效")
+            enr.position_id = st.id
             enr.assigned_at = now()
             enr.assign_forced = bool(reasons)
         db.add(enr)

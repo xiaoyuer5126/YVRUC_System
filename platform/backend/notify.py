@@ -8,7 +8,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session as OrmSession
 
 from .integrations import wecom
-from .models import Activity, CheckinRecord, Enrollment, PositionGroup, Station, User
+from .models import Activity, CheckinRecord, Enrollment, Shift, Position, User
 
 ENROLLED = ("confirmed", "waitlisted", "pending_confirm")
 
@@ -39,17 +39,17 @@ def notify_enrolled(db: OrmSession, act: Activity, template: str, **kw) -> int:
     return len(users)
 
 
-def notify_checkin(db: OrmSession, g: PositionGroup, *,
+def notify_checkin(db: OrmSession, g: Shift, *,
                    skip_checked_in: bool = True) -> int:
-    """给某场次的已确认志愿者发签到提醒，地点按各自工位给到人。"""
+    """给某场次的已确认志愿者发签到提醒，地点按各自岗位给到人。"""
     act = db.get(Activity, g.activity_id)
     rows = (db.query(Enrollment)
-            .filter(Enrollment.group_id == g.id,
+            .filter(Enrollment.shift_id == g.id,
                     Enrollment.status == "confirmed").all())
     checked: set[str] = set()
     if skip_checked_in:
         checked = {r[0] for r in db.query(CheckinRecord.user_id)
-                   .filter(CheckinRecord.group_id == g.id).all()}
+                   .filter(CheckinRecord.shift_id == g.id).all()}
     n = 0
     for enr in rows:
         if enr.user_id in checked:
@@ -57,8 +57,8 @@ def notify_checkin(db: OrmSession, g: PositionGroup, *,
         u = db.get(User, enr.user_id)
         if u is None:
             continue
-        station = db.get(Station, enr.station_id) if enr.station_id else None
-        loc = (station.location if station and station.location
+        position = db.get(Position, enr.position_id) if enr.position_id else None
+        loc = (position.location if position and position.location
                else act.location or "活动集合点")
         wecom.send_user(db, u, "checkin_reminder", activity=act.title,
                         group=g.name, loc=loc)

@@ -19,7 +19,7 @@ from ..database import db_session
 from ..deps import current_user
 from ..integrations import checkin_gateway
 from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
-                      PositionGroup, Station, User, now, uid)
+                      Shift, Position, User, now, uid)
 from ..qrcodes import qr_svg
 
 router = APIRouter(prefix="/api/checkin", tags=["checkin"])
@@ -28,12 +28,12 @@ router = APIRouter(prefix="/api/checkin", tags=["checkin"])
 CHECKOUT_GRACE = timedelta(hours=config.CHECKOUT_GRACE_HOURS)
 
 
-def _load_task(db: OrmSession, token: str) -> tuple[CheckinTask, Activity, PositionGroup]:
+def _load_task(db: OrmSession, token: str) -> tuple[CheckinTask, Activity, Shift]:
     task = db.query(CheckinTask).filter(CheckinTask.token == token.upper()).first()
     if task is None:
         raise HTTPException(404, "签到码无效")
     act = db.get(Activity, task.activity_id)
-    g = db.get(PositionGroup, task.group_id)
+    g = db.get(Shift, task.shift_id)
     return task, act, g
 
 
@@ -41,11 +41,11 @@ def _load_task(db: OrmSession, token: str) -> tuple[CheckinTask, Activity, Posit
 def task_info(token: str, db: OrmSession = Depends(db_session),
               user: User = Depends(current_user)):
     task, act, g = _load_task(db, token)
-    station = db.get(Station, task.station_id) if task.station_id else None
+    position = db.get(Position, task.position_id) if task.position_id else None
     t = now()
     rec = (db.query(CheckinRecord)
            .filter(CheckinRecord.user_id == user.id,
-                   CheckinRecord.group_id == g.id).first())
+                   CheckinRecord.shift_id == g.id).first())
     state = "active"
     if not task.active:
         state = "closed"
@@ -54,13 +54,13 @@ def task_info(token: str, db: OrmSession = Depends(db_session),
     elif task.valid_to and t > task.valid_to:
         state = "expired"
     mine = (db.query(Enrollment)
-            .filter(Enrollment.group_id == g.id, Enrollment.user_id == user.id,
+            .filter(Enrollment.shift_id == g.id, Enrollment.user_id == user.id,
                     Enrollment.status == "confirmed").first())
     return {
-        "activity_title": act.title, "group_name": g.name,
+        "activity_title": act.title, "shift_name": g.name,
         "group_time": g.span_text(),
-        "station": ({"name": station.name, "time_text": station.time_text(),
-                     "location": station.location} if station else None),
+        "position": ({"name": position.name, "time_text": position.time_text(),
+                     "location": position.location} if position else None),
         "mode": task.mode, "state": state,
         "enrolled": mine is not None,
         "checked_in": rec is not None,
@@ -91,33 +91,33 @@ def do_checkin(token: str, db: OrmSession = Depends(db_session),
     if task.valid_to and t > task.valid_to:
         raise HTTPException(409, f"签到已截止（{task.valid_to:%H:%M} 止）")
 
-    # 工位模式只用于按摊位分别核验；工位无独立时间，可签时段 = 场次时段
-    station = db.get(Station, task.station_id) if task.station_id else None
+    # 岗位模式只用于按摊位分别核验；岗位无独立时间，可签时段 = 场次时段
+    position = db.get(Position, task.position_id) if task.position_id else None
 
-    # 必须是该组的正式成员
+    # 必须是该场次的正式成员
     enr = (db.query(Enrollment)
-           .filter(Enrollment.group_id == g.id, Enrollment.user_id == user.id,
+           .filter(Enrollment.shift_id == g.id, Enrollment.user_id == user.id,
                    Enrollment.status == "confirmed").first())
     if enr is None:
         raise HTTPException(403, f"您不是「{act.title}·{g.name}」的确认志愿者")
 
     rec = (db.query(CheckinRecord)
            .filter(CheckinRecord.user_id == user.id,
-                   CheckinRecord.group_id == g.id).first())
+                   CheckinRecord.shift_id == g.id).first())
 
     if rec is None:
         # ---- 签到 ----
         rec = CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
-                            group_id=g.id,
-                            station_id=(enr.station_id
-                                        or (station.id if station else None)),
+                            shift_id=g.id,
+                            position_id=(enr.position_id
+                                        or (position.id if position else None)),
                             user_id=user.id, method="scan", checkin_at=t)
         db.add(rec)
         db.commit()
         return {"ok": True, "action": "checkin",
                 "message": f"签到成功，{user.name} 已到岗！",
                 "time": t.isoformat(timespec="minutes"),
-                "location": (station.location if station and station.location
+                "location": (position.location if position and position.location
                              else act.location)}
 
     if rec.checkout_at:

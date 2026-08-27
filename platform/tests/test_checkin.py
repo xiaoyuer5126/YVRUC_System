@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pytest
 
-from backend.models import (Activity, ActivityManager, PositionGroup, User,
+from backend.models import (Activity, ActivityManager, Shift, User,
                             now, uid)
 from conftest import ADMIN, login
 
@@ -24,7 +24,7 @@ def live_group(client, db, admin, take_student):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin_user.id, added_by=admin_user.id))
-    g = PositionGroup(id=uid("g"), activity_id=act.id, name="进行中场次",
+    g = Shift(id=uid("g"), activity_id=act.id, name="进行中场次",
                       start_time=now() - timedelta(minutes=30),
                       end_time=now() + timedelta(hours=3),
                       capacity=5, mode="single", sort=0)
@@ -33,9 +33,9 @@ def live_group(client, db, admin, take_student):
 
     sid = take_student()
     h = login(client, sid)
-    client.post(f"/api/activities/{act.id}/groups/{g.id}/enroll",
+    client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                 json={}, headers=h)
-    token = client.post(f"/api/staff/groups/{g.id}/checkin-tasks",
+    token = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks",
                         json={"mode": "group"}, headers=admin).json()["token"]
     return act, g, h, token
 

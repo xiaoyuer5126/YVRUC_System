@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session as OrmSession
 from ..database import db_session
 from ..deps import current_user
 from ..models import (Activity, CheckinRecord, CreditLog, Enrollment,
-                      HoursRecord, Notification, PositionGroup, Station, User,
+                      HoursRecord, Notification, Shift, Position, User,
                       iso, now)
 from ..serializers import iso_of
 
@@ -35,11 +35,11 @@ def valid_id_card(value: str) -> bool:
 
 def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
     act = db.get(Activity, enr.activity_id)
-    g = db.get(PositionGroup, enr.group_id)
-    st = db.get(Station, enr.station_id) if enr.station_id else None
+    g = db.get(Shift, enr.shift_id)
+    st = db.get(Position, enr.position_id) if enr.position_id else None
     rec = db.query(CheckinRecord).filter(
         CheckinRecord.user_id == enr.user_id,
-        CheckinRecord.group_id == enr.group_id).first()
+        CheckinRecord.shift_id == enr.shift_id).first()
     return {
         "id": enr.id,
         "activity": {"id": act.id, "title": act.title, "type": act.type,
@@ -47,7 +47,7 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "group": {"id": g.id, "name": g.name, "time_text": g.span_text(),
                   "start_time": iso_of(g.start_time),
                   "end_time": iso_of(g.end_time)},
-        "station": ({"id": st.id, "name": st.name, "time_text": st.time_text(),
+        "position": ({"id": st.id, "name": st.name, "time_text": st.time_text(),
                      "location": st.location} if st else None),
         "status": enr.status, "cancel_type": enr.cancel_type,
         "seat_held": enr.seat_held,
@@ -71,10 +71,10 @@ def my_enrollments(db: OrmSession = Depends(db_session),
     seen: set[str] = set()
     out = []
     for r in rows:
-        if r.group_id in seen and r.status == "cancelled":
+        if r.shift_id in seen and r.status == "cancelled":
             continue
         if r.status != "cancelled":
-            seen.add(r.group_id)
+            seen.add(r.shift_id)
         out.append(_enrollment_row(db, r))
     return out
 

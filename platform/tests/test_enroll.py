@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from backend.database import SessionLocal
 from backend.main import app
 from backend.models import (Activity, ActivityManager, Enrollment,
-                            PositionGroup, User, now, uid)
+                            Shift, User, now, uid)
 from conftest import ADMIN, login, student_row
 
 
@@ -38,7 +38,7 @@ def open_group(db):
         db.add(act)
         db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                                user_id=admin.id, added_by=admin.id))
-        g = PositionGroup(id=uid("g"), activity_id=act.id, name="测试场次",
+        g = Shift(id=uid("g"), activity_id=act.id, name="测试场次",
                           start_time=now() + start,
                           end_time=now() + start + timedelta(hours=3),
                           capacity=capacity, mode=mode,
@@ -50,7 +50,7 @@ def open_group(db):
 
 
 def enroll(client, headers, act, g, **body):
-    return client.post(f"/api/activities/{act.id}/groups/{g.id}/enroll",
+    return client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                        json=body, headers=headers)
 
 
@@ -136,7 +136,7 @@ def test_late_cancel_holds_the_seat(client, db, open_group, take_student):
     # 本人也不能再报一次把位子拿回去
     assert enroll(client, h, act, g).status_code == 409
 
-    group = client.get(f"/api/activities/{act.id}", headers=h).json()["groups"][0]
+    group = client.get(f"/api/activities/{act.id}", headers=h).json()["shifts"][0]
     assert group["held_seats"] == 1 and group["remaining"] == 0
 
 
@@ -164,7 +164,7 @@ def test_concurrent_enroll_does_not_oversell(open_group, take_student):
 
     def grab(sid):
         with TestClient(app) as c:
-            r = c.post(f"/api/activities/{act.id}/groups/{g.id}/enroll",
+            r = c.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                        json={}, headers=login(c, sid))
             return r.json().get("status") if r.status_code == 200 else None
 
@@ -175,7 +175,7 @@ def test_concurrent_enroll_does_not_oversell(open_group, take_student):
     check = SessionLocal()
     try:
         assert check.query(Enrollment).filter(
-            Enrollment.group_id == g.id,
+            Enrollment.shift_id == g.id,
             Enrollment.status == "confirmed").count() == 5
     finally:
         check.close()
@@ -194,14 +194,14 @@ def test_allow_reassign_recorded(client, open_group, take_student):
 
     client.patch(f"/api/activities/enrollments/{enr_id}/reassign-pref",
                  json={"allow_reassign": True}, headers=h)
-    group = client.get(f"/api/activities/{act.id}", headers=h).json()["groups"][0]
+    group = client.get(f"/api/activities/{act.id}", headers=h).json()["shifts"][0]
     assert group["my_enrollment"]["allow_reassign"] is True
 
 
 def test_capacity_zero_is_rejected(client, admin):
     """0 人的场次没有意义：以前会被当成「不限人数」。"""
     target = client.get("/api/staff/activities", headers=admin).json()[0]["id"]
-    r = client.post(f"/api/staff/activities/{target}/groups", headers=admin,
+    r = client.post(f"/api/staff/activities/{target}/shifts", headers=admin,
                     json={"name": "零名额", "capacity": 0, "mode": "single",
                           "start_time": (now() + timedelta(days=400)).isoformat(),
                           "end_time": (now() + timedelta(days=400, hours=2)).isoformat()})

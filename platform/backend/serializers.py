@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .enroll_logic import (group_confirmed_count, group_held_count,
-                           group_occupied_count, station_confirmed_count,
+from .enroll_logic import (shift_confirmed_count, group_held_count,
+                           group_occupied_count, position_confirmed_count,
                            time_conflicts, waitlist_position, waitlist_rows)
 from . import config
-from .models import Activity, AuditLog, Enrollment, PositionGroup, Station, iso, now
+from .models import Activity, AuditLog, Enrollment, Shift, Position, iso, now
 
 
 def iso_of(dt):
@@ -42,10 +42,10 @@ def display_status(act: Activity) -> tuple[str, str]:
 
 
 def activity_brief(db: OrmSession, act: Activity) -> dict:
-    groups = sorted(act.groups, key=lambda g: g.sort)
-    total_cap = sum(g.capacity for g in groups)
-    total_conf = sum(group_confirmed_count(db, g.id) for g in groups)
-    total_used = sum(group_occupied_count(db, g.id) for g in groups)
+    shifts = sorted(act.shifts, key=lambda g: g.sort)
+    total_cap = sum(g.capacity for g in shifts)
+    total_conf = sum(shift_confirmed_count(db, g.id) for g in shifts)
+    total_used = sum(group_occupied_count(db, g.id) for g in shifts)
     span = act.time_span()
     ds_code, ds_label = display_status(act)
     return {
@@ -54,7 +54,7 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
         "status_label": act.label_status(), "location": act.location,
         "intro": act.intro[:120], "cover_hue": act.cover_hue,
         "display_status": ds_code, "display_label": ds_label,
-        "groups_count": len(groups),
+        "groups_count": len(shifts),
         "total_capacity": total_cap, "total_confirmed": total_conf,
         # 剩余名额扣掉临近退选扣留的占位，不然广场上显示有位、点进去报不了
         "remaining": max(0, total_cap - total_used),
@@ -65,8 +65,8 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
     }
 
 
-def station_out(db: OrmSession, st: Station) -> dict:
-    confirmed = station_confirmed_count(db, st.id)
+def position_out(db: OrmSession, st: Position) -> dict:
+    confirmed = position_confirmed_count(db, st.id)
     req_desc = []
     for tag, value in (st.requirement_tags or {}).items():
         if isinstance(value, list):
@@ -76,7 +76,7 @@ def station_out(db: OrmSession, st: Station) -> dict:
             req_desc.append(f"{tag}={value}")
     return {
         "id": st.id, "name": st.name,
-        # 二级工位不再有独立时间：时间随场次（time_text = 场次时段）
+        # 岗位不再有独立时间：时间随场次（time_text = 场次时段）
         "time_text": st.time_text(),
         "location": st.location, "quota": st.quota, "confirmed": confirmed,
         "remaining": max(0, st.quota - confirmed),
@@ -88,9 +88,9 @@ def station_out(db: OrmSession, st: Station) -> dict:
     }
 
 
-def group_out(db: OrmSession, g: PositionGroup, user=None) -> dict:
-    stations = sorted(g.stations, key=lambda s: s.sort)
-    confirmed = group_confirmed_count(db, g.id)
+def shift_out(db: OrmSession, g: Shift, user=None) -> dict:
+    positions = sorted(g.positions, key=lambda s: s.sort)
+    confirmed = shift_confirmed_count(db, g.id)
     held = group_held_count(db, g.id)
     out = {
         "id": g.id, "name": g.name,
@@ -105,20 +105,20 @@ def group_out(db: OrmSession, g: PositionGroup, user=None) -> dict:
         "mode": g.mode,
         "mode_label": g.mode_label(),
         "note": g.note, "sort": g.sort,
-        "stations": [station_out(db, s) for s in stations],
+        "positions": [position_out(db, s) for s in positions],
         "waitlist_count": len(waitlist_rows(db, g.id)),
     }
 
     if user is not None:
         enr = (db.query(Enrollment)
-               .filter(Enrollment.group_id == g.id, Enrollment.user_id == user.id,
+               .filter(Enrollment.shift_id == g.id, Enrollment.user_id == user.id,
                        Enrollment.status.in_(("confirmed", "waitlisted",
                                               "pending_confirm")))
                .first())
         if enr:
             out["my_enrollment"] = {
                 "enrollment_id": enr.id, "status": enr.status,
-                "station_id": enr.station_id,
+                "position_id": enr.position_id,
                 "allow_reassign": enr.allow_reassign,
                 "confirm_deadline": iso_of(enr.confirm_deadline),
                 "waitlist_position": (waitlist_position(db, enr)
@@ -134,7 +134,7 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
         "intro": act.intro,
         "contact_info": act.contact_info,
         "qa_group_qr": act.qa_group_qr or "",
-        "groups": sorted([group_out(db, g, user) for g in act.groups],
+        "shifts": sorted([shift_out(db, g, user) for g in act.shifts],
                          key=lambda x: x["start_time"]),
     })
     if include_logs:
@@ -145,7 +145,7 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
     # 我在该活动的冲突提示（报名前预检用）
     if user is not None:
         clashes = []
-        for g in act.groups:
+        for g in act.shifts:
             clashes.extend(time_conflicts(db, user, g))
         out["my_time_conflicts"] = clashes
     return out

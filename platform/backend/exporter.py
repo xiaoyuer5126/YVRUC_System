@@ -2,8 +2,8 @@
 
 导出逻辑：
   · 第 1 个 Sheet：活动概览（各组已排/名额、签到统计）；
-  · 之后按"一级岗位"分 Sheet，字段：
-      姓名 学号 学院 手机号 | 二级工位 工位时间 工位地点 签到状态 签退时间
+  · 之后按"场次"分 Sheet，字段：
+      姓名 学号 学院 手机号 | 岗位 岗位时间 岗位地点 签到状态 签退时间
     这张表直接交付现场负责人用于点名和排班，无需人工二次制表；
   · 有未分配人员的组追加「未分配名单」Sheet。
 
@@ -31,7 +31,7 @@ SHEET_FORBIDDEN = set(':\\/?*[]')
 
 
 def _safe_sheet_name(name: str, used: set[str]) -> str:
-    base = "".join(c for c in name if c not in SHEET_FORBIDDEN).strip() or "岗位组"
+    base = "".join(c for c in name if c not in SHEET_FORBIDDEN).strip() or "场次"
     base = base[:28]
     candidate, i = base, 1
     while candidate in used:
@@ -58,7 +58,7 @@ def _style_header(ws, ncols: int) -> None:
 
 def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
     wb = Workbook()
-    groups = sorted(activity.groups, key=lambda g: g.sort)
+    shifts = sorted(activity.shifts, key=lambda g: g.sort)
 
     # ---------- 概览 Sheet ----------
     overview = wb.active
@@ -79,15 +79,15 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         overview.append(["整体时间",
                          f"{span[0]:%Y-%m-%d %H:%M} ~ {span[1]:%Y-%m-%d %H:%M}"])
     overview.append([])
-    overview.append(["一级岗位", "时间段", "模式", "已确认/名额", "已到岗"])
+    overview.append(["场次", "时间段", "模式", "已确认/名额", "已到岗"])
     checked = _checked_records(db, activity.id)
     from sqlalchemy import func
-    for g in groups:
+    for g in shifts:
         confirmed = (db.query(func.count(Enrollment.id))
-                     .filter(Enrollment.group_id == g.id,
+                     .filter(Enrollment.shift_id == g.id,
                              Enrollment.status == "confirmed").scalar() or 0)
         here = (db.query(func.count(func.distinct(CheckinRecord.user_id)))
-                .filter(CheckinRecord.group_id == g.id).scalar() or 0)
+                .filter(CheckinRecord.shift_id == g.id).scalar() or 0)
         overview.append([g.name, g.span_text(), g.mode_label(),
                          f"{confirmed}/{g.capacity}", here])
     overview["A1"].font = Font(name="微软雅黑", bold=True, size=14)
@@ -95,27 +95,27 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
     for col, w in zip("ABCDE", (24, 30, 14, 14, 10)):
         overview.column_dimensions[col].width = w
 
-    # ---------- 每个一级岗位一个 Sheet ----------
+    # ---------- 每个场次一个 Sheet ----------
     used_names: set[str] = {"活动概览"}
-    for g in groups:
-        stations = {s.id: s for s in g.stations}
+    for g in shifts:
+        positions = {s.id: s for s in g.positions}
         rows = (db.query(Enrollment, User)
-                .filter(Enrollment.group_id == g.id,
+                .filter(Enrollment.shift_id == g.id,
                         Enrollment.status == "confirmed")
                 .join(User, Enrollment.user_id == User.id)
                 .order_by(User.college, User.name).all())
 
         ws = wb.create_sheet(_safe_sheet_name(g.name, used_names))
-        has_stations = bool(stations)
+        has_stations = bool(positions)
         header = ["姓名", "学号", "学院", "手机号", "场次时间"]
-        header += (["二级工位", "服务地点", "接受调剂"] if has_stations else [])
+        header += (["岗位", "服务地点", "接受调剂"] if has_stations else [])
         header += ["签到状态", "签退时间"]
         ws.append(header)
         _style_header(ws, len(header))
 
         for enr, u in rows:
             line = [u.name, u.student_id, u.college, u.phone, g.span_text()]
-            st = stations.get(enr.station_id) if enr.station_id else None
+            st = positions.get(enr.position_id) if enr.position_id else None
             if has_stations:
                 line += [st.name if st else "待分配",
                          st.location if st else "—",
@@ -131,13 +131,13 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         for idx in range(6, len(header) + 1):
             ws.column_dimensions[get_column_letter(idx)].width = 14
 
-        # 未分配名单（有工位且有人没分到时才有意义）
+        # 未分配名单（有岗位且有人没分到时才有意义）
         if has_stations:
-            unassigned = [(e, u) for e, u in rows if not e.station_id]
+            unassigned = [(e, u) for e, u in rows if not e.position_id]
             if unassigned:
                 start = ws.max_row + 2
                 ws.cell(row=start, column=1,
-                        value="以下人员尚未分配工位（调配期处理）").font = \
+                        value="以下人员尚未分配岗位（调配期处理）").font = \
                     Font(bold=True, color="C00000")
                 for i, (_e, u) in enumerate(unassigned, start=start + 1):
                     ws.cell(row=i, column=1, value=u.name)

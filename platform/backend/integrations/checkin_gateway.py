@@ -21,7 +21,7 @@ ALPHABET = string.ascii_uppercase + string.digits
 def create_task(mode: str, group_key: str, station_key: str = "") -> str:
     """生成签到任务的 token。
 
-    mode: 'group' 统一签到 / 'station' 分时分工位签到。
+    mode: 'group' 统一签到 / 'position' 分岗位签到。
     """
     if is_mock("checkin_gateway"):
         return "".join(secrets.choice(ALPHABET) for _ in range(6))
@@ -30,7 +30,7 @@ def create_task(mode: str, group_key: str, station_key: str = "") -> str:
 
 
 def verify_scan(token: str) -> bool:
-    """核验扫码。演示模式恒真（有效性判断在路由层做：时间窗/工位时段）。"""
+    """核验扫码。演示模式恒真（有效性判断在路由层做：时间窗/岗位时段）。"""
     if is_mock("checkin_gateway"):
         return True
     raise NotImplementedError("待学校提供签到系统接口后在此实现 verify_scan")

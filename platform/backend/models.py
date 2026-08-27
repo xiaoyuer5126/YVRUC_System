@@ -1,12 +1,13 @@
 """数据模型。
 
-核心是设计方案第二节的**一二级岗位树**：
-  Activity（活动）── PositionGroup（一级岗位/场次，时间冲突检测的单位）
-                        └─ Station（二级工位，实际排班/签到的单位）
+结构是两层：
+  Activity（活动）── Shift（场次：只管时间，时段冲突检测的单位）
+                        └─ Position（岗位：具体职责、名额、条件、组长）
 
-报名 Enrollment 挂在「一级岗位」上（锁定时段），station_id 在两种情况下才有值：
-  · 模式A（精细化）：学生直接选工位，报名即带 station_id；
-  · 调配期：待分配组经排班程序/人工二次分配后回填。
+报名 Enrollment 挂在场次上（锁定时段）。position_id 在两种情况下有值：
+  · pick 模式：报名即选岗位，落库就带上；
+  · assign 模式：报名只锁时段，截止后由一键分配回填。
+一人在同一场次只能占一个岗位（唯一约束兜底）。
 """
 from __future__ import annotations
 
@@ -158,8 +159,8 @@ class Activity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
 
-    groups: Mapped[list["PositionGroup"]] = relationship(
-        back_populates="activity", order_by="PositionGroup.start_time",
+    shifts: Mapped[list["Shift"]] = relationship(
+        back_populates="activity", order_by="Shift.start_time",
         cascade="all, delete-orphan")
 
     STATUS_LABELS = {"draft": "筹备中", "published": "报名中",
@@ -169,10 +170,11 @@ class Activity(Base):
         return self.STATUS_LABELS.get(self.status, self.status)
 
     def time_span(self) -> tuple[datetime, datetime] | None:
-        """活动整体起止 = 一级岗位的最早开始 / 最晚结束。"""
-        if not self.groups:
+        """活动整体起止 = 最早场次开始 / 最晚场次结束。"""
+        if not self.shifts:
             return None
-        return min(g.start_time for g in self.groups), max(g.end_time for g in self.groups)
+        return (min(s.start_time for s in self.shifts),
+                max(s.end_time for s in self.shifts))
 
 
 class ActivityManager(Base):
@@ -192,36 +194,37 @@ class ActivityManager(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
-class PositionGroup(Base):
-    """一级岗位（场次）：总时间段 + 总人数上限 + 岗位模式。
+class Shift(Base):
+    """场次：一段服务时间。**时间只存在于这一层**，用于时段冲突检测。
 
-    时间冲突检测以这一层为准——学生报了这组，该时段即被锁定。
-    **时间完全由一级岗位负责**；二级工位只区分职责/地点。
-
-    mode 三种（创建/编辑时选定）：
-      single  仅一级岗位：无二级工位，报名即占该场次名额
-      assign  二级待定：报名只锁时段，截止后由排班程序统一分工位
-      fine    直接定二级：报名时直接选定二级工位（工位间默认互斥）
+    场次下挂具体岗位。两种模式：
+      pick    报名即选岗位：名额与候补都在岗位上
+      assign  截止后分配：报名只锁时段，名额与候补在场次上，
+              截止后由一键分配把人分进岗位
     """
-    __tablename__ = "position_groups"
+    __tablename__ = "shifts"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
     start_time: Mapped[datetime] = mapped_column(DateTime)
     end_time: Mapped[datetime] = mapped_column(DateTime)
-    capacity: Mapped[int] = mapped_column(Integer)                 # 总人数上限，至少 1
-    waitlist_quota: Mapped[int] = mapped_column(Integer, default=3)  # 候补队列上限
-    mode: Mapped[str] = mapped_column(String(12), default="fine")  # single / assign / fine
+    mode: Mapped[str] = mapped_column(String(12), default="pick")
+    # 下面两个数字**只在 assign 模式下有意义**：报名时还没有岗位可选，
+    # 名额只能记在场次上。pick 模式下名额与候补都在岗位上，这两个值不参与判断。
+    capacity: Mapped[int] = mapped_column(Integer, default=0)
+    waitlist_quota: Mapped[int] = mapped_column(Integer, default=3)
     note: Mapped[str] = mapped_column(String(512), default="")
     sort: Mapped[int] = mapped_column(Integer, default=0)
     # 签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
     reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    activity: Mapped[Activity] = relationship(back_populates="groups")
-    stations: Mapped[list["Station"]] = relationship(
-        back_populates="group", order_by="Station.sort",
+    activity: Mapped[Activity] = relationship(back_populates="shifts")
+    positions: Mapped[list["Position"]] = relationship(
+        back_populates="shift", order_by="Position.sort",
         cascade="all, delete-orphan")
+
+    MODE_LABELS = {"pick": "报名即选岗位", "assign": "截止后统一分配"}
 
     def span_text(self) -> str:
         same_day = self.start_time.date() == self.end_time.date()
@@ -230,48 +233,82 @@ class PositionGroup(Base):
                     f"-{self.end_time:%H:%M}")
         return f"{self.start_time:%m-%d %H:%M} ~ {self.end_time:%m-%d %H:%M}"
 
-    def station_quota_sum(self) -> int:
-        return sum(s.quota for s in self.stations)
-
-    MODE_LABELS = {"single": "仅一级岗位", "assign": "二级待定", "fine": "直接定二级"}
-
     def mode_label(self) -> str:
         return self.MODE_LABELS.get(self.mode, self.mode)
 
     def needs_assign(self) -> bool:
-        """二级待定：报名只锁时段，工位由调配期统一分配。"""
         return self.mode == "assign"
 
+    def total_capacity(self) -> int:
+        """场次总名额：assign 模式记在场次上，pick 模式是各岗位之和。"""
+        if self.needs_assign():
+            return self.capacity
+        return sum(p.quota for p in self.positions)
 
-class Station(Base):
-    """二级工位：同一场次下的职责/地点划分。
 
-    工位没有自己的时间——时间统一由一级岗位负责，同场次内的工位互斥
-    （一人只占一个），因此把人分进工位不会产生新的时段冲突。"""
-    __tablename__ = "stations"
+class Position(Base):
+    """岗位：场次下的具体职责。没有自己的时间——时间统一由场次负责，
+    同场次内的岗位互斥（一人只占一个），所以换岗不会产生新的时段冲突。"""
+    __tablename__ = "positions"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    group_id: Mapped[str] = mapped_column(ForeignKey("position_groups.id"), index=True)
+    shift_id: Mapped[str] = mapped_column(ForeignKey("shifts.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
     location: Mapped[str] = mapped_column(String(128), default="")
-    quota: Mapped[int] = mapped_column(Integer, default=1)
-    # 结构化必选条件 {标签: 值或值列表}，转成排班程序的条件树；空 = 不限
+    quota: Mapped[int] = mapped_column(Integer, default=1)          # 至少 1
+    waitlist_quota: Mapped[int] = mapped_column(Integer, default=3)
+    # 硬性条件 {标签: 值或值列表}，空 = 不限。报名时直接拦截，
+    # 一键分配时同样作为硬约束（见 assign.py）。
     requirement_tags: Mapped[dict] = mapped_column(JSON, default=dict)
-    requirement_note: Mapped[str] = mapped_column(String(512), default="")  # 要求原文（人看）
-    training_note: Mapped[str] = mapped_column(String(512), default="")     # 培训内容说明
+    requirement_note: Mapped[str] = mapped_column(String(512), default="")
+    training_note: Mapped[str] = mapped_column(String(512), default="")
+    # 需要组长：报名时志愿者可表态愿意担任，先到先得，管理者可改判
+    needs_leader: Mapped[bool] = mapped_column(Boolean, default=False)
     sort: Mapped[int] = mapped_column(Integer, default=0)
 
-    group: Mapped[PositionGroup] = relationship(back_populates="stations")
+    shift: Mapped[Shift] = relationship(back_populates="positions")
 
     def time_text(self) -> str:
-        """工位无独立时间：展示所属场次的时段。"""
-        return self.group.span_text() if self.group else ""
+        """岗位无独立时间：展示所属场次的时段。"""
+        return self.shift.span_text() if self.shift else ""
+
+    def requirement_desc(self) -> str:
+        parts = []
+        for tag, value in (self.requirement_tags or {}).items():
+            vals = value if isinstance(value, list) else [value]
+            vals = [str(v) for v in vals if str(v).strip()]
+            if vals:
+                parts.append(f"{tag}：{'/'.join(vals)}")
+        return "；".join(parts)
+
+
+class Attachment(Base):
+    """学习材料：培训文档挂场次或岗位，志愿者在活动页下载。
+
+    视频不自托管——大文件的上传成功率、带宽和备份代价都不划算，
+    走 url 字段指向学校平台/网盘的链接。
+    """
+    __tablename__ = "attachments"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_type: Mapped[str] = mapped_column(String(12))      # shift / position
+    owner_id: Mapped[str] = mapped_column(String(32), index=True)
+    activity_id: Mapped[str] = mapped_column(String(32), index=True)
+    kind: Mapped[str] = mapped_column(String(8), default="file")   # file / link
+    title: Mapped[str] = mapped_column(String(160))
+    # kind=file：存盘文件名与大小；kind=link：外部地址
+    stored_name: Mapped[str] = mapped_column(String(160), default="")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    url: Mapped[str] = mapped_column(String(512), default="")
+    uploaded_by: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
 # ======================= 报名 / 候补 / 分配 =======================
 
 class Enrollment(Base):
-    """一条报名 = （用户 × 一级岗位）。一人对同一组只有一条有效记录。
+    """一条报名 = （用户 × 场次）。一人对同一场次只有一条有效记录，
+    也就是同场次下只能占一个岗位——候补和正式都算。
 
     status 流转：
       confirmed        正式报名（即选即得 / 候补转正确认 / 管理员添加）
@@ -279,7 +316,7 @@ class Enrollment(Base):
       pending_confirm  候补转正，等待用户在 confirm_deadline 前确认
       cancelled        已退选（cancel_type: normal 正常 / late 临近扣分 /
                                      expired 放弃候补超时 / abandoned 主动放弃候补 /
-                                     group_deleted 场次被删除）
+                                     shift_deleted 场次被删除）
 
     seat_held：临近退选（开始前 24 小时内）扣分且**名额不再释放**，
     该记录虽已 cancelled 但仍占着一个名额，防止有人临期退了、别人补进来、
@@ -289,7 +326,7 @@ class Enrollment(Base):
     __table_args__ = (
         # 一人在一个场次只能有一条有效记录（含占位不释放的临近退选记录）。
         # 这是并发抢报的兜底：Redis 锁没拿住也插不进第二条。
-        Index("uq_enrollment_live", "group_id", "user_id", unique=True,
+        Index("uq_enrollment_live", "shift_id", "user_id", unique=True,
               postgresql_where=text(
                   "status IN ('confirmed', 'waitlisted', 'pending_confirm')"
                   " OR seat_held")),
@@ -297,19 +334,24 @@ class Enrollment(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
-    group_id: Mapped[str] = mapped_column(ForeignKey("position_groups.id"), index=True)
+    shift_id: Mapped[str] = mapped_column(ForeignKey("shifts.id"), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
 
     status: Mapped[str] = mapped_column(String(24), default="confirmed", index=True)
     cancel_type: Mapped[str] = mapped_column(String(16), default="")
     seat_held: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
-    # 志愿者报名时表态：是否接受管理者把自己调到别的工位。
-    # **只是参考**——管理者依然可以调，界面上会提示「本人不接受调剂」。
+    # 是否接受管理者把自己调到别的岗位。**只是参考**——管理者依然可以调，
+    # 界面上会提示「本人不接受调剂」。候补必须接受调剂（报名时强制为真）。
     allow_reassign: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    station_id: Mapped[str | None] = mapped_column(
-        ForeignKey("stations.id"), nullable=True)          # 二级工位（见类注释）
+    # —— 组长 ——
+    # 报名时表态愿意担任；先到先得，同岗位第一个有意愿的人自动成为组长。
+    leader_willing: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_leader: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    position_id: Mapped[str | None] = mapped_column(
+        ForeignKey("positions.id"), nullable=True, index=True)
     assign_forced: Mapped[bool] = mapped_column(Boolean, default=False)  # 违规强排标记
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     assigned_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -326,7 +368,7 @@ class Enrollment(Base):
 # ======================= 签到 =======================
 
 class CheckinTask(Base):
-    """签到任务：统一签到（挂一级岗位）或分时分工位签到（挂具体工位）。
+    """签到任务：整场次一个统一码，或每个岗位一个独立码。
 
     token 是签到码的核心串；对接学校现有签到系统时由 checkin_gateway
     适配器换成对方返回的任务号，本表结构不变。
@@ -335,9 +377,9 @@ class CheckinTask(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
-    group_id: Mapped[str] = mapped_column(ForeignKey("position_groups.id"), index=True)
-    station_id: Mapped[str | None] = mapped_column(ForeignKey("stations.id"), nullable=True)
-    mode: Mapped[str] = mapped_column(String(12), default="group")   # group / station
+    shift_id: Mapped[str] = mapped_column(ForeignKey("shifts.id"), index=True)
+    position_id: Mapped[str | None] = mapped_column(ForeignKey("positions.id"), nullable=True)
+    mode: Mapped[str] = mapped_column(String(12), default="shift")   # shift / position
     token: Mapped[str] = mapped_column(String(16), unique=True)
     valid_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     valid_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -352,8 +394,8 @@ class CheckinRecord(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     task_id: Mapped[str] = mapped_column(ForeignKey("checkin_tasks.id"), index=True)
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
-    group_id: Mapped[str] = mapped_column(String(32), index=True)
-    station_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    shift_id: Mapped[str] = mapped_column(String(32), index=True)
+    position_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
     method: Mapped[str] = mapped_column(String(12), default="scan")  # scan / manual
     by_user: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 手动补签操作人

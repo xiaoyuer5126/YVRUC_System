@@ -7,7 +7,7 @@ import pytest
 
 from backend import scheduled
 from backend.models import (Activity, ActivityManager, Enrollment,
-                            Notification, PositionGroup, User, now, uid)
+                            Notification, Shift, User, now, uid)
 from conftest import ADMIN
 
 
@@ -27,7 +27,7 @@ def make_activity(db):
         db.add(act)
         db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                                user_id=admin.id, added_by=admin.id))
-        g = PositionGroup(id=uid("g"), activity_id=act.id, name="场次",
+        g = Shift(id=uid("g"), activity_id=act.id, name="场次",
                           start_time=now() + timedelta(hours=start_in_hours),
                           end_time=now() + timedelta(hours=start_in_hours
                                                      + duration_hours),
@@ -77,7 +77,7 @@ def test_未到时间的活动不动(db, make_activity):
 
 def _enroll(db, act, g, student_id):
     u = db.query(User).filter(User.student_id == student_id).one()
-    db.add(Enrollment(id=uid("enr"), activity_id=act.id, group_id=g.id,
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
                       user_id=u.id, status="confirmed", joined_at=now()))
     db.commit()
     return u
@@ -123,19 +123,19 @@ def test_manual_reminder_skips_checked_in(client, db, admin, make_activity,
     act, g = make_activity("closed", reg_end_in_hours=-48, start_in_hours=1)
     u = _enroll(db, act, g, take_student())
 
-    r = client.post(f"/api/staff/groups/{g.id}/checkin-reminder", headers=admin)
+    r = client.post(f"/api/staff/shifts/{g.id}/checkin-reminder", headers=admin)
     assert r.status_code == 200 and r.json()["count"] == 1
 
     # 该志愿者签到后再补发，就没人需要提醒了
     from backend.models import CheckinRecord, CheckinTask
-    task = CheckinTask(id=uid("tsk"), activity_id=act.id, group_id=g.id,
+    task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
                        mode="group", token=uid("T")[:6].upper(),
                        valid_from=g.start_time, valid_to=g.end_time,
                        created_by="system")
     db.add(task)
     db.flush()
     db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
-                         group_id=g.id, user_id=u.id, method="manual"))
+                         shift_id=g.id, user_id=u.id, method="manual"))
     db.commit()
-    r = client.post(f"/api/staff/groups/{g.id}/checkin-reminder", headers=admin)
+    r = client.post(f"/api/staff/shifts/{g.id}/checkin-reminder", headers=admin)
     assert r.status_code == 400

@@ -71,9 +71,9 @@ def clear_failures(key: str) -> None:
 
 
 @contextlib.contextmanager
-def group_lock(group_id: str):
-    """锁住一个一级岗位的名额账本。"""
-    key = f"rucva:lock:group:{group_id}"
+def shift_lock(shift_id: str):
+    """锁住一个场次的名额账本。"""
+    key = f"rucva:lock:group:{shift_id}"
     token = secrets.token_hex(8)
     deadline = time.monotonic() + WAIT_TIMEOUT
     try:

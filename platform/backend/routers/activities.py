@@ -10,8 +10,8 @@ from .. import config, credit, enroll_logic as logic
 from ..database import db_session
 from ..deps import current_user
 from ..integrations import wecom
-from ..locks import group_lock
-from ..models import Activity, Enrollment, PositionGroup, Station, User, now, uid
+from ..locks import shift_lock
+from ..models import Activity, Enrollment, Shift, Position, User, now, uid
 from ..perm import is_activity_manager
 from ..serializers import activity_brief, activity_detail
 
@@ -30,10 +30,10 @@ def _get_activity(db: OrmSession, activity_id: str, user: User) -> Activity:
     return act
 
 
-def _get_group(db: OrmSession, group_id: str) -> PositionGroup:
-    g = db.get(PositionGroup, group_id)
+def _get_group(db: OrmSession, shift_id: str) -> Shift:
+    g = db.get(Shift, shift_id)
     if g is None:
-        raise HTTPException(404, "岗位组不存在")
+        raise HTTPException(404, "场次不存在")
     return g
 
 
@@ -58,12 +58,13 @@ def get_activity(activity_id: str,
 
 
 class EnrollBody(BaseModel):
-    station_id: str | None = None     # 直接定二级模式必填，其余留空
-    allow_reassign: bool = True       # 是否接受管理者调剂工位（仅作参考）
+    position_id: str | None = None    # pick 模式必填；assign 模式留空
+    allow_reassign: bool = True       # 是否接受管理者调剂岗位（仅作参考）
+    leader_willing: bool = False      # 是否愿意担任该岗位组长
 
 
 def _check_eligibility(db: OrmSession, user: User, act: Activity,
-                       g: PositionGroup) -> None:
+                       g: Shift) -> None:
     """报名资格：活动状态、报名窗、用户类型、资料、信用、限制准入。
 
     与名额无关的校验全在这里，锁外先跑一遍，把明确报不了的人挡在锁外面。
@@ -101,29 +102,33 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
                  f"至 {user.restricted_until:%Y-%m-%d}），无法报名本活动")
 
 
-@router.post("/{activity_id}/groups/{group_id}/enroll")
-def enroll(activity_id: str, group_id: str, body: EnrollBody,
+@router.post("/{activity_id}/shifts/{shift_id}/enroll")
+def enroll(activity_id: str, shift_id: str, body: EnrollBody,
            db: OrmSession = Depends(db_session),
            user: User = Depends(current_user)):
     act = _get_activity(db, activity_id, user)
-    g = _get_group(db, group_id)
+    g = _get_group(db, shift_id)
     if g.activity_id != act.id:
-        raise HTTPException(400, "岗位组不属于该活动")
+        raise HTTPException(400, "场次不属于该活动")
 
     _check_eligibility(db, user, act, g)
 
-    # 工位有效性（与名额无关，锁外先判）
-    station = None
-    if body.station_id:
-        station = db.get(Station, body.station_id)
-        if station is None or station.group_id != g.id:
-            raise HTTPException(400, "二级工位无效")
+    # 岗位有效性与硬性条件（与名额无关，锁外先判）
+    position = None
+    if body.position_id:
+        position = db.get(Position, body.position_id)
+        if position is None or position.shift_id != g.id:
+            raise HTTPException(400, "岗位无效")
         if g.needs_assign():
-            raise HTTPException(400, "该岗位组为「二级待定」模式，工位由调配期统一分配")
-    elif not g.needs_assign() and g.stations:
-        raise HTTPException(400, "请选择具体工位")
+            raise HTTPException(400, "该场次的岗位由报名截止后统一分配，无需选择")
+        unmet = logic.unmet_requirements(user, position)
+        if unmet:
+            raise HTTPException(
+                403, f"您不满足「{position.name}」的报名条件：{'；'.join(unmet)}")
+    elif not g.needs_assign():
+        raise HTTPException(400, "请选择具体岗位")
 
-    # ★ 时段冲突（粗粒度）：与所有有效报名的一级岗位比区间，重叠即拦截。
+    # ★ 时段冲突（粗粒度）：与所有有效报名的场次比区间，重叠即拦截。
     # 候补中的场次同样算已占用——排了队就等于预留了这段时间。
     clashes = logic.time_conflicts(db, user, g)
     if clashes:
@@ -132,9 +137,9 @@ def enroll(activity_id: str, group_id: str, body: EnrollBody,
             "conflicts": clashes})
 
     # ★ 名额判断与落库整段串行化到场次粒度，防止超卖与重复报名
-    with group_lock(g.id):
+    with shift_lock(g.id):
         live = (db.query(Enrollment)
-                .filter(Enrollment.group_id == g.id,
+                .filter(Enrollment.shift_id == g.id,
                         Enrollment.user_id == user.id)
                 .filter((Enrollment.status.in_(logic.ACTIVE))
                         | (Enrollment.seat_held.is_(True))).first())
@@ -147,33 +152,48 @@ def enroll(activity_id: str, group_id: str, body: EnrollBody,
                      "pending_confirm": "有候补转正待确认"}[live.status]
             raise HTTPException(409, f"该场次{label}，请勿重复报名")
 
-        enr = Enrollment(id=uid("enr"), activity_id=act.id, group_id=g.id,
+        enr = Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
                          user_id=user.id, joined_at=now(),
-                         allow_reassign=body.allow_reassign)
-        if logic.has_room(db, g, station):
+                         allow_reassign=body.allow_reassign,
+                         leader_willing=body.leader_willing)
+        if position is not None:
+            enr.position_id = position.id
+        if logic.has_room(db, g, position):
             enr.status = "confirmed"
-            if station is not None:
-                enr.station_id = station.id
+            if position is not None:
                 enr.assigned_at = enr.joined_at
         else:
             # 名额满了才轮到候补，此时才检查候补资格
             ok, why = credit.can_join_waitlist(user)
             if not ok:
                 raise HTTPException(403, why)
-            if len(logic.waitlist_rows(db, g.id)) >= g.waitlist_quota:
-                raise HTTPException(409, f"候补名额已满（上限{g.waitlist_quota}人）")
+            # 队列上限：pick 模式按岗位算，assign 模式按场次算
+            queued = logic.waitlist_rows(db, g.id)
+            if position is not None:
+                queued = [r for r in queued if r.position_id == position.id]
+                limit = position.waitlist_quota
+            else:
+                limit = g.waitlist_quota
+            if len(queued) >= limit:
+                raise HTTPException(409, f"候补名额已满（上限{limit}人）")
             enr.status = "waitlisted"
+            # 候补必须接受调剂：管理者要能把排队的人调到还有空位的岗位，
+            # 否则队列会卡在一个岗位上，别处空着没人。
+            enr.allow_reassign = True
         db.add(enr)
+        if enr.status == "confirmed" and position is not None:
+            db.flush()
+            logic.elect_leader(db, position)
 
         if enr.status == "confirmed":
             wecom.send_user(db, user, "signup_success", activity=act.title,
-                            group=g.name, time=g.span_text(),
-                            detail=(f"工位：{station.name}（{station.location}）"
-                                    if station else "具体工位将于调配期公布"))
+                            shift=g.name, time=g.span_text(),
+                            detail=(f"岗位：{position.name}（{position.location}）"
+                                    if position else "具体岗位将于报名截止后公布"))
         else:
             db.flush()
             wecom.send_user(db, user, "waitlist_queued", activity=act.title,
-                            group=g.name, pos=logic.waitlist_position(db, enr))
+                            shift=g.name, pos=logic.waitlist_position(db, enr))
         try:
             db.commit()
         except IntegrityError:      # 唯一索引兜底：锁失效时的并发重复报名
@@ -185,8 +205,9 @@ def enroll(activity_id: str, group_id: str, body: EnrollBody,
         "enrollment_id": enr.id,
         "waitlist_position": (logic.waitlist_position(db, enr)
                               if enr.status == "waitlisted" else 0),
+        "is_leader": enr.is_leader,
         "message": ("报名成功！名额已锁定。" if enr.status == "confirmed"
-                    else "名额已满，已为您加入候补队列。"),
+                    else "名额已满，已为您加入候补队列（候补默认接受岗位调剂）。"),
     }
 
 
@@ -218,10 +239,10 @@ def cancel_enroll(enrollment_id: str,
         raise HTTPException(404, "报名记录不存在")
     if enr.status == "cancelled":
         raise HTTPException(400, "该记录已退选")
-    g = db.get(PositionGroup, enr.group_id)
+    g = db.get(Shift, enr.shift_id)
     act = db.get(Activity, enr.activity_id)
 
-    with group_lock(g.id):
+    with shift_lock(g.id):
         if enr.status == "pending_confirm":
             # 放弃候补转正：顺延下一位并计数
             credit.register_abandon(db, user)
@@ -229,7 +250,7 @@ def cancel_enroll(enrollment_id: str,
             enr.cancel_type = "abandoned"
             enr.confirm_deadline = None
             db.commit()
-            logic.promote_head(db, g)
+            logic.promote_all(db, g)
             db.commit()
             return {"ok": True, "effect": "abandoned",
                     "message": "已放弃候补转正，名额顺延下一位。"
@@ -247,22 +268,30 @@ def cancel_enroll(enrollment_id: str,
             raise HTTPException(409, "活动已开始，无法退选；如有特殊情况请联系负责老师。")
 
         if (g.start_time - t).total_seconds() / 3600 >= config.LATE_CANCEL_HOURS:
+            vacated, was_leader = enr.position_id, enr.is_leader
             enr.status = "cancelled"
             enr.cancel_type = "normal"
+            enr.is_leader = False
             db.commit()
-            logic.promote_head(db, g)   # 正常退选 → 名额释放给候补
+            logic.promote_all(db, g)   # 正常退选 → 名额释放给候补
+            if was_leader:
+                logic.refill_leader(db, vacated)
             db.commit()
             return {"ok": True, "effect": "released",
                     "message": "退选成功，名额已释放给候补队列。"}
 
         # 临近退选：扣分，且名额不再释放——记录保留占位（《设计方案》阶段二.3）
+        vacated, was_leader = enr.position_id, enr.is_leader
         enr.status = "cancelled"
         enr.cancel_type = "late"
         enr.seat_held = True
+        enr.is_leader = False
         score = credit.apply_delta(db, user, -config.LATE_CANCEL_PENALTY,
                                    f"临近退选：距「{act.title}·{g.name}」开始不足"
                                    f"{config.LATE_CANCEL_HOURS}小时",
                                    activity_id=act.id)
+        if was_leader:
+            logic.refill_leader(db, vacated)
         db.commit()
     return {"ok": True, "effect": "penalized",
             "credit_score": score,
@@ -278,7 +307,7 @@ def confirm_promotion(enrollment_id: str,
     enr = db.get(Enrollment, enrollment_id)
     if enr is None or enr.user_id != user.id:
         raise HTTPException(404, "报名记录不存在")
-    with group_lock(enr.group_id):
+    with shift_lock(enr.shift_id):
         db.refresh(enr)
         if enr.status != "pending_confirm":
             raise HTTPException(400, "该记录不在待确认状态")
@@ -287,8 +316,8 @@ def confirm_promotion(enrollment_id: str,
         logic.confirm_promotion(db, enr, user)
         db.commit()
     st_name = ""
-    if enr.station_id:
-        st = db.get(Station, enr.station_id)
-        st_name = f"工位：{st.name}（{st.location}）"
-    return {"ok": True, "station_id": enr.station_id,
+    if enr.position_id:
+        st = db.get(Position, enr.position_id)
+        st_name = f"岗位：{st.name}（{st.location}）"
+    return {"ok": True, "position_id": enr.position_id,
             "message": f"确认成功，已恢复正式报名。{st_name}"}

@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from backend import violations
-from backend.models import (Activity, ActivityManager, PositionGroup, User,
+from backend.models import (Activity, ActivityManager, Shift, User,
                             ViolationRecord, now, uid)
 from conftest import ADMIN, QINGXIE, login
 

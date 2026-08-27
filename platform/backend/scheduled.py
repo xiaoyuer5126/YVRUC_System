@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session as OrmSession
 from . import config
 from .audit import log as audit_log
 from .enroll_logic import expire_stale_promotions
-from .models import Activity, PositionGroup, now
+from .models import Activity, Shift, now
 from .notify import notify_checkin, notify_enrolled
 
 logger = logging.getLogger(__name__)
@@ -86,18 +86,18 @@ def send_checkin_reminders(db: OrmSession) -> int:
     再起来，不该把早就结束的场次的提醒补发出去。
     """
     t = now()
-    groups = (db.query(PositionGroup)
-              .join(Activity, PositionGroup.activity_id == Activity.id)
-              .filter(PositionGroup.reminder_sent_at.is_(None),
-                      PositionGroup.start_time > t,
-                      PositionGroup.start_time <= t + REMINDER_LEAD,
+    shifts = (db.query(Shift)
+              .join(Activity, Shift.activity_id == Activity.id)
+              .filter(Shift.reminder_sent_at.is_(None),
+                      Shift.start_time > t,
+                      Shift.start_time <= t + REMINDER_LEAD,
                       Activity.status.in_(("published", "closed"))).all())
     sent = 0
-    for g in groups:
+    for g in shifts:
         n = notify_checkin(db, g)
         g.reminder_sent_at = t
         sent += n
         logger.info("场次「%s」签到提醒已发送 %d 人", g.name, n)
-    if groups:
+    if shifts:
         db.commit()
     return sent
