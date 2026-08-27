@@ -48,11 +48,8 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "请珍惜志愿服务记录，合理安排时间。"),
     "leader_appointed": (
         "您已成为岗位组长｜{activity}",
-        "您在「{activity}」的岗位「{position}」已被推举为组长。
-"
-        "时间：{position_time}
-地点：{position_loc}
-"
+        "您在「{activity}」的岗位「{position}」已被推举为组长。\n"
+        "时间：{position_time}\n地点：{position_loc}\n"
         "请提前与负责老师对接，现场协助点名与协调。"),
     "checkin_reminder": (
         "签到提醒｜{activity}",

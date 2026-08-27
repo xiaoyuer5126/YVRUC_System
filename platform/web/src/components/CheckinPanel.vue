@@ -1,5 +1,5 @@
 <template>
-  <div v-if="group">
+  <div v-if="shift">
     <div class="toolbar">
       <el-button type="primary" size="small" @click="openCreate">
         <el-icon><Plus /></el-icon>&nbsp;生成签到码
@@ -21,7 +21,7 @@
       </el-table-column>
       <el-table-column label="模式" width="130">
         <template #default="{row}">
-          {{ row.mode === 'station' ? `工位·${row.station_name}` : '统一签到' }}
+          {{ row.mode === 'position' ? `岗位·${row.position_name}` : '统一签到' }}
         </template>
       </el-table-column>
       <el-table-column label="有效时段" min-width="180">
@@ -47,7 +47,7 @@
 
     <!-- 实时大屏：按场次拉取，不依赖激活任务 -->
     <template v-if="board">
-      <div class="section-title">{{ board.group_name }} · 实时到岗
+      <div class="section-title">{{ board.shift_name }} · 实时到岗
         <el-tag size="small" effect="plain">每5秒刷新</el-tag>
       </div>
       <el-row :gutter="14">
@@ -63,7 +63,7 @@
         <el-col :span="18">
           <el-card shadow="never">
             <div class="st-grid">
-              <div v-for="s in board.stations" :key="s.id" class="st-box">
+              <div v-for="s in board.positions" :key="s.id" class="st-box">
                 <b>{{ s.name }}</b>
                 <div class="dim">{{ s.checked }}/{{ s.quota }} 到岗</div>
                 <el-progress :percentage="Math.min(100, Math.round(s.checked / Math.max(1, s.quota) * 100))"
@@ -114,7 +114,7 @@
           <el-table-column prop="name" label="姓名" width="100" />
           <el-table-column prop="student_id" label="学号" width="120" />
           <el-table-column prop="college" label="学院" min-width="140" />
-          <el-table-column prop="station" label="工位" min-width="120" />
+          <el-table-column prop="position" label="岗位" min-width="120" />
           <el-table-column label="方式" width="130">
             <template #default="{row}">
               <el-tag v-if="!row.checked_in" size="small" type="info" effect="plain">未签到</el-tag>
@@ -136,13 +136,13 @@
       <el-form label-width="110px">
         <el-form-item label="签到模式">
           <el-radio-group v-model="form.mode">
-            <el-radio value="group">统一签到</el-radio>
-            <el-radio value="station">分工位签到</el-radio>
+            <el-radio value="shift">统一签到</el-radio>
+            <el-radio value="position">分岗位签到</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="form.mode === 'station'" label="选择工位" required>
-          <el-select v-model="form.station_id" style="width:100%">
-            <el-option v-for="s in group.stations" :key="s.id" :value="s.id"
+        <el-form-item v-if="form.mode === 'position'" label="选择岗位" required>
+          <el-select v-model="form.position_id" style="width:100%">
+            <el-option v-for="s in group.positions" :key="s.id" :value="s.id"
                        :label="`${s.name}（${s.time_text}）`" />
           </el-select>
         </el-form-item>
@@ -182,14 +182,14 @@ import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
 
 const props = defineProps({
-  group: { type: Object, required: true },
+  shift: { type: Object, required: true },
   activityId: { type: String, default: '' },   // 兜底：序列化器缺 activity_id 时由父级传入
 })
 const route = useRoute()
-const actId = computed(() => props.activityId || props.group.activity_id)
+const actId = computed(() => props.activityId || props.shift.activity_id)
 
 const creating = ref(false)
-const form = ref({ mode: 'group', station_id: '', range: [] })
+const form = ref({ mode: 'shift', position_id: '', range: [] })
 const tasks = ref([])
 const board = ref(null)
 const qrVisible = ref(false)
@@ -216,7 +216,7 @@ async function loadTasks() {
 
 async function loadBoard() {
   try {
-    board.value = await api.get(`/api/staff/groups/${props.group.id}/board`)
+    board.value = await api.get(`/api/staff/shifts/${props.shift.id}/board`)
   } catch { /* toast by api；轮询失败保留旧数据 */ }
 }
 
@@ -263,24 +263,24 @@ onUnmounted(() => clearInterval(timer))
 
 function openCreate() {
   // 默认可签时段 = 场次起止；管理者可自行提前开放签到
-  const s = props.group.start_time?.replace(' ', 'T') || ''
-  const e = props.group.end_time?.replace(' ', 'T') || ''
-  form.value = { mode: 'group', station_id: '',
+  const s = props.shift.start_time?.replace(' ', 'T') || ''
+  const e = props.shift.end_time?.replace(' ', 'T') || ''
+  form.value = { mode: 'shift', position_id: '',
                  range: [new Date(s), new Date(e)] }
   creating.value = true
 }
 
 async function createTask() {
-  if (form.value.mode === 'station' && !form.value.station_id)
-    return ElMessage.warning('请选择工位')
+  if (form.value.mode === 'position' && !form.value.position_id)
+    return ElMessage.warning('请选择岗位')
   const body = {
     mode: form.value.mode,
-    station_id: form.value.mode === 'station' ? form.value.station_id : null,
+    position_id: form.value.mode === 'position' ? form.value.position_id : null,
   }
   const [f1, f2] = form.value.range || []
   if (f1) body.valid_from = toISO(f1)
   if (f2) body.valid_to = toISO(f2)
-  await api.post(`/api/staff/groups/${props.group.id}/checkin-tasks`, body)
+  await api.post(`/api/staff/shifts/${props.shift.id}/checkin-tasks`, body)
   ElMessage.success('签到码已生成')
   creating.value = false
   await loadTasks()
@@ -307,7 +307,7 @@ const reminding = ref(false)
 async function sendReminder() {
   reminding.value = true
   try {
-    const d = await api.post(`/api/staff/groups/${props.group.id}/checkin-reminder`)
+    const d = await api.post(`/api/staff/shifts/${props.shift.id}/checkin-reminder`)
     ElMessage.success(`已向 ${d.count} 位未签到志愿者发送签到提醒`)
   } finally { reminding.value = false }
 }

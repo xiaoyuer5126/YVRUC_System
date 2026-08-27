@@ -9,7 +9,7 @@
         <el-select v-model="filter.target_type" clearable placeholder="对象类型" style="width:150px" @change="load">
           <el-option value="activity" label="活动" />
           <el-option value="group" label="场次" />
-          <el-option value="station" label="工位" />
+          <el-option value="position" label="岗位" />
           <el-option value="assignment" label="岗位分配" />
           <el-option value="enrollment" label="报名记录" />
           <el-option value="user" label="用户/信用" />

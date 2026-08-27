@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from backend.database import SessionLocal
 from backend.main import app
-from backend.models import (Activity, ActivityManager, Enrollment,
+from backend.models import (Activity, ActivityManager, Enrollment, Position,
                             Shift, User, now, uid)
 from conftest import ADMIN, login, student_row
 
@@ -23,8 +23,9 @@ def open_group(db):
     """
     seq = iter(range(30, 300))
 
-    def _make(capacity: int, *, mode: str = "single", waitlist_quota: int = 3,
-              day_offset: int | None = None, start_in_hours: float = 4):
+    def _make(capacity: int, *, mode: str = "pick", waitlist_quota: int = 3,
+              day_offset: int | None = None, start_in_hours: float = 4,
+              requirement_tags: dict | None = None, needs_leader: bool = False):
         start = timedelta(days=day_offset if day_offset is not None
                           else next(seq), hours=start_in_hours)
         admin = db.query(User).filter(User.student_id == ADMIN).one()
@@ -39,17 +40,30 @@ def open_group(db):
         db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                                user_id=admin.id, added_by=admin.id))
         g = Shift(id=uid("g"), activity_id=act.id, name="测试场次",
-                          start_time=now() + start,
-                          end_time=now() + start + timedelta(hours=3),
-                          capacity=capacity, mode=mode,
-                          waitlist_quota=waitlist_quota, sort=0)
+                  start_time=now() + start,
+                  end_time=now() + start + timedelta(hours=3),
+                  capacity=capacity, mode=mode,
+                  waitlist_quota=waitlist_quota, sort=0)
         db.add(g)
+        db.flush()
+        # 名额在岗位上，所以每个测试场次都带一个岗位；assign 模式的场次
+        # 报名时不选岗位，名额看场次自己的 capacity。
+        p = Position(id=uid("p"), shift_id=g.id, name="测试岗位",
+                     location="测试地点", quota=capacity,
+                     waitlist_quota=waitlist_quota,
+                     requirement_tags=requirement_tags or {},
+                     needs_leader=needs_leader, sort=0)
+        db.add(p)
         db.commit()
+        g.test_position_id = p.id
         return act, g
     return _make
 
 
 def enroll(client, headers, act, g, **body):
+    """pick 模式必须带岗位；用例没指定就用场次自带的那个测试岗位。"""
+    if "position_id" not in body and not g.needs_assign():
+        body["position_id"] = g.test_position_id
     return client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                        json=body, headers=headers)
 
@@ -137,7 +151,7 @@ def test_late_cancel_holds_the_seat(client, db, open_group, take_student):
     assert enroll(client, h, act, g).status_code == 409
 
     group = client.get(f"/api/activities/{act.id}", headers=h).json()["shifts"][0]
-    assert group["held_seats"] == 1 and group["remaining"] == 0
+    assert group["remaining"] == 0   # 占位不释放，名额没回到池子里
 
 
 def test_normal_cancel_promotes_waitlist_head(client, db, open_group,
@@ -160,12 +174,13 @@ def test_normal_cancel_promotes_waitlist_head(client, db, open_group,
 def test_concurrent_enroll_does_not_oversell(open_group, take_student):
     """20 人同时抢 5 个名额：确认的必须正好 5 个。"""
     act, g = open_group(5, waitlist_quota=0)
+    pid = g.test_position_id
     students = [take_student() for _ in range(20)]
 
     def grab(sid):
         with TestClient(app) as c:
             r = c.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
-                       json={}, headers=login(c, sid))
+                           json={"position_id": pid}, headers=login(c, sid))
             return r.json().get("status") if r.status_code == 200 else None
 
     with ThreadPoolExecutor(max_workers=20) as pool:
@@ -198,11 +213,25 @@ def test_allow_reassign_recorded(client, open_group, take_student):
     assert group["my_enrollment"]["allow_reassign"] is True
 
 
-def test_capacity_zero_is_rejected(client, admin):
-    """0 人的场次没有意义：以前会被当成「不限人数」。"""
+def test_quota_zero_is_rejected(client, admin):
+    """0 人的岗位没有意义：以前会被当成「不限人数」。"""
     target = client.get("/api/staff/activities", headers=admin).json()[0]["id"]
     r = client.post(f"/api/staff/activities/{target}/shifts", headers=admin,
-                    json={"name": "零名额", "capacity": 0, "mode": "single",
+                    json={"name": "测试场次", "mode": "pick",
                           "start_time": (now() + timedelta(days=400)).isoformat(),
                           "end_time": (now() + timedelta(days=400, hours=2)).isoformat()})
+    assert r.status_code == 200
+    shift_id = r.json()["id"]
+    r = client.post(f"/api/staff/shifts/{shift_id}/positions", headers=admin,
+                    json={"name": "零名额", "quota": 0})
     assert r.status_code == 422
+
+
+def test_assign_shift_requires_capacity(client, admin):
+    """截止后统一分配的场次，名额只能记在场次上，必须填。"""
+    target = client.get("/api/staff/activities", headers=admin).json()[0]["id"]
+    r = client.post(f"/api/staff/activities/{target}/shifts", headers=admin,
+                    json={"name": "待分配场次", "mode": "assign", "capacity": 0,
+                          "start_time": (now() + timedelta(days=401)).isoformat(),
+                          "end_time": (now() + timedelta(days=401, hours=2)).isoformat()})
+    assert r.status_code == 400

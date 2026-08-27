@@ -8,14 +8,14 @@
           <div class="dim">{{ row.activity.location }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="场次 / 工位" min-width="180">
+      <el-table-column label="场次 / 岗位" min-width="180">
         <template #default="{ row }">
           {{ row.group.name }}（{{ row.group.time_text }}）
-          <div v-if="row.station">
-            <el-tag size="small" effect="plain">{{ row.station.name }}</el-tag>
-            <span class="dim"> {{ row.station.time_text }} · {{ row.station.location }}</span>
+          <div v-if="row.position">
+            <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
+            <span class="dim"> {{ row.position.time_text }} · {{ row.position.location }}</span>
           </div>
-          <div v-else-if="row.status === 'confirmed'" class="dim">工位待分配</div>
+          <div v-else-if="row.status === 'confirmed'" class="dim">岗位待分配</div>
         </template>
       </el-table-column>
       <el-table-column label="岗位调剂" width="120">

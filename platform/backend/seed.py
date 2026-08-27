@@ -17,7 +17,9 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta
 
-from .database import Base, SessionLocal, engine, init_db
+from sqlalchemy import text
+
+from .database import SessionLocal, engine, init_db
 from .models import (Activity, ActivityManager, AuditLog, CheckinRecord,
                      CheckinTask, CreditLog, Enrollment, HoursRecord,
                      Notification, Shift, Position, User, uid)
@@ -55,9 +57,12 @@ def dt(days=0, hours=0, minutes=0, base=None):
 
 
 def main() -> None:
-    # 整库重建而不是逐表 delete：模型改了字段时，只删数据会留下旧结构的表，
-    # 表现是插入报「column ... does not exist」，很难往这上面想。
-    Base.metadata.drop_all(engine)
+    # 整个 schema 重建，而不是逐表 delete、也不是 metadata.drop_all：
+    # 模型改了名字时，旧表还在库里且不在 metadata 里，drop_all 会因为
+    # 外键依赖失败；只删数据则会留下旧结构，插入时报「column 不存在」。
+    with engine.begin() as conn:
+        conn.execute(text("DROP SCHEMA public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
     init_db()
     db = SessionLocal()
     try:
@@ -138,12 +143,14 @@ def main() -> None:
         db.commit()
 
         # ---------- 岗位助手（无时间：职责/地点/名额/要求） ----------
-        def stn(group, name, loc, quota, tags=None, note="", train=""):
-            s = Position(id=uid("s"), shift_id=group.id, name=name,
-                        location=loc, quota=quota, requirement_tags=tags or {},
-                        requirement_note=note, training_note=train)
-            db.add(s)
-            return s
+        def stn(shift, name, loc, quota, tags=None, note="", train="",
+                leader=False, waitlist=3):
+            p = Position(id=uid("p"), shift_id=shift.id, name=name,
+                         location=loc, quota=quota, waitlist_quota=waitlist,
+                         requirement_tags=tags or {}, requirement_note=note,
+                         training_note=train, needs_leader=leader)
+            db.add(p)
+            return p
 
         def enr(user, act, group, days_ago, status="confirmed", position=None,
                 assigned=True, allow_reassign=None):
@@ -152,9 +159,11 @@ def main() -> None:
                            position_id=position.id if position else None,
                            status=status, source="self",
                            # 约四分之一的人不接受调剂，分配面板上能看到提示
-                           allow_reassign=(random.random() > 0.25
-                                           if allow_reassign is None
-                                           else allow_reassign),
+                           allow_reassign=(True if status != "confirmed"
+                                           else (random.random() > 0.25
+                                                 if allow_reassign is None
+                                                 else allow_reassign)),
+                           leader_willing=random.random() > 0.6,
                            joined_at=dt(days=-days_ago,
                                         minutes=random.randint(-50, 50)))
             if status == "confirmed" and assigned and position:
@@ -179,13 +188,11 @@ def main() -> None:
         m1 = Shift(id=uid("g"), activity_id=sport.id, name="上午场",
                            start_time=dt(days=3, base=t0.replace(hour=8)),
                            end_time=dt(days=3, base=t0.replace(hour=12)),
-                           capacity=26, mode="fine",
-                           waitlist_quota=3, sort=0)
+                           mode="pick", sort=0)
         m2 = Shift(id=uid("g"), activity_id=sport.id, name="下午场",
                            start_time=dt(days=3, base=t0.replace(hour=14)),
                            end_time=dt(days=3, base=t0.replace(hour=17, minute=30)),
-                           capacity=16, mode="fine",
-                           waitlist_quota=3, sort=1)
+                           mode="pick", sort=1)
         db.add_all([m1, m2])
         db.flush()
 
@@ -302,9 +309,12 @@ def main() -> None:
         f1 = Shift(id=uid("g"), activity_id=fair.id, name="下午讲解场",
                            start_time=dt(days=5, base=t0.replace(hour=13)),
                            end_time=dt(days=5, base=t0.replace(hour=17)),
-                           capacity=10, mode="single",
-                           waitlist_quota=3, sort=0)
+                           mode="pick", sort=0)
         db.add(f1)
+        db.flush()
+        f1_pos = stn(f1, "校园讲解", "明德主楼北门", 10,
+                     note="带队讲解 2 条校园线路，需提前熟悉讲解词",
+                     train="讲解词与线路图见岗位材料", leader=True)
         db.flush()
         # 3 人同时报了图书整理周（时段重叠素材）；其余 4 人正常
         book_rows = db.query(Enrollment).filter(Enrollment.shift_id == b1.id).all()
@@ -314,14 +324,16 @@ def main() -> None:
             u = db.get(User, uid_)
             db.add(Enrollment(id=uid("enr"), activity_id=fair.id,
                               shift_id=f1.id, user_id=u.id, status="confirmed",
-                              source="self", assigned_at=dt(days=-1),
+                              position_id=f1_pos.id, source="self",
+                              assigned_at=dt(days=-1),
                               joined_at=dt(days=-1)))
         rest = [u for u in students
                 if u.id not in book_ids and u.id != frozen_id][:4]
         for u in rest:
             db.add(Enrollment(id=uid("enr"), activity_id=fair.id,
                               shift_id=f1.id, user_id=u.id, status="confirmed",
-                              source="self", assigned_at=dt(days=-1),
+                              position_id=f1_pos.id, source="self",
+                              assigned_at=dt(days=-1),
                               joined_at=dt(days=-1)))
 
         # ---------- 活动4：校庆晚会当日保障（已截止·签到进行中·今天全天） ----------
@@ -338,8 +350,7 @@ def main() -> None:
         c1 = Shift(id=uid("g"), activity_id=gala.id, name="晚会当日班",
                            start_time=dt(base=t0.replace(hour=8, minute=0)),
                            end_time=dt(base=t0.replace(hour=23, minute=30)),
-                           capacity=12, mode="fine",
-                           waitlist_quota=3, sort=0)
+                           mode="pick", sort=0)
         db.add(c1)
         db.flush()
         c_s1 = stn(c1, "嘉宾引导", "明德堂前厅", 4)
@@ -349,7 +360,7 @@ def main() -> None:
         gala_users = students[38:50]
         assigned_map = [c_s1] * 4 + [c_s2] * 4 + [c_s3] * 4
         task_gala = CheckinTask(id=uid("tsk"), activity_id=gala.id, shift_id=c1.id,
-                                mode="group", token="GALA01",
+                                mode="shift", token="GALA01",
                                 valid_from=c1.start_time, valid_to=c1.end_time,
                                 active=True, created_by=wang.id)
         db.add(task_gala)
@@ -389,12 +400,13 @@ def main() -> None:
         e1 = Shift(id=uid("g"), activity_id=elder.id, name="上周六场",
                            start_time=dt(days=-7, base=t0.replace(hour=9)),
                            end_time=dt(days=-7, base=t0.replace(hour=12)),
-                           capacity=10, mode="single",
-                           waitlist_quota=3, sort=0)
+                           mode="pick", sort=0)
         db.add(e1)
         db.flush()
+        e1_pos = stn(e1, "陪伴服务", "海淀区敬老院", 10)
+        db.flush()
         elder_task = CheckinTask(id=uid("tsk"), activity_id=elder.id,
-                                 shift_id=e1.id, mode="group", token="ELDER9",
+                                 shift_id=e1.id, mode="shift", token="ELDER9",
                                  valid_from=e1.start_time, valid_to=e1.end_time,
                                  active=False, created_by=wang.id)
         db.add(elder_task)
@@ -403,6 +415,7 @@ def main() -> None:
         for i, u in enumerate(elder_pool):
             joined = dt(days=-12, minutes=i * 11)
             db.add(Enrollment(id=uid("enr"), activity_id=elder.id,
+                              position_id=e1_pos.id,
                               shift_id=e1.id, user_id=u.id, status="confirmed",
                               joined_at=joined, assigned_at=joined))
             db.add(CheckinRecord(id=uid("ckr"), task_id=elder_task.id,

@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
-from .. import scheduler_adapter
+from .. import assign
 from ..audit import diff_changes, log as audit_log
 from ..database import db_session
 from ..deps import require_manager
@@ -377,6 +377,7 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                       note=body.note.strip(), sort=len(act.shifts),
                       waitlist_quota=body.waitlist_quota)
     _apply_shift_mode(db, g, body.mode)
+    _validate_shift_capacity(db, g)
     db.add(g)
     db.flush()
     audit_log(db, actor=user, action="create", target_type="group",
@@ -777,17 +778,18 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
                          Enrollment.status == "cancelled")
                  .order_by(Enrollment.joined_at.desc()).limit(20).all()]
     return {
-        "group": {"id": g.id, "name": g.name, "time_text": g.span_text(),
-                  "capacity": g.capacity, "needs_assign": g.needs_assign(),
-                  "mode": g.mode,
-                  "held_seats": logic.group_held_count(db, g.id),
-                  "occupied": logic.group_occupied_count(db, g.id),
+        "shift": {"id": g.id, "name": g.name, "time_text": g.span_text(),
+                  "capacity": g.total_capacity(), "needs_assign": g.needs_assign(),
+                  "mode": g.mode, "mode_label": g.mode_label(),
+                  "occupied": logic.shift_occupied_count(db, g.id),
                   "activity_id": act.id, "activity_title": act.title,
                   "start_time": iso(g.start_time)},
-        "positions": [{"id": s.id, "name": s.name, "quota": s.quota,
-                      "time_text": s.time_text(), "location": s.location,
-                      "confirmed": logic.position_confirmed_count(db, s.id)}
-                     for s in positions],
+        "positions": [{"id": p.id, "name": p.name, "quota": p.quota,
+                       "location": p.location,
+                       "needs_leader": p.needs_leader,
+                       "requirement_desc": p.requirement_desc() or "不限",
+                       "confirmed": logic.position_confirmed_count(db, p.id)}
+                      for p in positions],
         "confirmed": confirmed,
         "waitlist": waitlist,
         "cancelled": cancelled,
@@ -795,11 +797,11 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
     }
 
 
-# ======================= 二次分配（排班程序） =======================
+# ======================= 一键分配 =======================
 
 class PreviewBody(BaseModel):
-    preset: str = ""
-    rules: dict | None = None      # 高级自定义规则（与排班程序 rules 配置同构）
+    # 跨场次连续性：本活动其它场次已排过同名岗位的人，优先还待在那个岗位
+    continuity: bool = True
 
 
 @router.post("/shifts/{shift_id}/assign/preview")
@@ -808,15 +810,10 @@ def assign_preview(shift_id: str, body: PreviewBody,
                    user: User = Depends(require_manager)):
     g = _group(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
-    if not g.positions:
-        raise HTTPException(400, "请先在该场次下创建岗位，再运行智能排班")
     try:
-        result = scheduler_adapter.preview(db, g, body.preset, body.rules)
-    except Exception as exc:   # 规则配置非法时给出可读错误
-        db.rollback()
-        raise HTTPException(400, f"规则配置无效：{exc}")
-    result["presets"] = scheduler_adapter.PRESETS_FOR_UI
-    return result
+        return assign.preview(db, g, continuity=body.continuity)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 class ApplyPlanBody(BaseModel):
@@ -834,9 +831,9 @@ def assign_apply(shift_id: str, body: ApplyPlanBody, bg: BackgroundTasks,
         raise HTTPException(400, "空方案")
     notify_items: list[dict] = []
     try:
-        result = scheduler_adapter.apply_plan(db, g, user, body.plan,
-                                              source=body.source,
-                                              notify_out=notify_items)
+        result = assign.apply_plan(db, g, user, body.plan,
+                                   source=body.source,
+                                   notify_out=notify_items)
     except ValueError as exc:
         db.rollback()
         raise HTTPException(409, str(exc))

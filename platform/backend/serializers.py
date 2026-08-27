@@ -7,11 +7,13 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .enroll_logic import (shift_confirmed_count, group_held_count,
-                           group_occupied_count, position_confirmed_count,
-                           time_conflicts, waitlist_position, waitlist_rows)
+from .enroll_logic import (position_confirmed_count, position_occupied_count,
+                           shift_confirmed_count, shift_occupied_count,
+                           time_conflicts, unmet_requirements,
+                           waitlist_position, waitlist_rows)
 from . import config
-from .models import Activity, AuditLog, Enrollment, Shift, Position, iso, now
+from .models import (Activity, Attachment, AuditLog, Enrollment, Position,
+                     Shift, User, iso, now)
 
 
 def iso_of(dt):
@@ -43,9 +45,9 @@ def display_status(act: Activity) -> tuple[str, str]:
 
 def activity_brief(db: OrmSession, act: Activity) -> dict:
     shifts = sorted(act.shifts, key=lambda g: g.sort)
-    total_cap = sum(g.capacity for g in shifts)
+    total_cap = sum(g.total_capacity() for g in shifts)
     total_conf = sum(shift_confirmed_count(db, g.id) for g in shifts)
-    total_used = sum(group_occupied_count(db, g.id) for g in shifts)
+    total_used = sum(shift_occupied_count(db, g.id) for g in shifts)
     span = act.time_span()
     ds_code, ds_label = display_status(act)
     return {
@@ -54,7 +56,7 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
         "status_label": act.label_status(), "location": act.location,
         "intro": act.intro[:120], "cover_hue": act.cover_hue,
         "display_status": ds_code, "display_label": ds_label,
-        "groups_count": len(shifts),
+        "shifts_count": len(shifts),
         "total_capacity": total_cap, "total_confirmed": total_conf,
         # 剩余名额扣掉临近退选扣留的占位，不然广场上显示有位、点进去报不了
         "remaining": max(0, total_cap - total_used),
@@ -65,47 +67,68 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
     }
 
 
-def position_out(db: OrmSession, st: Position) -> dict:
-    confirmed = position_confirmed_count(db, st.id)
-    req_desc = []
-    for tag, value in (st.requirement_tags or {}).items():
-        if isinstance(value, list):
-            if value:
-                req_desc.append(f"{tag}={'/'.join(map(str, value))}")
-        else:
-            req_desc.append(f"{tag}={value}")
-    return {
-        "id": st.id, "name": st.name,
-        # 岗位不再有独立时间：时间随场次（time_text = 场次时段）
-        "time_text": st.time_text(),
-        "location": st.location, "quota": st.quota, "confirmed": confirmed,
-        "remaining": max(0, st.quota - confirmed),
-        "requirement_tags": st.requirement_tags or {},
-        "requirement_desc": "；".join(req_desc) or "不限",
-        "requirement_note": st.requirement_note,
-        "training_note": st.training_note,
-        "sort": st.sort,
+def position_out(db: OrmSession, p: Position, user=None) -> dict:
+    """岗位。带 user 时附上「这个人能不能报」——前端据此灰掉并说明原因，
+    比让人点了再被拒要清楚。"""
+    confirmed = position_confirmed_count(db, p.id)
+    queued = len([r for r in waitlist_rows(db, p.shift_id)
+                  if r.position_id == p.id])
+    out = {
+        "id": p.id, "name": p.name,
+        # 岗位没有独立时间：显示所属场次的时段
+        "time_text": p.time_text(),
+        "location": p.location, "quota": p.quota, "confirmed": confirmed,
+        "remaining": max(0, p.quota - position_occupied_count(db, p.id)),
+        "waitlist_quota": p.waitlist_quota, "waitlist_count": queued,
+        "needs_leader": p.needs_leader,
+        "requirement_tags": p.requirement_tags or {},
+        "requirement_desc": p.requirement_desc() or "不限",
+        "requirement_note": p.requirement_note,
+        "training_note": p.training_note,
+        "attachments": attachments_out(db, "position", p.id),
+        "sort": p.sort,
     }
+    leader = (db.query(Enrollment)
+              .filter(Enrollment.position_id == p.id,
+                      Enrollment.is_leader.is_(True),
+                      Enrollment.status == "confirmed").first())
+    out["leader_name"] = (db.get(User, leader.user_id).name if leader else "")
+    if user is not None:
+        unmet = unmet_requirements(user, p)
+        out["eligible"] = not unmet
+        out["ineligible_reason"] = "；".join(unmet)
+    return out
+
+
+def attachments_out(db: OrmSession, owner_type: str, owner_id: str) -> list[dict]:
+    rows = (db.query(Attachment)
+            .filter(Attachment.owner_type == owner_type,
+                    Attachment.owner_id == owner_id)
+            .order_by(Attachment.created_at).all())
+    return [{"id": a.id, "kind": a.kind, "title": a.title, "size": a.size,
+             "url": (a.url if a.kind == "link" else f"/api/materials/{a.id}")}
+            for a in rows]
 
 
 def shift_out(db: OrmSession, g: Shift, user=None) -> dict:
-    positions = sorted(g.positions, key=lambda s: s.sort)
-    confirmed = shift_confirmed_count(db, g.id)
-    held = group_held_count(db, g.id)
+    positions = sorted(g.positions, key=lambda p: p.sort)
+    capacity = g.total_capacity()
     out = {
         "id": g.id, "name": g.name,
         "activity_id": g.activity_id,
         "start_time": iso_of(g.start_time), "end_time": iso_of(g.end_time),
         "time_text": g.span_text(),
-        "capacity": g.capacity, "confirmed": confirmed,
-        "held_seats": held,
-        "remaining": max(0, g.capacity - group_occupied_count(db, g.id)),
+        # 名额：assign 模式记在场次上，pick 模式是各岗位之和
+        "capacity": capacity,
+        "confirmed": shift_confirmed_count(db, g.id),
+        "remaining": max(0, capacity - shift_occupied_count(db, g.id)),
         "waitlist_quota": g.waitlist_quota,
         "needs_assign": g.needs_assign(),
         "mode": g.mode,
         "mode_label": g.mode_label(),
         "note": g.note, "sort": g.sort,
-        "positions": [position_out(db, s) for s in positions],
+        "positions": [position_out(db, p, user) for p in positions],
+        "attachments": attachments_out(db, "shift", g.id),
         "waitlist_count": len(waitlist_rows(db, g.id)),
     }
 
@@ -120,6 +143,7 @@ def shift_out(db: OrmSession, g: Shift, user=None) -> dict:
                 "enrollment_id": enr.id, "status": enr.status,
                 "position_id": enr.position_id,
                 "allow_reassign": enr.allow_reassign,
+                "is_leader": enr.is_leader,
                 "confirm_deadline": iso_of(enr.confirm_deadline),
                 "waitlist_position": (waitlist_position(db, enr)
                                       if enr.status != "confirmed" else 0),

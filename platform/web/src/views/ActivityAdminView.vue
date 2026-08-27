@@ -46,21 +46,21 @@
       <!-- ============ 岗位树 ============ -->
       <el-tab-pane label="岗位树（一二级）" name="tree">
         <el-alert type="info" :closable="false" style="margin-bottom:12px">
-          岗位模式三种：<b>仅一级</b>（简单活动，无二级工位）/ <b>二级待定</b>（报名只锁时段，截止后统一分工位）/
-          <b>直接定二级</b>（学生报名直接选工位，工位之间互斥）。
-          时间由一级岗位统一负责，二级工位只区分职责/地点；点击岗位名称可查看详情。
+          场次模式两种：<b>报名即选岗位</b>（名额与候补都在岗位上）/ <b>截止后统一分配</b>（报名只锁时段，名额记在场次上）；
+          <b>直接定二级</b>（学生报名直接选岗位，岗位之间互斥）。
+          时间由场次统一负责，岗位只区分职责/地点；点击岗位名称可查看详情。
         </el-alert>
         <div v-for="g in groups" :key="g.id" class="group-card">
           <div class="g-head">
             <el-link type="primary" :underline="false" style="font-weight:600;font-size:14px"
                      @click="showGroupDetail(g)">{{ g.name }}</el-link>
             <el-tag size="small" effect="plain"
-                    :type="g.mode === 'single' ? 'info' : g.mode === 'assign' ? 'warning' : 'primary'">
+                    :type="g.mode === 'assign' ? 'warning' : 'info'">
               {{ g.mode_label }}
             </el-tag>
             <span class="dim">{{ g.start_time.slice(5,16).replace('T',' ') }}
               ~ {{ g.end_time.slice(5,16).replace('T',' ') }}</span>
-            <span>上限 {{ g.capacity }} · 工位合计 {{ sumQuota(g) }}</span>
+            <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}` : `岗位合计 ${sumQuota(g)}` }}</span>
             <el-tooltip v-if="g.held_seats" placement="top"
                         content="临近退选（开始前24小时内）扣留的名额，按规则不再释放给任何人">
               <el-tag size="small" type="warning" effect="plain">
@@ -68,17 +68,17 @@
               </el-tag>
             </el-tooltip>
             <span style="margin-left:auto">
-              <el-button size="small" @click="openGroup(g)">编辑</el-button>
-              <el-button v-if="g.mode !== 'single'" size="small" type="primary" plain
-                         @click="openStation(null, g)">添加工位</el-button>
-              <el-popconfirm :title="`删除场次「${g.name}」？`" @confirm="delGroup(g)">
+              <el-button size="small" @click="openShift(g)">编辑</el-button>
+              <el-button size="small" type="primary" plain
+                         @click="openStation(null, g)">添加岗位</el-button>
+              <el-popconfirm :title="`删除场次「${g.name}」？`" @confirm="delShift(g)">
                 <template #reference><el-button size="small" type="danger" plain>删除</el-button></template>
               </el-popconfirm>
             </span>
           </div>
 
-          <el-table v-if="g.stations.length" :data="g.stations" size="small">
-            <el-table-column label="工位" min-width="130">
+          <el-table v-if="g.positions.length" :data="g.positions" size="small">
+            <el-table-column label="岗位" min-width="130">
               <template #default="{row}">
                 <el-link type="primary" :underline="false"
                          @click="showStationDetail(g, row)">{{ row.name }}</el-link>
@@ -93,21 +93,21 @@
             <el-table-column label="操作" width="130">
               <template #default="{row}">
                 <el-button size="small" link type="primary" @click="openStation(row, g)">编辑</el-button>
-                <el-popconfirm title="删除该工位？" @confirm="delStation(row)">
+                <el-popconfirm title="删除该岗位？" @confirm="delStation(row)">
                   <template #reference><el-button size="small" link type="danger">删除</el-button></template>
                 </el-popconfirm>
               </template>
             </el-table-column>
           </el-table>
           <p v-else class="dim" style="margin:6px 0 0">
-            {{ g.mode === 'single' ? '仅一级岗位模式：无需二级工位，学生报名即锁定时段。'
-             : g.mode === 'assign' ? '二级待定模式：调配期在此建好工位后，到「报名与调配」运行智能排班。'
-             : '精细化模式需先建工位供学生选择。' }}
+            {{ g.mode === 'assign'
+               ? '截止后统一分配：先建好岗位定名额，报名截止后到「报名与调配」一键分配。'
+               : '报名即选岗位：请先建好岗位，名额与候补都在岗位上。' }}
           </p>
         </div>
         <el-button style="width:100%;margin-top:4px" plain dashed
-                   @click="openGroup(null)">
-          <el-icon><Plus /></el-icon>&nbsp;新建一级岗位（场次）
+                   @click="openShift(null)">
+          <el-icon><Plus /></el-icon>&nbsp;新建场次（场次）
         </el-button>
       </el-tab-pane>
 
@@ -128,7 +128,7 @@
               <el-option v-for="g in groups" :key="g.id"
                          :value="g.id" :label="`${g.name}（${g.confirmed}/${g.capacity}）`" />
             </el-select>
-            <template v-if="currentGroup">
+            <template v-if="currentShift">
               <el-card shadow="never" class="wl-card">
                 <template #header><b>候补队列</b>
                   <span class="dim">（按报名时间排序，正常退选自动递补）</span></template>
@@ -153,7 +153,7 @@
             </template>
           </el-col>
           <el-col :span="17">
-            <template v-if="currentGroup">
+            <template v-if="currentShift">
               <div class="section-title" style="margin-top:0">已确认名单（{{ roster.confirmed.length }} 人）
                 <el-tooltip content="依据签到任务实时回流"><el-icon><InfoFilled /></el-icon></el-tooltip>
               </div>
@@ -170,9 +170,9 @@
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="工位" min-width="130">
+                <el-table-column label="岗位" min-width="130">
                   <template #default="{row}">
-                    {{ row.station_name || '待分配' }}
+                    {{ row.position_name || '待分配' }}
                     <el-tag v-if="row.assign_forced" size="small" type="danger">强制</el-tag>
                   </template>
                 </el-table-column>
@@ -181,11 +181,11 @@
                     <el-tag v-if="row.checked_in" type="success" size="small" effect="light">✓</el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column v-if="roster.stations.length" label="调岗" width="210">
+                <el-table-column v-if="roster.positions.length" label="调岗" width="210">
                   <template #default="{row}">
                     <el-select v-model="moveSel[row.enrollment_id]" size="small"
-                               clearable placeholder="调至工位…" style="width:140px">
-                      <el-option v-for="s in roster.stations" :key="s.id" :value="s.id"
+                               clearable placeholder="调至岗位…" style="width:140px">
+                      <el-option v-for="s in roster.positions" :key="s.id" :value="s.id"
                                  :label="`${s.name}（余${Math.max(0, s.quota - s.confirmed)}）`" />
                     </el-select>
                     <el-button size="small" link type="primary"
@@ -195,7 +195,7 @@
                 </el-table-column>
               </el-table>
 
-              <AssignPanel v-if="currentGroup" :group="currentGroup"
+              <AssignPanel v-if="currentShift" :shift="currentShift"
                            :unassigned-count="unassignedCount" @reload="loadAll" />
             </template>
           </el-col>
@@ -204,7 +204,7 @@
 
       <!-- ============ 签到管理 ============ -->
       <el-tab-pane label="签到管理" name="checkin" lazy>
-        <CheckinPanel v-if="currentGroup" :group="currentGroup" :activity-id="act.id" />
+        <CheckinPanel v-if="currentShift" :shift="currentShift" :activity-id="act.id" />
         <el-empty v-else description="请先创建场次" />
       </el-tab-pane>
 
@@ -214,7 +214,7 @@
           <el-button type="primary" @click="doExport">
             <el-icon><Download /></el-icon>&nbsp;导出排班表 Excel
           </el-button>
-          <span class="dim">按一级岗位分 Sheet：姓名、学号、学院、手机号、二级工位、时间、地点、签到状态——可直接交付现场负责人。
+          <span class="dim">按场次分 Sheet：姓名、学号、学院、手机号、岗位、时间、地点、签到状态——可直接交付现场负责人。
             生产版将强制加密并由企业微信单独发送密码；本次下载已计入审计。</span>
         </div>
         <el-divider />
@@ -279,7 +279,7 @@
                        style="width:320px">
               <el-option v-for="v in rosterOptions" :key="v.student_id"
                          :value="v.student_id"
-                         :label="`${v.name}（${v.student_id}）${v.group_name}`" />
+                         :label="`${v.name}（${v.student_id}）${v.shift_name}`" />
             </el-select>
             <el-input-number v-model="mh.hours" :min="0.5" :step="0.5" style="width:120px" />
             <el-input v-model="mh.note" placeholder="备注（如：场外支援）" style="width:220px" />
@@ -370,7 +370,7 @@
     </el-tabs>
 
     <!-- 场次对话框 -->
-    <el-dialog v-model="groupDlg.visible" :title="groupDlg.editing ? '编辑场次' : '新建场次'" width="520">
+    <el-dialog v-model="shiftDlg.visible" :title="shiftDlg.editing ? '编辑场次' : '新建场次'" width="520">
       <el-form label-width="100px">
         <el-form-item label="名称" required><el-input v-model="groupForm.name" placeholder="如：上午场" /></el-form-item>
         <el-form-item label="开始时间" required>
@@ -379,36 +379,40 @@
         <el-form-item label="结束时间" required>
           <el-date-picker v-model="groupForm.end_time" type="datetime" style="width:100%" />
         </el-form-item>
-        <el-form-item label="人数上限" required>
+        <el-form-item v-if="groupForm.mode === 'assign'" label="人数上限" required>
           <el-input-number v-model="groupForm.capacity" :min="1" />
+          <div class="dim" style="margin-top:4px">
+            报名截止前先占住的总名额；分配时各岗位名额之和不能超过它
+          </div>
         </el-form-item>
         <el-form-item label="候补名额">
           <el-input-number v-model="groupForm.waitlist_quota" :min="0" />
-          <div class="dim" style="margin-top:4px">候补队列人数上限，满员后不可再加入候补</div>
+          <div class="dim" style="margin-top:4px">
+            仅「截止后统一分配」用得上；报名即选岗位的场次，候补名额在各岗位上设置
+          </div>
         </el-form-item>
-        <el-form-item label="岗位模式" required>
+        <el-form-item label="场次模式" required>
           <el-radio-group v-model="groupForm.mode">
-            <el-radio-button value="single">仅一级</el-radio-button>
-            <el-radio-button value="assign">二级待定</el-radio-button>
-            <el-radio-button value="fine">直接定二级</el-radio-button>
+            <el-radio-button value="pick">报名即选岗位</el-radio-button>
+            <el-radio-button value="assign">截止后统一分配</el-radio-button>
           </el-radio-group>
           <div class="dim" style="margin-top:4px;line-height:1.7">
-            仅一级：无二级工位，报名即占名额；二级待定：报名只锁时段，截止后统一排班；
-            直接定二级：学生报名时选工位（工位之间互斥，时间随场次）。
+            报名即选岗位：名额与候补都在各岗位上，场次不设总人数；<br />
+            截止后统一分配：报名只锁时段，名额记在场次上，截止后一键分配到岗位。
           </div>
         </el-form-item>
         <el-form-item label="备注"><el-input v-model="groupForm.note" /></el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="groupDlg.visible = false">取消</el-button>
-        <el-button type="primary" :loading="savingGroup" @click="saveGroup">保存</el-button>
+        <el-button @click="shiftDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="savingGroup" @click="saveShift">保存</el-button>
       </template>
     </el-dialog>
 
-    <!-- 工位对话框 -->
-    <el-dialog v-model="stationDlg.visible" :title="stationDlg.editing ? '编辑工位' : '新建工位'" width="560">
+    <!-- 岗位对话框 -->
+    <el-dialog v-model="positionDlg.visible" :title="positionDlg.editing ? '编辑岗位' : '新建岗位'" width="560">
       <el-form label-width="100px">
-        <el-form-item label="工位名称" required><el-input v-model="stationForm.name" placeholder="如：东门引导" /></el-form-item>
+        <el-form-item label="岗位名称" required><el-input v-model="stationForm.name" placeholder="如：东门引导" /></el-form-item>
         <el-form-item label="服务地点"><el-input v-model="stationForm.location" /></el-form-item>
         <el-form-item label="名额" required><el-input-number v-model="stationForm.quota" :min="0" /></el-form-item>
         <el-form-item label="条件要求">
@@ -424,11 +428,11 @@
         <el-form-item label="要求原文"><el-input v-model="stationForm.requirement_note" placeholder="自然语言描述，展示用" /></el-form-item>
         <el-form-item label="培训内容"><el-input v-model="stationForm.training_note" /></el-form-item>
         <el-form-item label="">
-          <div class="dim">二级工位不设置时间：时段随场次，工位只区分职责/地点；同场次工位之间互斥。</div>
+          <div class="dim">岗位不设置时间：时段随场次，岗位只区分职责/地点；同场次岗位之间互斥。</div>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="stationDlg.visible = false">取消</el-button>
+        <el-button @click="positionDlg.visible = false">取消</el-button>
         <el-button type="primary" :loading="savingStation" @click="saveStation">保存</el-button>
       </template>
     </el-dialog>
@@ -436,7 +440,7 @@
     <!-- 岗位详情（点击名称） -->
     <el-dialog v-model="gdVisible" :title="(gdData?.name || '') + ' · 场次详情'" width="460">
       <el-descriptions v-if="gdData" :column="1" border>
-        <el-descriptions-item label="岗位模式">{{ gdData.mode_label }}</el-descriptions-item>
+        <el-descriptions-item label="场次模式">{{ gdData.mode_label }}</el-descriptions-item>
         <el-descriptions-item label="时间">{{ gdData.time_text }}</el-descriptions-item>
         <el-descriptions-item label="人数">已确认 {{ gdData.confirmed }} / {{ gdData.capacity }}
           <span v-if="gdData.held_seats" style="color:#e6a23c">
@@ -445,12 +449,12 @@
         <el-descriptions-item label="说明">{{ gdData.note || '—' }}</el-descriptions-item>
       </el-descriptions>
     </el-dialog>
-    <el-dialog v-model="sdVisible" :title="(sdData?.name || '') + ' · 工位详情'" width="460">
+    <el-dialog v-model="sdVisible" :title="(sdData?.name || '') + ' · 岗位详情'" width="460">
       <el-descriptions v-if="sdData" :column="1" border>
         <el-descriptions-item label="所属场次">{{ sdGroupName }}</el-descriptions-item>
         <el-descriptions-item label="服务地点">{{ sdData.location || '待定' }}</el-descriptions-item>
         <el-descriptions-item label="名额">{{ sdData.confirmed }}/{{ sdData.quota }}
-          <span class="dim">（同场次工位互斥）</span></el-descriptions-item>
+          <span class="dim">（同场次岗位互斥）</span></el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ sdData.requirement_desc }}</el-descriptions-item>
         <el-descriptions-item label="要求说明">{{ sdData.requirement_note || '—' }}</el-descriptions-item>
         <el-descriptions-item label="培训内容">{{ sdData.training_note || '—' }}</el-descriptions-item>
@@ -471,7 +475,7 @@
           </div>
         </el-form-item>
         <el-form-item v-if="notifyForm.scope !== 'all'" label="选择场次" required>
-          <el-select v-model="notifyForm.group_id" style="width:100%" placeholder="请选择场次">
+          <el-select v-model="notifyForm.shift_id" style="width:100%" placeholder="请选择场次">
             <el-option v-for="g in groups" :key="g.id" :value="g.id"
                        :label="`${g.name}（${g.start_time.slice(5,16).replace('T',' ')} ~ ${g.end_time.slice(11,16)}）`" />
           </el-select>
@@ -569,12 +573,12 @@ const qrUploading = ref(false)
 
 // —— 发送通知 ——
 const notifyDlg = ref({ visible: false, saving: false })
-const notifyForm = ref({ scope: 'all', group_id: '', title: '', content: '' })
+const notifyForm = ref({ scope: 'all', shift_id: '', title: '', content: '' })
 
 // —— 岗位树 ——
-const groupDlg = ref({ visible: false, editing: null })
+const shiftDlg = ref({ visible: false, editing: null })
 const groupForm = ref({})
-const stationDlg = ref({ visible: false, editing: null })
+const positionDlg = ref({ visible: false, editing: null })
 const stationForm = ref({})
 const editBase = ref(false)
 const baseForm = ref({})
@@ -605,12 +609,12 @@ const mh = ref({ userIds: [], hours: 0.5, note: '' })
 const rosterOptions = computed(() => {
   const seen = new Set()
   const out = []
-  for (const g of groups.value) {
+  for (const g of shifts.value) {
     for (const row of g._roster?.confirmed || []) {
       if (seen.has(row.user.student_id)) continue
       seen.add(row.user.student_id)
       out.push({ name: row.user.name, student_id: row.user.student_id,
-                 group_name: `· ${g.name}` })
+                 shift_name: `· ${g.name}` })
     }
   }
   return out
@@ -639,15 +643,15 @@ async function loadAll() {
     activityId = brief.id
     const d = await api.get(`/api/activities/${activityId}`)
     act.value = d
-    const rosters = await Promise.all(d.groups.map(g => api.get(`/api/staff/groups/${g.id}/roster`)))
-    d.groups.forEach((g, i) => {
+    const rosters = await Promise.all(d.shifts.map(g => api.get(`/api/staff/shifts/${g.id}/roster`)))
+    d.shifts.forEach((g, i) => {
       g._roster = rosters[i]
     })
     const logsResp = await api.get(`/api/staff/audit-logs?activity_id=${activityId}&size=50`)
     logs.value = logsResp.items || []
     managers.value = await api.get(`/api/staff/activities/${activityId}/managers`)
-    if (!currentGroupId.value && groups.value.length) {
-      currentGroupId.value = groups.value[0].id
+    if (!currentGroupId.value && shifts.value.length) {
+      currentGroupId.value = shifts.value[0].id
     }
     loadRoster()   // 无条件加载：act 赋值时 watcher 可能已抢先跑过一次空加载
   } catch (e) {
@@ -657,31 +661,31 @@ async function loadAll() {
   }
 }
 
-const groups = computed(() => act.value?.groups || [])
-const currentGroup = computed(() => groups.value.find(g => g.id === currentGroupId.value))
+const shifts = computed(() => act.value?.shifts || [])
+const currentShift = computed(() => shifts.value.find(g => g.id === currentGroupId.value))
 const unassignedCount = computed(() =>
-  (roster.value.confirmed || []).filter(x => !x.station_id).length)
+  (roster.value.confirmed || []).filter(x => !x.position_id).length)
 const pendingPromo = computed(() => roster.value.waitlist.some(w => w.status === 'pending_confirm'))
 const confirmedCount = computed(() => hours.value.filter(h => h.status === 'confirmed').length)
 
 function sumQuota(g) {
-  return g.stations.reduce((s, x) => s + x.quota, 0)
+  return g.positions.reduce((s, x) => s + x.quota, 0)
 }
 
 // —— 场次 CRUD ——
-function openGroup(g) {
-  groupDlg.value.editing = g || null
+function openShift(g) {
+  shiftDlg.value.editing = g || null
   groupForm.value = g ? {
     name: g.name,
     start_time: new Date(g.start_time.replace(' ', 'T')),
     end_time: new Date(g.end_time.replace(' ', 'T')),
-    capacity: g.capacity, mode: g.mode || 'fine', note: g.note,
+    capacity: g.capacity, mode: g.mode || 'pick', note: g.note,
     waitlist_quota: g.waitlist_quota ?? 3,
-  } : { name: '', start_time: '', end_time: '', capacity: 10, mode: 'single', note: '',
+  } : { name: '', start_time: '', end_time: '', capacity: 10, mode: 'pick', note: '',
         waitlist_quota: 3 }
-  groupDlg.value.visible = true
+  shiftDlg.value.visible = true
 }
-async function saveGroup() {
+async function saveShift() {
   const f = groupForm.value
   if (!f.name?.trim()) return ElMessage.warning('请填写场次名称')
   if (!f.start_time || !f.end_time) return ElMessage.warning('请选择起止时间')
@@ -692,29 +696,29 @@ async function saveGroup() {
       waitlist_quota: f.waitlist_quota ?? 3,
       start_time: toISO(f.start_time), end_time: toISO(f.end_time),
     }
-    if (groupDlg.value.editing) await api.patch(`/api/staff/groups/${groupDlg.value.editing.id}`, body)
+    if (shiftDlg.value.editing) await api.patch(`/api/staff/shifts/${shiftDlg.value.editing.id}`, body)
     else await api.post(`/api/staff/activities/${activityId}/groups`, body)
     ElMessage.success('已保存（操作留痕）')
-    groupDlg.value.visible = false
+    shiftDlg.value.visible = false
     loadAll()
   } catch { /* 错误提示由 api 层统一弹出 */ } finally {
     savingGroup.value = false
   }
 }
-async function delGroup(g) {
+async function delShift(g) {
   try {
-    await api.del(`/api/staff/groups/${g.id}`)
+    await api.del(`/api/staff/shifts/${g.id}`)
   } catch (e) {
     await ElMessageBox.confirm(e.message + '，是否强制删除？', '确认', { type: 'warning' })
-    await api.del(`/api/staff/groups/${g.id}?force=1`)
+    await api.del(`/api/staff/shifts/${g.id}?force=1`)
   }
   ElMessage.success('已删除')
   loadAll()
 }
 
-// —— 工位 CRUD ——
+// —— 岗位 CRUD ——
 function openStation(st, g) {
-  stationDlg.value = { visible: true, editing: st, groupId: g.id }
+  positionDlg.value = { visible: true, editing: st, groupId: g.id }
   stationForm.value = st ? {
     name: st.name, location: st.location, quota: st.quota,
     genderReq: (st.requirement_tags?.性别) || '',
@@ -727,7 +731,7 @@ function openStation(st, g) {
 }
 async function saveStation() {
   const f = stationForm.value
-  if (!f.name?.trim()) return ElMessage.warning('请填写工位名称')
+  if (!f.name?.trim()) return ElMessage.warning('请填写岗位名称')
   savingStation.value = true
   try {
     const tags = {}
@@ -738,17 +742,17 @@ async function saveStation() {
       requirement_tags: tags, requirement_note: f.requirement_note,
       training_note: f.training_note,
     }
-    if (stationDlg.value.editing) await api.patch(`/api/staff/stations/${stationDlg.value.editing.id}`, body)
-    else await api.post(`/api/staff/groups/${stationDlg.value.groupId}/stations`, body)
+    if (positionDlg.value.editing) await api.patch(`/api/staff/positions/${positionDlg.value.editing.id}`, body)
+    else await api.post(`/api/staff/shifts/${positionDlg.value.groupId}/positions`, body)
     ElMessage.success('已保存')
-    stationDlg.value.visible = false
+    positionDlg.value.visible = false
     loadAll()
   } catch { /* toast by api */ } finally {
     savingStation.value = false
   }
 }
 async function delStation(st) {
-  await api.del(`/api/staff/stations/${st.id}`)
+  await api.del(`/api/staff/positions/${st.id}`)
   ElMessage.success('已删除')
   loadAll()
 }
@@ -832,7 +836,7 @@ async function saveBase() {
 
 // —— 发送通知 ——
 function openNotify() {
-  notifyForm.value = { scope: 'all', group_id: currentGroupId.value || '',
+  notifyForm.value = { scope: 'all', shift_id: currentGroupId.value || '',
                        title: '', content: '' }
   notifyDlg.value.visible = true
 }
@@ -841,12 +845,12 @@ async function sendNotify() {
   const f = notifyForm.value
   if (!f.title.trim()) return ElMessage.warning('请填写通知标题')
   if (!f.content.trim()) return ElMessage.warning('请填写通知内容')
-  if (f.scope !== 'all' && !f.group_id) return ElMessage.warning('请选择场次')
+  if (f.scope !== 'all' && !f.shift_id) return ElMessage.warning('请选择场次')
   notifyDlg.value.saving = true
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/notify`, {
       scope: f.scope,
-      group_id: f.scope === 'all' ? '' : f.group_id,
+      shift_id: f.scope === 'all' ? '' : f.shift_id,
       title: f.title.trim(),
       content: f.content.trim(),
     })
@@ -936,7 +940,7 @@ async function uploadHours() {
 }
 
 function loadRoster() {
-  const g = currentGroup.value
+  const g = currentShift.value
   if (!g?._roster) return
   roster.value = g._roster
   moveSel.value = {}
@@ -946,8 +950,8 @@ async function applyMove(row) {
   const target = moveSel.value[row.enrollment_id]
   if (target === undefined) return
   const send = (force) => api.post(
-    `/api/staff/groups/${currentGroupId.value}/assign/apply`,
-    { plan: [{ enrollment_id: row.enrollment_id, station_id: target || '', force }],
+    `/api/staff/shifts/${currentGroupId.value}/assign/apply`,
+    { plan: [{ enrollment_id: row.enrollment_id, position_id: target || '', force }],
       source: 'manual' })
   try {
     const d = await send(false)
@@ -985,8 +989,8 @@ async function removeManager(row) {
 // 进入「导出与时长」页签时自动加载时长预览（静默加载，不弹提示）
 watch(tab, t => { if (t === 'export') hoursPreview(true) })
 watch(currentGroupId, loadRoster)
-watch(() => groups.value.map(g => g.confirmed).join(','), () => {
-  if (!currentGroupId.value && groups.value.length) currentGroupId.value = groups.value[0].id
+watch(() => shifts.value.map(g => g.confirmed).join(','), () => {
+  if (!currentGroupId.value && shifts.value.length) currentGroupId.value = shifts.value[0].id
   loadRoster()
 })
 

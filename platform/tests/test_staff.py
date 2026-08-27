@@ -83,7 +83,7 @@ def assigned_group(db):
     return act, g, s1, s2
 
 
-def test_assignment_audit_records_the_old_station(client, admin, db,
+def test_assignment_audit_records_the_old_position(client, admin, db,
                                                   assigned_group, take_student):
     """「谁动了我的岗位」：留痕里的旧值必须是真的旧岗位。"""
     act, g, s1, s2 = assigned_group
@@ -100,7 +100,7 @@ def test_assignment_audit_records_the_old_station(client, admin, db,
                                     "position_id": s2.id}],
                           "source": "manual"})
     assert r.status_code == 200
-    assert r.json()["rows"][0]["from_station_name"] == "岗位甲"
+    assert r.json()["rows"][0]["from_position_name"] == "岗位甲"
 
     logs = client.get(f"/api/staff/audit-logs?activity_id={act.id}",
                       headers=admin).json()["items"]

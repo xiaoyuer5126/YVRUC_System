@@ -4,15 +4,15 @@
       <template v-if="task">
         <div class="ok-icon" v-if="done">✓</div>
         <h2 style="margin:6px 0 2px">{{ task.activity_title }}</h2>
-        <p class="dim" style="margin:0 0 14px">{{ task.group_name }} · {{ task.group_time }}</p>
+        <p class="dim" style="margin:0 0 14px">{{ task.shift_name }} · {{ task.group_time }}</p>
 
         <template v-if="!done">
           <el-descriptions :column="1" border size="small">
-            <el-descriptions-item v-if="task.station" label="您的工位">
-              {{ task.station.name }}（{{ task.station.location }}）
+            <el-descriptions-item v-if="task.position" label="您的岗位">
+              {{ task.position.name }}（{{ task.position.location }}）
             </el-descriptions-item>
             <el-descriptions-item label="签到方式">
-              {{ task.mode === 'station' ? '分工位签到' : '统一签到' }}
+              {{ task.mode === 'position' ? '分岗位签到' : '统一签到' }}
             </el-descriptions-item>
             <el-descriptions-item label="当前状态">
               <template v-if="task.checked_in">

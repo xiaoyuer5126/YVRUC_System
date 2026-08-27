@@ -2,8 +2,8 @@
   <div v-loading="loading">
     <!-- 模式说明 -->
     <el-alert v-if="fineModeAllAssigned" type="info" :closable="false" style="margin-bottom:10px"
-              title="精细化场次：志愿者报名时已各自选定工位"
-              description="智能排班主要服务于「二级待定」场次。本场次运行试算一般会维持现状（结果中会标注「保持」）；如需个别调整，可直接修改下方建议工位后应用。" />
+              title="精细化场次：志愿者报名时已各自选定岗位"
+              description="智能排班主要服务于「二级待定」场次。本场次运行试算一般会维持现状（结果中会标注「保持」）；如需个别调整，可直接修改下方建议岗位后应用。" />
 
     <!-- 工具条 -->
     <div class="toolbar">
@@ -77,10 +77,10 @@
         </div>
       </el-alert>
 
-      <!-- 工位统计 -->
-      <div class="section-title">各工位建议人数</div>
-      <el-table :data="preview.station_stats" size="small" border style="margin-bottom:14px">
-        <el-table-column prop="name" label="工位" min-width="120" />
+      <!-- 岗位统计 -->
+      <div class="section-title">各岗位建议人数</div>
+      <el-table :data="preview.position_stats" size="small" border style="margin-bottom:14px">
+        <el-table-column prop="name" label="岗位" min-width="120" />
         <el-table-column prop="time" label="时间" min-width="130" />
         <el-table-column prop="location" label="地点" min-width="110" />
         <el-table-column prop="quota" label="名额" width="70" />
@@ -96,7 +96,7 @@
         </el-table-column>
       </el-table>
 
-      <div class="section-title">分配明细（可直接修改"建议工位"列再应用）</div>
+      <div class="section-title">分配明细（可直接修改"建议岗位"列再应用）</div>
       <el-table :data="rows" size="small" border max-height="420">
         <el-table-column label="姓名" width="90">
           <template #default="{row}"><b>{{ row.user.name }}</b></template>
@@ -106,7 +106,7 @@
         <el-table-column label="报名时间" width="110">
           <template #default="{row}"><span class="dim">{{ (row.joined_at || '').slice(5,16).replace('T',' ') }}</span></template>
         </el-table-column>
-        <el-table-column label="原工位" width="100">
+        <el-table-column label="原岗位" width="100">
           <template #default="{row}">{{ stationName(row.current_station_id) || '未分配' }}</template>
         </el-table-column>
         <el-table-column label="本人意愿" width="100">
@@ -121,7 +121,7 @@
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="建议工位" min-width="200">
+        <el-table-column label="建议岗位" min-width="200">
           <template #default="{row}">
             <el-select v-model="row.target" size="small" clearable placeholder="未分配">
               <el-option v-for="s in stationOpts" :key="s.value" :value="s.value"
@@ -142,7 +142,7 @@
         </el-table-column>
         <el-table-column label="超额强制" width="90">
           <template #default="{row}">
-            <el-tooltip content="该工位名额已满仍要排入时勾选（计入留痕）" placement="top">
+            <el-tooltip content="该岗位名额已满仍要排入时勾选（计入留痕）" placement="top">
               <el-checkbox v-model="row.force" :disabled="!overQuota(row)" />
             </el-tooltip>
           </template>
@@ -159,14 +159,14 @@
 
       <el-alert v-if="unwillingMoved" type="warning" :closable="false"
                 style="margin-top:12px"
-                :title="`有 ${unwillingMoved} 人报名时选择了不接受调剂，本方案仍会调换其工位`"
+                :title="`有 ${unwillingMoved} 人报名时选择了不接受调剂，本方案仍会调换其岗位`"
                 description="可以继续发布——这只是提醒，操作会连同姓名一起记入留痕日志。" />
 
       <div style="margin-top:14px;text-align:right">
         <el-button @click="resetEdit">还原为系统建议</el-button>
         <el-button type="primary" :loading="applying" @click="apply">确认并发布分配</el-button>
         <div class="dim" style="margin-top:6px">
-          发布后每位志愿者将通过企业微信收到「专属工位通知」（精确时间+地点）；操作计入留痕日志
+          发布后每位志愿者将通过企业微信收到「专属岗位通知」（精确时间+地点）；操作计入留痕日志
         </div>
       </div>
     </template>
@@ -178,8 +178,8 @@
     <el-dialog v-model="walkinVisible" title="补录志愿者（现场添加）" width="430">
       <el-form label-width="90px">
         <el-form-item label="学号"><el-input v-model="walkin.sid" /></el-form-item>
-        <el-form-item label="指定工位">
-          <el-select v-model="walkin.station" clearable style="width:100%">
+        <el-form-item label="指定岗位">
+          <el-select v-model="walkin.position" clearable style="width:100%">
             <el-option v-for="s in stationOpts" :key="s.value" :value="s.value" :label="s.label" />
           </el-select>
         </el-form-item>
@@ -206,8 +206,8 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api'
 
 const props = defineProps({
-  group: { type: Object, required: true },
-  unassignedCount: { type: Number, default: 0 },   // 已确认但还没有工位的人数
+  shift: { type: Object, required: true },
+  unassignedCount: { type: Number, default: 0 },   // 已确认但还没有岗位的人数
 })
 const emit = defineEmits(['reload'])
 
@@ -220,12 +220,12 @@ const advOpen = ref([])
 const preview = ref(null)
 const rows = ref([])
 const walkinVisible = ref(false)
-const walkin = ref({ sid: '', station: '', force: false, allowReassign: true })
+const walkin = ref({ sid: '', position: '', force: false, allowReassign: true })
 
 const presets = [
   { key: 'balanced', label: '均衡（推荐）', hint: '所有人拿到第1个岗位之前，没人拿第2个；适合大多数活动' },
   { key: 'first_come', label: '先到先得优先', hint: '早报名的人一次把他报的岗位拿满' },
-  { key: 'floor_first', label: '保底优先', hint: '死保每个工位的最低人数，代价是换岗的人会多' },
+  { key: 'floor_first', label: '保底优先', hint: '死保每个岗位的最低人数，代价是换岗的人会多' },
 ]
 
 const ORDER_LABELS = {
@@ -235,11 +235,11 @@ const ORDER_LABELS = {
   few_options: '报名岗位数少者优先',
 }
 const CAND_LABELS = {
-  min_quota: '未达最低人数的工位优先（保底）',
-  gap: '缺口率大的工位优先',
-  cohort: '同批：优先与已获伙伴同工位',
+  min_quota: '未达最低人数的岗位优先（保底）',
+  gap: '缺口率大的岗位优先',
+  cohort: '同批：优先与已获伙伴同岗位',
   stable: '上一版组合优先（增量稳定）',
-  scarce: '别人补不上的工位优先',
+  scarce: '别人补不上的岗位优先',
   preference: '符合优先条件的靠前',
 }
 const ORDER_ALL = ['spread', 'signup_time', 'few_options']
@@ -253,20 +253,20 @@ const addCandidate = ref('')
 
 // 精细化模式且人人有岗 → 提示即可，不禁止试算
 const fineModeAllAssigned = computed(() =>
-  !props.group.needs_assign && props.unassignedCount === 0)
+  !props.shift.needs_assign && props.unassignedCount === 0)
 
 const stationOpts = computed(() =>
-  props.group.stations.map(s => ({
+  props.shift.positions.map(s => ({
     value: s.id, label: s.name,
     left: Math.max(0, s.quota - (s.confirmed || 0)),
   })))
 
 function stationName(sid) {
-  const s = props.group.stations.find(x => x.id === sid)
+  const s = props.shift.positions.find(x => x.id === sid)
   return s ? s.name : ''
 }
 
-// 本人不接受调剂、方案又把他挪出原工位的人数（只提示，不拦）
+// 本人不接受调剂、方案又把他挪出原岗位的人数（只提示，不拦）
 const unwillingMoved = computed(() => rows.value.filter(
   r => !r.allow_reassign && r.current_station_id && r.target
        && r.target !== r.current_station_id).length)
@@ -344,30 +344,30 @@ function buildRows() {
 }
 function resetEdit() { buildRows() }
 function overQuota(row) {
-  const s = props.group.stations.find(x => x.id === row.target)
+  const s = props.shift.positions.find(x => x.id === row.target)
   return s ? s.quota - (s.confirmed || 0) <= 0 : false
 }
 
 async function runPreview() {
-  if (!props.group.stations.length) {
-    ElMessage.warning('请先在「岗位树」页签下创建二级工位，再运行智能排班')
+  if (!props.shift.positions.length) {
+    ElMessage.warning('请先在「岗位树」页签下创建岗位，再运行智能排班')
     return
   }
   solving.value = true
   try {
     const body = buildRulesBody()
     preview.value = await api.post(
-      `/api/staff/groups/${props.group.id}/assign/preview`, body, {})
+      `/api/staff/shifts/${props.shift.id}/assign/preview`, body, {})
     buildRows()
   } finally { solving.value = false }
 }
 
 async function apply() {
   const fullPlan = rows.value.map(r => ({
-    enrollment_id: r.enrollment_id, station_id: r.target, force: r.force }))
+    enrollment_id: r.enrollment_id, position_id: r.target, force: r.force }))
   applying.value = true
   try {
-    const d = await api.post(`/api/staff/groups/${props.group.id}/assign/apply`,
+    const d = await api.post(`/api/staff/shifts/${props.shift.id}/assign/apply`,
       { plan: fullPlan, source: 'assign' })
     ElMessage.success(d.summary + (d.applied ? '，通知已发送' : ''))
     preview.value = null
@@ -379,13 +379,13 @@ async function apply() {
 
 async function addWalkin() {
   try {
-    await api.post(`/api/staff/groups/${props.group.id}/add-walkin`, {
-      student_id: walkin.value.sid, station_id: walkin.value.station || '',
+    await api.post(`/api/staff/shifts/${props.shift.id}/add-walkin`, {
+      student_id: walkin.value.sid, position_id: walkin.value.position || '',
       allow_reassign: walkin.value.allowReassign,
       force: walkin.value.force })
     ElMessage.success('补录成功')
     walkinVisible.value = false
-    walkin.value = { sid: '', station: '', force: false, allowReassign: true }
+    walkin.value = { sid: '', position: '', force: false, allowReassign: true }
     emit('reload')
   } catch (e) {
     // 冲突/超额都需要显式勾选强制，替用户把勾打上并提示重试

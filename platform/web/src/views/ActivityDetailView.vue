@@ -31,18 +31,18 @@
         </el-card>
 
         <div class="section-title">岗位安排<span class="dim" style="font-weight:400;margin-left:8px">
-          点击岗位名称可查看详情；点击行首箭头展开二级工位</span></div>
+          点击岗位名称可查看详情；点击行首箭头展开岗位</span></div>
 
         <el-card shadow="never">
-          <el-table :data="act.groups" row-key="id"
-                    :row-class-name="({ row }) => row.mode === 'single' ? 'no-expand-row' : ''">
+          <el-table :data="act.shifts" row-key="id"
+                    :row-class-name="({ row }) => row.mode === 'pick' ? 'no-expand-row' : ''">
             <el-table-column type="expand" width="34">
               <template #default="{ row: g }">
                 <div style="padding:6px 12px 6px 40px">
-                  <!-- 直接定二级：工位表格 -->
-                  <template v-if="g.mode === 'fine' && g.stations.length">
-                    <el-table :data="g.stations" size="small" border>
-                      <el-table-column label="二级工位" min-width="150">
+                  <!-- 直接定二级：岗位表格 -->
+                  <template v-if="g.mode === 'pick' && g.positions.length">
+                    <el-table :data="g.positions" size="small" border>
+                      <el-table-column label="岗位" min-width="150">
                         <template #default="{ row: s }">
                           <el-link type="primary" :underline="false" style="font-weight:600"
                                    @click="showStationDetail(g, s)">{{ s.name }}</el-link>
@@ -61,7 +61,7 @@
                       <el-table-column prop="requirement_desc" label="要求" min-width="110" />
                       <el-table-column label="操作" width="170" align="center">
                         <template #default="{ row: s }">
-                          <!-- 我选中的工位：原地退选/确认 -->
+                          <!-- 我选中的岗位：原地退选/确认 -->
                           <template v-if="g.my_enrollment && myStationId(g) === s.id">
                             <template v-if="g.my_enrollment.status === 'pending_confirm'">
                               <el-countdown format="HH:mm:ss" :value="deadlineTs(g)"
@@ -74,9 +74,9 @@
                               {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
                             </el-button>
                           </template>
-                          <!-- 已选其他工位：置灰 -->
+                          <!-- 已选其他岗位：置灰 -->
                           <el-tooltip v-else-if="g.my_enrollment"
-                                      content="同场次只能选择一个二级工位；如需更换请先退选" placement="top">
+                                      content="同场次只能选择一个岗位；如需更换请先退选" placement="top">
                             <el-button size="small" disabled>
                               {{ s.remaining > 0 ? '选中' : '候补' }}
                             </el-button>
@@ -91,14 +91,14 @@
                       </el-table-column>
                     </el-table>
                     <div class="dim" style="margin-top:6px">
-                      同一场次内只能选择一个二级工位：选中后在本行退选，其他工位按钮置灰；
-                      工位满员可点「候补」，按排队顺序自动递补（转正需2小时内确认）。
+                      同一场次内只能选择一个岗位：选中后在本行退选，其他岗位按钮置灰；
+                      岗位满员可点「候补」，按排队顺序自动递补（转正需2小时内确认）。
                     </div>
                   </template>
                   <p v-else-if="g.mode === 'assign'" class="dim" style="margin:4px 0">
-                    {{ g.note || '本场次为「二级待定」：报名只锁定时段，报名截止后由青协通过排班程序统一分工位，结果经企业微信通知。' }}
+                    {{ g.note || '本场次为「二级待定」：报名只锁定时段，报名截止后由青协通过排班程序统一分岗位，结果经企业微信通知。' }}
                   </p>
-                  <p v-else class="dim" style="margin:4px 0">该场次为「仅一级岗位」，无需选择工位，报名即锁定时段。</p>
+                  <p v-else class="dim" style="margin:4px 0">该场次为「仅场次」，无需选择岗位，报名即锁定时段。</p>
                 </div>
               </template>
             </el-table-column>
@@ -107,7 +107,7 @@
                 <el-link type="primary" :underline="false" style="font-weight:600"
                          @click="showGroupDetail(row)">{{ row.name }}</el-link>
                 <el-tag size="small" effect="plain" style="margin-left:6px"
-                        :type="row.mode === 'single' ? 'info' : row.mode === 'assign' ? 'warning' : 'primary'">
+                        :type="row.mode === 'pick' ? 'info' : row.mode === 'assign' ? 'warning' : 'primary'">
                   {{ row.mode_label }}
                 </el-tag>
               </template>
@@ -136,8 +136,8 @@
                     </el-tooltip>
                   </div>
                   <!-- 直接定二级 -->
-                  <template v-if="row.mode === 'fine'">
-                    <!-- 有工位：状态标签（退选/确认在对应工位行原地操作） -->
+                  <template v-if="row.mode === 'pick'">
+                    <!-- 有岗位：状态标签（退选/确认在对应岗位行原地操作） -->
                     <template v-if="myStationId(row)">
                       <el-tag v-if="row.my_enrollment.status === 'confirmed'" type="success">
                         已选中{{ myStationName(row) ? '·' + myStationName(row) : '' }}
@@ -149,13 +149,13 @@
                         <el-tag type="danger">转正确认剩</el-tag>&nbsp;
                         <el-countdown format="HH:mm:ss" :value="deadlineTs(row)"
                                       style="vertical-align:middle" />
-                        <span class="dim" style="margin-left:6px">在对应工位行确认</span>
+                        <span class="dim" style="margin-left:6px">在对应岗位行确认</span>
                       </template>
                     </template>
-                    <!-- 无工位（管理员补录/历史数据）：操作留在场次行 -->
+                    <!-- 无岗位（管理员补录/历史数据）：操作留在场次行 -->
                     <template v-else>
                       <el-tag v-if="row.my_enrollment.status === 'confirmed'" type="success">
-                        已选中（工位待分配）
+                        已选中（岗位待分配）
                       </el-tag>
                       <el-tag v-else-if="row.my_enrollment.status === 'waitlisted'" type="warning">
                         候补中 · 第 {{ row.my_enrollment.waitlist_position }} 位
@@ -211,9 +211,9 @@
                   </template>
                 </template>
                 <template v-else-if="act.status === 'published'">
-                  <el-tooltip v-if="row.mode === 'fine'"
-                              content="点击行首箭头展开，选择一个二级工位" placement="top">
-                    <el-button size="small" disabled>展开选择工位</el-button>
+                  <el-tooltip v-if="row.mode === 'pick'"
+                              content="点击行首箭头展开，选择一个岗位" placement="top">
+                    <el-button size="small" disabled>展开选择岗位</el-button>
                   </el-tooltip>
                   <el-button v-else type="primary" size="small" @click="doEnroll(row, null)">
                     {{ enrollText(row) }}
@@ -232,7 +232,7 @@
                   style="margin-bottom:14px">
           <p style="margin:0 0 4px"><b>您存在时段重叠的既有报名：</b></p>
           <p v-for="c in act.my_time_conflicts" :key="c.enrollment_id" style="margin:2px 0;font-size:12px">
-            「{{ c.activity_title }}」{{ c.group_name }}（{{ c.time }}）
+            「{{ c.activity_title }}」{{ c.shift_name }}（{{ c.time }}）
           </p>
         </el-alert>
         <el-card shadow="never">
@@ -253,7 +253,7 @@
       </el-col>
     </el-row>
 
-    <!-- 一级岗位详情 -->
+    <!-- 场次详情 -->
     <el-dialog v-model="groupDetail.visible" :title="(groupDetail.data?.name || '') + ' · 场次详情'" width="480">
       <el-descriptions v-if="groupDetail.data" :column="1" border>
         <el-descriptions-item label="岗位模式">{{ groupDetail.data.mode_label }}</el-descriptions-item>
@@ -269,14 +269,14 @@
       </el-descriptions>
     </el-dialog>
 
-    <!-- 二级工位详情 -->
-    <el-dialog v-model="stationDetail.visible" :title="(stationDetail.data?.name || '') + ' · 工位详情'" width="480">
+    <!-- 岗位详情 -->
+    <el-dialog v-model="stationDetail.visible" :title="(stationDetail.data?.name || '') + ' · 岗位详情'" width="480">
       <el-descriptions v-if="stationDetail.data" :column="1" border>
         <el-descriptions-item label="所属场次">{{ stationDetail.groupName }}（{{ stationDetail.groupTime }}）</el-descriptions-item>
         <el-descriptions-item label="服务地点">{{ stationDetail.data.location || '待定' }}</el-descriptions-item>
         <el-descriptions-item label="名额">
           {{ stationDetail.data.confirmed }}/{{ stationDetail.data.quota }}
-          <span class="dim">（工位之间互斥，一场次一人一个工位）</span>
+          <span class="dim">（岗位之间互斥，一场次一人一个岗位）</span>
         </el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ stationDetail.data.requirement_desc }}</el-descriptions-item>
         <el-descriptions-item label="要求说明">{{ stationDetail.data.requirement_note || '—' }}</el-descriptions-item>
@@ -291,8 +291,8 @@
           <el-descriptions-item label="场次">
             {{ enrollDlg.group.name }}（{{ enrollDlg.group.time_text }}）
           </el-descriptions-item>
-          <el-descriptions-item label="工位">
-            {{ enrollDlg.station ? enrollDlg.station.name
+          <el-descriptions-item label="岗位">
+            {{ enrollDlg.position ? enrollDlg.position.name
                : (enrollDlg.group.mode === 'assign' ? '报名截止后由青协统一分配' : '无需选择') }}
           </el-descriptions-item>
           <el-descriptions-item label="结果">
@@ -305,7 +305,7 @@
         <div class="reassign-box">
           <el-checkbox v-model="enrollDlg.allowReassign">接受岗位调剂</el-checkbox>
           <p class="dim">
-            勾选表示你愿意被安排到本场次的其他工位。这只是给负责老师的参考——
+            勾选表示你愿意被安排到本场次的其他岗位。这只是给负责老师的参考——
             实际排班仍由他们决定，不勾选也可能被调整，但会在名单上标注你的意愿。
           </p>
         </div>
@@ -337,12 +337,12 @@ import ProfileDialog from '../components/ProfileDialog.vue'
 const route = useRoute()
 const act = ref(null)
 const groupDetail = ref({ visible: false, data: null })
-const enrollDlg = ref({ visible: false, group: null, station: null,
+const enrollDlg = ref({ visible: false, group: null, position: null,
                         allowReassign: true, submitting: false })
 const willWaitlist = computed(() => {
-  const { group: g, station } = enrollDlg.value
+  const { group: g, position } = enrollDlg.value
   if (!g) return false
-  return station ? station.remaining <= 0 : g.remaining <= 0
+  return position ? position.remaining <= 0 : g.remaining <= 0
 })
 const stationDetail = ref({ visible: false, data: null, groupName: '', groupTime: '' })
 
@@ -360,19 +360,19 @@ function deadlineTs(g) {
   return new Date(g.my_enrollment.confirm_deadline.replace(' ', 'T').slice(0, 19)).getTime()
 }
 function myStationId(g) {
-  return g.my_enrollment?.station_id || ''
+  return g.my_enrollment?.position_id || ''
 }
 function myStationName(g) {
   const sid = myStationId(g)
   if (!sid) return ''
-  for (const s of g.stations) if (s.id === sid) return s.name
+  for (const s of g.positions) if (s.id === sid) return s.name
   return ''
 }
 function canCancel(g) {
   return new Date(g.start_time.replace(' ', 'T')) > new Date()
 }
 function enrollText(g) {
-  if (g.mode === 'single') {
+  if (g.mode === 'pick') {
     return g.remaining > 0 ? '选中' : '加入候补'
   }
   return g.remaining > 0 ? '立即报名' : '加入候补'
@@ -390,21 +390,21 @@ async function load() {
 }
 onMounted(load)
 
-function doEnroll(g, station) {
-  if (g.mode === 'fine' && g.stations.length && !station) {
-    return ElMessage.warning('请先展开该场次，选择一个二级工位')
+function doEnroll(g, position) {
+  if (g.mode === 'pick' && g.positions.length && !position) {
+    return ElMessage.warning('请先展开该场次，选择一个岗位')
   }
-  enrollDlg.value = { visible: true, group: g, station, allowReassign: true,
+  enrollDlg.value = { visible: true, group: g, position, allowReassign: true,
                       submitting: false }
 }
 
 async function submitEnroll() {
-  const { group: g, station, allowReassign } = enrollDlg.value
+  const { group: g, position, allowReassign } = enrollDlg.value
   enrollDlg.value.submitting = true
   try {
     const d = await api.post(
       `/api/activities/${act.value.id}/groups/${g.id}/enroll`,
-      { station_id: station ? station.id : null, allow_reassign: allowReassign })
+      { position_id: position ? position.id : null, allow_reassign: allowReassign })
     enrollDlg.value.visible = false
     ElMessage.success(d.message)
     load()
@@ -424,7 +424,7 @@ async function submitEnroll() {
     if (e.data && e.data.conflicts) {
       enrollDlg.value.visible = false
       const list = e.data.conflicts
-        .map(c => `「${c.activity_title}」${c.group_name}（${c.time}）`
+        .map(c => `「${c.activity_title}」${c.shift_name}（${c.time}）`
                   + (c.waiting ? '　<i>候补中</i>' : '')).join('<br>')
       ElMessageBox.alert(list, '与已有报名时间冲突',
                          { dangerouslyUseHTMLString: true, type: 'error' })
@@ -476,6 +476,6 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .reassign-box { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #f7f8fa; }
 .reassign-box .dim { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
 
-/* 仅一级岗位：没有可展开的二级工位，隐藏展开箭头 */
+/* 仅场次：没有可展开的岗位，隐藏展开箭头 */
 :deep(.no-expand-row .el-table__expand-icon) { visibility: hidden; }
 </style>
