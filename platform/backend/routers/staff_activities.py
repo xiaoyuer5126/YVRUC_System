@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
-from .. import assign
+from .. import assign, copying
 from ..audit import diff_changes, log as audit_log
 from ..database import db_session
 from ..deps import require_manager
@@ -51,7 +51,7 @@ def _act(db: OrmSession, activity_id: str) -> Activity:
     return act
 
 
-def _group(db: OrmSession, gid: str) -> Shift:
+def _shift(db: OrmSession, gid: str) -> Shift:
     g = db.get(Shift, gid)
     if g is None:
         raise HTTPException(404, "场次不存在")
@@ -239,6 +239,75 @@ def _notify_activity_bg(activity_id: str, template: str, **kw):
         db.close()
 
 
+# ======================= 复制 =======================
+
+class CopyActivityBody(BaseModel):
+    title: str = ""
+    shift_days: int = 7      # 所有时间整体平移多少天
+
+
+@router.post("/activities/{activity_id}/copy")
+def copy_activity_route(activity_id: str, body: CopyActivityBody,
+                        db: OrmSession = Depends(db_session),
+                        user: User = Depends(require_manager)):
+    """复制一个活动的结构。报名、签到、时长、留痕都不带过来。"""
+    ensure_activity_manager(db, user, activity_id)
+    src = _act(db, activity_id)
+    title = body.title.strip() or f"{src.title}（副本）"
+    if len(title) > 128:
+        raise HTTPException(400, "活动名称过长")
+    act = copying.copy_activity(db, src, user, title=title,
+                                shift_days=body.shift_days)
+    audit_log(db, actor=user, action="copy", target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=f"复制自「{src.title}」（{copying.describe(src)}），"
+                      f"时间整体平移 {body.shift_days} 天", visible=False)
+    db.commit()
+    return {"id": act.id, "title": act.title}
+
+
+class CopyPositionsBody(BaseModel):
+    position_ids: list[str] = []      # 空 = 该场次下全部岗位
+    target_shift_ids: list[str]
+
+
+@router.post("/shifts/{shift_id}/positions/copy")
+def copy_positions_route(shift_id: str, body: CopyPositionsBody,
+                         db: OrmSession = Depends(db_session),
+                         user: User = Depends(require_manager)):
+    """把本场次的岗位批量复制到同一活动的其它场次。"""
+    src = _shift(db, shift_id)
+    ensure_activity_manager(db, user, src.activity_id)
+    sources = sorted(src.positions, key=lambda p: p.sort)
+    if body.position_ids:
+        wanted = set(body.position_ids)
+        sources = [p for p in sources if p.id in wanted]
+    if not sources:
+        raise HTTPException(400, "该场次下没有可复制的岗位")
+
+    targets = []
+    for tid in body.target_shift_ids:
+        target = db.get(Shift, tid)
+        if target is None or target.activity_id != src.activity_id:
+            raise HTTPException(400, "目标场次不属于本活动")
+        if target.id == src.id:
+            continue
+        targets.append(target)
+    if not targets:
+        raise HTTPException(400, "请选择至少一个目标场次")
+
+    result = copying.copy_positions_to(db, sources, targets, user)
+    audit_log(db, actor=user, action="copy", target_type="position",
+              target_id=src.id, target_label=src.name,
+              activity_id=src.activity_id,
+              summary=f"从「{src.name}」复制 {len(sources)} 个岗位到 "
+                      f"{len(targets)} 个场次，新建 {result['copied']} 个"
+                      + (f"；同名跳过 {len(result['skipped'])} 个"
+                         if result["skipped"] else ""))
+    db.commit()
+    return result
+
+
 # ======================= 状态流转 =======================
 
 @router.post("/activities/{activity_id}/publish")
@@ -402,7 +471,7 @@ SHIFT_FIELDS = {"name": "场次名", "start_time": "开始时间", "end_time": "
 def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager)):
-    g = _group(db, shift_id)
+    g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
     before_raw = {k: getattr(g, k) for k in SHIFT_FIELDS}
@@ -447,7 +516,7 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
 def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager)):
-    g = _group(db, shift_id)
+    g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
     n_active = db.query(Enrollment).filter(
@@ -517,7 +586,7 @@ def _validate_position(db: OrmSession, g: Shift, s: Position):
 def create_position(shift_id: str, body: PositionBody,
                    db: OrmSession = Depends(db_session),
                    user: User = Depends(require_manager)):
-    g = _group(db, shift_id)
+    g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
     s = Position(id=uid("s"), shift_id=g.id, name=body.name.strip(),
@@ -547,7 +616,7 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
     s = db.get(Position, position_id)
     if s is None:
         raise HTTPException(404, "岗位不存在")
-    g = _group(db, s.shift_id)
+    g = _shift(db, s.shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
     before_raw = {k: getattr(s, k) for k in POSITION_FIELDS}
@@ -595,7 +664,7 @@ def delete_position(position_id: str,
     s = db.get(Position, position_id)
     if s is None:
         raise HTTPException(404, "岗位不存在")
-    g = _group(db, s.shift_id)
+    g = _shift(db, s.shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
     n = db.query(Enrollment).filter(Enrollment.position_id == s.id,
@@ -703,7 +772,7 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
     if body.scope != "all":
         if not body.shift_id:
             raise HTTPException(400, "请选择场次")
-        g = _group(db, body.shift_id)
+        g = _shift(db, body.shift_id)
         if g.activity_id != act.id:
             raise HTTPException(400, "所选场次不属于该活动")
         shift_id = g.id
@@ -736,7 +805,7 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
 @router.get("/shifts/{shift_id}/roster")
 def roster(shift_id: str, db: OrmSession = Depends(db_session),
            user: User = Depends(require_manager)):
-    g = _group(db, shift_id)
+    g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
     positions = sorted(g.positions, key=lambda s: s.sort)
@@ -753,6 +822,8 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
                      "grade": u.grade, "credit_score": u.credit_score},
             "position_id": e.position_id,
             "position_name": st.name if st else "",
+            "is_leader": e.is_leader,
+            "leader_willing": e.leader_willing,
             "assign_forced": e.assign_forced,
             "allow_reassign": e.allow_reassign,
             "source": e.source,
@@ -808,7 +879,7 @@ class PreviewBody(BaseModel):
 def assign_preview(shift_id: str, body: PreviewBody,
                    db: OrmSession = Depends(db_session),
                    user: User = Depends(require_manager)):
-    g = _group(db, shift_id)
+    g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     try:
         return assign.preview(db, g, continuity=body.continuity)
@@ -825,7 +896,7 @@ class ApplyPlanBody(BaseModel):
 def assign_apply(shift_id: str, body: ApplyPlanBody, bg: BackgroundTasks,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager)):
-    g = _group(db, shift_id)
+    g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     if not body.plan:
         raise HTTPException(400, "空方案")
@@ -851,7 +922,7 @@ def add_walkin(shift_id: str, body: dict,
     时段冲突、名额超出都拦一道，勾选强制才放行——补录是常规操作，
     不该顺手把场次搞超员；真要超也得是明确按下去的，且留痕。
     """
-    g = _group(db, shift_id)
+    g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     sid = (body.get("student_id") or "").strip()
     u = db.query(User).filter(User.student_id == sid).first()

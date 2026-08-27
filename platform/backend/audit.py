@@ -36,7 +36,8 @@ ACTION_LABELS = {
     "credit_adjust": "信用分调整", "restriction": "限制准入设置",
     "violation": "违规登记",
     "checkin_task": "签到任务", "manual_checkin": "手动补签",
-    "integration": "集成配置",
+    "integration": "集成配置", "copy": "复制",
+    "material": "学习材料",
 }
 
 

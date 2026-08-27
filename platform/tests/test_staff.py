@@ -213,3 +213,54 @@ def test_qingxie_sees_users_page_teacher_does_not(client, teacher):
     assert client.get("/api/staff/users", headers=qingxie).status_code == 200
     assert client.get("/api/staff/users", headers=teacher).status_code == 403
     assert client.get("/api/staff/overview", headers=teacher).status_code == 403
+
+
+# ======================= 复制 =======================
+
+def test_copy_activity_shifts_times_and_drops_enrollments(
+        client, admin, db, assigned_group, take_student):
+    """复制只带结构：场次、岗位跟着走，报名不跟着走，时间整体平移。"""
+    act, g, p1, _p2 = assigned_group
+    u = db.query(User).filter(User.student_id == take_student()).one()
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                      user_id=u.id, status="confirmed", position_id=p1.id,
+                      joined_at=now()))
+    db.commit()
+
+    r = client.post(f"/api/staff/activities/{act.id}/copy", headers=admin,
+                    json={"shift_days": 7, "title": "复制出来的活动"})
+    assert r.status_code == 200
+    new_id = r.json()["id"]
+
+    detail = client.get(f"/api/activities/{new_id}", headers=admin).json()
+    assert detail["status"] == "draft"
+    assert len(detail["shifts"]) == 1
+    new_shift = detail["shifts"][0]
+    assert len(new_shift["positions"]) == len(g.positions)
+    assert new_shift["confirmed"] == 0          # 报名没有跟过来
+
+    # 比数据库里的值：接口输出按分钟截断，差值会变成 6 天 23:59:xx
+    old_start = db.get(Shift, g.id).start_time
+    new_start = db.get(Shift, new_shift["id"]).start_time
+    assert new_start - old_start == timedelta(days=7)
+
+
+def test_copy_positions_skips_duplicate_names(client, admin, db,
+                                              assigned_group):
+    act, g, _p1, _p2 = assigned_group
+    other = Shift(id=uid("s"), activity_id=act.id, name="第二场",
+                  start_time=g.start_time + timedelta(days=1),
+                  end_time=g.end_time + timedelta(days=1),
+                  mode="pick", sort=1)
+    db.add(other)
+    db.commit()
+
+    body = {"target_shift_ids": [other.id]}
+    r = client.post(f"/api/staff/shifts/{g.id}/positions/copy",
+                    headers=admin, json=body)
+    assert r.status_code == 200 and r.json()["copied"] == 2
+
+    # 再来一次：同名的都该被跳过，不会复制出两套一样的岗位
+    r = client.post(f"/api/staff/shifts/{g.id}/positions/copy",
+                    headers=admin, json=body)
+    assert r.json()["copied"] == 0 and len(r.json()["skipped"]) == 2

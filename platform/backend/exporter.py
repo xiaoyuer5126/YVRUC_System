@@ -106,9 +106,10 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
                 .order_by(User.college, User.name).all())
 
         ws = wb.create_sheet(_safe_sheet_name(g.name, used_names))
-        has_stations = bool(positions)
+        has_positions = bool(positions)
         header = ["姓名", "学号", "学院", "手机号", "场次时间"]
-        header += (["岗位", "服务地点", "接受调剂"] if has_stations else [])
+        header += (["岗位", "组长", "服务地点", "接受调剂"]
+                   if has_positions else [])
         header += ["签到状态", "签退时间"]
         ws.append(header)
         _style_header(ws, len(header))
@@ -116,8 +117,9 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         for enr, u in rows:
             line = [u.name, u.student_id, u.college, u.phone, g.span_text()]
             st = positions.get(enr.position_id) if enr.position_id else None
-            if has_stations:
+            if has_positions:
                 line += [st.name if st else "待分配",
+                         "组长 ★" if enr.is_leader else "",
                          st.location if st else "—",
                          "是" if enr.allow_reassign else "否"]
             rec = checked.get(u.id)
@@ -132,7 +134,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
             ws.column_dimensions[get_column_letter(idx)].width = 14
 
         # 未分配名单（有岗位且有人没分到时才有意义）
-        if has_stations:
+        if has_positions:
             unassigned = [(e, u) for e, u in rows if not e.position_id]
             if unassigned:
                 start = ws.max_row + 2

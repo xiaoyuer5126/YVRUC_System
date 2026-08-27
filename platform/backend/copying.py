@@ -1,0 +1,115 @@
+"""复制活动 / 批量复制岗位。
+
+多天活动、每年重办的固定活动，岗位表几乎一模一样，一个个重建既慢又容易漏。
+复制**只带结构**：活动信息、场次、岗位、学习材料。报名、签到、时长、留痕、
+管理者名单一概不带——那些属于上一次活动，跟着复制过来就是脏数据。
+
+学习材料的物理文件是各存一份的（不共用），删原件不会把副本弄坏。
+"""
+from __future__ import annotations
+
+from datetime import timedelta
+from shutil import copyfile
+from uuid import uuid4
+
+from sqlalchemy.orm import Session as OrmSession
+
+from .models import (Activity, ActivityManager, Attachment, Position, Shift,
+                     User, uid)
+
+
+def _copy_attachments(db: OrmSession, src_type: str, src_id: str,
+                      dst_id: str, activity_id: str, operator: User) -> int:
+    from .routers.materials import MATERIAL_DIR
+
+    rows = (db.query(Attachment)
+            .filter(Attachment.owner_type == src_type,
+                    Attachment.owner_id == src_id).all())
+    for a in rows:
+        stored = a.stored_name
+        if a.kind == "file" and stored:
+            src = MATERIAL_DIR / stored
+            if not src.is_file():
+                continue          # 原件已丢，跳过而不是复制出一条死记录
+            stored = f"{uuid4().hex}.{stored.rsplit('.', 1)[-1]}"
+            MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
+            copyfile(src, MATERIAL_DIR / stored)
+        db.add(Attachment(id=uid("att"), owner_type=src_type, owner_id=dst_id,
+                          activity_id=activity_id, kind=a.kind, title=a.title,
+                          stored_name=stored, size=a.size, url=a.url,
+                          uploaded_by=operator.id))
+    return len(rows)
+
+
+def copy_position(db: OrmSession, src: Position, target: Shift,
+                  operator: User, *, sort: int) -> Position:
+    p = Position(id=uid("p"), shift_id=target.id, name=src.name,
+                 location=src.location, quota=src.quota,
+                 waitlist_quota=src.waitlist_quota,
+                 requirement_tags=dict(src.requirement_tags or {}),
+                 requirement_note=src.requirement_note,
+                 training_note=src.training_note,
+                 needs_leader=src.needs_leader, sort=sort)
+    db.add(p)
+    db.flush()
+    _copy_attachments(db, "position", src.id, p.id,
+                      target.activity_id, operator)
+    return p
+
+
+def copy_positions_to(db: OrmSession, sources: list[Position],
+                      targets: list[Shift], operator: User) -> dict:
+    """把一批岗位复制到若干场次。同名岗位跳过——重复的名字会让跨场次
+    连续性分不清谁是谁，也让现场对不上人。"""
+    copied, skipped = 0, []
+    for target in targets:
+        existing = {p.name for p in target.positions}
+        sort = len(target.positions)
+        for src in sources:
+            if src.name in existing:
+                skipped.append(f"{target.name}·{src.name}")
+                continue
+            copy_position(db, src, target, operator, sort=sort)
+            existing.add(src.name)
+            sort += 1
+            copied += 1
+    return {"copied": copied, "skipped": skipped}
+
+
+def copy_activity(db: OrmSession, src: Activity, operator: User, *,
+                  title: str, shift_days: int) -> Activity:
+    """整活动复制。所有时间整体平移 shift_days 天，落「筹备中」。"""
+    delta = timedelta(days=shift_days)
+    act = Activity(id=uid("act"), title=title, type=src.type, intro=src.intro,
+                   location=src.location, contact_info=src.contact_info,
+                   contacts=[dict(c) for c in (src.contacts or [])],
+                   qa_group_qr=src.qa_group_qr, cover_hue=src.cover_hue,
+                   status="draft",
+                   reg_start=(src.reg_start + delta) if src.reg_start else None,
+                   reg_end=(src.reg_end + delta) if src.reg_end else None,
+                   created_by=operator.id)
+    db.add(act)
+    db.flush()
+    # 只有复制的人是管理者：上一次的共管名单未必还对
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                           user_id=operator.id, added_by=operator.id))
+
+    for src_shift in sorted(src.shifts, key=lambda s: s.sort):
+        shift = Shift(id=uid("s"), activity_id=act.id, name=src_shift.name,
+                      start_time=src_shift.start_time + delta,
+                      end_time=src_shift.end_time + delta,
+                      mode=src_shift.mode, capacity=src_shift.capacity,
+                      waitlist_quota=src_shift.waitlist_quota,
+                      note=src_shift.note, sort=src_shift.sort)
+        db.add(shift)
+        db.flush()
+        _copy_attachments(db, "shift", src_shift.id, shift.id, act.id, operator)
+        for i, src_pos in enumerate(sorted(src_shift.positions,
+                                           key=lambda p: p.sort)):
+            copy_position(db, src_pos, shift, operator, sort=i)
+    return act
+
+
+def describe(act: Activity) -> str:
+    n_pos = sum(len(s.positions) for s in act.shifts)
+    return f"{len(act.shifts)} 个场次、{n_pos} 个岗位"
