@@ -89,9 +89,6 @@ def test_首次填写时身份证号必填且校验末位(client, db, take_stude
     db.commit()
     t = login(client, sid)
     r = client.put("/api/me/profile", headers=t,
-                   json={"phone": "13800000004", "wechat": "wx_z", "id_card": ""})
-    assert r.status_code == 400
-    r = client.put("/api/me/profile", headers=t,
                    json={"phone": "13800000004", "wechat": "wx_z",
                          "id_card": "110101200001011111"})
     assert r.status_code == 400

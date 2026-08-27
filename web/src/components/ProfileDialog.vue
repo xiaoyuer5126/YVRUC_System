@@ -116,5 +116,7 @@ async function save() {
 </script>
 
 <style scoped>
+.id-row { display: flex; align-items: center; gap: 10px; }
+.mono { font-family: ui-monospace, monospace; letter-spacing: .5px; }
 .filled { display: flex; align-items: center; gap: 10px; }
 </style>
