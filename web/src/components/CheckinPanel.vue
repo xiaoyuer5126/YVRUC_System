@@ -192,7 +192,7 @@ const props = defineProps({
   activityId: { type: String, default: '' },   // 兜底：序列化器缺 activity_id 时由父级传入
 })
 const route = useRoute()
-const actId = computed(() => props.activityId || props.shift.activity_id)
+const actId = computed(() => props.activityId || props.shift.activity_id)  // vuecheck: script-only
 
 const creating = ref(false)
 const form = ref({ mode: 'shift', position_id: '', range: [] })

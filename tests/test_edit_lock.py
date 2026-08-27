@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from backend import config, scheduled
 from backend.models import Activity, Enrollment, Notification, now
-from conftest import login
+from conftest import editing, login
 
 
 def test_冻结期间报不了名也退不了选(client, admin, db, enrolled_activity,
@@ -90,15 +90,17 @@ def test_统一分配的场次必须先切模式才能加岗位(client, admin, d
     shift.capacity = 10
     db.commit()
 
-    r = client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
-                    json={"name": "整理A", "quota": 3})
-    assert r.status_code == 409
-    assert "报名即选岗位" in r.json()["detail"]
+    with editing(client, admin, act.id):
+        r = client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
+                        json={"name": "整理A", "quota": 3})
+        assert r.status_code == 409
+        assert "报名即选岗位" in r.json()["detail"]
 
-    assert client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
-                        json={"mode": "pick"}).status_code == 200
-    assert client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
-                       json={"name": "整理A", "quota": 3}).status_code == 200
+        assert client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
+                            json={"mode": "pick"}).status_code == 200
+        assert client.post(f"/api/staff/shifts/{shift.id}/positions",
+                           headers=admin,
+                           json={"name": "整理A", "quota": 3}).status_code == 200
 
 
 def test_余几人待分配的统计(client, admin, db, enrolled_activity, take_student):
@@ -119,3 +121,54 @@ def test_余几人待分配的统计(client, admin, db, enrolled_activity, take_
     sh = d["shifts"][0]
     assert sh["unassigned_count"] == 1
     assert sh["position_quota_sum"] == 1
+
+
+# ======================= 未进编辑态时结构只读 =======================
+
+def test_已发布活动不进编辑态改不了场次与岗位(client, admin, db,
+                                            enrolled_activity):
+    act, shift, _u = enrolled_activity
+    pos = shift.positions[0]
+
+    def denied(r):
+        return r.status_code == 409 and "调整安排" in r.json()["detail"]
+
+    assert denied(client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
+                               json={"name": "改个名"}))
+    assert denied(client.post(f"/api/staff/activities/{act.id}/shifts",
+                              headers=admin,
+                              json={"name": "新场次", "mode": "pick",
+                                    "start_time": (now() + timedelta(days=9)).isoformat(),
+                                    "end_time": (now() + timedelta(days=9, hours=2)).isoformat()}))
+    assert denied(client.post(f"/api/staff/shifts/{shift.id}/positions",
+                              headers=admin, json={"name": "新岗位", "quota": 2}))
+    assert denied(client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                               json={"quota": 9}))
+    assert denied(client.delete(f"/api/staff/positions/{pos.id}", headers=admin))
+
+    # 进入编辑态后照常改
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    assert client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                        json={"quota": 9}).status_code == 200
+
+
+def test_筹备中的活动可以直接改(client, admin, db, enrolled_activity):
+    """还没公开、没人报名，不必走暂停报名那一套。"""
+    act, shift, _u = enrolled_activity
+    db.get(Activity, act.id).status = "draft"
+    db.commit()
+    assert client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
+                        json={"name": "草稿随便改"}).status_code == 200
+    assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
+                       headers=admin).status_code == 409
+
+
+def test_已截止的活动也能进编辑态建岗位(client, admin, db, enrolled_activity):
+    """统一分配的岗位就是报名截止之后才建的。"""
+    act, shift, _u = enrolled_activity
+    db.get(Activity, act.id).status = "closed"
+    db.commit()
+    assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
+                       headers=admin).status_code == 200
+    assert client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
+                       json={"name": "整理岗", "quota": 3}).status_code == 200

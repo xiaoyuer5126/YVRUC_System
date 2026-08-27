@@ -252,6 +252,8 @@ def start_editing(activity_id: str, db: OrmSession = Depends(db_session),
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
+    if act.status == "draft":
+        raise HTTPException(409, "筹备中的活动可直接编辑，无需暂停报名")
     if act.editing_since is not None:
         who = db.get(User, act.editing_by)
         raise HTTPException(409, f"{who.name if who else '其他管理者'} "
@@ -335,6 +337,7 @@ def copy_positions_route(shift_id: str, body: CopyPositionsBody,
     """把本场次的岗位批量复制到同一活动的其它场次。"""
     src = _shift(db, shift_id)
     ensure_activity_manager(db, user, src.activity_id)
+    _ensure_editing(db, src.activity_id)
     sources = sorted(src.positions, key=lambda p: p.sort)
     if body.position_ids:
         wanted = set(body.position_ids)
@@ -496,7 +499,7 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager)):
     ensure_activity_manager(db, user, activity_id)
-    act = _act(db, activity_id)
+    act = _ensure_editing(db, activity_id)
     start, end = _parse_dt(body.start_time), _parse_dt(body.end_time)
     _validate_shift_times(start, end)
     g = Shift(id=uid("g"), activity_id=act.id, name=body.name.strip(),
@@ -531,7 +534,7 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
                  user: User = Depends(require_manager)):
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
-    act = db.get(Activity, g.activity_id)
+    act = _ensure_editing(db, g.activity_id)
     before_raw = {k: getattr(g, k) for k in SHIFT_FIELDS}
     for key in SHIFT_FIELDS:
         if key not in body:
@@ -576,7 +579,7 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
                  user: User = Depends(require_manager)):
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
-    act = db.get(Activity, g.activity_id)
+    act = _ensure_editing(db, g.activity_id)
     n_active = db.query(Enrollment).filter(
         Enrollment.shift_id == g.id,
         Enrollment.status.in_(logic.ACTIVE)).count()
@@ -622,6 +625,22 @@ POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
                    "requirement_note": "要求原文", "training_note": "培训内容"}
 
 
+def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:
+    """改场次/岗位之前，活动必须处于编辑态。
+
+    筹备中的活动随便改——还没公开，没人报名。已发布之后每一次改动都可能
+    让学生看到半成品：名额改到一半、岗位删了又建。所以强制走
+    「调整安排 → 改 → 保存并发布」这条路，改动期间报名暂停，
+    保存时把这批改动一次性通知到人。
+    """
+    act = _act(db, activity_id)
+    if act.status != "draft" and act.editing_since is None:
+        raise HTTPException(
+            409, "请先点右上角「调整安排（暂停报名）」再修改场次与岗位——"
+                 "改动期间报名会暂停，保存后统一通知已报名的志愿者")
+    return act
+
+
 def _ensure_pick_mode_for_positions(g: Shift) -> None:
     """加岗位前必须是「报名即选岗位」模式。
 
@@ -659,8 +678,8 @@ def create_position(shift_id: str, body: PositionBody,
                    user: User = Depends(require_manager)):
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
+    act = _ensure_editing(db, g.activity_id)
     _ensure_pick_mode_for_positions(g)
-    act = db.get(Activity, g.activity_id)
     s = Position(id=uid("s"), shift_id=g.id, name=body.name.strip(),
                 location=body.location.strip(), quota=body.quota,
                 waitlist_quota=body.waitlist_quota,
@@ -690,7 +709,7 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
         raise HTTPException(404, "岗位不存在")
     g = _shift(db, s.shift_id)
     ensure_activity_manager(db, user, g.activity_id)
-    act = db.get(Activity, g.activity_id)
+    act = _ensure_editing(db, g.activity_id)
     before_raw = {k: getattr(s, k) for k in POSITION_FIELDS}
     for key in POSITION_FIELDS:
         if key not in body:
@@ -750,7 +769,7 @@ def delete_position(position_id: str,
         raise HTTPException(404, "岗位不存在")
     g = _shift(db, s.shift_id)
     ensure_activity_manager(db, user, g.activity_id)
-    act = db.get(Activity, g.activity_id)
+    act = _ensure_editing(db, g.activity_id)
     n = db.query(Enrollment).filter(Enrollment.position_id == s.id,
                                     Enrollment.status == "confirmed").count()
     if n:

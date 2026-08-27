@@ -11,7 +11,7 @@ from backend.database import SessionLocal
 from backend.main import app
 from backend.models import (Activity, ActivityManager, Enrollment, Position,
                             Shift, User, now, uid)
-from conftest import ADMIN, login, student_row
+from conftest import ADMIN, editing, login, student_row
 
 
 @pytest.fixture
@@ -216,25 +216,27 @@ def test_allow_reassign_recorded(client, open_group, take_student):
 def test_quota_zero_is_rejected(client, admin):
     """0 人的岗位没有意义：以前会被当成「不限人数」。"""
     target = client.get("/api/staff/activities", headers=admin).json()[0]["id"]
-    r = client.post(f"/api/staff/activities/{target}/shifts", headers=admin,
-                    json={"name": "测试场次", "mode": "pick",
-                          "start_time": (now() + timedelta(days=400)).isoformat(),
-                          "end_time": (now() + timedelta(days=400, hours=2)).isoformat()})
-    assert r.status_code == 200
-    shift_id = r.json()["id"]
-    r = client.post(f"/api/staff/shifts/{shift_id}/positions", headers=admin,
-                    json={"name": "零名额", "quota": 0})
-    assert r.status_code == 422
+    with editing(client, admin, target):
+        r = client.post(f"/api/staff/activities/{target}/shifts", headers=admin,
+                        json={"name": "测试场次", "mode": "pick",
+                              "start_time": (now() + timedelta(days=400)).isoformat(),
+                              "end_time": (now() + timedelta(days=400, hours=2)).isoformat()})
+        assert r.status_code == 200
+        shift_id = r.json()["id"]
+        r = client.post(f"/api/staff/shifts/{shift_id}/positions", headers=admin,
+                        json={"name": "零名额", "quota": 0})
+        assert r.status_code == 422
 
 
 def test_assign_shift_requires_capacity(client, admin):
     """截止后统一分配的场次，名额只能记在场次上，必须填。"""
     target = client.get("/api/staff/activities", headers=admin).json()[0]["id"]
-    r = client.post(f"/api/staff/activities/{target}/shifts", headers=admin,
-                    json={"name": "待分配场次", "mode": "assign", "capacity": 0,
-                          "start_time": (now() + timedelta(days=401)).isoformat(),
-                          "end_time": (now() + timedelta(days=401, hours=2)).isoformat()})
-    assert r.status_code == 400
+    with editing(client, admin, target):
+        r = client.post(f"/api/staff/activities/{target}/shifts", headers=admin,
+                        json={"name": "待分配场次", "mode": "assign", "capacity": 0,
+                              "start_time": (now() + timedelta(days=401)).isoformat(),
+                              "end_time": (now() + timedelta(days=401, hours=2)).isoformat()})
+        assert r.status_code == 400
 
 
 def test_候补名次按岗位算而不是按场次(client, db, open_group, take_student):

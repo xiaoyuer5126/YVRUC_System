@@ -9,6 +9,7 @@ Redis 也用另一个 db 号。可用 RUCVA_TEST_DATABASE_URL / RUCVA_TEST_REDIS
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
@@ -175,3 +176,20 @@ def enrolled_activity(db, take_student):
                       joined_at=now()))
     db.commit()
     return act, shift, u
+
+
+@contextmanager
+def editing(client: TestClient, headers: dict, activity_id: str):
+    """已发布的活动要改结构，必须先进编辑态。
+
+    with editing(client, admin, act.id):
+        client.patch(f"/api/staff/positions/{p.id}", ...)
+    """
+    r = client.post(f"/api/staff/activities/{activity_id}/edit-lock",
+                    headers=headers)
+    assert r.status_code == 200, r.text
+    try:
+        yield
+    finally:
+        client.post(f"/api/staff/activities/{activity_id}/publish-changes",
+                    headers=headers)

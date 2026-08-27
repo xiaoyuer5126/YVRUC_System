@@ -125,11 +125,40 @@
         <el-button type="primary" :loading="saving" @click="save">创建草稿</el-button>
       </template>
     </el-dialog>
+
+    <!-- 复制活动：只带结构，落草稿并直接进编辑页 -->
+    <el-dialog v-model="copyDlg.visible" title="复制活动" width="500">
+      <p class="dim" style="margin-top:0;line-height:1.8">
+        复制「{{ copyDlg.source?.title }}」的<b>结构</b>：活动信息、场次、岗位、学习材料。<br />
+        报名、签到、时长与留痕都不会带过来；副本落「筹备中」，共管名单只有您自己。
+      </p>
+      <el-form label-width="96px">
+        <el-form-item label="延期天数" required>
+          <el-input-number v-model="copyDlg.shiftDays" :min="-365" :max="365" />
+          <span class="dim" style="margin-left:10px">
+            报名窗口与所有场次时间整体后移这么多天
+          </span>
+          <div v-if="copyPreview" class="dim" style="margin-top:6px">
+            场次时间：{{ copyPreview.from }} → <b>{{ copyPreview.to }}</b>
+          </div>
+        </el-form-item>
+        <el-form-item label="新活动名称">
+          <el-input v-model="copyDlg.title"
+                    :placeholder="`${copyDlg.source?.title}（副本）`" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="copyDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="copyDlg.busy" @click="doCopy">
+          复制并编辑
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
@@ -163,15 +192,27 @@ function openCopy(row) {
                     busy: false }
 }
 
+// 延期后场次落在哪天，边填边看，省得复制完才发现日子不对
+const copyPreview = computed(() => {
+  const src = copyDlg.value.source
+  if (!src?.reg_end) return null
+  const shift = (iso, days) => {
+    const t = new Date(iso)
+    t.setDate(t.getDate() + days)
+    return `${t.getMonth() + 1}-${String(t.getDate()).padStart(2, '0')}`
+  }
+  return { from: shift(src.reg_end, 0), to: shift(src.reg_end, copyDlg.value.shiftDays) }
+})
+
 async function doCopy() {
   const d = copyDlg.value
   d.busy = true
   try {
     const r = await api.post(`/api/staff/activities/${d.source.id}/copy`,
       { title: d.title, shift_days: d.shiftDays })
-    ElMessage.success(`已复制为「${r.title}」，请到筹备中查看并调整`)
     d.visible = false
-    load()
+    ElMessage.success(`已复制为「${r.title}」，请核对时间与岗位后发布`)
+    router.push(`/manage/${r.id}`)      // 复制完直接进编辑页
   } finally { d.busy = false }
 }
 

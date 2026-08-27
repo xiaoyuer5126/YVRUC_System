@@ -48,6 +48,24 @@ def used(tpl: str) -> set:
     return out - local
 
 
+def orphan_state(scr: str, tpl: str) -> list:
+    """脚本里定义了却没人用的响应式状态。
+
+    典型是「对话框写了 visible 标志，模板里却没有对应的 el-dialog」——
+    点按钮只是把一个没人渲染的 visible 置成 true，界面毫无反应，
+    构建和类型检查都不会吭声。
+    """
+    out = []
+    for line, name in re.findall(
+            r'(const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:ref|reactive|computed)\([^\n]*)', scr):
+        if 'vuecheck: script-only' in line:
+            continue          # 确实只在脚本里用的，声明处标一下即可
+        if re.search(rf'(?<![.\w]){re.escape(name)}\b', tpl):
+            continue
+        out.append(name)
+    return out
+
+
 bad = 0
 files = sorted(pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else '.').rglob('*.vue'))
 if not files:
@@ -60,17 +78,21 @@ for f in files:
         continue
     scr = scr_m.group(1)
     names = declared(scr)
-    missing = sorted(n for n in used(tpl_m.group(1))
+    tpl = tpl_m.group(1)
+    missing = sorted(n for n in used(tpl)
                      if n not in BUILTIN and n not in names)
+    orphans = orphan_state(scr, tpl)
     # 脚本里用了却没定义的，同样是漏改（rosterOptions 引用 groups 就是这样）
     scr_undef = sorted({n for n in re.findall(r'(?<![.\w$])([A-Za-z_$][\w$]*)\.value\b', scr)
                         if n not in names})
-    if missing or scr_undef:
+    if missing or scr_undef or orphans:
         bad += 1
         print(f'✗ {f}')
         if missing:
             print(f'    模板用到但未定义: {missing}')
         if scr_undef:
             print(f'    脚本用到但未定义: {scr_undef}')
+        if orphans:
+            print(f'    定义了却没人用（对话框漏写模板？）: {orphans}')
 print('全部通过' if not bad else f'{bad} 个文件有问题')
 sys.exit(1 if bad else 0)

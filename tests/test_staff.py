@@ -8,7 +8,7 @@ import pytest
 from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, Shift, Position,
                             User, now, uid)
-from conftest import ADMIN, QINGXIE, login
+from conftest import ADMIN, QINGXIE, editing, login
 
 
 @pytest.fixture
@@ -256,11 +256,12 @@ def test_copy_positions_skips_duplicate_names(client, admin, db,
     db.commit()
 
     body = {"target_shift_ids": [other.id]}
-    r = client.post(f"/api/staff/shifts/{g.id}/positions/copy",
-                    headers=admin, json=body)
-    assert r.status_code == 200 and r.json()["copied"] == 2
+    with editing(client, admin, act.id):
+        r = client.post(f"/api/staff/shifts/{g.id}/positions/copy",
+                        headers=admin, json=body)
+        assert r.status_code == 200 and r.json()["copied"] == 2
 
-    # 再来一次：同名的都该被跳过，不会复制出两套一样的岗位
-    r = client.post(f"/api/staff/shifts/{g.id}/positions/copy",
-                    headers=admin, json=body)
-    assert r.json()["copied"] == 0 and len(r.json()["skipped"]) == 2
+        # 再来一次：同名的都该被跳过，不会复制出两套一样的岗位
+        r = client.post(f"/api/staff/shifts/{g.id}/positions/copy",
+                        headers=admin, json=body)
+        assert r.json()["copied"] == 0 and len(r.json()["skipped"]) == 2

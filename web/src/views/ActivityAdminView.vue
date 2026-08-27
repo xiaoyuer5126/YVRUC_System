@@ -26,8 +26,7 @@
         <span class="dim" style="margin-left:10px">{{ act.time_text }} · {{ act.location }}</span>
       </template>
       <template #extra>
-        <el-button v-if="!act.editing" type="warning" plain
-                   :disabled="act.status !== 'published'"
+        <el-button v-if="!act.editing && act.status !== 'draft'" type="warning" plain
                    @click="startEditing">调整安排（暂停报名）</el-button>
         <el-button v-else type="success" :loading="lockBusy" @click="publishChanges">
           保存并发布
@@ -62,6 +61,13 @@
           / <b>截止后统一分配</b>（报名只锁时段，名额记在场次上，截止后一键分配）。
           同场次的岗位互斥，一人只占一个；点击岗位名称可查看详情。
         </el-alert>
+        <el-alert v-if="structureLocked" type="info" show-icon :closable="false"
+                  style="margin-bottom:12px"
+                  title="当前为只读：修改场次与岗位需先「调整安排（暂停报名）」"
+                  description="已发布的活动改到一半会被学生看到，所以改动要成批进行：
+                               点右上角进入调整，改完「保存并发布」，
+                               期间报名暂停，保存时把这批改动一次性通知已报名的志愿者。" />
+
         <el-alert v-if="shiftsNeedingPositions.length" type="error" show-icon
                   :closable="false" style="margin-bottom:12px"
                   :title="`有 ${shiftsNeedingPositions.length} 个场次还没有岗位，学生报不了名`"
@@ -91,12 +97,18 @@
               </el-tag>
             </el-tooltip>
             <span style="margin-left:auto">
-              <el-button size="small" @click="openShift(g)">编辑</el-button>
-              <el-button size="small" plain @click="openCopyPositions(g)">复制岗位到其它场次</el-button>
-              <el-button size="small" type="primary" plain
+              <el-button size="small" :disabled="structureLocked"
+                         @click="openShift(g)">编辑</el-button>
+              <el-button size="small" plain :disabled="structureLocked"
+                         @click="openCopyPositions(g)">复制岗位到其它场次</el-button>
+              <el-button size="small" type="primary" plain :disabled="structureLocked"
                          @click="openStation(null, g)">添加岗位</el-button>
-              <el-popconfirm :title="`删除场次「${g.name}」？`" @confirm="delShift(g)">
-                <template #reference><el-button size="small" type="danger" plain>删除</el-button></template>
+              <el-popconfirm :title="`删除场次「${g.name}」？`" @confirm="delShift(g)"
+                             :disabled="structureLocked">
+                <template #reference>
+                  <el-button size="small" type="danger" plain
+                             :disabled="structureLocked">删除</el-button>
+                </template>
               </el-popconfirm>
             </span>
           </div>
@@ -116,9 +128,14 @@
             <el-table-column prop="training_note" label="培训内容" min-width="160" show-overflow-tooltip />
             <el-table-column label="操作" width="130">
               <template #default="{row}">
-                <el-button size="small" link type="primary" @click="openStation(row, g)">编辑</el-button>
-                <el-popconfirm title="删除该岗位？" @confirm="delStation(row)">
-                  <template #reference><el-button size="small" link type="danger">删除</el-button></template>
+                <el-button size="small" link type="primary" :disabled="structureLocked"
+                           @click="openStation(row, g)">编辑</el-button>
+                <el-popconfirm title="删除该岗位？" @confirm="delStation(row)"
+                               :disabled="structureLocked">
+                  <template #reference>
+                    <el-button size="small" link type="danger"
+                               :disabled="structureLocked">删除</el-button>
+                  </template>
                 </el-popconfirm>
               </template>
             </el-table-column>
@@ -130,8 +147,8 @@
           </p>
         </div>
         <el-button style="width:100%;margin-top:4px" plain dashed
-                   @click="openShift(null)">
-          <el-icon><Plus /></el-icon>&nbsp;新建场次（场次）
+                   :disabled="structureLocked" @click="openShift(null)">
+          <el-icon><Plus /></el-icon>&nbsp;新建场次
         </el-button>
       </el-tab-pane>
 
@@ -463,37 +480,38 @@
     <el-dialog v-model="shiftDlg.visible" :title="shiftDlg.editing ? '编辑场次' : '新建场次'" width="520">
       <el-form label-width="100px">
         <el-form-item label="名称" required><el-input v-model="groupForm.name" placeholder="如：上午场" /></el-form-item>
-        <el-form-item label="开始时间" required>
-          <el-date-picker v-model="groupForm.start_time" type="datetime" style="width:100%" />
-        </el-form-item>
-        <el-form-item label="结束时间" required>
-          <el-date-picker v-model="groupForm.end_time" type="datetime" style="width:100%" />
-        </el-form-item>
-        <el-form-item v-if="groupForm.mode === 'assign'" label="人数上限" required>
-          <el-input-number v-model="groupForm.capacity" :min="1" />
-          <div class="dim" style="margin-top:4px">
-            报名截止前先占住的总名额；分配时各岗位名额之和不能超过它
-          </div>
-        </el-form-item>
-        <el-form-item label="候补名额">
-          <el-input-number v-model="groupForm.waitlist_quota" :min="0" />
-          <span class="dim" style="margin-left:10px">
-            仅本模式使用：报名时还没有岗位可选，队列记在场次上
-          </span>
-          <div class="dim" style="margin-top:4px">
-            仅「截止后统一分配」用得上；报名即选岗位的场次，候补名额在各岗位上设置
-          </div>
-        </el-form-item>
         <el-form-item label="场次模式" required>
           <el-radio-group v-model="groupForm.mode">
             <el-radio-button value="pick">报名即选岗位</el-radio-button>
             <el-radio-button value="assign">截止后统一分配</el-radio-button>
           </el-radio-group>
           <div class="dim" style="margin-top:4px;line-height:1.7">
-            报名即选岗位：名额与候补都在各岗位上，场次不设总人数；<br />
-            截止后统一分配：报名只锁时段，名额记在场次上，截止后一键分配到岗位。
+            <template v-if="groupForm.mode === 'pick'">
+              场次只管时间；<b>名额与候补都在各个岗位上设置</b>，这里不设总人数。
+            </template>
+            <template v-else>
+              报名只锁时段、不选岗位，名额与候补记在场次上；
+              报名截止后改为「报名即选岗位」并建好岗位，再运行一键分配。
+            </template>
           </div>
         </el-form-item>
+        <el-form-item label="开始时间" required>
+          <el-date-picker v-model="groupForm.start_time" type="datetime" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="结束时间" required>
+          <el-date-picker v-model="groupForm.end_time" type="datetime" style="width:100%" />
+        </el-form-item>
+        <!-- 名额与候补只属于「截止后统一分配」：报名即选岗位时它们在岗位上 -->
+        <template v-if="groupForm.mode === 'assign'">
+          <el-form-item label="人数上限" required>
+            <el-input-number v-model="groupForm.capacity" :min="1" />
+            <span class="dim" style="margin-left:10px">报名截止前先占住的总名额</span>
+          </el-form-item>
+          <el-form-item label="候补名额">
+            <el-input-number v-model="groupForm.waitlist_quota" :min="0" />
+            <span class="dim" style="margin-left:10px">满员后可排队的人数，0 = 不设候补</span>
+          </el-form-item>
+        </template>
         <el-form-item label="备注"><el-input v-model="groupForm.note" /></el-form-item>
       </el-form>
       <template #footer>
@@ -795,6 +813,10 @@ const mh = ref({ userIds: [], hours: 0.5, note: '' })
 
 // 手动加时长的候选人 = 本活动全部场次的已确认志愿者（含未签到的）
 // pick 模式却一个岗位都没有 = 学生根本报不了名
+// 已发布的活动，不进编辑态就不能动结构
+const structureLocked = computed(
+  () => !!act.value && act.value.status !== 'draft' && !act.value.editing)
+
 function needsPositions(g) {
   return g.mode === 'pick' && !g.positions.length
 }

@@ -6,7 +6,7 @@ from io import BytesIO
 from openpyxl import load_workbook
 
 from backend.models import CheckinRecord, CheckinTask, Enrollment, now, uid
-from conftest import login
+from conftest import editing, login
 
 
 def _setup(client, db, admin, enrolled_activity, take_student, n=3):
@@ -148,9 +148,10 @@ def test_关掉组长开关会清掉组长标记(client, admin, db, enrolled_act
         Enrollment.position_id == pos.id,
         Enrollment.is_leader.is_(True)).count() == 1
 
-    r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
-                     json={"needs_leader": False})
-    assert r.status_code == 200
+    with editing(client, admin, act.id):
+        r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                         json={"needs_leader": False})
+        assert r.status_code == 200
     db.expire_all()
     assert db.query(Enrollment).filter(
         Enrollment.position_id == pos.id,
