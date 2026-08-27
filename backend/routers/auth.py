@@ -135,6 +135,7 @@ def constants(user: User = Depends(current_user)):
         "activity_types": config.ACTIVITY_TYPES,
         "violation_kinds": violations.KINDS,
         "restriction_months": config.RESTRICTION_MONTHS,
+        "id_doc_types": config.ID_DOC_TYPES,
         "colleges": config.COLLEGES,
         "credit": {
             "full": config.CREDIT_FULL,

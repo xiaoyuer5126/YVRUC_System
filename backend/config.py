@@ -68,6 +68,15 @@ ACTIVITY_TYPES = {
 def type_name(code: str) -> str:
     return ACTIVITY_TYPES.get(code, {}).get("name", code)
 
+# 无内地身份证号时可选的证件类型（港澳台学生与留学生）
+ID_DOC_TYPES = [
+    "港澳居民来往内地通行证",
+    "台湾居民来往大陆通行证",
+    "港澳台居民居住证",
+    "外国人护照",
+    "外国人永久居留身份证",
+]
+
 # 限制准入的统一时长（月）。《规范》正文只显式写了「三个月内不得参与X类」，
 # 基础限制的时长在原文里是一张图片、提取不到，与青协确认后按三个月执行。
 RESTRICTION_MONTHS = 3

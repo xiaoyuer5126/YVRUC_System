@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from backend.models import Session, now
+from backend.models import Session, User, now
 from conftest import ADMIN, DEMO_PASSWORD, login
 
 
@@ -62,3 +62,49 @@ def test_logout_only_kills_current_session(client):
     assert client.post("/api/auth/logout", headers=phone).status_code == 200
     assert client.get("/api/auth/me", headers=phone).status_code == 401
     assert client.get("/api/auth/me", headers=laptop).status_code == 200
+
+
+# ======================= 证件号豁免 =======================
+
+def test_港澳台留学生可免填身份证号(client, db, take_student):
+    """勾选免填 + 说明证件类型，就算资料完善，能正常报名。"""
+    sid = take_student()
+    t = login(client, sid)
+    r = client.put("/api/me/profile", headers=t,
+                   json={"phone": "13800000001", "wechat": "wx_hk",
+                         "no_mainland_id": True,
+                         "id_doc_type": "港澳居民来往内地通行证"})
+    assert r.status_code == 200
+    user = r.json()["user"]
+    assert user["profile_complete"] is True
+    assert user["no_mainland_id"] is True
+
+    u = db.query(User).filter(User.student_id == sid).one()
+    assert u.id_card == ""          # 免填就不该留下半个号
+
+
+def test_免填必须说明证件类型(client, take_student):
+    t = login(client, take_student())
+    r = client.put("/api/me/profile", headers=t,
+                   json={"phone": "13800000002", "wechat": "wx_x",
+                         "no_mainland_id": True, "id_doc_type": ""})
+    assert r.status_code == 400
+
+
+def test_证件类型必须在清单内(client, take_student):
+    t = login(client, take_student())
+    r = client.put("/api/me/profile", headers=t,
+                   json={"phone": "13800000003", "wechat": "wx_y",
+                         "no_mainland_id": True, "id_doc_type": "随便什么证"})
+    assert r.status_code == 400
+
+
+def test_未勾选免填时身份证号仍然必填且校验末位(client, take_student):
+    t = login(client, take_student())
+    r = client.put("/api/me/profile", headers=t,
+                   json={"phone": "13800000004", "wechat": "wx_z", "id_card": ""})
+    assert r.status_code == 400
+    r = client.put("/api/me/profile", headers=t,
+                   json={"phone": "13800000004", "wechat": "wx_z",
+                         "id_card": "110101200001011111"})
+    assert r.status_code == 400

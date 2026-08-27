@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
+from .. import config
 from ..database import db_session
 from ..deps import current_user
 from ..models import (Activity, CheckinRecord, CreditLog, Enrollment,
@@ -139,28 +140,48 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
 class ProfileBody(BaseModel):
     phone: str
     wechat: str
-    id_card: str
+    id_card: str = ""
+    no_mainland_id: bool = False
+    id_doc_type: str = ""      # 港澳台居民居住证 / 护照 / 台胞证 …
 
 
 @router.put("/profile")
 def update_profile(body: ProfileBody,
                    db: OrmSession = Depends(db_session),
                    user: User = Depends(current_user)):
-    """完善/修改个人联系方式：手机号、微信号、身份证号（三者必填非空）。
+    """完善/修改个人联系方式：手机号、微信号、身份证号。
 
-    数智人大拿不到这三项，志愿者需自行补全后才能报名志愿活动。
+    数智人大拿不到这三项，志愿者需自行补全后才能报名。
+    港澳台学生与留学生可勾选「无内地身份证号」免填，改为说明所持证件类型。
     """
     phone = (body.phone or "").strip()
     wechat = (body.wechat or "").strip()
     id_card = (body.id_card or "").strip().upper()
-    if not (phone and wechat and id_card):
-        raise HTTPException(400, "手机号、微信号、身份证号均为必填项")
+    doc_type = (body.id_doc_type or "").strip()
+
+    if not (phone and wechat):
+        raise HTTPException(400, "手机号与微信号均为必填项")
     if not re.fullmatch(r"1[3-9]\d{9}", phone):
         raise HTTPException(400, "手机号格式不正确")
-    if not valid_id_card(id_card):
-        raise HTTPException(400, "身份证号不合法，请核对后重填")
+
+    if body.no_mainland_id:
+        if not doc_type:
+            raise HTTPException(400, "请选择您所持证件的类型")
+        if doc_type not in config.ID_DOC_TYPES:
+            raise HTTPException(400, "证件类型不在可选范围内")
+        id_card = ""
+    else:
+        if not id_card:
+            raise HTTPException(400, "请填写身份证号；港澳台学生与留学生"
+                                     "可勾选「无内地身份证号」")
+        if not valid_id_card(id_card):
+            raise HTTPException(400, "身份证号不合法，请核对后重填")
+        doc_type = ""
+
     user.phone = phone
     user.wechat = wechat
     user.id_card = id_card
+    user.no_mainland_id = body.no_mainland_id
+    user.id_doc_type = doc_type
     db.commit()
     return {"ok": True, "user": user.full()}

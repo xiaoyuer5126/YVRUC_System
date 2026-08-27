@@ -56,8 +56,11 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(128), default="")
     # 数智人大拿不到微信号/身份证号，需志愿者自行完善后才能报名
     wechat: Mapped[str] = mapped_column(String(64), default="")
-    # 身份证号由数智人大提供，仅存储不外显（导出表也不含，见 exporter.py）
+    # 身份证号仅存储不外显（导出表也不含，见 exporter.py）
     id_card: Mapped[str] = mapped_column(String(64), default="")
+    # 港澳台学生与留学生没有内地居民身份证号，勾选后免填（证件类型另记）
+    no_mainland_id: Mapped[bool] = mapped_column(Boolean, default=False)
+    id_doc_type: Mapped[str] = mapped_column(String(24), default="")
     # —— 类型与身份 ——
     # 类型二选一（老师/学生）；身份可多个（管理员/老师/青协/学生），可切换视角。
     user_type: Mapped[str] = mapped_column(String(12), default="student")  # teacher / student
@@ -86,12 +89,18 @@ class User(Base):
         return self.is_admin() or self.has_role(*MANAGER_ROLES)
 
     def profile_complete(self) -> bool:
-        """资料完善度：手机号/微信号/身份证号齐全（老师类型不要求）。"""
+        """资料完善度：手机号 + 微信号 + 身份证号（老师类型不要求）。
+
+        港澳台学生与留学生勾了「无内地身份证号」的，只要说明了证件类型
+        就算完善——他们本来就开不出这个号，卡着不让报名没有道理。
+        """
         if self.user_type == "teacher":
             return True
-        return bool((self.phone or "").strip()
-                    and (self.wechat or "").strip()
-                    and (self.id_card or "").strip())
+        if not ((self.phone or "").strip() and (self.wechat or "").strip()):
+            return False
+        if self.no_mainland_id:
+            return bool((self.id_doc_type or "").strip())
+        return bool((self.id_card or "").strip())
 
     def active_role_label(self) -> str:
         if not self.roles:
@@ -113,6 +122,8 @@ class User(Base):
         return {
             **self.brief(),
             "phone": self.phone, "email": self.email, "wechat": self.wechat,
+            "no_mainland_id": self.no_mainland_id,
+            "id_doc_type": self.id_doc_type,
             "profile_complete": self.profile_complete(),
             "credit_score": self.credit_score,
             "credit_frozen": bool(frozen),

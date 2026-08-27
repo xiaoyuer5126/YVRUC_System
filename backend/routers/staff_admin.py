@@ -154,8 +154,9 @@ def list_users(q: str = "", college: str = "",
     rows = query.order_by(User.student_id).limit(200).all()
     return [{
         **u.full(),
-        "id_card_masked": (u.id_card[:4] + "**********" + u.id_card[-3:]
-                           if len(u.id_card) >= 10 else ""),
+        "id_card_masked": (f"免填·{u.id_doc_type}" if u.no_mainland_id
+                           else (u.id_card[:4] + "**********" + u.id_card[-3:]
+                                 if len(u.id_card) >= 10 else "")),
     } for u in rows]
 
 
