@@ -37,6 +37,7 @@
           <template #default="{row}">
             <el-button size="small" type="primary" link
                        @click="$router.push('/manage/' + row.id)">管理</el-button>
+            <el-button size="small" link @click="openCopy(row)">复制</el-button>
             <el-popconfirm v-if="row.status === 'draft'" title="发布后学生即可报名，确认？"
                            @confirm="transition(row, 'publish')">
               <template #reference><el-button size="small" type="success" link>发布</el-button></template>

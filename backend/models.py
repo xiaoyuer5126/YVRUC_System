@@ -58,9 +58,8 @@ class User(Base):
     wechat: Mapped[str] = mapped_column(String(64), default="")
     # 身份证号仅存储不外显（导出表也不含，见 exporter.py）
     id_card: Mapped[str] = mapped_column(String(64), default="")
-    # 港澳台学生与留学生没有内地居民身份证号，勾选后免填（证件类型另记）
+    # 港澳台学生与留学生没有内地居民身份证号，勾选后免填
     no_mainland_id: Mapped[bool] = mapped_column(Boolean, default=False)
-    id_doc_type: Mapped[str] = mapped_column(String(24), default="")
     # —— 类型与身份 ——
     # 类型二选一（老师/学生）；身份可多个（管理员/老师/青协/学生），可切换视角。
     user_type: Mapped[str] = mapped_column(String(12), default="student")  # teacher / student
@@ -91,16 +90,20 @@ class User(Base):
     def profile_complete(self) -> bool:
         """资料完善度：手机号 + 微信号 + 身份证号（老师类型不要求）。
 
-        港澳台学生与留学生勾了「无内地身份证号」的，只要说明了证件类型
-        就算完善——他们本来就开不出这个号，卡着不让报名没有道理。
+        港澳台学生与留学生勾了「无内地身份证号」的，这一项直接跳过——
+        他们本来就开不出这个号，卡着不让报名没有道理。
         """
         if self.user_type == "teacher":
             return True
         if not ((self.phone or "").strip() and (self.wechat or "").strip()):
             return False
-        if self.no_mainland_id:
-            return bool((self.id_doc_type or "").strip())
-        return bool((self.id_card or "").strip())
+        return self.no_mainland_id or bool((self.id_card or "").strip())
+
+    def masked_id_card(self) -> str:
+        card = (self.id_card or "").strip()
+        if len(card) < 8:
+            return ""
+        return f"{card[:4]}{'*' * (len(card) - 7)}{card[-3:]}"
 
     def active_role_label(self) -> str:
         if not self.roles:
@@ -123,7 +126,8 @@ class User(Base):
             **self.brief(),
             "phone": self.phone, "email": self.email, "wechat": self.wechat,
             "no_mainland_id": self.no_mainland_id,
-            "id_doc_type": self.id_doc_type,
+            # 只回脱敏值：让本人看得出「已经填过了」，又不把号原样发出去
+            "id_card_masked": self.masked_id_card(),
             "profile_complete": self.profile_complete(),
             "credit_score": self.credit_score,
             "credit_frozen": bool(frozen),
@@ -169,6 +173,12 @@ class Activity(Base):
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+    # —— 编辑冻结 ——
+    # 管理者调整场次/岗位期间暂停报名：学生不该报进一个正在被改的岗位表，
+    # 也不该看到改了一半的安排。点「保存并发布」解冻，超时自动解冻兜底。
+    editing_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    editing_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     shifts: Mapped[list["Shift"]] = relationship(
         back_populates="activity", order_by="Shift.start_time",

@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import text
 
 from .database import SessionLocal, engine, init_db
+from .qrcodes import qr_svg
 from .models import (Activity, ActivityManager, AuditLog, CheckinRecord,
                      CheckinTask, CreditLog, Enrollment, HoursRecord,
                      Notification, Shift, Position, User, uid)
@@ -48,6 +49,22 @@ def fake_id_card(birth: str, seq: int) -> str:
     body = f"110101{birth}{seq % 1000:03d}"
     total = sum(int(c) * w for c, w in zip(body, ID_WEIGHTS))
     return body + ID_CHECK[total % 11]
+
+
+
+def demo_qr(label: str) -> str:
+    """演示用答疑群二维码（内联 SVG，不依赖外部文件）。
+
+    创建活动时二维码是必填项，种子数据不给的话活动详情页就是一片空白，
+    看起来像功能没做。
+    """
+    import base64
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160">'
+           f'<rect width="160" height="160" fill="#fff"/>'
+           f'{"".join(qr_svg(label).split(chr(10))[1:-1])}'
+           f'</svg>')
+    return "data:image/svg+xml;base64," + base64.b64encode(
+        svg.encode("utf-8")).decode()
 
 
 def dt(days=0, hours=0, minutes=0, base=None):
@@ -180,6 +197,7 @@ def main() -> None:
                          contact_info="青协项目部 李慕清 138xxxx0002（微信同）",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"},
                                    {"name": "王砚秋", "phone": "13950010000"}],
+                         qa_group_qr=demo_qr("RUCVA-QA-GROUP"),
                          status="published",
                          reg_start=dt(days=-3), reg_end=dt(days=2),
                          created_by=wang.id, created_at=dt(days=-4))
@@ -270,6 +288,7 @@ def main() -> None:
                         location="图书馆（明德楼）",
                         contact_info="青协项目部 lib-vol@ruc.edu.cn",
                         contacts=[{"name": "张远航", "phone": "13950030000"}],
+                        qa_group_qr=demo_qr("RUCVA-QA-GROUP"),
                         status="published",
                         reg_start=dt(days=-2), reg_end=dt(days=3),
                         created_by=wang.id, created_at=dt(days=-3))
@@ -302,6 +321,7 @@ def main() -> None:
                               "报名即锁定时段。",
                         location="明德广场", contact_info="招办协同 张远航",
                         contacts=[{"name": "张远航", "phone": "13950030000"}],
+                        qa_group_qr=demo_qr("RUCVA-QA-GROUP"),
                         status="published", reg_start=dt(days=-1),
                         reg_end=dt(days=4), created_by=zhang.id,
                         created_at=dt(days=-2))
@@ -344,6 +364,7 @@ def main() -> None:
                         contact_info="青协办公室 张远航",
                         contacts=[{"name": "王砚秋", "phone": "13950010000"},
                                   {"name": "张远航", "phone": "13950030000"}],
+                        qa_group_qr=demo_qr("RUCVA-QA-GROUP"),
                         status="closed", reg_start=dt(days=-6), reg_end=dt(days=-2),
                         created_by=zhang.id, created_at=dt(days=-7))
         db.add(gala)
@@ -393,6 +414,7 @@ def main() -> None:
                          location="海淀街道敬老院",
                          contact_info="青协项目部 李慕清",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
+                         qa_group_qr=demo_qr("RUCVA-QA-GROUP"),
                          status="finished", reg_start=dt(days=-20),
                          reg_end=dt(days=-12), created_by=limu.id,
                          created_at=dt(days=-22))

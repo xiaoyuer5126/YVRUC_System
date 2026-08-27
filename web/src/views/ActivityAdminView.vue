@@ -26,6 +26,12 @@
         <span class="dim" style="margin-left:10px">{{ act.time_text }} · {{ act.location }}</span>
       </template>
       <template #extra>
+        <el-button v-if="!act.editing" type="warning" plain
+                   :disabled="act.status !== 'published'"
+                   @click="startEditing">调整安排（暂停报名）</el-button>
+        <el-button v-else type="success" :loading="lockBusy" @click="publishChanges">
+          保存并发布
+        </el-button>
         <el-button @click="editBase = true">编辑基本信息</el-button>
         <el-popconfirm v-if="act.status === 'draft'" title="发布后进入报名期，确认？"
                        @confirm="transition('publish')">
@@ -42,15 +48,29 @@
       </template>
     </el-page-header>
 
+    <el-alert v-if="act.editing" type="warning" :closable="false" show-icon
+              style="margin:12px 0"
+              title="本活动正在调整安排，学生已暂停报名与退选"
+              :description="`改完请点右上角「保存并发布」恢复报名，并把改动汇总推送给已报名的志愿者；
+                             ${lockHours} 小时未保存会自动解冻。`" />
+
     <el-tabs v-model="tab" style="margin-top:8px">
       <!-- ============ 岗位树 ============ -->
-      <el-tab-pane label="岗位树（一二级）" name="tree">
+      <el-tab-pane label="岗位树" name="tree">
         <el-alert type="info" :closable="false" style="margin-bottom:12px">
           场次只管时间，岗位管具体的事。两种模式：<b>报名即选岗位</b>（名额与候补都在各个岗位上）
           / <b>截止后统一分配</b>（报名只锁时段，名额记在场次上，截止后一键分配）。
           同场次的岗位互斥，一人只占一个；点击岗位名称可查看详情。
         </el-alert>
-        <div v-for="g in shifts" :key="g.id" class="group-card">
+        <el-alert v-if="shiftsNeedingPositions.length" type="error" show-icon
+                  :closable="false" style="margin-bottom:12px"
+                  :title="`有 ${shiftsNeedingPositions.length} 个场次还没有岗位，学生报不了名`"
+                  :description="shiftsNeedingPositions.map(g => g.name).join('、')
+                                + '：请为这些场次添加岗位；名额与候补都记在岗位上，'
+                                + '没有岗位就等于没有名额。'" />
+
+        <div v-for="g in shifts" :key="g.id" class="group-card"
+             :class="{ 'needs-positions': needsPositions(g) }">
           <div class="g-head">
             <el-link type="primary" :underline="false" style="font-weight:600;font-size:14px"
                      @click="showGroupDetail(g)">{{ g.name }}</el-link>
@@ -61,6 +81,15 @@
             <span class="dim">{{ g.start_time.slice(5,16).replace('T',' ') }}
               ~ {{ g.end_time.slice(5,16).replace('T',' ') }}</span>
             <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}` : `岗位合计 ${sumQuota(g)}` }}</span>
+            <el-tag v-if="needsPositions(g)" size="small" type="danger" effect="dark">
+              未设岗位
+            </el-tag>
+            <el-tooltip v-else-if="g.unassigned_count" placement="top"
+                        content="已确认报名但还没拿到岗位的人数；增加岗位名额或运行一键分配">
+              <el-tag size="small" type="warning" effect="dark">
+                余 {{ g.unassigned_count }} 人待分配
+              </el-tag>
+            </el-tooltip>
             <span style="margin-left:auto">
               <el-button size="small" @click="openShift(g)">编辑</el-button>
               <el-button size="small" plain @click="openCopyPositions(g)">复制岗位到其它场次</el-button>
@@ -448,6 +477,9 @@
         </el-form-item>
         <el-form-item label="候补名额">
           <el-input-number v-model="groupForm.waitlist_quota" :min="0" />
+          <span class="dim" style="margin-left:10px">
+            仅本模式使用：报名时还没有岗位可选，队列记在场次上
+          </span>
           <div class="dim" style="margin-top:4px">
             仅「截止后统一分配」用得上；报名即选岗位的场次，候补名额在各岗位上设置
           </div>
@@ -712,6 +744,27 @@ async function remindBatch(b) {
 const shiftDlg = ref({ visible: false, editing: null })
 const groupForm = ref({})
 const positionDlg = ref({ visible: false, editing: null })
+const lockBusy = ref(false)
+const lockHours = ref(2)
+
+// —— 编辑冻结 ——
+async function startEditing() {
+  const d = await api.post(`/api/staff/activities/${activityId}/edit-lock`)
+  lockHours.value = d.auto_release_hours
+  ElMessage.warning('已暂停报名，改完请点「保存并发布」')
+  loadAll()
+}
+
+async function publishChanges() {
+  lockBusy.value = true
+  try {
+    const d = await api.post(`/api/staff/activities/${activityId}/publish-changes`)
+    ElMessage.success(d.changes
+      ? `已恢复报名，${d.changes} 项改动已通知已报名的志愿者`
+      : '已恢复报名（本次没有实质改动）')
+    loadAll()
+  } finally { lockBusy.value = false }
+}
 const copyPosDlg = ref({ visible: false, source: null, positionIds: [],
                          targetIds: [], busy: false })
 const stationForm = ref({})
@@ -741,6 +794,12 @@ const manualHours = ref([])                    // 手动添加的时长记录
 const mh = ref({ userIds: [], hours: 0.5, note: '' })
 
 // 手动加时长的候选人 = 本活动全部场次的已确认志愿者（含未签到的）
+// pick 模式却一个岗位都没有 = 学生根本报不了名
+function needsPositions(g) {
+  return g.mode === 'pick' && !g.positions.length
+}
+const shiftsNeedingPositions = computed(() => shifts.value.filter(needsPositions))
+
 const rosterOptions = computed(() => {
   const seen = new Set()
   const out = []
@@ -1184,6 +1243,7 @@ function toISO(v) {
 </script>
 
 <style scoped>
+.needs-positions { border-color: var(--el-color-danger) !important; }
 .group-card { border:1px solid #eceef1; border-radius:12px; padding:12px 14px; margin-bottom:12px; background:#fff; }
 .g-head { display:flex; gap:12px; align-items:center; margin-bottom:6px; font-size:13.5px; flex-wrap:wrap;}
 .toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }

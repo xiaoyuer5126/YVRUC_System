@@ -21,6 +21,17 @@ router = APIRouter(prefix="/api/activities", tags=["activities"])
 PUBLIC_STATUSES = ("published", "closed", "finished")
 
 
+def _ensure_not_editing(act: Activity) -> None:
+    """编辑冻结期间不接受报名与退选。
+
+    学生不该报进一个正在被改的岗位表——名额、条件、组长都可能下一秒就变；
+    也不该在管理者调整到一半时退出，让对方看到一份自己动着动着就变了的名单。
+    """
+    if act.editing_since is not None:
+        raise HTTPException(409, "负责老师正在调整本活动的安排，报名暂停中，"
+                                 "请稍后再试")
+
+
 def _get_activity(db: OrmSession, activity_id: str, user: User) -> Activity:
     act = db.get(Activity, activity_id)
     if act is None:
@@ -71,6 +82,7 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
     """
     if act.status != "published":
         raise HTTPException(409, f"活动当前为「{act.label_status()}」，不在报名期")
+    _ensure_not_editing(act)
 
     t = now()
     if act.reg_start and t < act.reg_start:
@@ -241,6 +253,7 @@ def cancel_enroll(enrollment_id: str,
         raise HTTPException(400, "该记录已退选")
     g = db.get(Shift, enr.shift_id)
     act = db.get(Activity, enr.activity_id)
+    _ensure_not_editing(act)
 
     with shift_lock(g.id):
         if enr.status == "pending_confirm":

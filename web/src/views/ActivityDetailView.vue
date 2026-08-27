@@ -18,12 +18,18 @@
           <el-descriptions :column="2" border size="small">
             <el-descriptions-item label="整体时间">{{ act.time_text }}</el-descriptions-item>
             <el-descriptions-item label="活动地点">{{ act.location || '待定' }}</el-descriptions-item>
-            <el-descriptions-item label="公示联系方式">{{ act.contact_info || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="公示联系方式">
+              <template v-if="act.contacts?.length">
+                <span v-for="(c, i) in act.contacts" :key="i" style="margin-right:14px">
+                  {{ c.name }} <span class="mono">{{ c.phone }}</span>
+                </span>
+              </template>
+              <span v-else>{{ act.contact_info || '—' }}</span>
+            </el-descriptions-item>
             <el-descriptions-item label="报名窗口">
               {{ fmtDT(act.reg_start) }} ~ {{ fmtDT(act.reg_end) }}
             </el-descriptions-item>
           </el-descriptions>
-      <MaterialList v-if="stationDetail.data" :items="stationDetail.data.attachments || []" />
           <div v-if="act.qa_group_qr" style="margin-top:10px;display:flex;gap:10px;align-items:center">
             <img :src="act.qa_group_qr" width="86" height="86"
                  style="border-radius:8px;border:1px solid #eceef1" />
@@ -31,12 +37,16 @@
           </div>
         </el-card>
 
+        <el-alert v-if="act.editing" type="warning" show-icon :closable="false"
+                  style="margin:12px 0"
+                  title="负责老师正在调整本活动的安排，报名暂时关闭"
+                  description="调整期间无法报名或退选；改好后会通过企业微信通知已报名的志愿者。" />
+
         <div class="section-title">岗位安排<span class="dim" style="font-weight:400;margin-left:8px">
           点击岗位名称可查看详情；点击行首箭头展开岗位</span></div>
 
         <el-card shadow="never">
-          <el-table :data="act.shifts" row-key="id"
-                    :row-class-name="({ row }) => row.mode === 'pick' ? 'no-expand-row' : ''">
+          <el-table :data="act.shifts" row-key="id">
             <el-table-column type="expand" width="34">
               <template #default="{ row: g }">
                 <div style="padding:6px 12px 6px 40px">
@@ -123,6 +133,30 @@
                     {{ g.note || '本场次报名只锁定时段；报名截止后由青协统一分配岗位，结果经企业微信通知。' }}
                   </p>
                   <p v-else class="dim" style="margin:4px 0">本场次尚未设置岗位，请联系负责老师。</p>
+
+                  <!-- 已报名：把自己岗位的培训内容与材料直接摊开 -->
+                  <el-card v-if="myPosition(g)" shadow="never" class="mine-card">
+                    <div class="mine-title">
+                      您的岗位：<b>{{ myPosition(g).name }}</b>
+                      <span class="dim">{{ myPosition(g).location || '地点待定' }}</span>
+                      <el-tag v-if="g.my_enrollment?.status === 'waitlisted'"
+                              size="small" type="warning" effect="plain">候补中</el-tag>
+                    </div>
+                    <p v-if="myPosition(g).training_note" class="mine-note">
+                      <b>培训内容：</b>{{ myPosition(g).training_note }}
+                    </p>
+                    <p v-if="myPosition(g).requirement_note" class="mine-note">
+                      <b>服务要求：</b>{{ myPosition(g).requirement_note }}
+                    </p>
+                    <MaterialList v-if="myPosition(g).attachments?.length"
+                                  :items="myPosition(g).attachments"
+                                  label="本岗位学习材料（请提前学习）" />
+                    <p v-if="!myPosition(g).training_note
+                             && !myPosition(g).attachments?.length"
+                       class="dim" style="margin:0">
+                      负责老师还没有上传本岗位的培训内容与材料。
+                    </p>
+                  </el-card>
 
                   <!-- 场次级学习材料 -->
                   <MaterialList v-if="g.attachments?.length" :items="g.attachments"
@@ -319,6 +353,9 @@
           <span v-else class="dim">本岗位不设组长</span>
         </el-descriptions-item>
       </el-descriptions>
+      <MaterialList v-if="stationDetail.data?.attachments?.length"
+                    :items="stationDetail.data.attachments"
+                    label="本岗位学习材料" />
     </el-dialog>
 
     <!-- 报名确认：确认时段 + 表态是否接受岗位调剂 -->
@@ -411,6 +448,12 @@ function needLateWarn(g) {
 function deadlineTs(g) {
   return new Date(g.my_enrollment.confirm_deadline.replace(' ', 'T').slice(0, 19)).getTime()
 }
+// 我在这个场次的岗位对象（报名后才有；统一分配的场次分配前为 null）
+function myPosition(g) {
+  const pid = g.my_enrollment?.position_id
+  return pid ? g.positions.find(p => p.id === pid) || null : null
+}
+
 function myStationId(g) {
   return g.my_enrollment?.position_id || ''
 }
@@ -526,11 +569,13 @@ const openProfileDialog = () => profileDialog.value.open(true)
 
 <style scoped>
 .req-blocked { color: #e6a23c; }
+.mine-card { margin-top: 10px; border-left: 3px solid var(--el-color-success); }
+.mine-title { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.mine-note { margin: 4px 0; font-size: 13px; line-height: 1.75; color: #606266; }
 .group-card { margin-bottom: 14px; border-radius: 12px; }
 .g-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 .reassign-box { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #f7f8fa; }
 .reassign-box .dim { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
 
 /* 仅场次：没有可展开的岗位，隐藏展开箭头 */
-:deep(.no-expand-row .el-table__expand-icon) { visibility: hidden; }
 </style>

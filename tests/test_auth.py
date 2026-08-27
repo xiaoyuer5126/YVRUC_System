@@ -67,13 +67,12 @@ def test_logout_only_kills_current_session(client):
 # ======================= 证件号豁免 =======================
 
 def test_港澳台留学生可免填身份证号(client, db, take_student):
-    """勾选免填 + 说明证件类型，就算资料完善，能正常报名。"""
+    """勾选免填后身份证号留空即可，资料照样算完善。"""
     sid = take_student()
     t = login(client, sid)
     r = client.put("/api/me/profile", headers=t,
                    json={"phone": "13800000001", "wechat": "wx_hk",
-                         "no_mainland_id": True,
-                         "id_doc_type": "港澳居民来往内地通行证"})
+                         "no_mainland_id": True})
     assert r.status_code == 200
     user = r.json()["user"]
     assert user["profile_complete"] is True
@@ -83,24 +82,12 @@ def test_港澳台留学生可免填身份证号(client, db, take_student):
     assert u.id_card == ""          # 免填就不该留下半个号
 
 
-def test_免填必须说明证件类型(client, take_student):
-    t = login(client, take_student())
-    r = client.put("/api/me/profile", headers=t,
-                   json={"phone": "13800000002", "wechat": "wx_x",
-                         "no_mainland_id": True, "id_doc_type": ""})
-    assert r.status_code == 400
-
-
-def test_证件类型必须在清单内(client, take_student):
-    t = login(client, take_student())
-    r = client.put("/api/me/profile", headers=t,
-                   json={"phone": "13800000003", "wechat": "wx_y",
-                         "no_mainland_id": True, "id_doc_type": "随便什么证"})
-    assert r.status_code == 400
-
-
-def test_未勾选免填时身份证号仍然必填且校验末位(client, take_student):
-    t = login(client, take_student())
+def test_首次填写时身份证号必填且校验末位(client, db, take_student):
+    from backend.models import User
+    sid = take_student()
+    db.query(User).filter(User.student_id == sid).one().id_card = ""
+    db.commit()
+    t = login(client, sid)
     r = client.put("/api/me/profile", headers=t,
                    json={"phone": "13800000004", "wechat": "wx_z", "id_card": ""})
     assert r.status_code == 400
@@ -108,3 +95,19 @@ def test_未勾选免填时身份证号仍然必填且校验末位(client, take_
                    json={"phone": "13800000004", "wechat": "wx_z",
                          "id_card": "110101200001011111"})
     assert r.status_code == 400
+
+
+def test_修改资料时留空不会清掉已填的身份证号(client, db, take_student):
+    """前端只显示脱敏值，留空提交意味着「不改这一项」。"""
+    from backend.models import User
+    sid = take_student()
+    before = db.query(User).filter(User.student_id == sid).one().id_card
+    assert before
+    t = login(client, sid)
+    r = client.put("/api/me/profile", headers=t,
+                   json={"phone": "13800000009", "wechat": "wx_new",
+                         "id_card": ""})
+    assert r.status_code == 200
+    assert r.json()["user"]["id_card_masked"].endswith(before[-3:])
+    db.expire_all()
+    assert db.query(User).filter(User.student_id == sid).one().id_card == before

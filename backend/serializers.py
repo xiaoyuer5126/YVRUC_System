@@ -65,6 +65,7 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
                       if span else "待定"),
         "reg_start": iso_of(act.reg_start), "reg_end": iso_of(act.reg_end),
         "contacts": act.contacts or [],
+        "editing": act.editing_since is not None,
     }
 
 
@@ -134,6 +135,13 @@ def shift_out(db: OrmSession, g: Shift, user=None) -> dict:
         "mode_label": g.mode_label(),
         "note": g.note, "sort": g.sort,
         "positions": [position_out(db, p, user) for p in positions],
+        # 已确认但还没岗位的人数：pick 模式下岗位名额之和不够时就有人落空，
+        # 管理者需要当场看见这个缺口，而不是等分配面板报「未排上」
+        "unassigned_count": (db.query(Enrollment)
+                             .filter(Enrollment.shift_id == g.id,
+                                     Enrollment.status == "confirmed",
+                                     Enrollment.position_id.is_(None)).count()),
+        "position_quota_sum": sum(p.quota for p in positions),
         "attachments": attachments_out(db, "shift", g.id),
         "waitlist_count": len(waitlist_rows(db, g.id)),
     }

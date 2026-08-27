@@ -67,6 +67,13 @@ def client():
 
 @pytest.fixture
 def db():
+    """用例直连数据库的会话。
+
+    ⚠️ 接口是在**另一个会话**里写库的，本会话的身份映射不会自动感知。
+    调完接口再读同一个对象，必须先 `db.expire_all()`（或 `db.refresh(obj)`），
+    否则读到的是调用前的旧值——测试会以「产品没写进去」的样子失败，
+    而实际上是会话缓存在骗你。
+    """
     s = SessionLocal()
     try:
         yield s

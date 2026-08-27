@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
-from .. import assign, copying
+from .. import assign, config, copying
 from ..audit import diff_changes, log as audit_log
 from ..database import db_session
 from ..deps import require_manager
@@ -30,9 +30,9 @@ from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, managed_activity_ids,
                      remove_manager)
 from ..integrations import wecom
-from ..models import (Activity, ActivityManager, CheckinRecord, Enrollment,
-                      Notification,
-                      Shift, Position, User, iso, now, uid)
+from ..models import (Activity, ActivityManager, AuditLog, CheckinRecord,
+                      Enrollment, Notification, Position, Shift, User,
+                      iso, now, uid)
 from ..serializers import activity_brief
 
 router = APIRouter(prefix="/api/staff", tags=["staff"])
@@ -240,6 +240,62 @@ def _notify_activity_bg(activity_id: str, template: str, **kw):
         db.close()
 
 
+# ======================= 编辑冻结 =======================
+
+@router.post("/activities/{activity_id}/edit-lock")
+def start_editing(activity_id: str, db: OrmSession = Depends(db_session),
+                  user: User = Depends(require_manager)):
+    """进入编辑态：本活动全部场次暂停报名与退选。
+
+    冻结整个活动而不是单个场次——批量复制岗位、调名额这类改动本来就跨场次，
+    而且同一活动里「有的能报有的不能报」学生只会更困惑。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    if act.editing_since is not None:
+        who = db.get(User, act.editing_by)
+        raise HTTPException(409, f"{who.name if who else '其他管理者'} "
+                                 f"正在编辑本活动，请等对方保存后再试")
+    act.editing_since = now()
+    act.editing_by = user.id
+    audit_log(db, actor=user, action="update", target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary="进入编辑态，暂停报名", visible=False)
+    db.commit()
+    return {"ok": True, "editing": True,
+            "auto_release_hours": config.EDIT_LOCK_HOURS}
+
+
+@router.post("/activities/{activity_id}/publish-changes")
+def finish_editing(activity_id: str, bg: BackgroundTasks,
+                   db: OrmSession = Depends(db_session),
+                   user: User = Depends(require_manager)):
+    """保存并发布：解冻，并把这段时间的改动汇总推给已报名的志愿者。"""
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    if act.editing_since is None:
+        raise HTTPException(409, "本活动不在编辑态")
+    since = act.editing_since
+    act.editing_since = None
+    act.editing_by = None
+
+    rows = (db.query(AuditLog)
+            .filter(AuditLog.activity_id == act.id,
+                    AuditLog.created_at >= since,
+                    AuditLog.visible.is_(True))
+            .order_by(AuditLog.created_at).all())
+    summary = "；".join(r.summary for r in rows[:8]) or "无实质改动"
+    audit_log(db, actor=user, action="update", target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=f"结束编辑并发布改动：{summary}", visible=False)
+    db.commit()
+    if rows and act.status != "draft":
+        bg.add_task(_notify_activity_bg, act.id, "activity_changed",
+                    activity=act.title, change_summary=summary)
+    return {"ok": True, "editing": False, "changes": len(rows),
+            "summary": summary}
+
+
 # ======================= 复制 =======================
 
 class CopyActivityBody(BaseModel):
@@ -291,6 +347,7 @@ def copy_positions_route(shift_id: str, body: CopyPositionsBody,
         target = db.get(Shift, tid)
         if target is None or target.activity_id != src.activity_id:
             raise HTTPException(400, "目标场次不属于本活动")
+        _ensure_pick_mode_for_positions(target)
         if target.id == src.id:
             continue
         targets.append(target)
@@ -565,6 +622,19 @@ POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
                    "requirement_note": "要求原文", "training_note": "培训内容"}
 
 
+def _ensure_pick_mode_for_positions(g: Shift) -> None:
+    """加岗位前必须是「报名即选岗位」模式。
+
+    这是报名截止后做分配的固定动作：先把场次切成 pick（名额口径从场次转到
+    各岗位），再建岗位、跑一键分配。留在 assign 模式下建岗位的话，名额会同时
+    挂在两层，谁也说不清以哪个为准。
+    """
+    if g.needs_assign():
+        raise HTTPException(
+            409, f"场次「{g.name}」当前是「截止后统一分配」，请先在场次设置里"
+                 f"改为「报名即选岗位」，再添加岗位并运行一键分配")
+
+
 def _validate_position(db: OrmSession, g: Shift, s: Position):
     """岗位自带名额，不再受场次总数约束——场次只管时间。
 
@@ -589,6 +659,7 @@ def create_position(shift_id: str, body: PositionBody,
                    user: User = Depends(require_manager)):
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
+    _ensure_pick_mode_for_positions(g)
     act = db.get(Activity, g.activity_id)
     s = Position(id=uid("s"), shift_id=g.id, name=body.name.strip(),
                 location=body.location.strip(), quota=body.quota,

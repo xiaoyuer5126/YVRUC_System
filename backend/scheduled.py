@@ -13,8 +13,10 @@ from sqlalchemy.orm import Session as OrmSession
 from . import config
 from .audit import log as audit_log
 from .enroll_logic import expire_stale_promotions
-from .models import Activity, Shift, now
+from .integrations import wecom
+from .models import Activity, Shift, User, now
 from .notify import notify_checkin, notify_enrolled
+from .perm import activity_manager_ids
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,8 @@ def run_once(db: OrmSession) -> dict[str, int]:
     result = {}
     for name, job in (("promotions", expire_stale_promotions),
                       ("advanced", auto_advance_activities),
-                      ("reminders", send_checkin_reminders)):
+                      ("reminders", send_checkin_reminders),
+                      ("unlocked", release_stale_edit_locks)):
         try:
             result[name] = job(db)
         except Exception:  # noqa: BLE001
@@ -64,6 +67,7 @@ def auto_advance_activities(db: OrmSession) -> int:
             if deadline and t > deadline:
                 _advance(db, act, "closed", "close",
                          f"报名截止时间（{deadline:%m-%d %H:%M}）已到，系统自动截止报名")
+                notify_managers_to_assign(db, act)
                 changed += 1
         # 同一轮里接着判：截止后场次也已结束的，一次到位，不用等下一分钟
         if act.status == "closed" and span and t > span[1]:
@@ -75,6 +79,62 @@ def auto_advance_activities(db: OrmSession) -> int:
     if changed:
         db.commit()
     return changed
+
+
+def notify_managers_to_assign(db: OrmSession, act: Activity) -> None:
+    """报名一截止就提醒管理者去建岗位。
+
+    「截止后统一分配」的场次，报名截止才是干活的开始；没人盯着的话，
+    这批人会一直挂在「待分配」，直到活动当天才发现没人排班。
+    """
+    pending = [s for s in act.shifts if s.needs_assign() and not s.positions]
+    if not pending:
+        return
+    names = "、".join(s.name for s in pending)
+    for uid_ in activity_manager_ids(db, act.id):
+        who = db.get(User, uid_)
+        if who is None:
+            continue
+        wecom.send_user(db, who, "custom",
+                        title=f"报名已截止，请设置岗位｜{act.title}",
+                        content=f"「{act.title}」报名已截止。\n"
+                                f"以下场次为「截止后统一分配」且还没有岗位："
+                                f"{names}\n"
+                                f"请进入活动管理设置岗位，再运行一键分配。")
+    logger.info("活动「%s」已截止，提醒管理者设置岗位：%s", act.title, names)
+
+
+# ======================= 编辑冻结兜底 =======================
+
+def release_stale_edit_locks(db: OrmSession) -> int:
+    """超时没点「保存并发布」就自动解冻。
+
+    管理者点了「调整安排」转头去开会，学生一下午都报不了名，而这件事
+    没有任何外部表现——除了学生以为活动黄了。
+    """
+    deadline = now() - timedelta(hours=config.EDIT_LOCK_HOURS)
+    rows = (db.query(Activity)
+            .filter(Activity.editing_since.isnot(None),
+                    Activity.editing_since < deadline).all())
+    for act in rows:
+        who = db.get(User, act.editing_by) if act.editing_by else None
+        act.editing_since = None
+        act.editing_by = None
+        audit_log(db, actor=None, action="update", target_type="activity",
+                  target_id=act.id, target_label=act.title, activity_id=act.id,
+                  summary=f"编辑态超过 {config.EDIT_LOCK_HOURS} 小时未保存，"
+                          f"系统自动解冻并恢复报名", visible=False)
+        if who is not None:
+            wecom.send_user(db, who, "custom",
+                            title=f"报名已自动恢复｜{act.title}",
+                            content=f"您对「{act.title}」的编辑态超过 "
+                                    f"{config.EDIT_LOCK_HOURS} 小时未保存，"
+                                    f"系统已自动解冻并恢复报名。\n"
+                                    f"如仍需调整，请重新点击「调整安排」。")
+        logger.info("活动「%s」编辑态超时，已自动解冻", act.title)
+    if rows:
+        db.commit()
+    return len(rows)
 
 
 # ======================= 签到提醒 =======================
