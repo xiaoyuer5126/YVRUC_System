@@ -141,6 +141,8 @@ const creating = ref(false)
 const saving = ref(false)
 const qrUploading = ref(false)
 const types = ref({})
+const copyDlg = ref({ visible: false, source: null, title: '', shiftDays: 7,
+                      busy: false })
 const form = ref({})
 const createRange = ref([])
 
@@ -154,6 +156,23 @@ function toISO(v) {
 const typeColor = t => TYPE_COLORS[t]?.color
 const statusType = s => ({ published: 'success', closed: 'info', draft: 'warning', finished: 'info' }[s])
 const pct = r => Math.min(100, Math.round(r.total_confirmed / Math.max(1, r.total_capacity) * 100))
+
+function openCopy(row) {
+  copyDlg.value = { visible: true, source: row, title: '', shiftDays: 7,
+                    busy: false }
+}
+
+async function doCopy() {
+  const d = copyDlg.value
+  d.busy = true
+  try {
+    const r = await api.post(`/api/staff/activities/${d.source.id}/copy`,
+      { title: d.title, shift_days: d.shiftDays })
+    ElMessage.success(`已复制为「${r.title}」，请到筹备中查看并调整`)
+    d.visible = false
+    load()
+  } finally { d.busy = false }
+}
 
 async function load() {
   loading.value = true

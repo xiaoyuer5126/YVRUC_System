@@ -63,12 +63,10 @@
             <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}` : `岗位合计 ${sumQuota(g)}` }}</span>
             <el-tooltip v-if="g.held_seats" placement="top"
                         content="临近退选（开始前24小时内）扣留的名额，按规则不再释放给任何人">
-              <el-tag size="small" type="warning" effect="plain">
-                扣留 {{ g.held_seats }}
-              </el-tag>
             </el-tooltip>
             <span style="margin-left:auto">
               <el-button size="small" @click="openShift(g)">编辑</el-button>
+              <el-button size="small" plain @click="openCopyPositions(g)">复制岗位到其它场次</el-button>
               <el-button size="small" type="primary" plain
                          @click="openStation(null, g)">添加岗位</el-button>
               <el-popconfirm :title="`删除场次「${g.name}」？`" @confirm="delShift(g)">
@@ -158,7 +156,17 @@
                 <el-tooltip content="依据签到任务实时回流"><el-icon><InfoFilled /></el-icon></el-tooltip>
               </div>
               <el-table :data="roster.confirmed" size="small" max-height="300" style="margin-bottom:14px">
-                <el-table-column prop="user.name" label="姓名" width="90" />
+                <el-table-column label="姓名" width="110">
+              <template #default="{row}">
+                {{ row.user.name }}
+                <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark"
+                        style="margin-left:4px">组长</el-tag>
+                <el-tooltip v-else-if="row.leader_willing" content="愿意担任组长">
+                  <el-tag size="small" type="warning" effect="plain"
+                          style="margin-left:4px">愿任</el-tag>
+                </el-tooltip>
+              </template>
+            </el-table-column>
                 <el-table-column prop="user.student_id" label="学号" width="110" />
                 <el-table-column prop="user.college" label="学院" width="130" />
                 <el-table-column prop="user.phone" label="手机号" width="120" />
@@ -234,7 +242,17 @@
         <el-table v-if="hours.length" :data="hours" size="small" style="margin-top:10px"
                   max-height="360" @selection-change="onHoursSelect">
           <el-table-column type="selection" width="40" />
-          <el-table-column prop="user.name" label="姓名" width="90" />
+          <el-table-column label="姓名" width="110">
+              <template #default="{row}">
+                {{ row.user.name }}
+                <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark"
+                        style="margin-left:4px">组长</el-tag>
+                <el-tooltip v-else-if="row.leader_willing" content="愿意担任组长">
+                  <el-tag size="small" type="warning" effect="plain"
+                          style="margin-left:4px">愿任</el-tag>
+                </el-tooltip>
+              </template>
+            </el-table-column>
           <el-table-column prop="user.student_id" label="学号" width="110" />
           <el-table-column prop="user.college" label="学院" width="130" />
           <el-table-column label="时长(h)" width="170">
@@ -414,7 +432,19 @@
       <el-form label-width="100px">
         <el-form-item label="岗位名称" required><el-input v-model="stationForm.name" placeholder="如：东门引导" /></el-form-item>
         <el-form-item label="服务地点"><el-input v-model="stationForm.location" /></el-form-item>
-        <el-form-item label="名额" required><el-input-number v-model="stationForm.quota" :min="0" /></el-form-item>
+        <el-form-item label="名额" required>
+          <el-input-number v-model="stationForm.quota" :min="1" />
+          <span class="dim" style="margin-left:10px">名额与候补都在岗位上，场次不设总数</span>
+        </el-form-item>
+        <el-form-item label="候补名额">
+          <el-input-number v-model="stationForm.waitlist_quota" :min="0" />
+          <span class="dim" style="margin-left:10px">满员后可排队的人数，0 = 不设候补</span>
+        </el-form-item>
+        <el-form-item label="组长">
+          <el-checkbox v-model="stationForm.needs_leader">本岗位需要一名组长</el-checkbox>
+          <div class="dim">报名时志愿者可表态愿意担任，按报名先后自动产生；
+            组长退选或被调走时自动从其余有意愿的人里递补。</div>
+        </el-form-item>
         <el-form-item label="条件要求">
           <el-select v-model="stationForm.genderReq" clearable placeholder="性别限制（可选）" style="width:180px;margin-right:8px">
             <el-option value="女" label="限女生" /><el-option value="男" label="限男生" />
@@ -423,17 +453,53 @@
                      placeholder="限定学院（可选）" style="width:260px">
             <el-option v-for="c in colleges" :key="c" :value="c" :label="c" />
           </el-select>
-          <div class="dim">将转换为排班程序的条件树参与自动分配（必选条件不满足者不会被排入）</div>
+          <div class="dim">硬性条件：不满足的志愿者<b>报名时就会被拦下</b>（岗位在活动页显示为
+            「不符合条件」并说明原因），一键分配时同样不会被排入。</div>
         </el-form-item>
         <el-form-item label="要求原文"><el-input v-model="stationForm.requirement_note" placeholder="自然语言描述，展示用" /></el-form-item>
         <el-form-item label="培训内容"><el-input v-model="stationForm.training_note" /></el-form-item>
+        <el-form-item v-if="positionDlg.editing" label="学习材料">
+          <MaterialManager owner-type="position" :owner-id="positionDlg.editing.id"
+                           :items="positionDlg.editing.attachments || []"
+                           @changed="loadAll" />
+        </el-form-item>
         <el-form-item label="">
-          <div class="dim">岗位不设置时间：时段随场次，岗位只区分职责/地点；同场次岗位之间互斥。</div>
+          <div class="dim">岗位没有时间：时段随场次；同场次的岗位互斥，一人只占一个。</div>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="positionDlg.visible = false">取消</el-button>
         <el-button type="primary" :loading="savingStation" @click="saveStation">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 岗位批量复制到其它场次 -->
+    <el-dialog v-model="copyPosDlg.visible" title="复制岗位到其它场次" width="520">
+      <p class="dim" style="margin-top:0">
+        从「{{ copyPosDlg.source?.name }}」复制岗位（含名额、条件、组长设置与学习材料）。
+        目标场次已有同名岗位的会跳过。
+      </p>
+      <el-form label-width="88px">
+        <el-form-item label="复制哪些">
+          <el-select v-model="copyPosDlg.positionIds" multiple collapse-tags
+                     placeholder="留空 = 全部岗位" style="width:100%">
+            <el-option v-for="p in copyPosDlg.source?.positions || []" :key="p.id"
+                       :value="p.id" :label="`${p.name}（${p.quota}人）`" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="复制到" required>
+          <el-select v-model="copyPosDlg.targetIds" multiple style="width:100%"
+                     placeholder="选择目标场次">
+            <el-option v-for="g in shifts.filter(x => x.id !== copyPosDlg.source?.id)"
+                       :key="g.id" :value="g.id" :label="`${g.name}（${g.time_text}）`" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="copyPosDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="copyPosDlg.busy" @click="doCopyPositions">
+          复制
+        </el-button>
       </template>
     </el-dialog>
 
@@ -553,6 +619,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download as dl, fmtDT } from '../api'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
+import MaterialManager from '../components/MaterialManager.vue'
 import { auth } from '../store'
 
 const route = useRoute()
@@ -579,6 +646,8 @@ const notifyForm = ref({ scope: 'all', shift_id: '', title: '', content: '' })
 const shiftDlg = ref({ visible: false, editing: null })
 const groupForm = ref({})
 const positionDlg = ref({ visible: false, editing: null })
+const copyPosDlg = ref({ visible: false, source: null, positionIds: [],
+                         targetIds: [], busy: false })
 const stationForm = ref({})
 const editBase = ref(false)
 const baseForm = ref({})
@@ -716,16 +785,40 @@ async function delShift(g) {
   loadAll()
 }
 
+// —— 岗位批量复制 ——
+function openCopyPositions(g) {
+  if (!g.positions.length) return ElMessage.warning('该场次下还没有岗位')
+  copyPosDlg.value = { visible: true, source: g, positionIds: [],
+                       targetIds: [], busy: false }
+}
+
+async function doCopyPositions() {
+  const d = copyPosDlg.value
+  if (!d.targetIds.length) return ElMessage.warning('请选择至少一个目标场次')
+  d.busy = true
+  try {
+    const r = await api.post(`/api/staff/shifts/${d.source.id}/positions/copy`,
+      { position_ids: d.positionIds, target_shift_ids: d.targetIds })
+    ElMessage.success(`已复制 ${r.copied} 个岗位`
+      + (r.skipped.length ? `，同名跳过 ${r.skipped.length} 个` : ''))
+    d.visible = false
+    loadAll()
+  } finally { d.busy = false }
+}
+
+
 // —— 岗位 CRUD ——
 function openStation(st, g) {
   positionDlg.value = { visible: true, editing: st, groupId: g.id }
   stationForm.value = st ? {
     name: st.name, location: st.location, quota: st.quota,
+    waitlist_quota: st.waitlist_quota, needs_leader: st.needs_leader,
     genderReq: (st.requirement_tags?.性别) || '',
     collegeReq: st.requirement_tags?.学院 || [],
     requirement_note: st.requirement_note, training_note: st.training_note,
   } : {
-    name: '', location: '', quota: 2, genderReq: '', collegeReq: [],
+    name: '', location: '', quota: 2, waitlist_quota: 3, needs_leader: false,
+    genderReq: '', collegeReq: [],
     requirement_note: '', training_note: '',
   }
 }
@@ -739,6 +832,7 @@ async function saveStation() {
     if (f.collegeReq?.length) tags['学院'] = f.collegeReq
     const body = {
       name: f.name, quota: f.quota, location: f.location,
+      waitlist_quota: f.waitlist_quota, needs_leader: f.needs_leader,
       requirement_tags: tags, requirement_note: f.requirement_note,
       training_note: f.training_note,
     }

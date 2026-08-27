@@ -111,7 +111,13 @@
               {{ row.checkout_at || '—' }}
             </template>
           </el-table-column>
-          <el-table-column prop="name" label="姓名" width="100" />
+          <el-table-column label="姓名" width="120">
+            <template #default="{row}">
+              {{ row.name }}
+              <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark"
+                      style="margin-left:4px">组长</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column prop="student_id" label="学号" width="120" />
           <el-table-column prop="college" label="学院" min-width="140" />
           <el-table-column prop="position" label="岗位" min-width="120" />

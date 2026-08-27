@@ -1,0 +1,114 @@
+<template>
+  <div class="mgr">
+    <div v-for="m in items" :key="m.id" class="row">
+      <el-icon><Link v-if="m.kind === 'link'" /><Document v-else /></el-icon>
+      <span class="name">{{ m.title }}</span>
+      <span class="size">{{ m.kind === 'link' ? '链接' : sizeText(m.size) }}</span>
+      <el-button link type="danger" size="small" @click="remove(m)">删除</el-button>
+    </div>
+
+    <div class="actions">
+      <el-upload :show-file-list="false" :before-upload="upload" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.txt">
+        <el-button size="small" :loading="uploading">上传文档</el-button>
+      </el-upload>
+      <el-button size="small" @click="linkDlg = true">添加链接</el-button>
+      <span class="dim">文档 ≤{{ limitMB }}MB；视频请传到网盘或校内平台后添加链接</span>
+    </div>
+
+    <el-dialog v-model="linkDlg" title="添加材料链接" width="440" append-to-body>
+      <el-form label-width="72px">
+        <el-form-item label="名称" required>
+          <el-input v-model="link.title" placeholder="如：岗前培训视频" />
+        </el-form-item>
+        <el-form-item label="链接" required>
+          <el-input v-model="link.url" placeholder="https://..." />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="linkDlg = false">取消</el-button>
+        <el-button type="primary" @click="addLink">添加</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Document, Link } from '@element-plus/icons-vue'
+import { api } from '../api'
+import { auth } from '../store'
+
+const props = defineProps({
+  ownerType: { type: String, required: true },   // shift / position
+  ownerId: { type: String, required: true },
+  items: { type: Array, default: () => [] },
+})
+const emit = defineEmits(['changed'])
+
+const limitMB = 50
+const uploading = ref(false)
+const linkDlg = ref(false)
+const link = ref({ title: '', url: '' })
+
+async function upload(file) {
+  if (file.size > limitMB * 1024 * 1024) {
+    ElMessage.error(`文件不能超过 ${limitMB}MB，请改用「添加链接」`)
+    return false
+  }
+  const form = new FormData()
+  form.append('owner_type', props.ownerType)
+  form.append('owner_id', props.ownerId)
+  form.append('file', file)
+  uploading.value = true
+  try {
+    // FormData 不能走 api 的 JSON 封装，这里直接发
+    const resp = await fetch('/api/staff/materials', {
+      method: 'POST', body: form,
+      headers: { Authorization: `Bearer ${auth.token}` },
+    })
+    const data = await resp.json()
+    if (!resp.ok) throw new Error(data.detail || '上传失败')
+    ElMessage.success('已上传')
+    emit('changed')
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally { uploading.value = false }
+  return false      // 交给上面的 fetch，禁用 el-upload 自己的上传
+}
+
+async function addLink() {
+  if (!link.value.title.trim() || !link.value.url.trim()) {
+    return ElMessage.warning('请填写名称与链接')
+  }
+  await api.post('/api/staff/materials/link', {
+    owner_type: props.ownerType, owner_id: props.ownerId,
+    title: link.value.title, url: link.value.url,
+  })
+  ElMessage.success('已添加')
+  linkDlg.value = false
+  link.value = { title: '', url: '' }
+  emit('changed')
+}
+
+async function remove(m) {
+  await api.del(`/api/staff/materials/${m.id}`)
+  ElMessage.success('已删除')
+  emit('changed')
+}
+
+function sizeText(bytes) {
+  if (!bytes) return ''
+  return bytes >= 1024 * 1024
+    ? `${(bytes / 1024 / 1024).toFixed(1)}MB`
+    : `${Math.max(1, Math.round(bytes / 1024))}KB`
+}
+</script>
+
+<style scoped>
+.mgr { width: 100%; }
+.row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; }
+.name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.size { color: #a8abb2; font-size: 12px; }
+.actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+</style>

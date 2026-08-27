@@ -1,96 +1,54 @@
 <template>
   <div v-loading="loading">
     <!-- 模式说明 -->
-    <el-alert v-if="fineModeAllAssigned" type="info" :closable="false" style="margin-bottom:10px"
-              title="精细化场次：志愿者报名时已各自选定岗位"
-              description="智能排班主要服务于「二级待定」场次。本场次运行试算一般会维持现状（结果中会标注「保持」）；如需个别调整，可直接修改下方建议岗位后应用。" />
+    <el-alert v-if="pickModeAllAssigned" type="info" :closable="false" style="margin-bottom:10px"
+              title="本场次报名时已各自选定岗位"
+              description="一键分配主要服务于「截止后统一分配」的场次。这里运行试算一般会维持现状（结果中标注「保持」）；个别调整可直接改下方的建议岗位后应用。" />
 
     <!-- 工具条 -->
     <div class="toolbar">
-      <span class="dim">排班规则：</span>
-      <el-radio-group v-model="preset" size="small" @change="onPresetChange">
-        <el-radio-button v-for="p in presets" :key="p.key" :value="p.key">{{ p.label }}</el-radio-button>
-        <el-radio-button value="custom" v-if="customDirty">自定义</el-radio-button>
-      </el-radio-group>
-      <el-tooltip :content="presets.find(p => p.key === preset)?.hint || '基于排班程序规则自定义'" placement="top">
+      <el-button type="primary" size="small" :loading="solving" @click="runPreview">
+        <el-icon><MagicStick /></el-icon>&nbsp;一键分配（试算）
+      </el-button>
+      <el-checkbox v-model="continuity" size="small">尽量同一人同一岗位</el-checkbox>
+      <el-tooltip placement="top"
+                  content="本活动其它场次已排过同名岗位的人，优先还待在那个岗位——多天活动里换来换去，交接成本全落在现场">
         <el-icon class="dim"><QuestionFilled /></el-icon>
       </el-tooltip>
-      <el-button type="primary" size="small" :loading="solving" @click="runPreview">
-        <el-icon><MagicStick /></el-icon>&nbsp;运行智能排班（试算）
-      </el-button>
       <el-button size="small" @click="$emit('reload')">刷新名单</el-button>
       <el-button size="small" type="success" plain @click="walkinVisible = true">补录志愿者</el-button>
-      <el-button v-if="customDirty" size="small" link @click="resetCustom">放弃自定义</el-button>
       <span style="margin-left:auto" class="dim" v-if="preview">
-        已确认 {{ preview.total_confirmed }} 人 · 建议 {{ preview.total_assigned }} 人上岗 ·
-        <span v-if="preview.degraded" style="color:#e6a23c">规模较大，已自动降级为浅层算法</span>
+        已确认 {{ preview.total_confirmed }} 人 · 建议 {{ preview.total_assigned }} 人上岗
       </span>
     </div>
 
-    <!-- 高级规则自定义 -->
-    <el-collapse v-model="advOpen" style="margin-bottom:12px">
-      <el-collapse-item name="adv" :title="customDirty ? '高级规则自定义（已修改）' : '高级规则自定义'">
-        <div class="rule-grid">
-          <div>
-            <div class="rule-cap">轮到谁挑（顺序即优先级）</div>
-            <div class="rule-line" v-for="(r, i) in cfgOrder" :key="r">
-              <el-icon class="mv" @click="move(cfgOrder, i, -1)"><Top /></el-icon>
-              <el-icon class="mv" @click="move(cfgOrder, i, 1)"><Bottom /></el-icon>
-              <span>{{ ORDER_LABELS[r] }}</span>
-              <el-tag v-if="r === 'signup_time'" size="small" effect="plain" type="info">不可关闭</el-tag>
-            </div>
-            <el-checkbox v-model="cfgRoundCap" style="margin-top:4px">每轮每人至多新增一个岗位</el-checkbox>
-          </div>
-          <div>
-            <div class="rule-cap">挑哪个岗位（候选排序）</div>
-            <div class="rule-line" v-for="(r, i) in cfgCandidate" :key="r">
-              <el-icon class="mv" @click="move(cfgCandidate, i, -1)"><Top /></el-icon>
-              <el-icon class="mv" @click="move(cfgCandidate, i, 1)"><Bottom /></el-icon>
-              <span>{{ CAND_LABELS[r] }}</span>
-              <el-icon class="mv" style="color:#f56c6c" @click="cfgCandidate.splice(i,1)"><Close /></el-icon>
-            </div>
-            <el-select v-model="addCandidate" size="small" placeholder="添加规则…" style="width:200px"
-                       v-if="cfgCandidate.length < CAND_ALL.length" @change="addCand">
-              <el-option v-for="c in CAND_ALL.filter(x => !cfgCandidate.includes(x))"
-                         :key="c" :value="c" :label="CAND_LABELS[c]" />
-            </el-select>
-          </div>
-          <div>
-            <div class="rule-cap">后处理开关</div>
-            <el-checkbox v-model="cfgToggles.cohort_swap">同批换人（同批岗位尽量同一批人）</el-checkbox><br />
-            <el-checkbox v-model="cfgToggles.preference_phase">优先条件逐档放行</el-checkbox>
-            <div class="dim" style="margin-top:10px;line-height:1.8">
-              固定规则（不可关闭）：锁定的行绝不改动、只排本人报过的岗位、必选条件必须满足、
-              时间冲突不兼排、不超名额、已排的人不掉岗、组长须满足组长条件、平局按岗位表顺序。
-            </div>
-          </div>
-        </div>
-      </el-collapse-item>
-    </el-collapse>
+    <div class="dim" style="margin-bottom:12px">
+      按报名先后依次匹配到还有名额、且满足硬性条件的岗位；不满足条件的不会被排入，
+      需要时可在对应行勾选「强制」。
+    </div>
 
-    <!-- 预览结果 -->
+
     <template v-if="preview">
-      <el-alert type="info" :closable="false" style="margin-bottom:10px">
-        <div style="line-height:1.8">
-          <b>本次排班依据：</b>
-          <div v-for="(line, i) in preview.rules_desc" :key="i">{{ line }}</div>
-        </div>
-      </el-alert>
-
       <!-- 岗位统计 -->
       <div class="section-title">各岗位建议人数</div>
       <el-table :data="preview.position_stats" size="small" border style="margin-bottom:14px">
         <el-table-column prop="name" label="岗位" min-width="120" />
-        <el-table-column prop="time" label="时间" min-width="130" />
         <el-table-column prop="location" label="地点" min-width="110" />
+        <el-table-column prop="requirement_desc" label="条件" min-width="120" />
+        <el-table-column label="组长" width="70">
+          <template #default="{row}">
+            <el-tag v-if="row.needs_leader" size="small" type="warning" effect="plain">需要</el-tag>
+            <span v-else class="dim">—</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="quota" label="名额" width="70" />
         <el-table-column label="建议排入" width="90">
-          <template #default="{row}"><b>{{ row.suggested }}</b></template>
+          <template #default="{row}"><b>{{ row.planned }}</b></template>
         </el-table-column>
         <el-table-column label="缺口" width="80">
           <template #default="{row}">
-            <span :style="{color: row.quota - row.suggested > 0 ? '#e6a23c' : '#67c23a'}">
-              {{ row.quota - row.suggested }}
+            <span :style="{color: row.quota - row.planned > 0 ? '#e6a23c' : '#67c23a'}">
+              {{ row.quota - row.planned }}
             </span>
           </template>
         </el-table-column>
@@ -98,8 +56,14 @@
 
       <div class="section-title">分配明细（可直接修改"建议岗位"列再应用）</div>
       <el-table :data="rows" size="small" border max-height="420">
-        <el-table-column label="姓名" width="90">
-          <template #default="{row}"><b>{{ row.user.name }}</b></template>
+        <el-table-column label="姓名" width="110">
+          <template #default="{row}">
+            <b>{{ row.user.name }}</b>
+            <el-tooltip v-if="row.leader_willing" content="愿意担任组长" placement="top">
+              <el-tag size="small" type="warning" effect="plain"
+                      style="margin-left:4px">愿任组长</el-tag>
+            </el-tooltip>
+          </template>
         </el-table-column>
         <el-table-column prop="user.student_id" label="学号" width="110" />
         <el-table-column prop="user.college" label="学院" width="120" />
@@ -107,7 +71,7 @@
           <template #default="{row}"><span class="dim">{{ (row.joined_at || '').slice(5,16).replace('T',' ') }}</span></template>
         </el-table-column>
         <el-table-column label="原岗位" width="100">
-          <template #default="{row}">{{ stationName(row.current_station_id) || '未分配' }}</template>
+          <template #default="{row}">{{ stationName(row.current_position_id) || '未分配' }}</template>
         </el-table-column>
         <el-table-column label="本人意愿" width="100">
           <template #default="{row}">
@@ -132,8 +96,9 @@
         <el-table-column label="变化" width="90">
           <template #default="{row}">
             <el-tag v-if="!row.target" size="small" type="danger" effect="plain">不排</el-tag>
-            <el-tag v-else-if="row.target === row.current_station_id" size="small" type="success" effect="plain">保持</el-tag>
-            <el-tag v-else-if="!row.current_station_id" size="small" type="primary" effect="plain">新排入</el-tag>
+            <el-tag v-else-if="row.target === row.current_position_id" size="small" type="success" effect="plain">保持</el-tag>
+            <el-tag v-else-if="row.continuity" size="small" type="success" effect="plain">同岗延续</el-tag>
+            <el-tag v-else-if="!row.current_position_id" size="small" type="primary" effect="plain">新排入</el-tag>
             <el-tag v-else size="small" :type="row.allow_reassign ? 'warning' : 'danger'"
                     effect="plain">
               {{ row.allow_reassign ? '调整' : '调整(违意愿)' }}
@@ -214,45 +179,14 @@ const emit = defineEmits(['reload'])
 const loading = ref(false)
 const solving = ref(false)
 const applying = ref(false)
-const preset = ref('balanced')
-const customDirty = ref(false)
-const advOpen = ref([])
+const continuity = ref(true)
 const preview = ref(null)
 const rows = ref([])
 const walkinVisible = ref(false)
 const walkin = ref({ sid: '', position: '', force: false, allowReassign: true })
 
-const presets = [
-  { key: 'balanced', label: '均衡（推荐）', hint: '所有人拿到第1个岗位之前，没人拿第2个；适合大多数活动' },
-  { key: 'first_come', label: '先到先得优先', hint: '早报名的人一次把他报的岗位拿满' },
-  { key: 'floor_first', label: '保底优先', hint: '死保每个岗位的最低人数，代价是换岗的人会多' },
-]
-
-const ORDER_LABELS = {
-  round_cap: '每轮每人至多一个岗位（结构开关，见下方勾选）',
-  spread: '已获岗位数少者优先（摊平）',
-  signup_time: '报名时间早者优先（先到先得）',
-  few_options: '报名岗位数少者优先',
-}
-const CAND_LABELS = {
-  min_quota: '未达最低人数的岗位优先（保底）',
-  gap: '缺口率大的岗位优先',
-  cohort: '同批：优先与已获伙伴同岗位',
-  stable: '上一版组合优先（增量稳定）',
-  scarce: '别人补不上的岗位优先',
-  preference: '符合优先条件的靠前',
-}
-const ORDER_ALL = ['spread', 'signup_time', 'few_options']
-const CAND_ALL = ['min_quota', 'gap', 'cohort', 'stable', 'scarce', 'preference']
-
-const cfgRoundCap = ref(true)
-const cfgOrder = ref([...ORDER_ALL])
-const cfgCandidate = ref([...CAND_ALL])
-const cfgToggles = ref({ cohort_swap: true, preference_phase: true })
-const addCandidate = ref('')
-
-// 精细化模式且人人有岗 → 提示即可，不禁止试算
-const fineModeAllAssigned = computed(() =>
+// 报名即选岗位且人人有岗 → 提示即可，不禁止试算
+const pickModeAllAssigned = computed(() =>
   !props.shift.needs_assign && props.unassignedCount === 0)
 
 const stationOpts = computed(() =>
@@ -268,78 +202,13 @@ function stationName(sid) {
 
 // 本人不接受调剂、方案又把他挪出原岗位的人数（只提示，不拦）
 const unwillingMoved = computed(() => rows.value.filter(
-  r => !r.allow_reassign && r.current_station_id && r.target
-       && r.target !== r.current_station_id).length)
-
-function onPresetChange() {
-  if (preset.value !== 'custom') {
-    customDirty.value = false
-    const spec = {
-      balanced: { order: ['spread', 'signup_time', 'few_options'], round: true,
-                  cand: [...CAND_ALL], tog: { cohort_swap: true, preference_phase: true } },
-      first_come: { order: ['signup_time', 'spread'], round: false,
-                    cand: ['gap', 'cohort', 'stable', 'scarce', 'preference', 'min_quota'],
-                    tog: { cohort_swap: true, preference_phase: true } },
-      floor_first: { order: ['spread', 'signup_time', 'few_options'], round: true,
-                     cand: ['min_quota', 'gap', 'cohort', 'stable', 'scarce', 'preference'],
-                     tog: { cohort_swap: true, preference_phase: true } },
-    }[preset.value]
-    if (spec) {
-      cfgOrder.value = spec.order
-      cfgRoundCap.value = spec.round
-      cfgCandidate.value = spec.cand
-      cfgToggles.value = spec.tog
-    }
-  }
-}
-function resetCustom() {
-  customDirty.value = false
-  preset.value = 'balanced'
-  onPresetChange()
-}
-function move(arr, i, d) {
-  const j = i + d
-  if (j < 0 || j >= arr.length) return
-  ;[arr[i], arr[j]] = [arr[j], arr[i]]
-  markCustom()
-}
-function addCand() {
-  if (addCandidate.value) {
-    cfgCandidate.value.push(addCandidate.value)
-    addCandidate.value = ''
-    markCustom()
-  }
-}
-function markCustom() {
-  customDirty.value = true
-  preset.value = 'custom'
-}
-
-function buildRulesBody() {
-  if (!customDirty.value && preset.value !== 'custom') {
-    return { preset: preset.value, rules: null }
-  }
-  if (!cfgOrder.value.includes('signup_time')) {
-    // 先到先得不可关闭（排班程序硬性要求）
-    cfgOrder.value = ['signup_time', ...cfgOrder.value]
-  }
-  const order = [...cfgOrder.value]
-  if (cfgRoundCap.value) order.unshift('round_cap')
-  return {
-    preset: 'custom',
-    rules: {
-      preset: 'custom', order,
-      candidate: [...cfgCandidate.value],
-      toggles: { ...cfgToggles.value },
-    },
-  }
-}
+  r => !r.allow_reassign && r.current_position_id && r.target
+       && r.target !== r.current_position_id).length)
 
 // 编辑态行
 function buildRows() {
-  rows.value = preview.value.rows.map(r => ({
-    ...r, target: r.suggested_station_id || '', force: false,
-    over: false,
+  rows.value = preview.value.plan.map(r => ({
+    ...r, target: r.position_id || '', force: false, over: false,
   }))
 }
 function resetEdit() { buildRows() }
@@ -350,14 +219,14 @@ function overQuota(row) {
 
 async function runPreview() {
   if (!props.shift.positions.length) {
-    ElMessage.warning('请先在「岗位树」页签下创建岗位，再运行智能排班')
+    ElMessage.warning('请先在「岗位树」页签下创建岗位，再运行一键分配')
     return
   }
   solving.value = true
   try {
-    const body = buildRulesBody()
     preview.value = await api.post(
-      `/api/staff/shifts/${props.shift.id}/assign/preview`, body, {})
+      `/api/staff/shifts/${props.shift.id}/assign/preview`,
+      { continuity: continuity.value })
     buildRows()
   } finally { solving.value = false }
 }
@@ -398,9 +267,4 @@ async function addWalkin() {
 
 <style scoped>
 .toolbar { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
-.rule-grid { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:18px; }
-.rule-cap { font-weight:600; font-size:13px; margin-bottom:8px; }
-.rule-line { display:flex; align-items:center; gap:6px; padding:3px 0; font-size:13px; }
-.mv { cursor:pointer; color:#909399; }
-.mv:hover { color:var(--el-color-primary); }
 </style>

@@ -23,6 +23,7 @@
               {{ fmtDT(act.reg_start) }} ~ {{ fmtDT(act.reg_end) }}
             </el-descriptions-item>
           </el-descriptions>
+      <MaterialList v-if="stationDetail.data" :items="stationDetail.data.attachments || []" />
           <div v-if="act.qa_group_qr" style="margin-top:10px;display:flex;gap:10px;align-items:center">
             <img :src="act.qa_group_qr" width="86" height="86"
                  style="border-radius:8px;border:1px solid #eceef1" />
@@ -48,6 +49,12 @@
                                    @click="showStationDetail(g, s)">{{ s.name }}</el-link>
                           <el-tag v-if="myStationId(g) === s.id" size="small" type="success"
                                   effect="light" style="margin-left:6px">已选</el-tag>
+                          <el-tag v-if="s.needs_leader" size="small" type="warning"
+                                  effect="plain" style="margin-left:6px">
+                            设组长{{ s.leader_name ? `·${s.leader_name}` : '' }}
+                          </el-tag>
+                          <el-tag v-if="s.attachments?.length" size="small" effect="plain"
+                                  style="margin-left:6px">材料 {{ s.attachments.length }}</el-tag>
                         </template>
                       </el-table-column>
                       <el-table-column prop="location" label="服务地点" min-width="110" />
@@ -58,7 +65,19 @@
                                   effect="plain">满</el-tag>
                         </template>
                       </el-table-column>
-                      <el-table-column prop="requirement_desc" label="要求" min-width="110" />
+                      <el-table-column label="要求" min-width="130">
+                        <template #default="{ row: s }">
+                          <span :class="{ 'req-blocked': s.eligible === false }">
+                            {{ s.requirement_desc }}
+                          </span>
+                          <el-tooltip v-if="s.eligible === false" placement="top"
+                                      :content="s.ineligible_reason">
+                            <el-icon color="#e6a23c" style="vertical-align:-2px;margin-left:4px">
+                              <Warning />
+                            </el-icon>
+                          </el-tooltip>
+                        </template>
+                      </el-table-column>
                       <el-table-column label="操作" width="170" align="center">
                         <template #default="{ row: s }">
                           <!-- 我选中的岗位：原地退选/确认 -->
@@ -81,6 +100,11 @@
                               {{ s.remaining > 0 ? '选中' : '候补' }}
                             </el-button>
                           </el-tooltip>
+                          <!-- 条件不满足：灰掉并说明为什么，别让人点了再被拒 -->
+                          <el-tooltip v-else-if="s.eligible === false" placement="top"
+                                      :content="`不符合报名条件：${s.ineligible_reason}`">
+                            <el-button size="small" disabled>不符合条件</el-button>
+                          </el-tooltip>
                           <!-- 未报名 -->
                           <el-button v-else-if="act.status === 'published'" size="small"
                                      type="primary" plain @click="doEnroll(g, s)">
@@ -96,9 +120,13 @@
                     </div>
                   </template>
                   <p v-else-if="g.mode === 'assign'" class="dim" style="margin:4px 0">
-                    {{ g.note || '本场次为「二级待定」：报名只锁定时段，报名截止后由青协通过排班程序统一分岗位，结果经企业微信通知。' }}
+                    {{ g.note || '本场次报名只锁定时段；报名截止后由青协统一分配岗位，结果经企业微信通知。' }}
                   </p>
-                  <p v-else class="dim" style="margin:4px 0">该场次为「仅场次」，无需选择岗位，报名即锁定时段。</p>
+                  <p v-else class="dim" style="margin:4px 0">本场次尚未设置岗位，请联系负责老师。</p>
+
+                  <!-- 场次级学习材料 -->
+                  <MaterialList v-if="g.attachments?.length" :items="g.attachments"
+                                label="本场次学习材料" />
                 </div>
               </template>
             </el-table-column>
@@ -281,6 +309,15 @@
         <el-descriptions-item label="条件要求">{{ stationDetail.data.requirement_desc }}</el-descriptions-item>
         <el-descriptions-item label="要求说明">{{ stationDetail.data.requirement_note || '—' }}</el-descriptions-item>
         <el-descriptions-item label="培训内容">{{ stationDetail.data.training_note || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="候补名额">
+          {{ stationDetail.data.waitlist_count }}/{{ stationDetail.data.waitlist_quota }}
+        </el-descriptions-item>
+        <el-descriptions-item label="组长">
+          <template v-if="stationDetail.data.needs_leader">
+            {{ stationDetail.data.leader_name || '尚未产生（报名时可表态愿意担任）' }}
+          </template>
+          <span v-else class="dim">本岗位不设组长</span>
+        </el-descriptions-item>
       </el-descriptions>
     </el-dialog>
 
@@ -303,7 +340,19 @@
         </el-descriptions>
 
         <div class="reassign-box">
-          <el-checkbox v-model="enrollDlg.allowReassign">接受岗位调剂</el-checkbox>
+          <el-checkbox v-model="enrollDlg.allowReassign" :disabled="willWaitlist">
+            接受岗位调剂
+          </el-checkbox>
+          <div v-if="willWaitlist" class="dim" style="margin-top:2px">
+            候补必须接受调剂：有空位的岗位才好把排队的人调过去
+          </div>
+          <el-checkbox v-if="enrollDlg.position?.needs_leader"
+                       v-model="enrollDlg.leaderWilling" style="display:block;margin-top:6px">
+            愿意担任本岗位组长
+          </el-checkbox>
+          <div v-if="enrollDlg.position?.needs_leader" class="dim" style="margin-top:2px">
+            该岗位需要一名组长，按报名先后从有意愿的人里产生；负责老师可改判
+          </div>
           <p class="dim">
             勾选表示你愿意被安排到本场次的其他岗位。这只是给负责老师的参考——
             实际排班仍由他们决定，不勾选也可能被调整，但会在名单上标注你的意愿。
@@ -333,11 +382,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { TYPE_COLORS } from '../store'
 import ProfileDialog from '../components/ProfileDialog.vue'
+import MaterialList from '../components/MaterialList.vue'
+import { Warning } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const act = ref(null)
 const groupDetail = ref({ visible: false, data: null })
 const enrollDlg = ref({ visible: false, group: null, position: null,
+                        leaderWilling: false,
                         allowReassign: true, submitting: false })
 const willWaitlist = computed(() => {
   const { group: g, position } = enrollDlg.value
@@ -395,16 +447,18 @@ function doEnroll(g, position) {
     return ElMessage.warning('请先展开该场次，选择一个岗位')
   }
   enrollDlg.value = { visible: true, group: g, position, allowReassign: true,
+                      leaderWilling: false,
                       submitting: false }
 }
 
 async function submitEnroll() {
-  const { group: g, position, allowReassign } = enrollDlg.value
+  const { group: g, position, allowReassign, leaderWilling } = enrollDlg.value
   enrollDlg.value.submitting = true
   try {
     const d = await api.post(
       `/api/activities/${act.value.id}/groups/${g.id}/enroll`,
-      { position_id: position ? position.id : null, allow_reassign: allowReassign })
+      { position_id: position ? position.id : null,
+        allow_reassign: allowReassign, leader_willing: leaderWilling })
     enrollDlg.value.visible = false
     ElMessage.success(d.message)
     load()
@@ -471,6 +525,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 </script>
 
 <style scoped>
+.req-blocked { color: #e6a23c; }
 .group-card { margin-bottom: 14px; border-radius: 12px; }
 .g-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 .reassign-box { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #f7f8fa; }
