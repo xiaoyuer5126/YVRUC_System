@@ -12,8 +12,8 @@
 # 数据库与 Redis 端口只绑 127.0.0.1：调试用得上，公网碰不到。
 # 宿主机端口可在 .env 里改——同一台机器上别的项目也可能占着这些端口。
 x-backend-build: &backend_build
-  context: ..
-  dockerfile: platform/backend/Dockerfile
+  context: .
+  dockerfile: backend/Dockerfile
 
 x-backend-env: &backend_env
   RUCVA_DATABASE_URL: postgresql+psycopg://rucva:${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}@postgres:5432/rucva
@@ -64,7 +64,7 @@ services:
     ports:
       - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"   # 本机直连 API 调试用，公网只走 web 反代
     volumes:
-      - rucva_uploads:/app/platform/data/uploads   # 活动二维码等上传件持久化
+      - rucva_uploads:/app/data/uploads   # 活动二维码等上传件持久化
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,8 +81,8 @@ services:
 
   web:
     build:
-      context: ..
-      dockerfile: platform/web/Dockerfile
+      context: .
+      dockerfile: web/Dockerfile
     container_name: rucva-web
     ports:
       - "${WEB_HOST_PORT:-8080}:80"
@@ -94,7 +94,7 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: rucva-cloudflared
-    # 固定域名隧道：token 存于 platform/.env 的 CLOUDFLARE_TOKEN（勿提交/外传）。
+    # 固定域名隧道：token 存于 .env 的 CLOUDFLARE_TOKEN（勿提交/外传）。
     # 官方镜像为 distroless（无 shell），故命令必须直接可执行、不能做条件分支。
     command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TOKEN}"]
     depends_on:

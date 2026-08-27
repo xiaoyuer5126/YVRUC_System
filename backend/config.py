@@ -1,6 +1,6 @@
 """平台全局配置。
 
-运行方式统一为 Docker Compose（platform/docker-compose.yml）：
+运行方式统一为 Docker Compose（docker-compose.yml）：
 后端连容器内的 PostgreSQL 与 Redis，两者都是硬依赖，连不上直接启动失败——
 半可用的服务比起不来更难排查。
 
@@ -12,16 +12,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-PLATFORM_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = PLATFORM_DIR / "data"
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # —— 基础设施 ——
 DATABASE_URL = os.environ["RUCVA_DATABASE_URL"]
 REDIS_URL = os.environ["RUCVA_REDIS_URL"]
-
-# schedule 排班程序所在目录（复用其求解器 core.solve）
-SCHEDULE_DIR = PLATFORM_DIR.parent / "schedule"
 
 # —— 会话 ——
 SESSION_HOURS = 24          # 令牌有效期；接 SSO 后由统一身份认证接管

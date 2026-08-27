@@ -8,10 +8,10 @@ venv/
 
 # ===== Node / 前端构建产物（npm install / npm run build 可再生）=====
 node_modules/
-platform/web/dist/
+web/dist/
 
 # ===== 运行时数据（演示库 / 上传件；Docker 部署由命名卷接管）=====
-platform/data/
+data/
 *.db
 *.sqlite3
 
@@ -24,9 +24,6 @@ platform/data/
 *.log
 *.tmp
 tmp/
-
-# ===== 验证截图 =====
-platform/shots/
 
 # ===== IDE / 操作系统 =====
 .idea/

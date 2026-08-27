@@ -1,15 +1,13 @@
 # 人大校青协志愿服务管理平台
 
 FastAPI + SQLAlchemy（PostgreSQL）+ Redis + Vue3 / Element Plus / ECharts（Vite 构建）。
-覆盖「活动发布 → 选课式报名 → 候补流转 → 智能调配 → 扫码签到签退 → 时长回传」全链路；
-排班引擎复用 `../schedule` 求解器（深度2主段超时自动降级深度1）。
+覆盖「活动发布 → 选课式报名 → 候补流转 → 一键分配 → 扫码签到签退 → 时长回传」全链路。
 
 ## 一、快速启动
 
 统一用 Docker 跑（后端依赖 PostgreSQL 与 Redis 两个服务，不再支持本机直跑）。
 
 ```bash
-cd platform
 cp .env.example .env          # 填 POSTGRES_PASSWORD、RUCVA_DEMO_PASSWORD
 docker compose up -d --build                    # postgres + redis + backend + web + cloudflared
 docker compose --profile seed run --rm seed     # 重置演示数据
@@ -23,7 +21,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
   Cloudflare Zero Trust 控制台绑定，`docker logs rucva-cloudflared` 看连接状态。
 - 上传的活动二维码存命名卷 `rucva_uploads`，数据库存 `rucva_pgdata`。
 
-### 环境变量（platform/.env）
+### 环境变量（.env）
 
 | 变量 | 说明 |
 |---|---|
@@ -117,7 +115,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
 ## 八、目录结构
 
 ```
-platform/
+rucva_system/
 ├── docker-compose.yml          全栈编排：postgres + redis + backend + web + cloudflared
 │                               （+ seed / tests 两个一次性任务 profile）
 ├── .env.example                环境变量模板（口令、演示登录、隧道令牌）
@@ -126,14 +124,17 @@ platform/
 ├── scripts/shot.mjs            CDP 直连 Edge 的截图/点击工具（Node≥22，无第三方依赖）
 ├── backend/
 │   ├── Dockerfile              base → test（跑 pytest）/ runtime（跑 uvicorn）两个 target
-│   ├── main.py                 FastAPI 入口：API + SPA 托管 + 候补清扫协程
+│   ├── main.py                 FastAPI 入口：API + SPA 托管 + 定时任务协程
 │   ├── config.py / database.py 业务常量与环境变量；PostgreSQL 连接
 │   ├── locks.py                ★ Redis 场次锁与登录失败计数
 │   ├── models.py / serializers.py   全部表结构与出参组装
 │   ├── deps.py                 会话鉴权（require_admin / require_users_page …）
 │   ├── perm.py                 activity_managers 多人共管规则
 │   ├── enroll_logic.py / credit.py  冲突检测、名额账本、候补流转、信用规则
-│   ├── scheduler_adapter.py    ★ 平台数据 ⇄ schedule 求解器适配（预览/应用/强排）
+│   ├── assign.py               ★ 一键分配：按报名先后做二分图匹配，可选同岗延续
+│   ├── violations.py           违规登记 → 限制准入建议（《志愿者服务规范》阶梯）
+│   ├── copying.py              复制活动 / 批量复制岗位
+│   ├── scheduled.py / notify.py  定时任务（状态流转、签到提醒）与人群通知
 │   ├── exporter.py / qrcodes.py / audit.py
 │   ├── seed.py                 演示数据种子（python -m backend.seed）
 │   ├── routers/                auth / activities / me / checkin /
