@@ -13,7 +13,31 @@
       <span class="dim">同一签到码：第一次扫=签到，第二次扫=签退；场次结束2小时后未签退，自动按场次结束时间计</span>
     </div>
 
-    <el-table :data="tasks" size="small" style="margin-bottom:16px">
+    <DataCards v-if="narrow" :rows="tasks" title-key="token" style="margin-bottom:16px"
+               :fields="[{ key: 'shift_name', label: '场次' },
+                         { key: 'position_name', label: '岗位', hideEmpty: true }]"
+               empty="还没有签到码">
+      <template #title="{ row }">
+        <span class="mono" style="font-size:18px;letter-spacing:3px">{{ row.token }}</span>
+      </template>
+      <template #extra="{ row }">
+        <el-tag size="small" :type="row.active ? 'success' : 'info'">
+          {{ row.active ? '开启' : '已关闭' }}
+        </el-tag>
+      </template>
+      <template #body="{ row }">
+        <div class="dim">
+          {{ row.mode === 'position' ? '分岗位签到' : '统一签到' }} ·
+          {{ fmtDT(row.valid_from) }} ~ {{ fmtDT(row.valid_to) }} · 已签 {{ row.count }} 人
+        </div>
+      </template>
+      <template #actions="{ row }">
+        <el-button size="small" @click="openQR(row)">二维码 / 大屏</el-button>
+        <el-button size="small" :type="row.active ? 'danger' : 'success'" link
+                   @click="toggle(row)">{{ row.active ? '关闭' : '开启' }}</el-button>
+      </template>
+    </DataCards>
+    <el-table v-else :data="tasks" size="small" style="margin-bottom:16px">
       <el-table-column label="签到码" width="110">
         <template #default="{row}">
           <b class="mono" style="font-size:15px;letter-spacing:2px">{{ row.token }}</b>
@@ -100,7 +124,22 @@
             <el-tag v-else size="small" type="warning" effect="plain">请先生成并开启签到码</el-tag>
           </template>
         </div>
-        <el-table :data="board.records" size="small" max-height="320"
+        <DataCards v-if="narrow" :rows="board.records" title-key="name"
+               row-key="student_id"
+               :fields="[{ key: 'student_id', label: '学号' },
+                         { key: 'position', label: '岗位' },
+                         { key: 'time', label: '签到', hideEmpty: true },
+                         { key: 'checkout_at', label: '签退', hideEmpty: true }]"
+               empty="名单为空">
+      <template #extra="{ row }">
+        <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+        <el-tag size="small" :type="row.checked_in ? 'success' : 'info'"
+                :effect="row.checked_in ? 'light' : 'plain'">
+          {{ row.checked_in ? (row.checkout_at ? '已签退' : '已到岗') : '未签到' }}
+        </el-tag>
+      </template>
+    </DataCards>
+    <el-table v-else :data="board.records" size="small" max-height="320"
                   :row-class-name="rowClass" @selection-change="onSelect">
           <el-table-column type="selection" width="40" />
           <el-table-column label="签到" width="90">
@@ -186,6 +225,8 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
+import { useNarrow } from '../composables/useNarrow'
+import DataCards from './DataCards.vue'
 
 const props = defineProps({
   shift: { type: Object, required: true },
@@ -196,6 +237,7 @@ const actId = computed(() => props.activityId || props.shift.activity_id)  // vu
 
 const creating = ref(false)
 const form = ref({ mode: 'shift', position_id: '', range: [] })
+const narrow = useNarrow()
 const tasks = ref([])
 const board = ref(null)
 const qrVisible = ref(false)

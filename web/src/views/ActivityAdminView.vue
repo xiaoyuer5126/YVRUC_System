@@ -121,7 +121,31 @@
             </span>
           </div>
 
-          <el-table v-if="g.positions.length" :data="g.positions" size="small">
+          <DataCards v-if="narrow && g.positions.length" :rows="g.positions"
+                     title-key="name"
+                     :fields="[{ key: 'group_name', label: '岗位组', hideEmpty: true },
+                               { key: 'location', label: '地点' },
+                               { key: 'requirement_desc', label: '要求' },
+                               { key: 'training_note', label: '培训' }]">
+            <template #extra="{ row }">
+              <el-tag size="small" :type="row.remaining > 0 ? 'success' : 'info'">
+                {{ row.confirmed }}/{{ row.quota }}
+              </el-tag>
+              <el-tag v-if="row.needs_leader" size="small" type="warning" effect="plain">组长</el-tag>
+            </template>
+            <template #actions="{ row }">
+              <el-button size="small" type="primary" plain :disabled="structureLocked"
+                         @click="openStation(row, g)">编辑</el-button>
+              <el-popconfirm title="删除该岗位？" @confirm="delStation(row)"
+                             :disabled="structureLocked">
+                <template #reference>
+                  <el-button size="small" type="danger" plain
+                             :disabled="structureLocked">删除</el-button>
+                </template>
+              </el-popconfirm>
+            </template>
+          </DataCards>
+          <el-table v-else-if="g.positions.length" :data="g.positions" size="small">
             <el-table-column label="岗位组" width="120">
               <template #default="{row}">
                 <el-tag v-if="row.group_name" size="small" effect="plain" type="warning">
@@ -235,7 +259,38 @@
               <div class="section-title" style="margin-top:0">已确认名单（{{ roster.confirmed.length }} 人）
                 <el-tooltip content="依据签到任务实时回流"><el-icon><InfoFilled /></el-icon></el-tooltip>
               </div>
-              <el-table :data="roster.confirmed" size="small" max-height="300" style="margin-bottom:14px">
+              <DataCards v-if="narrow" :rows="roster.confirmed" title-key="user.name"
+                         row-key="enrollment_id" style="margin-bottom:14px"
+                         :fields="[{ key: 'user.student_id', label: '学号' },
+                                   { key: 'user.college', label: '学院' },
+                                   { key: 'user.phone', label: '手机号' },
+                                   { key: 'position_name', label: '岗位',
+                                     format: v => v || '待分配' }]"
+                         empty="还没有确认的志愿者">
+                <template #extra="{ row }">
+                  <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+                  <el-tag v-if="row.checked_in" size="small" type="success" effect="light">已到岗</el-tag>
+                  <el-tag size="small" effect="plain"
+                          :type="row.allow_reassign ? 'success' : 'info'">
+                    {{ row.allow_reassign ? '接受调剂' : '不接受' }}
+                  </el-tag>
+                </template>
+                <template #actions="{ row }">
+                  <el-select v-model="moveSel[row.enrollment_id]" size="small" clearable
+                             placeholder="调至岗位…" style="width:150px">
+                    <el-option v-for="s in roster.positions" :key="s.id" :value="s.id"
+                               :label="`${s.name}（余${Math.max(0, s.quota - s.confirmed)}）`" />
+                  </el-select>
+                  <el-button size="small" type="primary" plain
+                             :disabled="moveSel[row.enrollment_id] === undefined"
+                             @click="applyMove(row)">调岗</el-button>
+                  <el-button v-if="row.is_leader" size="small" link type="warning"
+                             @click="setLeader(row, false)">取消组长</el-button>
+                  <el-button v-else-if="canBeLeader(row)" size="small" link
+                             @click="setLeader(row, true)">设为组长</el-button>
+                </template>
+              </DataCards>
+              <el-table v-else :data="roster.confirmed" size="small" max-height="300" style="margin-bottom:14px">
                 <el-table-column label="姓名" width="110">
               <template #default="{row}">
                 {{ row.user.name }}
@@ -336,7 +391,8 @@
           <el-button type="success" @click="uploadHours" :disabled="!confirmedCount">回传数智人大</el-button>
           <el-tag size="small" effect="plain">对接状态见「集成设置」（当前为演示回执）</el-tag>
         </div>
-        <el-table v-if="hours.length" :data="hours" size="small" style="margin-top:10px"
+        <div v-if="hours.length" class="scroll-x">
+        <el-table :data="hours" size="small" style="margin-top:10px;min-width:660px"
                   max-height="360" @selection-change="onHoursSelect">
           <el-table-column type="selection" width="40" />
           <el-table-column label="姓名" width="110">
@@ -380,6 +436,7 @@
             </template>
           </el-table-column>
         </el-table>
+        </div>
         <p class="dim" style="margin-top:8px">
           时长 = 签退 − 签到，向上取整至 0.5 小时。<b>未签退与自动兜底的记录标为「待核」</b>，
           一键确认会跳过它们——请核对实际服务情况后，勾选并修改数值再单独确认。
@@ -470,7 +527,24 @@
             <el-input v-model="newMgrSid" placeholder="输入学号添加管理者" style="width:220px" />
             <el-button type="primary" @click="addManager">添加管理者</el-button>
           </div>
-          <el-table :data="managers" size="small">
+          <DataCards v-if="narrow" :rows="managers" title-key="name"
+                     :fields="[{ key: 'student_id', label: '学号' },
+                               { key: 'college', label: '单位' },
+                               { key: 'role_label', label: '身份' }]">
+            <template #extra="{ row }">
+              <el-tag v-if="row.is_creator" size="small" type="warning" effect="plain">创建者</el-tag>
+            </template>
+            <template #actions="{ row }">
+              <el-popconfirm v-if="!row.is_creator && row.id !== auth.user.id"
+                             title="移除该管理者的管理权限？" @confirm="removeManager(row)">
+                <template #reference>
+                  <el-button size="small" link type="danger">移除</el-button>
+                </template>
+              </el-popconfirm>
+              <span v-else class="dim">{{ row.is_creator ? '创建者不可移除' : '不能移除自己' }}</span>
+            </template>
+          </DataCards>
+          <el-table v-else :data="managers" size="small">
             <el-table-column prop="name" label="姓名" width="100" />
             <el-table-column prop="student_id" label="学号" width="120" />
             <el-table-column prop="role_label" label="身份" min-width="140" />
@@ -780,10 +854,13 @@ import { api, download as dl, fmtDT } from '../api'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
 import MaterialManager from '../components/MaterialManager.vue'
+import DataCards from '../components/DataCards.vue'
+import { useNarrow } from '../composables/useNarrow'
 import { DAY_END, RANGE_DEFAULT_TIME, auth } from '../store'
 
 const route = useRoute()
 const act = ref(null)
+const narrow = useNarrow()
 const tab = ref(String(route.query.tab || 'tree'))   // 支持 ?tab=roster 直达页签
 const types = ref({})
 const colleges = ref([])
@@ -918,7 +995,7 @@ const ACTION_LABELS = {
 }
 const actionLabel = a => ACTION_LABELS[a] || a
 const cancelType = x => ({ normal: '退选', late: '临近扣分', expired: '确认超时',
-                           abandoned: '放弃候补', group_deleted: '场次取消' }[x.cancel_type] || '取消')
+                           abandoned: '放弃候补', shift_deleted: '场次取消' }[x.cancel_type] || '取消')
 
 let activityId = ''
 

@@ -1,18 +1,28 @@
 <template>
   <el-container class="app-root">
     <el-header class="topbar" height="56px">
-      <div class="brand" @click="$router.push('/')">
-        <div class="logo">志</div>
-        <div>
-          <div class="name">人大校青协志愿服务管理平台</div>
-          <div class="sub">Volunteer Service Management · 中国人民大学青年志愿者协会</div>
+      <div class="left">
+        <el-button v-if="narrow" text class="hamburger" aria-label="打开菜单"
+                   @click="drawer = true">
+          <el-icon :size="22"><Fold /></el-icon>
+        </el-button>
+        <div class="brand" @click="$router.push('/')">
+          <div class="logo">志</div>
+          <div class="brand-text">
+            <div class="name">{{ narrow ? '校青协志愿平台' : '人大校青协志愿服务管理平台' }}</div>
+            <div v-if="!narrow" class="sub">
+              Volunteer Service Management · 中国人民大学青年志愿者协会
+            </div>
+          </div>
         </div>
       </div>
+
       <div class="right">
         <template v-if="auth.user">
           <el-badge :value="unread" :hidden="!unread" class="msg-badge">
             <el-button text @click="$router.push('/messages')">
-              <el-icon><Bell /></el-icon>&nbsp;消息
+              <el-icon><Bell /></el-icon>
+              <span v-if="!narrow">&nbsp;消息</span>
             </el-button>
           </el-badge>
           <el-dropdown @command="onCommand">
@@ -20,10 +30,13 @@
               <el-avatar :size="30" style="background:var(--el-color-primary)">
                 {{ auth.user.name?.[0] }}
               </el-avatar>
-              <span>{{ auth.user.name }}</span>
-              <el-tag size="small" effect="light" style="color:#fff;background:rgba(255,255,255,.2);border:none">
-                {{ ROLE_LABELS[auth.activeIdentity] || '学生' }}视角
-              </el-tag>
+              <template v-if="!narrow">
+                <span>{{ auth.user.name }}</span>
+                <el-tag size="small" effect="light"
+                        style="color:#fff;background:rgba(255,255,255,.2);border:none">
+                  {{ ROLE_LABELS[auth.activeIdentity] || '学生' }}视角
+                </el-tag>
+              </template>
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
@@ -49,39 +62,32 @@
         </template>
       </div>
     </el-header>
+
     <el-container class="app-body">
-      <el-aside width="200px" class="side">
-        <el-menu :default-active="$route.path" router class="side-menu">
-          <template v-if="canSee.manage()">
-            <div class="menu-cap">工作台（{{ ROLE_LABELS[auth.activeIdentity] }}）</div>
-            <el-menu-item v-if="canSee.dashboard()" index="/dashboard">
-              <el-icon><Odometer /></el-icon>数据总览
-            </el-menu-item>
-            <el-menu-item index="/manage"><el-icon><Calendar /></el-icon>活动管理</el-menu-item>
-            <el-menu-item index="/audit"><el-icon><Document /></el-icon>审计日志</el-menu-item>
-            <el-menu-item v-if="canSee.users()" index="/users">
-              <el-icon><UserFilled /></el-icon>用户与信用
-            </el-menu-item>
-            <el-menu-item v-if="canSee.integrations()" index="/integrations">
-              <el-icon><Link /></el-icon>集成设置
-            </el-menu-item>
-          </template>
-          <template v-else>
-            <div class="menu-cap">志愿服务</div>
-            <el-menu-item index="/square"><el-icon><Compass /></el-icon>活动广场</el-menu-item>
-            <el-menu-item index="/my"><el-icon><Tickets /></el-icon>我的报名</el-menu-item>
-            <el-menu-item index="/credit"><el-icon><Star /></el-icon>信用分</el-menu-item>
-            <el-menu-item index="/hours"><el-icon><Clock /></el-icon>志愿时长</el-menu-item>
-          </template>
-        </el-menu>
+      <el-aside v-if="!narrow" width="200px" class="side">
+        <SideMenu :active="$route.path" />
         <div class="side-foot dim">
           演示环境 · 对接数智人大/企业微信<br />接口已预留，见「集成设置」
         </div>
       </el-aside>
-      <el-main class="app-main" style="padding:0">
+      <el-main class="app-main">
         <router-view />
       </el-main>
     </el-container>
+
+    <!-- 窄屏导航：同一份菜单收进抽屉，选完自动关 -->
+    <el-drawer v-model="drawer" direction="ltr" size="264px" :with-header="false">
+      <div class="drawer-head">
+        <div class="logo">志</div>
+        <div>
+          <div class="name">校青协志愿平台</div>
+          <div class="drawer-sub">
+            {{ auth.user?.name }} · {{ ROLE_LABELS[auth.activeIdentity] || '学生' }}视角
+          </div>
+        </div>
+      </div>
+      <SideMenu :active="$route.path" @navigate="drawer = false" />
+    </el-drawer>
 
     <!-- 资料完善对话框：未完善的学生登录时强制弹出；也可从右上角菜单进入修改 -->
     <ProfileDialog ref="profileDialog" />
@@ -89,15 +95,24 @@
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ArrowDown, Bell, Check, Fold } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { auth, canSee, clearAuth, setActiveIdentity, ROLE_LABELS } from '../store'
+import { useNarrow } from '../composables/useNarrow'
 import ProfileDialog from '../components/ProfileDialog.vue'
+import SideMenu from '../components/SideMenu.vue'
 
 const router = useRouter()
+const route = useRoute()
+const narrow = useNarrow()
+const drawer = ref(false)
 const unread = ref(0)
 let timer = null
+
+// 抽屉里点的若是当前页，el-menu 不触发 select，这里兜住
+watch(() => route.path, () => { drawer.value = false })
 
 async function poll() {
   if (!auth.token) return
@@ -143,32 +158,49 @@ async function onCommand(cmd) {
 /* 固定视口高度：侧边栏恒定满高，右侧内容独立滚动 */
 .app-root { height: 100vh; }
 .app-body { height: calc(100vh - 56px); }
-.app-main { height: 100%; overflow-y: auto; }
+.app-main { height: 100%; overflow-y: auto; padding: 0; }
 .topbar {
   background: linear-gradient(90deg, #7e1b2a, var(--ruc-red));
   color: #fff; display: flex; align-items: center; justify-content: space-between;
   padding: 0 22px; position: sticky; top: 0; z-index: 100;
-  flex-shrink: 0;
+  flex-shrink: 0; gap: 8px;
 }
-.brand { display: flex; gap: 12px; align-items: center; cursor: pointer; }
+.left { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.hamburger { color: #fff; padding: 6px; }
+.brand { display: flex; gap: 12px; align-items: center; cursor: pointer; min-width: 0; }
+.brand-text { min-width: 0; }
 .logo {
   width: 38px; height: 38px; border-radius: 9px; background: rgba(255,255,255,.16);
   display: flex; align-items: center; justify-content: center;
   font-size: 20px; font-weight: 700; font-family: serif;
-  border: 1px solid rgba(255,255,255,.35);
+  border: 1px solid rgba(255,255,255,.35); flex-shrink: 0;
 }
-.name { font-size: 16px; font-weight: 600; letter-spacing: .5px; }
+.name { font-size: 16px; font-weight: 600; letter-spacing: .5px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub { font-size: 11px; opacity: .75; }
-.right { display: flex; align-items: center; gap: 14px; }
+.right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
 .who { display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer; outline: none; }
 .side {
   background: #fff; border-right: 1px solid #eceef1;
   display: flex; flex-direction: column;
   height: 100%; overflow-y: auto; flex-shrink: 0;
 }
-.side-menu { border-right: none; flex: 1; }
-.menu-cap { font-size: 12px; color: #a8abb2; padding: 14px 20px 4px; }
-.switch-cap { font-size: 12px; color: #a8abb2; padding: 4px 16px 6px; border-bottom: 1px dashed #eceef1; margin-bottom: 4px; }
-.side-foot { padding: 14px; line-height: 1.7; border-top: 1px dashed #eceef1; flex-shrink: 0; }
+.side-foot { padding: 14px; line-height: 1.7; border-top: 1px dashed #eceef1;
+             flex-shrink: 0; margin-top: auto; }
 .msg-badge :deep(.el-button) { color: #fff; }
+.switch-cap { font-size: 12px; color: #a8abb2; padding: 4px 16px 6px;
+              border-bottom: 1px dashed #eceef1; margin-bottom: 4px; }
+
+.drawer-head {
+  display: flex; gap: 12px; align-items: center; padding: 16px;
+  background: linear-gradient(90deg, #7e1b2a, var(--ruc-red)); color: #fff;
+}
+.drawer-sub { font-size: 12px; opacity: .8; margin-top: 2px; }
+
+@media (max-width: 860px) {
+  .topbar { padding: 0 10px; }
+  .right { gap: 4px; }
+  .name { font-size: 15px; }
+  .logo { width: 32px; height: 32px; font-size: 17px; }
+}
 </style>

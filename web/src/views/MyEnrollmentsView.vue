@@ -1,7 +1,52 @@
 <template>
   <div class="page">
     <h2>我的报名</h2>
-    <el-table :data="rows" style="width:100%" v-loading="loading">
+
+    <!-- 窄屏：一条报名一张卡；表格在手机上要么横滑要么挤成一条线 -->
+    <div v-if="narrow" v-loading="loading" class="mob-list">
+      <div v-for="row in rows" :key="row.id" class="mob-card">
+        <div class="mob-head">
+          <b>{{ row.activity.title }}</b>
+          <EnrollStatusTag :row="row" />
+        </div>
+        <div class="dim">{{ row.activity.location }}</div>
+        <div class="mob-line">
+          {{ row.shift.name }} · {{ row.shift.time_text }}
+        </div>
+        <div v-if="row.position" class="mob-line">
+          <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
+          <span class="dim"> {{ row.position.location }}</span>
+        </div>
+        <div v-else-if="row.status === 'confirmed'" class="dim">岗位待分配</div>
+        <div class="mob-line">
+          <span class="dim">岗位调剂：</span>
+          <el-tag v-if="isActive(row)" size="small" effect="plain"
+                  :type="row.allow_reassign ? 'success' : 'info'"
+                  @click="toggleReassign(row)">
+            {{ row.allow_reassign ? '接受' : '不接受' }}
+          </el-tag>
+          <span v-else class="dim">—</span>
+          <template v-if="row.status === 'confirmed'">
+            <span class="dim" style="margin-left:10px">签到：</span>
+            <CheckinStatusTag :row="row" />
+          </template>
+        </div>
+        <div class="mob-actions">
+          <el-button size="small" @click="$router.push('/activity/' + row.activity.id)">
+            查看活动
+          </el-button>
+          <el-button v-if="row.status === 'pending_confirm'" size="small" type="primary"
+                     @click="confirm(row)">确认转正</el-button>
+          <el-button v-else-if="row.active !== false && isActive(row)" size="small"
+                     type="danger" plain @click="cancel(row)">
+            {{ row.status === 'waitlisted' ? '退出候补' : '退选' }}
+          </el-button>
+        </div>
+      </div>
+      <el-empty v-if="!rows.length && !loading" description="还没有报名记录" :image-size="60" />
+    </div>
+
+    <el-table v-else :data="rows" style="width:100%" v-loading="loading">
       <el-table-column label="活动" min-width="200">
         <template #default="{ row }">
           <b>{{ row.activity.title }}</b>
@@ -32,34 +77,12 @@
         </template>
       </el-table-column>
       <el-table-column label="状态" width="190">
-        <template #default="{ row }">
-          <el-tag v-if="row.status === 'confirmed'" type="success">已报名</el-tag>
-          <el-tag v-else-if="row.status === 'waitlisted'" type="warning">候补中</el-tag>
-          <template v-else-if="row.status === 'pending_confirm'">
-            <el-countdown format="HH:mm:ss"
-                          :value="new Date(row.confirm_deadline.replace(' ','T')).getTime()"
-                          style="margin-right:8px">
-              <template #prefix><el-tag type="danger">转正确认剩</el-tag>&nbsp;</template>
-            </el-countdown>
-          </template>
-          <template v-else-if="row.cancel_type === 'late'">
-            <el-tag type="danger">临近退选(扣分)</el-tag>
-            <div v-if="row.seat_held" class="dim checkout-time">名额已扣留，不可再报</div>
-          </template>
-          <el-tag v-else type="info">{{ cancelLabel(row) }}</el-tag>
-        </template>
+        <template #default="{ row }"><EnrollStatusTag :row="row" /></template>
       </el-table-column>
-      <el-table-column label="签到" width="100">
+      <el-table-column label="签到" width="120">
         <template #default="{ row }">
-          <template v-if="row.checked_in && row.status === 'confirmed'">
-            <el-tag type="success" effect="light">已到岗</el-tag>
-            <div v-if="row.checkout_at" class="dim checkout-time">签退 {{ row.checkout_at.slice(11, 16) }}</div>
-            <el-tag v-else-if="shiftEnded(row)" type="danger" effect="light" size="small">
-              未签退
-            </el-tag>
-            <el-tag v-else type="warning" effect="light" size="small">服务中</el-tag>
-          </template>
-          <span v-else-if="row.status === 'confirmed'" class="dim">未签到</span>
+          <CheckinStatusTag v-if="row.status === 'confirmed'" :row="row" />
+          <span v-else class="dim">—</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">
@@ -89,25 +112,18 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
+import { useNarrow } from '../composables/useNarrow'
+import EnrollStatusTag from '../components/EnrollStatusTag.vue'
+import CheckinStatusTag from '../components/CheckinStatusTag.vue'
 
+const narrow = useNarrow()
 const rows = ref([])
 const loading = ref(false)
-
-const CANCEL_LABELS = {
-  normal: '已退选', abandoned: '已放弃候补', expired: '确认超时',
-  group_deleted: '场次取消',
-}
-const cancelLabel = r => r.status === 'cancelled'
-  ? (CANCEL_LABELS[r.cancel_type] || '已取消') : ''
 
 function isActive(r) {
   return ['confirmed', 'waitlisted', 'pending_confirm'].includes(r.status)
 }
 
-// 场次结束后还没签退，是「未签退」而不是「服务中」——人早走了
-function shiftEnded(r) {
-  return !!r.shift?.end_time && new Date(r.shift.end_time) < new Date()
-}
 
 async function load() {
   loading.value = true
@@ -144,6 +160,15 @@ async function cancel(row) {
 </script>
 
 <style scoped>
+.mob-list { display: flex; flex-direction: column; gap: 10px; }
+.mob-card { background:#fff; border:1px solid #eceef1; border-radius:10px; padding:12px 14px; }
+.mob-head { display:flex; justify-content:space-between; gap:8px; align-items:flex-start;
+            margin-bottom:2px; }
+.mob-head b { font-size:14.5px; line-height:1.45; }
+.mob-line { margin-top:6px; font-size:13px; display:flex; align-items:center;
+            gap:4px; flex-wrap:wrap; }
+.mob-actions { margin-top:10px; padding-top:10px; border-top:1px dashed #eceef1;
+               display:flex; gap:8px; flex-wrap:wrap; }
 .checkout-time {
   font-size: 11px;
   line-height: 1.4;

@@ -64,3 +64,52 @@ body {
   border-radius: 2px; display:inline-block; }
 
 .el-table .warning-cell { color: #f56c6c !important; font-weight: 600; }
+
+/* ===== 窄屏（≤860px）===== */
+/* 手机上不做「缩小的桌面版」：留白收紧、栅格拉直、表格交给卡片。 */
+@media (max-width: 860px) {
+  html { -webkit-text-size-adjust: 100%; }
+
+  .page, .page-wide, .page-narrow { max-width: 100%; padding: 12px 12px 32px; }
+
+  /* 广场卡片单列 */
+  .card-grid { grid-template-columns: 1fr; gap: 12px; }
+
+  /* el-row/el-col 一律拉直：桌面版的 17/7 分栏在手机上没有意义 */
+  .el-row > .el-col { width: 100% !important; max-width: 100% !important;
+                      flex: 0 0 100% !important; }
+  .el-row > .el-col + .el-col { margin-top: 12px; }
+
+  /* 描述列表标签不再固定宽度，长标签自己换行 */
+  .el-descriptions__label { width: auto !important; }
+  .el-descriptions__cell { display: block !important; }
+
+  /* 对话框：留一点边距即可，别再按像素宽 */
+  .el-overlay-dialog .el-dialog { width: 94% !important; margin: 6vh auto !important; }
+  .el-dialog__body { padding: 14px 16px; }
+  /* 表单标签压到上方，否则 100px 的标签列吃掉半屏 */
+  .el-dialog .el-form-item { display: block; }
+  .el-dialog .el-form-item__label { width: auto !important; text-align: left;
+                                    padding: 0 0 4px; line-height: 1.6; }
+  .el-dialog .el-form-item__content { margin-left: 0 !important; }
+
+  /* 抽屉里的菜单铺满 */
+  .el-drawer__body { padding: 0; }
+
+  /* 工具条换行，别把按钮挤出屏幕 */
+  .toolbar { flex-wrap: wrap; gap: 8px; }
+  .toolbar > * { flex-shrink: 0; }
+
+  /* 实在留着的表格（分配面板等）允许横滑，但不让整页横滑 */
+  .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  .section-title { margin: 14px 0 8px; }
+  h2 { font-size: 19px; }
+  h3 { font-size: 16px; }
+}
+
+/* 触摸设备上按钮给足点击面积 */
+@media (hover: none) and (pointer: coarse) {
+  .el-button--small { min-height: 32px; }
+  .el-button.is-link { padding: 6px 4px; }
+}

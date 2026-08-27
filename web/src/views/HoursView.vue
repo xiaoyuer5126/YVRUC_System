@@ -25,7 +25,21 @@
       <template #header><b>时长明细</b><span class="dim" style="font-weight:400;margin-left:8px">
         活动结束后由青协依据签到记录一键确认，并回传至数智人大/志愿北京
       </span></template>
-      <el-table :data="data.records">
+      <DataCards v-if="narrow" :rows="data.records" title-key="activity_title"
+                 :fields="[{ key: 'created_at', label: '确认时间', format: fmtDT },
+                           { key: 'upload_ref', label: '回执号', hideEmpty: true }]"
+                 empty="还没有时长记录">
+        <template #extra="{ row }">
+          <b style="font-size:16px;color:var(--el-color-primary)">{{ row.hours }}h</b>
+        </template>
+        <template #body="{ row }">
+          <el-tag v-if="row.status === 'uploaded'" type="success" effect="light" size="small">
+            已回传数智人大
+          </el-tag>
+          <el-tag v-else type="warning" effect="light" size="small">已确认，待回传</el-tag>
+        </template>
+      </DataCards>
+      <el-table v-else :data="data.records">
         <el-table-column prop="activity_title" label="活动" min-width="220" />
         <el-table-column label="时长（小时）" width="110">
           <template #default="{ row }"><b>{{ row.hours }}</b></template>
@@ -49,7 +63,10 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { api, fmtDT } from '../api'
+import { useNarrow } from '../composables/useNarrow'
+import DataCards from '../components/DataCards.vue'
 
+const narrow = useNarrow()
 const data = ref(null)
 onMounted(async () => { data.value = await api.get('/api/me/hours') })
 </script>

@@ -20,7 +20,22 @@
         <el-checkbox v-model="onlyVisible" @change="load">仅志愿者可见</el-checkbox>
         <span class="dim">共 {{ total }} 条</span>
       </div>
-      <el-table :data="items" size="small" v-loading="loading">
+      <DataCards v-if="narrow" :rows="items" title-key="summary" v-loading="loading"
+                 :fields="[{ key: 'actor_name', label: '操作人' },
+                           { key: 'created_at', label: '时间', format: fmtDT }]"
+                 empty="暂无记录">
+        <template #extra="{ row }">
+          <el-tag size="small" effect="plain">{{ row.action_label }}</el-tag>
+        </template>
+        <template #body="{ row }">
+          <div v-for="(ch, i) in row.changes" :key="i" class="dim" style="line-height:1.7">
+            {{ ch.label }}：{{ ch.old || '空' }} →
+            <b style="color:var(--el-color-primary)">{{ ch.new || '空' }}</b>
+          </div>
+        </template>
+      </DataCards>
+
+      <el-table v-else :data="items" size="small" v-loading="loading">
         <el-table-column prop="actor_name" label="操作人" width="90" />
         <el-table-column label="动作" width="100">
           <template #default="{row}"><el-tag size="small" effect="plain">{{ row.action_label }}</el-tag></template>
@@ -48,7 +63,10 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { api, fmtDT } from '../api'
+import { useNarrow } from '../composables/useNarrow'
+import DataCards from '../components/DataCards.vue'
 
+const narrow = useNarrow()
 const items = ref([])
 const total = ref(0)
 const page = ref(1)

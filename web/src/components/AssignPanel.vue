@@ -55,7 +55,9 @@
       </el-table>
 
       <div class="section-title">分配明细（可直接修改"建议岗位"列再应用）</div>
-      <el-table :data="rows" size="small" border max-height="420">
+      <div class="dim scroll-hint">明细列较多，窄屏可左右滑动查看</div>
+      <div class="scroll-x">
+      <el-table :data="rows" size="small" border max-height="420" style="min-width:720px">
         <el-table-column label="姓名" width="110">
           <template #default="{row}">
             <b>{{ row.user.name }}</b>
@@ -113,6 +115,7 @@
           </template>
         </el-table-column>
       </el-table>
+      </div>
 
       <div v-if="preview.unassigned.length" class="section-title">
         暂未能分配（{{ preview.unassigned.length }} 人）
@@ -266,5 +269,7 @@ async function addWalkin() {
 </script>
 
 <style scoped>
+.scroll-hint { margin: -6px 0 6px; }
+@media (min-width: 861px) { .scroll-hint { display: none; } }
 .toolbar { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
 </style>

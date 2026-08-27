@@ -16,7 +16,8 @@
             </el-descriptions-item>
             <el-descriptions-item label="当前状态">
               <template v-if="task.checked_in">
-                已签到{{ task.checked_out ? ' · 已签退' : ' · 服务中' }}
+                已签到{{ task.checked_out ? ' · 已签退'
+                        : (task.state === 'expired' ? ' · 未签退' : ' · 服务中') }}
               </template>
               <el-tag v-else size="small" :type="stateType">{{ stateText }}</el-tag>
             </el-descriptions-item>
@@ -113,10 +114,22 @@ async function doCheckin() {
 <style scoped>
 .scan-wrap {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  padding: 16px;
   background:
     radial-gradient(800px 400px at 80% -10%, rgba(158,34,53,.15), transparent), #f5f6f8;
 }
-.scan-card { width: 420px; border-radius: 16px; text-align: center; padding: 8px; }
+.scan-card { width: 420px; max-width: 100%; border-radius: 16px;
+             text-align: center; padding: 8px; }
+
+/* 这一页基本只在手机上被扫开：铺满、按钮做大、别垂直居中留一堆空白 */
+@media (max-width: 860px) {
+  .scan-wrap { align-items: flex-start; padding: 12px; }
+  .scan-card { padding: 2px; }
+  .scan-card :deep(.el-card__body) { padding: 16px 14px; }
+  .scan-card :deep(.el-button--large) { height: 52px; font-size: 17px; }
+  .scan-card :deep(.el-descriptions__label) { width: 78px; }
+  h2 { font-size: 19px; line-height: 1.4; }
+}
 .ok-icon {
   width: 64px; height: 64px; margin: 4px auto; border-radius: 50%;
   background: #f0f9eb; color: #67c23a; font-size: 34px; line-height: 64px;

@@ -594,7 +594,7 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
     if n_active and force:
         # 场次没了，扣留的占位名额也一并失效——这不是志愿者的责任
         (db.query(Enrollment).filter(Enrollment.shift_id == g.id)
-         .update({"status": "cancelled", "cancel_type": "group_deleted",
+         .update({"status": "cancelled", "cancel_type": "shift_deleted",
                   "seat_held": False},
                  synchronize_session=False))
         bg.add_task(_notify_activity_bg, act.id, "activity_changed",

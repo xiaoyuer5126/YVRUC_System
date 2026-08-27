@@ -33,7 +33,11 @@
           <template #header><b>最近操作留痕</b>
             <router-link to="/audit" style="float:right;font-size:12px">全部 →</router-link>
           </template>
-          <el-table :data="d.recent_logs" size="small">
+          <DataCards v-if="narrow" :rows="d.recent_logs" title-key="summary"
+                 :fields="[{ key: 'actor_name', label: '操作人' },
+                           { key: 'created_at', label: '时间', format: fmtDT }]"
+                 empty="暂无操作记录" />
+      <el-table v-else :data="d.recent_logs" size="small">
             <el-table-column label="操作人" width="90" prop="actor_name" />
             <el-table-column label="摘要" min-width="300" prop="summary" show-overflow-tooltip />
             <el-table-column label="时间" width="110">
@@ -50,7 +54,10 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import * as echarts from 'echarts'
 import { api, fmtDT } from '../api'
+import { useNarrow } from '../composables/useNarrow'
+import DataCards from '../components/DataCards.vue'
 
+const narrow = useNarrow()
 const d = ref(null)
 const trendEl = ref()
 const pieEl = ref()

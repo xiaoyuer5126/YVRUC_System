@@ -30,7 +30,17 @@
       <el-col :span="15">
         <el-card shadow="never" style="border-radius:14px;min-height:420px">
           <template #header><b>信用流水</b></template>
-          <el-table :data="data.logs" size="small">
+          <DataCards v-if="narrow" :rows="data.logs" title-key="reason"
+                     :fields="[{ key: 'after', label: '余额' },
+                               { key: 'created_at', label: '时间', format: fmtDT }]"
+                     empty="暂无信用分变动">
+            <template #extra="{ row }">
+              <el-tag :type="row.delta > 0 ? 'success' : 'danger'" effect="light">
+                {{ row.delta > 0 ? '+' : '' }}{{ row.delta }}
+              </el-tag>
+            </template>
+          </DataCards>
+          <el-table v-else :data="data.logs" size="small">
             <el-table-column label="变动" width="80">
               <template #default="{ row }">
                 <b :style="{ color: row.delta >= 0 ? '#67c23a' : '#f56c6c' }">
@@ -54,7 +64,10 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api, fmtDT } from '../api'
+import { useNarrow } from '../composables/useNarrow'
+import DataCards from '../components/DataCards.vue'
 
+const narrow = useNarrow()
 const data = ref(null)
 const scoreColor = computed(() => {
   const s = data.value?.score ?? 100

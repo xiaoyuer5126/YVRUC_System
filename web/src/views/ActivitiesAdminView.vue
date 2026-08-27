@@ -6,7 +6,35 @@
     </div>
 
     <el-card shadow="never">
-      <el-table :data="list" v-loading="loading">
+      <DataCards v-if="narrow" :rows="list" title-key="title" v-loading="loading"
+                 :fields="[{ key: 'time_text', label: '时间' },
+                           { key: 'location', label: '地点' }]"
+                 empty="还没有活动">
+        <template #extra="{ row }">
+          <el-tag size="small" :type="statusType(row.status)">{{ row.status_label }}</el-tag>
+        </template>
+        <template #body="{ row }">
+          <div class="dim" style="line-height:1.8">
+            {{ row.type_label }} · 场次 {{ row.shifts_count }} ·
+            已确认 {{ row.total_confirmed }}/{{ row.total_capacity }}
+            <span v-if="row.waitlist_count">· 候补 {{ row.waitlist_count }}</span>
+          </div>
+        </template>
+        <template #actions="{ row }">
+          <el-button size="small" type="primary"
+                     @click="$router.push('/manage/' + row.id)">管理</el-button>
+          <el-button size="small" @click="openCopy(row)">复制</el-button>
+          <el-popconfirm v-if="row.status === 'draft'" title="发布后学生即可报名，确认？"
+                         @confirm="transition(row, 'publish')">
+            <template #reference><el-button size="small" type="success" plain>发布</el-button></template>
+          </el-popconfirm>
+          <el-popconfirm v-if="row.status === 'published'" title="截止后不再接受新报名？"
+                         @confirm="transition(row, 'close')">
+            <template #reference><el-button size="small" type="warning" plain>截止</el-button></template>
+          </el-popconfirm>
+        </template>
+      </DataCards>
+      <el-table v-else :data="list" v-loading="loading">
         <el-table-column label="活动" min-width="240">
           <template #default="{row}">
             <b>{{ row.title }}</b>
@@ -164,8 +192,11 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { RANGE_DEFAULT_TIME, TYPE_COLORS, auth } from '../store'
+import { useNarrow } from '../composables/useNarrow'
+import DataCards from '../components/DataCards.vue'
 
 const router = useRouter()
+const narrow = useNarrow()
 const list = ref([])
 const loading = ref(false)
 const creating = ref(false)

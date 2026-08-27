@@ -14,7 +14,37 @@
         <span class="dim">信用分低于 60 自动冻结报名 30 天；限制准入依据《志愿者服务规范》</span>
       </div>
 
-      <el-table :data="users" size="small" v-loading="loading" max-height="620">
+      <DataCards v-if="narrow" :rows="users" title-key="name" v-loading="loading"
+                 :fields="[{ key: 'student_id', label: '学号' },
+                           { key: 'college', label: '学院' },
+                           { key: 'phone', label: '手机号' },
+                           { key: 'id_card_masked', label: '证件号', hideEmpty: true }]"
+                 empty="没有匹配的志愿者">
+        <template #extra="{ row }">
+          <el-tag :type="row.credit_score >= 60 ? 'success' : 'danger'" effect="light">
+            {{ row.credit_score }} 分
+          </el-tag>
+        </template>
+        <template #body="{ row }">
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            <el-tag v-if="row.credit_frozen" size="small" type="danger">报名冻结</el-tag>
+            <el-tag v-if="row.waitlist_banned" size="small" type="danger" effect="plain">候补暂停</el-tag>
+            <el-tag v-if="row.abandon_count" size="small" effect="plain">
+              放弃候补 {{ row.abandon_count }} 次
+            </el-tag>
+            <el-tag v-if="row.restricted_types?.length" size="small" type="warning" effect="plain">
+              限 {{ row.restricted_types.join('/') }} 类
+            </el-tag>
+          </div>
+        </template>
+        <template #actions="{ row }">
+          <el-button size="small" type="primary" plain @click="openCredit(row)">调整信用</el-button>
+          <el-button size="small" type="danger" plain @click="openViolation(row)">登记违规</el-button>
+          <el-button size="small" @click="openRestrict(row)">限制准入</el-button>
+        </template>
+      </DataCards>
+
+      <el-table v-else :data="users" size="small" v-loading="loading" max-height="620">
         <el-table-column prop="name" label="姓名" width="90" />
         <el-table-column prop="student_id" label="学号" width="110" />
         <el-table-column prop="gender" label="性别" width="60" />
@@ -156,7 +186,10 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
+import { useNarrow } from '../composables/useNarrow'
+import DataCards from '../components/DataCards.vue'
 
+const narrow = useNarrow()
 const users = ref([])
 const colleges = ref([])
 const q = ref('')
@@ -255,6 +288,7 @@ async function saveRestrict() {
 
 <style scoped>
 .toolbar { display:flex; gap:12px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+.toolbar .dim { flex: 1 1 100%; }   /* 说明文字独占一行，别把工具条撑宽 */
 .suggest { border:1px solid var(--el-border-color); border-radius:8px; padding:12px 14px; }
 .suggest-head { font-weight:600; margin-bottom:6px; }
 .basis { margin:0 0 4px; color:var(--el-color-primary); font-size:13px; }
