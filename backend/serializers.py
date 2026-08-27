@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .enroll_logic import (position_confirmed_count, position_occupied_count,
+from .enroll_logic import (position_confirmed_count,
+                           position_occupied_count,
                            shift_confirmed_count, shift_occupied_count,
                            time_conflicts, unmet_requirements,
                            waitlist_position, waitlist_rows)
@@ -71,6 +72,7 @@ def position_out(db: OrmSession, p: Position, user=None) -> dict:
     """岗位。带 user 时附上「这个人能不能报」——前端据此灰掉并说明原因，
     比让人点了再被拒要清楚。"""
     confirmed = position_confirmed_count(db, p.id)
+    occupied = position_occupied_count(db, p.id)
     queued = len([r for r in waitlist_rows(db, p.shift_id)
                   if r.position_id == p.id])
     out = {
@@ -78,7 +80,9 @@ def position_out(db: OrmSession, p: Position, user=None) -> dict:
         # 岗位没有独立时间：显示所属场次的时段
         "time_text": p.time_text(),
         "location": p.location, "quota": p.quota, "confirmed": confirmed,
-        "remaining": max(0, p.quota - position_occupied_count(db, p.id)),
+        "remaining": max(0, p.quota - occupied),
+        # 临近退选扣留的名额：不发出去的话，「已确认 8/10、剩余 0」没人看得懂
+        "held_seats": occupied - confirmed,
         "waitlist_quota": p.waitlist_quota, "waitlist_count": queued,
         "needs_leader": p.needs_leader,
         "requirement_tags": p.requirement_tags or {},
@@ -122,6 +126,8 @@ def shift_out(db: OrmSession, g: Shift, user=None) -> dict:
         "capacity": capacity,
         "confirmed": shift_confirmed_count(db, g.id),
         "remaining": max(0, capacity - shift_occupied_count(db, g.id)),
+        "held_seats": (shift_occupied_count(db, g.id)
+                       - shift_confirmed_count(db, g.id)),
         "waitlist_quota": g.waitlist_quota,
         "needs_assign": g.needs_assign(),
         "mode": g.mode,

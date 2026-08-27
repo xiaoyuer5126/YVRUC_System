@@ -139,7 +139,7 @@ def enrolled_activity(db, take_student):
     """
     from datetime import timedelta
     from backend.models import (Activity, ActivityManager, Enrollment,
-                                Position, Shift, User, now, uid)
+                                Position, Shift, now, uid)
 
     admin_user = student_row(db, ADMIN)
     act = Activity(id=uid("act"), title=f"通知测试活动 {uid('t')}", type="A",

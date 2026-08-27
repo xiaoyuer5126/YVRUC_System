@@ -323,14 +323,14 @@
 
     <!-- 报名确认：确认时段 + 表态是否接受岗位调剂 -->
     <el-dialog v-model="enrollDlg.visible" title="确认报名" width="480px">
-      <template v-if="enrollDlg.group">
+      <template v-if="enrollDlg.shift">
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="场次">
-            {{ enrollDlg.group.name }}（{{ enrollDlg.group.time_text }}）
+            {{ enrollDlg.shift.name }}（{{ enrollDlg.shift.time_text }}）
           </el-descriptions-item>
           <el-descriptions-item label="岗位">
             {{ enrollDlg.position ? enrollDlg.position.name
-               : (enrollDlg.group.mode === 'assign' ? '报名截止后由青协统一分配' : '无需选择') }}
+               : (enrollDlg.shift.mode === 'assign' ? '报名截止后由青协统一分配' : '无需选择') }}
           </el-descriptions-item>
           <el-descriptions-item label="结果">
             <el-tag :type="willWaitlist ? 'warning' : 'success'" size="small">
@@ -359,7 +359,7 @@
           </p>
         </div>
 
-        <el-alert v-if="needLateWarn(enrollDlg.group)" type="warning" :closable="false"
+        <el-alert v-if="needLateWarn(enrollDlg.shift)" type="warning" :closable="false"
                   style="margin-top:10px"
                   title="距该场次开始已不足 24 小时：报名后再退选将扣除信用分，且名额不再释放" />
       </template>
@@ -388,11 +388,11 @@ import { Warning } from '@element-plus/icons-vue'
 const route = useRoute()
 const act = ref(null)
 const groupDetail = ref({ visible: false, data: null })
-const enrollDlg = ref({ visible: false, group: null, position: null,
+const enrollDlg = ref({ visible: false, shift: null, position: null,
                         leaderWilling: false,
                         allowReassign: true, submitting: false })
 const willWaitlist = computed(() => {
-  const { group: g, position } = enrollDlg.value
+  const { shift: g, position } = enrollDlg.value
   if (!g) return false
   return position ? position.remaining <= 0 : g.remaining <= 0
 })
@@ -446,13 +446,13 @@ function doEnroll(g, position) {
   if (g.mode === 'pick' && g.positions.length && !position) {
     return ElMessage.warning('请先展开该场次，选择一个岗位')
   }
-  enrollDlg.value = { visible: true, group: g, position, allowReassign: true,
+  enrollDlg.value = { visible: true, shift: g, position, allowReassign: true,
                       leaderWilling: false,
                       submitting: false }
 }
 
 async function submitEnroll() {
-  const { group: g, position, allowReassign, leaderWilling } = enrollDlg.value
+  const { shift: g, position, allowReassign, leaderWilling } = enrollDlg.value
   enrollDlg.value.submitting = true
   try {
     const d = await api.post(

@@ -45,7 +45,7 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "id": enr.id,
         "activity": {"id": act.id, "title": act.title, "type": act.type,
                      "status": act.status, "location": act.location},
-        "group": {"id": g.id, "name": g.name, "time_text": g.span_text(),
+        "shift": {"id": g.id, "name": g.name, "time_text": g.span_text(),
                   "start_time": iso_of(g.start_time),
                   "end_time": iso_of(g.end_time)},
         "position": ({"id": st.id, "name": st.name, "time_text": st.time_text(),

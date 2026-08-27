@@ -10,7 +10,7 @@
       </el-table-column>
       <el-table-column label="场次 / 岗位" min-width="180">
         <template #default="{ row }">
-          {{ row.group.name }}（{{ row.group.time_text }}）
+          {{ row.shift.name }}（{{ row.shift.time_text }}）
           <div v-if="row.position">
             <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
             <span class="dim"> {{ row.position.time_text }} · {{ row.position.location }}</span>
@@ -121,7 +121,7 @@ async function toggleReassign(row) {
 }
 
 async function cancel(row) {
-  const g = row.group
+  const g = row.shift
   const start = new Date(g.start_time.replace(' ', 'T'))
   const late = Date.now() > start.getTime() - 24 * 3600e3
   await ElMessageBox.confirm(

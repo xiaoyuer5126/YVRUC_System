@@ -172,7 +172,15 @@ def waitlist_rows(db: OrmSession, shift_id: str) -> list[Enrollment]:
 
 
 def waitlist_position(db: OrmSession, enr: Enrollment) -> int:
+    """排在第几位。
+
+    pick 模式的队列是按岗位分的，只能和同岗位的人比——按整个场次排名的话，
+    排在「引导岗」第一位的人会因为「检录岗」前面有两个人而被告知「第 3 位」，
+    白白以为自己没希望。
+    """
     rows = waitlist_rows(db, enr.shift_id)
+    if enr.position_id:
+        rows = [r for r in rows if r.position_id == enr.position_id]
     for i, row in enumerate(rows):
         if row.id == enr.id:
             return i + 1

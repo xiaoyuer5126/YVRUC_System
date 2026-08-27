@@ -1,8 +1,8 @@
 """通知签收：发送时要求签收、志愿者签收、管理端查看与催办。"""
 from __future__ import annotations
 
-from backend.models import Notification, User
-from conftest import QINGXIE, login
+from backend.models import Notification
+from conftest import login
 
 
 def _send(client, admin, act_id, *, need_ack, title="集合地点变更"):

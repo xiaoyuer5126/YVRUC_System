@@ -186,6 +186,19 @@
                     <el-tag v-if="row.checked_in" type="success" size="small" effect="light">✓</el-tag>
                   </template>
                 </el-table-column>
+                <el-table-column label="组长" width="96">
+                  <template #default="{row}">
+                    <el-button v-if="row.is_leader" size="small" link type="warning"
+                               @click="setLeader(row, false)">取消</el-button>
+                    <el-tooltip v-else-if="canBeLeader(row)" placement="top"
+                                content="改判为本岗位组长；原组长会被自动摘掉">
+                      <el-button size="small" link @click="setLeader(row, true)">
+                        指定
+                      </el-button>
+                    </el-tooltip>
+                    <span v-else class="dim">—</span>
+                  </template>
+                </el-table-column>
                 <el-table-column v-if="roster.positions.length" label="调岗" width="210">
                   <template #default="{row}">
                     <el-select v-model="moveSel[row.enrollment_id]" size="small"
@@ -1094,6 +1107,21 @@ function loadRoster() {
   if (!g?._roster) return
   roster.value = g._roster
   moveSel.value = {}
+}
+
+// 只有「岗位设了组长」的人才能被指定；没岗位的人后端也会拒
+function canBeLeader(row) {
+  const p = roster.value?.positions?.find(x => x.id === row.position_id)
+  return !!p?.needs_leader
+}
+
+async function setLeader(row, on) {
+  const d = await api.post(`/api/staff/enrollments/${row.enrollment_id}/leader`,
+                           { is_leader: on })
+  ElMessage.success(on ? `已指定 ${row.user.name} 为组长`
+                       : `已取消 ${row.user.name} 的组长身份，由下一位有意愿者接任`)
+  loadAll()
+  return d
 }
 
 async function applyMove(row) {

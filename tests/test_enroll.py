@@ -235,3 +235,29 @@ def test_assign_shift_requires_capacity(client, admin):
                           "start_time": (now() + timedelta(days=401)).isoformat(),
                           "end_time": (now() + timedelta(days=401, hours=2)).isoformat()})
     assert r.status_code == 400
+
+
+def test_候补名次按岗位算而不是按场次(client, db, open_group, take_student):
+    """排在自己岗位第一位的人，不该因为别的岗位排了人就被说成第三位。"""
+    act, g = open_group(1)
+    p1_id = g.test_position_id
+    p2 = Position(id=uid("p"), shift_id=g.id, name="第二岗位",
+                  quota=1, waitlist_quota=3, sort=1)
+    db.add(p2)
+    db.commit()
+    p2_id = p2.id
+
+    def go(position_id):
+        t = login(client, take_student())
+        r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                        headers=t, json={"position_id": position_id})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    assert go(p1_id)["status"] == "confirmed"      # 占满 p1
+    assert go(p2_id)["status"] == "confirmed"      # 占满 p2
+    go(p1_id); go(p1_id)                            # p1 排两个候补
+
+    third = go(p2_id)                               # p2 的第一个候补
+    assert third["status"] == "waitlisted"
+    assert third["waitlist_position"] == 1

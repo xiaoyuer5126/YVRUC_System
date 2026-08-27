@@ -1,0 +1,170 @@
+"""导出表与签到大屏：新模型下字段是否对得上、组长有没有标出来。"""
+from __future__ import annotations
+
+from io import BytesIO
+
+from openpyxl import load_workbook
+
+from backend.models import CheckinRecord, CheckinTask, Enrollment, now, uid
+from conftest import login
+
+
+def _setup(client, db, admin, enrolled_activity, take_student, n=3):
+    """在已有活动上再塞几个人，其中一个当组长、一个签到。"""
+    act, shift, first = enrolled_activity
+    pos = shift.positions[0]
+    pos.needs_leader = True
+    db.commit()
+
+    people = [first]
+    for _ in range(n - 1):
+        sid = take_student()
+        t = login(client, sid)
+        r = client.post(f"/api/activities/{act.id}/shifts/{shift.id}/enroll",
+                        headers=t, json={"position_id": pos.id,
+                                         "leader_willing": True})
+        assert r.status_code == 200, r.text
+        from conftest import student_row
+        people.append(student_row(db, sid))
+    return act, shift, pos, people
+
+
+def test_导出表带组长与调剂意愿(client, admin, db, enrolled_activity,
+                              take_student):
+    act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
+                                     take_student)
+
+    token = admin["Authorization"].split()[1]
+    r = client.get(f"/api/staff/activities/{act.id}/export.xlsx?token={token}")
+    assert r.status_code == 200
+
+    wb = load_workbook(BytesIO(r.content))
+    ws = wb[[s for s in wb.sheetnames if s != "活动概览"][0]]
+    header = [c.value for c in ws[1]]
+    assert "组长" in header and "接受调剂" in header and "岗位" in header
+
+    col = header.index("组长") + 1
+    leaders = [ws.cell(row=i, column=col).value
+               for i in range(2, ws.max_row + 1)]
+    assert leaders.count("组长 ★") == 1, f"组长列应恰好一个，实际 {leaders}"
+
+
+def test_大屏以确认名单为主表并标出组长(client, admin, db, enrolled_activity,
+                                     take_student):
+    act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
+                                     take_student)
+    enr = (db.query(Enrollment)
+           .filter(Enrollment.position_id == pos.id,
+                   Enrollment.status == "confirmed").all())
+    task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=shift.id,
+                       mode="group", token="ABC123",
+                       valid_from=shift.start_time, valid_to=shift.end_time,
+                       created_by="system")
+    db.add(task)
+    db.flush()
+    db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
+                         shift_id=shift.id, position_id=pos.id,
+                         user_id=enr[0].user_id, method="manual",
+                         checkin_at=now()))
+    db.commit()
+
+    board = client.get(f"/api/staff/shifts/{shift.id}/board",
+                       headers=admin).json()
+    assert board["expected"] == len(enr)      # 未签到的也要在名单里
+    assert board["checked"] == 1
+    assert sum(1 for r in board["records"] if r["is_leader"]) == 1
+    assert all(r["position"] for r in board["records"])
+
+
+def test_未分配名单只在有岗位时出现(client, admin, db, enrolled_activity,
+                                  take_student):
+    """assign 模式下没分岗位的人要单独列出来，不能悄悄消失。"""
+    act, shift, _u = enrolled_activity
+    shift.mode = "assign"
+    shift.capacity = 10
+    db.commit()
+
+    sid = take_student()
+    t = login(client, sid)
+    r = client.post(f"/api/activities/{act.id}/shifts/{shift.id}/enroll",
+                    headers=t, json={})
+    assert r.status_code == 200
+
+    token = admin["Authorization"].split()[1]
+    r = client.get(f"/api/staff/activities/{act.id}/export.xlsx?token={token}")
+    wb = load_workbook(BytesIO(r.content))
+    ws = wb[[s for s in wb.sheetnames if s != "活动概览"][0]]
+    text = "\n".join(str(c.value) for row in ws.iter_rows() for c in row
+                     if c.value)
+    assert "尚未分配岗位" in text
+
+
+# ======================= 组长 =======================
+
+def test_一个岗位只会有一个组长(client, admin, db, enrolled_activity,
+                              take_student):
+    """老师改判组长时，原组长必须被摘掉——两个组长会让现场不知道听谁的。"""
+    act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
+                                     take_student, n=3)
+    rows = (db.query(Enrollment)
+            .filter(Enrollment.position_id == pos.id,
+                    Enrollment.status == "confirmed")
+            .order_by(Enrollment.joined_at).all())
+    auto = [r for r in rows if r.is_leader]
+    assert len(auto) == 1, "报名时应按先后自动产生一个组长"
+
+    other = next(r for r in rows if not r.is_leader)
+    r = client.post(f"/api/staff/enrollments/{other.id}/leader",
+                    headers=admin, json={"is_leader": True})
+    assert r.status_code == 200
+    db.expire_all()
+    leaders = [x for x in db.query(Enrollment)
+               .filter(Enrollment.position_id == pos.id,
+                       Enrollment.is_leader.is_(True)).all()]
+    assert len(leaders) == 1 and leaders[0].id == other.id
+
+
+def test_取消组长后自动补位(client, admin, db, enrolled_activity, take_student):
+    act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
+                                     take_student, n=3)
+    leader = (db.query(Enrollment)
+              .filter(Enrollment.position_id == pos.id,
+                      Enrollment.is_leader.is_(True)).one())
+    r = client.post(f"/api/staff/enrollments/{leader.id}/leader",
+                    headers=admin, json={"is_leader": False})
+    assert r.status_code == 200
+    db.expire_all()
+    leaders = (db.query(Enrollment)
+               .filter(Enrollment.position_id == pos.id,
+                       Enrollment.is_leader.is_(True)).all())
+    assert len(leaders) == 1 and leaders[0].id != leader.id, "该由下一个有意愿的人接任"
+
+
+def test_关掉组长开关会清掉组长标记(client, admin, db, enrolled_activity,
+                                  take_student):
+    act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
+                                     take_student, n=2)
+    assert db.query(Enrollment).filter(
+        Enrollment.position_id == pos.id,
+        Enrollment.is_leader.is_(True)).count() == 1
+
+    r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                     json={"needs_leader": False})
+    assert r.status_code == 200
+    db.expire_all()
+    assert db.query(Enrollment).filter(
+        Enrollment.position_id == pos.id,
+        Enrollment.is_leader.is_(True)).count() == 0
+
+
+def test_没设组长的岗位不能指定组长(client, admin, db, enrolled_activity,
+                                  take_student):
+    act, shift, _u = enrolled_activity
+    pos = shift.positions[0]
+    pos.needs_leader = False
+    db.commit()
+    enr = db.query(Enrollment).filter(
+        Enrollment.position_id == pos.id).first()
+    r = client.post(f"/api/staff/enrollments/{enr.id}/leader",
+                    headers=admin, json={"is_leader": True})
+    assert r.status_code == 409

@@ -627,6 +627,18 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
         setattr(s, key, body[key])
     _validate_position(db, g, s)
 
+    # 组长开关变化要落到人身上：关掉了还留着组长标记，导出表和大屏就会
+    # 显示一个「不存在的岗位角色」；打开了则当场按报名先后选一个。
+    if s.needs_leader != before_raw["needs_leader"]:
+        if s.needs_leader:
+            db.flush()
+            logic.elect_leader(db, s)
+        else:
+            (db.query(Enrollment)
+             .filter(Enrollment.position_id == s.id,
+                     Enrollment.is_leader.is_(True))
+             .update({"is_leader": False}, synchronize_session=False))
+
     def fmt(v):
         if isinstance(v, datetime):
             return v.strftime("%m-%d %H:%M")
@@ -912,9 +924,10 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
                          Enrollment.status == "confirmed")
                  .order_by(Enrollment.joined_at).all()]
     waitlist = []
-    for i, e in enumerate(logic.waitlist_rows(db, g.id), start=1):
+    for e in logic.waitlist_rows(db, g.id):
         row = user_row(e)
-        row["queue_position"] = i
+        # 队列按岗位分，名次也要按岗位算（见 logic.waitlist_position）
+        row["queue_position"] = logic.waitlist_position(db, e)
         waitlist.append(row)
     cancelled = [user_row(e) for e in db.query(Enrollment)
                  .filter(Enrollment.shift_id == g.id,
@@ -938,6 +951,69 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
         "cancelled": cancelled,
         "checked_in_count": len(checked_ids),
     }
+
+
+class LeaderBody(BaseModel):
+    is_leader: bool = True
+
+
+@router.post("/enrollments/{enrollment_id}/leader")
+def set_leader(enrollment_id: str, body: LeaderBody,
+               db: OrmSession = Depends(db_session),
+               user: User = Depends(require_manager)):
+    """指定或取消组长。
+
+    自动产生的组长是按报名先后来的，负责老师可以改判。一个岗位只能有一个
+    组长——指定新人时先把原来的摘掉，否则导出表和大屏会出现两个组长。
+    """
+    enr = db.get(Enrollment, enrollment_id)
+    if enr is None:
+        raise HTTPException(404, "报名记录不存在")
+    ensure_activity_manager(db, user, enr.activity_id)
+    if enr.status != "confirmed":
+        raise HTTPException(409, "只有正式报名的志愿者才能担任组长")
+    if not enr.position_id:
+        raise HTTPException(409, "该志愿者还没有岗位，请先分配岗位")
+    position = db.get(Position, enr.position_id)
+    if not position.needs_leader:
+        raise HTTPException(409, f"岗位「{position.name}」未设置组长，"
+                                 f"请先在岗位设置里勾选「需要组长」")
+    target = db.get(User, enr.user_id)
+
+    if body.is_leader:
+        previous = (db.query(Enrollment)
+                    .filter(Enrollment.position_id == position.id,
+                            Enrollment.is_leader.is_(True),
+                            Enrollment.id != enr.id).all())
+        for row in previous:
+            row.is_leader = False
+        enr.is_leader = True
+        was = "、".join(db.get(User, r.user_id).name for r in previous)
+        summary = (f"指定 {target.name} 为岗位「{position.name}」组长"
+                   + (f"（原组长 {was} 已卸任）" if was else ""))
+        wecom.send_user(db, target, "leader_appointed",
+                        activity=db.get(Activity, enr.activity_id).title,
+                        position=position.name,
+                        position_time=position.time_text(),
+                        position_loc=position.location or "待定")
+    else:
+        enr.is_leader = False
+        # 同时清掉本人的意愿：否则他还是按报名先后排最前的那个「有意愿的人」，
+        # 补位时会被立刻重新选回来，取消就成了空操作。
+        # 老师若改主意，仍可用本接口直接指定他。
+        enr.leader_willing = False
+        summary = (f"取消 {target.name} 的岗位「{position.name}」组长身份"
+                   f"（同时撤下其组长意愿，由下一位有意愿者接任）")
+
+    audit_log(db, actor=user, action="update", target_type="enrollment",
+              target_id=enr.id, target_label=target.name,
+              activity_id=enr.activity_id, summary=summary)
+    db.commit()
+    # 取消之后按报名先后自动补一个，别让岗位空着没人负责
+    if not body.is_leader:
+        logic.refill_leader(db, position.id)
+        db.commit()
+    return {"ok": True, "is_leader": enr.is_leader}
 
 
 # ======================= 一键分配 =======================

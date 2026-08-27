@@ -17,9 +17,9 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import config
 from ..audit import log as audit_log
 from ..database import db_session
-from ..deps import current_user, require_manager
-from ..models import Attachment, Position, Shift, User, uid
-from ..perm import ensure_activity_manager
+from ..deps import current_user_download, require_manager
+from ..models import Activity, Attachment, Position, Shift, User, uid
+from ..perm import ensure_activity_manager, is_activity_manager
 
 router = APIRouter(prefix="/api", tags=["materials"])
 
@@ -138,10 +138,19 @@ def delete_material(material_id: str, db: OrmSession = Depends(db_session),
 
 @router.get("/materials/{material_id}")
 def download_material(material_id: str, db: OrmSession = Depends(db_session),
-                      user: User = Depends(current_user)):
-    """志愿者下载培训材料。登录即可——材料本身就是发给报名者看的。"""
+                      user: User = Depends(current_user_download)):
+    """志愿者下载培训材料。
+
+    走 current_user_download：这是 <a href> 直链，带不了 Authorization 头。
+    登录即可下载——材料本身就是发给报名者看的；但筹备中的活动整体不对外，
+    它的材料也不能漏出去。
+    """
     row = db.get(Attachment, material_id)
     if row is None or row.kind != "file":
+        raise HTTPException(404, "材料不存在")
+    act = db.get(Activity, row.activity_id) if row.activity_id else None
+    if act is not None and act.status == "draft" and not is_activity_manager(
+            db, user, act.id):
         raise HTTPException(404, "材料不存在")
     path = MATERIAL_DIR / row.stored_name
     if not path.is_file():
