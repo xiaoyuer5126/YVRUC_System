@@ -26,17 +26,18 @@
         <span class="dim" style="margin-left:10px">{{ act.time_text }} · {{ act.location }}</span>
       </template>
       <template #extra>
-        <el-button v-if="!act.editing && act.status !== 'draft'" type="warning" plain
-                   @click="startEditing">调整安排（暂停报名）</el-button>
-        <el-button v-else type="success" :loading="lockBusy" @click="publishChanges">
-          保存并发布
+        <el-button v-if="structureLocked" type="warning" plain @click="startEditing">
+          {{ editLabel }}
         </el-button>
-        <el-button @click="editBase = true">编辑基本信息</el-button>
-        <el-popconfirm v-if="act.status === 'draft'" title="发布后进入报名期，确认？"
-                       @confirm="transition('publish')">
-          <template #reference><el-button type="success">发布活动</el-button></template>
+        <!-- 草稿是首次发布，编辑态是发布改动，对管理者是同一件事：改完了，让学生看到 -->
+        <el-popconfirm v-if="canPublish" :title="publishConfirm"
+                       @confirm="saveAndPublish">
+          <template #reference>
+            <el-button type="success" :loading="lockBusy">保存并发布</el-button>
+          </template>
         </el-popconfirm>
-        <el-popconfirm v-else-if="act.status === 'published'" title="截止后不再接受新报名，确认？"
+        <el-button @click="editBase = true">编辑基本信息</el-button>
+        <el-popconfirm v-if="act.status === 'published'" title="截止后不再接受新报名，确认？"
                        @confirm="transition('close')">
           <template #reference><el-button type="warning">截止报名</el-button></template>
         </el-popconfirm>
@@ -62,11 +63,18 @@
           同场次的岗位互斥，一人只占一个；点击岗位名称可查看详情。
         </el-alert>
         <el-alert v-if="structureLocked" type="info" show-icon :closable="false"
-                  style="margin-bottom:12px"
-                  title="当前为只读：修改场次与岗位需先「调整安排（暂停报名）」"
-                  description="已发布的活动改到一半会被学生看到，所以改动要成批进行：
-                               点右上角进入调整，改完「保存并发布」，
-                               期间报名暂停，保存时把这批改动一次性通知已报名的志愿者。" />
+                  style="margin-bottom:12px">
+          <template #title>
+            当前为只读——场次与岗位需要进入调整状态才能修改
+            <el-button type="warning" size="small" style="margin-left:10px"
+                       @click="startEditing">{{ editLabel }}</el-button>
+          </template>
+          <div style="line-height:1.8">
+            {{ act.status === 'published'
+               ? '已发布的活动改到一半会被学生看到，所以改动要成批进行：进入调整后报名暂停，改完点「保存并发布」，这批改动会一次性通知已报名的志愿者。'
+               : '报名已结束，进入调整只是把改动成批起来——改完点「保存并发布」，会把这批改动一次性通知已报名的志愿者。' }}
+          </div>
+        </el-alert>
 
         <el-alert v-if="shiftsNeedingPositions.length" type="error" show-icon
                   :closable="false" style="margin-bottom:12px"
@@ -773,13 +781,26 @@ async function startEditing() {
   loadAll()
 }
 
-async function publishChanges() {
+// 草稿 → 首次发布；编辑态 → 发布这批改动。对管理者都是「改完了，让学生看到」
+const canPublish = computed(
+  () => !!act.value && (act.value.status === 'draft' || act.value.editing))
+
+const publishConfirm = computed(() => act.value?.status === 'draft'
+  ? '发布后学生即可报名，确认？'
+  : '恢复报名，并把这段时间的改动通知已报名的志愿者？')
+
+async function saveAndPublish() {
   lockBusy.value = true
   try {
-    const d = await api.post(`/api/staff/activities/${activityId}/publish-changes`)
-    ElMessage.success(d.changes
-      ? `已恢复报名，${d.changes} 项改动已通知已报名的志愿者`
-      : '已恢复报名（本次没有实质改动）')
+    if (act.value.status === 'draft') {
+      await api.post(`/api/staff/activities/${activityId}/publish`)
+      ElMessage.success('已发布，学生现在可以报名了')
+    } else {
+      const d = await api.post(`/api/staff/activities/${activityId}/publish-changes`)
+      ElMessage.success(d.changes
+        ? `已恢复报名，${d.changes} 项改动已通知已报名的志愿者`
+        : '已恢复报名（本次没有实质改动）')
+    }
     loadAll()
   } finally { lockBusy.value = false }
 }
@@ -813,6 +834,10 @@ const mh = ref({ userIds: [], hours: 0.5, note: '' })
 
 // 手动加时长的候选人 = 本活动全部场次的已确认志愿者（含未签到的）
 // pick 模式却一个岗位都没有 = 学生根本报不了名
+// 报名已经结束的活动，再说「暂停报名」只会让人困惑
+const editLabel = computed(() =>
+  act.value?.status === 'published' ? '调整安排（暂停报名）' : '调整安排')
+
 // 已发布的活动，不进编辑态就不能动结构
 const structureLocked = computed(
   () => !!act.value && act.value.status !== 'draft' && !act.value.editing)

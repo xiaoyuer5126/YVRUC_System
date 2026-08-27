@@ -105,14 +105,14 @@
           <el-input v-model="form.intro" type="textarea" :rows="3"
                     placeholder="介绍活动内容、岗位与注意事项" />
         </el-form-item>
-        <el-form-item label="答疑群二维码" required>
+        <el-form-item label="答疑群二维码">
           <div class="contacts-box">
             <el-upload :show-file-list="false" :http-request="uploadQr" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
               <el-button type="primary" plain :loading="qrUploading">
                 <el-icon><Upload /></el-icon>&nbsp;上传二维码图片
               </el-button>
             </el-upload>
-            <div class="dim" style="margin-top:4px">支持 png/jpg/jpeg/webp，不超过 2MB；平台仅作展示容器</div>
+            <div class="dim" style="margin-top:4px">选填；支持 png/jpg/jpeg/webp，不超过 2MB。平台仅作展示容器，志愿者扫码自愿入群</div>
             <div v-if="form.qa_group_qr" class="qr-preview">
               <img :src="form.qa_group_qr" alt="答疑群二维码" />
               <el-button link type="danger" size="small" @click="form.qa_group_qr = ''">移除图片</el-button>
@@ -277,7 +277,6 @@ async function save() {
     return ElMessage.warning('请选择报名开始与截止时间')
   }
   if (!f.intro.trim()) return ElMessage.warning('请填写活动简介')
-  if (!f.qa_group_qr) return ElMessage.warning('请上传答疑群二维码')
   saving.value = true
   try {
     const body = {

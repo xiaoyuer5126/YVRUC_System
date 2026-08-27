@@ -265,3 +265,40 @@ def test_copy_positions_skips_duplicate_names(client, admin, db,
         r = client.post(f"/api/staff/shifts/{g.id}/positions/copy",
                         headers=admin, json=body)
         assert r.json()["copied"] == 0 and len(r.json()["skipped"]) == 2
+
+
+def test_答疑群二维码非必填(client, admin):
+    """群二维码是选填：不是每个活动都建群。"""
+    r = client.post("/api/staff/activities", headers=admin,
+                    json={"title": "无群活动", "type": "A", "intro": "x",
+                          "location": "世纪馆",
+                          "contacts": [{"name": "王", "phone": "13900000000"}],
+                          "reg_start": (now() - timedelta(days=1)).isoformat(),
+                          "reg_end": (now() + timedelta(days=1)).isoformat()})
+    assert r.status_code == 200, r.text
+    d = client.get(f"/api/activities/{r.json()['id']}", headers=admin).json()
+    assert d["qa_group_qr"] == ""
+
+
+def test_没有岗位的场次不能发布(client, admin, db):
+    """pick 模式没岗位就是没名额，发出去学生一个都报不了。"""
+    r = client.post("/api/staff/activities", headers=admin,
+                    json={"title": "空场次活动", "type": "A", "intro": "x",
+                          "location": "世纪馆",
+                          "contacts": [{"name": "王", "phone": "13900000000"}],
+                          "reg_start": (now() - timedelta(days=1)).isoformat(),
+                          "reg_end": (now() + timedelta(days=1)).isoformat()})
+    aid = r.json()["id"]
+    r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
+                    json={"name": "上午场", "mode": "pick",
+                          "start_time": (now() + timedelta(days=5)).isoformat(),
+                          "end_time": (now() + timedelta(days=5, hours=3)).isoformat()})
+    shift_id = r.json()["id"]
+
+    r = client.post(f"/api/staff/activities/{aid}/publish", headers=admin)
+    assert r.status_code == 400 and "还没有岗位" in r.json()["detail"]
+
+    client.post(f"/api/staff/shifts/{shift_id}/positions", headers=admin,
+                json={"name": "引导", "quota": 3})
+    assert client.post(f"/api/staff/activities/{aid}/publish",
+                       headers=admin).status_code == 200

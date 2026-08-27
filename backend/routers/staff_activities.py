@@ -152,8 +152,6 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
     contacts = _clean_contacts(body.contacts)
     if not body.intro.strip():
         raise HTTPException(400, "请填写活动简介")
-    if not body.qa_group_qr.strip():
-        raise HTTPException(400, "请上传答疑群二维码")
     reg_start, reg_end = _parse_dt(body.reg_start), _parse_dt(body.reg_end)
     if reg_start is None or reg_end is None:
         raise HTTPException(400, "请选择报名开始与截止时间")
@@ -376,10 +374,17 @@ def publish(activity_id: str, db: OrmSession = Depends(db_session),
             user: User = Depends(require_manager)):
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    if not act.shifts:
-        raise HTTPException(400, "请先至少创建一个场次（场次）再发布")
     if act.status != "draft":
         raise HTTPException(409, f"当前状态为「{act.label_status()}」，不能发布")
+    if not act.shifts:
+        raise HTTPException(400, "请先至少创建一个场次再发布")
+    # 「报名即选岗位」的场次没有岗位就等于没有名额，发出去学生一个都报不了
+    empty = [g.name for g in act.shifts if not g.needs_assign() and not g.positions]
+    if empty:
+        raise HTTPException(
+            400, f"场次「{'、'.join(empty)}」还没有岗位——名额与候补都记在岗位上，"
+                 f"没有岗位学生就报不了名。请先添加岗位，或把这些场次改为"
+                 f"「截止后统一分配」")
     act.status = "published"
     if act.reg_start is None:
         act.reg_start = now()
