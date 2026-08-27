@@ -456,7 +456,7 @@ async function submitEnroll() {
   enrollDlg.value.submitting = true
   try {
     const d = await api.post(
-      `/api/activities/${act.value.id}/groups/${g.id}/enroll`,
+      `/api/activities/${act.value.id}/shifts/${g.id}/enroll`,
       { position_id: position ? position.id : null,
         allow_reassign: allowReassign, leader_willing: leaderWilling })
     enrollDlg.value.visible = false

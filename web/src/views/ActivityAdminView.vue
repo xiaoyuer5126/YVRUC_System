@@ -46,11 +46,11 @@
       <!-- ============ 岗位树 ============ -->
       <el-tab-pane label="岗位树（一二级）" name="tree">
         <el-alert type="info" :closable="false" style="margin-bottom:12px">
-          场次模式两种：<b>报名即选岗位</b>（名额与候补都在岗位上）/ <b>截止后统一分配</b>（报名只锁时段，名额记在场次上）；
-          <b>直接定二级</b>（学生报名直接选岗位，岗位之间互斥）。
-          时间由场次统一负责，岗位只区分职责/地点；点击岗位名称可查看详情。
+          场次只管时间，岗位管具体的事。两种模式：<b>报名即选岗位</b>（名额与候补都在各个岗位上）
+          / <b>截止后统一分配</b>（报名只锁时段，名额记在场次上，截止后一键分配）。
+          同场次的岗位互斥，一人只占一个；点击岗位名称可查看详情。
         </el-alert>
-        <div v-for="g in groups" :key="g.id" class="group-card">
+        <div v-for="g in shifts" :key="g.id" class="group-card">
           <div class="g-head">
             <el-link type="primary" :underline="false" style="font-weight:600;font-size:14px"
                      @click="showGroupDetail(g)">{{ g.name }}</el-link>
@@ -61,9 +61,6 @@
             <span class="dim">{{ g.start_time.slice(5,16).replace('T',' ') }}
               ~ {{ g.end_time.slice(5,16).replace('T',' ') }}</span>
             <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}` : `岗位合计 ${sumQuota(g)}` }}</span>
-            <el-tooltip v-if="g.held_seats" placement="top"
-                        content="临近退选（开始前24小时内）扣留的名额，按规则不再释放给任何人">
-            </el-tooltip>
             <span style="margin-left:auto">
               <el-button size="small" @click="openShift(g)">编辑</el-button>
               <el-button size="small" plain @click="openCopyPositions(g)">复制岗位到其它场次</el-button>
@@ -123,7 +120,7 @@
         <el-row :gutter="14">
           <el-col :span="7">
             <el-select v-model="currentGroupId" style="width:100%;margin-bottom:10px">
-              <el-option v-for="g in groups" :key="g.id"
+              <el-option v-for="g in shifts" :key="g.id"
                          :value="g.id" :label="`${g.name}（${g.confirmed}/${g.capacity}）`" />
             </el-select>
             <template v-if="currentShift">
@@ -575,7 +572,7 @@
         </el-form-item>
         <el-form-item v-if="notifyForm.scope !== 'all'" label="选择场次" required>
           <el-select v-model="notifyForm.shift_id" style="width:100%" placeholder="请选择场次">
-            <el-option v-for="g in groups" :key="g.id" :value="g.id"
+            <el-option v-for="g in shifts" :key="g.id" :value="g.id"
                        :label="`${g.name}（${g.start_time.slice(5,16).replace('T',' ')} ~ ${g.end_time.slice(11,16)}）`" />
           </el-select>
         </el-form-item>
@@ -822,7 +819,7 @@ async function saveShift() {
       start_time: toISO(f.start_time), end_time: toISO(f.end_time),
     }
     if (shiftDlg.value.editing) await api.patch(`/api/staff/shifts/${shiftDlg.value.editing.id}`, body)
-    else await api.post(`/api/staff/activities/${activityId}/groups`, body)
+    else await api.post(`/api/staff/activities/${activityId}/shifts`, body)
     ElMessage.success('已保存（操作留痕）')
     shiftDlg.value.visible = false
     loadAll()

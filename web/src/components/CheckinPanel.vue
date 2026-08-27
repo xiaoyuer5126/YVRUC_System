@@ -148,7 +148,7 @@
         </el-form-item>
         <el-form-item v-if="form.mode === 'position'" label="选择岗位" required>
           <el-select v-model="form.position_id" style="width:100%">
-            <el-option v-for="s in group.positions" :key="s.id" :value="s.id"
+            <el-option v-for="s in shift.positions" :key="s.id" :value="s.id"
                        :label="`${s.name}（${s.time_text}）`" />
           </el-select>
         </el-form-item>
