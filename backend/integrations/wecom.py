@@ -73,11 +73,13 @@ def render(template_key: str, extra: str = "", **kw) -> tuple[str, str]:
 
 
 def send_user(db: OrmSession, user: User, template_key: str,
-              data: dict | None = None, **fields) -> None:
+              data: dict | None = None, *, need_ack: bool = False,
+              batch_id: str | None = None, **fields) -> None:
     """向单个用户发模板消息，并把送达记录写进调用方的事务。
 
     消息与触发它的业务变更同生共死：业务回滚了，通知也不该留下。
     真实推送失败只标记 delivered=False，不打断业务。
+    need_ack=True 的消息要志愿者点一次「我已知悉」才算到人。
     """
     title, content = render(template_key, **fields)
     delivered = True
@@ -90,7 +92,8 @@ def send_user(db: OrmSession, user: User, template_key: str,
             delivered = False
     db.add(Notification(id=uid("ntf"), user_id=user.id,
                         template_key=template_key, title=title,
-                        content=content, data=data or {}, delivered=delivered))
+                        content=content, data=data or {}, delivered=delivered,
+                        need_ack=need_ack, batch_id=batch_id))
 
 
 def _http_send(student_id: str, title: str, content: str) -> bool:

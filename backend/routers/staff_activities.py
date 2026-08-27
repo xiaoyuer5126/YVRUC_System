@@ -31,6 +31,7 @@ from ..perm import (activity_manager_ids, add_manager,
                      remove_manager)
 from ..integrations import wecom
 from ..models import (Activity, ActivityManager, CheckinRecord, Enrollment,
+                      Notification,
                       Shift, Position, User, iso, now, uid)
 from ..serializers import activity_brief
 
@@ -748,6 +749,7 @@ class NotifyBody(BaseModel):
     shift_id: str = ""
     title: str = Field(max_length=128)
     content: str
+    need_ack: bool = False  # 要求志愿者点「我已知悉」
 
 
 @router.post("/activities/{activity_id}/notify")
@@ -789,15 +791,85 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
         checked = {r[0] for r in db.query(CheckinRecord.user_id)
                    .filter(CheckinRecord.shift_id == shift_id).all()}
         users = [u for u in users if u.id not in checked]
+    batch_id = uid("bat") if body.need_ack else None
     for u in users:
-        wecom.send_user(db, u, "custom", title=title, content=content)
+        wecom.send_user(db, u, "custom", title=title, content=content,
+                        data={"activity_id": act.id},
+                        need_ack=body.need_ack, batch_id=batch_id)
     n = len(users)
     audit_log(db, actor=user, action="update", target_type="notify",
               target_id=act.id, target_label=act.title,
               activity_id=act.id,
-              summary=f"向{n}位志愿者发送通知：{title}", visible=False)
+              summary=f"向{n}位志愿者发送通知：{title}"
+                      + ("（要求签收）" if body.need_ack else ""),
+              visible=False)
     db.commit()
-    return {"ok": True, "count": n}
+    return {"ok": True, "count": n, "batch_id": batch_id}
+
+
+@router.get("/activities/{activity_id}/notify-batches")
+def notify_batches(activity_id: str, db: OrmSession = Depends(db_session),
+                   user: User = Depends(require_manager)):
+    """需要签收的群发批次及其签收情况。"""
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    # 该活动报名者收到的、要求签收的通知，按批次聚合
+    member_ids = [r[0] for r in db.query(Enrollment.user_id)
+                  .filter(Enrollment.activity_id == act.id).distinct().all()]
+    if not member_ids:
+        return []
+    rows = (db.query(Notification)
+            .filter(Notification.need_ack.is_(True),
+                    Notification.batch_id.isnot(None),
+                    Notification.user_id.in_(member_ids))
+            .order_by(Notification.created_at.desc()).all())
+    batches: dict[str, dict] = {}
+    for n in rows:
+        b = batches.setdefault(n.batch_id, {
+            "batch_id": n.batch_id, "title": n.title,
+            "created_at": iso(n.created_at), "total": 0, "acked": 0,
+            "pending": []})
+        b["total"] += 1
+        if n.acked_at:
+            b["acked"] += 1
+        else:
+            u = db.get(User, n.user_id)
+            if u is not None:
+                b["pending"].append({"name": u.name, "student_id": u.student_id})
+    return list(batches.values())
+
+
+@router.post("/notify-batches/{batch_id}/remind")
+def remind_batch(batch_id: str, db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_manager)):
+    """一键提醒未签收的志愿者：给他们再发一条同内容的待签收通知。"""
+    pending = (db.query(Notification)
+               .filter(Notification.batch_id == batch_id,
+                       Notification.acked_at.is_(None)).all())
+    if not pending:
+        raise HTTPException(400, "该批通知已全部签收，无需提醒")
+    first = pending[0]
+    activity_id = str((first.data or {}).get("activity_id") or "")
+    if activity_id:
+        ensure_activity_manager(db, user, activity_id)
+    elif not user.is_admin():
+        raise HTTPException(403, "无法确认该批通知所属活动，请由管理员操作")
+    for n in pending:
+        u = db.get(User, n.user_id)
+        if u is None:
+            continue
+        wecom.send_user(db, u, "custom",
+                        data={"activity_id": activity_id},
+                        need_ack=True, batch_id=batch_id,
+                        title=f"[待签收提醒] {n.title}",
+                        content=n.content)
+    audit_log(db, actor=user, action="update", target_type="notify",
+              target_id=batch_id, target_label=first.title,
+              activity_id=activity_id or None,
+              summary=f"提醒 {len(pending)} 位未签收志愿者：{first.title}",
+              visible=False)
+    db.commit()
+    return {"ok": True, "count": len(pending)}
 
 
 # ======================= 报名名单 =======================

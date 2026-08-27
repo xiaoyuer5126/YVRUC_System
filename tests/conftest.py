@@ -129,3 +129,42 @@ def take_student(student_seq):
 def student_row(db, student_id: str):
     from backend.models import User
     return db.query(User).filter(User.student_id == student_id).one()
+
+
+@pytest.fixture
+def enrolled_activity(db, take_student):
+    """一个已发布的活动 + 一个场次 + 一名已确认志愿者。
+
+    通知类用例只关心"有人能收到"，不必每次自己搭一遍岗位树。
+    """
+    from datetime import timedelta
+    from backend.models import (Activity, ActivityManager, Enrollment,
+                                Position, Shift, User, now, uid)
+
+    admin_user = student_row(db, ADMIN)
+    act = Activity(id=uid("act"), title=f"通知测试活动 {uid('t')}", type="A",
+                   intro="x", location="世纪馆",
+                   contacts=[{"name": "测试", "phone": "13900000000"}],
+                   qa_group_qr="x", status="published",
+                   reg_start=now() - timedelta(days=1),
+                   reg_end=now() + timedelta(days=2), created_by=admin_user.id)
+    db.add(act)
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                           user_id=admin_user.id, added_by=admin_user.id))
+    shift = Shift(id=uid("s"), activity_id=act.id, name="上午场",
+                  start_time=now() + timedelta(days=3),
+                  end_time=now() + timedelta(days=3, hours=4),
+                  mode="pick", sort=0)
+    db.add(shift)
+    db.flush()
+    pos = Position(id=uid("p"), shift_id=shift.id, name="引导", quota=5,
+                   waitlist_quota=2, location="北门", sort=0)
+    db.add(pos)
+    db.flush()
+
+    u = student_row(db, take_student())
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=shift.id,
+                      user_id=u.id, position_id=pos.id, status="confirmed",
+                      joined_at=now()))
+    db.commit()
+    return act, shift, u

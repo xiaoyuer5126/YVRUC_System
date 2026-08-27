@@ -330,6 +330,39 @@
       </el-tab-pane>
 
       <!-- ============ 管理者 ============ -->
+      <el-tab-pane label="签收情况" name="acks" lazy>
+        <div class="dim" style="margin-bottom:10px">
+          只列出「要求签收」的群发通知。签收 = 志愿者点过「我已知悉」，
+          比「已读」硬——已读只说明他打开过消息中心。
+        </div>
+        <el-empty v-if="!ackBatches.length"
+                  description="还没有要求签收的通知；发送通知时勾选「要求志愿者签收」即可" />
+        <el-card v-for="b in ackBatches" :key="b.batch_id" shadow="never"
+                 style="margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <b>{{ b.title }}</b>
+            <span class="dim">{{ fmtDT(b.created_at) }}</span>
+            <el-tag size="small" :type="b.acked === b.total ? 'success' : 'warning'">
+              已签收 {{ b.acked }}/{{ b.total }}
+            </el-tag>
+            <el-button v-if="b.acked < b.total" size="small" type="primary" plain
+                       style="margin-left:auto" @click="remindBatch(b)">
+              一键提醒未签收（{{ b.total - b.acked }} 人）
+            </el-button>
+          </div>
+          <el-progress :percentage="Math.round(b.acked / b.total * 100)"
+                       :status="b.acked === b.total ? 'success' : undefined"
+                       style="margin-top:10px" />
+          <div v-if="b.pending.length" style="margin-top:10px">
+            <span class="dim">未签收：</span>
+            <el-tag v-for="p in b.pending" :key="p.student_id" size="small"
+                    type="info" effect="plain" style="margin:2px 4px 2px 0">
+              {{ p.name }}（{{ p.student_id }}）
+            </el-tag>
+          </div>
+        </el-card>
+      </el-tab-pane>
+
       <el-tab-pane label="管理者" name="managers" lazy>
         <el-alert type="info" :closable="false" style="margin-bottom:12px">
           一个活动可由多人共同管理：创建者自动成为管理者（<b>不可被移除</b>，但权限上不特殊）；
@@ -554,6 +587,15 @@
           <el-input v-model="notifyForm.content" type="textarea" :rows="4"
                     placeholder="请输入通知正文，将通过企业微信推送给志愿者" />
         </el-form-item>
+        <el-form-item label="">
+          <el-checkbox v-model="notifyForm.need_ack">要求志愿者签收</el-checkbox>
+          <div class="dim">
+            勾选后，志愿者的通知会显红并附「我已知悉」按钮；您可以在下方
+            「签收情况」里看到谁还没签，并一键催办。<br>
+            改集合地点、临时取消这类必须确认到人的通知才勾，别每条都勾——
+            都要签收就等于都不要签收。
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="notifyDlg.visible = false">取消</el-button>
@@ -640,7 +682,21 @@ const qrUploading = ref(false)
 
 // —— 发送通知 ——
 const notifyDlg = ref({ visible: false, saving: false })
-const notifyForm = ref({ scope: 'all', shift_id: '', title: '', content: '' })
+const notifyForm = ref({ scope: 'all', shift_id: '', title: '', content: '',
+                         need_ack: false })
+const ackBatches = ref([])
+
+// —— 签收情况 ——
+async function loadBatches() {
+  ackBatches.value = await api.get(
+    `/api/staff/activities/${activityId}/notify-batches`)
+}
+
+async function remindBatch(b) {
+  const d = await api.post(`/api/staff/notify-batches/${b.batch_id}/remind`)
+  ElMessage.success(`已提醒 ${d.count} 位未签收志愿者`)
+  loadBatches()
+}
 
 // —— 岗位树 ——
 const shiftDlg = ref({ visible: false, editing: null })
@@ -931,7 +987,7 @@ async function saveBase() {
 // —— 发送通知 ——
 function openNotify() {
   notifyForm.value = { scope: 'all', shift_id: currentGroupId.value || '',
-                       title: '', content: '' }
+                       title: '', content: '', need_ack: false }
   notifyDlg.value.visible = true
 }
 
@@ -947,9 +1003,12 @@ async function sendNotify() {
       shift_id: f.scope === 'all' ? '' : f.shift_id,
       title: f.title.trim(),
       content: f.content.trim(),
+      need_ack: f.need_ack,
     })
-    ElMessage.success(`已发送给 ${d.count} 人`)
+    ElMessage.success(`已发送给 ${d.count} 人`
+      + (f.need_ack ? '，可在「签收情况」查看进度' : ''))
     notifyDlg.value.visible = false
+    loadBatches()
   } catch { /* toast by api */ } finally {
     notifyDlg.value.saving = false
   }
@@ -1081,7 +1140,10 @@ async function removeManager(row) {
   } catch { /* toast by api */ }
 }
 // 进入「导出与时长」页签时自动加载时长预览（静默加载，不弹提示）
-watch(tab, t => { if (t === 'export') hoursPreview(true) })
+watch(tab, t => {
+  if (t === 'export') hoursPreview(true)
+  if (t === 'acks') loadBatches()
+})
 watch(currentGroupId, loadRoster)
 watch(() => shifts.value.map(g => g.confirmed).join(','), () => {
   if (!currentGroupId.value && shifts.value.length) currentGroupId.value = shifts.value[0].id

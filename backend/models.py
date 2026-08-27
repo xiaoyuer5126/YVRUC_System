@@ -518,10 +518,19 @@ class Notification(Base):
     read: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
+    # —— 签收 ——
+    # 「已读」是打开消息中心就会置上的，证明不了人真的看到了；需要确认到人的
+    # 通知（改集合地点、临时取消）单独要一次签收动作。
+    need_ack: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    acked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 同一批群发共用一个 batch_id，管理端按批次看签收情况
+    batch_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+
     def out(self) -> dict:
         return {
             "id": self.id, "title": self.title, "content": self.content,
             "template_key": self.template_key, "read": self.read,
+            "need_ack": self.need_ack, "acked_at": iso(self.acked_at),
             "data": self.data or {}, "created_at": iso(self.created_at),
         }
 

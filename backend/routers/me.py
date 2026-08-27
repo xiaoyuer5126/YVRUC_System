@@ -88,16 +88,39 @@ def my_notifications(db: OrmSession = Depends(db_session),
     unread = (db.query(func.count(Notification.id))
               .filter(Notification.user_id == user.id,
                       Notification.read.is_(False)).scalar() or 0)
-    return {"unread": unread, "items": [n.out() for n in rows]}
+    pending_ack = (db.query(func.count(Notification.id))
+                   .filter(Notification.user_id == user.id,
+                           Notification.need_ack.is_(True),
+                           Notification.acked_at.is_(None)).scalar() or 0)
+    return {"unread": unread, "pending_ack": pending_ack,
+            "items": [n.out() for n in rows]}
 
 
 @router.post("/notifications/read-all")
 def read_all(db: OrmSession = Depends(db_session), user=Depends(current_user)):
+    """全部标为已读。待签收的通知只标已读，签收仍需本人逐条点。"""
     (db.query(Notification)
      .filter(Notification.user_id == user.id, Notification.read.is_(False))
      .update({"read": True}, synchronize_session=False))
     db.commit()
     return {"ok": True}
+
+
+@router.post("/notifications/{notification_id}/ack")
+def ack_notification(notification_id: str,
+                     db: OrmSession = Depends(db_session),
+                     user=Depends(current_user)):
+    """签收一条通知。已读只说明打开过消息中心，签收才是本人确认看到了。"""
+    n = db.get(Notification, notification_id)
+    if n is None or n.user_id != user.id:
+        raise HTTPException(404, "通知不存在")
+    if not n.need_ack:
+        raise HTTPException(400, "该通知无需签收")
+    if n.acked_at is None:
+        n.acked_at = now()
+        n.read = True
+        db.commit()
+    return {"ok": True, "acked_at": iso(n.acked_at)}
 
 
 @router.get("/credit")
