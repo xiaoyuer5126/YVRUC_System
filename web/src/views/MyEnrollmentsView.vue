@@ -54,6 +54,9 @@
           <template v-if="row.checked_in && row.status === 'confirmed'">
             <el-tag type="success" effect="light">已到岗</el-tag>
             <div v-if="row.checkout_at" class="dim checkout-time">签退 {{ row.checkout_at.slice(11, 16) }}</div>
+            <el-tag v-else-if="shiftEnded(row)" type="danger" effect="light" size="small">
+              未签退
+            </el-tag>
             <el-tag v-else type="warning" effect="light" size="small">服务中</el-tag>
           </template>
           <span v-else-if="row.status === 'confirmed'" class="dim">未签到</span>
@@ -99,6 +102,11 @@ const cancelLabel = r => r.status === 'cancelled'
 
 function isActive(r) {
   return ['confirmed', 'waitlisted', 'pending_confirm'].includes(r.status)
+}
+
+// 场次结束后还没签退，是「未签退」而不是「服务中」——人早走了
+function shiftEnded(r) {
+  return !!r.shift?.end_time && new Date(r.shift.end_time) < new Date()
 }
 
 async function load() {

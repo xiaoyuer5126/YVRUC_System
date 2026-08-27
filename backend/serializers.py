@@ -22,26 +22,33 @@ def iso_of(dt):
 
 
 def display_status(act: Activity) -> tuple[str, str]:
-    """广场展示状态：报名中（绿）/ 已截止（黄）/ 进行中（红）/ 已结束（灰）。
+    """展示状态：按**时间**算，而不是只看数据库里的 status。
 
-    进行中 = 报名已截止且当前时间落在场次时间跨度内；
-    已截止的场次时间已过但未手动结束 → 也归为已结束。
+    状态流转由定时任务每分钟推进，中间那一分钟里 status 还没跟上；报名开始
+    时间更是完全不体现在 status 上——「已发布但还没到报名时间」的活动，
+    以前一律显示「报名中」，学生点进去才发现报不了。
+
+        筹备中 → 未开始报名 → 报名中 → 已截止 → 进行中 → 已结束
     """
-    if act.status == "published":
-        return "published", "报名中"
+    t = now()
+    if act.status == "draft":
+        return "draft", "筹备中"
     if act.status == "finished":
         return "finished", "已结束"
-    if act.status == "closed":
-        span = act.time_span()
-        t = now()
-        if span:
-            if t < span[0]:
-                return "closed", "已截止"
-            if t <= span[1]:
-                return "ongoing", "进行中"
-            return "finished", "已结束"
-        return "closed", "已截止"
-    return "draft", "筹备中"
+
+    span = act.time_span()
+    if span and t > span[1]:
+        return "finished", "已结束"
+    if span and span[0] <= t <= span[1]:
+        return "ongoing", "进行中"
+
+    if act.status == "published":
+        if act.reg_start and t < act.reg_start:
+            return "upcoming", "未开始报名"
+        if act.reg_end and t > act.reg_end:
+            return "closed", "已截止"
+        return "published", "报名中"
+    return "closed", "已截止"
 
 
 def activity_brief(db: OrmSession, act: Activity) -> dict:
@@ -69,9 +76,15 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
     }
 
 
-def position_out(db: OrmSession, p: Position, user=None) -> dict:
-    """岗位。带 user 时附上「这个人能不能报」——前端据此灰掉并说明原因，
-    比让人点了再被拒要清楚。"""
+def position_out(db: OrmSession, p: Position, user=None, *,
+                 enrolled: bool = False, manager: bool = False) -> dict:
+    """岗位。
+
+    带 user 时附上「这个人能不能报」——前端据此灰掉并说明原因，比让人点了
+    再被拒要清楚。培训内容、学习材料与组长姓名只对**已报名本场次的人**
+    和管理者可见：培训材料是发给要上岗的人的，组长姓名属于个人信息，
+    不该挂在公开页面上供人浏览。
+    """
     confirmed = position_confirmed_count(db, p.id)
     occupied = position_occupied_count(db, p.id)
     queued = len([r for r in waitlist_rows(db, p.shift_id)
@@ -89,20 +102,32 @@ def position_out(db: OrmSession, p: Position, user=None) -> dict:
         "requirement_tags": p.requirement_tags or {},
         "requirement_desc": p.requirement_desc() or "不限",
         "requirement_note": p.requirement_note,
-        "training_note": p.training_note,
-        "attachments": attachments_out(db, "position", p.id),
         "sort": p.sort,
     }
+    visible = enrolled or manager
+    out["training_visible"] = visible
+    out["training_note"] = p.training_note if visible else ""
+    out["attachments"] = attachments_out(db, "position", p.id) if visible else []
+    out["material_count"] = attachment_count(db, "position", p.id)
     leader = (db.query(Enrollment)
               .filter(Enrollment.position_id == p.id,
                       Enrollment.is_leader.is_(True),
                       Enrollment.status == "confirmed").first())
-    out["leader_name"] = (db.get(User, leader.user_id).name if leader else "")
+    out["leader_name"] = ((db.get(User, leader.user_id).name if leader else "")
+                          if visible else "")
     if user is not None:
         unmet = unmet_requirements(user, p)
         out["eligible"] = not unmet
         out["ineligible_reason"] = "；".join(unmet)
     return out
+
+
+def attachment_count(db: OrmSession, owner_type: str, owner_id: str) -> int:
+    """材料**数量**始终公开：让人知道「报名后有 3 份培训材料」是招募信息，
+    内容本身才需要报名后才能看。"""
+    return (db.query(Attachment)
+            .filter(Attachment.owner_type == owner_type,
+                    Attachment.owner_id == owner_id).count())
 
 
 def attachments_out(db: OrmSession, owner_type: str, owner_id: str) -> list[dict]:
@@ -115,9 +140,20 @@ def attachments_out(db: OrmSession, owner_type: str, owner_id: str) -> list[dict
             for a in rows]
 
 
-def shift_out(db: OrmSession, g: Shift, user=None) -> dict:
+def shift_out(db: OrmSession, g: Shift, user=None, *,
+              manager: bool = False) -> dict:
     positions = sorted(g.positions, key=lambda p: p.sort)
     capacity = g.total_capacity()
+    # 报名本场次的人才看得到培训内容与组长（见 position_out）
+    my_enr = None
+    if user is not None:
+        my_enr = (db.query(Enrollment)
+                  .filter(Enrollment.shift_id == g.id,
+                          Enrollment.user_id == user.id,
+                          Enrollment.status.in_(("confirmed", "waitlisted",
+                                                 "pending_confirm")))
+                  .first())
+    enrolled = my_enr is not None
     out = {
         "id": g.id, "name": g.name,
         "activity_id": g.activity_id,
@@ -134,7 +170,8 @@ def shift_out(db: OrmSession, g: Shift, user=None) -> dict:
         "mode": g.mode,
         "mode_label": g.mode_label(),
         "note": g.note, "sort": g.sort,
-        "positions": [position_out(db, p, user) for p in positions],
+        "positions": [position_out(db, p, user, enrolled=enrolled,
+                                   manager=manager) for p in positions],
         # 已确认但还没岗位的人数：pick 模式下岗位名额之和不够时就有人落空，
         # 管理者需要当场看见这个缺口，而不是等分配面板报「未排上」
         "unassigned_count": (db.query(Enrollment)
@@ -146,33 +183,28 @@ def shift_out(db: OrmSession, g: Shift, user=None) -> dict:
         "waitlist_count": len(waitlist_rows(db, g.id)),
     }
 
-    if user is not None:
-        enr = (db.query(Enrollment)
-               .filter(Enrollment.shift_id == g.id, Enrollment.user_id == user.id,
-                       Enrollment.status.in_(("confirmed", "waitlisted",
-                                              "pending_confirm")))
-               .first())
-        if enr:
-            out["my_enrollment"] = {
-                "enrollment_id": enr.id, "status": enr.status,
-                "position_id": enr.position_id,
-                "allow_reassign": enr.allow_reassign,
-                "is_leader": enr.is_leader,
-                "confirm_deadline": iso_of(enr.confirm_deadline),
-                "waitlist_position": (waitlist_position(db, enr)
-                                      if enr.status != "confirmed" else 0),
-            }
+    if my_enr is not None:
+        out["my_enrollment"] = {
+            "enrollment_id": my_enr.id, "status": my_enr.status,
+            "position_id": my_enr.position_id,
+            "allow_reassign": my_enr.allow_reassign,
+            "is_leader": my_enr.is_leader,
+            "confirm_deadline": iso_of(my_enr.confirm_deadline),
+            "waitlist_position": (waitlist_position(db, my_enr)
+                                  if my_enr.status != "confirmed" else 0),
+        }
     return out
 
 
 def activity_detail(db: OrmSession, act: Activity, user=None,
-                    include_logs: bool = True) -> dict:
+                    include_logs: bool = True, *, manager: bool = False) -> dict:
     out = activity_brief(db, act)
     out.update({
         "intro": act.intro,
         "contact_info": act.contact_info,
         "qa_group_qr": act.qa_group_qr or "",
-        "shifts": sorted([shift_out(db, g, user) for g in act.shifts],
+        "shifts": sorted([shift_out(db, g, user, manager=manager)
+                          for g in act.shifts],
                          key=lambda x: x["start_time"]),
     })
     if include_logs:

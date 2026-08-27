@@ -89,6 +89,11 @@ def login(client: TestClient, student_id: str) -> dict:
     return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
+# 岗位的服务地点、要求原文、培训内容都是必填（志愿者到岗前只能看到这些）
+POSITION_TEXT = {"location": "北门", "requirement_note": "无特殊要求",
+                 "training_note": "现场由负责人统一讲解"}
+
+
 @pytest.fixture
 def admin(client):
     return login(client, ADMIN)
@@ -166,7 +171,7 @@ def enrolled_activity(db, take_student):
     db.add(shift)
     db.flush()
     pos = Position(id=uid("p"), shift_id=shift.id, name="引导", quota=5,
-                   waitlist_quota=2, location="北门", sort=0)
+                   waitlist_quota=2, sort=0, **POSITION_TEXT)
     db.add(pos)
     db.flush()
 

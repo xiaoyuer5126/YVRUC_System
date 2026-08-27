@@ -50,11 +50,13 @@ const list = ref([])
 const typeColor = t => TYPE_COLORS[t]?.color
 
 // 展示状态 → el-tag type 颜色
+// 展示状态 → el-tag 颜色。以后端 display_status 为准，别在这里另算一套
 const STATUS_TYPES = {
-  published: 'success',
-  closed: 'warning',
-  ongoing: 'danger',
-  finished: 'info',
+  upcoming: 'primary',    // 未开始报名
+  published: 'success',   // 报名中
+  closed: 'warning',      // 已截止
+  ongoing: 'danger',      // 进行中
+  finished: 'info',       // 已结束
 }
 const statusType = code => STATUS_TYPES[code] || 'info'
 

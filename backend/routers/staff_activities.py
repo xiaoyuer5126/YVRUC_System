@@ -659,6 +659,15 @@ def _ensure_pick_mode_for_positions(g: Shift) -> None:
                  f"改为「报名即选岗位」，再添加岗位并运行一键分配")
 
 
+def _require_position_text(s: Position) -> None:
+    """三项说明是志愿者到岗前唯一能看到的信息，缺一项现场就要被问一次。"""
+    for value, label in ((s.location, "服务地点"),
+                         (s.requirement_note, "要求原文"),
+                         (s.training_note, "培训内容")):
+        if not (value or "").strip():
+            raise HTTPException(400, f"请填写岗位「{s.name}」的{label}")
+
+
 def _validate_position(db: OrmSession, g: Shift, s: Position):
     """岗位自带名额，不再受场次总数约束——场次只管时间。
 
@@ -694,6 +703,7 @@ def create_position(shift_id: str, body: PositionBody,
                 training_note=body.training_note.strip(),
                 sort=len(g.positions))
     _validate_position(db, g, s)
+    _require_position_text(s)
     db.add(s)
     db.flush()   # 让 group 关系可用，供 time_text() 使用
     audit_log(db, actor=user, action="create", target_type="position",
@@ -721,6 +731,7 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
             continue
         setattr(s, key, body[key])
     _validate_position(db, g, s)
+    _require_position_text(s)
 
     # 组长开关变化要落到人身上：关掉了还留着组长标记，导出表和大屏就会
     # 显示一个「不存在的岗位角色」；打开了则当场按报名先后选一个。

@@ -96,6 +96,7 @@
         </el-form-item>
         <el-form-item label="报名窗口" required>
           <el-date-picker v-model="createRange" type="datetimerange" style="width:100%"
+                          :default-time="RANGE_DEFAULT_TIME"
                           start-placeholder="报名开始时间" end-placeholder="报名截止时间" />
           <div class="dim" style="margin-top:4px;line-height:1.7">
             报名开始与截止时间为必填；发布后可在活动管理页「编辑基本信息」调整。
@@ -112,7 +113,7 @@
                 <el-icon><Upload /></el-icon>&nbsp;上传二维码图片
               </el-button>
             </el-upload>
-            <div class="dim" style="margin-top:4px">选填；支持 png/jpg/jpeg/webp，不超过 2MB。平台仅作展示容器，志愿者扫码自愿入群</div>
+            <div class="dim" style="margin-top:4px">选填；支持 png/jpg/jpeg/webp，不超过 2MB。活动信息交流答疑群，所有人均可扫码入群</div>
             <div v-if="form.qa_group_qr" class="qr-preview">
               <img :src="form.qa_group_qr" alt="答疑群二维码" />
               <el-button link type="danger" size="small" @click="form.qa_group_qr = ''">移除图片</el-button>
@@ -162,7 +163,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
-import { TYPE_COLORS, auth } from '../store'
+import { RANGE_DEFAULT_TIME, TYPE_COLORS, auth } from '../store'
 
 const router = useRouter()
 const list = ref([])

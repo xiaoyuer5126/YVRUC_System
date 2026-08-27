@@ -8,7 +8,7 @@ import pytest
 from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, Shift, Position,
                             User, now, uid)
-from conftest import ADMIN, QINGXIE, editing, login
+from conftest import ADMIN, POSITION_TEXT, QINGXIE, editing, login
 
 
 @pytest.fixture
@@ -299,6 +299,6 @@ def test_没有岗位的场次不能发布(client, admin, db):
     assert r.status_code == 400 and "还没有岗位" in r.json()["detail"]
 
     client.post(f"/api/staff/shifts/{shift_id}/positions", headers=admin,
-                json={"name": "引导", "quota": 3})
+                json={"name": "引导", "quota": 3, **POSITION_TEXT})
     assert client.post(f"/api/staff/activities/{aid}/publish",
                        headers=admin).status_code == 200

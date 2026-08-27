@@ -70,3 +70,11 @@ export const TYPE_COLORS = {
   C: { label: 'C类·大型校级', color: '#e6a23c' },
   D: { label: 'D类·重大活动', color: '#f56c6c' },
 }
+
+// 日期区间选择器的默认时刻：先点日期时，起止会预填成当天的第一刻与最后一刻，
+// 省得每次都手动把结束时间从 00:00 拖到 23:59
+export const RANGE_DEFAULT_TIME = [
+  new Date(2000, 0, 1, 0, 0, 0),
+  new Date(2000, 0, 1, 23, 59, 59),
+]
+export const DAY_END = new Date(2000, 0, 1, 23, 59, 59)

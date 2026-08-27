@@ -65,7 +65,9 @@ def get_activity(activity_id: str,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(current_user)):
     act = _get_activity(db, activity_id, user)
-    return activity_detail(db, act, user)
+    # 管理者要能在同一个页面核对培训内容与组长，不必先去后台
+    return activity_detail(db, act, user,
+                           manager=is_activity_manager(db, user, activity_id))
 
 
 class EnrollBody(BaseModel):

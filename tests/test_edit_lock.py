@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from backend import config, scheduled
 from backend.models import Activity, Enrollment, Notification, now
-from conftest import editing, login
+from conftest import POSITION_TEXT, editing, login
 
 
 def test_冻结期间报不了名也退不了选(client, admin, db, enrolled_activity,
@@ -92,7 +92,7 @@ def test_统一分配的场次必须先切模式才能加岗位(client, admin, d
 
     with editing(client, admin, act.id):
         r = client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
-                        json={"name": "整理A", "quota": 3})
+                        json={"name": "整理A", "quota": 3, **POSITION_TEXT})
         assert r.status_code == 409
         assert "报名即选岗位" in r.json()["detail"]
 
@@ -100,7 +100,7 @@ def test_统一分配的场次必须先切模式才能加岗位(client, admin, d
                             json={"mode": "pick"}).status_code == 200
         assert client.post(f"/api/staff/shifts/{shift.id}/positions",
                            headers=admin,
-                           json={"name": "整理A", "quota": 3}).status_code == 200
+                           json={"name": "整理A", "quota": 3, **POSITION_TEXT}).status_code == 200
 
 
 def test_余几人待分配的统计(client, admin, db, enrolled_activity, take_student):
@@ -171,4 +171,5 @@ def test_已截止的活动也能进编辑态建岗位(client, admin, db, enroll
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
     assert client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
-                       json={"name": "整理岗", "quota": 3}).status_code == 200
+                       json={"name": "整理岗", "quota": 3,
+                              **POSITION_TEXT}).status_code == 200

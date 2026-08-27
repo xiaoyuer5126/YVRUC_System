@@ -160,7 +160,11 @@ def main() -> None:
         db.commit()
 
         # ---------- 岗位助手（无时间：职责/地点/名额/要求） ----------
-        def stn(shift, name, loc, quota, tags=None, note="", train="",
+        # 服务地点/要求原文/培训内容都是必填，演示数据也要满足——
+        # 否则后台一改岗位就被自己的校验拦下
+        def stn(shift, name, loc, quota, tags=None,
+                note="服从现场安排，提前 15 分钟到岗",
+                train="到岗后由负责人统一讲解岗位职责与应急流程",
                 leader=False, waitlist=3):
             p = Position(id=uid("p"), shift_id=shift.id, name=name,
                          location=loc, quota=quota, waitlist_quota=waitlist,

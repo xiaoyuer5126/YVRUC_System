@@ -11,7 +11,7 @@ from backend.database import SessionLocal
 from backend.main import app
 from backend.models import (Activity, ActivityManager, Enrollment, Position,
                             Shift, User, now, uid)
-from conftest import ADMIN, editing, login, student_row
+from conftest import ADMIN, POSITION_TEXT, editing, login, student_row
 
 
 @pytest.fixture
@@ -49,10 +49,9 @@ def open_group(db):
         # 名额在岗位上，所以每个测试场次都带一个岗位；assign 模式的场次
         # 报名时不选岗位，名额看场次自己的 capacity。
         p = Position(id=uid("p"), shift_id=g.id, name="测试岗位",
-                     location="测试地点", quota=capacity,
-                     waitlist_quota=waitlist_quota,
+                     quota=capacity, waitlist_quota=waitlist_quota,
                      requirement_tags=requirement_tags or {},
-                     needs_leader=needs_leader, sort=0)
+                     needs_leader=needs_leader, sort=0, **POSITION_TEXT)
         db.add(p)
         db.commit()
         g.test_position_id = p.id
@@ -224,7 +223,7 @@ def test_quota_zero_is_rejected(client, admin):
         assert r.status_code == 200
         shift_id = r.json()["id"]
         r = client.post(f"/api/staff/shifts/{shift_id}/positions", headers=admin,
-                        json={"name": "零名额", "quota": 0})
+                        json={"name": "零名额", "quota": 0, **POSITION_TEXT})
         assert r.status_code == 422
 
 
@@ -244,7 +243,7 @@ def test_候补名次按岗位算而不是按场次(client, db, open_group, take
     act, g = open_group(1)
     p1_id = g.test_position_id
     p2 = Position(id=uid("p"), shift_id=g.id, name="第二岗位",
-                  quota=1, waitlist_quota=3, sort=1)
+                  quota=1, waitlist_quota=3, sort=1, **POSITION_TEXT)
     db.add(p2)
     db.commit()
     p2_id = p2.id

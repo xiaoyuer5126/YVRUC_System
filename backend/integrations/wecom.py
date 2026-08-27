@@ -53,7 +53,9 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "请提前与负责老师对接，现场协助点名与协调。"),
     "checkin_reminder": (
         "签到提醒｜{activity}",
-        "您报名的「{activity}」· {shift} 即将开始，请前往 {loc} 签到到岗。"),
+        "您报名的「{activity}」· {shift} 即将开始。\n"
+        "岗位：{position}\n地点：{loc}\n"
+        "请提前到岗并扫码签到；服务结束后记得再扫一次签退。"),
     "custom": (
         "{title}",
         "{content}"),

@@ -504,10 +504,12 @@
           </div>
         </el-form-item>
         <el-form-item label="开始时间" required>
-          <el-date-picker v-model="groupForm.start_time" type="datetime" style="width:100%" />
+          <el-date-picker v-model="groupForm.start_time" type="datetime" style="width:100%"
+                          @change="onShiftStartPicked" />
         </el-form-item>
         <el-form-item label="结束时间" required>
-          <el-date-picker v-model="groupForm.end_time" type="datetime" style="width:100%" />
+          <el-date-picker v-model="groupForm.end_time" type="datetime" style="width:100%"
+                          :default-time="DAY_END" />
         </el-form-item>
         <!-- 名额与候补只属于「截止后统一分配」：报名即选岗位时它们在岗位上 -->
         <template v-if="groupForm.mode === 'assign'">
@@ -532,7 +534,8 @@
     <el-dialog v-model="positionDlg.visible" :title="positionDlg.editing ? '编辑岗位' : '新建岗位'" width="560">
       <el-form label-width="100px">
         <el-form-item label="岗位名称" required><el-input v-model="stationForm.name" placeholder="如：东门引导" /></el-form-item>
-        <el-form-item label="服务地点"><el-input v-model="stationForm.location" /></el-form-item>
+        <el-form-item label="服务地点" required><el-input v-model="stationForm.location"
+                    placeholder="如：世纪馆北门检录处" /></el-form-item>
         <el-form-item label="名额" required>
           <el-input-number v-model="stationForm.quota" :min="1" />
           <span class="dim" style="margin-left:10px">名额与候补都在岗位上，场次不设总数</span>
@@ -557,15 +560,20 @@
           <div class="dim">硬性条件：不满足的志愿者<b>报名时就会被拦下</b>（岗位在活动页显示为
             「不符合条件」并说明原因），一键分配时同样不会被排入。</div>
         </el-form-item>
-        <el-form-item label="要求原文"><el-input v-model="stationForm.requirement_note" placeholder="自然语言描述，展示用" /></el-form-item>
-        <el-form-item label="培训内容"><el-input v-model="stationForm.training_note" /></el-form-item>
-        <el-form-item v-if="positionDlg.editing" label="学习材料">
-          <MaterialManager owner-type="position" :owner-id="positionDlg.editing.id"
+        <el-form-item label="要求原文" required><el-input v-model="stationForm.requirement_note"
+                    placeholder="给志愿者看的说明，如：需全程站立，着深色衣裤" /></el-form-item>
+        <el-form-item label="培训内容" required><el-input v-model="stationForm.training_note"
+                    type="textarea" :rows="2"
+                    placeholder="到岗前需要知道的事：流程、话术、应急联系人" /></el-form-item>
+        <el-form-item label="学习材料">
+          <MaterialManager v-if="positionDlg.editing" owner-type="position"
+                           :owner-id="positionDlg.editing.id"
                            :items="positionDlg.editing.attachments || []"
-                           @changed="loadAll" />
-        </el-form-item>
-        <el-form-item label="">
-          <div class="dim">岗位没有时间：时段随场次；同场次的岗位互斥，一人只占一个。</div>
+                           @changed="onMaterialChanged" />
+          <div v-else class="dim">
+            先「保存」把岗位建出来，这里就会出现上传框——材料要挂在具体岗位上。
+            保存后会自动留在本页，可以接着传。
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -711,7 +719,8 @@
           </div>
         </el-form-item>
         <el-form-item label="报名窗口">
-          <el-date-picker v-model="baseRange" type="datetimerange" style="width:100%" />
+          <el-date-picker v-model="baseRange" type="datetimerange" style="width:100%"
+                          :default-time="RANGE_DEFAULT_TIME" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -730,7 +739,7 @@ import { api, download as dl, fmtDT } from '../api'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
 import MaterialManager from '../components/MaterialManager.vue'
-import { auth } from '../store'
+import { DAY_END, RANGE_DEFAULT_TIME, auth } from '../store'
 
 const route = useRoute()
 const act = ref(null)
@@ -914,6 +923,14 @@ function sumQuota(g) {
 }
 
 // —— 场次 CRUD ——
+// 选完开始时间，结束时间自动落到当天最后一刻；已经填过就不动
+function onShiftStartPicked(v) {
+  if (!v || groupForm.value.end_time) return
+  const end = new Date(v)
+  end.setHours(23, 59, 59, 0)
+  groupForm.value.end_time = end
+}
+
 function openShift(g) {
   shiftDlg.value.editing = g || null
   groupForm.value = g ? {
@@ -980,6 +997,21 @@ async function doCopyPositions() {
 
 
 // —— 岗位 CRUD ——
+// 保存后从新数据里找回这个岗位，好让材料上传框接着用
+function findPosition(id) {
+  for (const g of shifts.value) {
+    const hit = (g.positions || []).find(p => p.id === id)
+    if (hit) return hit
+  }
+  return null
+}
+
+async function onMaterialChanged() {
+  const id = positionDlg.value.editing?.id
+  await loadAll()
+  if (id) positionDlg.value.editing = findPosition(id)
+}
+
 function openStation(st, g) {
   positionDlg.value = { visible: true, editing: st, groupId: g.id }
   stationForm.value = st ? {
@@ -997,6 +1029,11 @@ function openStation(st, g) {
 async function saveStation() {
   const f = stationForm.value
   if (!f.name?.trim()) return ElMessage.warning('请填写岗位名称')
+  for (const [key, label] of [['location', '服务地点'],
+                              ['requirement_note', '要求原文'],
+                              ['training_note', '培训内容']]) {
+    if (!f[key]?.trim()) return ElMessage.warning(`请填写${label}`)
+  }
   savingStation.value = true
   try {
     const tags = {}
@@ -1008,11 +1045,19 @@ async function saveStation() {
       requirement_tags: tags, requirement_note: f.requirement_note,
       training_note: f.training_note,
     }
-    if (positionDlg.value.editing) await api.patch(`/api/staff/positions/${positionDlg.value.editing.id}`, body)
-    else await api.post(`/api/staff/shifts/${positionDlg.value.groupId}/positions`, body)
-    ElMessage.success('已保存')
-    positionDlg.value.visible = false
-    loadAll()
+    if (positionDlg.value.editing) {
+      await api.patch(`/api/staff/positions/${positionDlg.value.editing.id}`, body)
+      ElMessage.success('已保存')
+      positionDlg.value.visible = false
+      await loadAll()
+    } else {
+      // 新建后不关窗：材料必须挂在已有岗位上，关了还得再点开一次
+      const d = await api.post(
+        `/api/staff/shifts/${positionDlg.value.groupId}/positions`, body)
+      ElMessage.success('岗位已创建，可以继续上传学习材料')
+      await loadAll()
+      positionDlg.value.editing = findPosition(d.id)
+    }
   } catch { /* toast by api */ } finally {
     savingStation.value = false
   }

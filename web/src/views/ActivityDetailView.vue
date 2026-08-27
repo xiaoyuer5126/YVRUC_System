@@ -6,7 +6,7 @@
         <el-tag :color="typeColor(act.type)" effect="dark" style="border:none;margin-left:10px">
           {{ act.type_label }}
         </el-tag>
-        <el-tag style="margin-left:6px" :type="statusType">{{ act.status_label }}</el-tag>
+        <el-tag style="margin-left:6px" :type="statusType">{{ act.display_label }}</el-tag>
       </template>
     </el-page-header>
 
@@ -46,7 +46,8 @@
           点击岗位名称可查看详情；点击行首箭头展开岗位</span></div>
 
         <el-card shadow="never">
-          <el-table :data="act.shifts" row-key="id">
+          <el-table :data="act.shifts" row-key="id"
+                    :expand-row-keys="act.shifts.map(g => g.id)">
             <el-table-column type="expand" width="34">
               <template #default="{ row: g }">
                 <div style="padding:6px 12px 6px 40px">
@@ -63,8 +64,11 @@
                                   effect="plain" style="margin-left:6px">
                             设组长{{ s.leader_name ? `·${s.leader_name}` : '' }}
                           </el-tag>
-                          <el-tag v-if="s.attachments?.length" size="small" effect="plain"
-                                  style="margin-left:6px">材料 {{ s.attachments.length }}</el-tag>
+                          <el-tag v-if="s.material_count" size="small" effect="plain"
+                                  style="margin-left:6px"
+                                  :type="s.training_visible ? 'success' : 'info'">
+                            材料 {{ s.material_count }}{{ s.training_visible ? '' : '·报名后可看' }}
+                          </el-tag>
                         </template>
                       </el-table-column>
                       <el-table-column prop="location" label="服务地点" min-width="110" />
@@ -342,15 +346,25 @@
         </el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ stationDetail.data.requirement_desc }}</el-descriptions-item>
         <el-descriptions-item label="要求说明">{{ stationDetail.data.requirement_note || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="培训内容">{{ stationDetail.data.training_note || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="培训内容">
+          <template v-if="stationDetail.data.training_visible">
+            {{ stationDetail.data.training_note || '—' }}
+          </template>
+          <span v-else class="dim">报名本场次后可见</span>
+        </el-descriptions-item>
         <el-descriptions-item label="候补名额">
           {{ stationDetail.data.waitlist_count }}/{{ stationDetail.data.waitlist_quota }}
         </el-descriptions-item>
         <el-descriptions-item label="组长">
-          <template v-if="stationDetail.data.needs_leader">
+          <template v-if="!stationDetail.data.needs_leader">
+            <span class="dim">本岗位不设组长</span>
+          </template>
+          <template v-else-if="!stationDetail.data.training_visible">
+            <span class="dim">本岗位设组长，报名后可见组长信息</span>
+          </template>
+          <template v-else>
             {{ stationDetail.data.leader_name || '尚未产生（报名时可表态愿意担任）' }}
           </template>
-          <span v-else class="dim">本岗位不设组长</span>
         </el-descriptions-item>
       </el-descriptions>
       <MaterialList v-if="stationDetail.data?.attachments?.length"
@@ -426,7 +440,7 @@ const route = useRoute()
 const act = ref(null)
 const groupDetail = ref({ visible: false, data: null })
 const enrollDlg = ref({ visible: false, shift: null, position: null,
-                        leaderWilling: false,
+                        leaderWilling: true,
                         allowReassign: true, submitting: false })
 const willWaitlist = computed(() => {
   const { shift: g, position } = enrollDlg.value
@@ -436,7 +450,12 @@ const willWaitlist = computed(() => {
 const stationDetail = ref({ visible: false, data: null, groupName: '', groupTime: '' })
 
 const typeColor = t => TYPE_COLORS[t]?.color
-const statusType = { published: 'success', closed: 'info', draft: 'warning', finished: 'info' }
+// 与广场共用同一套：状态按时间算，颜色也要一致，否则两处对同一个活动说法不同
+const STATUS_TYPES = {
+  draft: 'warning', upcoming: 'primary', published: 'success',
+  closed: 'warning', ongoing: 'danger', finished: 'info',
+}
+const statusType = computed(() => STATUS_TYPES[act.value?.display_status] || 'info')
 
 function pct(g) {
   return Math.min(100, Math.round((g.confirmed / Math.max(1, g.capacity)) * 100))
@@ -490,7 +509,7 @@ function doEnroll(g, position) {
     return ElMessage.warning('请先展开该场次，选择一个岗位')
   }
   enrollDlg.value = { visible: true, shift: g, position, allowReassign: true,
-                      leaderWilling: false,
+                      leaderWilling: true,
                       submitting: false }
 }
 
