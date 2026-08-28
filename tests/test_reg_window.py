@@ -148,3 +148,44 @@ def test_详情里给出每场自己的报名闸门(client, db, open_group, take
     # 活动的报名截止远在一年后，闸门要按本场开场时间算
     assert shifts["测试场次"]["enroll_deadline"][:10] == \
         f"{(now() + timedelta(hours=5)):%Y-%m-%d}"
+
+
+# ======================= 报名还没开始 =======================
+
+def test_报名开始前按钮不该是活的(client, db, open_group, take_student):
+    """活动一发布 status 就是 published，但那不等于现在能报。
+
+    前端判的是这个 enroll_open，判错了就是让人点下去才收到「报名尚未开始」。
+    """
+    act, g = open_group(3, day_offset=0, start_in_hours=5)
+    act.reg_start = now() + timedelta(hours=2)
+    db.commit()
+
+    t = login(client, take_student())
+    d = client.get(f"/api/activities/{act.id}", headers=t).json()
+    assert d["status"] == "published" and d["display_label"] == "未开始报名"
+    assert d["shifts"][0]["enroll_open"] is False
+    # 倒计时用的是服务端算好的秒数，前端不拿 reg_start 自己减
+    assert 7000 < d["opens_in"] <= 7200
+
+    r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                    headers=t, json={"position_id": g.test_position_id})
+    assert r.status_code == 409 and "报名尚未开始" in r.json()["detail"]
+
+
+def test_到点之后重拉就开了(client, db, open_group, take_student):
+    """倒计时归零时前端重拉一次，以服务端为准——这里模拟那一次重拉。"""
+    act, g = open_group(3, day_offset=0, start_in_hours=5)
+    act.reg_start = now() + timedelta(hours=2)
+    db.commit()
+    t = login(client, take_student())
+    assert client.get(f"/api/activities/{act.id}",
+                      headers=t).json()["shifts"][0]["enroll_open"] is False
+
+    act.reg_start = now() - timedelta(minutes=1)
+    db.commit()
+    d = client.get(f"/api/activities/{act.id}", headers=t).json()
+    assert d["opens_in"] == 0 and d["shifts"][0]["enroll_open"] is True
+    assert client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                       headers=t,
+                       json={"position_id": g.test_position_id}).status_code == 200

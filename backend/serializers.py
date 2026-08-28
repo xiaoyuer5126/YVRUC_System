@@ -58,6 +58,18 @@ def display_status(act: Activity) -> tuple[str, str]:
     return "closed", "已截止"
 
 
+def opens_in(act: Activity) -> int:
+    """距报名开始还有多少秒；已经开始或没设开始时间给 0。
+
+    发**秒数**而不是让前端拿 reg_start 自己减：客户端时钟偏几分钟是常事，
+    自己减出来的倒计时会比服务端早到或晚到，按钮跟着错。秒数只用到客户端的
+    「流逝时间」，那部分是准的。倒计时归零时前端重拉一次，以服务端为准。
+    """
+    if act.reg_start and now() < act.reg_start:
+        return int((act.reg_start - now()).total_seconds())
+    return 0
+
+
 def activity_brief(db: OrmSession, act: Activity) -> dict:
     # 只数服务场次：培训/彩排不招人，算进「共几场、多少名额」会把学生看晕
     shifts = sorted(act.main_shifts(), key=lambda g: g.sort)
@@ -80,6 +92,7 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
         "time_text": (f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}"
                       if span else "待定"),
         "reg_start": iso_of(act.reg_start), "reg_end": iso_of(act.reg_end),
+        "opens_in": opens_in(act),
         "contacts": act.contacts or [],
         "editing": act.editing_since is not None,
     }
@@ -217,7 +230,8 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
                                                  "pending_confirm")))
                   .first())
     enrolled = my_enr is not None
-    # 本场次的报名闸门。前端据此灰按钮，别让人点了才知道这一场已经开过了。
+    # 本场次的报名闸门。前端据此灰按钮，别让人点了才知道这一场已经开过了，
+    # 或者报名压根还没开始——「活动已发布」不等于「现在能报」。
     deadline = enroll_deadline(g.activity, g)
     out = {
         "id": g.id, "name": g.name,
@@ -225,7 +239,7 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
         "start_time": iso_of(g.start_time), "end_time": iso_of(g.end_time),
         "time_text": g.span_text(),
         "enroll_deadline": iso_of(deadline),
-        "enroll_open": now() <= deadline,
+        "enroll_open": not opens_in(g.activity) and now() <= deadline,
         "started": now() >= g.start_time,
         # 名额：assign 模式记在场次上，pick 模式是各岗位之和
         "capacity": capacity,

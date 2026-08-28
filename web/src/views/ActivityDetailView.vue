@@ -63,6 +63,15 @@
                   title="负责老师正在调整本活动的安排，报名暂时关闭"
                   description="调整期间无法报名或退选；改好后会通过企业微信通知已报名的志愿者。" />
 
+        <!-- 还没到报名开始：倒计时归零时自己重拉一次，不必让人手动刷新页面。
+             按钮在这之前是灰的（enroll_open 由后端算，含 reg_start）。 -->
+        <div v-if="opensAt" class="reg-countdown">
+          <el-icon><Clock /></el-icon>
+          <span>报名于 <b>{{ fmtDT(act.reg_start) }}</b> 开始，还有</span>
+          <el-countdown :value="opensAt" :format="openFormat" @finish="load" />
+          <span class="dim">时间到自动开放，不用刷新页面</span>
+        </div>
+
         <div class="section-title">岗位安排<span class="dim" style="font-weight:400;margin-left:8px">
           点击岗位名称可查看详情；点击行首箭头展开岗位</span></div>
 
@@ -154,6 +163,7 @@
                              type="primary" plain @click="doEnroll(g, s)">
                     {{ s.remaining > 0 ? '选中' : '候补' }}
                   </el-button>
+                  <el-button v-else size="small" disabled>{{ closedText(g) }}</el-button>
                 </div>
                 <div v-if="s.eligible === false" class="m-pos-why">
                   {{ s.ineligible_reason }}
@@ -312,7 +322,9 @@
                                      type="primary" plain @click="doEnroll(g, s)">
                             {{ s.remaining > 0 ? '选中' : '候补' }}
                           </el-button>
-                          <span v-else class="dim">—</span>
+                          <el-button v-else size="small" disabled>
+                            {{ closedText(g) }}
+                          </el-button>
                         </template>
                       </el-table-column>
                     </el-table>
@@ -682,7 +694,7 @@ import { TYPE_COLORS } from '../store'
 import ProfileDialog from '../components/ProfileDialog.vue'
 import MaterialList from '../components/MaterialList.vue'
 import { useNarrow } from '../composables/useNarrow'
-import { Warning } from '@element-plus/icons-vue'
+import { Clock, Warning } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const narrow = useNarrow()
@@ -784,6 +796,7 @@ function openFor(g) {
 }
 function closedText(g) {
   if (act.value?.status !== 'published') return '不在报名期'
+  if (act.value.opens_in) return '未开始报名'
   return g.started ? '本场已开场' : '本场报名已截止'
 }
 function enrollText(g) {
@@ -800,8 +813,21 @@ function showStationDetail(g, s) {
                           groupName: g.name, groupTime: g.time_text }
 }
 
+/** 倒计时目标（本地时间戳）。
+ *
+ * 用后端给的「还剩多少秒」加上此刻，而不是直接 parse reg_start：客户端时钟
+ * 偏几分钟，倒计时就会比服务端早到或晚到，按钮跟着错。归零时 load() 重拉，
+ * 真没到点的话新的 opens_in 会把目标再往后推一点，自己纠回来。
+ */
+const opensAt = ref(0)
+const openFormat = computed(
+  () => (act.value?.opens_in > 86400 ? 'DD 天 HH:mm:ss' : 'HH:mm:ss'))
+
 async function load() {
   act.value = await api.get(`/api/activities/${route.params.id}`)
+  opensAt.value = act.value.opens_in
+    ? Date.now() + act.value.opens_in * 1000
+    : 0
 }
 onMounted(load)
 
@@ -894,6 +920,17 @@ const openProfileDialog = () => profileDialog.value.open(true)
 @media (max-width: 860px) {
   .hd-title { display: block; font-size: 16px; line-height: 1.5; }
   .hd-tags { display: flex; flex-wrap: wrap; margin: 4px 0 0; }
+}
+
+/* 报名开始倒计时：一行放得下就一行，窄屏自然换行 */
+.reg-countdown {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: 12px 0 0; padding: 8px 12px; font-size: 13px;
+  border-radius: 8px; background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+.reg-countdown :deep(.el-statistic__content) {
+  font-size: 15px; font-weight: 600; color: var(--el-color-primary);
 }
 
 /* —— 窄屏的场次／岗位卡片 —— */
