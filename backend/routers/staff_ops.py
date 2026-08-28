@@ -407,6 +407,7 @@ def poster(activity_id: str, db: OrmSession = Depends(db_session),
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     L: list[str] = [f"【{act.title}】志愿者招募",
+                    f"主办：{act.organizer or '—'}",
                     f"类型：{act.type}类·{config.type_name(act.type)}"]
     span = act.time_span()
     if span:

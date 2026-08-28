@@ -189,8 +189,8 @@
           </el-select>
         </el-form-item>
         <el-form-item label="可签时段">
-          <el-date-picker v-model="form.range" type="datetimerange" style="width:100%"
-                          start-placeholder="开放签到" end-placeholder="停止签到" />
+          <DateRange v-model="form.range"
+                     start-placeholder="开放签到" end-placeholder="停止签到" />
           <div class="dim">默认为场次起止时间，可自行调整：提前开放即允许志愿者提前到岗签到</div>
         </el-form-item>
       </el-form>
@@ -265,6 +265,7 @@ import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
+import DateRange from './DateRange.vue'
 
 const props = defineProps({
   shift: { type: Object, required: true },

@@ -39,6 +39,7 @@ router = APIRouter(prefix="/api/staff", tags=["staff"])
 
 ACTIVITY_FIELDS = {
     "title": "名称", "type": "类型", "intro": "简介", "location": "地点",
+    "organizer": "组织单位",
     "contact_info": "公示联系方式", "contacts": "公示联系人",
     "qa_group_qr": "答疑群二维码",
     "volunteer_requirement": "志愿者要求", "volunteer_benefit": "志愿者保障",
@@ -113,6 +114,7 @@ def list_all(db: OrmSession = Depends(db_session),
 
 class ActivityBody(BaseModel):
     title: str = Field(max_length=128)
+    organizer: str = Field(default="", max_length=64)
     type: str = "A"
     intro: str = ""
     location: str = ""
@@ -149,6 +151,8 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
     # 创建活动信息完整性校验：全部必填
     if not body.title.strip():
         raise HTTPException(400, "请填写活动名称")
+    if not body.organizer.strip():
+        raise HTTPException(400, "请填写组织单位")
     if body.type not in config_types():
         raise HTTPException(400, "活动类型必须是 A/B/C/D")
     if not body.location.strip():
@@ -160,6 +164,7 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
     if reg_start is None or reg_end is None:
         raise HTTPException(400, "请选择报名开始与截止时间")
     act = Activity(id=uid("act"), title=body.title.strip(), type=body.type,
+                   organizer=body.organizer.strip(),
                    intro=body.intro.strip(), location=body.location.strip(),
                    contact_info=body.contact_info.strip(),
                    qa_group_qr=body.qa_group_qr, cover_hue=body.cover_hue,

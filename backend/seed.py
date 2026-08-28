@@ -193,7 +193,7 @@ def main() -> None:
             return e
 
         # ---------- 活动1：运动会（报名中·直接定二级） ----------
-        sport = Activity(id=uid("act"), title="校运动会开幕式志愿服务",
+        sport = Activity(id=uid("act"), title="校运动会开幕式志愿服务", organizer="校青年志愿者协会",
                          type="C", cover_hue=350,
                          intro="全校秋季运动会开幕式需要大量志愿者支持，涉及引导、检录、礼仪、医疗辅助等岗位。"
                                "请仔细核对时间后报名；开始前24小时内退选将扣除信用分。",
@@ -285,7 +285,7 @@ def main() -> None:
             enr(take(), sport, m2, 1, position=o_final)
 
         # ---------- 活动2：图书整理周（报名中·二级待定） ----------
-        book = Activity(id=uid("act"), title="图书馆图书整理周·周六专场",
+        book = Activity(id=uid("act"), title="图书馆图书整理周·周六专场", organizer="图书馆",
                         type="B", cover_hue=210,
                         intro="图书馆馆藏调整需要大批志愿者参与图书下架、搬运与重新上架。"
                               "具体分工将在报名截止后由青协统一排班公布。",
@@ -319,7 +319,7 @@ def main() -> None:
             cnt += 1
 
         # ---------- 活动3：招生咨询会（报名中·仅一级） ----------
-        fair = Activity(id=uid("act"), title="校园开放日·招生咨询志愿讲解",
+        fair = Activity(id=uid("act"), title="校园开放日·招生咨询志愿讲解", organizer="本科生招生办公室",
                         type="A", cover_hue=150,
                         intro="面向来访考生家长的咨询引导志愿服务。岗位简单，无需分岗位，"
                               "报名即锁定时段。",
@@ -361,7 +361,7 @@ def main() -> None:
                               joined_at=dt(days=-1)))
 
         # ---------- 活动4：校庆晚会当日保障（已截止·签到进行中·今天全天） ----------
-        gala = Activity(id=uid("act"), title="校庆文艺晚会·当日保障",
+        gala = Activity(id=uid("act"), title="校庆文艺晚会·当日保障", organizer="校团委",
                         type="D", cover_hue=280,
                         intro="校庆晚会当天全流程保障，已截止报名。请按分配岗位准时到岗并扫码签到。",
                         location="明德堂",
@@ -411,7 +411,7 @@ def main() -> None:
         db.add(task_back)
 
         # ---------- 活动5：敬老院（已结束·仅一级·时长已回传） ----------
-        elder = Activity(id=uid("act"), title="社区敬老院陪伴服务（秋）",
+        elder = Activity(id=uid("act"), title="社区敬老院陪伴服务（秋）", organizer="文学院青年志愿者协会",
                          type="A", cover_hue=30,
                          intro="每周定期前往附近社区敬老院陪伴老人，聊天读报、组织小活动。"
                                "岗位简单，仅按场次报名。",

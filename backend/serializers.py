@@ -62,6 +62,7 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
     ds_code, ds_label = display_status(act)
     return {
         "id": act.id, "title": act.title, "type": act.type,
+        "organizer": act.organizer,
         "type_label": f"{act.type}类·{config.type_name(act.type)}", "status": act.status,
         "status_label": act.label_status(), "location": act.location,
         "intro": act.intro[:120], "cover_hue": act.cover_hue,

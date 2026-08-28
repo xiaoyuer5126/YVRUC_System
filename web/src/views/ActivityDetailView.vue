@@ -19,6 +19,7 @@
           <h3 style="margin-top:0">{{ act.title }}</h3>
           <p style="white-space:pre-wrap;color:#606266;line-height:1.8">{{ act.intro }}</p>
           <el-descriptions :column="narrow ? 1 : 2" border size="small">
+            <el-descriptions-item label="组织单位">{{ act.organizer || '—' }}</el-descriptions-item>
             <el-descriptions-item label="整体时间">{{ act.time_text }}</el-descriptions-item>
             <el-descriptions-item label="活动地点">{{ act.location || '待定' }}</el-descriptions-item>
             <el-descriptions-item label="公示联系方式">

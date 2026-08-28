@@ -21,6 +21,7 @@
           <el-tag size="small" :type="statusType(a.display_status)">{{ a.display_label }}</el-tag>
         </div>
         <div class="card-title">{{ a.title }}</div>
+        <div v-if="a.organizer" class="meta-row"><el-icon><OfficeBuilding /></el-icon>{{ a.organizer }}</div>
         <div class="meta-row"><el-icon><Clock /></el-icon>{{ a.time_text }}</div>
         <div class="meta-row"><el-icon><Location /></el-icon>{{ a.location || '待定' }}</div>
         <div class="meta-row">

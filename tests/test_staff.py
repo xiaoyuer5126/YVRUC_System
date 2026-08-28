@@ -315,7 +315,7 @@ def test_切成统一分配会报出清空了几个人(client, admin, db, assign
 def test_答疑群二维码非必填(client, admin):
     """群二维码是选填：不是每个活动都建群。"""
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"title": "无群活动", "type": "A", "intro": "x",
+                    json={"title": "无群活动", "organizer": "校青协", "type": "A", "intro": "x",
                           "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
@@ -328,7 +328,7 @@ def test_答疑群二维码非必填(client, admin):
 def test_没有岗位的场次不能发布(client, admin, db):
     """pick 模式没岗位就是没名额，发出去学生一个都报不了。"""
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"title": "空场次活动", "type": "A", "intro": "x",
+                    json={"title": "空场次活动", "organizer": "校青协", "type": "A", "intro": "x",
                           "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),

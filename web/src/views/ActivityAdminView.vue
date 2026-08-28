@@ -1008,58 +1008,8 @@
     </el-dialog>
 
     <!-- 基本信息编辑 -->
-    <el-dialog v-model="editBase" title="编辑活动基本信息" width="560">
-      <el-form label-width="110px">
-        <el-form-item label="名称"><el-input v-model="baseForm.title" /></el-form-item>
-        <el-form-item label="类型">
-          <el-radio-group v-model="baseForm.type">
-            <el-radio-button v-for="(t, k) in types" :key="k" :value="k">{{ k }}类·{{ t.name }}</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="地点"><el-input v-model="baseForm.location" /></el-form-item>
-        <el-form-item label="公示联系方式" required>
-          <div class="contacts-box">
-            <div v-for="(c, i) in baseForm.contacts" :key="i" class="contact-row">
-              <el-input v-model="c.name" maxlength="32" placeholder="姓名" style="width:150px" />
-              <el-input v-model="c.phone" maxlength="64" placeholder="电话/微信" style="flex:1" />
-              <el-button type="danger" plain :disabled="baseForm.contacts.length <= 1"
-                         @click="baseForm.contacts.splice(i, 1)">删除</el-button>
-            </div>
-            <el-button plain size="small"
-                       @click="baseForm.contacts.push({ name: '', phone: '' })">
-              <el-icon><Plus /></el-icon>&nbsp;添加联系人
-            </el-button>
-          </div>
-        </el-form-item>
-        <el-form-item label="简介"><el-input v-model="baseForm.intro" type="textarea" :rows="3" /></el-form-item>
-        <!-- 活动级的整体要求与保障；岗位上的「要求原文」讲的是那个岗位特有的事 -->
-        <el-form-item label="志愿者要求">
-          <el-input v-model="baseForm.volunteer_requirement" type="textarea" :rows="2"
-                    placeholder="选填。整个活动共通的要求，如：着深色衣裤、提前 20 分钟到集合点" />
-        </el-form-item>
-        <el-form-item label="志愿者保障">
-          <el-input v-model="baseForm.volunteer_benefit" type="textarea" :rows="2"
-                    placeholder="选填。提供什么，如：午餐与饮水、志愿时长、纪念徽章、意外险" />
-        </el-form-item>
-        <el-form-item label="答疑群二维码">
-          <div class="contacts-box">
-            <el-upload :show-file-list="false" :http-request="uploadBaseQr" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
-              <el-button type="primary" plain :loading="qrUploading">
-                <el-icon><Upload /></el-icon>&nbsp;上传二维码图片
-              </el-button>
-            </el-upload>
-            <div class="dim" style="margin-top:4px">支持 png/jpg/jpeg/webp，不超过 2MB</div>
-            <div v-if="baseForm.qa_group_qr" class="qr-preview">
-              <img :src="baseForm.qa_group_qr" alt="答疑群二维码" />
-              <el-button link type="danger" size="small" @click="baseForm.qa_group_qr = ''">移除图片</el-button>
-            </div>
-          </div>
-        </el-form-item>
-        <el-form-item label="报名窗口">
-          <el-date-picker v-model="baseRange" type="datetimerange" style="width:100%"
-                          :default-time="RANGE_DEFAULT_TIME" />
-        </el-form-item>
-      </el-form>
+    <el-dialog v-model="editBase" title="编辑活动基本信息" width="620">
+      <ActivityForm v-model="baseForm" v-model:range="baseRange" :types="types" />
       <template #footer>
         <el-button @click="editBase = false">取消</el-button>
         <el-button type="primary" :loading="savingBase" @click="saveBase">保存并通知变更</el-button>
@@ -1077,8 +1027,10 @@ import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
 import MaterialManager from '../components/MaterialManager.vue'
 import DataCards from '../components/DataCards.vue'
+import ActivityForm from '../components/ActivityForm.vue'
+import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'
-import { DAY_END, RANGE_DEFAULT_TIME, auth } from '../store'
+import { DAY_END, auth } from '../store'
 
 const route = useRoute()
 const act = ref(null)
@@ -1095,7 +1047,6 @@ const savingBase = ref(false)
 const managers = ref([])
 const newMgrSid = ref('')
 const moveSel = ref({})
-const qrUploading = ref(false)
 
 // —— 发送通知 ——
 const notifyDlg = ref({ visible: false, saving: false })
@@ -1610,16 +1561,7 @@ watch(() => route.params.id, (id) => {
 
 watch(editBase, (v) => {
   if (v && act.value) {
-    const contacts = Array.isArray(act.value.contacts) && act.value.contacts.length
-      ? act.value.contacts.map(c => ({ name: c.name || '', phone: c.phone || '' }))
-      : [{ name: '', phone: '' }]
-    baseForm.value = {
-      title: act.value.title, type: act.value.type, location: act.value.location,
-      contacts, intro: act.value.intro,
-      volunteer_requirement: act.value.volunteer_requirement || '',
-      volunteer_benefit: act.value.volunteer_benefit || '',
-      qa_group_qr: act.value.qa_group_qr,
-    }
+    baseForm.value = activityToForm(act.value)
     baseRange.value = [
       act.value.reg_start ? new Date(act.value.reg_start.replace(' ', 'T')) : '',
       act.value.reg_end ? new Date(act.value.reg_end.replace(' ', 'T')) : '',
@@ -1627,49 +1569,13 @@ watch(editBase, (v) => {
   }
 })
 
-// 自定义上传：POST /api/staff/upload-image（FormData），成功后取 url 预览
-async function uploadBaseQr({ file }) {
-  const fd = new FormData()
-  fd.append('file', file)
-  qrUploading.value = true
-  try {
-    const headers = {}
-    if (auth.token) headers.Authorization = `Bearer ${auth.token}`
-    const resp = await fetch('/api/staff/upload-image', { method: 'POST', headers, body: fd })
-    const d = await resp.json().catch(() => ({}))
-    if (!resp.ok) {
-      throw new Error(typeof d.detail === 'string' ? d.detail : `上传失败(${resp.status})`)
-    }
-    baseForm.value.qa_group_qr = d.url
-    ElMessage.success('二维码已上传')
-  } catch (e) {
-    ElMessage.error(e.message || '上传失败')
-  } finally {
-    qrUploading.value = false
-  }
-}
-
-function contactError(contacts) {
-  if (!contacts?.length) return '请至少添加一位公示联系人'
-  for (const c of contacts) {
-    if (!c.name?.trim()) return '请填写每位联系人的姓名'
-    if (!c.phone?.trim()) return '请填写每位联系人的电话/微信'
-  }
-  return ''
-}
-
 async function saveBase() {
-  const ce = contactError(baseForm.value.contacts)
-  if (ce) return ElMessage.warning(ce)
-  const body = { ...baseForm.value }
-  body.contacts = baseForm.value.contacts.map(c => ({ name: c.name.trim(), phone: c.phone.trim() }))
-  if (baseRange.value?.length === 2) {
-    body.reg_start = toISO(baseRange.value[0])
-    body.reg_end = toISO(baseRange.value[1])
-  }
+  const err = validateActivity(baseForm.value, baseRange.value)
+  if (err) return ElMessage.warning(err)
   savingBase.value = true
   try {
-    await api.patch(`/api/staff/activities/${activityId}`, body)
+    await api.patch(`/api/staff/activities/${activityId}`,
+                    activityBody(baseForm.value, baseRange.value))
     ElMessage.success('已保存，变更将推送提醒志愿者')
     editBase.value = false
     loadAll()

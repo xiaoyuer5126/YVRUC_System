@@ -163,6 +163,9 @@ class Activity(Base):
     contacts: Mapped[list] = mapped_column(JSON, default=list)
     qa_group_qr: Mapped[str] = mapped_column(Text, default="")           # 答疑群二维码(dataURL)，平台只做展示容器
     cover_hue: Mapped[int] = mapped_column(Integer, default=0)           # 封面色相（演示用渐变色卡）
+    # 谁办的这场活动：校青协 / 某院系志愿团体 / 学校某部门。必填——
+    # 审批时靠它判断该由哪个部门归口，志愿者也要知道自己报的是谁的活动。
+    organizer: Mapped[str] = mapped_column(String(64), default="")
     # 活动级的整体要求与保障，都选填。岗位上的「要求原文」讲的是那个岗位
     # 特有的事，这两条讲的是整个活动共通的：着装、集合、餐食、时长、纪念品。
     volunteer_requirement: Mapped[str] = mapped_column(Text, default="")
