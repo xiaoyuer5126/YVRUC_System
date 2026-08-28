@@ -26,9 +26,7 @@
         <span class="dim" style="margin-left:10px">{{ act.time_text }} · {{ act.location }}</span>
       </template>
       <template #extra>
-        <el-button v-if="structureLocked" type="warning" plain @click="startEditing">
-          {{ editLabel }}
-        </el-button>
+        <!-- 「调整岗位」只在岗位设置那一页出现一次，页头不重复放 -->
         <!-- 草稿是首次发布，编辑态是发布改动，对管理者是同一件事：改完了，让学生看到 -->
         <el-popconfirm v-if="canPublish" :title="publishConfirm"
                        @confirm="saveAndPublish">
@@ -51,32 +49,29 @@
 
     <el-alert v-if="act.editing" type="warning" :closable="false" show-icon
               style="margin:12px 0"
-              title="本活动正在调整安排，学生已暂停报名与退选"
-              :description="`改完请点右上角「保存并发布」恢复报名，并把改动汇总推送给已报名的志愿者；
-                             ${lockHours} 小时未保存会自动解冻。`" />
+              title="正在调整岗位，学生已暂停报名与退选"
+              :description="`改完点右上角「保存并发布」恢复报名并通知志愿者；${lockHours} 小时未保存会自动解冻。`" />
 
     <el-tabs v-model="tab" style="margin-top:8px">
-      <!-- ============ 岗位树 ============ -->
+      <!-- ============ 岗位设置 ============ -->
       <el-tab-pane name="tree">
-        <template #label>岗位树
+        <template #label>岗位设置
           <el-badge v-if="treeAlerts.length" value="!" type="danger" />
         </template>
         <el-alert type="info" :closable="false" style="margin-bottom:12px">
-          场次只管时间，岗位管具体的事。两种模式：<b>报名即选岗位</b>（名额与候补都在各个岗位上）
-          / <b>截止后统一分配</b>（报名只锁时段，名额记在场次上，<b>岗位等报名截止后再建</b>）。
-          同场次的岗位互斥，一人只占一个；点击岗位名称可查看详情。
+          场次管时间，岗位管具体的事，同场次的岗位互斥（一人只占一个）。
+          <b>报名即选岗位</b>：名额与候补在各岗位上，发布前建好。
+          <b>截止后统一分配</b>：名额记在场次上，岗位等报名截止后再建。
         </el-alert>
         <el-alert v-if="structureLocked" type="info" show-icon :closable="false"
                   style="margin-bottom:12px">
           <template #title>
-            当前为只读——场次与岗位需要进入调整状态才能修改
+            只读——改场次与岗位要先进入调整状态
             <el-button type="warning" size="small" style="margin-left:10px"
                        @click="startEditing">{{ editLabel }}</el-button>
           </template>
           <div style="line-height:1.8">
-            {{ act.status === 'published'
-               ? '已发布的活动改到一半会被学生看到，所以改动要成批进行：进入调整后报名暂停，改完点「保存并发布」，这批改动会一次性通知已报名的志愿者。'
-               : '报名已结束，进入调整只是把改动成批起来——改完点「保存并发布」，会把这批改动一次性通知已报名的志愿者。' }}
+            改动成批进行：调整期间暂停报名，点「保存并发布」后一次性通知已报名的志愿者。
           </div>
         </el-alert>
 
@@ -245,7 +240,7 @@
           <el-button type="primary" plain @click="openNotify">
             <el-icon><Bell /></el-icon>&nbsp;发送通知
           </el-button>
-          <span class="dim">向本活动已报名报名的志愿者发送企业微信通知（演示模式下进入其「消息中心」）</span>
+          <span class="dim">发给本活动已报名的志愿者</span>
         </div>
         <el-row :gutter="14">
           <el-col :span="7">
@@ -455,14 +450,58 @@
       </el-tab-pane>
 
       <!-- ============ 导出与时长 ============ -->
-      <el-tab-pane label="导出与时长" name="export" lazy>
+      <el-tab-pane name="export" lazy>
+        <template #label>导出与时长
+          <el-badge v-if="pendingAppeals" :value="pendingAppeals" type="danger" />
+        </template>
         <div class="toolbar">
           <el-button type="primary" @click="doExport">
             <el-icon><Download /></el-icon>&nbsp;导出排班表 Excel
           </el-button>
-          <span class="dim">按场次分 Sheet：姓名、学号、学院、手机号、岗位、时间、地点、签到状态——可直接交付现场负责人。
-            生产版将强制加密并由企业微信单独发送密码；本次下载已计入审计。</span>
+          <span class="dim">按场次分 Sheet，含姓名学号手机号与签到状态，可直接交付现场；下载已留痕。</span>
         </div>
+
+        <!-- 时长申诉：出了岔子的那一条才走这里，不是全员自报 -->
+        <template v-if="appeals.length">
+          <el-divider />
+          <div class="toolbar">
+            <b>时长申诉</b>
+            <span class="dim">志愿者对自己的时长提的异议，采纳即改写时长并留痕。</span>
+          </div>
+          <el-table :data="appeals" size="small" style="margin-top:6px">
+            <el-table-column label="志愿者" width="150">
+              <template #default="{ row }">
+                {{ row.name }}<span class="dim mono"> {{ row.student_id }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="原值 → 申报" width="140">
+              <template #default="{ row }">
+                {{ row.old_hours }}h → <b>{{ row.claimed_hours }}h</b>
+              </template>
+            </el-table-column>
+            <el-table-column prop="reason" label="理由" min-width="220" show-overflow-tooltip />
+            <el-table-column label="状态" width="110">
+              <template #default="{ row }">
+                <el-tag size="small" effect="plain"
+                        :type="{ pending: 'warning', accepted: 'success',
+                                 rejected: 'info' }[row.status]">
+                  {{ row.label }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="160">
+              <template #default="{ row }">
+                <template v-if="row.status === 'pending'">
+                  <el-button size="small" type="primary" plain
+                             @click="openResolve(row, true)">采纳</el-button>
+                  <el-button size="small" plain
+                             @click="openResolve(row, false)">不采纳</el-button>
+                </template>
+                <span v-else class="dim">{{ row.reply || '—' }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
         <el-divider />
         <div class="toolbar">
           <el-button @click="hoursPreview()" :loading="hoursLoading">基于签到记录计算应录时长</el-button>
@@ -524,8 +563,7 @@
         </el-table>
         </div>
         <p class="dim" style="margin-top:8px">
-          时长 = 签退 − 签到，向上取整至 0.5 小时。<b>未签退与自动兜底的记录标为「待核」</b>，
-          一键确认会跳过它们——请核对实际服务情况后，勾选并修改数值再单独确认。
+          <b>「待核」的记录一键确认会跳过</b>：核对后勾选、改数值，再单独确认。
         </p>
 
         <!-- 手动添加时长 -->
@@ -572,8 +610,7 @@
       <!-- ============ 管理者 ============ -->
       <el-tab-pane label="签收情况" name="acks" lazy>
         <div class="dim" style="margin-bottom:10px">
-          只列出「要求签收」的群发通知。签收 = 志愿者点过「我已知悉」，
-          比「已读」硬——已读只说明他打开过消息中心。
+          只列要求签收的群发。签收 = 本人点过「我已知悉」，比「已读」硬；
           催办只是催他回去签原来那条，不会多出一条待签收。
         </div>
         <el-empty v-if="!ackBatches.length"
@@ -734,10 +771,9 @@
     <!-- 培训 / 彩排（附属场次） -->
     <el-dialog v-model="attDlg.visible"
                :title="(attDlg.editing ? '编辑' : '添加') + '培训 / 彩排'" width="560">
-      <p class="dim" style="margin-top:0;line-height:1.8">
-        挂在「{{ attDlg.parent?.name }}」下面：学生报这个场次时<b>连带报上</b>，
-        退选时连带退。它自己不招人、不设名额，但有自己的签到码、时间与地点，
-        时长按下面选的方式算。
+      <p class="dim" style="margin-top:0">
+        挂在「{{ attDlg.parent?.name }}」下面：学生报该场次时连带报上、退选时连带退。
+        自己不设名额，但有独立的签到码与时长。
       </p>
       <el-form label-width="100px">
         <el-form-item label="类型" required>
@@ -764,10 +800,7 @@
             <el-option v-for="p in attDlg.parent?.positions || []" :key="p.id"
                        :value="p.id" :label="p.name" />
           </el-select>
-          <div class="dim" style="line-height:1.7">
-            只对选中岗位的人生效。<b>后面调岗时会自动跟着走</b>：人被调去别的岗位，
-            这一场就不再叫他。
-          </div>
+          <div class="dim">只对选中岗位的人生效，调岗时自动跟着走</div>
         </el-form-item>
         <el-form-item label="时长认定">
           <el-radio-group v-model="attForm.hours_mode">
@@ -786,11 +819,37 @@
       </template>
     </el-dialog>
 
+    <!-- 处理时长申诉 -->
+    <el-dialog v-model="resolveDlg.visible"
+               :title="resolveDlg.accept ? '采纳申诉' : '不采纳申诉'" width="480">
+      <p class="dim" style="margin-top:0;line-height:1.8">
+        {{ resolveDlg.row?.name }}：{{ resolveDlg.row?.old_hours }}h →
+        申报 {{ resolveDlg.row?.claimed_hours }}h<br />
+        理由：{{ resolveDlg.row?.reason }}
+      </p>
+      <el-form label-width="88px">
+        <el-form-item v-if="resolveDlg.accept" label="改为">
+          <el-input-number v-model="resolveDlg.hours" :min="0.5" :max="24" :step="0.5" />
+          <span class="dim" style="margin-left:10px">小时，可改成第三个数</span>
+        </el-form-item>
+        <el-form-item label="答复">
+          <el-input v-model="resolveDlg.reply" type="textarea" :rows="2" maxlength="500"
+                    :placeholder="resolveDlg.accept ? '选填，会发给本人'
+                                                    : '建议说明理由，会发给本人'" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="resolveDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="resolveDlg.busy" @click="doResolve">
+          确认{{ resolveDlg.accept ? '采纳' : '不采纳' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 招募文案：一键复制发群里 -->
     <el-dialog v-model="posterDlg.visible" title="活动信息（招募版）" width="620">
       <p class="dim" style="margin-top:0">
-        对外用的纯文本：时间地点、岗位与名额、要求与保障、联系方式。
-        <b>不含志愿者名单</b>——名单请用「导出与时长」里的排班表。
+        对外用的纯文本，<b>不含志愿者名单</b>；要名单请用「导出与时长」里的排班表。
       </p>
       <el-input v-model="posterDlg.text" type="textarea" :rows="16" readonly />
       <template #footer>
@@ -816,15 +875,11 @@
         <el-form-item label="岗位组">
           <el-input v-model="stationForm.group_name" style="width:220px"
                     placeholder="如：东门片区（选填）" />
-          <div class="dim" style="margin-top:4px;line-height:1.7">
-            同一场次内<b>组名相同的岗位共用一名组长</b>——东门的引导、检录、
-            医疗点现场本来就是一个人在协调。留空则本岗位自成一组。
-          </div>
+          <div class="dim">同一场次内组名相同的岗位共用一名组长；留空则本岗位自成一组</div>
         </el-form-item>
         <el-form-item label="组长">
           <el-checkbox v-model="stationForm.needs_leader">本组需要一名组长</el-checkbox>
-          <div class="dim">报名时志愿者可表态愿意担任，按报名先后自动产生；
-            组长退选或被调走时自动从其余有意愿的人里递补。</div>
+          <div class="dim">报名时可表态愿任，先到先得；组长退出后自动递补</div>
         </el-form-item>
         <el-form-item label="条件要求">
           <el-select v-model="stationForm.genderReq" clearable placeholder="性别限制（可选）" style="width:180px;margin-right:8px">
@@ -834,8 +889,7 @@
                      placeholder="限定学院（可选）" style="width:260px">
             <el-option v-for="c in colleges" :key="c" :value="c" :label="c" />
           </el-select>
-          <div class="dim">硬性条件：不满足的志愿者<b>报名时就会被拦下</b>（岗位在活动页显示为
-            「不符合条件」并说明原因），一键分配时同样不会被排入。</div>
+          <div class="dim">硬性条件：不满足的人报名时就会被拦下，一键分配也不会排入</div>
         </el-form-item>
         <el-form-item label="要求原文" required><el-input v-model="stationForm.requirement_note"
                     placeholder="给志愿者看的说明，如：需全程站立，着深色衣裤" /></el-form-item>
@@ -847,10 +901,7 @@
                            :owner-id="positionDlg.editing.id"
                            :items="positionDlg.editing.attachments || []"
                            @changed="onMaterialChanged" />
-          <div v-else class="dim">
-            先「保存」把岗位建出来，这里就会出现上传框——材料要挂在具体岗位上。
-            保存后会自动留在本页，可以接着传。
-          </div>
+          <div v-else class="dim">先「保存」把岗位建出来，再回到这里上传</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -862,8 +913,7 @@
     <!-- 岗位批量复制到其它场次 -->
     <el-dialog v-model="copyPosDlg.visible" title="复制岗位到其它场次" width="520">
       <p class="dim" style="margin-top:0">
-        从「{{ copyPosDlg.source?.name }}」复制岗位（含名额、条件、组长设置与学习材料）。
-        目标场次已有同名岗位的会跳过。
+        从「{{ copyPosDlg.source?.name }}」复制岗位，含名额、条件、组长与材料；同名的跳过。
       </p>
       <el-form label-width="88px">
         <el-form-item label="复制哪些">
@@ -922,9 +972,7 @@
             <el-radio-button value="group">指定场次</el-radio-button>
             <el-radio-button value="not_checked_in">指定场次未到岗</el-radio-button>
           </el-radio-group>
-          <div class="dim" style="margin-top:4px">
-            收件人为已报名报名（status=enrolled）的志愿者；「未到岗」将排除该场次已签到的人。
-          </div>
+          <div class="dim">收件人是已报名的志愿者；「未到岗」会排除该场次已签到的人</div>
         </el-form-item>
         <el-form-item v-if="notifyForm.scope !== 'all'" label="选择场次" required>
           <el-select v-model="notifyForm.shift_id" style="width:100%" placeholder="请选择场次">
@@ -1064,7 +1112,7 @@ async function remindBatch(b) {
   loadBatches()
 }
 
-// —— 岗位树 ——
+// —— 岗位设置 ——
 const shiftDlg = ref({ visible: false, editing: null })
 const groupForm = ref({})
 const positionDlg = ref({ visible: false, editing: null })
@@ -1153,7 +1201,7 @@ const mh = ref({ userIds: [], hours: 0.5, note: '' })
 // pick 模式却一个岗位都没有 = 学生根本报不了名
 // 报名已经结束的活动，再说「暂停报名」只会让人困惑
 const editLabel = computed(() =>
-  act.value?.status === 'published' ? '调整安排（暂停报名）' : '调整安排')
+  act.value?.status === 'published' ? '调整岗位（暂停报名）' : '调整岗位')
 
 // 已发布的活动，不进编辑态就不能动结构
 const structureLocked = computed(
@@ -1171,7 +1219,7 @@ function unassignedHint(g) {
     : '本场次报名只锁时段，岗位在报名截止后统一分配——截止前有人待分配是正常的'
 }
 
-// 岗位树上的红色感叹号：这里列出的都是「不处理就会出事」的场次。
+// 岗位设置页上的红色感叹号：这里列出的都是「不处理就会出事」的场次。
 // assign 场次报名期没有岗位是设计如此，不报警；截止后还没建才是漏排。
 const treeAlerts = computed(() => shifts.value.flatMap(g => {
   if (!g.positions.length) {
@@ -1239,6 +1287,7 @@ async function loadAll() {
     const logsResp = await api.get(`/api/staff/audit-logs?activity_id=${activityId}&size=50`)
     logs.value = logsResp.items || []
     managers.value = await api.get(`/api/staff/activities/${activityId}/managers`)
+    loadAppeals()      // 标签上的红点要一进页面就在，不能等切到那一页才知道
     if (!currentGroupId.value && shifts.value.length) {
       currentGroupId.value = shifts.value[0].id
     }
@@ -1666,6 +1715,36 @@ async function transition(action) {
 // —— 导出与时长 ——
 function doExport() { dl(`/api/staff/activities/${activityId}/export.xlsx`) }
 
+// —— 时长申诉 ——
+const appeals = ref([])
+const pendingAppeals = computed(
+  () => appeals.value.filter(a => a.status === 'pending').length)
+const resolveDlg = ref({ visible: false, row: null, accept: true,
+                         hours: 1, reply: '', busy: false })
+
+async function loadAppeals() {
+  appeals.value = await api.get(
+    `/api/staff/activities/${activityId}/hours-appeals`)
+}
+
+function openResolve(row, accept) {
+  resolveDlg.value = { visible: true, row, accept, hours: row.claimed_hours,
+                       reply: '', busy: false }
+}
+
+async function doResolve() {
+  const d = resolveDlg.value
+  d.busy = true
+  try {
+    await api.post(`/api/staff/hours-appeals/${d.row.id}/resolve`,
+      { accept: d.accept, hours: d.accept ? d.hours : null, reply: d.reply })
+    ElMessage.success(d.accept ? '已采纳，时长已更新' : '已答复本人')
+    d.visible = false
+    loadAppeals()
+    hoursPreview(true)
+  } finally { d.busy = false }
+}
+
 // 加载时长预览（含手动添加的记录）；silent=true 时不弹「暂无签到数据」提示
 async function hoursPreview(silent = false) {
   hoursLoading.value = true
@@ -1812,7 +1891,7 @@ async function removeManager(row) {
 }
 // 进入「导出与时长」页签时自动加载时长预览（静默加载，不弹提示）
 watch(tab, t => {
-  if (t === 'export') hoursPreview(true)
+  if (t === 'export') { hoursPreview(true); loadAppeals() }
   if (t === 'acks') loadBatches()
 })
 watch(currentGroupId, loadRoster)

@@ -3,7 +3,7 @@
     <!-- 模式说明 -->
     <el-alert v-if="pickModeAllAssigned" type="info" :closable="false" style="margin-bottom:10px"
               title="本场次报名时已各自选定岗位"
-              description="一键分配主要服务于「截止后统一分配」的场次。这里运行试算一般会维持现状（结果中标注「保持」）；个别调整可直接改下方的建议岗位后应用。" />
+              description="主要服务于「截止后统一分配」的场次；已有岗位的人试算时会保持现状，可直接改下方的建议岗位。" />
 
     <!-- 工具条 -->
     <div class="toolbar">
@@ -23,8 +23,7 @@
     </div>
 
     <div class="dim" style="margin-bottom:12px">
-      按报名先后依次匹配到还有名额、且满足硬性条件的岗位；不满足条件的不会被排入，
-      需要时可在对应行勾选「强制」。
+      按报名先后匹配还有名额且满足条件的岗位；不满足的不排入，可勾「强制」。
     </div>
 
 
@@ -134,7 +133,7 @@
         <el-button @click="resetEdit">还原为系统建议</el-button>
         <el-button type="primary" :loading="applying" @click="apply">确认并发布分配</el-button>
         <div class="dim" style="margin-top:6px">
-          发布后每位志愿者将通过企业微信收到「专属岗位通知」（精确时间+地点）；操作计入留痕日志
+          发布后每人会收到岗位通知（时间+地点），操作留痕
         </div>
       </div>
     </template>
@@ -222,7 +221,7 @@ function overQuota(row) {
 
 async function runPreview() {
   if (!props.shift.positions.length) {
-    ElMessage.warning('请先在「岗位树」页签下创建岗位，再运行一键分配')
+    ElMessage.warning('请先在「岗位设置」页签下创建岗位，再运行一键分配')
     return
   }
   solving.value = true

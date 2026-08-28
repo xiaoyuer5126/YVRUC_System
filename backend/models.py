@@ -506,6 +506,37 @@ class HoursRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+class HoursAppeal(Base):
+    """时长申诉：志愿者对某条已确认的时长提异议，管理者采纳或驳回。
+
+    自报只走这条兜底路，不做主路径——全员自报会系统性虚高（不是诚信问题，
+    是记忆问题），而且管理者要逐条判断，比扫码贵得多。出了岔子的那一条
+    （忘记签退、中途被叫走）才值得单独说一次。
+    """
+    __tablename__ = "hours_appeals"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    record_id: Mapped[str] = mapped_column(ForeignKey("hours_records.id"),
+                                           index=True)
+    activity_id: Mapped[str] = mapped_column(String(32), index=True)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    old_hours: Mapped[float] = mapped_column(Float)      # 提交时的原值，留证
+    claimed_hours: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str] = mapped_column(String(512))
+    status: Mapped[str] = mapped_column(String(12), default="pending",
+                                        index=True)      # pending/accepted/rejected
+    reply: Mapped[str] = mapped_column(String(512), default="")
+    final_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    handled_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    STATUS_LABELS = {"pending": "待处理", "accepted": "已采纳", "rejected": "未采纳"}
+
+    def status_label(self) -> str:
+        return self.STATUS_LABELS.get(self.status, self.status)
+
+
 class ViolationRecord(Base):
     """违规记录（《志愿者服务规范》「限制准入名单」的一行）。
 

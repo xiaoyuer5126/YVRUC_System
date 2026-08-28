@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session as OrmSession
 from ..database import db_session
 from ..deps import current_user
 from ..models import (Activity, CheckinRecord, CreditLog, Enrollment,
-                      HoursRecord, Notification, Shift, Position, User,
-                      iso, now)
+                      HoursAppeal, HoursRecord, Notification, Shift, Position,
+                      User, iso, now, uid)
+from ..notify import notify_managers
 from ..serializers import iso_of
 
 router = APIRouter(prefix="/api/me", tags=["me"])
@@ -155,15 +156,66 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
             .order_by(HoursRecord.created_at.desc()).all())
     total = sum(r.hours for r in rows)
     uploaded = sum(r.hours for r in rows if r.status == "uploaded")
+    appeals = {a.record_id: a for a in db.query(HoursAppeal)
+               .filter(HoursAppeal.user_id == user.id)
+               .order_by(HoursAppeal.created_at).all()}
     out = []
     for r in rows:
         act = db.get(Activity, r.activity_id)
+        a = appeals.get(r.id)
         out.append({"id": r.id, "activity_title": act.title if act else "",
                     "hours": r.hours, "status": r.status,
                     "upload_ref": r.upload_ref,
-                    "created_at": iso_of(r.created_at)})
+                    "created_at": iso_of(r.created_at),
+                    # 已回传的记录不能再动，申诉入口也就不该出现
+                    "can_appeal": r.status != "uploaded" and (
+                        a is None or a.status == "rejected"),
+                    "appeal": ({"status": a.status, "label": a.status_label(),
+                                "claimed_hours": a.claimed_hours,
+                                "reason": a.reason, "reply": a.reply}
+                               if a else None)})
     return {"total": round(total, 1), "uploaded": round(uploaded, 1),
             "records": out}
+
+
+class AppealBody(BaseModel):
+    claimed_hours: float
+    reason: str
+
+
+@router.post("/hours/{record_id}/appeal")
+def appeal_hours(record_id: str, body: AppealBody,
+                 db: OrmSession = Depends(db_session), user=Depends(current_user)):
+    """对某条时长提异议。一条记录同时只能有一个待处理的申诉。"""
+    r = db.get(HoursRecord, record_id)
+    if r is None or r.user_id != user.id:
+        raise HTTPException(404, "时长记录不存在")
+    if r.status == "uploaded":
+        raise HTTPException(409, "该记录已回传数智人大，不可再申诉；请联系负责老师")
+    reason = body.reason.strip()
+    if len(reason) < 5:
+        raise HTTPException(400, "请把情况写清楚（至少 5 个字），管理者才好判断")
+    if body.claimed_hours <= 0:
+        raise HTTPException(400, "申报时长必须大于 0")
+    if body.claimed_hours > 24:
+        raise HTTPException(400, "申报时长不能超过 24 小时")
+    pending = (db.query(HoursAppeal)
+               .filter(HoursAppeal.record_id == r.id,
+                       HoursAppeal.status == "pending").first())
+    if pending is not None:
+        raise HTTPException(409, "已有一条申诉在处理中，请等待答复")
+    db.add(HoursAppeal(id=uid("apl"), record_id=r.id, activity_id=r.activity_id,
+                       user_id=user.id, old_hours=r.hours,
+                       claimed_hours=round(body.claimed_hours, 2),
+                       reason=reason))
+    act = db.get(Activity, r.activity_id)
+    notify_managers(db, r.activity_id, f"[时长申诉] {act.title if act else ''}",
+                    f"{user.name}（{user.student_id}）对时长提出异议：\n"
+                    f"{r.hours:g}h → 申报 {body.claimed_hours:g}h\n"
+                    f"理由：{reason}\n"
+                    f"请到活动的「导出与时长」页处理。")
+    db.commit()
+    return {"ok": True}
 
 
 class ProfileBody(BaseModel):

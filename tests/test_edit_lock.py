@@ -109,7 +109,7 @@ def test_已发布活动不进编辑态改不了场次与岗位(client, admin, d
     pos = shift.positions[0]
 
     def denied(r):
-        return r.status_code == 409 and "调整安排" in r.json()["detail"]
+        return r.status_code == 409 and "调整岗位" in r.json()["detail"]
 
     assert denied(client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
                                json={"name": "改个名"}))

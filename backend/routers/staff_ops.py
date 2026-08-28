@@ -17,10 +17,11 @@ from ..deps import require_manager, require_manager_download
 from ..enroll_logic import position_enrolled_count
 from ..exporter import build_activity_workbook
 from ..perm import ensure_activity_manager
-from ..integrations import checkin_gateway, shuzhi
+from ..integrations import checkin_gateway, shuzhi, wecom
 from ..notify import notify_checkin
 from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
-                      HoursRecord, Shift, Position, User, iso, now, uid)
+                      HoursAppeal, HoursRecord, Shift, Position, User,
+                      iso, now, uid)
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
 
@@ -630,12 +631,22 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
 
-    def upsert(user_id: str, hours: float) -> None:
+    kept: list[str] = []
+
+    def upsert(user_id: str, hours: float, *, force: bool = False) -> None:
         existing = db.query(HoursRecord).filter(
             HoursRecord.activity_id == act.id,
             HoursRecord.user_id == user_id,
             HoursRecord.source == "checkin").first()
         if existing:
+            # 采纳过申诉的记录不被「确认全部」推回计算值：那次改判是人判的
+            settled = db.query(HoursAppeal).filter(
+                HoursAppeal.record_id == existing.id,
+                HoursAppeal.status == "accepted").first()
+            if settled is not None and not force:
+                u = db.get(User, user_id)
+                kept.append(u.name if u else user_id)
+                return
             existing.hours = hours
             return
         db.add(HoursRecord(id=uid("hrs"), activity_id=act.id,
@@ -661,7 +672,7 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
                 raise HTTPException(404, f"学号 {sid} 不存在")
             targets.append((u.id, round(hours, 2)))
         for uid_, h in targets:
-            upsert(uid_, h)
+            upsert(uid_, h, force=True)   # 逐个点名改，就是人判的，照改
         count = len(targets)
         detail = "、".join(f"{db.get(User, u_).name}{h:g}h"
                            for u_, h in targets[:8])
@@ -682,15 +693,102 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
                      f"请在表格中逐条核对后确认")
         for it in clear:
             upsert(it["user"]["id"], it["hours"])
-        count = len(clear)
+        count = len(clear) - len(kept)
         summary = (f"确认 {count} 人志愿时长（依据签到签退记录）"
                    + (f"；{len(review)} 人未正常签退、时长待核未确认"
-                      if review else ""))
+                      if review else "")
+                   + (f"；{'、'.join(kept)} 的时长由申诉改判过，保留不覆盖"
+                      if kept else ""))
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=summary)
     db.commit()
     return {"ok": True, "count": count, "message": summary}
+
+
+# ======================= 时长申诉 =======================
+
+@router.get("/activities/{activity_id}/hours-appeals")
+def list_appeals(activity_id: str, db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_manager)):
+    ensure_activity_manager(db, user, activity_id)
+    rows = (db.query(HoursAppeal)
+            .filter(HoursAppeal.activity_id == activity_id)
+            .order_by(HoursAppeal.status.desc(),
+                      HoursAppeal.created_at.desc()).all())
+    out = []
+    for a in rows:
+        u = db.get(User, a.user_id)
+        rec = db.get(HoursRecord, a.record_id)
+        out.append({"id": a.id, "status": a.status, "label": a.status_label(),
+                    "name": u.name if u else "?",
+                    "student_id": u.student_id if u else "",
+                    "old_hours": a.old_hours, "claimed_hours": a.claimed_hours,
+                    "current_hours": rec.hours if rec else None,
+                    "uploaded": bool(rec and rec.status == "uploaded"),
+                    "reason": a.reason, "reply": a.reply,
+                    "final_hours": a.final_hours,
+                    "created_at": iso(a.created_at)})
+    return out
+
+
+class ResolveAppealBody(BaseModel):
+    accept: bool
+    hours: float | None = None    # 采纳时可改判成第三个数，留空则按申报值
+    reply: str = ""
+
+
+@router.post("/hours-appeals/{appeal_id}/resolve")
+def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
+                   db: OrmSession = Depends(db_session),
+                   user: User = Depends(require_manager)):
+    """采纳或驳回一条时长申诉。采纳即改写时长，全程留痕并回告本人。"""
+    a = db.get(HoursAppeal, appeal_id)
+    if a is None:
+        raise HTTPException(404, "申诉不存在")
+    ensure_activity_manager(db, user, a.activity_id)
+    if a.status != "pending":
+        raise HTTPException(409, f"该申诉已{a.status_label()}")
+    rec = db.get(HoursRecord, a.record_id)
+    if rec is None:
+        raise HTTPException(404, "对应的时长记录已不存在")
+    if rec.status == "uploaded":
+        raise HTTPException(409, "该记录已回传数智人大，无法再改；请走线下更正")
+    act = _act(db, a.activity_id)
+    who = db.get(User, a.user_id)
+
+    if body.accept:
+        hours = a.claimed_hours if body.hours is None else round(body.hours, 2)
+        if hours <= 0:
+            raise HTTPException(400, "时长必须大于 0")
+        before = rec.hours
+        rec.hours = hours
+        rec.confirmed_by = user.id
+        a.final_hours = hours
+        a.status = "accepted"
+        summary = (f"采纳 {who.name if who else ''} 的时长申诉："
+                   f"{before:g}h → {hours:g}h（申报 {a.claimed_hours:g}h）")
+    else:
+        a.status = "rejected"
+        summary = (f"驳回 {who.name if who else ''} 的时长申诉"
+                   f"（申报 {a.claimed_hours:g}h，维持 {rec.hours:g}h）")
+    a.reply = body.reply.strip()
+    a.handled_by = user.id
+    a.handled_at = now()
+
+    if who is not None:
+        wecom.send_user(
+            db, who, "custom", data={"activity_id": act.id},
+            title=f"时长申诉{'已采纳' if body.accept else '未采纳'}｜{act.title}",
+            content=(f"您对「{act.title}」时长的申诉已处理。\n"
+                     f"结果：{'采纳' if body.accept else '未采纳'}，"
+                     f"当前时长 {rec.hours:g} 小时。"
+                     + (f"\n说明：{a.reply}" if a.reply else "")))
+    audit_log(db, actor=user, action="hours_confirm", target_type="hours",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=summary + (f"；说明：{a.reply}" if a.reply else ""))
+    db.commit()
+    return {"ok": True, "status": a.status, "hours": rec.hours}
 
 
 @router.post("/activities/{activity_id}/hours/upload")
@@ -702,8 +800,16 @@ def hours_upload(activity_id: str, db: OrmSession = Depends(db_session),
     rows = (db.query(HoursRecord)
             .filter(HoursRecord.activity_id == act.id,
                     HoursRecord.status != "uploaded").all())
+    # 回传即定稿，之后改不了。有人正在申诉的记录先留下，处理完下次一起传
+    held = {a.record_id for a in db.query(HoursAppeal)
+            .filter(HoursAppeal.activity_id == act.id,
+                    HoursAppeal.status == "pending").all()}
+    skipped = [r for r in rows if r.id in held]
+    rows = [r for r in rows if r.id not in held]
     if not rows:
-        raise HTTPException(400, "没有待回传的时长记录，请先确认时长")
+        raise HTTPException(
+            400, f"{len(skipped)} 条记录正在申诉中，处理完再回传"
+            if skipped else "没有待回传的时长记录，请先确认时长")
     receipt = shuzhi.upload_service_hours(act.id, rows)
     if not receipt.ok:
         raise HTTPException(502, f"数智人大接口返回失败：{receipt.message}")
@@ -712,10 +818,12 @@ def hours_upload(activity_id: str, db: OrmSession = Depends(db_session),
         r.status = "uploaded"
         r.upload_ref = receipt.receipt_no
         r.uploaded_at = stamp
+    tail = f"；{len(skipped)} 条因申诉待处理未回传" if skipped else ""
     audit_log(db, actor=user, action="hours_upload", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"回传 {len(rows)} 人时长至数智人大"
-                      f"（回执号 {receipt.receipt_no}，{receipt.message}）")
+                      f"（回执号 {receipt.receipt_no}，{receipt.message}）{tail}")
     db.commit()
     return {"ok": True, "receipt_no": receipt.receipt_no,
-            "count": len(rows), "message": receipt.message}
+            "count": len(rows), "skipped": len(skipped),
+            "message": receipt.message + tail}

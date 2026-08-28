@@ -125,7 +125,7 @@ def notify_managers_to_assign(db: OrmSession, act: Activity) -> None:
                         title=f"报名已截止，请排岗｜{act.title}",
                         content=f"「{act.title}」报名已截止，还有场次没排完：\n"
                                 f"{lines}\n"
-                                f"请进入活动管理的「岗位树」补齐岗位，"
+                                f"请进入活动管理的「岗位设置」补齐岗位，"
                                 f"再到「报名与调配」运行一键分配。")
     logger.info("活动「%s」已截止，提醒管理者排岗：%s", act.title, "；".join(gaps))
 
@@ -135,7 +135,7 @@ def notify_managers_to_assign(db: OrmSession, act: Activity) -> None:
 def release_stale_edit_locks(db: OrmSession) -> int:
     """超时没点「保存并发布」就自动解冻。
 
-    管理者点了「调整安排」转头去开会，学生一下午都报不了名，而这件事
+    管理者点了「调整岗位」转头去开会，学生一下午都报不了名，而这件事
     没有任何外部表现——除了学生以为活动黄了。
     """
     deadline = now() - timedelta(hours=config.EDIT_LOCK_HOURS)
@@ -156,7 +156,7 @@ def release_stale_edit_locks(db: OrmSession) -> int:
                             content=f"您对「{act.title}」的编辑态超过 "
                                     f"{config.EDIT_LOCK_HOURS} 小时未保存，"
                                     f"系统已自动解冻并恢复报名。\n"
-                                    f"如仍需调整，请重新点击「调整安排」。")
+                                    f"如仍需调整，请重新点击「调整岗位」。")
         logger.info("活动「%s」编辑态超时，已自动解冻", act.title)
     if rows:
         db.commit()

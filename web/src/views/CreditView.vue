@@ -22,8 +22,7 @@
             </el-descriptions-item>
           </el-descriptions>
           <p class="dim" style="text-align:left;line-height:1.8;font-size:12px;margin-top:12px">
-            规则：开始前24小时内退选 −5 分；放弃候补累计3次暂停候补；
-            低于60分冻结报名30天。依据《志愿者服务规范》与平台设计方案。
+            开始前 24 小时内退选 −5 分；放弃候补累计 3 次暂停候补；低于 60 分冻结报名 30 天。
           </p>
         </el-card>
       </el-col>

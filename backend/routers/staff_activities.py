@@ -751,13 +751,13 @@ def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:
 
     筹备中的活动随便改——还没公开，没人报名。已发布之后每一次改动都可能
     让学生看到半成品：名额改到一半、岗位删了又建。所以强制走
-    「调整安排 → 改 → 保存并发布」这条路，改动期间报名暂停，
+    「调整岗位 → 改 → 保存并发布」这条路，改动期间报名暂停，
     保存时把这批改动一次性通知到人。
     """
     act = _act(db, activity_id)
     if act.status != "draft" and act.editing_since is None:
         raise HTTPException(
-            409, "请先点右上角「调整安排（暂停报名）」再修改场次与岗位——"
+            409, "请先点右上角「调整岗位（暂停报名）」再修改场次与岗位——"
                  "改动期间报名会暂停，保存后统一通知已报名的志愿者")
     return act
 

@@ -7,7 +7,7 @@
       <el-button size="small" @click="openReminder">
         <el-icon><Bell /></el-icon>&nbsp;补发签到提醒
       </el-button>
-      <span class="dim">同一签到码：第一次扫=签到，第二次扫=签退；场次结束2小时后未签退，自动按场次结束时间计</span>
+      <span class="dim">同一个码：第一次扫签到，第二次扫签退</span>
     </div>
 
     <DataCards v-if="narrow" :rows="tasks" title-key="token" style="margin-bottom:16px"
@@ -117,7 +117,7 @@
             <el-tag v-if="!batchTaskId" size="small" type="warning" effect="plain">请先生成并开启签到码</el-tag>
           </template>
           <template v-else>
-            <span v-if="batchTaskId" class="dim">勾选左侧复选框可批量签到/签退/取消（未签到者也可直接补签）</span>
+            <span v-if="batchTaskId" class="dim">勾选后可批量签到／签退／取消</span>
             <el-tag v-else size="small" type="warning" effect="plain">请先生成并开启签到码</el-tag>
           </template>
         </div>
