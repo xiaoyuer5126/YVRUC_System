@@ -241,6 +241,53 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
     }
 
 
+class ExcuseBody(BaseModel):
+    excused: bool
+    reason: str = ""
+
+
+@router.post("/enrollments/{enrollment_id}/excuse")
+def set_excuse(enrollment_id: str, body: ExcuseBody,
+               db: OrmSession = Depends(db_session),
+               user: User = Depends(current_user)):
+    """培训/彩排请假（或销假）。
+
+    只对附属场次开放：服务场次不来就是退选，那条路有信用分规则，不能靠请假绕过。
+    开始之后不能再改——人已经到没到，现场说了算。
+    """
+    enr = db.get(Enrollment, enrollment_id)
+    if enr is None or enr.user_id != user.id:
+        raise HTTPException(404, "报名记录不存在")
+    g = db.get(Shift, enr.shift_id)
+    if not g.is_attached():
+        raise HTTPException(400, "只有培训/彩排可以请假；服务场次请走退选")
+    if enr.status != "enrolled":
+        raise HTTPException(409, "该报名记录不在生效状态")
+    if now() >= g.start_time:
+        raise HTTPException(409, f"「{g.name}」已经开始，不能再改请假状态")
+    reason = body.reason.strip()
+    if body.excused and len(reason) < 2:
+        raise HTTPException(400, "请简单说明无法参加的原因")
+
+    act = db.get(Activity, enr.activity_id)
+    enr.excused = body.excused
+    enr.excuse_reason = reason if body.excused else ""
+    enr.excused_at = now() if body.excused else None
+    logic.record_change(db, user, enr,
+                        "excuse" if body.excused else "unexcuse",
+                        reason if body.excused else "")
+    # 临近才请假的要立刻让管理者知道：现场少一个人是要补位的
+    hours_left = (g.start_time - now()).total_seconds() / 3600
+    if body.excused and hours_left < config.LATE_CANCEL_HOURS:
+        notify.notify_managers(
+            db, act.id, f"[{g.kind_label()}请假] {act.title}",
+            f"{user.name}（{user.student_id}）无法参加「{g.name}」"
+            f"（{g.span_text()}），距开始不足 {config.LATE_CANCEL_HOURS} 小时。\n"
+            f"事由：{reason}")
+    db.commit()
+    return {"ok": True, "excused": enr.excused}
+
+
 class ReassignPrefBody(BaseModel):
     allow_reassign: bool
 

@@ -265,3 +265,66 @@ def test_招募文案带上岗位与彩排(client, admin, db, act_with_positions
         assert want in text, f"招募文案里少了「{want}」\n{text}"
     # 招募文案对外，不能带名单
     assert "学号" not in text
+
+
+def test_培训彩排可以请假(client, admin, db, act_with_positions, take_student):
+    """请假不是退选：人还在名单上，只是这一场不来。"""
+    act, g, east, _c = act_with_positions
+    sid = _add_attached(client, admin, act, g, kind="training")
+    u = student_row(db, take_student())
+    h = _enroll(client, u.student_id, act, g, east)
+
+    detail = client.get(f"/api/activities/{act.id}", headers=h).json()
+    att = detail["shifts"][0]["attached"][0]
+    assert att["mine"] and not att["excused"]
+
+    r = client.post(f"/api/activities/enrollments/{att['my_enrollment_id']}/excuse",
+                    headers=h, json={"excused": True, "reason": "与专业课冲突"})
+    assert r.status_code == 200, r.text
+
+    row = db.query(Enrollment).filter(Enrollment.shift_id == sid,
+                                      Enrollment.user_id == u.id).one()
+    assert row.excused and row.status == "enrolled"   # 还在名单上
+
+    # 请假的人不进应到岗的分母，也不再被催签到
+    board = client.get(f"/api/staff/shifts/{sid}/board", headers=admin).json()
+    assert board["expected"] == 0 and board["excused"] == 1
+    r = client.post(f"/api/staff/shifts/{sid}/checkin-reminder", headers=admin,
+                    json={})
+    assert r.status_code == 400 and "没有需要提醒的人" in r.json()["detail"]
+
+    # 销假回到正常
+    client.post(f"/api/activities/enrollments/{att['my_enrollment_id']}/excuse",
+                headers=h, json={"excused": False})
+    board = client.get(f"/api/staff/shifts/{sid}/board", headers=admin).json()
+    assert board["expected"] == 1 and board["excused"] == 0
+
+
+def test_服务场次不能请假(client, admin, db, act_with_positions, take_student):
+    """服务场次不来就是退选，那条路有信用分规则，不能靠请假绕过。"""
+    act, g, east, _c = act_with_positions
+    u = student_row(db, take_student())
+    h = _enroll(client, u.student_id, act, g, east)
+    enr = db.query(Enrollment).filter(Enrollment.shift_id == g.id,
+                                      Enrollment.user_id == u.id).one()
+
+    r = client.post(f"/api/activities/enrollments/{enr.id}/excuse", headers=h,
+                    json={"excused": True, "reason": "有事"})
+    assert r.status_code == 400 and "请走退选" in r.json()["detail"]
+
+
+def test_开始后不能再改请假(client, admin, db, act_with_positions, take_student):
+    act, g, east, _c = act_with_positions
+    sid = _add_attached(client, admin, act, g, days=5)
+    u = student_row(db, take_student())
+    h = _enroll(client, u.student_id, act, g, east)
+    enr = db.query(Enrollment).filter(Enrollment.shift_id == sid,
+                                      Enrollment.user_id == u.id).one()
+
+    s = db.get(Shift, sid)
+    s.start_time = now() - timedelta(minutes=5)
+    db.commit()
+
+    r = client.post(f"/api/activities/enrollments/{enr.id}/excuse", headers=h,
+                    json={"excused": True, "reason": "临时有事"})
+    assert r.status_code == 409 and "已经开始" in r.json()["detail"]

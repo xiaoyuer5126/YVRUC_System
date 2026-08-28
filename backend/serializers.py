@@ -170,7 +170,22 @@ def attached_out(db: OrmSession, s: Shift, my_enr=None) -> dict:
     applies = s.applies_to_positions or []
     mine = (my_enr is not None and my_enr.status == "enrolled"
             and (not applies or my_enr.position_id in applies))
+    # 我在这一场的报名记录（培训/彩排是连带产生的），用来显示请假状态
+    row = None
+    if mine:
+        row = (db.query(Enrollment)
+               .filter(Enrollment.shift_id == s.id,
+                       Enrollment.user_id == my_enr.user_id,
+                       Enrollment.status == "enrolled").first())
+    excused_n = (db.query(Enrollment)
+                 .filter(Enrollment.shift_id == s.id,
+                         Enrollment.status == "enrolled",
+                         Enrollment.excused.is_(True)).count())
     return {
+        "my_enrollment_id": row.id if row else "",
+        "excused": bool(row and row.excused),
+        "excuse_reason": row.excuse_reason if row else "",
+        "excused_count": excused_n,
         "id": s.id, "name": s.name, "kind": s.kind, "kind_label": s.kind_label(),
         "start_time": iso_of(s.start_time), "end_time": iso_of(s.end_time),
         "time_text": s.span_text(), "location": s.location,

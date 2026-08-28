@@ -267,6 +267,7 @@ ROSTER_ACTIONS = {
     "enroll": "报名", "waitlist": "加入候补", "cancel": "退选",
     "quit_queue": "退出候补", "abandon": "放弃候补转正",
     "promote": "候补转正",
+    "excuse": "请假", "unexcuse": "销假",
 }
 
 

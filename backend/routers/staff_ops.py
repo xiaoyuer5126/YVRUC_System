@@ -248,9 +248,11 @@ def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
             .order_by(User.college, User.name).all())
 
     items = []
-    checked = checked_out = 0
+    checked = checked_out = excused = 0
     by_position: dict[str, int] = {}   # 到岗统计只基于有签到记录者
     for enr, u, rec in rows:
+        if enr.excused and not rec:
+            excused += 1
         st = db.get(Position, enr.position_id) if enr.position_id else None
         if rec:
             checked += 1
@@ -270,6 +272,7 @@ def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
             "checkout_at": (rec.checkout_at.strftime("%H:%M:%S")
                             if rec and rec.checkout_at else ""),
             "checkout_method": (rec.checkout_method or "") if rec else "",
+            "excused": enr.excused, "excuse_reason": enr.excuse_reason,
         })
     positions = [{"id": s.id, "name": s.name, "quota": s.quota,
                  "checked": by_position.get(s.id, 0)}
@@ -277,7 +280,10 @@ def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
     return {
         "activity_id": act.id, "activity_title": act.title,
         "shift_id": g.id, "shift_name": g.name,
-        "expected": len(rows), "checked": checked,
+        "kind": g.kind, "kind_label": g.kind_label(),
+        # 请假的人不进应到岗的分母：他事先说了不来，不该拉低到岗率
+        "expected": len(rows) - excused, "checked": checked,
+        "excused": excused,
         "checked_out": checked_out,
         "positions": positions, "records": items[:500],
     }

@@ -88,6 +88,16 @@
                 <span>{{ s.time_text }}</span>
                 <span class="dim">{{ s.location || act.location }}</span>
                 <span class="dim">{{ attachedWho(g, s) }}</span>
+                <template v-if="s.mine">
+                  <el-tag size="small" :type="s.excused ? 'info' : 'primary'" effect="plain">
+                    {{ s.excused ? '已请假' : '要参加' }}
+                  </el-tag>
+                  <el-button size="small" link
+                             :type="s.excused ? 'primary' : 'warning'"
+                             @click="toggleExcuse(s)">
+                    {{ s.excused ? '销假' : '我无法参加' }}
+                  </el-button>
+                </template>
               </div>
             </div>
 
@@ -348,9 +358,17 @@
                       <span class="dim">
                         {{ s.hours_mode === 'none' ? '不计时长' : '计入志愿时长' }}
                       </span>
-                      <el-tag v-if="s.mine" size="small" type="primary" effect="plain">
-                        您需要参加
-                      </el-tag>
+                      <template v-if="s.mine">
+                        <el-tag size="small" :type="s.excused ? 'info' : 'primary'"
+                                effect="plain">
+                          {{ s.excused ? '已请假' : '您需要参加' }}
+                        </el-tag>
+                        <el-button size="small" link
+                                   :type="s.excused ? 'primary' : 'warning'"
+                                   @click="toggleExcuse(s)">
+                          {{ s.excused ? '销假' : '我无法参加' }}
+                        </el-button>
+                      </template>
                     </div>
                     <div class="dim" style="font-size:12px">
                       报名本场次时自动带上，退选时一并退出；到场同样要扫码签到。
@@ -689,6 +707,30 @@ function deadlineTs(g) {
   return new Date(g.my_enrollment.confirm_deadline.replace(' ', 'T').slice(0, 19)).getTime()
 }
 // 我在这个场次的岗位对象（报名后才有；统一分配的场次分配前为 null）
+// 培训/彩排请假：服务场次不来是退选（有信用分规则），这里只管附属时段
+async function toggleExcuse(s) {
+  if (s.excused) {
+    await api.post(`/api/activities/enrollments/${s.my_enrollment_id}/excuse`,
+                   { excused: false })
+    ElMessage.success('已销假')
+    return load()
+  }
+  let reason = ''
+  try {
+    const r = await ElMessageBox.prompt(
+      `「${s.name}」${s.time_text}。请说明无法参加的原因，负责老师会看到。`,
+      `${s.kind_label}请假`,
+      { inputPlaceholder: '如：与专业课时间冲突', inputPattern: /.{2,}/,
+        inputErrorMessage: '请简单写一下原因',
+        confirmButtonText: '提交请假', cancelButtonText: '再想想' })
+    reason = r.value
+  } catch { return }
+  await api.post(`/api/activities/enrollments/${s.my_enrollment_id}/excuse`,
+                 { excused: true, reason })
+  ElMessage.success('已请假，负责老师会看到')
+  load()
+}
+
 // 培训/彩排可以只对某几个岗位生效，把「谁要去」写在脸上
 function attachedWho(g, s) {
   if (!s.applies_to_positions?.length) return '全体参加'

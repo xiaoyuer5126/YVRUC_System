@@ -77,6 +77,7 @@
             <div class="ratio"><b>{{ board.checked }}</b> / {{ board.expected }}</div>
             <div class="dim">已到岗 / 应到岗</div>
             <div class="dim" style="margin-top:4px">已签退 {{ board.checked_out }} 人</div>
+            <div v-if="board.excused" class="dim">已请假 {{ board.excused }} 人（不计入应到岗）</div>
             <el-progress type="circle" :percentage="pct" :width="86"
                          :color="pct === 100 ? '#67c23a' : '#9e2235'" style="margin-top:8px" />
           </el-card>
@@ -130,9 +131,11 @@
                empty="名单为空">
       <template #extra="{ row }">
         <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
-        <el-tag size="small" :type="row.checked_in ? 'success' : 'info'"
+        <el-tag size="small"
+                :type="row.checked_in ? 'success' : (row.excused ? 'info' : 'danger')"
                 :effect="row.checked_in ? 'light' : 'plain'">
-          {{ row.checked_in ? (row.checkout_at ? '已签退' : '已到岗') : '未签到' }}
+          {{ row.checked_in ? (row.checkout_at ? '已签退' : '已到岗')
+             : (row.excused ? '已请假' : '未签到') }}
         </el-tag>
       </template>
     </DataCards>
@@ -159,7 +162,9 @@
           <el-table-column prop="position" label="岗位" min-width="120" />
           <el-table-column label="方式" width="130">
             <template #default="{row}">
-              <el-tag v-if="!row.checked_in" size="small" type="info" effect="plain">未签到</el-tag>
+              <el-tag v-if="row.excused && !row.checked_in" size="small"
+                      type="info" effect="plain">已请假</el-tag>
+              <el-tag v-else-if="!row.checked_in" size="small" type="info" effect="plain">未签到</el-tag>
               <template v-else>
                 <el-tag size="small" :effect="row.method === 'scan' ? 'light' : 'plain'">
                   {{ row.method === 'scan' ? '扫码' : '补签' }}

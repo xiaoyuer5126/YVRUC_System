@@ -58,6 +58,7 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "position": ({"id": st.id, "name": st.name, "time_text": st.time_text(),
                      "location": st.location} if st else None),
         "status": enr.status, "cancel_type": enr.cancel_type,
+        "excused": enr.excused, "excuse_reason": enr.excuse_reason,
         "seat_held": enr.seat_held,
         "allow_reassign": enr.allow_reassign,
         "joined_at": iso_of(enr.joined_at),

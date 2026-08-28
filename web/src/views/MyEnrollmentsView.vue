@@ -20,6 +20,7 @@
         <div v-if="row.shift.attached" class="dim">
           随「{{ row.shift.parent_name }}」报名，退选请退主场次
           <template v-if="row.shift.location"> · {{ row.shift.location }}</template>
+          <el-tag v-if="row.excused" size="small" type="info" effect="plain">已请假</el-tag>
         </div>
         <div v-if="row.position" class="mob-line">
           <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
@@ -71,6 +72,7 @@
           <div v-if="row.shift.attached" class="dim">
             随「{{ row.shift.parent_name }}」报名
             <template v-if="row.shift.location"> · {{ row.shift.location }}</template>
+            <el-tag v-if="row.excused" size="small" type="info" effect="plain">已请假</el-tag>
           </div>
           <div v-if="row.position">
             <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>

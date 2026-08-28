@@ -426,6 +426,13 @@ class Enrollment(Base):
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     assigned_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
+    # —— 请假（只用于培训/彩排这类附属场次）——
+    # 不动 status：status 被名额、候补、签到、时长一路过滤着，加一个值要改
+    # 十几处判断；请假的人仍然是「已报名」，只是这一场不来。
+    excused: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    excuse_reason: Mapped[str] = mapped_column(String(256), default="")
+    excused_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     source: Mapped[str] = mapped_column(String(16), default="self")  # self/promoted/admin
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=now)  # 排队/报名时间
     promoted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

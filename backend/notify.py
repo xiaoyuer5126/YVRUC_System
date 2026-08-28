@@ -52,7 +52,9 @@ def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
     act = db.get(Activity, g.activity_id)
     q = (db.query(Enrollment)
          .filter(Enrollment.shift_id == g.id,
-                 Enrollment.status == "enrolled"))
+                 Enrollment.status == "enrolled",
+                 # 请了假的人不再催他签到：他已经说过来不了了
+                 Enrollment.excused.is_(False)))
     if position_ids:
         q = q.filter(Enrollment.position_id.in_(position_ids))
     rows = q.all()
