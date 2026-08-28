@@ -129,8 +129,7 @@ def send_reminder(shift_id: str, db: OrmSession = Depends(db_session),
     g.reminder_sent_at = now()
     audit_log(db, actor=user, action="update", target_type="notify",
               target_id=g.id, target_label=g.name, activity_id=g.activity_id,
-              summary=f"手动补发签到提醒：{n} 人（未签到的已确认志愿者）",
-              visible=False)
+              summary=f"手动补发签到提醒：{n} 人（未签到的已确认志愿者）")
     db.commit()
     return {"ok": True, "count": n}
 
@@ -356,8 +355,7 @@ def export(activity_id: str, db: OrmSession = Depends(db_session),
     audit_log(db, actor=user, action="export", target_type="export",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"导出排班表《{filename}》"
-                      "（生产版将强制加密，密码经企业微信单独发送）",
-              visible=False)
+                      "（生产版将强制加密，密码经企业微信单独发送）")
     db.commit()
     from urllib.parse import quote
     return StreamingResponse(
@@ -490,7 +488,7 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
         added.append(f"{u.name} {hours}h")
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"手动添加时长：{'、'.join(added)}", visible=False)
+              summary=f"手动添加时长：{'、'.join(added)}")
     db.commit()
     return {"ok": True, "count": len(added)}
 
@@ -510,8 +508,7 @@ def hours_manual_delete(activity_id: str, record_id: str,
     db.delete(r)
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"删除手动时长：{u.name if u else '?'} {r.hours}h（{r.note}）",
-              visible=False)
+              summary=f"删除手动时长：{u.name if u else '?'} {r.hours}h（{r.note}）")
     db.commit()
     return {"ok": True}
 

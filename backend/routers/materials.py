@@ -82,7 +82,8 @@ async def upload_material(owner_type: str = Form(...), owner_id: str = Form(...)
     audit_log(db, actor=user, action="material", target_type="material",
               target_id=row.id, target_label=f"{owner_name}·{row.title}",
               activity_id=activity_id,
-              summary=f"上传学习材料《{row.title}》（{len(data) // 1024}KB）")
+              summary=f"上传学习材料《{row.title}》（{len(data) // 1024}KB）",
+              visible=True)
     db.commit()
     return {"id": row.id, "title": row.title, "size": row.size}
 
@@ -112,7 +113,8 @@ def add_link(body: LinkBody, db: OrmSession = Depends(db_session),
     audit_log(db, actor=user, action="material", target_type="material",
               target_id=row.id, target_label=f"{owner_name}·{row.title}",
               activity_id=activity_id,
-              summary=f"添加学习材料链接《{row.title}》")
+              summary=f"添加学习材料链接《{row.title}》",
+              visible=True)
     db.commit()
     return {"id": row.id, "title": row.title}
 

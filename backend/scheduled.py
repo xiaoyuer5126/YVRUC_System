@@ -123,7 +123,7 @@ def release_stale_edit_locks(db: OrmSession) -> int:
         audit_log(db, actor=None, action="update", target_type="activity",
                   target_id=act.id, target_label=act.title, activity_id=act.id,
                   summary=f"编辑态超过 {config.EDIT_LOCK_HOURS} 小时未保存，"
-                          f"系统自动解冻并恢复报名", visible=False)
+                          f"系统自动解冻并恢复报名")
         if who is not None:
             wecom.send_user(db, who, "custom",
                             title=f"报名已自动恢复｜{act.title}",

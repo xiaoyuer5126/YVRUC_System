@@ -14,7 +14,15 @@ from .models import AuditLog, uid
 def log(db: OrmSession, *, actor, action: str, target_type: str,
         target_id: str = "", target_label: str = "", activity_id: str | None = None,
         summary: str = "", changes: list[dict] | None = None,
-        visible: bool = True) -> AuditLog:
+        visible: bool = False) -> AuditLog:
+    """记一条审计。
+
+    visible 默认 **False**：留痕里什么都有——签到码、他人学号、信用分处分——
+    默认公开等于「忘了标就泄露」。曾经真的把签到码整串写进了志愿者可见的
+    变更记录，学生不到现场也能签到。
+    需要对志愿者公开的，显式传 visible=True，且只限「谁动了我的岗位」
+    这类结构性变更：活动信息、场次、岗位的增删改。
+    """
     entry = AuditLog(
         id=uid("aud"),
         actor_id=getattr(actor, "id", None),

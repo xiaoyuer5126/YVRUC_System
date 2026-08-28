@@ -216,7 +216,8 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
     audit_log(db, actor=user, action="update", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"修改活动信息：{'、'.join(c['label'] for c in changes)}",
-              changes=changes)
+              changes=changes,
+              visible=True)
     db.commit()
     return {"ok": True, "changes": changes}
 
@@ -260,7 +261,7 @@ def start_editing(activity_id: str, db: OrmSession = Depends(db_session),
     act.editing_by = user.id
     audit_log(db, actor=user, action="update", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary="进入编辑态，暂停报名", visible=False)
+              summary="进入编辑态，暂停报名")
     db.commit()
     return {"ok": True, "editing": True,
             "auto_release_hours": config.EDIT_LOCK_HOURS}
@@ -287,7 +288,7 @@ def finish_editing(activity_id: str, bg: BackgroundTasks,
     summary = "；".join(r.summary for r in rows[:8]) or "无实质改动"
     audit_log(db, actor=user, action="update", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"结束编辑并发布改动：{summary}", visible=False)
+              summary=f"结束编辑并发布改动：{summary}")
     db.commit()
     if rows and act.status != "draft":
         bg.add_task(_notify_activity_bg, act.id, "activity_changed",
@@ -318,7 +319,7 @@ def copy_activity_route(activity_id: str, body: CopyActivityBody,
     audit_log(db, actor=user, action="copy", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"复制自「{src.title}」（{copying.describe(src)}），"
-                      f"时间整体平移 {body.shift_days} 天", visible=False)
+                      f"时间整体平移 {body.shift_days} 天")
     db.commit()
     return {"id": act.id, "title": act.title}
 
@@ -390,7 +391,7 @@ def publish(activity_id: str, db: OrmSession = Depends(db_session),
         act.reg_start = now()
     audit_log(db, actor=user, action="publish", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary="发布活动，开始报名", visible=False)
+              summary="发布活动，开始报名")
     db.commit()
     return {"ok": True}
 
@@ -444,7 +445,7 @@ def delete_activity(activity_id: str, db: OrmSession = Depends(db_session),
     db.delete(act)
     audit_log(db, actor=user, action="delete", target_type="activity",
               target_id=activity_id, target_label=label, activity_id=None,
-              summary=f"删除草稿活动「{label}」", visible=False)
+              summary=f"删除草稿活动「{label}」")
     db.commit()
     return {"ok": True}
 
@@ -519,7 +520,8 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
               target_id=g.id, target_label=f"{act.title}·{g.name}",
               activity_id=act.id,
               summary=f"新建场次「{g.name}」（{g.span_text()}，"
-                      f"{g.mode_label()}，上限{body.capacity}人）")
+                      f"{g.mode_label()}，上限{body.capacity}人）",
+              visible=True)
     db.commit()
     if act.status != "draft":
         bg.add_task(_notify_activity_bg, act.id, "activity_changed",
@@ -573,7 +575,8 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
               activity_id=act.id,
               summary=f"修改场次「{g.name}」："
                       f"{'、'.join(c['label'] for c in changes) or '无实质变化'}",
-              changes=changes)
+              changes=changes,
+              visible=True)
     db.commit()
     return {"ok": True, "changes": changes}
 
@@ -605,7 +608,8 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
     audit_log(db, actor=user, action="delete", target_type="group",
               target_id=g.id, target_label=label, activity_id=act.id,
               summary=f"删除场次「{g.name}」" +
-                      (f"（强制，含{n_active}条报名记录）" if n_active else ""))
+                      (f"（强制，含{n_active}条报名记录）" if n_active else ""),
+              visible=True)
     db.commit()
     return {"ok": True}
 
@@ -713,7 +717,8 @@ def create_position(shift_id: str, body: PositionBody,
               target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
               activity_id=act.id,
               summary=f"新建岗位「{s.name}」（{s.time_text()}，"
-                      f"{s.location or '地点待定'}，{s.quota}人）")
+                      f"{s.location or '地点待定'}，{s.quota}人）",
+              visible=True)
     db.commit()
     return {"id": s.id}
 
@@ -774,7 +779,8 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
               activity_id=act.id,
               summary=f"修改岗位「{s.name}」："
                       f"{'、'.join(c['label'] for c in changes) or '无实质变化'}",
-              changes=changes)
+              changes=changes,
+              visible=True)
     db.commit()
     return {"ok": True, "changes": changes}
 
@@ -797,7 +803,8 @@ def delete_position(position_id: str,
     db.delete(s)
     audit_log(db, actor=user, action="delete", target_type="position",
               target_id=s.id, target_label=label, activity_id=act.id,
-              summary=f"删除岗位「{s.name}」")
+              summary=f"删除岗位「{s.name}」",
+              visible=True)
     db.commit()
     return {"ok": True}
 
@@ -837,8 +844,7 @@ def add_activity_manager(activity_id: str, body: ManagerBody,
     audit_log(db, actor=user, action="update", target_type="activity",
               target_id=activity_id, target_label=act.title,
               activity_id=activity_id,
-              summary=f"添加活动管理者：{target.name}（{target.student_id}）",
-              visible=False)
+              summary=f"添加活动管理者：{target.name}（{target.student_id}）")
     db.commit()
     return {"ok": True, "id": row.id}
 
@@ -857,8 +863,7 @@ def remove_activity_manager(activity_id: str, user_id: str,
     audit_log(db, actor=user, action="update", target_type="activity",
               target_id=activity_id, target_label=act.title,
               activity_id=activity_id,
-              summary=f"移除活动管理者：{target.name if target else user_id}",
-              visible=False)
+              summary=f"移除活动管理者：{target.name if target else user_id}")
     db.commit()
     return {"ok": True}
 
@@ -922,8 +927,7 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
               target_id=act.id, target_label=act.title,
               activity_id=act.id,
               summary=f"向{n}位志愿者发送通知：{title}"
-                      + ("（要求签收）" if body.need_ack else ""),
-              visible=False)
+                      + ("（要求签收）" if body.need_ack else ""))
     db.commit()
     return {"ok": True, "count": n, "batch_id": batch_id}
 
@@ -987,8 +991,7 @@ def remind_batch(batch_id: str, db: OrmSession = Depends(db_session),
     audit_log(db, actor=user, action="update", target_type="notify",
               target_id=batch_id, target_label=first.title,
               activity_id=activity_id or None,
-              summary=f"提醒 {len(pending)} 位未签收志愿者：{first.title}",
-              visible=False)
+              summary=f"提醒 {len(pending)} 位未签收志愿者：{first.title}")
     db.commit()
     return {"ok": True, "count": len(pending)}
 
@@ -1241,11 +1244,20 @@ def add_walkin(shift_id: str, body: dict,
                 409, f"{u.name} 在该场次已有记录"
                      f"（{'临近退选占位' if live.seat_held else live.status}）")
 
+        # 名额要按落点算：pick 模式下名额在岗位上，不传岗位一律判「满」，
+        # 补录任何按岗位报名的场次都会被要求勾强制。
+        position = None
+        if body.get("position_id"):
+            position = db.get(Position, body["position_id"])
+            if position is None or position.shift_id != g.id:
+                raise HTTPException(400, "岗位不属于该场次")
+
         clashes = logic.time_conflicts(db, u, g)
         if clashes:
             reasons.append(f"时段与{logic.conflict_message(clashes)}冲突")
-        if not logic.has_room(db, g):
-            reasons.append(f"场次名额已满（上限{g.capacity}人）")
+        if not logic.has_room(db, g, position):
+            reasons.append(f"「{position.name}」名额已满（上限{position.quota}人）"
+                           if position else f"场次名额已满（上限{g.capacity}人）")
         if reasons and not force:
             raise HTTPException(409, f"{u.name}：{'；'.join(reasons)}。"
                                      f"确认添加请勾选强制")
@@ -1254,11 +1266,8 @@ def add_walkin(shift_id: str, body: dict,
                          user_id=u.id, source="admin", joined_at=now(),
                          status="confirmed",
                          allow_reassign=bool(body.get("allow_reassign", True)))
-        if body.get("position_id"):
-            st = db.get(Position, body["position_id"])
-            if st is None or st.shift_id != g.id:
-                raise HTTPException(400, "岗位无效")
-            enr.position_id = st.id
+        if position is not None:
+            enr.position_id = position.id
             enr.assigned_at = now()
             enr.assign_forced = bool(reasons)
         db.add(enr)

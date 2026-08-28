@@ -482,9 +482,9 @@ def main() -> None:
                             visible=visible, created_at=when))
 
         aud("create", "activity", sport.id, sport.title, sport.id,
-            "创建活动「校运动会开幕式志愿服务」", dt(days=-4), visible=False)
+            "创建活动「校运动会开幕式志愿服务」", dt(days=-4))
         aud("publish", "activity", sport.id, sport.title, sport.id,
-            "发布活动，开始报名", dt(days=-3), visible=False)
+            "发布活动，开始报名", dt(days=-3))
         aud("update", "group", m1.id, "运动会·上午场", sport.id,
             "集合地点由「南门」变更为「东门」",
             dt(days=-1, hours=-6),
@@ -499,25 +499,24 @@ def main() -> None:
               "old": "", "new": "赛前一周 19:00 线上培训会议"}])
         aud("create", "activity", book.id, book.title, book.id,
             "创建活动「图书馆图书整理周·周六专场」（二级待定模式）",
-            dt(days=-3), visible=False)
+            dt(days=-3))
         aud("publish", "activity", book.id, book.title, book.id,
-            "发布活动，开始报名", dt(days=-2), visible=False)
+            "发布活动，开始报名", dt(days=-2))
         aud("assign", "assignment", c1.id, "晚会·当日班", gala.id,
             "12 人完成岗位分配（其中强制分配 0 人）", dt(days=-5), visible=True,
             actor=users["2025003"])
         aud("create", "checkin", task_gala.id, "晚会签到码 GALA01", gala.id,
-            "生成统一签到码 GALA01", dt(days=-1), visible=False,
+            "生成统一签到码 GALA01", dt(days=-1),
             actor=users["2025003"])
         aud("create", "activity", elder.id, elder.title, elder.id,
             "创建活动「社区敬老院陪伴服务（秋）」（仅场次模式）",
-            dt(days=-22), visible=False)
+            dt(days=-22))
         aud("hours_upload", "hours", elder.id, elder.title, elder.id,
-            "回传 8 人时长至数智人大（回执号 MOCK-ELDER-0008）", dt(days=-5),
-            visible=False)
+            "回传 8 人时长至数智人大（回执号 MOCK-ELDER-0008）", dt(days=-5))
         aud("restriction", "user", restricted.id,
             f"{restricted.name}（{restricted.student_id}）", None,
             "限制准入：不得参与C/D类活动至%s（依据《志愿者服务规范》）"
-            % (dt(days=25).strftime("%Y-%m-%d")), dt(days=-15), visible=False)
+            % (dt(days=25).strftime("%Y-%m-%d")), dt(days=-15))
         db.commit()
 
         # ---------- 通知样例 ----------

@@ -261,8 +261,7 @@ def create_violation(body: ViolationBody,
               summary=f"违规登记：{s['kind_label']}·{act.type}类「{act.title}」"
                       f"（第{s['history_count']}次）→ 限制准入 {new}",
               changes=[{"field": "restriction", "label": "限制准入",
-                        "old": old, "new": new}],
-              visible=False)
+                        "old": old, "new": new}])
     db.commit()
     return {"ok": True, "id": record.id, "restricted_types": types,
             "restricted_until": iso(until)}
@@ -313,7 +312,7 @@ def set_restriction(user_id: str, body: RestrictionBody,
               target_id=u.id, target_label=f"{u.name}（{u.student_id}）",
               summary=f"限制准入：{old} → {new}",
               changes=[{"field": "restriction", "label": "限制准入",
-                        "old": old, "new": new}], visible=False)
+                        "old": old, "new": new}])
     db.commit()
     return {"ok": True}
 
@@ -339,7 +338,6 @@ def put_integration(key: str, body: dict,
     audit_log(db, actor=user, action="integration", target_type="integration",
               target_id=key, target_label=cfg.get("label", key),
               summary=f"更新「{cfg.get('label', key)}」对接配置"
-                      f"（{'真实接口' if cfg.get('enabled') else '演示模式'}）",
-              visible=False)
+                      f"（{'真实接口' if cfg.get('enabled') else '演示模式'}）")
     db.commit()
     return cfg
