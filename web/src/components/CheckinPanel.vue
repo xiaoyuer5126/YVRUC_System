@@ -4,12 +4,24 @@
       <el-button type="primary" size="small" @click="openCreate">
         <el-icon><Plus /></el-icon>&nbsp;生成签到码
       </el-button>
-      <el-tooltip placement="top"
-                  content="只发给还没签到的已确认志愿者；场次开始前 30 分钟系统会自动发一次">
-        <el-button size="small" :loading="reminding" @click="sendReminder">
-          <el-icon><Bell /></el-icon>&nbsp;补发签到提醒
-        </el-button>
-      </el-tooltip>
+      <el-dropdown split-button size="small" :loading="reminding"
+                   @click="sendReminder()" @command="sendReminder">
+        <el-icon><Bell /></el-icon>&nbsp;补发签到提醒
+        <template #dropdown>
+          <el-dropdown-menu>
+            <div class="dim" style="padding:4px 14px">只发给还没签到的人</div>
+            <el-dropdown-item :command="undefined">全场次</el-dropdown-item>
+            <el-dropdown-item v-for="gn in positionGroups" :key="'g:' + gn"
+                              :command="{ group_name: gn }" divided>
+              岗位组「{{ gn }}」
+            </el-dropdown-item>
+            <el-dropdown-item v-for="p in shift.positions" :key="p.id"
+                              :command="{ position_ids: [p.id] }">
+              岗位「{{ p.name }}」
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
       <span class="dim">同一签到码：第一次扫=签到，第二次扫=签退；场次结束2小时后未签退，自动按场次结束时间计</span>
     </div>
 
@@ -351,12 +363,16 @@ function copyLink() {
 }
 const reminding = ref(false)
 
-// 手动催场：自动提醒在开始前 30 分钟发过一次，这个按钮补发给还没到岗的人
-async function sendReminder() {
+// 现场催场往往是「东门那三个人没到」，所以可以只催某个岗位组或岗位
+const positionGroups = computed(() => [...new Set(
+  (props.shift.positions || []).map(p => p.group_name).filter(Boolean))])
+
+async function sendReminder(scope) {
   reminding.value = true
   try {
-    const d = await api.post(`/api/staff/shifts/${props.shift.id}/checkin-reminder`)
-    ElMessage.success(`已向 ${d.count} 位未签到志愿者发送签到提醒`)
+    const d = await api.post(
+      `/api/staff/shifts/${props.shift.id}/checkin-reminder`, scope || {})
+    ElMessage.success(`已向 ${d.scope} 的 ${d.count} 位未签到志愿者发送提醒`)
   } finally { reminding.value = false }
 }
 

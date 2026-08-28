@@ -78,7 +78,8 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
 
 
 def position_out(db: OrmSession, p: Position, user=None, *,
-                 enrolled: bool = False, manager: bool = False) -> dict:
+                 enrolled: bool = False, manager: bool = False,
+                 same_group: bool = False) -> dict:
     """岗位。
 
     带 user 时附上「这个人能不能报」——前端据此灰掉并说明原因，比让人点了
@@ -115,9 +116,14 @@ def position_out(db: OrmSession, p: Position, user=None, *,
     siblings = group_positions(db, p)
     out["group_positions"] = [x.name for x in siblings] if len(siblings) > 1 else []
     out["needs_leader"] = group_needs_leader(siblings)
+    # 组长联系方式只给**同组已正式报名**的人：现场要找得到组长，
+    # 但候补和别的组的人拿他的手机号没有意义，只是多暴露一份个人信息。
     leader = group_leader(db, p)
-    out["leader_name"] = ((db.get(User, leader.user_id).name if leader else "")
-                          if visible else "")
+    leader_user = db.get(User, leader.user_id) if leader else None
+    out["leader_name"] = (leader_user.name if leader_user else "") if visible else ""
+    out["leader_contact"] = (
+        {"phone": leader_user.phone, "wechat": leader_user.wechat}
+        if leader_user and (manager or same_group) else None)
     if user is not None:
         unmet = unmet_requirements(user, p)
         out["eligible"] = not unmet
@@ -141,6 +147,16 @@ def attachments_out(db: OrmSession, owner_type: str, owner_id: str) -> list[dict
     return [{"id": a.id, "kind": a.kind, "title": a.title, "size": a.size,
              "url": (a.url if a.kind == "link" else f"/api/materials/{a.id}")}
             for a in rows]
+
+
+def _same_group(db: OrmSession, my_enr, position: Position) -> bool:
+    """我是否**正式报名**在该岗位所属的组里。候补不算：还没确定要去现场。"""
+    if my_enr is None or my_enr.status != "confirmed" or not my_enr.position_id:
+        return False
+    mine = db.get(Position, my_enr.position_id)
+    if mine is None:
+        return False
+    return any(x.id == mine.id for x in group_positions(db, position))
 
 
 def shift_out(db: OrmSession, g: Shift, user=None, *,
@@ -174,7 +190,9 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
         "mode_label": g.mode_label(),
         "note": g.note, "sort": g.sort,
         "positions": [position_out(db, p, user, enrolled=enrolled,
-                                   manager=manager) for p in positions],
+                                   manager=manager,
+                                   same_group=_same_group(db, my_enr, p))
+                      for p in positions],
         # 已确认但还没岗位的人数：pick 模式下岗位名额之和不够时就有人落空，
         # 管理者需要当场看见这个缺口，而不是等分配面板报「未排上」
         "unassigned_count": (db.query(Enrollment)

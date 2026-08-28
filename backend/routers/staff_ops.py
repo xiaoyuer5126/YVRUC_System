@@ -111,27 +111,51 @@ def toggle_task(task_id: str, body: dict,
     return {"ok": True, "active": task.active}
 
 
+class ReminderBody(BaseModel):
+    """范围三选一：整场次 / 指定岗位组 / 指定岗位。"""
+    position_ids: list[str] = []
+    group_name: str = ""
+
+
 @router.post("/shifts/{shift_id}/checkin-reminder")
-def send_reminder(shift_id: str, db: OrmSession = Depends(db_session),
+def send_reminder(shift_id: str, body: ReminderBody | None = None,
+                  db: OrmSession = Depends(db_session),
                   user: User = Depends(require_manager)):
     """手动补发签到提醒。
 
     自动提醒在场次开始前 30 分钟发一次；这个按钮用于临时催场——
-    只发给还没签到的已确认志愿者，已经到岗的不再打扰。
+    只发给还没签到的正式志愿者，已经到岗的不再打扰。
+    可只催某几个岗位或某个岗位组：现场往往是「东门那三个人没到」。
     """
     g = db.get(Shift, shift_id)
     if g is None:
         raise HTTPException(404, "场次不存在")
     ensure_activity_manager(db, user, g.activity_id)
-    n = notify_checkin(db, g)
+
+    body = body or ReminderBody()
+    ids, scope = None, "全场次"
+    if body.group_name.strip():
+        ids = [p.id for p in g.positions if p.group_name == body.group_name.strip()]
+        if not ids:
+            raise HTTPException(400, f"本场次没有岗位组「{body.group_name}」")
+        scope = f"岗位组「{body.group_name}」"
+    elif body.position_ids:
+        known = {p.id: p for p in g.positions}
+        bad = [i for i in body.position_ids if i not in known]
+        if bad:
+            raise HTTPException(400, "所选岗位不属于该场次")
+        ids = list(body.position_ids)
+        scope = "岗位" + "、".join(f"「{known[i].name}」" for i in ids)
+
+    n = notify_checkin(db, g, position_ids=ids)
     if not n:
-        raise HTTPException(400, "该场次没有需要提醒的人（未签到的已确认志愿者为 0）")
+        raise HTTPException(400, f"{scope}没有需要提醒的人（未签到的正式志愿者为 0）")
     g.reminder_sent_at = now()
     audit_log(db, actor=user, action="update", target_type="notify",
               target_id=g.id, target_label=g.name, activity_id=g.activity_id,
-              summary=f"手动补发签到提醒：{n} 人（未签到的已确认志愿者）")
+              summary=f"手动补发签到提醒：{scope} {n} 人（未签到）")
     db.commit()
-    return {"ok": True, "count": n}
+    return {"ok": True, "count": n, "scope": scope}
 
 
 @router.get("/checkin-tasks/{task_id}/board")

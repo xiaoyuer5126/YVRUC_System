@@ -200,6 +200,35 @@ def refill_leader(db: OrmSession, position_id: str | None) -> None:
         elect_leader(db, position)
 
 
+# ======================= 人员变动流水 =======================
+
+def record_change(db: OrmSession, user: User, enr: Enrollment, action: str,
+                  detail: str = "") -> None:
+    """记一条人员变动。
+
+    报名与退选此前完全不留痕——审计只记管理者操作，所以活动前一天少了三个人，
+    老师可能到现场才发现。这里用同一套审计设施记学生自己的动作，
+    actor 就是学生本人；不对外公开（其他志愿者不该看到谁退了）。
+    """
+    from .audit import log as audit_log
+
+    shift = db.get(Shift, enr.shift_id)
+    position = db.get(Position, enr.position_id) if enr.position_id else None
+    where = f"{shift.name}·{position.name}" if position else shift.name
+    audit_log(db, actor=user, action=action, target_type="enrollment",
+              target_id=enr.id, target_label=user.name,
+              activity_id=enr.activity_id,
+              summary=f"{user.name}（{user.student_id}）{ROSTER_ACTIONS[action]}"
+                      f"「{where}」" + (f"：{detail}" if detail else ""))
+
+
+ROSTER_ACTIONS = {
+    "enroll": "报名", "waitlist": "加入候补", "cancel": "退选",
+    "quit_queue": "退出候补", "abandon": "放弃候补转正",
+    "promote": "候补转正",
+}
+
+
 # ======================= 候补队列 =======================
 
 def waitlist_rows(db: OrmSession, shift_id: str) -> list[Enrollment]:

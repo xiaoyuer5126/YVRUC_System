@@ -239,6 +239,8 @@ class Shift(Base):
     sort: Mapped[int] = mapped_column(Integer, default=0)
     # 签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
     reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 人员变动日报发到哪一天了，防止一天推多条
+    digest_sent_on: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     activity: Mapped[Activity] = relationship(back_populates="shifts")
     positions: Mapped[list["Position"]] = relationship(

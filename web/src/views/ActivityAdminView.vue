@@ -355,6 +355,48 @@
                 </el-table-column>
               </el-table>
 
+              <!-- 临近退选扣留的名额：不列出来老师根本找不到它 -->
+              <template v-if="roster.held?.length">
+                <div class="section-title">
+                  临近退选扣留的名额（{{ roster.held.length }}）
+                  <span class="dim" style="font-weight:400">
+                    岗位名额没有变，是这些记录占着位子；释放后候补可以补上
+                  </span>
+                </div>
+                <DataCards :rows="roster.held" title-key="user.name"
+                           row-key="enrollment_id"
+                           :fields="[{ key: 'user.student_id', label: '学号' },
+                                     { key: 'position_name', label: '岗位',
+                                       format: v => v || '未分配' }]">
+                  <template #actions="{ row }">
+                    <el-popconfirm title="把这个名额放回去？候补可以补上"
+                                   @confirm="releaseSeat(row)">
+                      <template #reference>
+                        <el-button size="small" type="primary" plain>释放名额</el-button>
+                      </template>
+                    </el-popconfirm>
+                  </template>
+                </DataCards>
+              </template>
+
+              <!-- 人员变动流水 -->
+              <template v-if="roster.roster_changes?.length">
+                <div class="section-title">人员变动</div>
+                <el-timeline>
+                  <el-timeline-item v-for="(c, i) in roster.roster_changes" :key="i"
+                                    :timestamp="fmtDT(c.created_at)" placement="top"
+                                    :type="['cancel','abandon'].includes(c.action)
+                                           ? 'danger' : 'primary'">
+                    <el-tag size="small" effect="plain"
+                            :type="['cancel','abandon'].includes(c.action)
+                                   ? 'danger' : 'success'">
+                      {{ c.action_label }}
+                    </el-tag>
+                    <span style="margin-left:6px">{{ c.summary }}</span>
+                  </el-timeline-item>
+                </el-timeline>
+              </template>
+
               <AssignPanel v-if="currentShift" :shift="currentShift"
                            :unassigned-count="unassignedCount" @reload="loadAll" />
             </template>
@@ -1385,6 +1427,13 @@ function loadRoster() {
 function canBeLeader(row) {
   const p = roster.value?.positions?.find(x => x.id === row.position_id)
   return !!p?.needs_leader
+}
+
+async function releaseSeat(row) {
+  const d = await api.post(
+    `/api/staff/enrollments/${row.enrollment_id}/release-seat`)
+  ElMessage.success(d.message)
+  loadAll()
 }
 
 async function setLeader(row, on) {

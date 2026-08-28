@@ -155,6 +155,13 @@
                 您的岗位：<b>{{ myPosition(g).name }}</b>
                 <span class="dim">{{ myPosition(g).location || '地点待定' }}</span>
               </div>
+              <p v-if="myPosition(g).leader_name" class="mine-note">
+                <b>组长：</b>{{ myPosition(g).leader_name }}
+                <template v-if="myPosition(g).leader_contact">
+                  （手机 {{ myPosition(g).leader_contact.phone || '—' }} ·
+                  微信 {{ myPosition(g).leader_contact.wechat || '—' }}）
+                </template>
+              </p>
               <p v-if="myPosition(g).training_note" class="mine-note">
                 <b>培训内容：</b>{{ myPosition(g).training_note }}
               </p>
@@ -277,6 +284,13 @@
                       <el-tag v-if="g.my_enrollment?.status === 'waitlisted'"
                               size="small" type="warning" effect="plain">候补中</el-tag>
                     </div>
+                    <p v-if="myPosition(g).leader_name" class="mine-note">
+                      <b>组长：</b>{{ myPosition(g).leader_name }}
+                      <template v-if="myPosition(g).leader_contact">
+                        （手机 {{ myPosition(g).leader_contact.phone || '—' }} ·
+                        微信 {{ myPosition(g).leader_contact.wechat || '—' }}）
+                      </template>
+                    </p>
                     <p v-if="myPosition(g).training_note" class="mine-note">
                       <b>培训内容：</b>{{ myPosition(g).training_note }}
                     </p>
@@ -495,6 +509,13 @@
           </template>
           <template v-else>
             {{ stationDetail.data.leader_name || '尚未产生（报名时可表态愿意担任）' }}
+            <div v-if="stationDetail.data.leader_contact" class="dim" style="line-height:1.8">
+              手机 {{ stationDetail.data.leader_contact.phone || '—' }} ·
+              微信 {{ stationDetail.data.leader_contact.wechat || '—' }}
+            </div>
+            <div v-else-if="stationDetail.data.leader_name" class="dim">
+              报名本岗位所在的组后可见联系方式
+            </div>
           </template>
         </el-descriptions-item>
       </el-descriptions>

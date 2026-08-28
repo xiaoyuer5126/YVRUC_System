@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import config, credit, enroll_logic as logic
 from ..database import db_session
 from ..deps import current_user
+from .. import notify
 from ..integrations import wecom
 from ..locks import shift_lock
 from ..models import Activity, Enrollment, Shift, Position, User, now, uid
@@ -195,8 +196,10 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
             # 否则队列会卡在一个岗位上，别处空着没人。
             enr.allow_reassign = True
         db.add(enr)
+        db.flush()
+        logic.record_change(db, user, enr,
+                            "enroll" if enr.status == "confirmed" else "waitlist")
         if enr.status == "confirmed" and position is not None:
-            db.flush()
             logic.elect_leader(db, position)
 
         if enr.status == "confirmed":
@@ -267,6 +270,7 @@ def cancel_enroll(enrollment_id: str,
             enr.status = "cancelled"
             enr.cancel_type = "abandoned"
             enr.confirm_deadline = None
+            logic.record_change(db, user, enr, "abandon")
             db.commit()
             logic.promote_all(db, g)
             db.commit()
@@ -277,6 +281,7 @@ def cancel_enroll(enrollment_id: str,
         if enr.status == "waitlisted":
             enr.status = "cancelled"
             enr.cancel_type = "normal"
+            logic.record_change(db, user, enr, "quit_queue")
             db.commit()
             return {"ok": True, "effect": "quit_queue", "message": "已退出候补队列。"}
 
@@ -299,6 +304,10 @@ def cancel_enroll(enrollment_id: str,
         enr.seat_held = hold_seat
         enr.is_leader = False
 
+        logic.record_change(
+            db, user, enr, "cancel",
+            f"距开始 {hours_left:.1f} 小时"
+            + ("，扣分并扣留名额" if hold_seat else "，扣分" if late else ""))
         score = None
         if late:
             score = credit.apply_delta(
@@ -307,6 +316,7 @@ def cancel_enroll(enrollment_id: str,
                 f"{config.LATE_CANCEL_HOURS}小时", activity_id=act.id)
         db.commit()
 
+        notify.notify_late_dropout(db, enr, user)
         if not hold_seat:
             logic.promote_all(db, g)     # 名额放回去，候补按顺序递补
         if was_leader:
@@ -338,6 +348,7 @@ def confirm_promotion(enrollment_id: str,
         if enr.confirm_deadline and now() > enr.confirm_deadline:
             raise HTTPException(409, "确认窗口已超时，名额已顺延")
         logic.confirm_promotion(db, enr, user)
+        logic.record_change(db, user, enr, "promote")
         db.commit()
     st_name = ""
     if enr.position_id:

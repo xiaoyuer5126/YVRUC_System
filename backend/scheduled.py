@@ -161,3 +161,55 @@ def send_checkin_reminders(db: OrmSession) -> int:
     if shifts:
         db.commit()
     return sent
+
+
+# ======================= 人员变动日报 =======================
+
+def send_roster_digests(db: OrmSession) -> int:
+    """活动前几天，每天给管理者一条人员变动摘要。
+
+    逐条推变动会被无视（报名期一天几十条），完全不推又会让老师在现场
+    才发现少人。折中：临近活动时每天一条「昨日 +2 −1，当前 18/20」，
+    真正紧急的（距开始不足 24 小时的减员）另有即时提醒。
+    """
+    from .enroll_logic import ROSTER_ACTIONS, shift_confirmed_count
+    from .models import AuditLog
+    from .notify import notify_managers
+
+    t = now()
+    today = t.replace(hour=0, minute=0, second=0, microsecond=0)
+    lead = timedelta(days=config.ROSTER_DIGEST_DAYS)
+    shifts = (db.query(Shift)
+              .join(Activity, Shift.activity_id == Activity.id)
+              .filter(Shift.start_time > t,
+                      Shift.start_time <= t + lead,
+                      Activity.status.in_(("published", "closed")))
+              .all())
+    sent = 0
+    for g in shifts:
+        if g.digest_sent_on and g.digest_sent_on >= today:
+            continue
+        since = t - timedelta(days=1)
+        rows = (db.query(AuditLog)
+                .filter(AuditLog.activity_id == g.activity_id,
+                        AuditLog.action.in_(tuple(ROSTER_ACTIONS)),
+                        AuditLog.created_at >= since).all())
+        g.digest_sent_on = t
+        if not rows:
+            continue          # 没有变动就不打扰
+        joined = sum(1 for r in rows if r.action in ("enroll", "promote"))
+        left = sum(1 for r in rows if r.action in ("cancel", "abandon"))
+        confirmed = shift_confirmed_count(db, g.id)
+        capacity = g.total_capacity()
+        act = db.get(Activity, g.activity_id)
+        gap = max(0, capacity - confirmed)
+        notify_managers(
+            db, act.id, f"[人员变动] {act.title} · {g.name}",
+            f"过去 24 小时：新增 {joined} 人，退出 {left} 人。\n"
+            f"当前 {confirmed}/{capacity} 人"
+            + (f"，缺 {gap} 人。" if gap else "，人数已满。")
+            + f"\n场次开始：{g.start_time:%m-%d %H:%M}")
+        sent += 1
+    if shifts:
+        db.commit()
+    return sent

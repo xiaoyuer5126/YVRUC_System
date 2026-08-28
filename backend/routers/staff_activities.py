@@ -1051,7 +1051,18 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
                          Enrollment.status == "cancelled")
                  .order_by(Enrollment.joined_at.desc()).limit(20).all()]
     deadline = logic.auto_promote_deadline(db, g)
+    # 人员变动流水：活动前一天少了几个人，得看得见是谁、什么时候退的
+    changes = (db.query(AuditLog)
+               .filter(AuditLog.activity_id == act.id,
+                       AuditLog.action.in_(tuple(logic.ROSTER_ACTIONS)))
+               .order_by(AuditLog.created_at.desc()).limit(30).all())
     return {
+        "roster_changes": [{
+            "action": c.action,
+            "action_label": logic.ROSTER_ACTIONS.get(c.action, c.action),
+            "who": c.actor_name, "summary": c.summary,
+            "created_at": iso(c.created_at),
+        } for c in changes],
         "auto_promote_deadline": iso(deadline),
         "auto_promote_over": now() > deadline,
         "shift": {"id": g.id, "name": g.name, "time_text": g.span_text(),
