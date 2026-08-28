@@ -784,11 +784,13 @@ class PositionBody(BaseModel):
     requirement_note: str = ""
     training_note: str = ""
     needs_leader: bool = False
+    needs_vest: bool = False
 
 
 POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
                    "group_name": "岗位组",
                    "waitlist_quota": "候补名额", "needs_leader": "需要组长",
+                   "needs_vest": "需要马甲",
                    "requirement_tags": "条件要求",
                    "requirement_note": "要求原文", "training_note": "培训内容"}
 
@@ -862,6 +864,7 @@ def create_position(shift_id: str, body: PositionBody,
                 location=body.location.strip(), quota=body.quota,
                 waitlist_quota=body.waitlist_quota,
                 needs_leader=body.needs_leader,
+                needs_vest=body.needs_vest,
                 group_name=body.group_name.strip(),
                 requirement_tags=body.requirement_tags or {},
                 requirement_note=body.requirement_note.strip(),

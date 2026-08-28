@@ -113,6 +113,7 @@
                   {{ s.location || '地点待定' }}
                   <template v-if="s.requirement_desc !== '不限'"> · {{ s.requirement_desc }}</template>
                   <template v-if="s.needs_leader"> · 设组长</template>
+                  <template v-if="s.needs_vest"> · 需领马甲</template>
                   <template v-if="s.material_count"> · 材料 {{ s.material_count }}</template>
                 </div>
                 <div class="m-pos-act">
@@ -239,6 +240,8 @@
                                   effect="plain" style="margin-left:6px">
                             设组长{{ s.leader_name ? `·${s.leader_name}` : '' }}
                           </el-tag>
+                          <el-tag v-if="s.needs_vest" size="small" type="primary"
+                                  effect="plain" style="margin-left:6px">需领马甲</el-tag>
                           <el-tag v-if="s.material_count" size="small" effect="plain"
                                   style="margin-left:6px"
                                   :type="s.training_visible ? 'success' : 'info'">

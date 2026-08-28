@@ -454,6 +454,11 @@
         <el-empty v-else description="请先创建场次" />
       </el-tab-pane>
 
+      <!-- ============ 志愿马甲 ============ -->
+      <el-tab-pane label="志愿马甲" name="vest" lazy>
+        <VestPanel :activity-id="act.id" />
+      </el-tab-pane>
+
       <!-- ============ 导出与时长 ============ -->
       <el-tab-pane name="export" lazy>
         <template #label>导出与时长
@@ -900,6 +905,10 @@
                     placeholder="如：东门片区（选填）" />
           <div class="dim">同一场次内组名相同的岗位共用一名组长；留空则本岗位自成一组</div>
         </el-form-item>
+        <el-form-item label="志愿马甲">
+          <el-checkbox v-model="stationForm.needs_vest">本岗位需要领取志愿马甲</el-checkbox>
+          <div class="dim">报名时志愿者就能看到；领取与归还在「志愿马甲」页扫码或手动登记</div>
+        </el-form-item>
         <el-form-item label="组长">
           <el-checkbox v-model="stationForm.needs_leader">本组需要一名组长</el-checkbox>
           <div class="dim">报名时可表态愿任，先到先得；组长退出后自动递补</div>
@@ -1045,6 +1054,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download as dl, fmtDT } from '../api'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
+import VestPanel from '../components/VestPanel.vue'
 import MaterialManager from '../components/MaterialManager.vue'
 import DataCards from '../components/DataCards.vue'
 import ActivityForm from '../components/ActivityForm.vue'
@@ -1509,12 +1519,14 @@ function openStation(st, g) {
   stationForm.value = st ? {
     name: st.name, location: st.location, quota: st.quota,
     waitlist_quota: st.waitlist_quota, needs_leader: st.needs_leader,
+    needs_vest: st.needs_vest,
     group_name: st.group_name || '',
     genderReq: (st.requirement_tags?.性别) || '',
     collegeReq: st.requirement_tags?.学院 || [],
     requirement_note: st.requirement_note, training_note: st.training_note,
   } : {
     name: '', location: '', quota: 2, waitlist_quota: 3, needs_leader: false,
+    needs_vest: false,
     group_name: '',
     genderReq: '', collegeReq: [],
     requirement_note: '', training_note: '',
@@ -1536,6 +1548,7 @@ async function saveStation() {
     const body = {
       name: f.name, quota: f.quota, location: f.location,
       waitlist_quota: f.waitlist_quota, needs_leader: f.needs_leader,
+      needs_vest: !!f.needs_vest,
       group_name: f.group_name || '',
       requirement_tags: tags, requirement_note: f.requirement_note,
       training_note: f.training_note,

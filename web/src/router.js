@@ -25,6 +25,7 @@ const routes = [
     ],
   },
   { path: '/checkin/:token', component: () => import('./views/CheckinLanding.vue'), meta: { public: true } },
+  { path: '/vest/:token', component: () => import('./views/VestLanding.vue'), meta: { public: true } },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 

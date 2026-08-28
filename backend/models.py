@@ -331,6 +331,8 @@ class Position(Base):
     training_note: Mapped[str] = mapped_column(String(512), default="")
     # 需要组长：报名时志愿者可表态愿意担任，先到先得，管理者可改判
     needs_leader: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 本岗位是否需要领志愿马甲；报名时就要让人看到，现场才不会白跑一趟
+    needs_vest: Mapped[bool] = mapped_column(Boolean, default=False)
     # 岗位组：同一场次内组名相同的岗位共用一名组长（如「东门片区」下的
     # 引导/检录/医疗点）。留空 = 该岗位自成一组，行为与从前一致。
     group_name: Mapped[str] = mapped_column(String(64), default="")
@@ -514,6 +516,48 @@ class HoursRecord(Base):
     uploaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     confirmed_by: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class VestTask(Base):
+    """马甲二维码。一场活动两个码：一个领取，一个归还。
+
+    不做「同一个码扫两次」——领取和归还是两个物理动作，发生在活动的两头，
+    现场也常常是两张桌子。两个码各贴各的，谁也不会扫错。
+    """
+    __tablename__ = "vest_tasks"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
+    action: Mapped[str] = mapped_column(String(8))       # take 领取 / return 归还
+    token: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    ACTION_LABELS = {"take": "领取", "return": "归还"}
+
+    def action_label(self) -> str:
+        return self.ACTION_LABELS.get(self.action, self.action)
+
+
+class VestRecord(Base):
+    """一个人在一场活动里的马甲台账。一人一条，领了记时间，还了再记一次。"""
+    __tablename__ = "vest_records"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    vest_no: Mapped[str] = mapped_column(String(32), default="")   # 编号，选填
+    taken_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    taken_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    taken_method: Mapped[str] = mapped_column(String(12), default="scan")
+    returned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    returned_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    returned_method: Mapped[str] = mapped_column(String(12), default="")
+
+    __table_args__ = (
+        Index("ux_vest_user_activity", "activity_id", "user_id", unique=True),
+    )
 
 
 class HoursAppeal(Base):
