@@ -61,10 +61,9 @@
           <el-badge v-if="treeAlerts.length" value="!" type="danger" />
         </template>
         <el-alert type="info" :closable="false" style="margin-bottom:12px">
-          场次只管时间，岗位管具体的事。两种模式说的是<b>谁来定岗位</b>：
-          <b>报名即选岗位</b>（学生自己挑，名额与候补都在各个岗位上）
-          / <b>截止后统一分配</b>（学生只锁时段，名额记在场次上，截止后由你一键分配）。
-          两种模式都要先把岗位建好；同场次的岗位互斥，一人只占一个，点击岗位名称可查看详情。
+          场次只管时间，岗位管具体的事。两种模式：<b>报名即选岗位</b>（名额与候补都在各个岗位上）
+          / <b>截止后统一分配</b>（报名只锁时段，名额记在场次上，<b>岗位等报名截止后再建</b>）。
+          同场次的岗位互斥，一人只占一个；点击岗位名称可查看详情。
         </el-alert>
         <el-alert v-if="structureLocked" type="info" show-icon :closable="false"
                   style="margin-bottom:12px">
@@ -99,11 +98,11 @@
             </el-tag>
             <span class="dim">{{ g.start_time.slice(5,16).replace('T',' ') }}
               ~ {{ g.end_time.slice(5,16).replace('T',' ') }}</span>
-            <span>{{ g.mode === 'assign'
-                     ? `上限 ${g.capacity}（岗位合计 ${sumQuota(g)}）`
-                     : `岗位合计 ${sumQuota(g)}` }}</span>
-            <el-tag v-if="!g.positions.length" size="small" type="danger" effect="dark">
-              未设岗位
+            <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}` : `岗位合计 ${sumQuota(g)}` }}</span>
+            <el-tag v-if="!g.positions.length"
+                    size="small" :type="g.mode === 'assign' ? 'info' : 'danger'"
+                    :effect="g.mode === 'assign' ? 'plain' : 'dark'">
+              {{ g.mode === 'assign' ? '岗位待截止后再建' : '未设岗位' }}
             </el-tag>
             <!-- 待分配和未设岗位是两件事，别互相遮住：
                  assign 模式截止前人人待分配是常态，截止后还剩人就是漏排 -->
@@ -120,7 +119,7 @@
               <el-button size="small" plain :disabled="structureLocked"
                          @click="openCopyPositions(g)">复制岗位到其它场次</el-button>
               <el-button size="small" type="primary" plain :disabled="structureLocked"
-                         @click="openStation(null, g)">添加岗位</el-button>
+                         @click="addPosition(g)">添加岗位</el-button>
               <el-popconfirm :title="`删除场次「${g.name}」？`" @confirm="delShift(g)"
                              :disabled="structureLocked">
                 <template #reference>
@@ -192,7 +191,7 @@
           </el-table>
           <p v-else class="dim" style="margin:6px 0 0">
             {{ g.mode === 'assign'
-               ? '还没有岗位。学生现在可以报名（名额记在场次上），但报名截止后没有岗位可分——请先建好岗位。'
+               ? '截止后统一分配：学生报名只锁时段。报名截止后把本场次改回「报名即选岗位」，建好岗位再一键分配。'
                : '还没有岗位。名额与候补都在岗位上，没有岗位学生就报不了名——请先建好岗位。' }}
           </p>
         </div>
@@ -662,8 +661,8 @@
             </template>
             <template v-else>
               学生报名只锁时段、不挑岗位，<b>名额与候补记在场次上</b>；
-              岗位照常在「岗位树」里建好（合计不超过人数上限），
-              报名截止后到「报名与调配」一键分配。
+              岗位在报名截止后建——那时把本场次改回「报名即选岗位」，
+              再建岗位并运行一键分配。
             </template>
           </div>
           <!-- 改成 assign 会作废学生已经选好的岗位，先把代价摆出来 -->
@@ -699,26 +698,15 @@
 
     <!-- 岗位对话框 -->
     <el-dialog v-model="positionDlg.visible" :title="positionDlg.editing ? '编辑岗位' : '新建岗位'" width="560">
-      <!-- assign 场次的岗位也在这里建：名额是分配用的坑位，收在场次上限内 -->
-      <el-alert v-if="positionShift?.mode === 'assign'" type="info" show-icon
-                :closable="false" style="margin-bottom:12px">
-        本场次是「截止后统一分配」：学生报名时看不到也选不了岗位，
-        这里定的是报名截止后分配用的坑位。各岗位名额之和不能超过场次人数上限
-        {{ positionShift.capacity }}（其它岗位已占 {{ otherQuotaSum }}）。
-      </el-alert>
       <el-form label-width="100px">
         <el-form-item label="岗位名称" required><el-input v-model="stationForm.name" placeholder="如：东门引导" /></el-form-item>
         <el-form-item label="服务地点" required><el-input v-model="stationForm.location"
                     placeholder="如：世纪馆北门检录处" /></el-form-item>
         <el-form-item label="名额" required>
           <el-input-number v-model="stationForm.quota" :min="1" />
-          <span class="dim" style="margin-left:10px">
-            {{ positionShift?.mode === 'assign'
-               ? `分配用的坑位数，本场次还可分配 ${Math.max(0, positionShift.capacity - otherQuotaSum)} 个`
-               : '名额与候补都在岗位上，场次不设总数' }}
-          </span>
+          <span class="dim" style="margin-left:10px">名额与候补都在岗位上，场次不设总数</span>
         </el-form-item>
-        <el-form-item v-if="positionShift?.mode !== 'assign'" label="候补名额">
+        <el-form-item label="候补名额">
           <el-input-number v-model="stationForm.waitlist_quota" :min="0" />
           <span class="dim" style="margin-left:10px">满员后可排队的人数，0 = 不设候补</span>
         </el-form-item>
@@ -1071,12 +1059,18 @@ function unassignedHint(g) {
     : '本场次报名只锁时段，岗位在报名截止后统一分配——截止前有人待分配是正常的'
 }
 
-// 岗位树上的红色感叹号：这里列出的都是「不处理就会出事」的场次
+// 岗位树上的红色感叹号：这里列出的都是「不处理就会出事」的场次。
+// assign 场次报名期没有岗位是设计如此，不报警；截止后还没建才是漏排。
 const treeAlerts = computed(() => shifts.value.flatMap(g => {
   if (!g.positions.length) {
-    return [{ id: g.id, name: g.name, text: g.mode === 'assign'
-      ? '还没有岗位。学生可以报名，但报名截止后没有岗位可分。'
-      : '还没有岗位。名额与候补都记在岗位上，学生现在根本报不了名。' }]
+    if (g.mode === 'pick') {
+      return [{ id: g.id, name: g.name,
+        text: '还没有岗位。名额与候补都记在岗位上，学生现在根本报不了名。' }]
+    }
+    return regClosed.value
+      ? [{ id: g.id, name: g.name,
+           text: '报名已截止，还没建岗位。改回「报名即选岗位」并建好岗位，再一键分配。' }]
+      : []
   }
   if (g.unassigned_count && (regClosed.value || g.mode === 'pick')) {
     return [{ id: g.id, name: g.name,
@@ -1278,12 +1272,29 @@ async function onMaterialChanged() {
   if (id) positionDlg.value.editing = findPosition(id)
 }
 
-const positionShift = computed(
-  () => shifts.value.find(g => g.id === positionDlg.value.groupId))
-// assign 模式下岗位名额之和受场次上限约束，填之前就把余量说清楚
-const otherQuotaSum = computed(() => (positionShift.value?.positions || [])
-  .filter(p => p.id !== positionDlg.value.editing?.id)
-  .reduce((s, p) => s + p.quota, 0))
+// assign 场次不能建岗位。点按钮的当下就说清楚，并给一步到位的切换——
+// 让人填完一整个表单再被后端 409 拦下，是这里以前最招骂的地方。
+async function addPosition(g) {
+  if (g.mode === 'assign') {
+    const enrolled = g.enrolled || 0
+    try {
+      await ElMessageBox.confirm(
+        `「${g.name}」现在是「截止后统一分配」：报名只锁时段，名额记在场次上（上限 ${g.capacity}），`
+        + `岗位要改成「报名即选岗位」之后才能建。\n\n`
+        + `切换后名额口径转到各个岗位，`
+        + (enrolled ? `已报上名的 ${enrolled} 人不受影响，但都是「待分配」，`
+                    + `需要你手动指派或在「报名与调配」里一键分配。` : '本场次目前还没有人报名。'),
+        '需要先改岗位模式',
+        { type: 'warning', confirmButtonText: '改为「报名即选岗位」并继续',
+          cancelButtonText: '取消' })
+    } catch { return }
+    await api.patch(`/api/staff/shifts/${g.id}`, { mode: 'pick' })
+    await loadAll()
+    g = shifts.value.find(x => x.id === g.id) || g
+    ElMessage.success('已改为「报名即选岗位」，现在可以建岗位了')
+  }
+  openStation(null, g)
+}
 
 function openStation(st, g) {
   positionDlg.value = { visible: true, editing: st, groupId: g.id }

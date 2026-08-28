@@ -349,14 +349,9 @@ def copy_positions_route(shift_id: str, body: CopyPositionsBody,
         target = db.get(Shift, tid)
         if target is None or target.activity_id != src.activity_id:
             raise HTTPException(400, "目标场次不属于本活动")
+        _ensure_pick_mode_for_positions(target)
         if target.id == src.id:
             continue
-        # 目标是 assign 场次时，复制进去的名额同样要收在场次上限内
-        exists = {p.name for p in target.positions}
-        _check_assign_capacity(
-            db, target,
-            sum(p.quota for p in target.positions)
-            + sum(p.quota for p in sources if p.name not in exists))
         targets.append(target)
     if not targets:
         raise HTTPException(400, "请选择至少一个目标场次")
@@ -672,18 +667,18 @@ def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:
     return act
 
 
-def _check_assign_capacity(db: OrmSession, g: Shift, quota_sum: int) -> None:
-    """assign 模式下各岗位名额之和不能超过场次上限。
+def _ensure_pick_mode_for_positions(g: Shift) -> None:
+    """加岗位前必须是「报名即选岗位」模式。
 
-    上限是学生报名时抢的那个数；岗位名额是截止后分配用的坑位。
-    坑位比报名上限还多，等于让一键分配排出没人坐的位置。
+    这是两种场次的分界线：assign 场次报名时只锁时段，名额记在场次上，
+    岗位是报名截止后才建的；留在 assign 模式下建岗位，名额会同时挂在
+    两层，谁也说不清以哪个为准。前端在点「添加岗位」时就会提示并给出
+    一键切换，不会让人填完一整个表单才被拦下。
     """
-    if not g.needs_assign():
-        return
-    if quota_sum > g.capacity:
+    if g.needs_assign():
         raise HTTPException(
-            400, f"各岗位名额之和（{quota_sum}）超过场次人数上限（{g.capacity}）；"
-                 f"请调低岗位名额，或先在场次设置里提高人数上限")
+            409, f"场次「{g.name}」当前是「截止后统一分配」，请先在场次设置里"
+                 f"改为「报名即选岗位」，再添加岗位并运行一键分配")
 
 
 def _require_position_text(s: Position) -> None:
@@ -698,15 +693,19 @@ def _require_position_text(s: Position) -> None:
 def _validate_position(db: OrmSession, g: Shift, s: Position):
     """岗位自带名额，不再受场次总数约束——场次只管时间。
 
-    assign 模式例外：那时名额记在场次上，各岗位之和不能超过它。
+    assign 模式例外：切过模式的场次可能留着一批岗位，那时名额记在场次上，
+    各岗位之和不能超过它，否则一键分配会分出比报名人数更多的坑位。
     """
     if s.quota <= 0:
         raise HTTPException(400, "岗位名额必须大于 0")
     used = logic.position_occupied_count(db, s.id) if s.id else 0
     if s.quota < used:
         raise HTTPException(400, f"岗位名额不能小于已占用的 {used} 人")
-    _check_assign_capacity(
-        db, g, sum(x.quota for x in g.positions if x.id != s.id) + s.quota)
+    if g.needs_assign():
+        quota_sum = sum(x.quota for x in g.positions if x.id != s.id) + s.quota
+        if quota_sum > g.capacity:
+            raise HTTPException(
+                400, f"各岗位名额之和({quota_sum})超过场次人数上限({g.capacity})")
 
 
 @router.post("/shifts/{shift_id}/positions")
@@ -716,6 +715,7 @@ def create_position(shift_id: str, body: PositionBody,
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
+    _ensure_pick_mode_for_positions(g)
     s = Position(id=uid("s"), shift_id=g.id, name=body.name.strip(),
                 location=body.location.strip(), quota=body.quota,
                 waitlist_quota=body.waitlist_quota,

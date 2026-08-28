@@ -64,8 +64,8 @@
                            style="margin-top:4px" />
             </div>
 
-            <!-- 岗位列表：pick 模式每块都能选；assign 模式只是给你看清楚有哪些活 -->
-            <template v-if="g.positions.length">
+            <!-- 报名即选岗位：每个岗位一块 -->
+            <template v-if="g.mode === 'pick' && g.positions.length">
               <div v-for="s in g.positions" :key="s.id" class="m-pos"
                    :class="{ mine: myStationId(g) === s.id, blocked: s.eligible === false }">
                 <div class="m-pos-head">
@@ -79,9 +79,8 @@
                   <template v-if="s.material_count"> · 材料 {{ s.material_count }}</template>
                 </div>
                 <div class="m-pos-act">
-                  <span v-if="g.mode === 'assign'" class="dim">报名截止后统一分配</span>
                   <!-- 我选中的岗位：原地退选／确认 -->
-                  <template v-else-if="g.my_enrollment && myStationId(g) === s.id">
+                  <template v-if="g.my_enrollment && myStationId(g) === s.id">
                     <template v-if="g.my_enrollment.status === 'pending_confirm'">
                       <el-countdown format="HH:mm:ss" :value="deadlineTs(g)" />
                       <el-button type="primary" size="small" @click="confirmPromo(g)">确认</el-button>
@@ -114,8 +113,8 @@
               </div>
             </template>
 
-            <!-- 截止后统一分配：报名按钮留在场次上（没有岗位时也走这里） -->
-            <template v-if="g.mode === 'assign' || !g.positions.length">
+            <!-- 截止后统一分配：报名按钮留在场次上 -->
+            <template v-else>
               <p class="dim" style="margin:8px 0 0">
                 {{ g.mode === 'assign'
                    ? (g.note || '本场次报名只锁定时段；报名截止后由青协统一分配岗位。')
@@ -190,8 +189,8 @@
             <el-table-column type="expand" width="34">
               <template #default="{ row: g }">
                 <div style="padding:6px 12px 6px 40px">
-                  <!-- 岗位表格：pick 模式在这里选，assign 模式只展示安排 -->
-                  <template v-if="g.positions.length">
+                  <!-- 直接定二级：岗位表格 -->
+                  <template v-if="g.mode === 'pick' && g.positions.length">
                     <el-table :data="g.positions" size="small" border>
                       <el-table-column label="岗位" min-width="150">
                         <template #default="{ row: s }">
@@ -233,9 +232,8 @@
                       </el-table-column>
                       <el-table-column label="操作" width="170" align="center">
                         <template #default="{ row: s }">
-                          <span v-if="g.mode === 'assign'" class="dim">截止后统一分配</span>
                           <!-- 我选中的岗位：原地退选/确认 -->
-                          <template v-else-if="g.my_enrollment && myStationId(g) === s.id">
+                          <template v-if="g.my_enrollment && myStationId(g) === s.id">
                             <template v-if="g.my_enrollment.status === 'pending_confirm'">
                               <el-countdown format="HH:mm:ss" :value="deadlineTs(g)"
                                             style="vertical-align:middle;margin-right:6px" />
@@ -269,14 +267,8 @@
                       </el-table-column>
                     </el-table>
                     <div class="dim" style="margin-top:6px">
-                      <template v-if="g.mode === 'assign'">
-                        {{ g.note || '本场次报名只锁定时段，不用挑岗位' }}：上面是本场次的岗位安排，
-                        报名截止后由青协统一分配，结果经企业微信通知。
-                      </template>
-                      <template v-else>
-                        同一场次内只能选择一个岗位：选中后在本行退选，其他岗位按钮置灰；
-                        岗位满员可点「候补」，按排队顺序自动递补（转正需2小时内确认）。
-                      </template>
+                      同一场次内只能选择一个岗位：选中后在本行退选，其他岗位按钮置灰；
+                      岗位满员可点「候补」，按排队顺序自动递补（转正需2小时内确认）。
                     </div>
                   </template>
                   <p v-else-if="g.mode === 'assign'" class="dim" style="margin:4px 0">

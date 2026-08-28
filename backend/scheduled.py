@@ -94,8 +94,9 @@ def staffing_gaps(db: OrmSession, act: Activity) -> list[str]:
     for s in act.shifts:
         if not s.positions:
             out.append(f"「{s.name}」还没有岗位"
-                       + ("（截止后统一分配，现在正是排岗的时候）"
-                          if s.needs_assign() else "（学生此前无法报名）"))
+                       + ("（截止后统一分配，现在正是建岗位的时候：先改回"
+                          "「报名即选岗位」）" if s.needs_assign()
+                          else "（学生此前无法报名）"))
             continue
         n = (db.query(Enrollment)
              .filter(Enrollment.shift_id == s.id,

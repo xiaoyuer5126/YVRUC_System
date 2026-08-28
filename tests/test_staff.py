@@ -267,21 +267,20 @@ def test_copy_positions_skips_duplicate_names(client, admin, db,
         assert r.json()["copied"] == 0 and len(r.json()["skipped"]) == 2
 
 
-def test_统一分配的场次也能直接建岗位(client, admin, db, assigned_group):
-    """两种模式的区别只是谁来定岗位，不该有一种模式不许建岗位。
+def test_统一分配的场次必须先切模式才能加岗位(client, admin, db, assigned_group):
+    """两种场次的分界线：assign 报名时只锁时段，岗位是截止后才建的。
 
-    以前必须先把场次改成 pick 才能加岗位——填完一整个表单才被 409 拦下，
-    而改模式又会清空所有人已选的岗位。
+    前端在点「添加岗位」当下就提示并给一键切换，后端这道闸门是兜底。
     """
-    act, g, _p1, _p2 = assigned_group      # assign 模式，上限 4，已有 2+2
+    act, g, _p1, _p2 = assigned_group
     with editing(client, admin, act.id):
         r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
                         json={"name": "岗位丙", "quota": 1, **POSITION_TEXT})
-        assert r.status_code == 400          # 2+2+1 > 上限 4
-        assert "超过场次人数上限" in r.json()["detail"]
+        assert r.status_code == 409
+        assert "报名即选岗位" in r.json()["detail"]
 
         client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
-                     json={"capacity": 5})
+                     json={"mode": "pick"})
         r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
                         json={"name": "岗位丙", "quota": 1, **POSITION_TEXT})
         assert r.status_code == 200, r.text
