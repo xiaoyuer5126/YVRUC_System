@@ -127,3 +127,51 @@ def test_岗位详情展示同组岗位(client, admin, db, enrolled_activity, ta
     assert pos[p1.name]["leader_name"]      # 管理者看得到
     # 组里任一岗位问到的都是同一个组长
     assert pos[p1.name]["leader_name"] == pos[p2.name]["leader_name"]
+
+
+def test_组长可以看组员联系方式(client, admin, db, enrolled_activity,
+                              take_student):
+    """组长要在现场找得到人；这是把手机号给另一个同学，所以每次都留痕。"""
+    from backend.models import AuditLog, User
+
+    act, shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,
+                                   take_student)
+    leader = _leaders(db, p1, p2)[0]
+    who = db.get(User, leader.user_id)
+    h = login(client, who.student_id)
+
+    r = client.get(f"/api/me/enrollments/{leader.id}/team", headers=h)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    # 同组两个岗位的人都在，且带着联系方式
+    assert {m["position"] for m in d["members"]} == {p1.name, p2.name}
+    expected = (db.query(Enrollment)
+                .filter(Enrollment.position_id.in_([p1.id, p2.id]),
+                        Enrollment.status == "enrolled").count())
+    assert len(d["members"]) == expected
+    assert next(m for m in d["members"] if m["is_me"])["is_leader"] is True
+    assert all("phone" in m and "wechat" in m for m in d["members"])
+
+    logs = db.query(AuditLog).filter(AuditLog.action == "view_team",
+                                     AuditLog.activity_id == act.id).all()
+    assert len(logs) == 1 and not logs[0].visible      # 志愿者侧看不到这条
+
+
+def test_非组长不能看组员联系方式(client, admin, db, enrolled_activity,
+                                take_student):
+    from backend.models import User
+
+    act, shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,
+                                   take_student)
+    leader = _leaders(db, p1, p2)[0]
+    plain = (db.query(Enrollment)
+             .filter(Enrollment.position_id.in_([p1.id, p2.id]),
+                     Enrollment.is_leader.is_(False),
+                     Enrollment.status == "enrolled").first())
+    h = login(client, db.get(User, plain.user_id).student_id)
+
+    assert client.get(f"/api/me/enrollments/{plain.id}/team",
+                      headers=h).status_code == 403
+    # 也不能拿组长的报名 id 去查
+    assert client.get(f"/api/me/enrollments/{leader.id}/team",
+                      headers=h).status_code == 404

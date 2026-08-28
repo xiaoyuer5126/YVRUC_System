@@ -60,6 +60,7 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "status": enr.status, "cancel_type": enr.cancel_type,
         "excused": enr.excused, "excuse_reason": enr.excuse_reason,
         "seat_held": enr.seat_held,
+        "is_leader": enr.is_leader,
         "allow_reassign": enr.allow_reassign,
         "joined_at": iso_of(enr.joined_at),
         "confirm_deadline": iso_of(enr.confirm_deadline),
@@ -86,6 +87,57 @@ def my_enrollments(db: OrmSession = Depends(db_session),
             seen.add(r.shift_id)
         out.append(_enrollment_row(db, r))
     return out
+
+
+@router.get("/enrollments/{enrollment_id}/team")
+def my_team(enrollment_id: str, db: OrmSession = Depends(db_session),
+            user=Depends(current_user)):
+    """组长看本组组员的联系方式。
+
+    范围是**同一岗位组**（组名相同的岗位共用一名组长），这正是组长的管辖
+    范围。这是把一批同学的手机号给另一个同学，所以每次查看都留痕——
+    志愿者侧看不到这条记录，出事时管理员查得到。
+    """
+    from .. import enroll_logic as logic
+    from ..audit import log as audit_log
+
+    enr = db.get(Enrollment, enrollment_id)
+    if enr is None or enr.user_id != user.id:
+        raise HTTPException(404, "报名记录不存在")
+    if not enr.is_leader:
+        raise HTTPException(403, "只有组长可以查看组员联系方式")
+    position = db.get(Position, enr.position_id) if enr.position_id else None
+    if position is None:
+        raise HTTPException(409, "您还没有岗位，暂时没有组员")
+
+    siblings = logic.group_positions(db, position)
+    ids = [p.id for p in siblings]
+    rows = (db.query(Enrollment, User)
+            .join(User, Enrollment.user_id == User.id)
+            .filter(Enrollment.position_id.in_(ids),
+                    Enrollment.status == "enrolled")
+            .order_by(User.name).all())
+    members = [{
+        "name": u.name, "student_id": u.student_id, "college": u.college,
+        "phone": u.phone, "wechat": u.wechat,
+        "position": next((p.name for p in siblings
+                          if p.id == e.position_id), ""),
+        "is_leader": e.is_leader, "is_me": u.id == user.id,
+    } for e, u in rows]
+
+    act = db.get(Activity, enr.activity_id)
+    shift = db.get(Shift, enr.shift_id)
+    audit_log(db, actor=user, action="view_team", target_type="enrollment",
+              target_id=enr.id, target_label=user.name,
+              activity_id=enr.activity_id,
+              summary=f"组长 {user.name} 查看了「{shift.name}·"
+                      f"{logic.leader_scope_label(siblings, position)}」"
+                      f"{len(members)} 位组员的联系方式")
+    db.commit()
+    return {"activity_title": act.title if act else "",
+            "shift_name": shift.name if shift else "",
+            "scope": logic.leader_scope_label(siblings, position),
+            "members": members}
 
 
 @router.get("/notifications")

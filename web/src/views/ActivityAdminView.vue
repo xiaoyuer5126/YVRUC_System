@@ -1235,6 +1235,7 @@ const ACTION_LABELS = {
   create: '创建', update: '修改', delete: '删除', publish: '发布', close: '截止',
   finish: '结束', assign: '分配', assign_manual: '手动调岗', force_assign: '强制分配',
   export: '导出', hours_confirm: '确认时长', hours_upload: '回传时长',
+  view_team: '查看组员',
 }
 const actionLabel = a => ACTION_LABELS[a] || a
 const cancelType = x => ({ normal: '退选', late: '临近扣分', expired: '确认超时',

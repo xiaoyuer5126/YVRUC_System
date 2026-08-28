@@ -24,6 +24,7 @@
         </div>
         <div v-if="row.position" class="mob-line">
           <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
+          <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
           <span class="dim"> {{ row.position.location }}</span>
         </div>
         <div v-else-if="row.status === 'enrolled'" class="dim">岗位待分配</div>
@@ -44,6 +45,8 @@
           <el-button size="small" @click="$router.push('/activity/' + row.activity.id)">
             查看活动
           </el-button>
+          <el-button v-if="row.is_leader" size="small" type="warning" plain
+                     @click="openTeam(row)">组员名单</el-button>
           <el-button v-if="row.status === 'pending_confirm'" size="small" type="primary"
                      @click="confirm(row)">确认转正</el-button>
           <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached"
@@ -106,6 +109,8 @@
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
           <el-button size="small" @click="$router.push('/activity/' + row.activity.id)">查看</el-button>
+          <el-button v-if="row.is_leader" size="small" type="warning" plain
+                     @click="openTeam(row)">组员</el-button>
           <el-button v-if="row.status === 'pending_confirm'" size="small" type="primary"
                      @click="confirm(row)">确认</el-button>
           <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached"
@@ -123,6 +128,36 @@
         信用分低于 60 分冻结报名 30 天。
       </p>
     </el-alert>
+
+    <el-dialog v-model="teamDlg.visible" :title="'组员名单 · ' + (teamDlg.data?.scope || '')"
+               width="560">
+      <p class="dim" style="margin-top:0;line-height:1.8">
+        {{ teamDlg.data?.activity_title }} · {{ teamDlg.data?.shift_name }}。
+        联系方式仅用于本次活动的联络，请勿他用；<b>每次查看都会记入审计</b>。
+      </p>
+      <DataCards v-if="narrow" :rows="teamDlg.data?.members || []" title-key="name"
+                 :fields="[{ key: 'position', label: '岗位' },
+                           { key: 'college', label: '学院' },
+                           { key: 'phone', label: '手机' },
+                           { key: 'wechat', label: '微信' }]"
+                 empty="本组暂无组员">
+        <template #extra="{ row }">
+          <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+        </template>
+      </DataCards>
+      <el-table v-else :data="teamDlg.data?.members || []" size="small">
+        <el-table-column label="姓名" width="110">
+          <template #default="{ row }">
+            {{ row.name }}
+            <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="position" label="岗位" min-width="110" />
+        <el-table-column prop="college" label="学院" min-width="120" />
+        <el-table-column prop="phone" label="手机" width="130" />
+        <el-table-column prop="wechat" label="微信" min-width="110" />
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
@@ -133,10 +168,18 @@ import { api } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import EnrollStatusTag from '../components/EnrollStatusTag.vue'
 import CheckinStatusTag from '../components/CheckinStatusTag.vue'
+import DataCards from '../components/DataCards.vue'
 
 const narrow = useNarrow()
 const rows = ref([])
 const loading = ref(false)
+const teamDlg = ref({ visible: false, data: null })
+
+// 组长看本组组员的联系方式。范围是同一岗位组，后端每次查看都留痕。
+async function openTeam(row) {
+  teamDlg.value = { visible: true, data: null }
+  teamDlg.value.data = await api.get(`/api/me/enrollments/${row.id}/team`)
+}
 
 function isActive(r) {
   return ['enrolled', 'waitlisted', 'pending_confirm'].includes(r.status)
