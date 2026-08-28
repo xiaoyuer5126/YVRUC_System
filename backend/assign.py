@@ -81,7 +81,7 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
 
     rows = (db.query(Enrollment)
             .filter(Enrollment.shift_id == shift.id,
-                    Enrollment.status == "confirmed")
+                    Enrollment.status == "enrolled")
             .order_by(Enrollment.joined_at).all())
 
     users = {r.id: db.get(User, r.user_id) for r in rows}
@@ -98,7 +98,7 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
                         .filter(Enrollment.user_id == r.user_id,
                                 Enrollment.activity_id == shift.activity_id,
                                 Enrollment.shift_id != shift.id,
-                                Enrollment.status == "confirmed").first())
+                                Enrollment.status == "enrolled").first())
             if previous and previous[0] in by_name:
                 prefer[r.id] = by_name[previous[0]]
 
@@ -145,7 +145,7 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
         "plan": plan,
         "unassigned": unassigned,
         "position_stats": stats,
-        "total_confirmed": len(rows),
+        "total_enrolled": len(rows),
         "total_assigned": len(plan),
     }
 
@@ -165,7 +165,7 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
     rows = []
     for row in plan:
         enr = db.get(Enrollment, row.get("enrollment_id") or "")
-        if enr is None or enr.shift_id != shift.id or enr.status != "confirmed":
+        if enr is None or enr.shift_id != shift.id or enr.status != "enrolled":
             raise ValueError(f"报名记录无效或不在该场次内：{row.get('enrollment_id')}")
         pid = (row.get("position_id") or "").strip()
         if pid and pid not in positions:
@@ -177,7 +177,7 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
     counts: dict[str, int] = {}
     for enr in (db.query(Enrollment)
                 .filter(Enrollment.shift_id == shift.id,
-                        Enrollment.status == "confirmed").all()):
+                        Enrollment.status == "enrolled").all()):
         if enr.id not in planned and enr.position_id:
             counts[enr.position_id] = counts.get(enr.position_id, 0) + 1
     for enr, position, force in rows:

@@ -99,7 +99,7 @@
               未设岗位
             </el-tag>
             <el-tooltip v-else-if="g.unassigned_count" placement="top"
-                        content="已确认报名但还没拿到岗位的人数；增加岗位名额或运行一键分配">
+                        content="已报名报名但还没拿到岗位的人数；增加岗位名额或运行一键分配">
               <el-tag size="small" type="warning" effect="dark">
                 余 {{ g.unassigned_count }} 人待分配
               </el-tag>
@@ -129,7 +129,7 @@
                                { key: 'training_note', label: '培训' }]">
             <template #extra="{ row }">
               <el-tag size="small" :type="row.remaining > 0 ? 'success' : 'info'">
-                {{ row.confirmed }}/{{ row.quota }}
+                {{ row.enrolled }}/{{ row.quota }}
               </el-tag>
               <el-tag v-if="row.needs_leader" size="small" type="warning" effect="plain">组长</el-tag>
             </template>
@@ -161,8 +161,8 @@
               </template>
             </el-table-column>
             <el-table-column prop="location" label="服务地点" min-width="120" />
-            <el-table-column label="名额/已确认" width="130">
-              <template #default="{row}">{{ row.quota }} / {{ row.confirmed }}</template>
+            <el-table-column label="名额/已报名" width="130">
+              <template #default="{row}">{{ row.quota }} / {{ row.enrolled }}</template>
             </el-table-column>
             <el-table-column prop="requirement_desc" label="要求" min-width="140" />
             <el-table-column prop="training_note" label="培训内容" min-width="160" show-overflow-tooltip />
@@ -201,13 +201,13 @@
           <el-button type="primary" plain @click="openNotify">
             <el-icon><Bell /></el-icon>&nbsp;发送通知
           </el-button>
-          <span class="dim">向本活动已确认报名的志愿者发送企业微信通知（演示模式下进入其「消息中心」）</span>
+          <span class="dim">向本活动已报名报名的志愿者发送企业微信通知（演示模式下进入其「消息中心」）</span>
         </div>
         <el-row :gutter="14">
           <el-col :span="7">
             <el-select v-model="currentGroupId" style="width:100%;margin-bottom:10px">
               <el-option v-for="g in shifts" :key="g.id"
-                         :value="g.id" :label="`${g.name}（${g.confirmed}/${g.capacity}）`" />
+                         :value="g.id" :label="`${g.name}（${g.enrolled}/${g.capacity}）`" />
             </el-select>
             <template v-if="currentShift">
               <el-card shadow="never" class="wl-card">
@@ -256,10 +256,10 @@
           </el-col>
           <el-col :span="17">
             <template v-if="currentShift">
-              <div class="section-title" style="margin-top:0">已确认名单（{{ roster.confirmed.length }} 人）
+              <div class="section-title" style="margin-top:0">已报名名单（{{ roster.enrolled.length }} 人）
                 <el-tooltip content="依据签到任务实时回流"><el-icon><InfoFilled /></el-icon></el-tooltip>
               </div>
-              <DataCards v-if="narrow" :rows="roster.confirmed" title-key="user.name"
+              <DataCards v-if="narrow" :rows="roster.enrolled" title-key="user.name"
                          row-key="enrollment_id" style="margin-bottom:14px"
                          :fields="[{ key: 'user.student_id', label: '学号' },
                                    { key: 'user.college', label: '学院' },
@@ -279,7 +279,7 @@
                   <el-select v-model="moveSel[row.enrollment_id]" size="small" clearable
                              placeholder="调至岗位…" style="width:150px">
                     <el-option v-for="s in roster.positions" :key="s.id" :value="s.id"
-                               :label="`${s.name}（余${Math.max(0, s.quota - s.confirmed)}）`" />
+                               :label="`${s.name}（余${Math.max(0, s.quota - s.enrolled)}）`" />
                   </el-select>
                   <el-button size="small" type="primary" plain
                              :disabled="moveSel[row.enrollment_id] === undefined"
@@ -290,7 +290,7 @@
                              @click="setLeader(row, true)">设为组长</el-button>
                 </template>
               </DataCards>
-              <el-table v-else :data="roster.confirmed" size="small" max-height="300" style="margin-bottom:14px">
+              <el-table v-else :data="roster.enrolled" size="small" max-height="300" style="margin-bottom:14px">
                 <el-table-column label="姓名" width="110">
               <template #default="{row}">
                 {{ row.user.name }}
@@ -346,7 +346,7 @@
                     <el-select v-model="moveSel[row.enrollment_id]" size="small"
                                clearable placeholder="调至岗位…" style="width:140px">
                       <el-option v-for="s in roster.positions" :key="s.id" :value="s.id"
-                                 :label="`${s.name}（余${Math.max(0, s.quota - s.confirmed)}）`" />
+                                 :label="`${s.name}（余${Math.max(0, s.quota - s.enrolled)}）`" />
                     </el-select>
                     <el-button size="small" link type="primary"
                                :disabled="moveSel[row.enrollment_id] === undefined"
@@ -430,7 +430,7 @@
               确认正常签退的
             </el-button>
           </el-tooltip>
-          <el-button type="success" @click="uploadHours" :disabled="!confirmedCount">回传数智人大</el-button>
+          <el-button type="success" @click="uploadHours" :disabled="!enrolledCount">回传数智人大</el-button>
           <el-tag size="small" effect="plain">对接状态见「集成设置」（当前为演示回执）</el-tag>
         </div>
         <div v-if="hours.length" class="scroll-x">
@@ -473,7 +473,7 @@
               <el-tag v-if="row.status === 'uploaded'" type="success" effect="light">
                 已回传 {{ row.upload_ref }}
               </el-tag>
-              <el-tag v-else-if="row.status === 'confirmed'" type="warning" effect="light">已确认</el-tag>
+              <el-tag v-else-if="row.status === 'enrolled'" type="warning" effect="light">已报名</el-tag>
               <el-tag v-else effect="info">待确认</el-tag>
             </template>
           </el-table-column>
@@ -511,7 +511,7 @@
             <el-table-column label="状态" width="110">
               <template #default="{row}">
                 <el-tag v-if="row.status === 'uploaded'" type="success" effect="light">已回传</el-tag>
-                <el-tag v-else type="warning" effect="light">已确认</el-tag>
+                <el-tag v-else type="warning" effect="light">已报名</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="80">
@@ -774,7 +774,7 @@
       <el-descriptions v-if="gdData" :column="1" border>
         <el-descriptions-item label="场次模式">{{ gdData.mode_label }}</el-descriptions-item>
         <el-descriptions-item label="时间">{{ gdData.time_text }}</el-descriptions-item>
-        <el-descriptions-item label="人数">已确认 {{ gdData.confirmed }} / {{ gdData.capacity }}
+        <el-descriptions-item label="人数">已报名 {{ gdData.enrolled }} / {{ gdData.capacity }}
           <span v-if="gdData.held_seats" style="color:#e6a23c">
             · {{ gdData.held_seats }} 个名额因临近退选被扣留（不再释放）</span>
           <span class="dim">（候补 {{ gdData.waitlist_count }} 人）</span></el-descriptions-item>
@@ -785,7 +785,7 @@
       <el-descriptions v-if="sdData" :column="1" border>
         <el-descriptions-item label="所属场次">{{ sdGroupName }}</el-descriptions-item>
         <el-descriptions-item label="服务地点">{{ sdData.location || '待定' }}</el-descriptions-item>
-        <el-descriptions-item label="名额">{{ sdData.confirmed }}/{{ sdData.quota }}
+        <el-descriptions-item label="名额">{{ sdData.enrolled }}/{{ sdData.quota }}
           <span class="dim">（同场次岗位互斥）</span></el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ sdData.requirement_desc }}</el-descriptions-item>
         <el-descriptions-item label="要求说明">{{ sdData.requirement_note || '—' }}</el-descriptions-item>
@@ -803,7 +803,7 @@
             <el-radio-button value="not_checked_in">指定场次未到岗</el-radio-button>
           </el-radio-group>
           <div class="dim" style="margin-top:4px">
-            收件人为已确认报名（status=confirmed）的志愿者；「未到岗」将排除该场次已签到的人。
+            收件人为已报名报名（status=enrolled）的志愿者；「未到岗」将排除该场次已签到的人。
           </div>
         </el-form-item>
         <el-form-item v-if="notifyForm.scope !== 'all'" label="选择场次" required>
@@ -993,7 +993,7 @@ function showStationDetail(g, s) {
 }
 
 // —— 名单/调配 ——
-const roster = ref({ confirmed: [], waitlist: [], cancelled: [] })
+const roster = ref({ enrolled: [], waitlist: [], cancelled: [] })
 const currentGroupId = ref('')
 const hours = ref([])
 const hoursLoading = ref(false)
@@ -1001,7 +1001,7 @@ const hoursSel = ref([])                       // 时长表勾选行
 const manualHours = ref([])                    // 手动添加的时长记录
 const mh = ref({ userIds: [], hours: 0.5, note: '' })
 
-// 手动加时长的候选人 = 本活动全部场次的已确认志愿者（含未签到的）
+// 手动加时长的候选人 = 本活动全部场次的已报名志愿者（含未签到的）
 // pick 模式却一个岗位都没有 = 学生根本报不了名
 // 报名已经结束的活动，再说「暂停报名」只会让人困惑
 const editLabel = computed(() =>
@@ -1020,7 +1020,7 @@ const rosterOptions = computed(() => {
   const seen = new Set()
   const out = []
   for (const g of shifts.value) {
-    for (const row of g._roster?.confirmed || []) {
+    for (const row of g._roster?.enrolled || []) {
       if (seen.has(row.user.student_id)) continue
       seen.add(row.user.student_id)
       out.push({ name: row.user.name, student_id: row.user.student_id,
@@ -1074,9 +1074,9 @@ async function loadAll() {
 const shifts = computed(() => act.value?.shifts || [])
 const currentShift = computed(() => shifts.value.find(g => g.id === currentGroupId.value))
 const unassignedCount = computed(() =>
-  (roster.value.confirmed || []).filter(x => !x.position_id).length)
+  (roster.value.enrolled || []).filter(x => !x.position_id).length)
 const pendingPromo = computed(() => roster.value.waitlist.some(w => w.status === 'pending_confirm'))
-const confirmedCount = computed(() => hours.value.filter(h => h.status === 'confirmed').length)
+const enrolledCount = computed(() => hours.value.filter(h => h.status === 'enrolled').length)
 
 function sumQuota(g) {
   return g.positions.reduce((s, x) => s + x.quota, 0)
@@ -1376,7 +1376,7 @@ async function confirmSelectedHours() {
   }))
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/hours/confirm`, { items })
-    ElMessage.success(`已确认 ${d.count} 名志愿者的时长`)
+    ElMessage.success(`已报名 ${d.count} 名志愿者的时长`)
     hoursPreview(true)
   } catch { /* toast by api */ }
 }
@@ -1385,7 +1385,7 @@ async function confirmSelectedHours() {
 async function confirmAllHours() {
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/hours/confirm`, {})
-    ElMessage.success(d.message || `已确认 ${d.count} 名志愿者的时长`)
+    ElMessage.success(d.message || `已报名 ${d.count} 名志愿者的时长`)
     hoursPreview(true)
   } catch { /* toast by api */ }
 }
@@ -1498,7 +1498,7 @@ watch(tab, t => {
   if (t === 'acks') loadBatches()
 })
 watch(currentGroupId, loadRoster)
-watch(() => shifts.value.map(g => g.confirmed).join(','), () => {
+watch(() => shifts.value.map(g => g.enrolled).join(','), () => {
   if (!currentGroupId.value && shifts.value.length) currentGroupId.value = shifts.value[0].id
   loadRoster()
 })

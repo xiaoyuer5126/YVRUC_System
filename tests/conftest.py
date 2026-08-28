@@ -227,7 +227,7 @@ def enrolled_activity(db, take_student):
 
     u = student_row(db, take_student())
     db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=shift.id,
-                      user_id=u.id, position_id=pos.id, status="confirmed",
+                      user_id=u.id, position_id=pos.id, status="enrolled",
                       joined_at=now()))
     db.commit()
     return act, shift, u

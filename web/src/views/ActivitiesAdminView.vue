@@ -16,7 +16,7 @@
         <template #body="{ row }">
           <div class="dim" style="line-height:1.8">
             {{ row.type_label }} · 场次 {{ row.shifts_count }} ·
-            已确认 {{ row.total_confirmed }}/{{ row.total_capacity }}
+            已报名 {{ row.total_enrolled }}/{{ row.total_capacity }}
             <span v-if="row.waitlist_count">· 候补 {{ row.waitlist_count }}</span>
           </div>
         </template>
@@ -56,7 +56,7 @@
         <el-table-column label="场次/时间" min-width="170" prop="time_text" />
         <el-table-column label="报名" width="150">
           <template #default="{row}">
-            {{ row.total_confirmed }}/{{ row.total_capacity }}
+            {{ row.total_enrolled }}/{{ row.total_capacity }}
             <span v-if="row.waitlist_count" class="dim">+候补{{ row.waitlist_count }}</span>
             <el-progress :percentage="pct(row)" :stroke-width="4" :show-text="false" />
           </template>
@@ -217,7 +217,7 @@ function toISO(v) {
 
 const typeColor = t => TYPE_COLORS[t]?.color
 const statusType = s => ({ published: 'success', closed: 'info', draft: 'warning', finished: 'info' }[s])
-const pct = r => Math.min(100, Math.round(r.total_confirmed / Math.max(1, r.total_capacity) * 100))
+const pct = r => Math.min(100, Math.round(r.total_enrolled / Math.max(1, r.total_capacity) * 100))
 
 function openCopy(row) {
   copyDlg.value = { visible: true, source: row, title: '', shiftDays: 7,

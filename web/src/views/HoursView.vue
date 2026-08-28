@@ -47,7 +47,7 @@
         <el-table-column label="状态" width="150">
           <template #default="{ row }">
             <el-tag v-if="row.status === 'uploaded'" type="success" effect="light">已回传</el-tag>
-            <el-tag v-else type="warning" effect="light">已确认待回传</el-tag>
+            <el-tag v-else type="warning" effect="light">已报名待回传</el-tag>
             <span v-if="row.upload_ref" class="dim mono" style="margin-left:6px">{{ row.upload_ref }}</span>
           </template>
         </el-table-column>

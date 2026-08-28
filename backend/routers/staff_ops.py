@@ -161,7 +161,7 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
 @router.get("/checkin-tasks/{task_id}/board")
 def board(task_id: str, db: OrmSession = Depends(db_session),
           user: User = Depends(require_manager)):
-    """签到实时大屏。以已确认报名名单为主表（含未签到者），前端 5s 轮询。"""
+    """签到实时大屏。以已报名报名名单为主表（含未签到者），前端 5s 轮询。"""
     task = db.get(CheckinTask, task_id)
     if task is None:
         raise HTTPException(404, "任务不存在")
@@ -172,7 +172,7 @@ def board(task_id: str, db: OrmSession = Depends(db_session),
     roster = (db.query(Enrollment, User)
               .join(User, Enrollment.user_id == User.id)
               .filter(Enrollment.shift_id == g.id,
-                      Enrollment.status == "confirmed")
+                      Enrollment.status == "enrolled")
               .order_by(User.college, User.name).all())
     recs = (db.query(CheckinRecord)
             .filter(CheckinRecord.shift_id == g.id).all())
@@ -222,7 +222,7 @@ def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
     """按场次聚合的签到实时大屏（不依赖激活的签到任务，
     任务关闭/不存在时仍可查看到场名单）。前端 5s 轮询。
 
-    以已确认报名（Enrollment.status=confirmed）join User 为主表，
+    以已报名报名（Enrollment.status=enrolled）join User 为主表，
     左连该场次的 CheckinRecord（user_id+shift_id 匹配，一人至多一条）。
     """
     g = db.get(Shift, shift_id)
@@ -237,7 +237,7 @@ def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
                        (CheckinRecord.user_id == Enrollment.user_id)
                        & (CheckinRecord.shift_id == Enrollment.shift_id))
             .filter(Enrollment.shift_id == g.id,
-                    Enrollment.status == "confirmed")
+                    Enrollment.status == "enrolled")
             .order_by(User.college, User.name).all())
 
     items = []
@@ -307,7 +307,7 @@ def batch_op(task_id: str, body: dict,
         enr = (db.query(Enrollment)
                .filter(Enrollment.shift_id == task.shift_id,
                        Enrollment.user_id == u.id,
-                       Enrollment.status == "confirmed").first())
+                       Enrollment.status == "enrolled").first())
         if enr is None:
             skipped.append(f"{u.name}（非本场次确认志愿者）")
             continue
@@ -506,7 +506,7 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
         if hours <= 0:
             raise HTTPException(400, f"{u.name} 的时长必须大于 0")
         db.add(HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id,
-                           hours=round(hours, 2), status="confirmed",
+                           hours=round(hours, 2), status="enrolled",
                            source="manual", note=(it.get("note") or "").strip(),
                            confirmed_by=user.id))
         added.append(f"{u.name} {hours}h")
@@ -563,7 +563,7 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
             return
         db.add(HoursRecord(id=uid("hrs"), activity_id=act.id,
                            user_id=user_id, hours=hours,
-                           status="confirmed", source="checkin",
+                           status="enrolled", source="checkin",
                            confirmed_by=user.id))
 
     chosen = (body.items if body else None) or []

@@ -58,7 +58,7 @@
             </div>
             <div class="dim">{{ g.time_text }}</div>
             <div class="m-quota">
-              已确认 {{ g.confirmed }}/{{ g.capacity }}
+              已报名 {{ g.enrolled }}/{{ g.capacity }}
               <span v-if="g.waitlist_count" class="dim">· 候补 {{ g.waitlist_count }}</span>
               <el-progress :percentage="pct(g)" :stroke-width="5" :show-text="false"
                            style="margin-top:4px" />
@@ -70,7 +70,7 @@
                    :class="{ mine: myStationId(g) === s.id, blocked: s.eligible === false }">
                 <div class="m-pos-head">
                   <span class="m-pos-name" @click="showStationDetail(g, s)">{{ s.name }}</span>
-                  <span class="dim">{{ s.confirmed }}/{{ s.quota }}</span>
+                  <span class="dim">{{ s.enrolled }}/{{ s.quota }}</span>
                 </div>
                 <div class="m-pos-meta dim">
                   {{ s.location || '地点待定' }}
@@ -122,7 +122,7 @@
               </p>
               <div class="m-pos-act" style="margin-top:8px">
                 <template v-if="g.my_enrollment">
-                  <el-tag v-if="g.my_enrollment.status === 'confirmed'" type="success" size="small">
+                  <el-tag v-if="g.my_enrollment.status === 'enrolled'" type="success" size="small">
                     已报名（岗位待分配）
                   </el-tag>
                   <el-tag v-else-if="g.my_enrollment.status === 'waitlisted'" type="warning" size="small">
@@ -134,7 +134,7 @@
                   </template>
                   <el-button v-if="g.my_enrollment.status !== 'pending_confirm'"
                              size="small" type="danger" plain
-                             :disabled="g.my_enrollment.status === 'confirmed' && !canCancel(g)"
+                             :disabled="g.my_enrollment.status === 'enrolled' && !canCancel(g)"
                              @click="cancelEnroll(g)">
                     {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
                   </el-button>
@@ -212,7 +212,7 @@
                       <el-table-column prop="location" label="服务地点" min-width="110" />
                       <el-table-column label="名额" width="100">
                         <template #default="{ row: s }">
-                          {{ s.confirmed }}/{{ s.quota }}
+                          {{ s.enrolled }}/{{ s.quota }}
                           <el-tag v-if="s.remaining <= 0" size="small" type="danger"
                                   effect="plain">满</el-tag>
                         </template>
@@ -324,9 +324,9 @@
               </template>
             </el-table-column>
             <el-table-column label="时间" min-width="140" prop="time_text" />
-            <el-table-column label="已确认/名额" min-width="150">
+            <el-table-column label="已报名/名额" min-width="150">
               <template #default="{ row }">
-                <div>{{ row.confirmed }}/{{ row.capacity }}
+                <div>{{ row.enrolled }}/{{ row.capacity }}
                   <span v-if="row.waitlist_count" class="dim">· 候补 {{ row.waitlist_count }}</span>
                 </div>
                 <el-progress :percentage="pct(row)" :stroke-width="5" :show-text="false" />
@@ -350,7 +350,7 @@
                   <template v-if="row.mode === 'pick'">
                     <!-- 有岗位：状态标签（退选/确认在对应岗位行原地操作） -->
                     <template v-if="myStationId(row)">
-                      <el-tag v-if="row.my_enrollment.status === 'confirmed'" type="success">
+                      <el-tag v-if="row.my_enrollment.status === 'enrolled'" type="success">
                         已选中{{ myStationName(row) ? '·' + myStationName(row) : '' }}
                       </el-tag>
                       <el-tag v-else-if="row.my_enrollment.status === 'waitlisted'" type="warning">
@@ -365,7 +365,7 @@
                     </template>
                     <!-- 无岗位（管理员补录/历史数据）：操作留在场次行 -->
                     <template v-else>
-                      <el-tag v-if="row.my_enrollment.status === 'confirmed'" type="success">
+                      <el-tag v-if="row.my_enrollment.status === 'enrolled'" type="success">
                         已选中（岗位待分配）
                       </el-tag>
                       <el-tag v-else-if="row.my_enrollment.status === 'waitlisted'" type="warning">
@@ -381,7 +381,7 @@
                         <el-button type="primary" size="small"
                                    @click="confirmPromo(row)">确认转正</el-button>
                       </template>
-                      <el-button v-if="row.my_enrollment.status === 'confirmed'"
+                      <el-button v-if="row.my_enrollment.status === 'enrolled'"
                                  size="small" type="danger" plain
                                  :disabled="!canCancel(row)" @click="cancelEnroll(row)">
                         退选
@@ -394,7 +394,7 @@
                   </template>
                   <!-- 仅一级 / 二级待定：按钮留在场次行 -->
                   <template v-else>
-                    <el-tag v-if="row.my_enrollment.status === 'confirmed'" type="success">
+                    <el-tag v-if="row.my_enrollment.status === 'enrolled'" type="success">
                       已选中
                     </el-tag>
                     <el-tag v-else-if="row.my_enrollment.status === 'waitlisted'" type="warning">
@@ -410,7 +410,7 @@
                       <el-button type="primary" size="small"
                                  @click="confirmPromo(row)">确认转正</el-button>
                     </template>
-                    <el-button v-if="row.my_enrollment.status === 'confirmed'"
+                    <el-button v-if="row.my_enrollment.status === 'enrolled'"
                                size="small" type="danger" plain
                                :disabled="!canCancel(row)" @click="cancelEnroll(row)">
                       退选
@@ -470,7 +470,7 @@
         <el-descriptions-item label="岗位模式">{{ groupDetail.data.mode_label }}</el-descriptions-item>
         <el-descriptions-item label="时间">{{ groupDetail.data.time_text }}</el-descriptions-item>
         <el-descriptions-item label="人数">
-          已确认 {{ groupDetail.data.confirmed }} / {{ groupDetail.data.capacity }}
+          已报名 {{ groupDetail.data.enrolled }} / {{ groupDetail.data.capacity }}
           <span v-if="groupDetail.data.waitlist_count" class="dim">（候补 {{ groupDetail.data.waitlist_count }} 人）</span>
           <span v-if="groupDetail.data.held_seats" class="dim">
             · 另有 {{ groupDetail.data.held_seats }} 个名额因临近退选被扣留，不再释放</span>
@@ -486,7 +486,7 @@
         <el-descriptions-item label="所属场次">{{ stationDetail.groupName }}（{{ stationDetail.groupTime }}）</el-descriptions-item>
         <el-descriptions-item label="服务地点">{{ stationDetail.data.location || '待定' }}</el-descriptions-item>
         <el-descriptions-item label="名额">
-          {{ stationDetail.data.confirmed }}/{{ stationDetail.data.quota }}
+          {{ stationDetail.data.enrolled }}/{{ stationDetail.data.quota }}
           <span class="dim">（岗位之间互斥，一场次一人一个岗位）</span>
         </el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ stationDetail.data.requirement_desc }}</el-descriptions-item>
@@ -612,7 +612,7 @@ const STATUS_TYPES = {
 const statusType = computed(() => STATUS_TYPES[act.value?.display_status] || 'info')
 
 function pct(g) {
-  return Math.min(100, Math.round((g.confirmed / Math.max(1, g.capacity)) * 100))
+  return Math.min(100, Math.round((g.enrolled / Math.max(1, g.capacity)) * 100))
 }
 function needLateWarn(g) {
   const st = new Date(g.start_time.replace(' ', 'T'))

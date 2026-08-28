@@ -8,7 +8,7 @@
     进后台建岗位后一键智能排班
   · 校园开放日招生咨询（A类·报名中·仅一级）——简单活动无需岗位
   · 校庆文艺晚会（D类·已截止·签到进行中）——统一+分岗位签到码、实时大屏
-  · 社区敬老院陪伴服务（A类·已结束·仅一级）——时长已确认并回传数智人大
+  · 社区敬老院陪伴服务（A类·已结束·仅一级）——时长已报名并回传数智人大
 
 运行：python -m backend.seed   （重复执行会先清空重建）
 """
@@ -173,21 +173,21 @@ def main() -> None:
             db.add(p)
             return p
 
-        def enr(user, act, group, days_ago, status="confirmed", position=None,
+        def enr(user, act, group, days_ago, status="enrolled", position=None,
                 assigned=True, allow_reassign=None):
             e = Enrollment(id=uid("enr"), activity_id=act.id,
                            shift_id=group.id, user_id=user.id,
                            position_id=position.id if position else None,
                            status=status, source="self",
                            # 约四分之一的人不接受调剂，分配面板上能看到提示
-                           allow_reassign=(True if status != "confirmed"
+                           allow_reassign=(True if status != "enrolled"
                                            else (random.random() > 0.25
                                                  if allow_reassign is None
                                                  else allow_reassign)),
                            leader_willing=random.random() > 0.6,
                            joined_at=dt(days=-days_ago,
                                         minutes=random.randint(-50, 50)))
-            if status == "confirmed" and assigned and position:
+            if status == "enrolled" and assigned and position:
                 e.assigned_at = e.joined_at
             db.add(e)
             return e
@@ -312,7 +312,7 @@ def main() -> None:
             if cnt >= 18 or u.id == frozen_id:
                 continue
             db.add(Enrollment(id=uid("enr"), activity_id=book.id,
-                              shift_id=b1.id, user_id=u.id, status="confirmed",
+                              shift_id=b1.id, user_id=u.id, status="enrolled",
                               source="self",
                               allow_reassign=random.random() > 0.25,
                               joined_at=dt(days=-2, minutes=cnt * 7)))
@@ -347,7 +347,7 @@ def main() -> None:
         for uid_ in book_members:
             u = db.get(User, uid_)
             db.add(Enrollment(id=uid("enr"), activity_id=fair.id,
-                              shift_id=f1.id, user_id=u.id, status="confirmed",
+                              shift_id=f1.id, user_id=u.id, status="enrolled",
                               position_id=f1_pos.id, source="self",
                               assigned_at=dt(days=-1),
                               joined_at=dt(days=-1)))
@@ -355,7 +355,7 @@ def main() -> None:
                 if u.id not in book_ids and u.id != frozen_id][:4]
         for u in rest:
             db.add(Enrollment(id=uid("enr"), activity_id=fair.id,
-                              shift_id=f1.id, user_id=u.id, status="confirmed",
+                              shift_id=f1.id, user_id=u.id, status="enrolled",
                               position_id=f1_pos.id, source="self",
                               assigned_at=dt(days=-1),
                               joined_at=dt(days=-1)))
@@ -393,7 +393,7 @@ def main() -> None:
         for i, (u, st_) in enumerate(zip(gala_users, assigned_map)):
             joined = dt(days=-5, minutes=i * 9)
             db.add(Enrollment(id=uid("enr"), activity_id=gala.id,
-                              shift_id=c1.id, user_id=u.id, status="confirmed",
+                              shift_id=c1.id, user_id=u.id, status="enrolled",
                               position_id=st_.id, assigned_at=joined,
                               joined_at=joined, source="self"))
             if i < 7:   # 前7人已到岗
@@ -442,7 +442,7 @@ def main() -> None:
             joined = dt(days=-12, minutes=i * 11)
             db.add(Enrollment(id=uid("enr"), activity_id=elder.id,
                               position_id=e1_pos.id,
-                              shift_id=e1.id, user_id=u.id, status="confirmed",
+                              shift_id=e1.id, user_id=u.id, status="enrolled",
                               joined_at=joined, assigned_at=joined))
             db.add(CheckinRecord(id=uid("ckr"), task_id=elder_task.id,
                                  activity_id=elder.id, shift_id=e1.id,

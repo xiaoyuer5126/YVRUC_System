@@ -37,7 +37,7 @@ def overview(db: OrmSession = Depends(db_session),
         Activity.status).all()
     by_status = {s: n for s, n in act_rows}
     active_enroll = (db.query(func.count(Enrollment.id))
-                     .filter(Enrollment.status.in_(("confirmed", "waitlisted",
+                     .filter(Enrollment.status.in_(("enrolled", "waitlisted",
                                                     "pending_confirm")))
                      .scalar() or 0)
     waitlisted = (db.query(func.count(Enrollment.id))
@@ -64,7 +64,7 @@ def overview(db: OrmSession = Depends(db_session),
     # 学院分布（有效报名）
     college_rows = (db.query(User.college, func.count(Enrollment.id))
                     .join(Enrollment, Enrollment.user_id == User.id)
-                    .filter(Enrollment.status == "confirmed")
+                    .filter(Enrollment.status == "enrolled")
                     .group_by(User.college).all())
     colleges = [{"college": c or "未填写", "count": n}
                 for c, n in sorted(college_rows, key=lambda x: -x[1])[:8]]

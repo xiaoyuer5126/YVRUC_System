@@ -20,7 +20,7 @@ def _fill_and_queue(client, db, open_group, take_student, *,
     r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                     headers=login(client, first),
                     json={"position_id": g.test_position_id})
-    assert r.json()["status"] == "confirmed"
+    assert r.json()["status"] == "enrolled"
     queued = take_student()
     r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                     headers=login(client, queued),
@@ -59,7 +59,7 @@ def _free_the_seat(db, shift_id):
     """
     enr = (db.query(Enrollment)
            .filter(Enrollment.shift_id == shift_id,
-                   Enrollment.status == "confirmed").one())
+                   Enrollment.status == "enrolled").one())
     enr.status = "cancelled"
     enr.cancel_type = "normal"
     enr.seat_held = False
@@ -114,7 +114,7 @@ def test_截止后管理者可手动转正(client, admin, db, open_group, take_s
                     headers=admin)
     assert r.status_code == 200
     db.expire_all()
-    assert db.get(Enrollment, waiting.id).status == "confirmed"
+    assert db.get(Enrollment, waiting.id).status == "enrolled"
     # 手动转正不走 2 小时确认窗：活动就在眼前，再等两小时名额只会继续空着
     assert db.get(Enrollment, waiting.id).confirm_deadline is None
 

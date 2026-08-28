@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session as OrmSession
 from .integrations import wecom
 from .models import Activity, CheckinRecord, Enrollment, Shift, Position, User
 
-ENROLLED = ("confirmed", "waitlisted", "pending_confirm")
+ENROLLED = ("enrolled", "waitlisted", "pending_confirm")
 
 
 def _users_of(db: OrmSession, user_ids) -> list[User]:
@@ -49,7 +49,7 @@ def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
     act = db.get(Activity, g.activity_id)
     q = (db.query(Enrollment)
          .filter(Enrollment.shift_id == g.id,
-                 Enrollment.status == "confirmed"))
+                 Enrollment.status == "enrolled"))
     if position_ids:
         q = q.filter(Enrollment.position_id.in_(position_ids))
     rows = q.all()
@@ -96,7 +96,7 @@ def notify_late_dropout(db: OrmSession, enr, user: User) -> None:
     逐条推等于让老师关掉通知。正文带当前人数，老师一眼知道缺不缺人。
     """
     from . import config
-    from .enroll_logic import shift_confirmed_count
+    from .enroll_logic import shift_enrolled_count
     from .models import Activity, Position, Shift, now
 
     shift = db.get(Shift, enr.shift_id)
@@ -106,13 +106,13 @@ def notify_late_dropout(db: OrmSession, enr, user: User) -> None:
     act = db.get(Activity, enr.activity_id)
     position = db.get(Position, enr.position_id) if enr.position_id else None
     where = f"{shift.name}·{position.name}" if position else shift.name
-    confirmed = shift_confirmed_count(db, shift.id)
+    enrolled = shift_enrolled_count(db, shift.id)
     capacity = shift.total_capacity()
-    gap = max(0, capacity - confirmed)
+    gap = max(0, capacity - enrolled)
     notify_managers(
         db, act.id,
         f"[临近减员] {act.title}",
         f"{user.name}（{user.student_id}）退出了「{where}」，"
         f"距开始不足 {config.LATE_CANCEL_HOURS} 小时。\n"
-        f"该场次当前 {confirmed}/{capacity} 人"
+        f"该场次当前 {enrolled}/{capacity} 人"
         + (f"，缺 {gap} 人。" if gap else "，人数已满。"))

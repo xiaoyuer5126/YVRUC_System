@@ -163,7 +163,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                 raise HTTPException(
                     409, "您此前在该场次临近退选，名额已按规则扣留，无法再次报名；"
                          "如确有需要请联系负责老师")
-            label = {"confirmed": "已报名为正式成员", "waitlisted": "已在候补队列中",
+            label = {"enrolled": "已报名为正式成员", "waitlisted": "已在候补队列中",
                      "pending_confirm": "有候补转正待确认"}[live.status]
             raise HTTPException(409, f"该场次{label}，请勿重复报名")
 
@@ -174,7 +174,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         if position is not None:
             enr.position_id = position.id
         if logic.has_room(db, g, position):
-            enr.status = "confirmed"
+            enr.status = "enrolled"
             if position is not None:
                 enr.assigned_at = enr.joined_at
         else:
@@ -198,11 +198,11 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         db.add(enr)
         db.flush()
         logic.record_change(db, user, enr,
-                            "enroll" if enr.status == "confirmed" else "waitlist")
-        if enr.status == "confirmed" and position is not None:
+                            "enroll" if enr.status == "enrolled" else "waitlist")
+        if enr.status == "enrolled" and position is not None:
             logic.elect_leader(db, position)
 
-        if enr.status == "confirmed":
+        if enr.status == "enrolled":
             wecom.send_user(db, user, "signup_success", activity=act.title,
                             shift=g.name, time=g.span_text(),
                             detail=(f"岗位：{position.name}（{position.location}）"
@@ -223,7 +223,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         "waitlist_position": (logic.waitlist_position(db, enr)
                               if enr.status == "waitlisted" else 0),
         "is_leader": enr.is_leader,
-        "message": ("报名成功！名额已锁定。" if enr.status == "confirmed"
+        "message": ("报名成功！名额已锁定。" if enr.status == "enrolled"
                     else "名额已满，已为您加入候补队列（候补默认接受岗位调剂）。"),
     }
 
@@ -285,7 +285,7 @@ def cancel_enroll(enrollment_id: str,
             db.commit()
             return {"ok": True, "effect": "quit_queue", "message": "已退出候补队列。"}
 
-        # confirmed：活动开始后不可退
+        # enrolled：活动开始后不可退
         t = now()
         if t >= g.start_time:
             raise HTTPException(409, "活动已开始，无法退选；如有特殊情况请联系负责老师。")

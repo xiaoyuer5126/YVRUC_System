@@ -78,7 +78,7 @@ def test_未到时间的活动不动(db, make_activity):
 def _enroll(db, act, g, student_id):
     u = db.query(User).filter(User.student_id == student_id).one()
     db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
-                      user_id=u.id, status="confirmed", joined_at=now()))
+                      user_id=u.id, status="enrolled", joined_at=now()))
     db.commit()
     return u
 

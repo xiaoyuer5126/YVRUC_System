@@ -14,7 +14,7 @@ def _one_seat(client, db, open_group, take_student, *, reg_end_in_hours):
     r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                     headers=login(client, taker),
                     json={"position_id": g.test_position_id})
-    assert r.json()["status"] == "confirmed"
+    assert r.json()["status"] == "enrolled"
     queued = take_student()
     client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                 headers=login(client, queued),
@@ -23,7 +23,7 @@ def _one_seat(client, db, open_group, take_student, *, reg_end_in_hours):
     db.commit()
     enr = (db.query(Enrollment)
            .filter(Enrollment.shift_id == g.id,
-                   Enrollment.status == "confirmed").one())
+                   Enrollment.status == "enrolled").one())
     return act, g, taker, enr
 
 

@@ -55,7 +55,7 @@ def task_info(token: str, db: OrmSession = Depends(db_session),
         state = "expired"
     mine = (db.query(Enrollment)
             .filter(Enrollment.shift_id == g.id, Enrollment.user_id == user.id,
-                    Enrollment.status == "confirmed").first())
+                    Enrollment.status == "enrolled").first())
     return {
         "activity_title": act.title, "shift_name": g.name,
         "group_time": g.span_text(),
@@ -97,7 +97,7 @@ def do_checkin(token: str, db: OrmSession = Depends(db_session),
     # 必须是该场次的正式成员
     enr = (db.query(Enrollment)
            .filter(Enrollment.shift_id == g.id, Enrollment.user_id == user.id,
-                   Enrollment.status == "confirmed").first())
+                   Enrollment.status == "enrolled").first())
     if enr is None:
         raise HTTPException(403, f"您不是「{act.title}·{g.name}」的确认志愿者")
 

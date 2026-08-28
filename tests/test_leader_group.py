@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from backend.models import Enrollment, Position, uid
-from conftest import POSITION_TEXT, editing, login
+from conftest import POSITION_TEXT, login
 
 
 def _group_of(client, admin, db, enrolled_activity, take_student, *,
@@ -32,7 +32,7 @@ def _leaders(db, *positions):
     return (db.query(Enrollment)
             .filter(Enrollment.position_id.in_([p.id for p in positions]),
                     Enrollment.is_leader.is_(True),
-                    Enrollment.status == "confirmed").all())
+                    Enrollment.status == "enrolled").all())
 
 
 def test_同组岗位只产生一名组长(client, admin, db, enrolled_activity,
@@ -78,7 +78,7 @@ def test_改判组长会摘掉同组的原组长(client, admin, db, enrolled_act
     other = (db.query(Enrollment)
              .filter(Enrollment.position_id == p2.id,
                      Enrollment.is_leader.is_(False),
-                     Enrollment.status == "confirmed").first())
+                     Enrollment.status == "enrolled").first())
     r = client.post(f"/api/staff/enrollments/{other.id}/leader",
                     headers=admin, json={"is_leader": True})
     assert r.status_code == 200
@@ -93,7 +93,6 @@ def test_组长退选后由组内下一位接任(client, admin, db, enrolled_act
     act, shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,
                                    take_student)
     leader = _leaders(db, p1, p2)[0]
-    from conftest import student_row
     from backend.models import User
     u = db.get(User, leader.user_id)
     t = login(client, u.student_id)

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from backend import scheduled
-from backend.models import Activity, Notification, Position, Shift, now, uid
+from backend.models import Activity, Notification, Position, now, uid
 from conftest import POSITION_TEXT, login
 
 

@@ -90,7 +90,7 @@ def test_assignment_audit_records_the_old_position(client, admin, db,
     sid = take_student()
     u = db.query(User).filter(User.student_id == sid).one()
     enr = Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
-                     user_id=u.id, status="confirmed", position_id=s1.id,
+                     user_id=u.id, status="enrolled", position_id=s1.id,
                      joined_at=now())
     db.add(enr)
     db.commit()
@@ -115,7 +115,7 @@ def test_moving_unwilling_volunteer_is_allowed_but_recorded(
     act, g, s1, s2 = assigned_group
     u = db.query(User).filter(User.student_id == take_student()).one()
     enr = Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
-                     user_id=u.id, status="confirmed", position_id=s1.id,
+                     user_id=u.id, status="enrolled", position_id=s1.id,
                      allow_reassign=False, joined_at=now())
     db.add(enr)
     db.commit()
@@ -131,7 +131,7 @@ def test_moving_unwilling_volunteer_is_allowed_but_recorded(
     assert body["rows"][0]["allow_reassign"] is False
 
     roster = client.get(f"/api/staff/shifts/{g.id}/roster", headers=admin).json()
-    row = next(x for x in roster["confirmed"] if x["user"]["id"] == u.id)
+    row = next(x for x in roster["enrolled"] if x["user"]["id"] == u.id)
     assert row["allow_reassign"] is False
 
 
@@ -141,7 +141,7 @@ def test_walkin_needs_force_when_group_is_full(client, admin, db,
     for _ in range(g.capacity):
         u = db.query(User).filter(User.student_id == take_student()).one()
         db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
-                          user_id=u.id, status="confirmed", joined_at=now()))
+                          user_id=u.id, status="enrolled", joined_at=now()))
     db.commit()
 
     extra = take_student()
@@ -184,7 +184,7 @@ def test_unchecked_out_hours_need_review(client, admin, db, take_student):
     stayer = db.query(User).filter(User.student_id == take_student()).one()
     for u, checkout in ((quitter, None), (stayer, g.end_time)):
         db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
-                          user_id=u.id, status="confirmed", joined_at=now()))
+                          user_id=u.id, status="enrolled", joined_at=now()))
         db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
                              shift_id=g.id, user_id=u.id, method="scan",
                              checkin_at=g.start_time, checkout_at=checkout))
@@ -205,7 +205,7 @@ def test_unchecked_out_hours_need_review(client, admin, db, take_student):
     after = client.get(f"/api/staff/activities/{act.id}/hours",
                        headers=admin).json()["items"]
     got = {i["user"]["id"]: i["status"] for i in after}
-    assert got[stayer.id] == "confirmed" and got[quitter.id] is None
+    assert got[stayer.id] == "enrolled" and got[quitter.id] is None
 
 
 def test_qingxie_sees_users_page_teacher_does_not(client, teacher):
@@ -223,7 +223,7 @@ def test_copy_activity_shifts_times_and_drops_enrollments(
     act, g, p1, _p2 = assigned_group
     u = db.query(User).filter(User.student_id == take_student()).one()
     db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
-                      user_id=u.id, status="confirmed", position_id=p1.id,
+                      user_id=u.id, status="enrolled", position_id=p1.id,
                       joined_at=now()))
     db.commit()
 
@@ -237,7 +237,7 @@ def test_copy_activity_shifts_times_and_drops_enrollments(
     assert len(detail["shifts"]) == 1
     new_shift = detail["shifts"][0]
     assert len(new_shift["positions"]) == len(g.positions)
-    assert new_shift["confirmed"] == 0          # 报名没有跟过来
+    assert new_shift["enrolled"] == 0          # 报名没有跟过来
 
     # 比数据库里的值：接口输出按分钟截断，差值会变成 6 天 23:59:xx
     old_start = db.get(Shift, g.id).start_time

@@ -55,7 +55,7 @@ def test_大屏以确认名单为主表并标出组长(client, admin, db, enroll
                                      take_student)
     enr = (db.query(Enrollment)
            .filter(Enrollment.position_id == pos.id,
-                   Enrollment.status == "confirmed").all())
+                   Enrollment.status == "enrolled").all())
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=shift.id,
                        mode="group", token="ABC123",
                        valid_from=shift.start_time, valid_to=shift.end_time,
@@ -108,7 +108,7 @@ def test_一个岗位只会有一个组长(client, admin, db, enrolled_activity,
                                      take_student, n=3)
     rows = (db.query(Enrollment)
             .filter(Enrollment.position_id == pos.id,
-                    Enrollment.status == "confirmed")
+                    Enrollment.status == "enrolled")
             .order_by(Enrollment.joined_at).all())
     auto = [r for r in rows if r.is_leader]
     assert len(auto) == 1, "报名时应按先后自动产生一个组长"

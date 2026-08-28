@@ -5,8 +5,7 @@
 """
 from __future__ import annotations
 
-from backend.models import AuditLog
-from conftest import POSITION_TEXT, editing, login
+from conftest import editing, login
 
 
 def _visible_summaries(client, headers, activity_id):

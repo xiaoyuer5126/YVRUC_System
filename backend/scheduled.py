@@ -172,7 +172,7 @@ def send_roster_digests(db: OrmSession) -> int:
     才发现少人。折中：临近活动时每天一条「昨日 +2 −1，当前 18/20」，
     真正紧急的（距开始不足 24 小时的减员）另有即时提醒。
     """
-    from .enroll_logic import ROSTER_ACTIONS, shift_confirmed_count
+    from .enroll_logic import ROSTER_ACTIONS, shift_enrolled_count
     from .models import AuditLog
     from .notify import notify_managers
 
@@ -199,14 +199,14 @@ def send_roster_digests(db: OrmSession) -> int:
             continue          # 没有变动就不打扰
         joined = sum(1 for r in rows if r.action in ("enroll", "promote"))
         left = sum(1 for r in rows if r.action in ("cancel", "abandon"))
-        confirmed = shift_confirmed_count(db, g.id)
+        enrolled = shift_enrolled_count(db, g.id)
         capacity = g.total_capacity()
         act = db.get(Activity, g.activity_id)
-        gap = max(0, capacity - confirmed)
+        gap = max(0, capacity - enrolled)
         notify_managers(
             db, act.id, f"[人员变动] {act.title} · {g.name}",
             f"过去 24 小时：新增 {joined} 人，退出 {left} 人。\n"
-            f"当前 {confirmed}/{capacity} 人"
+            f"当前 {enrolled}/{capacity} 人"
             + (f"，缺 {gap} 人。" if gap else "，人数已满。")
             + f"\n场次开始：{g.start_time:%m-%d %H:%M}")
         sent += 1

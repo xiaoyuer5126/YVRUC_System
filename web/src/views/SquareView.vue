@@ -27,7 +27,7 @@
           <span v-if="a.status === 'published'">
             剩余 <b style="color:var(--el-color-primary)">{{ a.remaining }}</b> / {{ a.total_capacity }}
           </span>
-          <span v-else class="dim">已确认 {{ a.total_confirmed }} 人</span>
+          <span v-else class="dim">已报名 {{ a.total_enrolled }} 人</span>
         </div>
       </div>
     </div>

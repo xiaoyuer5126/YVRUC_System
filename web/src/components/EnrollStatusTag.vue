@@ -1,6 +1,6 @@
 <!-- 报名状态标签。表格与窄屏卡片共用，免得两处各写一套判断。 -->
 <template>
-  <el-tag v-if="row.status === 'confirmed'" type="success">已报名</el-tag>
+  <el-tag v-if="row.status === 'enrolled'" type="success">已报名</el-tag>
   <el-tag v-else-if="row.status === 'waitlisted'" type="warning">
     候补中{{ row.waitlist_position ? ` 第${row.waitlist_position}位` : '' }}
   </el-tag>

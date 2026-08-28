@@ -18,7 +18,7 @@
       <el-button size="small" @click="$emit('reload')">刷新名单</el-button>
       <el-button size="small" type="success" plain @click="walkinVisible = true">补录志愿者</el-button>
       <span style="margin-left:auto" class="dim" v-if="preview">
-        已确认 {{ preview.total_confirmed }} 人 · 建议 {{ preview.total_assigned }} 人上岗
+        已报名 {{ preview.total_enrolled }} 人 · 建议 {{ preview.total_assigned }} 人上岗
       </span>
     </div>
 
@@ -175,7 +175,7 @@ import { api } from '../api'
 
 const props = defineProps({
   shift: { type: Object, required: true },
-  unassignedCount: { type: Number, default: 0 },   // 已确认但还没有岗位的人数
+  unassignedCount: { type: Number, default: 0 },   // 已报名但还没有岗位的人数
 })
 const emit = defineEmits(['reload'])
 
@@ -195,7 +195,7 @@ const pickModeAllAssigned = computed(() =>
 const stationOpts = computed(() =>
   props.shift.positions.map(s => ({
     value: s.id, label: s.name,
-    left: Math.max(0, s.quota - (s.confirmed || 0)),
+    left: Math.max(0, s.quota - (s.enrolled || 0)),
   })))
 
 function stationName(sid) {
@@ -217,7 +217,7 @@ function buildRows() {
 function resetEdit() { buildRows() }
 function overQuota(row) {
   const s = props.shift.positions.find(x => x.id === row.target)
-  return s ? s.quota - (s.confirmed || 0) <= 0 : false
+  return s ? s.quota - (s.enrolled || 0) <= 0 : false
 }
 
 async function runPreview() {

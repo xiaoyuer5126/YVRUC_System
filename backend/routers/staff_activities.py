@@ -480,7 +480,7 @@ def _validate_shift_capacity(db: OrmSession, g: Shift):
     used = logic.shift_occupied_count(db, g.id)
     if g.capacity < used:
         raise HTTPException(
-            400, f"人数上限不能小于已占用名额（{used} 人：含已确认报名与"
+            400, f"人数上限不能小于已占用名额（{used} 人：含已报名报名与"
                  f"临近退选扣留的名额）")
 
 
@@ -763,7 +763,7 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
     if changes and act.status != "draft":
         affected = (db.query(Enrollment.user_id)
                     .filter(Enrollment.position_id == s.id,
-                            Enrollment.status == "confirmed").all())
+                            Enrollment.status == "enrolled").all())
         for (uid_,) in affected:
             bg.add_task(_notify_assignment_bg,
                         [{"user_id": uid_, "position_id": s.id,
@@ -796,9 +796,9 @@ def delete_position(position_id: str,
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
     n = db.query(Enrollment).filter(Enrollment.position_id == s.id,
-                                    Enrollment.status == "confirmed").count()
+                                    Enrollment.status == "enrolled").count()
     if n:
-        raise HTTPException(409, f"该岗位仍有 {n} 人已确认，请先在分配面板调整")
+        raise HTTPException(409, f"该岗位仍有 {n} 人已报名，请先在分配面板调整")
     label = f"{act.title}·{g.name}·{s.name}"
     db.delete(s)
     audit_log(db, actor=user, action="delete", target_type="position",
@@ -882,7 +882,7 @@ class NotifyBody(BaseModel):
 def notify_volunteers(activity_id: str, body: NotifyBody,
                       db: OrmSession = Depends(db_session),
                       user: User = Depends(require_manager)):
-    """向该活动 status=confirmed 的报名者发送自定义通知。
+    """向该活动 status=enrolled 的报名者发送自定义通知。
 
     scope=group：再按 shift_id 过滤；scope=not_checked_in：按 shift_id 过滤
     且排除已在该场次有签到记录的人。Mock 模式下消息落 notifications 表。
@@ -907,7 +907,7 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
     # 两步查询：先 DISTINCT user_id（JSON 列在 PG 上无相等运算符，不能整行去重）
     ids = (db.query(Enrollment.user_id)
            .filter(Enrollment.activity_id == act.id,
-                   Enrollment.status == "confirmed"))
+                   Enrollment.status == "enrolled"))
     if shift_id:
         ids = ids.filter(Enrollment.shift_id == shift_id)
     ids = [r[0] for r in ids.distinct().all()]
@@ -1032,9 +1032,9 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
             "seat_held": e.seat_held,
         }
 
-    confirmed = [user_row(e) for e in db.query(Enrollment)
+    enrolled = [user_row(e) for e in db.query(Enrollment)
                  .filter(Enrollment.shift_id == g.id,
-                         Enrollment.status == "confirmed")
+                         Enrollment.status == "enrolled")
                  .order_by(Enrollment.joined_at).all()]
     waitlist = []
     for e in logic.waitlist_rows(db, g.id):
@@ -1075,9 +1075,9 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
                        "location": p.location,
                        "needs_leader": p.needs_leader,
                        "requirement_desc": p.requirement_desc() or "不限",
-                       "confirmed": logic.position_confirmed_count(db, p.id)}
+                       "enrolled": logic.position_enrolled_count(db, p.id)}
                       for p in positions],
-        "confirmed": confirmed,
+        "enrolled": enrolled,
         "waitlist": waitlist,
         "held": held,
         "cancelled": cancelled,
@@ -1174,7 +1174,7 @@ def set_leader(enrollment_id: str, body: LeaderBody,
     if enr is None:
         raise HTTPException(404, "报名记录不存在")
     ensure_activity_manager(db, user, enr.activity_id)
-    if enr.status != "confirmed":
+    if enr.status != "enrolled":
         raise HTTPException(409, "只有正式报名的志愿者才能担任组长")
     if not enr.position_id:
         raise HTTPException(409, "该志愿者还没有岗位，请先分配岗位")
@@ -1318,7 +1318,7 @@ def add_walkin(shift_id: str, body: dict,
 
         enr = Enrollment(id=uid("enr"), activity_id=g.activity_id, shift_id=g.id,
                          user_id=u.id, source="admin", joined_at=now(),
-                         status="confirmed",
+                         status="enrolled",
                          allow_reassign=bool(body.get("allow_reassign", True)))
         if position is not None:
             enr.position_id = position.id

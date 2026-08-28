@@ -114,7 +114,7 @@ def test_余几人待分配的统计(client, admin, db, enrolled_activity, take_
     other = db.query(User).filter(
         User.student_id == take_student()).one()
     db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=shift.id,
-                      user_id=other.id, status="confirmed", joined_at=now()))
+                      user_id=other.id, status="enrolled", joined_at=now()))
     db.commit()
 
     d = client.get(f"/api/activities/{act.id}", headers=admin).json()

@@ -3,7 +3,7 @@
 《设计方案》阶段二/阶段三的关键机制：
   · 时段冲突：只比场次的时间区间，重叠即拦截（跨活动，含候补中的场次——
     排了队就等于预留了这段时间）；
-  · 名额账本：已确认 + 临近退选占位（seat_held），后者不释放给任何人；
+  · 名额账本：已报名 + 临近退选占位（seat_held），后者不释放给任何人；
   · 候补按 joined_at 排队，正常退选释放名额 → 队首转正，2 小时确认窗口。
 
 调用容量相关函数前必须持有 locks.shift_lock(shift_id)，见 locks.py。
@@ -19,7 +19,7 @@ from . import config, credit
 from .integrations import wecom
 from .models import Activity, Enrollment, Shift, Position, User, now
 
-ACTIVE = ("confirmed", "waitlisted", "pending_confirm")
+ACTIVE = ("enrolled", "waitlisted", "pending_confirm")
 
 
 def overlaps(a1, a2, b1, b2) -> bool:
@@ -43,7 +43,7 @@ def time_conflicts(db: OrmSession, user: User,
                 "enrollment_id": enr.id, "activity_id": act.id,
                 "activity_title": act.title, "shift_name": g.name,
                 "time": g.span_text(), "status": enr.status,
-                "waiting": enr.status != "confirmed",
+                "waiting": enr.status != "enrolled",
             })
     return out
 
@@ -59,31 +59,31 @@ def conflict_message(clashes: list[dict]) -> str:
 
 # ======================= 名额账本 =======================
 
-def shift_confirmed_count(db: OrmSession, shift_id: str) -> int:
-    """正式报名人数（用于展示「已确认 N 人」）。"""
+def shift_enrolled_count(db: OrmSession, shift_id: str) -> int:
+    """正式报名人数（用于展示「已报名 N 人」）。"""
     return db.query(Enrollment).filter(
         Enrollment.shift_id == shift_id,
-        Enrollment.status == "confirmed").count()
+        Enrollment.status == "enrolled").count()
 
 
 def shift_occupied_count(db: OrmSession, shift_id: str) -> int:
     """场次已消耗的名额 = 正式报名 + 临近退选占位。"""
     return db.query(Enrollment).filter(
         Enrollment.shift_id == shift_id,
-        or_(Enrollment.status == "confirmed",
+        or_(Enrollment.status == "enrolled",
             Enrollment.seat_held.is_(True))).count()
 
 
-def position_confirmed_count(db: OrmSession, position_id: str) -> int:
+def position_enrolled_count(db: OrmSession, position_id: str) -> int:
     return db.query(Enrollment).filter(
         Enrollment.position_id == position_id,
-        Enrollment.status == "confirmed").count()
+        Enrollment.status == "enrolled").count()
 
 
 def position_occupied_count(db: OrmSession, position_id: str) -> int:
     return db.query(Enrollment).filter(
         Enrollment.position_id == position_id,
-        or_(Enrollment.status == "confirmed",
+        or_(Enrollment.status == "enrolled",
             Enrollment.seat_held.is_(True))).count()
 
 
@@ -157,7 +157,7 @@ def elect_leader(db: OrmSession, position: Position) -> Enrollment | None:
     ids = [p.id for p in positions]
     rows = (db.query(Enrollment)
             .filter(Enrollment.position_id.in_(ids),
-                    Enrollment.status == "confirmed")
+                    Enrollment.status == "enrolled")
             .order_by(Enrollment.joined_at).all())
     if any(r.is_leader for r in rows):
         return next(r for r in rows if r.is_leader)
@@ -188,7 +188,7 @@ def group_leader(db: OrmSession, position: Position) -> Enrollment | None:
     return (db.query(Enrollment)
             .filter(Enrollment.position_id.in_(ids),
                     Enrollment.is_leader.is_(True),
-                    Enrollment.status == "confirmed").first())
+                    Enrollment.status == "enrolled").first())
 
 
 def refill_leader(db: OrmSession, position_id: str | None) -> None:
@@ -304,7 +304,7 @@ def promote_directly(db: OrmSession, enr: Enrollment, user: User) -> Enrollment:
     自动转正截止之后才用得上：那时活动近在眼前，再给两小时确认窗
     只会让名额继续空着。所以直接落实，并把结果通知本人。
     """
-    enr.status = "confirmed"
+    enr.status = "enrolled"
     enr.confirm_deadline = None
     enr.promoted_at = now()
     credit.reset_abandon_if_confirmed(user)
@@ -340,7 +340,7 @@ def confirm_promotion(db: OrmSession, enr: Enrollment, user: User) -> Enrollment
     不需要再做时段过滤。
     """
     shift = db.get(Shift, enr.shift_id)
-    enr.status = "confirmed"
+    enr.status = "enrolled"
     enr.confirm_deadline = None
     credit.reset_abandon_if_confirmed(user)
     _settle_position(db, enr, user, shift)

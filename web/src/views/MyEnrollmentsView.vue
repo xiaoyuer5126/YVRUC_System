@@ -17,7 +17,7 @@
           <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
           <span class="dim"> {{ row.position.location }}</span>
         </div>
-        <div v-else-if="row.status === 'confirmed'" class="dim">岗位待分配</div>
+        <div v-else-if="row.status === 'enrolled'" class="dim">岗位待分配</div>
         <div class="mob-line">
           <span class="dim">岗位调剂：</span>
           <el-tag v-if="isActive(row)" size="small" effect="plain"
@@ -26,7 +26,7 @@
             {{ row.allow_reassign ? '接受' : '不接受' }}
           </el-tag>
           <span v-else class="dim">—</span>
-          <template v-if="row.status === 'confirmed'">
+          <template v-if="row.status === 'enrolled'">
             <span class="dim" style="margin-left:10px">签到：</span>
             <CheckinStatusTag :row="row" />
           </template>
@@ -60,7 +60,7 @@
             <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
             <span class="dim"> {{ row.position.time_text }} · {{ row.position.location }}</span>
           </div>
-          <div v-else-if="row.status === 'confirmed'" class="dim">岗位待分配</div>
+          <div v-else-if="row.status === 'enrolled'" class="dim">岗位待分配</div>
         </template>
       </el-table-column>
       <el-table-column label="岗位调剂" width="120">
@@ -81,7 +81,7 @@
       </el-table-column>
       <el-table-column label="签到" width="120">
         <template #default="{ row }">
-          <CheckinStatusTag v-if="row.status === 'confirmed'" :row="row" />
+          <CheckinStatusTag v-if="row.status === 'enrolled'" :row="row" />
           <span v-else class="dim">—</span>
         </template>
       </el-table-column>
@@ -121,7 +121,7 @@ const rows = ref([])
 const loading = ref(false)
 
 function isActive(r) {
-  return ['confirmed', 'waitlisted', 'pending_confirm'].includes(r.status)
+  return ['enrolled', 'waitlisted', 'pending_confirm'].includes(r.status)
 }
 
 

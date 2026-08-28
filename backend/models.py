@@ -337,7 +337,7 @@ class Enrollment(Base):
     也就是同场次下只能占一个岗位——候补和正式都算。
 
     status 流转：
-      confirmed        正式报名（即选即得 / 候补转正确认 / 管理员添加）
+      enrolled        正式报名（即选即得 / 候补转正确认 / 管理员添加）
       waitlisted       候补排队（按 joined_at 先后）
       pending_confirm  候补转正，等待用户在 confirm_deadline 前确认
       cancelled        已退选（cancel_type: normal 正常 / late 临近扣分 /
@@ -354,7 +354,7 @@ class Enrollment(Base):
         # 这是并发抢报的兜底：Redis 锁没拿住也插不进第二条。
         Index("uq_enrollment_live", "shift_id", "user_id", unique=True,
               postgresql_where=text(
-                  "status IN ('confirmed', 'waitlisted', 'pending_confirm')"
+                  "status IN ('enrolled', 'waitlisted', 'pending_confirm')"
                   " OR seat_held")),
     )
 
@@ -363,7 +363,7 @@ class Enrollment(Base):
     shift_id: Mapped[str] = mapped_column(ForeignKey("shifts.id"), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
 
-    status: Mapped[str] = mapped_column(String(24), default="confirmed", index=True)
+    status: Mapped[str] = mapped_column(String(24), default="enrolled", index=True)
     cancel_type: Mapped[str] = mapped_column(String(16), default="")
     seat_held: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
@@ -388,7 +388,7 @@ class Enrollment(Base):
     confirm_deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     def active(self) -> bool:
-        return self.status in ("confirmed", "waitlisted", "pending_confirm")
+        return self.status in ("enrolled", "waitlisted", "pending_confirm")
 
 
 # ======================= 签到 =======================
@@ -456,7 +456,7 @@ class HoursRecord(Base):
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
     hours: Mapped[float] = mapped_column(Float)
-    status: Mapped[str] = mapped_column(String(16), default="confirmed")  # confirmed/uploaded
+    status: Mapped[str] = mapped_column(String(16), default="enrolled")  # enrolled/uploaded
     source: Mapped[str] = mapped_column(String(12), default="checkin")    # checkin 签到统计 / manual 手动添加
     note: Mapped[str] = mapped_column(String(256), default="")            # 手动添加时的备注
     upload_ref: Mapped[str] = mapped_column(String(64), default="")       # 数智人大回执号

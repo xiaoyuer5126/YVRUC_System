@@ -79,17 +79,17 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         overview.append(["整体时间",
                          f"{span[0]:%Y-%m-%d %H:%M} ~ {span[1]:%Y-%m-%d %H:%M}"])
     overview.append([])
-    overview.append(["场次", "时间段", "模式", "已确认/名额", "已到岗"])
+    overview.append(["场次", "时间段", "模式", "已报名/名额", "已到岗"])
     checked = _checked_records(db, activity.id)
     from sqlalchemy import func
     for g in shifts:
-        confirmed = (db.query(func.count(Enrollment.id))
+        enrolled = (db.query(func.count(Enrollment.id))
                      .filter(Enrollment.shift_id == g.id,
-                             Enrollment.status == "confirmed").scalar() or 0)
+                             Enrollment.status == "enrolled").scalar() or 0)
         here = (db.query(func.count(func.distinct(CheckinRecord.user_id)))
                 .filter(CheckinRecord.shift_id == g.id).scalar() or 0)
         overview.append([g.name, g.span_text(), g.mode_label(),
-                         f"{confirmed}/{g.capacity}", here])
+                         f"{enrolled}/{g.capacity}", here])
     overview["A1"].font = Font(name="微软雅黑", bold=True, size=14)
     _style_header(overview, 5)
     for col, w in zip("ABCDE", (24, 30, 14, 14, 10)):
@@ -101,7 +101,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         positions = {s.id: s for s in g.positions}
         rows = (db.query(Enrollment, User)
                 .filter(Enrollment.shift_id == g.id,
-                        Enrollment.status == "confirmed")
+                        Enrollment.status == "enrolled")
                 .join(User, Enrollment.user_id == User.id)
                 .order_by(User.college, User.name).all())
 

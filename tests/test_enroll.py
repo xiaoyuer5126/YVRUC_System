@@ -9,9 +9,8 @@ from fastapi.testclient import TestClient
 
 from backend.database import SessionLocal
 from backend.main import app
-from backend.models import (Activity, ActivityManager, Enrollment, Position,
-                            Shift, User, now, uid)
-from conftest import ADMIN, POSITION_TEXT, editing, login, student_row
+from backend.models import Activity, Enrollment, Position, now, uid
+from conftest import POSITION_TEXT, editing, login, student_row
 
 
 def enroll(client, headers, act, g, **body):
@@ -27,7 +26,7 @@ def test_full_group_falls_back_to_waitlist(client, open_group, take_student):
     first, second = take_student(), take_student()
 
     assert enroll(client, login(client, first), act, g
-                  ).json()["status"] == "confirmed"
+                  ).json()["status"] == "enrolled"
     assert enroll(client, login(client, second), act, g
                   ).json()["status"] == "waitlisted"
 
@@ -72,7 +71,7 @@ def test_waitlist_ban_does_not_block_normal_enroll(client, db, open_group,
     db.commit()
 
     r = enroll(client, login(client, student.student_id), act, g)
-    assert r.status_code == 200 and r.json()["status"] == "confirmed"
+    assert r.status_code == 200 and r.json()["status"] == "enrolled"
 
 
 def test_waitlist_ban_blocks_queueing(client, db, open_group, take_student):
@@ -107,7 +106,7 @@ def test_late_cancel_holds_the_seat(client, admin, db, open_group, take_student)
 
     # 位子仍被占着：确认人数掉到 0，但剩余名额还是 0
     shift = client.get(f"/api/activities/{act.id}", headers=h).json()["shifts"][0]
-    assert shift["confirmed"] == 0
+    assert shift["enrolled"] == 0
     assert shift["remaining"] == 0
     assert shift["held_seats"] == 1
 
@@ -167,12 +166,12 @@ def test_concurrent_enroll_does_not_oversell(open_group, take_student):
     with ThreadPoolExecutor(max_workers=20) as pool:
         results = list(pool.map(grab, students))
 
-    assert results.count("confirmed") == 5
+    assert results.count("enrolled") == 5
     check = SessionLocal()
     try:
         assert check.query(Enrollment).filter(
             Enrollment.shift_id == g.id,
-            Enrollment.status == "confirmed").count() == 5
+            Enrollment.status == "enrolled").count() == 5
     finally:
         check.close()
 
@@ -237,8 +236,8 @@ def test_候补名次按岗位算而不是按场次(client, db, open_group, take
         assert r.status_code == 200, r.text
         return r.json()
 
-    assert go(p1_id)["status"] == "confirmed"      # 占满 p1
-    assert go(p2_id)["status"] == "confirmed"      # 占满 p2
+    assert go(p1_id)["status"] == "enrolled"      # 占满 p1
+    assert go(p2_id)["status"] == "enrolled"      # 占满 p2
     go(p1_id); go(p1_id)                            # p1 排两个候补
 
     third = go(p2_id)                               # p2 的第一个候补

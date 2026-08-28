@@ -8,9 +8,9 @@ from __future__ import annotations
 from sqlalchemy.orm import Session as OrmSession
 
 from .enroll_logic import (group_leader, group_needs_leader, group_positions,
-                           position_confirmed_count,
+                           position_enrolled_count,
                            position_occupied_count,
-                           shift_confirmed_count, shift_occupied_count,
+                           shift_enrolled_count, shift_occupied_count,
                            time_conflicts, unmet_requirements,
                            waitlist_position, waitlist_rows)
 from . import config
@@ -55,7 +55,7 @@ def display_status(act: Activity) -> tuple[str, str]:
 def activity_brief(db: OrmSession, act: Activity) -> dict:
     shifts = sorted(act.shifts, key=lambda g: g.sort)
     total_cap = sum(g.total_capacity() for g in shifts)
-    total_conf = sum(shift_confirmed_count(db, g.id) for g in shifts)
+    total_conf = sum(shift_enrolled_count(db, g.id) for g in shifts)
     total_used = sum(shift_occupied_count(db, g.id) for g in shifts)
     span = act.time_span()
     ds_code, ds_label = display_status(act)
@@ -66,7 +66,7 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
         "intro": act.intro[:120], "cover_hue": act.cover_hue,
         "display_status": ds_code, "display_label": ds_label,
         "shifts_count": len(shifts),
-        "total_capacity": total_cap, "total_confirmed": total_conf,
+        "total_capacity": total_cap, "total_enrolled": total_conf,
         # 剩余名额扣掉临近退选扣留的占位，不然广场上显示有位、点进去报不了
         "remaining": max(0, total_cap - total_used),
         "time_text": (f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}"
@@ -87,7 +87,8 @@ def position_out(db: OrmSession, p: Position, user=None, *,
     和管理者可见：培训材料是发给要上岗的人的，组长姓名属于个人信息，
     不该挂在公开页面上供人浏览。
     """
-    confirmed = position_confirmed_count(db, p.id)
+    # 变量名要和「我是否已报名」的参数区分开：一个是人数，一个是布尔
+    n_enrolled = position_enrolled_count(db, p.id)
     occupied = position_occupied_count(db, p.id)
     queued = len([r for r in waitlist_rows(db, p.shift_id)
                   if r.position_id == p.id])
@@ -95,10 +96,10 @@ def position_out(db: OrmSession, p: Position, user=None, *,
         "id": p.id, "name": p.name,
         # 岗位没有独立时间：显示所属场次的时段
         "time_text": p.time_text(),
-        "location": p.location, "quota": p.quota, "confirmed": confirmed,
+        "location": p.location, "quota": p.quota, "enrolled": n_enrolled,
         "remaining": max(0, p.quota - occupied),
-        # 临近退选扣留的名额：不发出去的话，「已确认 8/10、剩余 0」没人看得懂
-        "held_seats": occupied - confirmed,
+        # 临近退选扣留的名额：不发出去的话，「已报名 8/10、剩余 0」没人看得懂
+        "held_seats": occupied - n_enrolled,
         "waitlist_quota": p.waitlist_quota, "waitlist_count": queued,
         "needs_leader": p.needs_leader,
         "requirement_tags": p.requirement_tags or {},
@@ -151,7 +152,7 @@ def attachments_out(db: OrmSession, owner_type: str, owner_id: str) -> list[dict
 
 def _same_group(db: OrmSession, my_enr, position: Position) -> bool:
     """我是否**正式报名**在该岗位所属的组里。候补不算：还没确定要去现场。"""
-    if my_enr is None or my_enr.status != "confirmed" or not my_enr.position_id:
+    if my_enr is None or my_enr.status != "enrolled" or not my_enr.position_id:
         return False
     mine = db.get(Position, my_enr.position_id)
     if mine is None:
@@ -169,7 +170,7 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
         my_enr = (db.query(Enrollment)
                   .filter(Enrollment.shift_id == g.id,
                           Enrollment.user_id == user.id,
-                          Enrollment.status.in_(("confirmed", "waitlisted",
+                          Enrollment.status.in_(("enrolled", "waitlisted",
                                                  "pending_confirm")))
                   .first())
     enrolled = my_enr is not None
@@ -180,10 +181,10 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
         "time_text": g.span_text(),
         # 名额：assign 模式记在场次上，pick 模式是各岗位之和
         "capacity": capacity,
-        "confirmed": shift_confirmed_count(db, g.id),
+        "enrolled": shift_enrolled_count(db, g.id),
         "remaining": max(0, capacity - shift_occupied_count(db, g.id)),
         "held_seats": (shift_occupied_count(db, g.id)
-                       - shift_confirmed_count(db, g.id)),
+                       - shift_enrolled_count(db, g.id)),
         "waitlist_quota": g.waitlist_quota,
         "needs_assign": g.needs_assign(),
         "mode": g.mode,
@@ -193,11 +194,11 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
                                    manager=manager,
                                    same_group=_same_group(db, my_enr, p))
                       for p in positions],
-        # 已确认但还没岗位的人数：pick 模式下岗位名额之和不够时就有人落空，
+        # 已报名但还没岗位的人数：pick 模式下岗位名额之和不够时就有人落空，
         # 管理者需要当场看见这个缺口，而不是等分配面板报「未排上」
         "unassigned_count": (db.query(Enrollment)
                              .filter(Enrollment.shift_id == g.id,
-                                     Enrollment.status == "confirmed",
+                                     Enrollment.status == "enrolled",
                                      Enrollment.position_id.is_(None)).count()),
         "position_quota_sum": sum(p.quota for p in positions),
         "attachments": attachments_out(db, "shift", g.id),
@@ -212,7 +213,7 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
             "is_leader": my_enr.is_leader,
             "confirm_deadline": iso_of(my_enr.confirm_deadline),
             "waitlist_position": (waitlist_position(db, my_enr)
-                                  if my_enr.status != "confirmed" else 0),
+                                  if my_enr.status != "enrolled" else 0),
         }
     return out
 
