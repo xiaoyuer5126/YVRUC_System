@@ -107,6 +107,36 @@ def test_催办只发给未签收的人(client, admin, db, enrolled_activity):
     assert r.status_code == 400
 
 
+def test_催办不产生新的待签收(client, admin, db, enrolled_activity):
+    """催一次就多一条待办的话，5 个人的批次催一轮会变成 10 条。"""
+    act, _shift, u = enrolled_activity
+    batch = _send(client, admin, act.id, need_ack=True)["batch_id"]
+    student = login(client, u.student_id)
+
+    for _ in range(2):
+        assert client.post(f"/api/staff/notify-batches/{batch}/remind",
+                           headers=admin).status_code == 200
+
+    inbox = client.get("/api/me/notifications", headers=student).json()
+    assert inbox["pending_ack"] == 1          # 催了两轮，要签的还是那一条
+    assert sum(1 for n in inbox["items"]
+               if n["template_key"] == "ack_reminder") == 2
+
+    b = next(x for x in client.get(
+        f"/api/staff/activities/{act.id}/notify-batches",
+        headers=admin).json() if x["batch_id"] == batch)
+    assert (b["total"], b["acked"], b["reminded"]) == (1, 0, 2)
+    assert b["last_remind_at"]
+
+    # 签掉那一条，批次就齐了——催办不影响口径
+    item = next(n for n in inbox["items"] if n["need_ack"])
+    client.post(f"/api/me/notifications/{item['id']}/ack", headers=student)
+    b = next(x for x in client.get(
+        f"/api/staff/activities/{act.id}/notify-batches",
+        headers=admin).json() if x["batch_id"] == batch)
+    assert (b["total"], b["acked"], b["pending"]) == (1, 1, [])
+
+
 def test_非本活动管理者不能查看签收情况(client, teacher, enrolled_activity):
     act, _shift, _u = enrolled_activity
     r = client.get(f"/api/staff/activities/{act.id}/notify-batches",
@@ -151,7 +181,7 @@ def test_签到提醒可要求签收并进批次(client, admin, enrolled_activit
     b = next(x for x in client.get(
         f"/api/staff/activities/{act.id}/notify-batches",
         headers=admin).json() if x["batch_id"] == batch)
-    assert b["pending"] == [] and b["acked"] == 2   # 原提醒 + 催办各一条
+    assert (b["total"], b["acked"], b["pending"], b["reminded"]) == (1, 1, [], 1)
 
 
 def test_签收批次不串活动(client, admin, db, enrolled_activity, take_student):

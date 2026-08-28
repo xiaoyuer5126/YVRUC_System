@@ -81,28 +81,6 @@ def test_未冻结时不能保存并发布(client, admin, enrolled_activity):
     assert r.status_code == 409
 
 
-# ======================= 统一分配场次的建岗位约束 =======================
-
-def test_统一分配的场次必须先切模式才能加岗位(client, admin, db,
-                                          enrolled_activity):
-    act, shift, _u = enrolled_activity
-    shift.mode = "assign"
-    shift.capacity = 10
-    db.commit()
-
-    with editing(client, admin, act.id):
-        r = client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
-                        json={"name": "整理A", "quota": 3, **POSITION_TEXT})
-        assert r.status_code == 409
-        assert "报名即选岗位" in r.json()["detail"]
-
-        assert client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
-                            json={"mode": "pick"}).status_code == 200
-        assert client.post(f"/api/staff/shifts/{shift.id}/positions",
-                           headers=admin,
-                           json={"name": "整理A", "quota": 3, **POSITION_TEXT}).status_code == 200
-
-
 def test_余几人待分配的统计(client, admin, db, enrolled_activity, take_student):
     """已确认人数 − 岗位名额之和 = 落空的人，管理者要当场看得见。"""
     act, shift, _u = enrolled_activity

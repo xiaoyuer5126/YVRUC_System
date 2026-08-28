@@ -26,7 +26,7 @@ def draft_activity(db):
     db.add(Shift(id=uid("g"), activity_id=act.id, name="草稿场次",
                          start_time=now() + timedelta(days=40),
                          end_time=now() + timedelta(days=40, hours=3),
-                         capacity=5, mode="single", sort=0))
+                         capacity=5, mode="assign", sort=0))
     db.commit()
     return act
 
@@ -170,7 +170,7 @@ def test_unchecked_out_hours_need_review(client, admin, db, take_student):
     g = Shift(id=uid("g"), activity_id=act.id, name="已结束场次",
                       start_time=now() - timedelta(days=2),
                       end_time=now() - timedelta(days=2) + timedelta(hours=4),
-                      capacity=5, mode="single", sort=0)
+                      capacity=5, mode="assign", sort=0)
     db.add(g)
     db.flush()
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
@@ -265,6 +265,52 @@ def test_copy_positions_skips_duplicate_names(client, admin, db,
         r = client.post(f"/api/staff/shifts/{g.id}/positions/copy",
                         headers=admin, json=body)
         assert r.json()["copied"] == 0 and len(r.json()["skipped"]) == 2
+
+
+def test_统一分配的场次也能直接建岗位(client, admin, db, assigned_group):
+    """两种模式的区别只是谁来定岗位，不该有一种模式不许建岗位。
+
+    以前必须先把场次改成 pick 才能加岗位——填完一整个表单才被 409 拦下，
+    而改模式又会清空所有人已选的岗位。
+    """
+    act, g, _p1, _p2 = assigned_group      # assign 模式，上限 4，已有 2+2
+    with editing(client, admin, act.id):
+        r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
+                        json={"name": "岗位丙", "quota": 1, **POSITION_TEXT})
+        assert r.status_code == 400          # 2+2+1 > 上限 4
+        assert "超过场次人数上限" in r.json()["detail"]
+
+        client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+                     json={"capacity": 5})
+        r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
+                        json={"name": "岗位丙", "quota": 1, **POSITION_TEXT})
+        assert r.status_code == 200, r.text
+    assert len(db.get(Shift, g.id).positions) == 3
+
+
+def test_切成统一分配会报出清空了几个人(client, admin, db, assigned_group,
+                                        take_student):
+    """清空是实打实的减损，不能悄悄发生——接口要把人数交回去。"""
+    act, g, p1, _p2 = assigned_group
+    u = db.query(User).filter(User.student_id == take_student()).one()
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                      user_id=u.id, status="enrolled", position_id=p1.id,
+                      joined_at=now()))
+    g.mode = "pick"
+    db.commit()
+
+    with editing(client, admin, act.id):
+        r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+                         json={"mode": "assign"})
+        assert r.status_code == 200, r.text
+        assert r.json()["cleared"] == 1
+
+    enr = db.query(Enrollment).filter(Enrollment.user_id == u.id,
+                                      Enrollment.shift_id == g.id).one()
+    assert enr.position_id is None
+    logs = client.get(f"/api/staff/audit-logs?activity_id={act.id}",
+                      headers=admin).json()["items"]
+    assert any("已清空 1 人的岗位" in l["summary"] for l in logs)
 
 
 def test_答疑群二维码非必填(client, admin):

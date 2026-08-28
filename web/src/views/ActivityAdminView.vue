@@ -56,11 +56,15 @@
 
     <el-tabs v-model="tab" style="margin-top:8px">
       <!-- ============ 岗位树 ============ -->
-      <el-tab-pane label="岗位树" name="tree">
+      <el-tab-pane name="tree">
+        <template #label>岗位树
+          <el-badge v-if="treeAlerts.length" value="!" type="danger" />
+        </template>
         <el-alert type="info" :closable="false" style="margin-bottom:12px">
-          场次只管时间，岗位管具体的事。两种模式：<b>报名即选岗位</b>（名额与候补都在各个岗位上）
-          / <b>截止后统一分配</b>（报名只锁时段，名额记在场次上，截止后一键分配）。
-          同场次的岗位互斥，一人只占一个；点击岗位名称可查看详情。
+          场次只管时间，岗位管具体的事。两种模式说的是<b>谁来定岗位</b>：
+          <b>报名即选岗位</b>（学生自己挑，名额与候补都在各个岗位上）
+          / <b>截止后统一分配</b>（学生只锁时段，名额记在场次上，截止后由你一键分配）。
+          两种模式都要先把岗位建好；同场次的岗位互斥，一人只占一个，点击岗位名称可查看详情。
         </el-alert>
         <el-alert v-if="structureLocked" type="info" show-icon :closable="false"
                   style="margin-bottom:12px">
@@ -76,15 +80,16 @@
           </div>
         </el-alert>
 
-        <el-alert v-if="shiftsNeedingPositions.length" type="error" show-icon
+        <el-alert v-if="treeAlerts.length" type="error" show-icon
                   :closable="false" style="margin-bottom:12px"
-                  :title="`有 ${shiftsNeedingPositions.length} 个场次还没有岗位，学生报不了名`"
-                  :description="shiftsNeedingPositions.map(g => g.name).join('、')
-                                + '：请为这些场次添加岗位；名额与候补都记在岗位上，'
-                                + '没有岗位就等于没有名额。'" />
+                  :title="`有 ${treeAlerts.length} 个场次还没排好`">
+          <div v-for="a in treeAlerts" :key="a.id" style="line-height:1.9">
+            <b>{{ a.name }}</b>：{{ a.text }}
+          </div>
+        </el-alert>
 
         <div v-for="g in shifts" :key="g.id" class="group-card"
-             :class="{ 'needs-positions': needsPositions(g) }">
+             :class="{ 'needs-positions': !g.positions.length }">
           <div class="g-head">
             <el-link type="primary" :underline="false" style="font-weight:600;font-size:14px"
                      @click="showGroupDetail(g)">{{ g.name }}</el-link>
@@ -94,14 +99,19 @@
             </el-tag>
             <span class="dim">{{ g.start_time.slice(5,16).replace('T',' ') }}
               ~ {{ g.end_time.slice(5,16).replace('T',' ') }}</span>
-            <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}` : `岗位合计 ${sumQuota(g)}` }}</span>
-            <el-tag v-if="needsPositions(g)" size="small" type="danger" effect="dark">
+            <span>{{ g.mode === 'assign'
+                     ? `上限 ${g.capacity}（岗位合计 ${sumQuota(g)}）`
+                     : `岗位合计 ${sumQuota(g)}` }}</span>
+            <el-tag v-if="!g.positions.length" size="small" type="danger" effect="dark">
               未设岗位
             </el-tag>
-            <el-tooltip v-else-if="g.unassigned_count" placement="top"
-                        content="已报名报名但还没拿到岗位的人数；增加岗位名额或运行一键分配">
-              <el-tag size="small" type="warning" effect="dark">
-                余 {{ g.unassigned_count }} 人待分配
+            <!-- 待分配和未设岗位是两件事，别互相遮住：
+                 assign 模式截止前人人待分配是常态，截止后还剩人就是漏排 -->
+            <el-tooltip v-if="g.unassigned_count" placement="top"
+                        :content="unassignedHint(g)">
+              <el-tag size="small" :type="regClosed ? 'danger' : 'warning'"
+                      :effect="regClosed || g.mode === 'pick' ? 'dark' : 'plain'">
+                {{ g.unassigned_count }} 人待分配
               </el-tag>
             </el-tooltip>
             <span style="margin-left:auto">
@@ -182,8 +192,8 @@
           </el-table>
           <p v-else class="dim" style="margin:6px 0 0">
             {{ g.mode === 'assign'
-               ? '截止后统一分配：先建好岗位定名额，报名截止后到「报名与调配」一键分配。'
-               : '报名即选岗位：请先建好岗位，名额与候补都在岗位上。' }}
+               ? '还没有岗位。学生现在可以报名（名额记在场次上），但报名截止后没有岗位可分——请先建好岗位。'
+               : '还没有岗位。名额与候补都在岗位上，没有岗位学生就报不了名——请先建好岗位。' }}
           </p>
         </div>
         <el-button style="width:100%;margin-top:4px" plain dashed
@@ -530,6 +540,7 @@
         <div class="dim" style="margin-bottom:10px">
           只列出「要求签收」的群发通知。签收 = 志愿者点过「我已知悉」，
           比「已读」硬——已读只说明他打开过消息中心。
+          催办只是催他回去签原来那条，不会多出一条待签收。
         </div>
         <el-empty v-if="!ackBatches.length"
                   description="还没有要求签收的通知；发通知或补发签到提醒时勾选「要求签收」即可" />
@@ -541,6 +552,9 @@
             <el-tag size="small" :type="b.acked === b.total ? 'success' : 'warning'">
               已签收 {{ b.acked }}/{{ b.total }}
             </el-tag>
+            <span v-if="b.reminded" class="dim">
+              已催办 {{ b.reminded }} 次 · 最近 {{ fmtDT(b.last_remind_at) }}
+            </span>
             <el-button v-if="b.acked < b.total" size="small" type="primary" plain
                        style="margin-left:auto" @click="remindBatch(b)">
               一键提醒未签收（{{ b.total - b.acked }} 人）
@@ -644,13 +658,17 @@
           </el-radio-group>
           <div class="dim" style="margin-top:4px;line-height:1.7">
             <template v-if="groupForm.mode === 'pick'">
-              场次只管时间；<b>名额与候补都在各个岗位上设置</b>，这里不设总人数。
+              学生报名时自己挑岗位；<b>名额与候补都在各个岗位上设置</b>，这里不设总人数。
             </template>
             <template v-else>
-              报名只锁时段、不选岗位，名额与候补记在场次上；
-              报名截止后改为「报名即选岗位」并建好岗位，再运行一键分配。
+              学生报名只锁时段、不挑岗位，<b>名额与候补记在场次上</b>；
+              岗位照常在「岗位树」里建好（合计不超过人数上限），
+              报名截止后到「报名与调配」一键分配。
             </template>
           </div>
+          <!-- 改成 assign 会作废学生已经选好的岗位，先把代价摆出来 -->
+          <el-alert v-if="modeSwitchCost" type="warning" show-icon :closable="false"
+                    style="margin-top:8px" :title="modeSwitchCost" />
         </el-form-item>
         <el-form-item label="开始时间" required>
           <el-date-picker v-model="groupForm.start_time" type="datetime" style="width:100%"
@@ -681,15 +699,26 @@
 
     <!-- 岗位对话框 -->
     <el-dialog v-model="positionDlg.visible" :title="positionDlg.editing ? '编辑岗位' : '新建岗位'" width="560">
+      <!-- assign 场次的岗位也在这里建：名额是分配用的坑位，收在场次上限内 -->
+      <el-alert v-if="positionShift?.mode === 'assign'" type="info" show-icon
+                :closable="false" style="margin-bottom:12px">
+        本场次是「截止后统一分配」：学生报名时看不到也选不了岗位，
+        这里定的是报名截止后分配用的坑位。各岗位名额之和不能超过场次人数上限
+        {{ positionShift.capacity }}（其它岗位已占 {{ otherQuotaSum }}）。
+      </el-alert>
       <el-form label-width="100px">
         <el-form-item label="岗位名称" required><el-input v-model="stationForm.name" placeholder="如：东门引导" /></el-form-item>
         <el-form-item label="服务地点" required><el-input v-model="stationForm.location"
                     placeholder="如：世纪馆北门检录处" /></el-form-item>
         <el-form-item label="名额" required>
           <el-input-number v-model="stationForm.quota" :min="1" />
-          <span class="dim" style="margin-left:10px">名额与候补都在岗位上，场次不设总数</span>
+          <span class="dim" style="margin-left:10px">
+            {{ positionShift?.mode === 'assign'
+               ? `分配用的坑位数，本场次还可分配 ${Math.max(0, positionShift.capacity - otherQuotaSum)} 个`
+               : '名额与候补都在岗位上，场次不设总数' }}
+          </span>
         </el-form-item>
-        <el-form-item label="候补名额">
+        <el-form-item v-if="positionShift?.mode !== 'assign'" label="候补名额">
           <el-input-number v-model="stationForm.waitlist_quota" :min="0" />
           <span class="dim" style="margin-left:10px">满员后可排队的人数，0 = 不设候补</span>
         </el-form-item>
@@ -890,7 +919,7 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download as dl, fmtDT } from '../api'
 import AssignPanel from '../components/AssignPanel.vue'
@@ -931,7 +960,7 @@ async function loadBatches() {
 
 async function remindBatch(b) {
   const d = await api.post(`/api/staff/notify-batches/${b.batch_id}/remind`)
-  ElMessage.success(`已提醒 ${d.count} 位未签收志愿者`)
+  ElMessage.success(`已催 ${d.count} 位未签收志愿者回去签收（不新增待签收通知）`)
   loadBatches()
 }
 
@@ -973,6 +1002,25 @@ async function saveAndPublish() {
     loadAll()
   } finally { lockBusy.value = false }
 }
+
+// 编辑态下离开本页：改动确实存下来了，但学生还在「报名暂停」里等着，
+// 而这件事离开这一页就再也看不见——所以走之前必须拦一下。
+onBeforeRouteLeave(async () => {
+  if (!act.value?.editing) return true
+  try {
+    await ElMessageBox.confirm(
+      `「${act.value.title}」还在调整状态：改动已经存下来了，但学生看不到，`
+      + `报名也一直暂停着（${lockHours.value} 小时后系统才会自动恢复）。`,
+      '改动还没发布',
+      { type: 'warning', distinguishCancelAndClose: true,
+        confirmButtonText: '保存并发布', cancelButtonText: '暂时离开' })
+  } catch (e) {
+    return e === 'cancel'      // 暂时离开=放行；点 X / Esc = 留在本页
+  }
+  await saveAndPublish()
+  return true
+})
+
 const copyPosDlg = ref({ visible: false, source: null, positionIds: [],
                          targetIds: [], busy: false })
 const stationForm = ref({})
@@ -1011,10 +1059,35 @@ const editLabel = computed(() =>
 const structureLocked = computed(
   () => !!act.value && act.value.status !== 'draft' && !act.value.editing)
 
-function needsPositions(g) {
-  return g.mode === 'pick' && !g.positions.length
+// 报名是否已经截止：截止后还有人没岗位，就不再是「等着分」而是漏排了
+const regClosed = computed(() => ['closed', 'finished'].includes(act.value?.status))
+
+function unassignedHint(g) {
+  if (g.mode === 'pick') {
+    return '这些人报了名却没有岗位（岗位被删或管理员补录）；到「报名与调配」手动指派'
+  }
+  return regClosed.value
+    ? '报名已截止，这些人还没分到岗位；到「报名与调配」运行一键分配'
+    : '本场次报名只锁时段，岗位在报名截止后统一分配——截止前有人待分配是正常的'
 }
-const shiftsNeedingPositions = computed(() => shifts.value.filter(needsPositions))
+
+// 岗位树上的红色感叹号：这里列出的都是「不处理就会出事」的场次
+const treeAlerts = computed(() => shifts.value.flatMap(g => {
+  if (!g.positions.length) {
+    return [{ id: g.id, name: g.name, text: g.mode === 'assign'
+      ? '还没有岗位。学生可以报名，但报名截止后没有岗位可分。'
+      : '还没有岗位。名额与候补都记在岗位上，学生现在根本报不了名。' }]
+  }
+  if (g.unassigned_count && (regClosed.value || g.mode === 'pick')) {
+    return [{ id: g.id, name: g.name,
+      text: `还有 ${g.unassigned_count} 人没分到岗位`
+        + (sumQuota(g) < g.enrolled
+           ? `，而岗位名额合计只有 ${sumQuota(g)}、已报名 ${g.enrolled} 人——`
+             + '先加名额再分配。'
+           : '，到「报名与调配」运行一键分配。') }]
+  }
+  return []
+}))
 
 const rosterOptions = computed(() => {
   const seen = new Set()
@@ -1103,10 +1176,36 @@ function openShift(g) {
         waitlist_quota: 3 }
   shiftDlg.value.visible = true
 }
+// 切到「截止后统一分配」会作废学生已经选好的岗位——弹窗前先算清楚有几个人
+const modeSwitchAffected = computed(() => {   // vuecheck: script-only
+  const g = shiftDlg.value.editing
+  if (!g || g.mode !== 'pick' || groupForm.value.mode !== 'assign') return 0
+  return Math.max(0, (g.enrolled || 0) - (g.unassigned_count || 0))
+})
+const modeSwitchCost = computed(() => {
+  const g = shiftDlg.value.editing
+  if (!g || g.mode === groupForm.value.mode) return ''
+  if (groupForm.value.mode === 'assign') {
+    return modeSwitchAffected.value
+      ? `改为「截止后统一分配」会清空 ${modeSwitchAffected.value} 位志愿者已经选定的岗位，`
+        + '由你在报名截止后重新分配；这批人会在「保存并发布」时收到变更通知。'
+      : '改为「截止后统一分配」后，名额口径从各岗位转到场次的「人数上限」，'
+        + '学生报名时不再挑岗位。'
+  }
+  return '改为「报名即选岗位」后，名额口径从场次的「人数上限」转到各个岗位；'
+    + '已经报上名的人不受影响，但他们仍是「待分配」，需要你手动指派或一键分配。'
+})
+
 async function saveShift() {
   const f = groupForm.value
   if (!f.name?.trim()) return ElMessage.warning('请填写场次名称')
   if (!f.start_time || !f.end_time) return ElMessage.warning('请选择起止时间')
+  if (modeSwitchAffected.value) {
+    try {
+      await ElMessageBox.confirm(modeSwitchCost.value, '确认切换岗位模式？',
+        { type: 'warning', confirmButtonText: '确认切换', cancelButtonText: '再想想' })
+    } catch { return }
+  }
   savingGroup.value = true
   try {
     const body = {
@@ -1114,9 +1213,16 @@ async function saveShift() {
       waitlist_quota: f.waitlist_quota ?? 3,
       start_time: toISO(f.start_time), end_time: toISO(f.end_time),
     }
-    if (shiftDlg.value.editing) await api.patch(`/api/staff/shifts/${shiftDlg.value.editing.id}`, body)
-    else await api.post(`/api/staff/activities/${activityId}/shifts`, body)
-    ElMessage.success('已保存（操作留痕）')
+    let cleared = 0
+    if (shiftDlg.value.editing) {
+      cleared = (await api.patch(
+        `/api/staff/shifts/${shiftDlg.value.editing.id}`, body)).cleared || 0
+    } else {
+      await api.post(`/api/staff/activities/${activityId}/shifts`, body)
+    }
+    ElMessage.success(cleared
+      ? `已保存；${cleared} 位志愿者的岗位已清空，待重新分配（操作留痕）`
+      : '已保存（操作留痕）')
     shiftDlg.value.visible = false
     loadAll()
   } catch { /* 错误提示由 api 层统一弹出 */ } finally {
@@ -1171,6 +1277,13 @@ async function onMaterialChanged() {
   await loadAll()
   if (id) positionDlg.value.editing = findPosition(id)
 }
+
+const positionShift = computed(
+  () => shifts.value.find(g => g.id === positionDlg.value.groupId))
+// assign 模式下岗位名额之和受场次上限约束，填之前就把余量说清楚
+const otherQuotaSum = computed(() => (positionShift.value?.positions || [])
+  .filter(p => p.id !== positionDlg.value.editing?.id)
+  .reduce((s, p) => s + p.quota, 0))
 
 function openStation(st, g) {
   positionDlg.value = { visible: true, editing: st, groupId: g.id }
@@ -1237,6 +1350,16 @@ onMounted(async () => {
   const c = await api.get('/api/auth/constants')
   types.value = c.activity_types
   colleges.value = c.colleges
+  loadAll()
+})
+
+// 同一路由换 id 时组件会被复用，不重新拉数据的话页面还停在上一个活动上
+watch(() => route.params.id, (id) => {
+  if (!id || id === activityId) return
+  activityId = id
+  notFound.value = false
+  loadError.value = ''
+  currentGroupId.value = ''
   loadAll()
 })
 

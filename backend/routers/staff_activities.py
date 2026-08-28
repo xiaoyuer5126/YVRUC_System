@@ -349,9 +349,14 @@ def copy_positions_route(shift_id: str, body: CopyPositionsBody,
         target = db.get(Shift, tid)
         if target is None or target.activity_id != src.activity_id:
             raise HTTPException(400, "目标场次不属于本活动")
-        _ensure_pick_mode_for_positions(target)
         if target.id == src.id:
             continue
+        # 目标是 assign 场次时，复制进去的名额同样要收在场次上限内
+        exists = {p.name for p in target.positions}
+        _check_assign_capacity(
+            db, target,
+            sum(p.quota for p in target.positions)
+            + sum(p.quota for p in sources if p.name not in exists))
         targets.append(target)
     if not targets:
         raise HTTPException(400, "请选择至少一个目标场次")
@@ -420,8 +425,13 @@ def _transition(activity_id: str, target: str, action: str, summary: str,
 def close(activity_id: str, bg: BackgroundTasks,
           db: OrmSession = Depends(db_session),
           user: User = Depends(require_manager)):
-    return _transition(activity_id, "closed", "close", "截止报名",
-                       ("published",), db, user, bg)
+    out = _transition(activity_id, "closed", "close", "截止报名",
+                      ("published",), db, user, bg)
+    # 手动截止和系统自动截止是同一件事，排岗提醒不能只挂在定时任务上
+    from ..scheduled import notify_managers_to_assign
+    notify_managers_to_assign(db, _act(db, activity_id))
+    db.commit()
+    return out
 
 
 @router.post("/activities/{activity_id}/finish")
@@ -484,20 +494,27 @@ def _validate_shift_capacity(db: OrmSession, g: Shift):
                  f"临近退选扣留的名额）")
 
 
-def _apply_shift_mode(db: OrmSession, g: Shift, mode: str):
-    """切换场次模式，并把与新模式矛盾的既有分配清理干净。"""
+def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> int:
+    """切换场次模式，返回被清空岗位的人数。
+
+    改成 assign 意味着「岗位由截止后统一分配」，报名时选定的岗位一律作废——
+    否则分配面板里会混着一批「已经有岗位」的人，谁也说不清是谁定的。
+    这是一次实打实的减损，所以要把人数报出去：前端拿它弹二次确认，
+    留痕里也写清楚清了几个人，不能悄悄改掉学生已经看到的安排。
+    """
     if mode not in SHIFT_MODES:
         raise HTTPException(400, "场次模式必须是 pick 或 assign")
     if mode == "assign" and g.mode != "assign":
-        # 二级待定：岗位由调配期统一分配，先前报名时选定的岗位一律作废，
-        # 否则分配面板里会混着一批"已经有岗位"的人，谁也说不清是谁定的
-        (db.query(Enrollment)
-         .filter(Enrollment.shift_id == g.id,
-                 Enrollment.position_id.isnot(None))
-         .update({"position_id": None, "assigned_at": None,
-                  "assigned_by": None, "assign_forced": False},
-                 synchronize_session=False))
+        cleared = (db.query(Enrollment)
+                   .filter(Enrollment.shift_id == g.id,
+                           Enrollment.position_id.isnot(None))
+                   .update({"position_id": None, "assigned_at": None,
+                            "assigned_by": None, "assign_forced": False},
+                           synchronize_session=False))
+        g.mode = mode
+        return cleared
     g.mode = mode
+    return 0
 
 
 @router.post("/activities/{activity_id}/shifts")
@@ -543,6 +560,7 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
     before_raw = {k: getattr(g, k) for k in SHIFT_FIELDS}
+    cleared = 0
     for key in SHIFT_FIELDS:
         if key not in body:
             continue
@@ -550,7 +568,7 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
         if key in ("start_time", "end_time"):
             setattr(g, key, _parse_dt(v))
         elif key == "mode":
-            _apply_shift_mode(db, g, v)
+            cleared = _apply_shift_mode(db, g, v)
         else:
             setattr(g, key, v)
     _validate_shift_times(g.start_time, g.end_time)
@@ -574,11 +592,13 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
               target_id=g.id, target_label=f"{act.title}·{g.name}",
               activity_id=act.id,
               summary=f"修改场次「{g.name}」："
-                      f"{'、'.join(c['label'] for c in changes) or '无实质变化'}",
+                      f"{'、'.join(c['label'] for c in changes) or '无实质变化'}"
+                      + (f"；已清空 {cleared} 人的岗位，改由截止后统一分配"
+                         if cleared else ""),
               changes=changes,
               visible=True)
     db.commit()
-    return {"ok": True, "changes": changes}
+    return {"ok": True, "changes": changes, "cleared": cleared}
 
 
 @router.delete("/shifts/{shift_id}")
@@ -652,17 +672,18 @@ def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:
     return act
 
 
-def _ensure_pick_mode_for_positions(g: Shift) -> None:
-    """加岗位前必须是「报名即选岗位」模式。
+def _check_assign_capacity(db: OrmSession, g: Shift, quota_sum: int) -> None:
+    """assign 模式下各岗位名额之和不能超过场次上限。
 
-    这是报名截止后做分配的固定动作：先把场次切成 pick（名额口径从场次转到
-    各岗位），再建岗位、跑一键分配。留在 assign 模式下建岗位的话，名额会同时
-    挂在两层，谁也说不清以哪个为准。
+    上限是学生报名时抢的那个数；岗位名额是截止后分配用的坑位。
+    坑位比报名上限还多，等于让一键分配排出没人坐的位置。
     """
-    if g.needs_assign():
+    if not g.needs_assign():
+        return
+    if quota_sum > g.capacity:
         raise HTTPException(
-            409, f"场次「{g.name}」当前是「截止后统一分配」，请先在场次设置里"
-                 f"改为「报名即选岗位」，再添加岗位并运行一键分配")
+            400, f"各岗位名额之和（{quota_sum}）超过场次人数上限（{g.capacity}）；"
+                 f"请调低岗位名额，或先在场次设置里提高人数上限")
 
 
 def _require_position_text(s: Position) -> None:
@@ -677,19 +698,15 @@ def _require_position_text(s: Position) -> None:
 def _validate_position(db: OrmSession, g: Shift, s: Position):
     """岗位自带名额，不再受场次总数约束——场次只管时间。
 
-    assign 模式例外：那时名额记在场次上，各岗位之和不能超过它，
-    否则一键分配会分出比报名人数更多的坑位。
+    assign 模式例外：那时名额记在场次上，各岗位之和不能超过它。
     """
     if s.quota <= 0:
         raise HTTPException(400, "岗位名额必须大于 0")
     used = logic.position_occupied_count(db, s.id) if s.id else 0
     if s.quota < used:
         raise HTTPException(400, f"岗位名额不能小于已占用的 {used} 人")
-    if g.needs_assign():
-        quota_sum = sum(x.quota for x in g.positions if x.id != s.id) + s.quota
-        if quota_sum > g.capacity:
-            raise HTTPException(
-                400, f"各岗位名额之和({quota_sum})超过场次人数上限({g.capacity})")
+    _check_assign_capacity(
+        db, g, sum(x.quota for x in g.positions if x.id != s.id) + s.quota)
 
 
 @router.post("/shifts/{shift_id}/positions")
@@ -699,7 +716,6 @@ def create_position(shift_id: str, body: PositionBody,
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
-    _ensure_pick_mode_for_positions(g)
     s = Position(id=uid("s"), shift_id=g.id, name=body.name.strip(),
                 location=body.location.strip(), quota=body.quota,
                 waitlist_quota=body.waitlist_quota,
@@ -935,7 +951,11 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
 @router.get("/activities/{activity_id}/notify-batches")
 def notify_batches(activity_id: str, db: OrmSession = Depends(db_session),
                    user: User = Depends(require_manager)):
-    """需要签收的群发批次及其签收情况。"""
+    """需要签收的群发批次及其签收情况。
+
+    催签收的通知（ack_reminder）不进人数口径，只累计催办次数——
+    催一次就多一条待签收的话，5 个人的批次催一轮会显示成 10 条。
+    """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     # 该活动报名者收到的、要求签收的通知，按批次聚合
@@ -944,8 +964,9 @@ def notify_batches(activity_id: str, db: OrmSession = Depends(db_session),
     if not member_ids:
         return []
     rows = (db.query(Notification)
-            .filter(Notification.need_ack.is_(True),
-                    Notification.batch_id.isnot(None),
+            .filter(Notification.batch_id.isnot(None),
+                    (Notification.need_ack.is_(True))
+                    | (Notification.template_key == "ack_reminder"),
                     Notification.user_id.in_(member_ids))
             .order_by(Notification.created_at.desc()).all())
     batches: dict[str, dict] = {}
@@ -957,7 +978,17 @@ def notify_batches(activity_id: str, db: OrmSession = Depends(db_session),
         b = batches.setdefault(n.batch_id, {
             "batch_id": n.batch_id, "title": n.title,
             "created_at": iso(n.created_at), "total": 0, "acked": 0,
-            "pending": []})
+            "reminded": 0, "last_remind_at": None, "pending": [],
+            "_rounds": set()})
+        if n.template_key == "ack_reminder":
+            # 一轮催办给几个人就有几条，按轮次去重才是「催了几次」
+            b["_rounds"].add(str((n.data or {}).get("remind_round") or n.id))
+            b["reminded"] = len(b["_rounds"])
+            b["last_remind_at"] = max(b["last_remind_at"] or "",
+                                      iso(n.created_at))
+            continue
+        b["title"] = n.title          # 以原通知的标题为准
+        b["created_at"] = iso(n.created_at)
         b["total"] += 1
         if n.acked_at:
             b["acked"] += 1
@@ -965,15 +996,22 @@ def notify_batches(activity_id: str, db: OrmSession = Depends(db_session),
             u = db.get(User, n.user_id)
             if u is not None:
                 b["pending"].append({"name": u.name, "student_id": u.student_id})
+    for b in batches.values():
+        b.pop("_rounds", None)
     return list(batches.values())
 
 
 @router.post("/notify-batches/{batch_id}/remind")
 def remind_batch(batch_id: str, db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager)):
-    """一键提醒未签收的志愿者：给他们再发一条同内容的待签收通知。"""
+    """一键提醒未签收的志愿者：催他们回去把原通知签掉。
+
+    催办本身**不是**待签收通知——原来那条才是。否则催一次就多一条待办，
+    5 个人的批次催一轮变成 10 条，谁也说不清还剩几个人没回。
+    """
     pending = (db.query(Notification)
                .filter(Notification.batch_id == batch_id,
+                       Notification.need_ack.is_(True),
                        Notification.acked_at.is_(None)).all())
     if not pending:
         raise HTTPException(400, "该批通知已全部签收，无需提醒")
@@ -983,15 +1021,16 @@ def remind_batch(batch_id: str, db: OrmSession = Depends(db_session),
         ensure_activity_manager(db, user, activity_id)
     elif not user.is_admin():
         raise HTTPException(403, "无法确认该批通知所属活动，请由管理员操作")
+    round_id = uid("rnd")
     for n in pending:
         u = db.get(User, n.user_id)
         if u is None:
             continue
-        wecom.send_user(db, u, "custom",
-                        data={"activity_id": activity_id},
-                        need_ack=True, batch_id=batch_id,
-                        title=f"[待签收提醒] {n.title}",
-                        content=n.content)
+        wecom.send_user(db, u, "ack_reminder", title=n.title,
+                        data={"activity_id": activity_id,
+                              "remind_round": round_id,
+                              "ack_of": n.id},
+                        batch_id=batch_id)
     audit_log(db, actor=user, action="update", target_type="notify",
               target_id=batch_id, target_label=first.title,
               activity_id=activity_id or None,

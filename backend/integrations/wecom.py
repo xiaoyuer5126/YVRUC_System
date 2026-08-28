@@ -56,6 +56,11 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "您报名的「{activity}」· {shift} 即将开始。\n"
         "岗位：{position}\n地点：{loc}\n"
         "请提前到岗并扫码签到；服务结束后记得再扫一次签退。"),
+    # 催签收：本身不要签收，否则催一次就多一条待办，5 个人的批次会变成 10 条
+    "ack_reminder": (
+        "待签收提醒｜{title}",
+        "您有一条通知还没签收：\n「{title}」\n"
+        "请到消息中心打开它，点一下「我已知悉」。"),
     "custom": (
         "{title}",
         "{content}"),
