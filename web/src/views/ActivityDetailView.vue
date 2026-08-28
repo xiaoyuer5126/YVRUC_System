@@ -1,12 +1,15 @@
 <template>
   <div class="page" v-if="act">
     <el-page-header @back="$router.back()" :title="'返回'">
+      <!-- 窄屏下标题与标签分行：三样东西挤一行会被折成三行 -->
       <template #content>
-        <span style="font-weight:600">{{ act.title }}</span>
-        <el-tag :color="typeColor(act.type)" effect="dark" style="border:none;margin-left:10px">
-          {{ act.type_label }}
-        </el-tag>
-        <el-tag style="margin-left:6px" :type="statusType">{{ act.display_label }}</el-tag>
+        <span class="hd-title">{{ act.title }}</span>
+        <span class="hd-tags">
+          <el-tag :color="typeColor(act.type)" effect="dark" style="border:none">
+            {{ act.type_label }}
+          </el-tag>
+          <el-tag :type="statusType">{{ act.display_label }}</el-tag>
+        </span>
       </template>
     </el-page-header>
 
@@ -812,6 +815,14 @@ const openProfileDialog = () => profileDialog.value.open(true)
 </script>
 
 <style scoped>
+/* 页头：宽屏标题与标签同一行，窄屏标签落到下一行 */
+.hd-title { font-weight: 600; }
+.hd-tags { display: inline-flex; gap: 6px; margin-left: 10px; vertical-align: middle; }
+@media (max-width: 860px) {
+  .hd-title { display: block; font-size: 16px; line-height: 1.5; }
+  .hd-tags { display: flex; flex-wrap: wrap; margin: 4px 0 0; }
+}
+
 /* —— 窄屏的场次／岗位卡片 —— */
 .m-shifts { display: flex; flex-direction: column; gap: 12px; }
 .m-shift :deep(.el-card__body) { padding: 14px; }

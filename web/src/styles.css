@@ -96,6 +96,21 @@ body {
   /* 抽屉里的菜单铺满 */
   .el-drawer__body { padding: 0; }
 
+  /* 页头竖排：返回 / 标题 / 副信息 / 按钮各占一行。
+     一行挤四样东西，标题会被压成 100 多像素高的一竖条。
+     注意 __content 是嵌在 __left 里的，两层都要拆开。 */
+  .el-page-header__header { display: block !important; }
+  .el-page-header__left { display: block !important; margin-right: 0 !important; }
+  .el-page-header__left .el-divider--vertical { display: none; }
+  .el-page-header__back { margin-right: 0; }
+  .el-page-header__content { margin-top: 6px; font-size: 16px; line-height: 1.5; }
+  .el-page-header__extra {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-top: 10px; text-align: left;
+  }
+  /* 页头里的按钮自身带的左外边距会破坏 gap 对齐 */
+  .el-page-header__extra .el-button + .el-button { margin-left: 0; }
+
   /* 工具条换行，别把按钮挤出屏幕 */
   .toolbar { flex-wrap: wrap; gap: 8px; }
   .toolbar > * { flex-shrink: 0; }

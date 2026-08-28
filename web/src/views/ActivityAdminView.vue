@@ -18,12 +18,15 @@
   </div>
   <div class="page page-wide" v-else-if="act">
     <el-page-header @back="$router.push('/manage')" title="返回列表">
+      <!-- 窄屏下标题与副信息各占一行：一行挤不下活动名+状态+时间地点 -->
       <template #content>
-        <b>{{ act.title }}</b>
-        <el-tag size="small" style="margin-left:8px" :type="{published:'success',closed:'info',draft:'warning',finished:'info'}[act.status]">
-          {{ act.status_label }}
-        </el-tag>
-        <span class="dim" style="margin-left:10px">{{ act.time_text }} · {{ act.location }}</span>
+        <div class="hd-title">
+          <b>{{ act.title }}</b>
+          <el-tag size="small" :type="{published:'success',closed:'info',draft:'warning',finished:'info'}[act.status]">
+            {{ act.status_label }}
+          </el-tag>
+        </div>
+        <div class="hd-meta dim">{{ act.time_text }} · {{ act.location }}</div>
       </template>
       <template #extra>
         <!-- 「调整岗位」只在岗位设置那一页出现一次，页头不重复放 -->
@@ -1909,6 +1912,14 @@ function toISO(v) {
 </script>
 
 <style scoped>
+/* 页头：宽屏一行排开，窄屏由 styles.css 的媒体查询拆成多行 */
+.hd-title { display: inline-flex; align-items: center; gap: 8px; vertical-align: middle; }
+.hd-meta { display: inline; margin-left: 10px; }
+@media (max-width: 860px) {
+  .hd-title { display: flex; flex-wrap: wrap; font-size: 16px; }
+  .hd-meta { display: block; margin: 4px 0 0; }
+}
+
 .needs-positions { border-color: var(--el-color-danger) !important; }
 .group-card { border:1px solid #eceef1; border-radius:12px; padding:12px 14px; margin-bottom:12px; background:#fff; }
 .g-head { display:flex; gap:12px; align-items:center; margin-bottom:6px; font-size:13.5px; flex-wrap:wrap;}
