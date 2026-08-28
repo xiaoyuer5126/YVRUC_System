@@ -400,7 +400,8 @@ def test_恢复报名必须重设截止时间(client, admin, db, take_student):
                        ).status_code == 409
 
 
-def test_活动开始后不能恢复报名(client, admin, db):
+def test_场次都开过了就不能恢复报名(client, admin, db):
+    """只有一个场次，它已经开场了——恢复出来一个人也报不进来。"""
     from backend.models import Activity, ActivityManager
 
     admin_user = db.query(User).filter(User.student_id == ADMIN).one()
@@ -419,7 +420,7 @@ def test_活动开始后不能恢复报名(client, admin, db):
 
     r = client.post(f"/api/staff/activities/{act.id}/reopen", headers=admin,
                     json={"reg_end": (now() + timedelta(hours=1)).isoformat()})
-    assert r.status_code == 409 and "已经开始" in r.json()["detail"]
+    assert r.status_code == 409 and "所有场次都已开始" in r.json()["detail"]
 
 
 def test_扣留的名额不挡住岗位的其它修改(client, admin, db, open_group, take_student):

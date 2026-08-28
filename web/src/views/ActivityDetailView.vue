@@ -52,6 +52,12 @@
           </div>
         </el-card>
 
+        <!-- 审批人看的是同一个页面，只是活动还没公开；不另做一套只读页 -->
+        <el-alert v-if="act.review_preview" type="info" show-icon :closable="false"
+                  style="margin:12px 0"
+                  :title="`审批预览 · 当前状态「${act.status_label}」`"
+                  description="这条活动还没有公开，你是作为审批人在看它的完整安排。通过或驳回请回「活动审批」页操作。" />
+
         <el-alert v-if="act.editing" type="warning" show-icon :closable="false"
                   style="margin:12px 0"
                   title="负责老师正在调整本活动的安排，报名暂时关闭"
@@ -70,8 +76,12 @@
                       :type="g.mode === 'assign' ? 'warning' : 'info'">
                 {{ g.mode_label }}
               </el-tag>
+              <el-tag v-if="g.started" size="small" type="info" effect="plain">已开场</el-tag>
             </div>
             <div class="dim">{{ g.time_text }}</div>
+            <div v-if="act.status === 'published' && !g.enroll_open" class="dim">
+              本场报名已于 {{ fmtDT(g.enroll_deadline) }} 结束
+            </div>
             <div class="m-quota">
               已报名 {{ g.enrolled }}/{{ g.capacity }}
               <span v-if="g.waitlist_count" class="dim">· 候补 {{ g.waitlist_count }}</span>
@@ -140,7 +150,7 @@
                   <el-button v-else-if="s.eligible === false" size="small" disabled>
                     不符合条件
                   </el-button>
-                  <el-button v-else-if="act.status === 'published'" size="small"
+                  <el-button v-else-if="openFor(g)" size="small"
                              type="primary" plain @click="doEnroll(g, s)">
                     {{ s.remaining > 0 ? '选中' : '候补' }}
                   </el-button>
@@ -177,12 +187,12 @@
                     {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
                   </el-button>
                 </template>
-                <el-button v-else-if="act.status === 'published' && g.mode === 'assign'"
+                <el-button v-else-if="openFor(g) && g.mode === 'assign'"
                            type="primary" size="small" @click="doEnroll(g, null)">
                   {{ enrollText(g) }}
                 </el-button>
-                <el-tag v-else-if="act.status !== 'published'" type="info" size="small">
-                  不在报名期
+                <el-tag v-else-if="!openFor(g)" type="info" size="small">
+                  {{ closedText(g) }}
                 </el-tag>
               </div>
             </template>
@@ -298,7 +308,7 @@
                             <el-button size="small" disabled>不符合条件</el-button>
                           </el-tooltip>
                           <!-- 未报名 -->
-                          <el-button v-else-if="act.status === 'published'" size="small"
+                          <el-button v-else-if="openFor(g)" size="small"
                                      type="primary" plain @click="doEnroll(g, s)">
                             {{ s.remaining > 0 ? '选中' : '候补' }}
                           </el-button>
@@ -392,6 +402,10 @@
                         :type="row.mode === 'pick' ? 'info' : row.mode === 'assign' ? 'warning' : 'primary'">
                   {{ row.mode_label }}
                 </el-tag>
+                <!-- 每个场次在自己开场时就停止收人，活动整体可能还在报名期 -->
+                <div v-if="act.status === 'published' && !row.enroll_open" class="dim">
+                  本场报名已于 {{ fmtDT(row.enroll_deadline) }} 结束
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="时间" min-width="140" prop="time_text" />
@@ -492,7 +506,7 @@
                     </el-button>
                   </template>
                 </template>
-                <template v-else-if="act.status === 'published'">
+                <template v-else-if="openFor(row)">
                   <el-tooltip v-if="row.mode === 'pick'"
                               content="点击行首箭头展开，选择一个岗位" placement="top">
                     <el-button size="small" disabled>展开选择岗位</el-button>
@@ -501,7 +515,7 @@
                     {{ enrollText(row) }}
                   </el-button>
                 </template>
-                <el-tag v-else type="info" size="small">不在报名期</el-tag>
+                <el-tag v-else type="info" size="small">{{ closedText(row) }}</el-tag>
               </template>
             </el-table-column>
           </el-table>
@@ -758,6 +772,19 @@ function myStationName(g) {
 }
 function canCancel(g) {
   return new Date(g.start_time.replace(' ', 'T')) > new Date()
+}
+/** 这一场现在还收不收人。
+ *
+ * 活动整体在报名期还不够：每个场次在**自己开场时**就关闸（enroll_open 由后端
+ * 按 min(活动报名截止, 本场开场) 算）。支教那种连办八周的活动，第三周了还开着
+ * 报名很正常，但第一周那场早就不该再收人。
+ */
+function openFor(g) {
+  return act.value?.status === 'published' && g.enroll_open
+}
+function closedText(g) {
+  if (act.value?.status !== 'published') return '不在报名期'
+  return g.started ? '本场已开场' : '本场报名已截止'
 }
 function enrollText(g) {
   if (g.mode === 'pick') {

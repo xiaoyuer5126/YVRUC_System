@@ -211,6 +211,8 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
             if key == "type" and value not in config_types():
                 raise HTTPException(400, "活动类型必须是 A/B/C/D")
             setattr(act, key, value)
+    if "reg_end" in body:
+        ensure_reg_end_in_range(act)
     changes = diff_changes(
         {k: (iso(v) if isinstance(v, datetime) else v) for k, v in before.items()},
         {k: (iso(getattr(act, k)) if isinstance(getattr(act, k), datetime)
@@ -415,6 +417,22 @@ def ensure_ready_to_publish(act: Activity) -> None:
             400, f"场次「{'、'.join(empty)}」还没有岗位——名额与候补都记在岗位上，"
                  f"没有岗位学生就报不了名。请先添加岗位，或把这些场次改为"
                  f"「截止后统一分配」")
+    ensure_reg_end_in_range(act)
+
+
+def ensure_reg_end_in_range(act: Activity) -> None:
+    """报名截止不能晚于最后一个场次的开始时间。
+
+    晚于它的那一段是死窗口：每个场次在自己开场时就停止收人，最后一场都开始了，
+    活动却还挂着「报名中」，学生点进去每一场都是灰的。
+    """
+    last = act.last_shift_start()
+    if act.reg_end and last and act.reg_end > last:
+        raise HTTPException(
+            400, f"报名截止时间（{act.reg_end:%m-%d %H:%M}）晚于最后一个场次的"
+                 f"开始时间（{last:%m-%d %H:%M}）。每个场次在自己开场时就不再收人，"
+                 f"这中间的一段谁也报不进来。请把报名截止时间提前，"
+                 f"或把场次时间往后调")
 
 
 def _transition(activity_id: str, target: str, action: str, summary: str,
@@ -462,23 +480,25 @@ def reopen(activity_id: str, body: ReopenBody,
 
     必须重设截止时间：定时任务是按 reg_end 判断的，只把状态改回「报名中」
     而不动 reg_end，下一分钟就会被再截止一次，等于白点。
-    活动开始之后不给恢复——人都到场了再往里放人没有意义。
+    最后一个场次也开场之后不给恢复——那时每一场都已经各自关闸，恢复出来
+    一个人也报不进来。前面几场开过了不要紧，后面还没开的照样可以补人。
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     if act.status != "closed":
         raise HTTPException(409, f"当前状态为「{act.label_status()}」，不能恢复报名")
-    span = act.time_span()
+    last = act.last_shift_start()
     t = now()
-    if span and t >= span[0]:
-        raise HTTPException(409, "活动已经开始，不能恢复报名")
+    if last and t >= last:
+        raise HTTPException(409, "所有场次都已开始，恢复报名也收不到人了")
     new_end = _parse_dt(body.reg_end)
     if new_end is None:
         raise HTTPException(400, "请选择新的报名截止时间")
     if new_end <= t:
         raise HTTPException(400, "新的报名截止时间必须晚于当前时间")
-    if span and new_end > span[0]:
-        raise HTTPException(400, "报名截止时间不能晚于第一个场次的开始时间")
+    if last and new_end > last:
+        raise HTTPException(400, f"报名截止时间不能晚于最后一个场次的开始时间"
+                                 f"（{last:%m-%d %H:%M}）")
     old_end = act.reg_end
     act.status = "published"
     act.reg_end = new_end

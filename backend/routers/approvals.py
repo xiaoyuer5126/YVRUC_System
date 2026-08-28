@@ -59,6 +59,19 @@ def _can_decide(db: OrmSession, user: User, act: Activity) -> bool:
             or user.is_president() or user.is_admin())
 
 
+def can_review(db: OrmSession, user: User, act: Activity) -> bool:
+    """能不能**看**这条活动的完整安排（审批线上的人）。
+
+    比 _can_decide 多一类：批过或驳过这条的人。活动通过之后到发起方点发布
+    之前还是不公开的，审批人回头想核对自己批了什么，不该被挡在门外。
+    """
+    if _can_decide(db, user, act):
+        return True
+    return db.query(ApprovalEvent).filter(
+        ApprovalEvent.activity_id == act.id,
+        ApprovalEvent.actor_id == user.id).first() is not None
+
+
 def _event(db: OrmSession, act: Activity, kind: str, actor: User, **kw) -> None:
     db.add(ApprovalEvent(id=uid("apv"), activity_id=act.id, kind=kind,
                          actor_id=actor.id, **kw))

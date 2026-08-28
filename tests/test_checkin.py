@@ -5,9 +5,9 @@ from datetime import timedelta
 
 import pytest
 
-from backend.models import (Activity, ActivityManager, Position, Shift, User,
-                            now, uid)
-from conftest import ADMIN, login
+from backend.models import (Activity, ActivityManager, Enrollment, Position,
+                            Shift, User, now, uid)
+from conftest import ADMIN, login, student_row
 
 
 @pytest.fixture
@@ -33,12 +33,16 @@ def live_group(client, db, admin, take_student):
     pos = Position(id=uid("p"), shift_id=g.id, name="签到测试岗位",
                    location="集合点", quota=5, sort=0)
     db.add(pos)
-    db.commit()
+    db.flush()
 
+    # 直接落库而不是走报名接口：场次已经开场了，接口会（正确地）拒绝。
+    # 现实里这个人是昨天报的名，今天来签到。
     sid = take_student()
     h = login(client, sid)
-    client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
-                json={"position_id": pos.id}, headers=h)
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                      user_id=student_row(db, sid).id, position_id=pos.id,
+                      status="enrolled", joined_at=now() - timedelta(days=1)))
+    db.commit()
     token = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks",
                         json={"mode": "shift"}, headers=admin).json()["token"]
     return act, g, h, token

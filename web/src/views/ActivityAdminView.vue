@@ -881,7 +881,7 @@
       <el-form label-width="110px">
         <el-form-item label="新的截止时间" required>
           <el-date-picker v-model="reopenDlg.regEnd" type="datetime" style="width:100%"
-                          :default-time="DAY_END" placeholder="晚于此刻，且早于第一个场次开始" />
+                          :default-time="DAY_END" placeholder="晚于此刻，且不晚于最后一个场次开始" />
         </el-form-item>
       </el-form>
       <template #footer>

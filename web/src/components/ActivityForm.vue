@@ -38,7 +38,9 @@
     <el-form-item label="报名窗口" required>
       <DateRange v-model="range" start-placeholder="报名开始时间" end-placeholder="报名截止时间" />
       <div class="dim" style="line-height:1.7">
-        活动时间不用填：会根据场次时间自动计算并显示。
+        活动时间不用填：会根据场次时间自动计算并显示。<br />
+        截止时间不能晚于最后一个场次的开始时间；每个场次还会在<b>自己开场时</b>
+        各自停止收人。
       </div>
     </el-form-item>
     <el-form-item label="活动简介" required>

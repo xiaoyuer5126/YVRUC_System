@@ -181,6 +181,54 @@ def test_审批超时只催人不放行(client, admin, db, draft):
     assert scheduled.remind_stale_approvals(db) == 0
 
 
+# ======================= 审批人看得到活动 =======================
+
+def test_审批人能看未公开活动的完整安排(client, admin, db, draft, take_student):
+    """看不到岗位与培训内容就没法批。审批页上那个「查看完整安排」要真能点开。"""
+    head = login(client, QINGXIE_HEAD)
+    assert client.get(f"/api/activities/{draft}", headers=head).status_code == 404
+
+    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                json={"department_id": _liaison(db).id})
+    d = client.get(f"/api/activities/{draft}", headers=head)
+    assert d.status_code == 200, d.text
+    d = d.json()
+    assert d["review_preview"] is True and d["status_label"] == "待审批"
+    # 培训内容是判断活动办不办得成的依据，按管理者视角给
+    assert d["shifts"][0]["positions"][0]["training_visible"] is True
+
+    # 无关的人照样看不见
+    other = login(client, take_student())
+    assert client.get(f"/api/activities/{draft}", headers=other).status_code == 404
+
+
+def test_批过之后仍能回看自己批的那条(client, admin, db, draft):
+    """通过到发起方点发布之间活动还不公开，审批人要能核对自己批了什么。"""
+    head = login(client, QINGXIE_HEAD)
+    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                json={"department_id": _liaison(db).id})
+    client.post(f"/api/staff/activities/{draft}/transfer-approval", headers=head,
+                json={"student_id": PRESIDENT, "reason": "请会长定"})
+    # 已经不是审批人了，但转交这一下留在流水里
+    assert client.post(f"/api/staff/activities/{draft}/decide", headers=head,
+                       json={"approve": True}).status_code == 403
+    assert client.get(f"/api/activities/{draft}", headers=head).status_code == 200
+
+
+def test_活动一旦公开审批人就退回普通视角(client, admin, db, draft, take_student):
+    """公开之后他和别人看到的该是同一页——那时活动里已经有报名的人了。"""
+    head = login(client, QINGXIE_HEAD)
+    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                json={"department_id": _liaison(db).id})
+    client.post(f"/api/staff/activities/{draft}/decide", headers=head,
+                json={"approve": True})
+    client.post(f"/api/staff/activities/{draft}/publish", headers=admin)
+
+    d = client.get(f"/api/activities/{draft}", headers=head).json()
+    assert d["review_preview"] is False
+    assert d["shifts"][0]["positions"][0]["training_visible"] is False
+
+
 def test_只有管理员能指定部长(client, admin, db):
     head = login(client, QINGXIE_HEAD)
     dept = db.query(Department).filter(Department.name == "环保项目部").one()

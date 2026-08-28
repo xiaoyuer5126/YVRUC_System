@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .enroll_logic import (group_leader, group_needs_leader, group_positions,
+from .enroll_logic import (enroll_deadline, group_leader, group_needs_leader,
+                           group_positions,
                            position_enrolled_count,
                            position_occupied_count,
                            shift_enrolled_count, shift_occupied_count,
@@ -216,11 +217,16 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
                                                  "pending_confirm")))
                   .first())
     enrolled = my_enr is not None
+    # 本场次的报名闸门。前端据此灰按钮，别让人点了才知道这一场已经开过了。
+    deadline = enroll_deadline(g.activity, g)
     out = {
         "id": g.id, "name": g.name,
         "activity_id": g.activity_id,
         "start_time": iso_of(g.start_time), "end_time": iso_of(g.end_time),
         "time_text": g.span_text(),
+        "enroll_deadline": iso_of(deadline),
+        "enroll_open": now() <= deadline,
+        "started": now() >= g.start_time,
         # 名额：assign 模式记在场次上，pick 模式是各岗位之和
         "capacity": capacity,
         "enrolled": shift_enrolled_count(db, g.id),

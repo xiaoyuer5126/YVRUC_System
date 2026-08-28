@@ -49,6 +49,19 @@ def time_conflicts(db: OrmSession, user: User,
     return out
 
 
+def enroll_deadline(act: Activity, shift: Shift) -> datetime:
+    """本场次实际什么时候停止收人：活动报名截止与本场次开场时间里更早的那个。
+
+    活动的报名窗可以跨很多天——支教连着办八周，第三周还想让人报第五周那场，
+    很正常。但没有哪一场能在**自己开场之后**还收人：报进去的人签不了到，
+    也退不了选（活动已开始一律不许退），最后只会挂在名单上算一个未签到。
+    所以截止时间按场次各算各的，活动那个只是总闸。
+    """
+    if act.reg_end and act.reg_end < shift.start_time:
+        return act.reg_end
+    return shift.start_time
+
+
 def attached_shifts(db: OrmSession, shift_id: str,
                     position_id: str | None = None) -> list[Shift]:
     """某服务场次下的培训/彩排场次；给了岗位就只留对该岗位生效的。"""

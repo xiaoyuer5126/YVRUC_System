@@ -11,7 +11,7 @@
 
     <el-card v-for="a in rows" :key="a.id" shadow="never" class="item">
       <div class="head">
-        <b class="title" @click="$router.push('/manage/' + a.id)">{{ a.title }}</b>
+        <b class="title" @click="$router.push('/activity/' + a.id)">{{ a.title }}</b>
         <el-tag size="small" effect="plain">{{ a.type_label }}</el-tag>
         <el-tag v-if="!a.mine" size="small" type="info" effect="plain">
           当前审批人：{{ a.assignee }}
@@ -34,7 +34,7 @@
       <div class="dim" style="margin-top:6px">
         提交于 {{ fmtDT(a.submitted_at) }} ·
         <el-link type="primary" :underline="false"
-                 @click="$router.push('/manage/' + a.id)">查看完整安排</el-link>
+                 @click="$router.push('/activity/' + a.id)">查看完整安排</el-link>
       </div>
     </el-card>
 

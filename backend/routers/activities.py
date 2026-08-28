@@ -16,6 +16,7 @@ from ..models import Activity, Enrollment, Shift, Position, User, now, uid
 from ..perm import is_activity_manager
 from ..qrcodes import qr_svg
 from ..serializers import activity_brief, activity_detail
+from .approvals import can_review
 
 router = APIRouter(prefix="/api/activities", tags=["activities"])
 
@@ -38,9 +39,12 @@ def _get_activity(db: OrmSession, activity_id: str, user: User) -> Activity:
     act = db.get(Activity, activity_id)
     if act is None:
         raise HTTPException(404, "活动不存在")
-    if act.status not in PUBLIC_STATUSES and not is_activity_manager(db, user, act.id):
-        raise HTTPException(404, "活动不存在")
-    return act
+    if act.status in PUBLIC_STATUSES:
+        return act
+    # 还没公开：管理者，以及这条审批线上的人（要看得到安排才批得下去）
+    if is_activity_manager(db, user, act.id) or can_review(db, user, act):
+        return act
+    raise HTTPException(404, "活动不存在")
 
 
 def _get_group(db: OrmSession, shift_id: str) -> Shift:
@@ -67,9 +71,16 @@ def get_activity(activity_id: str,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(current_user)):
     act = _get_activity(db, activity_id, user)
+    manager = is_activity_manager(db, user, activity_id)
+    # 审批人也按管理者视角渲染：培训内容、学习材料这些是判断活动办得成不成的
+    # 依据，看不到就批不下去。只在活动**还没公开**时给——那时一个报名的人都
+    # 没有，不存在暴露联系方式的问题；一旦公开，他和其他人看到的就该是同一页。
+    review = (not manager and act.status not in PUBLIC_STATUSES
+              and can_review(db, user, act))
     # 管理者要能在同一个页面核对培训内容与组长，不必先去后台
-    return activity_detail(db, act, user,
-                           manager=is_activity_manager(db, user, activity_id))
+    out = activity_detail(db, act, user, manager=manager or review)
+    out["review_preview"] = review
+    return out
 
 
 @router.get("/{activity_id}/qr.svg", response_class=Response)
@@ -108,9 +119,12 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
     t = now()
     if act.reg_start and t < act.reg_start:
         raise HTTPException(409, f"报名尚未开始（{act.reg_start:%m-%d %H:%M} 起）")
-    reg_end = act.reg_end or g.start_time
-    if reg_end and t > reg_end:
-        raise HTTPException(409, "报名已截止")
+    # 截止按场次各算各的：活动的报名窗可能还没到期，但这一场已经开场了
+    deadline = logic.enroll_deadline(act, g)
+    if t > deadline:
+        raise HTTPException(
+            409, "报名已截止" if deadline == act.reg_end else
+            f"「{g.name}」已于 {g.start_time:%m-%d %H:%M} 开场，不再接受报名")
 
     # 老师类型不参与报名（无信用分/时长等个人数据）
     if user.user_type == "teacher":

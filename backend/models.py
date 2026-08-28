@@ -261,6 +261,16 @@ class Activity(Base):
         return (min(s.start_time for s in rows),
                 max(s.end_time for s in rows))
 
+    def last_shift_start(self) -> datetime | None:
+        """报名截止最晚只能填到这里：最后一个服务场次的开始时间。
+
+        再往后填是一段死窗口——每个场次在自己开场时就不收人了（见
+        enroll_logic.enroll_deadline），最后一场都开始之后，这条活动
+        已经一个人也报不进来，页面上却还挂着「报名中」。
+        """
+        rows = self.main_shifts()
+        return max(s.start_time for s in rows) if rows else None
+
 
 class ApprovalEvent(Base):
     """审批流水：提交、转交、通过、驳回各一条，按时间排。
