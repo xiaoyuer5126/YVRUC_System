@@ -4,24 +4,9 @@
       <el-button type="primary" size="small" @click="openCreate">
         <el-icon><Plus /></el-icon>&nbsp;生成签到码
       </el-button>
-      <el-dropdown split-button size="small" :loading="reminding"
-                   @click="sendReminder()" @command="sendReminder">
+      <el-button size="small" @click="openReminder">
         <el-icon><Bell /></el-icon>&nbsp;补发签到提醒
-        <template #dropdown>
-          <el-dropdown-menu>
-            <div class="dim" style="padding:4px 14px">只发给还没签到的人</div>
-            <el-dropdown-item :command="undefined">全场次</el-dropdown-item>
-            <el-dropdown-item v-for="gn in positionGroups" :key="'g:' + gn"
-                              :command="{ group_name: gn }" divided>
-              岗位组「{{ gn }}」
-            </el-dropdown-item>
-            <el-dropdown-item v-for="p in shift.positions" :key="p.id"
-                              :command="{ position_ids: [p.id] }">
-              岗位「{{ p.name }}」
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
+      </el-button>
       <span class="dim">同一签到码：第一次扫=签到，第二次扫=签退；场次结束2小时后未签退，自动按场次结束时间计</span>
     </div>
 
@@ -230,6 +215,41 @@
       </div>
     </el-dialog>
   </div>
+
+    <!-- 补发签到提醒：先选范围再发，别在下拉里盲点 -->
+    <el-dialog v-model="reminderDlg" title="补发签到提醒" width="460">
+      <p class="dim" style="margin-top:0;line-height:1.8">
+        只发给<b>还没签到</b>的正式志愿者，已经到岗的不会被打扰。<br />
+        场次开始前 30 分钟系统已自动发过一次。
+      </p>
+      <el-form label-width="72px">
+        <el-form-item label="范围">
+          <el-radio-group v-model="reminderScope">
+            <el-radio value="all">全场次</el-radio>
+            <el-radio v-if="positionGroups.length" value="group">按岗位组</el-radio>
+            <el-radio value="position">按岗位</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="reminderScope === 'group'" label="岗位组" required>
+          <el-select v-model="reminderGroup" placeholder="选择岗位组" style="width:100%">
+            <el-option v-for="gn in positionGroups" :key="gn" :value="gn" :label="gn" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="reminderScope === 'position'" label="岗位" required>
+          <el-select v-model="reminderPositions" multiple placeholder="可多选"
+                     style="width:100%">
+            <el-option v-for="p in shift.positions" :key="p.id" :value="p.id"
+                       :label="p.name" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="reminderDlg = false">取消</el-button>
+        <el-button type="primary" :loading="reminding" @click="sendReminder">
+          发送
+        </el-button>
+      </template>
+    </el-dialog>
 </template>
 
 <script setup>
@@ -367,12 +387,33 @@ const reminding = ref(false)
 const positionGroups = computed(() => [...new Set(
   (props.shift.positions || []).map(p => p.group_name).filter(Boolean))])
 
-async function sendReminder(scope) {
+const reminderDlg = ref(false)
+const reminderScope = ref('all')
+const reminderGroup = ref('')
+const reminderPositions = ref([])
+
+function openReminder() {
+  reminderScope.value = 'all'
+  reminderGroup.value = ''
+  reminderPositions.value = []
+  reminderDlg.value = true
+}
+
+async function sendReminder() {
+  const body = {}
+  if (reminderScope.value === 'group') {
+    if (!reminderGroup.value) return ElMessage.warning('请选择岗位组')
+    body.group_name = reminderGroup.value
+  } else if (reminderScope.value === 'position') {
+    if (!reminderPositions.value.length) return ElMessage.warning('请选择岗位')
+    body.position_ids = reminderPositions.value
+  }
   reminding.value = true
   try {
     const d = await api.post(
-      `/api/staff/shifts/${props.shift.id}/checkin-reminder`, scope || {})
-    ElMessage.success(`已向 ${d.scope} 的 ${d.count} 位未签到志愿者发送提醒`)
+      `/api/staff/shifts/${props.shift.id}/checkin-reminder`, body)
+    ElMessage.success(`已向${d.scope}的 ${d.count} 位未签到志愿者发送提醒`)
+    reminderDlg.value = false
   } finally { reminding.value = false }
 }
 

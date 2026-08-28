@@ -81,7 +81,7 @@ def _notify_assignment_bg(items: list[dict]):
                 continue
             wecom.send_user(db, u, "assignment",
                             activity=db.get(Activity, g.activity_id).title,
-                            group=g.name, position=st.name,
+                            shift=g.name, position=st.name,
                             position_time=st.time_text(),
                             position_loc=st.location or "待定")
         db.commit()

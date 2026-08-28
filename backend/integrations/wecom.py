@@ -67,11 +67,21 @@ def render(template_key: str, extra: str = "", **kw) -> tuple[str, str]:
     title_tpl, body_tpl = TEMPLATES.get(template_key, ("平台通知", "{extra}"))
     kw = {**kw, "extra": extra}
 
+    missing: set[str] = set()
+
     class _Safe(dict):
-        def __missing__(self, k):   # 缺参时原样占位，便于发现模板问题
+        def __missing__(self, k):
+            # 缺参时保留占位并记一笔：静默留一串 {shift} 发给志愿者，
+            # 没人会发现——真发生过。
+            missing.add(k)
             return "{" + k + "}"
 
-    return title_tpl.format_map(_Safe(kw)), body_tpl.format_map(_Safe(kw))
+    title = title_tpl.format_map(_Safe(kw))
+    body = body_tpl.format_map(_Safe(kw))
+    if missing:
+        log.error("消息模板 %s 缺少占位符 %s，发出去的正文里会留下花括号",
+                  template_key, "、".join(sorted(missing)))
+    return title, body
 
 
 def send_user(db: OrmSession, user: User, template_key: str,

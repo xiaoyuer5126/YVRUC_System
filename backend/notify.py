@@ -68,7 +68,9 @@ def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
         loc = (position.location if position and position.location
                else act.location or "活动集合点")
         wecom.send_user(db, u, "checkin_reminder", activity=act.title,
-                        group=g.name, loc=loc)
+                        shift=g.name,
+                        position=position.name if position else "待分配",
+                        loc=loc)
         n += 1
     return n
 
