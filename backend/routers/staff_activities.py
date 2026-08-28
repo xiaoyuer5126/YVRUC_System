@@ -950,6 +950,10 @@ def notify_batches(activity_id: str, db: OrmSession = Depends(db_session),
             .order_by(Notification.created_at.desc()).all())
     batches: dict[str, dict] = {}
     for n in rows:
+        # 志愿者往往同时报了好几个活动，只认属于本活动的那些批次，
+        # 否则这里会把别的活动的未签收名单（姓名+学号）摊给本活动管理者
+        if str((n.data or {}).get("activity_id") or "") != act.id:
+            continue
         b = batches.setdefault(n.batch_id, {
             "batch_id": n.batch_id, "title": n.title,
             "created_at": iso(n.created_at), "total": 0, "acked": 0,

@@ -532,7 +532,7 @@
           比「已读」硬——已读只说明他打开过消息中心。
         </div>
         <el-empty v-if="!ackBatches.length"
-                  description="还没有要求签收的通知；发送通知时勾选「要求志愿者签收」即可" />
+                  description="还没有要求签收的通知；发通知或补发签到提醒时勾选「要求签收」即可" />
         <el-card v-for="b in ackBatches" :key="b.batch_id" shadow="never"
                  style="margin-bottom:12px">
           <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">

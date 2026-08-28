@@ -115,6 +115,7 @@ class ReminderBody(BaseModel):
     """范围三选一：整场次 / 指定岗位组 / 指定岗位。"""
     position_ids: list[str] = []
     group_name: str = ""
+    need_ack: bool = False   # 要求志愿者点「我已知悉」，管理端能看到谁没回
 
 
 @router.post("/shifts/{shift_id}/checkin-reminder")
@@ -126,6 +127,7 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
     自动提醒在场次开始前 30 分钟发一次；这个按钮用于临时催场——
     只发给还没签到的正式志愿者，已经到岗的不再打扰。
     可只催某几个岗位或某个岗位组：现场往往是「东门那三个人没到」。
+    勾选签收后，这一批会出现在活动的「待签收批次」里，能看到谁还没回。
     """
     g = db.get(Shift, shift_id)
     if g is None:
@@ -147,15 +149,18 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
         ids = list(body.position_ids)
         scope = "岗位" + "、".join(f"「{known[i].name}」" for i in ids)
 
-    n = notify_checkin(db, g, position_ids=ids)
+    batch_id = uid("bat") if body.need_ack else None
+    n = notify_checkin(db, g, position_ids=ids, need_ack=body.need_ack,
+                       batch_id=batch_id)
     if not n:
         raise HTTPException(400, f"{scope}没有需要提醒的人（未签到的正式志愿者为 0）")
     g.reminder_sent_at = now()
     audit_log(db, actor=user, action="update", target_type="notify",
               target_id=g.id, target_label=g.name, activity_id=g.activity_id,
-              summary=f"手动补发签到提醒：{scope} {n} 人（未签到）")
+              summary=f"手动补发签到提醒：{scope} {n} 人（未签到）"
+                      + ("，要求签收" if body.need_ack else ""))
     db.commit()
-    return {"ok": True, "count": n, "scope": scope}
+    return {"ok": True, "count": n, "scope": scope, "batch_id": batch_id}
 
 
 @router.get("/checkin-tasks/{task_id}/board")

@@ -242,6 +242,12 @@
                        :label="p.name" />
           </el-select>
         </el-form-item>
+        <el-form-item label="签收">
+          <el-checkbox v-model="reminderAck">要求志愿者点「我已知悉」</el-checkbox>
+          <div class="dim" style="line-height:1.7">
+            勾选后可在本活动的「签收情况」里看到谁还没回，并一键催办。
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="reminderDlg = false">取消</el-button>
@@ -391,16 +397,18 @@ const reminderDlg = ref(false)
 const reminderScope = ref('all')
 const reminderGroup = ref('')
 const reminderPositions = ref([])
+const reminderAck = ref(false)
 
 function openReminder() {
   reminderScope.value = 'all'
   reminderGroup.value = ''
   reminderPositions.value = []
+  reminderAck.value = false
   reminderDlg.value = true
 }
 
 async function sendReminder() {
-  const body = {}
+  const body = { need_ack: reminderAck.value }
   if (reminderScope.value === 'group') {
     if (!reminderGroup.value) return ElMessage.warning('请选择岗位组')
     body.group_name = reminderGroup.value
@@ -412,7 +420,8 @@ async function sendReminder() {
   try {
     const d = await api.post(
       `/api/staff/shifts/${props.shift.id}/checkin-reminder`, body)
-    ElMessage.success(`已向${d.scope}的 ${d.count} 位未签到志愿者发送提醒`)
+    ElMessage.success(`已向${d.scope}的 ${d.count} 位未签到志愿者发送提醒`
+      + (d.batch_id ? '（要求签收）' : ''))
     reminderDlg.value = false
   } finally { reminding.value = false }
 }

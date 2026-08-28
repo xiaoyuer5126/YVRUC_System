@@ -40,11 +40,14 @@ def notify_enrolled(db: OrmSession, act: Activity, template: str, **kw) -> int:
 
 
 def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
-                   position_ids: list[str] | None = None) -> int:
+                   position_ids: list[str] | None = None,
+                   need_ack: bool = False,
+                   batch_id: str | None = None) -> int:
     """给某场次的正式志愿者发签到提醒，地点按各自岗位给到人。
 
     position_ids 限定范围：现场催场往往是「东门那三个人没到」，
     整场次群发会打扰到已经在岗的其他岗位。
+    need_ack=True 时要求本人点「我已知悉」，管理端按 batch_id 看谁还没回。
     """
     act = db.get(Activity, g.activity_id)
     q = (db.query(Enrollment)
@@ -70,7 +73,10 @@ def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
         wecom.send_user(db, u, "checkin_reminder", activity=act.title,
                         shift=g.name,
                         position=position.name if position else "待分配",
-                        loc=loc)
+                        loc=loc,
+                        # activity_id 是「提醒未签收」判权限的依据，不能省
+                        data={"activity_id": act.id},
+                        need_ack=need_ack, batch_id=batch_id)
         n += 1
     return n
 

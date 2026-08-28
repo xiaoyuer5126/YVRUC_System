@@ -112,3 +112,67 @@ def test_非本活动管理者不能查看签收情况(client, teacher, enrolled
     r = client.get(f"/api/staff/activities/{act.id}/notify-batches",
                    headers=teacher)
     assert r.status_code == 403
+
+
+def _remind(client, admin, shift_id, **body):
+    r = client.post(f"/api/staff/shifts/{shift_id}/checkin-reminder",
+                    headers=admin, json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_签到提醒默认不要求签收(client, admin, enrolled_activity):
+    act, shift, _u = enrolled_activity
+    assert _remind(client, admin, shift.id)["batch_id"] is None
+    assert client.get(f"/api/staff/activities/{act.id}/notify-batches",
+                      headers=admin).json() == []
+
+
+def test_签到提醒可要求签收并进批次(client, admin, enrolled_activity):
+    """现场催场最需要「他到底看没看到」，所以提醒也能要签收。"""
+    act, shift, u = enrolled_activity
+    batch = _remind(client, admin, shift.id, need_ack=True)["batch_id"]
+    assert batch
+
+    b = next(x for x in client.get(
+        f"/api/staff/activities/{act.id}/notify-batches",
+        headers=admin).json() if x["batch_id"] == batch)
+    assert b["acked"] == 0
+    assert u.student_id in [p["student_id"] for p in b["pending"]]
+
+    # 催办要能定位到活动（靠 data.activity_id 判权限），签收后计数归位
+    assert client.post(f"/api/staff/notify-batches/{batch}/remind",
+                       headers=admin).json()["count"] == 1
+    student = login(client, u.student_id)
+    for n in client.get("/api/me/notifications",
+                        headers=student).json()["items"]:
+        if n["need_ack"] and not n["acked_at"]:
+            client.post(f"/api/me/notifications/{n['id']}/ack", headers=student)
+    b = next(x for x in client.get(
+        f"/api/staff/activities/{act.id}/notify-batches",
+        headers=admin).json() if x["batch_id"] == batch)
+    assert b["pending"] == [] and b["acked"] == 2   # 原提醒 + 催办各一条
+
+
+def test_签收批次不串活动(client, admin, db, enrolled_activity, take_student):
+    """同一个人报了两个活动，A 的管理者不该看到 B 的未签收名单。"""
+    from backend.models import Enrollment, now, uid
+    from conftest import make_enrolled_activity
+
+    act_a, _shift_a, u = enrolled_activity
+    act_b, shift_b, _other = make_enrolled_activity(db, take_student)
+    db.add(Enrollment(id=uid("enr"), activity_id=act_b.id, shift_id=shift_b.id,
+                      user_id=u.id, position_id=shift_b.positions[0].id,
+                      status="enrolled", joined_at=now()))
+    db.commit()
+
+    batch_b = _send(client, admin, act_b.id, need_ack=True,
+                    title="B 活动通知")["batch_id"]
+    ids = [x["batch_id"] for x in client.get(
+        f"/api/staff/activities/{act_a.id}/notify-batches",
+        headers=admin).json()]
+    assert batch_b not in ids
+    # B 自己的批次照常可见
+    assert batch_b in [x["batch_id"] for x in client.get(
+        f"/api/staff/activities/{act_b.id}/notify-batches",
+        headers=admin).json()]

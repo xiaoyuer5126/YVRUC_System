@@ -194,11 +194,11 @@ def student_row(db, student_id: str):
     return db.query(User).filter(User.student_id == student_id).one()
 
 
-@pytest.fixture
-def enrolled_activity(db, take_student):
+def make_enrolled_activity(db, take_student):
     """一个已发布的活动 + 一个场次 + 一名已确认志愿者。
 
     通知类用例只关心"有人能收到"，不必每次自己搭一遍岗位树。
+    要第二个活动（比如验证批次不串活动）时直接再调一次。
     """
     from datetime import timedelta
     from backend.models import (Activity, ActivityManager, Enrollment,
@@ -231,6 +231,11 @@ def enrolled_activity(db, take_student):
                       joined_at=now()))
     db.commit()
     return act, shift, u
+
+
+@pytest.fixture
+def enrolled_activity(db, take_student):
+    return make_enrolled_activity(db, take_student)
 
 
 @contextmanager
