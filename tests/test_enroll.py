@@ -87,25 +87,52 @@ def test_waitlist_ban_blocks_queueing(client, db, open_group, take_student):
     assert r.status_code == 403 and "候补资格" in r.json()["detail"]
 
 
-def test_late_cancel_holds_the_seat(client, db, open_group, take_student):
-    """开始前 24 小时内退选：扣分，名额扣留——别人补不进来，本人也回不去。"""
+def test_late_cancel_holds_the_seat(client, admin, db, open_group, take_student):
+    """开始前 24 小时内 + 报名已截止：扣分，且名额被扣留占位。
+
+    报名还开着时只扣分不扣留（见 test_seat_hold.py）：平台仍在招人，
+    这时把位子废掉，等于新人能报、候补能转正，唯独这个位子谁都不能用。
+    """
     act, g = open_group(1, day_offset=0, start_in_hours=5)
     h = login(client, take_student())
     enr_id = enroll(client, h, act, g).json()["enrollment_id"]
+
+    db.get(Activity, act.id).reg_end = now() - timedelta(hours=1)
+    db.commit()
 
     assert client.delete(f"/api/activities/enrollments/{enr_id}",
                          headers=h).json()["effect"] == "penalized"
     db.expunge_all()
     assert db.get(Enrollment, enr_id).seat_held is True
 
-    # 名额没有回到池子里
-    r = enroll(client, login(client, take_student()), act, g)
-    assert r.json()["status"] == "waitlisted"
-    # 本人也不能再报一次把位子拿回去
-    assert enroll(client, h, act, g).status_code == 409
+    # 位子仍被占着：确认人数掉到 0，但剩余名额还是 0
+    shift = client.get(f"/api/activities/{act.id}", headers=h).json()["shifts"][0]
+    assert shift["confirmed"] == 0
+    assert shift["remaining"] == 0
+    assert shift["held_seats"] == 1
 
-    group = client.get(f"/api/activities/{act.id}", headers=h).json()["shifts"][0]
-    assert group["remaining"] == 0   # 占位不释放，名额没回到池子里
+    # 老师能在名单里找到它，并放回去
+    roster = client.get(f"/api/staff/shifts/{g.id}/roster", headers=admin).json()
+    assert [x["enrollment_id"] for x in roster["held"]] == [enr_id]
+    assert client.post(f"/api/staff/enrollments/{enr_id}/release-seat",
+                       headers=admin).status_code == 200
+    shift = client.get(f"/api/activities/{act.id}", headers=h).json()["shifts"][0]
+    assert shift["remaining"] == 1
+
+
+def test_扣留期间本人不能把位子拿回去(client, admin, db, open_group, take_student):
+    """报名若被老师重新打开，扣留的约束仍然对本人有效。"""
+    act, g = open_group(1, day_offset=0, start_in_hours=5)
+    h = login(client, take_student())
+    enr_id = enroll(client, h, act, g).json()["enrollment_id"]
+    db.get(Activity, act.id).reg_end = now() - timedelta(hours=1)
+    db.commit()
+    client.delete(f"/api/activities/enrollments/{enr_id}", headers=h)
+
+    db.get(Activity, act.id).reg_end = now() + timedelta(days=1)   # 又开放报名
+    db.commit()
+    r = enroll(client, h, act, g)
+    assert r.status_code == 409 and "扣留" in r.json()["detail"]
 
 
 def test_normal_cancel_promotes_waitlist_head(client, db, open_group,

@@ -285,37 +285,43 @@ def cancel_enroll(enrollment_id: str,
         if t >= g.start_time:
             raise HTTPException(409, "活动已开始，无法退选；如有特殊情况请联系负责老师。")
 
-        if (g.start_time - t).total_seconds() / 3600 >= config.LATE_CANCEL_HOURS:
-            vacated, was_leader = enr.position_id, enr.is_leader
-            enr.status = "cancelled"
-            enr.cancel_type = "normal"
-            enr.is_leader = False
-            db.commit()
-            logic.promote_all(db, g)   # 正常退选 → 名额释放给候补
-            if was_leader:
-                logic.refill_leader(db, vacated)
-            db.commit()
-            return {"ok": True, "effect": "released",
-                    "message": "退选成功，名额已释放给候补队列。"}
+        hours_left = (g.start_time - t).total_seconds() / 3600
+        late = hours_left < config.LATE_CANCEL_HOURS
+        # 报名还开着就说明平台仍在招人：此时把位子废掉自相矛盾——
+        # 新人能报、候补能转正，唯独这个位子空着谁都不能用。
+        # 所以扣分只看「距开始满不满 24 小时」，扣留还要求「报名已截止」。
+        reg_closed = bool(act.reg_end and t > act.reg_end)
+        hold_seat = late and reg_closed
 
-        # 临近退选：扣分，且名额不再释放——记录保留占位（《设计方案》阶段二.3）
         vacated, was_leader = enr.position_id, enr.is_leader
         enr.status = "cancelled"
-        enr.cancel_type = "late"
-        enr.seat_held = True
+        enr.cancel_type = "late" if late else "normal"
+        enr.seat_held = hold_seat
         enr.is_leader = False
-        score = credit.apply_delta(db, user, -config.LATE_CANCEL_PENALTY,
-                                   f"临近退选：距「{act.title}·{g.name}」开始不足"
-                                   f"{config.LATE_CANCEL_HOURS}小时",
-                                   activity_id=act.id)
+
+        score = None
+        if late:
+            score = credit.apply_delta(
+                db, user, -config.LATE_CANCEL_PENALTY,
+                f"临近退选：距「{act.title}·{g.name}」开始不足"
+                f"{config.LATE_CANCEL_HOURS}小时", activity_id=act.id)
+        db.commit()
+
+        if not hold_seat:
+            logic.promote_all(db, g)     # 名额放回去，候补按顺序递补
         if was_leader:
             logic.refill_leader(db, vacated)
         db.commit()
-    return {"ok": True, "effect": "penalized",
-            "credit_score": score,
+
+    if not late:
+        return {"ok": True, "effect": "released",
+                "message": "退选成功，名额已释放给候补队列。"}
+    tail = ("；该名额已按规则扣留，如需补人请联系负责老师。" if hold_seat
+            else "；报名尚未截止，名额已释放给候补队列。")
+    return {"ok": True, "effect": "penalized", "credit_score": score,
             "message": f"距开始不足{config.LATE_CANCEL_HOURS}小时退选，"
                        f"扣除信用分{config.LATE_CANCEL_PENALTY}分"
-                       f"（当前{score}分）；该名额已按规则扣留，不再释放。"}
+                       f"（当前{score}分）{tail}"}
 
 
 @router.post("/enrollments/{enrollment_id}/confirm-promotion")

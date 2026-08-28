@@ -1042,6 +1042,10 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
         # 队列按岗位分，名次也要按岗位算（见 logic.waitlist_position）
         row["queue_position"] = logic.waitlist_position(db, e)
         waitlist.append(row)
+    held = [user_row(e) for e in db.query(Enrollment)
+            .filter(Enrollment.shift_id == g.id,
+                    Enrollment.seat_held.is_(True))
+            .order_by(Enrollment.joined_at).all()]
     cancelled = [user_row(e) for e in db.query(Enrollment)
                  .filter(Enrollment.shift_id == g.id,
                          Enrollment.status == "cancelled")
@@ -1064,9 +1068,48 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
                       for p in positions],
         "confirmed": confirmed,
         "waitlist": waitlist,
+        "held": held,
         "cancelled": cancelled,
         "checked_in_count": len(checked_ids),
     }
+
+
+@router.post("/enrollments/{enrollment_id}/release-seat")
+def release_held_seat(enrollment_id: str, db: OrmSession = Depends(db_session),
+                      user: User = Depends(require_manager)):
+    """把临近退选扣留的名额放回去。
+
+    扣留是对退选者的约束（他自己也不能再报），但位子空着与否是现场需求——
+    补不补人由负责老师判断。放回后候补队列按顺序递补。
+    岗位名额本身不受影响：扣留从来不改老师填的数字，只是让一条已取消的
+    记录占着位子。
+    """
+    enr = db.get(Enrollment, enrollment_id)
+    if enr is None:
+        raise HTTPException(404, "报名记录不存在")
+    ensure_activity_manager(db, user, enr.activity_id)
+    if not enr.seat_held:
+        raise HTTPException(409, "该记录没有扣留名额")
+    g = _shift(db, enr.shift_id)
+    target = db.get(User, enr.user_id)
+    with shift_lock(g.id):
+        enr.seat_held = False
+        audit_log(db, actor=user, action="update", target_type="enrollment",
+                  target_id=enr.id, target_label=target.name,
+                  activity_id=enr.activity_id,
+                  summary=f"释放 {target.name} 临近退选扣留的名额"
+                          f"（{db.get(Position, enr.position_id).name if enr.position_id else g.name}）")
+        db.commit()
+        promoted = logic.promote_all(db, g)
+        db.commit()
+    # 过了自动转正截止点，放出来的位子不会自动被候补占上——老师释放名额
+    # 多半就是为了补人，这里要说清楚还差一步，否则位子会一直空着。
+    over = now() > logic.auto_promote_deadline(db, g)
+    return {"ok": True, "promoted": promoted, "auto_promote_over": over,
+            "message": ("名额已释放，候补队首已转为待确认。" if promoted
+                        else ("名额已释放；已过自动转正时间，"
+                              "请在候补名单中手动为某人转正。" if over
+                              else "名额已释放，但当前没有候补在排队。"))}
 
 
 @router.post("/enrollments/{enrollment_id}/promote")
