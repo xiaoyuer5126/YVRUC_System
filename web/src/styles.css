@@ -111,6 +111,14 @@ body {
   /* 页头里的按钮自身带的左外边距会破坏 gap 对齐 */
   .el-page-header__extra .el-button + .el-button { margin-left: 0; }
 
+  /* 标签栏在窄屏是横滑的，但看不出来——在这一行下面补一句提示。
+     用伪元素是因为 el-tabs 的 header 与 content 之间插不进真实节点。 */
+  .el-tabs__header::after {
+    content: '← 左右滑动查看更多功能 →';
+    display: block; text-align: center;
+    font-size: 12px; color: #a8abb2; padding: 2px 0 6px;
+  }
+
   /* 工具条换行，别把按钮挤出屏幕 */
   .toolbar { flex-wrap: wrap; gap: 8px; }
   .toolbar > * { flex-shrink: 0; }

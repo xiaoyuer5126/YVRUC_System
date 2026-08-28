@@ -347,3 +347,67 @@ def test_没有岗位的场次不能发布(client, admin, db):
                 json={"name": "引导", "quota": 3, **POSITION_TEXT})
     assert client.post(f"/api/staff/activities/{aid}/publish",
                        headers=admin).status_code == 200
+
+
+def test_恢复报名必须重设截止时间(client, admin, db, take_student):
+    """只把状态改回「报名中」而不动 reg_end，定时任务下一分钟就又截止了。"""
+    from backend.models import Activity, ActivityManager
+
+    admin_user = db.query(User).filter(User.student_id == ADMIN).one()
+    act = Activity(id=uid("act"), title=f"恢复报名 {uid('t')}", type="A",
+                   intro="x", location="x", organizer="校青协",
+                   contacts=[{"name": "测试", "phone": "13900000000"}],
+                   status="closed", reg_start=now() - timedelta(days=3),
+                   reg_end=now() - timedelta(hours=1), created_by=admin_user.id)
+    db.add(act)
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                           user_id=admin_user.id, added_by=admin_user.id))
+    db.add(Shift(id=uid("g"), activity_id=act.id, name="将来场次",
+                 start_time=now() + timedelta(days=5),
+                 end_time=now() + timedelta(days=5, hours=3),
+                 mode="pick", sort=0))
+    db.commit()
+    url = f"/api/staff/activities/{act.id}/reopen"
+
+    # 过去的时间：等于没恢复
+    r = client.post(url, headers=admin,
+                    json={"reg_end": (now() - timedelta(hours=1)).isoformat()})
+    assert r.status_code == 400 and "晚于当前时间" in r.json()["detail"]
+
+    # 晚于场次开始：报名到一半人已经在现场了
+    r = client.post(url, headers=admin,
+                    json={"reg_end": (now() + timedelta(days=6)).isoformat()})
+    assert r.status_code == 400 and "不能晚于" in r.json()["detail"]
+
+    r = client.post(url, headers=admin,
+                    json={"reg_end": (now() + timedelta(days=2)).isoformat()})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(Activity, act.id).status == "published"
+
+    # 已经在报名中的，不能再「恢复」
+    assert client.post(url, headers=admin,
+                       json={"reg_end": (now() + timedelta(days=2)).isoformat()}
+                       ).status_code == 409
+
+
+def test_活动开始后不能恢复报名(client, admin, db):
+    from backend.models import Activity, ActivityManager
+
+    admin_user = db.query(User).filter(User.student_id == ADMIN).one()
+    act = Activity(id=uid("act"), title=f"已开始 {uid('t')}", type="A",
+                   intro="x", location="x", organizer="校青协",
+                   contacts=[{"name": "测试", "phone": "13900000000"}],
+                   status="closed", reg_start=now() - timedelta(days=3),
+                   reg_end=now() - timedelta(days=1), created_by=admin_user.id)
+    db.add(act)
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                           user_id=admin_user.id, added_by=admin_user.id))
+    db.add(Shift(id=uid("g"), activity_id=act.id, name="进行中",
+                 start_time=now() - timedelta(hours=1),
+                 end_time=now() + timedelta(hours=2), mode="pick", sort=0))
+    db.commit()
+
+    r = client.post(f"/api/staff/activities/{act.id}/reopen", headers=admin,
+                    json={"reg_end": (now() + timedelta(hours=1)).isoformat()})
+    assert r.status_code == 409 and "已经开始" in r.json()["detail"]

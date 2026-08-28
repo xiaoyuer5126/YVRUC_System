@@ -30,22 +30,24 @@
       </template>
       <template #extra>
         <!-- 「调整岗位」只在岗位设置那一页出现一次，页头不重复放 -->
+        <el-button @click="openPoster">复制活动信息</el-button>
+        <el-button @click="editBase = true">编辑基本信息</el-button>
+        <el-popconfirm v-if="act.status === 'published'" title="截止后不再接受新报名，确认？"
+                       @confirm="transition('close')">
+          <template #reference><el-button type="warning">截止报名</el-button></template>
+        </el-popconfirm>
+        <el-button v-else-if="act.status === 'closed'" type="warning" plain
+                   @click="openReopen">恢复报名</el-button>
+        <el-popconfirm v-if="['published','closed'].includes(act.status)"
+                       title="结束活动，确认？" @confirm="transition('finish')">
+          <template #reference><el-button type="danger">结束活动</el-button></template>
+        </el-popconfirm>
         <!-- 草稿是首次发布，编辑态是发布改动，对管理者是同一件事：改完了，让学生看到 -->
         <el-popconfirm v-if="canPublish" :title="publishConfirm"
                        @confirm="saveAndPublish">
           <template #reference>
             <el-button type="success" :loading="lockBusy">保存并发布</el-button>
           </template>
-        </el-popconfirm>
-        <el-button @click="editBase = true">编辑基本信息</el-button>
-        <el-button @click="openPoster">复制活动信息</el-button>
-        <el-popconfirm v-if="act.status === 'published'" title="截止后不再接受新报名，确认？"
-                       @confirm="transition('close')">
-          <template #reference><el-button type="warning">截止报名</el-button></template>
-        </el-popconfirm>
-        <el-popconfirm v-else-if="['published','closed'].includes(act.status)"
-                       title="结束活动，确认？" @confirm="transition('finish')">
-          <template #reference><el-button type="danger">结束活动</el-button></template>
         </el-popconfirm>
       </template>
     </el-page-header>
@@ -822,6 +824,24 @@
       </template>
     </el-dialog>
 
+    <!-- 恢复报名：必须重设截止时间，否则定时任务下一分钟又给截了 -->
+    <el-dialog v-model="reopenDlg.visible" title="恢复报名" width="460">
+      <p class="dim" style="margin-top:0;line-height:1.8">
+        重新开放报名，并把报名截止时间往后延。<b>必须填新的截止时间</b>——
+        系统按这个时间自动截止，不改的话下一分钟就又截止了。
+      </p>
+      <el-form label-width="110px">
+        <el-form-item label="新的截止时间" required>
+          <el-date-picker v-model="reopenDlg.regEnd" type="datetime" style="width:100%"
+                          :default-time="DAY_END" placeholder="晚于此刻，且早于第一个场次开始" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="reopenDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="reopenDlg.busy" @click="doReopen">恢复报名</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 处理时长申诉 -->
     <el-dialog v-model="resolveDlg.visible"
                :title="resolveDlg.accept ? '采纳申诉' : '不采纳申诉'" width="480">
@@ -900,11 +920,11 @@
                     type="textarea" :rows="2"
                     placeholder="到岗前需要知道的事：流程、话术、应急联系人" /></el-form-item>
         <el-form-item label="学习材料">
-          <MaterialManager v-if="positionDlg.editing" owner-type="position"
-                           :owner-id="positionDlg.editing.id"
-                           :items="positionDlg.editing.attachments || []"
+          <!-- 新建时也能传：先攒在本地，保存建出岗位后再一并上传 -->
+          <MaterialManager ref="materialMgr" owner-type="position"
+                           :owner-id="positionDlg.editing?.id || ''"
+                           :items="positionDlg.editing?.attachments || []"
                            @changed="onMaterialChanged" />
-          <div v-else class="dim">先「保存」把岗位建出来，再回到这里上传</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -1481,6 +1501,8 @@ async function addPosition(g) {
   openStation(null, g)
 }
 
+const materialMgr = ref(null)
+
 function openStation(st, g) {
   positionDlg.value = { visible: true, editing: st, groupId: g.id }
   stationForm.value = st ? {
@@ -1523,12 +1545,17 @@ async function saveStation() {
       positionDlg.value.visible = false
       await loadAll()
     } else {
-      // 新建后不关窗：材料必须挂在已有岗位上，关了还得再点开一次
       const d = await api.post(
         `/api/staff/shifts/${positionDlg.value.groupId}/positions`, body)
-      ElMessage.success('岗位已创建，可以继续上传学习材料')
+      // 建出岗位后才有 id 可挂，这时把弹窗里攒的材料一并传上去
+      const failed = await materialMgr.value?.flush(d.id)
+      if (failed) {
+        ElMessage.warning(`岗位已创建，但有 ${failed} 个材料没传上，请在编辑里重试`)
+      } else {
+        ElMessage.success('岗位已创建')
+      }
+      positionDlg.value.visible = false
       await loadAll()
-      positionDlg.value.editing = findPosition(d.id)
     }
   } catch { /* toast by api */ } finally {
     savingStation.value = false
@@ -1623,6 +1650,23 @@ async function transition(action) {
 
 // —— 导出与时长 ——
 function doExport() { dl(`/api/staff/activities/${activityId}/export.xlsx`) }
+
+// —— 恢复报名 ——
+const reopenDlg = ref({ visible: false, regEnd: '', busy: false })
+const openReopen = () => { reopenDlg.value = { visible: true, regEnd: '', busy: false } }
+
+async function doReopen() {
+  const d = reopenDlg.value
+  if (!d.regEnd) return ElMessage.warning('请选择新的报名截止时间')
+  d.busy = true
+  try {
+    await api.post(`/api/staff/activities/${activityId}/reopen`,
+                   { reg_end: toISO(d.regEnd) })
+    ElMessage.success('已恢复报名')
+    d.visible = false
+    loadAll()
+  } finally { d.busy = false }
+}
 
 // —— 时长申诉 ——
 const appeals = ref([])

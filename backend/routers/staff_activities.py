@@ -441,6 +441,48 @@ def close(activity_id: str, bg: BackgroundTasks,
     return out
 
 
+class ReopenBody(BaseModel):
+    reg_end: str          # 新的报名截止时间，必须晚于此刻
+
+
+@router.post("/activities/{activity_id}/reopen")
+def reopen(activity_id: str, body: ReopenBody,
+           db: OrmSession = Depends(db_session),
+           user: User = Depends(require_manager)):
+    """已截止 → 重新开放报名。
+
+    必须重设截止时间：定时任务是按 reg_end 判断的，只把状态改回「报名中」
+    而不动 reg_end，下一分钟就会被再截止一次，等于白点。
+    活动开始之后不给恢复——人都到场了再往里放人没有意义。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    if act.status != "closed":
+        raise HTTPException(409, f"当前状态为「{act.label_status()}」，不能恢复报名")
+    span = act.time_span()
+    t = now()
+    if span and t >= span[0]:
+        raise HTTPException(409, "活动已经开始，不能恢复报名")
+    new_end = _parse_dt(body.reg_end)
+    if new_end is None:
+        raise HTTPException(400, "请选择新的报名截止时间")
+    if new_end <= t:
+        raise HTTPException(400, "新的报名截止时间必须晚于当前时间")
+    if span and new_end > span[0]:
+        raise HTTPException(400, "报名截止时间不能晚于第一个场次的开始时间")
+    old_end = act.reg_end
+    act.status = "published"
+    act.reg_end = new_end
+    audit_log(db, actor=user, action="publish", target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=f"恢复报名，报名截止时间 "
+                      f"{old_end:%m-%d %H:%M} → {new_end:%m-%d %H:%M}"
+                      if old_end else f"恢复报名，报名截止 {new_end:%m-%d %H:%M}",
+              visible=True)
+    db.commit()
+    return {"ok": True, "reg_end": iso(act.reg_end)}
+
+
 @router.post("/activities/{activity_id}/finish")
 def finish(activity_id: str, bg: BackgroundTasks,
            db: OrmSession = Depends(db_session),

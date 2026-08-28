@@ -6,6 +6,14 @@
       <span class="size">{{ m.kind === 'link' ? '链接' : sizeText(m.size) }}</span>
       <el-button link type="danger" size="small" @click="remove(m)">删除</el-button>
     </div>
+    <!-- 岗位还没保存时先攒着，保存后由调用方一次性传上去 -->
+    <div v-for="(m, i) in pending" :key="'p' + i" class="row">
+      <el-icon><Link v-if="m.kind === 'link'" /><Document v-else /></el-icon>
+      <span class="name">{{ m.title }}</span>
+      <span class="size">{{ m.kind === 'link' ? '链接' : sizeText(m.file?.size) }}</span>
+      <el-tag size="small" type="info" effect="plain">待保存</el-tag>
+      <el-button link type="danger" size="small" @click="pending.splice(i, 1)">移除</el-button>
+    </div>
 
     <div class="actions">
       <el-upload :show-file-list="false" :before-upload="upload" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.txt">
@@ -41,10 +49,14 @@ import { auth } from '../store'
 
 const props = defineProps({
   ownerType: { type: String, required: true },   // shift / position
-  ownerId: { type: String, required: true },
+  // 没有 ownerId = 对象还没建出来：先把文件攒在本地，保存后再传（见 flush）
+  ownerId: { type: String, default: '' },
   items: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['changed'])
+
+// 待保存队列：[{kind:'file', file} | {kind:'link', title, url}]
+const pending = ref([])
 
 const limitMB = 50
 const uploading = ref(false)
@@ -56,9 +68,18 @@ async function upload(file) {
     ElMessage.error(`文件不能超过 ${limitMB}MB，请改用「添加链接」`)
     return false
   }
+  if (!props.ownerId) {
+    pending.value.push({ kind: 'file', title: file.name, file })
+    return false
+  }
+  try { await send(file) } catch { /* 已弹过错误 */ }
+  return false      // 交给我们自己的 fetch，禁用 el-upload 的上传
+}
+
+async function send(file, ownerId = props.ownerId) {
   const form = new FormData()
   form.append('owner_type', props.ownerType)
-  form.append('owner_id', props.ownerId)
+  form.append('owner_id', ownerId)
   form.append('file', file)
   uploading.value = true
   try {
@@ -73,23 +94,50 @@ async function upload(file) {
     emit('changed')
   } catch (e) {
     ElMessage.error(e.message)
+    throw e
   } finally { uploading.value = false }
-  return false      // 交给上面的 fetch，禁用 el-upload 自己的上传
 }
 
 async function addLink() {
   if (!link.value.title.trim() || !link.value.url.trim()) {
     return ElMessage.warning('请填写名称与链接')
   }
-  await api.post('/api/staff/materials/link', {
-    owner_type: props.ownerType, owner_id: props.ownerId,
-    title: link.value.title, url: link.value.url,
-  })
-  ElMessage.success('已添加')
+  if (!props.ownerId) {
+    pending.value.push({ kind: 'link', ...link.value })
+  } else {
+    await api.post('/api/staff/materials/link', {
+      owner_type: props.ownerType, owner_id: props.ownerId,
+      title: link.value.title, url: link.value.url,
+    })
+    ElMessage.success('已添加')
+    emit('changed')
+  }
   linkDlg.value = false
   link.value = { title: '', url: '' }
-  emit('changed')
 }
+
+/** 岗位保存后把攒着的材料传上去，返回失败的条数。
+ *  失败不假装成功——调用方要如实告诉管理者哪几个没传上。 */
+async function flush(ownerId) {
+  const queue = pending.value
+  pending.value = []
+  let failed = 0
+  for (const m of queue) {
+    try {
+      if (m.kind === 'file') {
+        await send(m.file, ownerId)
+      } else {
+        await api.post('/api/staff/materials/link', {
+          owner_type: props.ownerType, owner_id: ownerId,
+          title: m.title, url: m.url,
+        })
+      }
+    } catch { failed += 1 }
+  }
+  return failed
+}
+
+defineExpose({ flush, pendingCount: () => pending.value.length })
 
 async function remove(m) {
   await api.del(`/api/staff/materials/${m.id}`)
