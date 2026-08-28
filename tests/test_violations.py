@@ -140,10 +140,10 @@ def test_登记必须填情况简述(client, act_of_type, student):
     assert r.status_code == 400
 
 
-def test_老师不能登记违规(client, teacher, act_of_type, student):
+def test_老师不能登记违规(client, initiator, act_of_type, student):
     """限制准入是全平台口径，只有管理员/青协能落。"""
     act = act_of_type("A")
-    r = client.post("/api/staff/violations", headers=teacher,
+    r = client.post("/api/staff/violations", headers=initiator,
                     json={"user_id": student.id, "activity_id": act.id,
                           "kind": "late", "detail": "迟到 20 分钟",
                           "types": ["C", "D"],

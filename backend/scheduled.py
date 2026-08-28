@@ -30,6 +30,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("advanced", auto_advance_activities),
                       ("reminders", send_checkin_reminders),
                       ("digests", send_roster_digests),
+                      ("approvals", remind_stale_approvals),
                       ("unlocked", release_stale_edit_locks)):
         try:
             result[name] = job(db)
@@ -128,6 +129,46 @@ def notify_managers_to_assign(db: OrmSession, act: Activity) -> None:
                                 f"请进入活动管理的「岗位设置」补齐岗位，"
                                 f"再到「报名与调配」运行一键分配。")
     logger.info("活动「%s」已截止，提醒管理者排岗：%s", act.title, "；".join(gaps))
+
+
+# ======================= 审批超时提醒 =======================
+
+def remind_stale_approvals(db: OrmSession) -> int:
+    """待审批放太久就催一次，抄送会长。**永不自动通过**。
+
+    审批是关口，没人看就该一直等着；能自动放行的关口等于没有关口。
+    催过一次就记下时间，别每分钟催一遍。
+    """
+    from .models import ApprovalEvent, Department  # noqa: F401
+    from .integrations import wecom as _wecom
+
+    deadline = now() - timedelta(hours=config.APPROVAL_REMIND_HOURS)
+    rows = (db.query(Activity)
+            .filter(Activity.status == "pending",
+                    Activity.submitted_at.isnot(None),
+                    Activity.submitted_at < deadline,
+                    Activity.approval_reminded_at.is_(None)).all())
+    for act in rows:
+        who = (db.get(User, act.approval_assignee_id)
+               if act.approval_assignee_id else None)
+        waited = int((now() - act.submitted_at).total_seconds() // 3600)
+        text = (f"「{act.title}」（{act.organizer}）已提交 {waited} 小时"
+                f"还没有处理。\n请到「活动审批」通过或驳回；"
+                f"确实不该由您批，可以转交。")
+        targets = [who] + [p for p in db.query(User)
+                           .filter(User.qingxie_post == "president").all()
+                           if p is not None and p.id != (who.id if who else "")]
+        for t in targets:
+            if t is None:
+                continue
+            _wecom.send_user(db, t, "custom", data={"activity_id": act.id},
+                             title=f"审批已等待 {waited} 小时｜{act.title}",
+                             content=text)
+        act.approval_reminded_at = now()
+        logger.info("活动「%s」审批超时未处理，已提醒", act.title)
+    if rows:
+        db.commit()
+    return len(rows)
 
 
 # ======================= 编辑冻结兜底 =======================

@@ -8,7 +8,8 @@ import pytest
 from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, Shift, Position,
                             User, now, uid)
-from conftest import ADMIN, POSITION_TEXT, QINGXIE, editing, login
+from conftest import (ADMIN, POSITION_TEXT, QINGXIE, approve, editing,
+                      login)
 
 
 @pytest.fixture
@@ -49,11 +50,11 @@ def test_draft_visible_to_its_manager(client, admin, draft_activity):
                       headers=admin).status_code == 200
 
 
-def test_non_manager_cannot_touch_others_activity(client, teacher,
+def test_non_manager_cannot_touch_others_activity(client, initiator,
                                                   draft_activity):
     """老师只能管自己参与共管的活动。"""
     r = client.patch(f"/api/staff/activities/{draft_activity.id}",
-                     json={"location": "被别人改了"}, headers=teacher)
+                     json={"location": "被别人改了"}, headers=initiator)
     assert r.status_code == 403
 
 
@@ -208,11 +209,11 @@ def test_unchecked_out_hours_need_review(client, admin, db, take_student):
     assert got[stayer.id] == "enrolled" and got[quitter.id] is None
 
 
-def test_qingxie_sees_users_page_teacher_does_not(client, teacher):
+def test_qingxie_sees_users_page_initiator_does_not(client, initiator):
     qingxie = login(client, QINGXIE)
     assert client.get("/api/staff/users", headers=qingxie).status_code == 200
-    assert client.get("/api/staff/users", headers=teacher).status_code == 403
-    assert client.get("/api/staff/overview", headers=teacher).status_code == 403
+    assert client.get("/api/staff/users", headers=initiator).status_code == 403
+    assert client.get("/api/staff/overview", headers=initiator).status_code == 403
 
 
 # ======================= 复制 =======================
@@ -340,11 +341,19 @@ def test_没有岗位的场次不能发布(client, admin, db):
                           "end_time": (now() + timedelta(days=5, hours=3)).isoformat()})
     shift_id = r.json()["id"]
 
-    r = client.post(f"/api/staff/activities/{aid}/publish", headers=admin)
+    # 结构不全在**提交审批**就被拦下，不必等到发布，也不该让审批人替他查
+    dept = client.get("/api/staff/departments", headers=admin).json()[0]
+    r = client.post(f"/api/staff/activities/{aid}/submit", headers=admin,
+                    json={"department_id": dept["id"]})
     assert r.status_code == 400 and "还没有岗位" in r.json()["detail"]
+
+    # 草稿也不能绕过审批直接发布
+    r = client.post(f"/api/staff/activities/{aid}/publish", headers=admin)
+    assert r.status_code == 409 and "先提交校青协审批" in r.json()["detail"]
 
     client.post(f"/api/staff/shifts/{shift_id}/positions", headers=admin,
                 json={"name": "引导", "quota": 3, **POSITION_TEXT})
+    approve(client, admin, aid)
     assert client.post(f"/api/staff/activities/{aid}/publish",
                        headers=admin).status_code == 200
 

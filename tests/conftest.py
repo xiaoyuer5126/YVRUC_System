@@ -51,7 +51,7 @@ from backend.main import app  # noqa: E402
 DEMO_PASSWORD = os.environ["RUCVA_DEMO_PASSWORD"]
 
 ADMIN = "2025001"        # 王砚秋，管理员
-TEACHER = "2025002"      # 李慕清，老师（只管自己的活动）
+INITIATOR = "2025002"    # 李慕清，活动发起方（只管自己的活动）
 QINGXIE = "2025003"      # 张远航，青协
 
 
@@ -150,8 +150,9 @@ def admin(client):
 
 
 @pytest.fixture
-def teacher(client):
-    return login(client, TEACHER)
+def initiator(client):
+    """另一个有管理身份、但不管这个活动的人。用来验越权。"""
+    return login(client, INITIATOR)
 
 
 @pytest.fixture(scope="session")
@@ -236,6 +237,23 @@ def make_enrolled_activity(db, take_student):
 @pytest.fixture
 def enrolled_activity(db, take_student):
     return make_enrolled_activity(db, take_student)
+
+
+def approve(client, headers, activity_id):
+    """走一遍审批：提交给一个有部长的部门 → 通过。要发布活动就得先过这关。
+
+    挑「有部长的」而不是第一个：部长可以被改到别的部门去，用例之间共用
+    一个库，写死下标会被别的用例改出来的状态坑掉。
+    """
+    depts = [d for d in client.get("/api/staff/departments", headers=headers).json()
+             if d["has_head"]]
+    assert depts, "没有任何部门设了部长，无法走审批"
+    r = client.post(f"/api/staff/activities/{activity_id}/submit", headers=headers,
+                    json={"department_id": depts[0]["id"]})
+    assert r.status_code == 200, r.text
+    r = client.post(f"/api/staff/activities/{activity_id}/decide", headers=headers,
+                    json={"approve": True})
+    assert r.status_code == 200, r.text
 
 
 @contextmanager

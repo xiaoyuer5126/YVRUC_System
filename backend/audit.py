@@ -1,7 +1,7 @@
 """审计留痕服务。
 
 《设计方案》四.2「谁动了我的岗位」：
-  所有老师/青协的增删改 → audit_logs；
+  所有发起方/青协的增删改 → audit_logs；
   活动相关且 visible=True 的记录在活动详情页对志愿者展示（倒序前10条）。
 """
 from __future__ import annotations

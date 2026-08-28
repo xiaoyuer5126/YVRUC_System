@@ -22,7 +22,7 @@
       <template #content>
         <div class="hd-title">
           <b>{{ act.title }}</b>
-          <el-tag size="small" :type="{published:'success',closed:'info',draft:'warning',finished:'info'}[act.status]">
+          <el-tag size="small" :type="{published:'success',closed:'info',draft:'info',pending:'warning',approved:'primary',finished:'info'}[act.status]">
             {{ act.status_label }}
           </el-tag>
         </div>
@@ -42,6 +42,12 @@
                        title="结束活动，确认？" @confirm="transition('finish')">
           <template #reference><el-button type="danger">结束活动</el-button></template>
         </el-popconfirm>
+        <el-button v-if="act.status === 'draft'" type="primary" @click="openSubmit">
+          提交审批
+        </el-button>
+        <el-tag v-else-if="act.status === 'pending'" type="warning" size="large" effect="dark">
+          待 {{ approval?.department || '青协' }} 审批
+        </el-tag>
         <!-- 草稿是首次发布，编辑态是发布改动，对管理者是同一件事：改完了，让学生看到 -->
         <el-popconfirm v-if="canPublish" :title="publishConfirm"
                        @confirm="saveAndPublish">
@@ -51,6 +57,18 @@
         </el-popconfirm>
       </template>
     </el-page-header>
+
+    <!-- 审批状态：待审批看到审批人，被驳回看到意见 -->
+    <el-alert v-if="act.status === 'pending'" type="warning" show-icon :closable="false"
+              style="margin:12px 0"
+              :title="`已提交${approval?.department || ''}审批，等待 ${approval?.assignee || ''} 处理`"
+              description="审批期间可以继续调整安排；通过后回到你手里，由你点「保存并发布」开始报名。" />
+    <el-alert v-else-if="act.status === 'approved'" type="success" show-icon :closable="false"
+              style="margin:12px 0" title="审批已通过，可以发布了"
+              :description="approval?.comment ? ('审批意见：' + approval.comment) : ''" />
+    <el-alert v-else-if="act.status === 'draft' && approval?.comment" type="error" show-icon
+              :closable="false" style="margin:12px 0" title="审批未通过"
+              :description="'意见：' + approval.comment + '；修改后可重新提交。'" />
 
     <el-alert v-if="act.editing" type="warning" :closable="false" show-icon
               style="margin:12px 0"
@@ -657,7 +675,7 @@
       <el-tab-pane label="管理者" name="managers" lazy>
         <el-alert type="info" :closable="false" style="margin-bottom:12px">
           一个活动可由多人共同管理：创建者自动成为管理者（<b>不可被移除</b>，但权限上不特殊）；
-          管理者之间权限完全相同，可互相添加/移除；被添加者须持有 <b>老师/青协</b> 身份。
+          管理者之间权限完全相同，可互相添加/移除；被添加者须持有 <b>活动发起方/青协</b> 身份。
         </el-alert>
         <el-card shadow="never">
           <div class="toolbar" style="margin-bottom:10px">
@@ -826,6 +844,31 @@
       <template #footer>
         <el-button @click="attDlg.visible = false">取消</el-button>
         <el-button type="primary" :loading="attDlg.busy" @click="saveAttached">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 提交审批 -->
+    <el-dialog v-model="submitDlg.visible" title="提交校青协审批" width="500">
+      <p class="dim" style="margin-top:0;line-height:1.8">
+        所有活动发布前都要过校青协。选一个归口部门，提交给该部门部长；
+        通过后活动回到你手里，由你自己点发布。
+      </p>
+      <el-form label-width="88px">
+        <el-form-item label="审批部门" required>
+          <el-select v-model="submitDlg.deptId" placeholder="选择归口部门" style="width:100%">
+            <el-option v-for="d in depts" :key="d.id" :value="d.id" :disabled="!d.has_head"
+                       :label="d.name + (d.note ? ' ' + d.note : '')
+                               + (d.head_name ? `（部长 ${d.head_name}）` : '（未设部长）')" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="给审批人">
+          <el-input v-model="submitDlg.note" type="textarea" :rows="2"
+                    placeholder="选填，补充说明" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="submitDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="submitDlg.busy" @click="doSubmit">提交</el-button>
       </template>
     </el-dialog>
 
@@ -1112,17 +1155,18 @@ async function startEditing() {
 }
 
 // 草稿 → 首次发布；编辑态 → 发布这批改动。对管理者都是「改完了，让学生看到」
+// 草稿不能直接发布：要先过审批。approved 才轮到「保存并发布」
 const canPublish = computed(
-  () => !!act.value && (act.value.status === 'draft' || act.value.editing))
+  () => !!act.value && (act.value.status === 'approved' || act.value.editing))
 
-const publishConfirm = computed(() => act.value?.status === 'draft'
+const publishConfirm = computed(() => act.value?.status === 'approved'
   ? '发布后学生即可报名，确认？'
   : '恢复报名，并把这段时间的改动通知已报名的志愿者？')
 
 async function saveAndPublish() {
   lockBusy.value = true
   try {
-    if (act.value.status === 'draft') {
+    if (act.value.status === 'approved') {
       await api.post(`/api/staff/activities/${activityId}/publish`)
       ElMessage.success('已发布，学生现在可以报名了')
     } else {
@@ -1273,6 +1317,7 @@ async function loadAll() {
     logs.value = logsResp.items || []
     managers.value = await api.get(`/api/staff/activities/${activityId}/managers`)
     loadAppeals()      // 标签上的红点要一进页面就在，不能等切到那一页才知道
+    loadApproval()
     if (!currentGroupId.value && shifts.value.length) {
       currentGroupId.value = shifts.value[0].id
     }
@@ -1664,6 +1709,34 @@ async function transition(action) {
 
 // —— 导出与时长 ——
 function doExport() { dl(`/api/staff/activities/${activityId}/export.xlsx`) }
+
+// —— 提交审批 ——
+const approval = ref(null)
+const depts = ref([])
+const submitDlg = ref({ visible: false, deptId: '', note: '', busy: false })
+
+async function loadApproval() {
+  approval.value = await api.get(
+    `/api/staff/activities/${activityId}/approval`, { silent: true })
+}
+
+async function openSubmit() {
+  depts.value = await api.get('/api/staff/departments')
+  submitDlg.value = { visible: true, deptId: '', note: '', busy: false }
+}
+
+async function doSubmit() {
+  const d = submitDlg.value
+  if (!d.deptId) return ElMessage.warning('请选择审批部门')
+  d.busy = true
+  try {
+    const r = await api.post(`/api/staff/activities/${activityId}/submit`,
+                             { department_id: d.deptId, note: d.note })
+    ElMessage.success(`已提交，等待 ${r.assignee} 审批`)
+    d.visible = false
+    loadAll()
+  } finally { d.busy = false }
+}
 
 // —— 恢复报名 ——
 const reopenDlg = ref({ visible: false, regEnd: '', busy: false })

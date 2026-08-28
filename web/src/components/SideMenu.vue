@@ -7,6 +7,9 @@
         <el-icon><Odometer /></el-icon>数据总览
       </el-menu-item>
       <el-menu-item index="/manage"><el-icon><Calendar /></el-icon>活动管理</el-menu-item>
+      <el-menu-item v-if="canSee.approvals()" index="/approvals">
+        <el-icon><Stamp /></el-icon>活动审批
+      </el-menu-item>
       <el-menu-item index="/audit"><el-icon><Document /></el-icon>审计日志</el-menu-item>
       <el-menu-item v-if="canSee.users()" index="/users">
         <el-icon><UserFilled /></el-icon>用户与信用
@@ -28,8 +31,8 @@
 
 <script setup>
 import {
-  Bell, Calendar, Clock, Compass, Document, Link, Odometer, Star, Tickets,
-  UserFilled,
+  Bell, Calendar, Clock, Compass, Document, Link, Odometer, Stamp, Star,
+  Tickets, UserFilled,
 } from '@element-plus/icons-vue'
 import { auth, canSee, ROLE_LABELS } from '../store'
 

@@ -32,8 +32,13 @@ def display_status(act: Activity) -> tuple[str, str]:
         筹备中 → 未开始报名 → 报名中 → 已截止 → 进行中 → 已结束
     """
     t = now()
+    # 三种「还没公开」的状态在展示层是一回事：学生看不到，管理端各有各的按钮
     if act.status == "draft":
-        return "draft", "筹备中"
+        return "draft", "草稿"
+    if act.status == "pending":
+        return "draft", "待审批"
+    if act.status == "approved":
+        return "draft", "待发布"
     if act.status == "finished":
         return "finished", "已结束"
 

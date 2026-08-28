@@ -90,9 +90,10 @@ def main() -> None:
         # 用户类型（老师/学生 二选一） + 身份（可多个，可切换）
         staff_specs = [
             # 学号, 姓名, 类型, 身份
-            ("2025001", "王砚秋", "teacher", ["admin", "teacher"]),   # 管理员：见全部
-            ("2025002", "李慕清", "teacher", ["teacher"]),            # 老师：仅自己管理的活动
-            ("2025003", "张远航", "student", ["qingxie", "student"]), # 青协（学生类型）：可管活动+用户与信用
+            ("2025001", "王砚秋", "teacher", ["admin", "qingxie"]),  # 管理员：见全部
+            ("2025002", "李慕清", "teacher", ["initiator"]),          # 发起方：仅自己管理的活动
+            ("2025003", "张远航", "student", ["qingxie", "student"]), # 青协（学生类型）：会长
+            ("2025004", "周砚", "student", ["qingxie", "student"]),     # 青协：对外联络部部长
         ]
         users: dict[str, User] = {}
         for sid, name, utype, roles in staff_specs:
@@ -109,6 +110,17 @@ def main() -> None:
         wang = users["2025001"]
         limu = users["2025002"]
         zhang = users["2025003"]
+
+        # 部门与职务：审批按部门归口，部长是默认审批人，会长可接管任何一条
+        from backend.routers.approvals import ensure_departments
+        from backend.models import Department
+        ensure_departments(db)
+        zhang.qingxie_post = "president"
+        liaison = (db.query(Department)
+                   .filter(Department.name == "对外联络部").one())
+        users["2025004"].department_id = liaison.id
+        users["2025004"].qingxie_post = "head"
+        db.commit()
 
         colleges = ["明理书院", "新闻学院", "法学院", "财政金融学院", "经济学院",
                     "信息学院", "外国语学院", "马克思主义学院", "社会学院",

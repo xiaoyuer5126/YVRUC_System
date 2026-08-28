@@ -2,7 +2,7 @@
 
   · 创建者自动成为管理者（created_by 仅作记录，不产生额外权限）；
   · 管理者之间权限完全相同，可互相添加/移除（创建者不可被移除）；
-  · 被添加者必须持有 老师/青协 身份；管理员无需添加，天然可见/可操作全部。
+  · 被添加者必须持有 活动发起方/青协 身份；管理员无需添加，天然可见/可操作全部。
 """
 from __future__ import annotations
 
@@ -42,8 +42,8 @@ def activity_manager_ids(db: OrmSession, activity_id: str) -> list[str]:
 def add_manager(db: OrmSession, activity_id: str, user: User,
                 added_by: User) -> ActivityManager:
     if not user.is_manager_identity():
-        raise HTTPException(400, "活动管理者仅限 老师/青协 身份"
-                                 f"（{user.name} 当前身份不含老师/青协）")
+        raise HTTPException(400, "活动管理者仅限 活动发起方/青协 身份"
+                                 f"（{user.name} 当前身份不含活动发起方/青协）")
     exists = db.query(ActivityManager).filter_by(
         activity_id=activity_id, user_id=user.id).first()
     if exists:

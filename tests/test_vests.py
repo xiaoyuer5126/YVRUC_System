@@ -131,7 +131,7 @@ def test_台账与手动登记(client, admin, db, vest_activity):
                        json={}).status_code == 400      # 没人可催了
 
 
-def test_非本活动管理者看不到台账(client, teacher, vest_activity):
+def test_非本活动管理者看不到台账(client, initiator, vest_activity):
     act, _a, _b = vest_activity
     assert client.get(f"/api/staff/activities/{act.id}/vests",
-                      headers=teacher).status_code == 403
+                      headers=initiator).status_code == 403

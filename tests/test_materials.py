@@ -63,9 +63,9 @@ def test_超大文件与不支持的类型被拒(client, admin, enrolled_activit
     assert r.status_code == 400 and "MB" in r.json()["detail"]
 
 
-def test_非本活动管理者不能上传(client, teacher, enrolled_activity):
+def test_非本活动管理者不能上传(client, initiator, enrolled_activity):
     _act, shift, _u = enrolled_activity
-    assert _upload(client, teacher, shift.id).status_code == 403
+    assert _upload(client, initiator, shift.id).status_code == 403
 
 
 def test_链接必须是http开头(client, admin, enrolled_activity):

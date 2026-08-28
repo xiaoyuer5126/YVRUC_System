@@ -24,7 +24,7 @@
           <el-button size="small" type="primary"
                      @click="$router.push('/manage/' + row.id)">管理</el-button>
           <el-button size="small" @click="openCopy(row)">复制</el-button>
-          <el-popconfirm v-if="row.status === 'draft'" title="发布后学生即可报名，确认？"
+          <el-popconfirm v-if="row.status === 'approved'" title="发布后学生即可报名，确认？"
                          @confirm="transition(row, 'publish')">
             <template #reference><el-button size="small" type="success" plain>发布</el-button></template>
           </el-popconfirm>
@@ -66,7 +66,7 @@
             <el-button size="small" type="primary" link
                        @click="$router.push('/manage/' + row.id)">管理</el-button>
             <el-button size="small" link @click="openCopy(row)">复制</el-button>
-            <el-popconfirm v-if="row.status === 'draft'" title="发布后学生即可报名，确认？"
+            <el-popconfirm v-if="row.status === 'approved'" title="发布后学生即可报名，确认？"
                            @confirm="transition(row, 'publish')">
               <template #reference><el-button size="small" type="success" link>发布</el-button></template>
             </el-popconfirm>
@@ -152,7 +152,7 @@ const form = ref({})
 const createRange = ref([])
 
 const typeColor = t => TYPE_COLORS[t]?.color
-const statusType = s => ({ published: 'success', closed: 'info', draft: 'warning', finished: 'info' }[s])
+const statusType = s => ({ published: 'success', closed: 'info', draft: 'info', pending: 'warning', approved: 'primary', finished: 'info' }[s])
 const pct = r => Math.min(100, Math.round(r.total_enrolled / Math.max(1, r.total_capacity) * 100))
 
 function openCopy(row) {

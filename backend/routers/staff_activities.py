@@ -386,18 +386,12 @@ def publish(activity_id: str, db: OrmSession = Depends(db_session),
             user: User = Depends(require_manager)):
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    if act.status != "draft":
+    # 所有活动发布前都要过校青协：草稿要先提交审批，通过后才轮到这一步
+    if act.status == "draft":
+        raise HTTPException(409, "请先提交校青协审批，通过后再发布")
+    if act.status != "approved":
         raise HTTPException(409, f"当前状态为「{act.label_status()}」，不能发布")
-    if not act.main_shifts():
-        raise HTTPException(400, "请先至少创建一个场次再发布")
-    # 「报名即选岗位」的场次没有岗位就等于没有名额，发出去学生一个都报不了
-    empty = [g.name for g in act.main_shifts()
-             if not g.needs_assign() and not g.positions]
-    if empty:
-        raise HTTPException(
-            400, f"场次「{'、'.join(empty)}」还没有岗位——名额与候补都记在岗位上，"
-                 f"没有岗位学生就报不了名。请先添加岗位，或把这些场次改为"
-                 f"「截止后统一分配」")
+    ensure_ready_to_publish(act)
     act.status = "published"
     if act.reg_start is None:
         act.reg_start = now()
@@ -406,6 +400,20 @@ def publish(activity_id: str, db: OrmSession = Depends(db_session),
               summary="发布活动，开始报名")
     db.commit()
     return {"ok": True}
+
+
+def ensure_ready_to_publish(act: Activity) -> None:
+    """结构上够不够格公开。提交审批与发布都走这一道，别让审批人替发起方查。"""
+    if not act.main_shifts():
+        raise HTTPException(400, "请先至少创建一个场次")
+    # 「报名即选岗位」的场次没有岗位就等于没有名额，发出去学生一个都报不了
+    empty = [g.name for g in act.main_shifts()
+             if not g.needs_assign() and not g.positions]
+    if empty:
+        raise HTTPException(
+            400, f"场次「{'、'.join(empty)}」还没有岗位——名额与候补都记在岗位上，"
+                 f"没有岗位学生就报不了名。请先添加岗位，或把这些场次改为"
+                 f"「截止后统一分配」")
 
 
 def _transition(activity_id: str, target: str, action: str, summary: str,

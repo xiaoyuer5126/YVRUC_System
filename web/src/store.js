@@ -30,7 +30,7 @@ export function setActiveIdentity(role) {
 function pickDefaultIdentity(user) {
   const roles = user?.roles || []
   if (roles.includes('admin')) return 'admin'
-  if (roles.includes('teacher')) return 'teacher'
+  if (roles.includes('initiator')) return 'initiator'
   if (roles.includes('qingxie')) return 'qingxie'
   return 'student'
 }
@@ -45,20 +45,21 @@ export function clearAuth() {
 }
 
 export const ROLE_LABELS = {
-  admin: '管理员', teacher: '老师', qingxie: '青协', student: '学生',
+  admin: '管理员', qingxie: '青协', initiator: '活动发起方', student: '学生',
 }
 
 export const hasIdentity = (role) => !!auth.user && (auth.user.roles || []).includes(role)
 export const isAdmin = () => hasIdentity('admin')
 export const isManager = () =>
-  isAdmin() || hasIdentity('teacher') || hasIdentity('qingxie')
+  isAdmin() || hasIdentity('initiator') || hasIdentity('qingxie')
 
 // —— 页面可见性（按当前身份视角） ——
 export const canSee = {
   dashboard: () => auth.activeIdentity === 'admin',
-  manage: () => ['admin', 'teacher', 'qingxie'].includes(auth.activeIdentity),
-  audit: () => ['admin', 'teacher', 'qingxie'].includes(auth.activeIdentity),
+  manage: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
+  audit: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
   users: () => ['admin', 'qingxie'].includes(auth.activeIdentity),
+  approvals: () => ['admin', 'qingxie'].includes(auth.activeIdentity),
   integrations: () => auth.activeIdentity === 'admin',
   personal: () => true,
 }

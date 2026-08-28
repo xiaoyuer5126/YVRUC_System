@@ -44,6 +44,10 @@ ABANDON_BAN_DAYS = 120     # 「本学期」按 120 天近似
 # 签退宽限：场次结束后这么久内仍可自行签退，超时按场次结束时间兜底并标记待核
 CHECKOUT_GRACE_HOURS = 2
 
+# 审批放着没人处理多久开始催（小时）。只催人，**绝不自动通过**——
+# 审批不能因为没人看就默认放行。
+APPROVAL_REMIND_HOURS = int(os.environ.get("RUCVA_APPROVAL_REMIND_HOURS", "24"))
+
 # 编辑冻结的自动解除时长（小时）：管理者点了「调整岗位」就去开会，
 # 学生一下午都报不了名——超时没保存就自动解冻并提醒他。
 EDIT_LOCK_HOURS = 2

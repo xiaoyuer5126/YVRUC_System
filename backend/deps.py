@@ -5,8 +5,8 @@
 放开全站会让令牌进 nginx 访问日志、浏览器历史和外链 Referer。
 
 权限模型（两层）：
-  · 身份（User.roles，可多个）：管理员 / 老师 / 青协 / 学生
-      - 工作台入口：老师 / 青协 / 管理员
+  · 身份（User.roles，可多个）：管理员 / 青协 / 活动发起方 / 学生
+      - 工作台入口：活动发起方 / 青协 / 管理员
       - 数据总览 / 集成设置：仅管理员
       - 用户与信用：管理员 / 青协
   · 活动级（activity_managers）：非管理员只能操作自己管理的活动
@@ -63,15 +63,15 @@ def current_user_download(request: Request,
 
 
 def require_manager(user: User = Depends(current_user)) -> User:
-    """工作台入口：老师 / 青协 / 管理员身份。"""
+    """工作台入口：活动发起方 / 青协 / 管理员身份。"""
     if not user.is_manager_identity():
-        raise HTTPException(403, "需要 老师/青协/管理员 身份")
+        raise HTTPException(403, "需要 活动发起方/青协/管理员 身份")
     return user
 
 
 def require_manager_download(user: User = Depends(current_user_download)) -> User:
     if not user.is_manager_identity():
-        raise HTTPException(403, "需要 老师/青协/管理员 身份")
+        raise HTTPException(403, "需要 活动发起方/青协/管理员 身份")
     return user
 
 

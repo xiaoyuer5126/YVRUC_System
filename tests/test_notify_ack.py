@@ -137,10 +137,10 @@ def test_催办不产生新的待签收(client, admin, db, enrolled_activity):
     assert (b["total"], b["acked"], b["pending"]) == (1, 1, [])
 
 
-def test_非本活动管理者不能查看签收情况(client, teacher, enrolled_activity):
+def test_非本活动管理者不能查看签收情况(client, initiator, enrolled_activity):
     act, _shift, _u = enrolled_activity
     r = client.get(f"/api/staff/activities/{act.id}/notify-batches",
-                   headers=teacher)
+                   headers=initiator)
     assert r.status_code == 403
 
 

@@ -19,6 +19,7 @@ const routes = [
       { path: 'dashboard', component: () => import('./views/DashboardView.vue'), meta: { page: 'dashboard' } },
       { path: 'manage', component: () => import('./views/ActivitiesAdminView.vue'), meta: { page: 'manage' } },
       { path: 'manage/:id', component: () => import('./views/ActivityAdminView.vue'), meta: { page: 'manage' } },
+      { path: 'approvals', component: () => import('./views/ApprovalsView.vue'), meta: { page: 'approvals' } },
       { path: 'audit', component: () => import('./views/AuditLogsView.vue'), meta: { page: 'audit' } },
       { path: 'users', component: () => import('./views/UsersCreditView.vue'), meta: { page: 'users' } },
       { path: 'integrations', component: () => import('./views/IntegrationsView.vue'), meta: { page: 'integrations' } },
@@ -40,7 +41,7 @@ router.beforeEach((to) => {
   if (!to.meta.public && !auth.token) {
     return { path: '/login', query: { next: to.fullPath } }
   }
-  const manageView = ['admin', 'teacher', 'qingxie'].includes(auth.activeIdentity)
+  const manageView = ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity)
 
   // 首页按视角分流：工作台视角落地活动管理，学生视角落地活动广场
   if (to.path === '/') {
@@ -58,9 +59,10 @@ router.beforeEach((to) => {
 
   const need = {
     dashboard: () => auth.activeIdentity === 'admin',
-    manage: () => ['admin', 'teacher', 'qingxie'].includes(auth.activeIdentity),
-    audit: () => ['admin', 'teacher', 'qingxie'].includes(auth.activeIdentity),
+    manage: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
+    audit: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
     users: () => ['admin', 'qingxie'].includes(auth.activeIdentity),
+    approvals: () => ['admin', 'qingxie'].includes(auth.activeIdentity),
     integrations: () => auth.activeIdentity === 'admin',
   }[page]
   if (!need || need()) return
@@ -69,8 +71,9 @@ router.beforeEach((to) => {
   const wanted = {
     dashboard: 'admin', integrations: 'admin',
     users: hasIdentity('admin') ? 'admin' : 'qingxie',
-    manage: hasIdentity('admin') ? 'admin' : hasIdentity('teacher') ? 'teacher' : 'qingxie',
-    audit: hasIdentity('admin') ? 'admin' : hasIdentity('teacher') ? 'teacher' : 'qingxie',
+    approvals: hasIdentity('admin') ? 'admin' : 'qingxie',
+    manage: hasIdentity('admin') ? 'admin' : hasIdentity('initiator') ? 'initiator' : 'qingxie',
+    audit: hasIdentity('admin') ? 'admin' : hasIdentity('initiator') ? 'initiator' : 'qingxie',
   }[page]
   if (wanted && hasIdentity(wanted)) {
     setActiveIdentity(wanted)

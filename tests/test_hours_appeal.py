@@ -185,7 +185,7 @@ def test_已回传的不能再申诉(client, admin, db, served):
     assert r.status_code == 409
 
 
-def test_非本活动管理者不能处理申诉(client, admin, teacher, db, served):
+def test_非本活动管理者不能处理申诉(client, admin, initiator, db, served):
     act, _g, u = served
     _confirm(client, admin, act)
     stu = login(client, u.student_id)
@@ -195,4 +195,4 @@ def test_非本活动管理者不能处理申诉(client, admin, teacher, db, ser
     a = client.get(f"/api/staff/activities/{act.id}/hours-appeals",
                    headers=admin).json()[0]
     assert client.post(f"/api/staff/hours-appeals/{a['id']}/resolve",
-                       headers=teacher, json={"accept": True}).status_code == 403
+                       headers=initiator, json={"accept": True}).status_code == 403

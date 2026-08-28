@@ -36,11 +36,16 @@ def iso(dt: datetime | None) -> str | None:
 
 # ======================= 用户与会话 =======================
 
-# 用户身份（可多个）：管理员 / 老师 / 青协 / 学生
-ROLES = ("admin", "teacher", "qingxie", "student")
-ROLE_LABELS = {"admin": "管理员", "teacher": "老师", "qingxie": "青协", "student": "学生"}
-# 可被设为活动管理者的身份（老师 / 青协；管理员天然全权）
-MANAGER_ROLES = ("teacher", "qingxie")
+# 用户身份（可多个）：管理员 / 青协 / 活动发起方 / 学生
+#
+# 「活动发起方」同时盖住学校各部门的老师和院系二级志愿团体的学生负责人：
+# 他们做的是同一件事——发起活动、交给校青协审批。类型（老师/学生）另算，
+# 决定的是能不能报名，与这里无关。
+ROLES = ("admin", "qingxie", "initiator", "student")
+ROLE_LABELS = {"admin": "管理员", "qingxie": "青协",
+               "initiator": "活动发起方", "student": "学生"}
+# 可被设为活动管理者的身份（发起方 / 青协；管理员天然全权）
+MANAGER_ROLES = ("initiator", "qingxie")
 
 
 class User(Base):
@@ -61,7 +66,7 @@ class User(Base):
     # 港澳台学生与留学生没有内地居民身份证号，勾选后免填
     no_mainland_id: Mapped[bool] = mapped_column(Boolean, default=False)
     # —— 类型与身份 ——
-    # 类型二选一（老师/学生）；身份可多个（管理员/老师/青协/学生），可切换视角。
+    # 类型二选一（老师/学生）；身份可多个（管理员/青协/活动发起方/学生），可切换视角。
     user_type: Mapped[str] = mapped_column(String(12), default="student")  # teacher / student
     roles: Mapped[list] = mapped_column(JSON, default=list)                # ["student", ...]
 
@@ -75,7 +80,21 @@ class User(Base):
     restricted_types: Mapped[list] = mapped_column(JSON, default=list)   # ["C","D"]
     restricted_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # —— 青协内部职务（只对 qingxie 身份有意义）——
+    # 部长是本部门活动的默认审批人；会长可以接管任何一条审批。
+    department_id: Mapped[str | None] = mapped_column(
+        ForeignKey("departments.id"), nullable=True, index=True)
+    qingxie_post: Mapped[str] = mapped_column(String(12), default="member")
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    POST_LABELS = {"president": "会长", "head": "部长", "member": "干事"}
+
+    def post_label(self) -> str:
+        return self.POST_LABELS.get(self.qingxie_post, self.qingxie_post)
+
+    def is_president(self) -> bool:
+        return self.has_role("qingxie") and self.qingxie_post == "president"
 
     def has_role(self, *roles: str) -> bool:
         return bool(set(roles) & set(self.roles or []))
@@ -84,7 +103,7 @@ class User(Base):
         return self.has_role("admin")
 
     def is_manager_identity(self) -> bool:
-        """能否进入工作台/被设为活动管理者：老师 / 青协（管理员天然可以）。"""
+        """能否进入工作台/被设为活动管理者：发起方 / 青协（管理员天然可以）。"""
         return self.is_admin() or self.has_role(*MANAGER_ROLES)
 
     def profile_complete(self) -> bool:
@@ -139,6 +158,20 @@ class User(Base):
         }
 
 
+class Department(Base):
+    """校青协的部门。活动审批按部门归口，部长是默认审批人。
+
+    做成表而不是常量：部长每年换届，部门也可能增减；对外联络部还要挂一句
+    给二级团体看的说明。
+    """
+    __tablename__ = "departments"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    note: Mapped[str] = mapped_column(String(128), default="")
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Session(Base):
     """登录会话。expires_at 到点即失效，由 deps.current_user 校验并清理。"""
     __tablename__ = "sessions"
@@ -172,7 +205,21 @@ class Activity(Base):
     volunteer_benefit: Mapped[str] = mapped_column(Text, default="")
 
     status: Mapped[str] = mapped_column(String(16), default="draft")
-    # draft 筹备中 / published 报名中 / closed 已截止 / finished 已结束
+    # draft 草稿 / pending 待审批 / approved 待发布 /
+    # published 报名中 / closed 已截止 / finished 已结束
+
+    # —— 审批 ——
+    # 所有活动发布前都要过校青协；通过后回到发起方手里，由他自己点发布。
+    approval_dept_id: Mapped[str | None] = mapped_column(
+        ForeignKey("departments.id"), nullable=True, index=True)
+    approval_assignee_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, index=True)
+    approval_comment: Mapped[str] = mapped_column(String(512), default="")
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 提醒过一次就记下来，别每分钟催一遍
+    approval_reminded_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True)
 
     reg_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reg_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -191,8 +238,9 @@ class Activity(Base):
         back_populates="activity", order_by="Shift.start_time",
         cascade="all, delete-orphan")
 
-    STATUS_LABELS = {"draft": "筹备中", "published": "报名中",
-                     "closed": "已截止", "finished": "已结束"}
+    STATUS_LABELS = {"draft": "草稿", "pending": "待审批", "approved": "待发布",
+                     "published": "报名中", "closed": "已截止",
+                     "finished": "已结束"}
 
     def label_status(self) -> str:
         return self.STATUS_LABELS.get(self.status, self.status)
@@ -214,13 +262,37 @@ class Activity(Base):
                 max(s.end_time for s in rows))
 
 
+class ApprovalEvent(Base):
+    """审批流水：提交、转交、通过、驳回各一条，按时间排。
+
+    当前状态挂在 Activity 上（一条活动只有一条「正在进行的审批」），
+    历史留在这里——转交给了谁、为什么转，事后要说得清。
+    """
+    __tablename__ = "approval_events"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(12))   # submit/transfer/approve/reject
+    actor_id: Mapped[str] = mapped_column(String(32))
+    dept_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    comment: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    KIND_LABELS = {"submit": "提交审批", "transfer": "转交",
+                   "approve": "通过", "reject": "驳回"}
+
+    def kind_label(self) -> str:
+        return self.KIND_LABELS.get(self.kind, self.kind)
+
+
 class ActivityManager(Base):
     """活动管理者（多人共管）。
 
     · 创建者自动成为管理者，且**不可被移除**（created_by 只是记录信息，
       权限上不特殊）；
     · 管理者之间权限完全相同，任何管理者可添加/移除其他管理者；
-    · 被添加者必须持有 老师/青协 身份（管理员无需添加，天然可见全部）。
+    · 被添加者必须持有 活动发起方/青协 身份（管理员无需添加，天然可见全部）。
     """
     __tablename__ = "activity_managers"
 
@@ -616,7 +688,7 @@ class ViolationRecord(Base):
 
 
 class AuditLog(Base):
-    """操作留痕中心。老师/青协的增删改全记这里，志愿者可在活动页看到摘要。
+    """操作留痕中心。发起方/青协的增删改全记这里，志愿者可在活动页看到摘要。
 
     changes 结构: [{"field": 字段名, "label": 中文列名, "old": 旧值, "new": 新值}]
     """
