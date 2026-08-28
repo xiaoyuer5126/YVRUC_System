@@ -145,11 +145,17 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
 
     # ★ 时段冲突（粗粒度）：与所有有效报名的场次比区间，重叠即拦截。
     # 候补中的场次同样算已占用——排了队就等于预留了这段时间。
-    clashes = logic.time_conflicts(db, user, g)
-    if clashes:
-        raise HTTPException(409, {
-            "message": f"时间段与您已报名的活动冲突：{logic.conflict_message(clashes)}",
-            "conflicts": clashes})
+    # 培训/彩排是连带报上的，它们的时间也要一起比：报完才发现彩排那晚
+    # 有别的活动，等于把冲突留给了现场。
+    for target in [g] + logic.attached_shifts(
+            db, g.id, position.id if position else None):
+        clashes = logic.time_conflicts(db, user, target)
+        if clashes:
+            extra = "" if target is g else f"（{target.kind_label()}：{target.name}）"
+            raise HTTPException(409, {
+                "message": f"时间段与您已报名的活动冲突{extra}："
+                           f"{logic.conflict_message(clashes)}",
+                "conflicts": clashes})
 
     # ★ 名额判断与落库整段串行化到场次粒度，防止超卖与重复报名
     with shift_lock(g.id):
@@ -203,10 +209,17 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
             logic.elect_leader(db, position)
 
         if enr.status == "enrolled":
+            logic.sync_attached(db, enr)      # 培训/彩排连带报上
+            extra = "".join(
+                f"\n{s.kind_label()}：{s.span_text()}"
+                f"（{s.location or act.location or '地点待定'}）"
+                for s in logic.attached_shifts(
+                    db, g.id, position.id if position else None))
             wecom.send_user(db, user, "signup_success", activity=act.title,
                             shift=g.name, time=g.span_text(),
                             detail=(f"岗位：{position.name}（{position.location}）"
-                                    if position else "具体岗位将于报名截止后公布"))
+                                    if position else "具体岗位将于报名截止后公布")
+                                   + extra)
         else:
             db.flush()
             wecom.send_user(db, user, "waitlist_queued", activity=act.title,
@@ -260,6 +273,12 @@ def cancel_enroll(enrollment_id: str,
     if enr.status == "cancelled":
         raise HTTPException(400, "该记录已退选")
     g = db.get(Shift, enr.shift_id)
+    if g.is_attached():
+        parent = db.get(Shift, g.parent_id)
+        raise HTTPException(
+            409, f"「{g.name}」是「{parent.name}」的{g.kind_label()}，"
+                 f"随该场次报名产生，不能单独退出；如确实不能参加，"
+                 f"请退选「{parent.name}」或联系负责老师")
     act = db.get(Activity, enr.activity_id)
     _ensure_not_editing(act)
 
@@ -303,6 +322,7 @@ def cancel_enroll(enrollment_id: str,
         enr.cancel_type = "late" if late else "normal"
         enr.seat_held = hold_seat
         enr.is_leader = False
+        logic.sync_attached(db, enr)     # 培训/彩排跟着退掉
 
         logic.record_change(
             db, user, enr, "cancel",

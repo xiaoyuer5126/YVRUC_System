@@ -53,7 +53,8 @@ def display_status(act: Activity) -> tuple[str, str]:
 
 
 def activity_brief(db: OrmSession, act: Activity) -> dict:
-    shifts = sorted(act.shifts, key=lambda g: g.sort)
+    # 只数服务场次：培训/彩排不招人，算进「共几场、多少名额」会把学生看晕
+    shifts = sorted(act.main_shifts(), key=lambda g: g.sort)
     total_cap = sum(g.total_capacity() for g in shifts)
     total_conf = sum(shift_enrolled_count(db, g.id) for g in shifts)
     total_used = sum(shift_occupied_count(db, g.id) for g in shifts)
@@ -160,6 +161,25 @@ def _same_group(db: OrmSession, my_enr, position: Position) -> bool:
     return any(x.id == mine.id for x in group_positions(db, position))
 
 
+def attached_out(db: OrmSession, s: Shift, my_enr=None) -> dict:
+    """附属场次（培训/彩排）在主场次上的一行摘要。
+
+    自己不招人，所以没有名额与候补；关心的是什么时候、在哪、对谁生效、算不算时长。
+    """
+    applies = s.applies_to_positions or []
+    mine = (my_enr is not None and my_enr.status == "enrolled"
+            and (not applies or my_enr.position_id in applies))
+    return {
+        "id": s.id, "name": s.name, "kind": s.kind, "kind_label": s.kind_label(),
+        "start_time": iso_of(s.start_time), "end_time": iso_of(s.end_time),
+        "time_text": s.span_text(), "location": s.location,
+        "hours_mode": s.hours_mode, "hours_label": s.hours_label(),
+        "applies_to_positions": applies,
+        "enrolled": shift_enrolled_count(db, s.id),
+        "mine": mine,        # 我这次报名要不要去这一场
+    }
+
+
 def shift_out(db: OrmSession, g: Shift, user=None, *,
               manager: bool = False) -> dict:
     positions = sorted(g.positions, key=lambda p: p.sort)
@@ -189,6 +209,16 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
         "needs_assign": g.needs_assign(),
         "mode": g.mode,
         "mode_label": g.mode_label(),
+        "location": g.location,
+        "kind": g.kind, "kind_label": g.kind_label(),
+        "parent_id": g.parent_id,
+        "applies_to_positions": g.applies_to_positions or [],
+        "hours_mode": g.hours_mode, "hours_label": g.hours_label(),
+        # 本场次附带的培训/彩排：学生看的是「报这个岗位还要去哪几场」
+        "attached": [attached_out(db, s, my_enr)
+                     for s in sorted(
+                         (x for x in g.activity.shifts if x.parent_id == g.id),
+                         key=lambda x: x.start_time)],
         "note": g.note, "sort": g.sort,
         "positions": [position_out(db, p, user, enrolled=enrolled,
                                    manager=manager,
@@ -225,8 +255,11 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
         "intro": act.intro,
         "contact_info": act.contact_info,
         "qa_group_qr": act.qa_group_qr or "",
+        "volunteer_requirement": act.volunteer_requirement,
+        "volunteer_benefit": act.volunteer_benefit,
+        # 培训/彩排不单列，它们挂在各自主场次的 attached 里
         "shifts": sorted([shift_out(db, g, user, manager=manager)
-                          for g in act.shifts],
+                          for g in act.main_shifts()],
                          key=lambda x: x["start_time"]),
     })
     if include_logs:

@@ -163,6 +163,10 @@ class Activity(Base):
     contacts: Mapped[list] = mapped_column(JSON, default=list)
     qa_group_qr: Mapped[str] = mapped_column(Text, default="")           # 答疑群二维码(dataURL)，平台只做展示容器
     cover_hue: Mapped[int] = mapped_column(Integer, default=0)           # 封面色相（演示用渐变色卡）
+    # 活动级的整体要求与保障，都选填。岗位上的「要求原文」讲的是那个岗位
+    # 特有的事，这两条讲的是整个活动共通的：着装、集合、餐食、时长、纪念品。
+    volunteer_requirement: Mapped[str] = mapped_column(Text, default="")
+    volunteer_benefit: Mapped[str] = mapped_column(Text, default="")
 
     status: Mapped[str] = mapped_column(String(16), default="draft")
     # draft 筹备中 / published 报名中 / closed 已截止 / finished 已结束
@@ -190,12 +194,21 @@ class Activity(Base):
     def label_status(self) -> str:
         return self.STATUS_LABELS.get(self.status, self.status)
 
+    def main_shifts(self) -> list["Shift"]:
+        """服务场次。培训/彩排是附属场次，不参与名额、时间跨度与广场展示。"""
+        return [s for s in self.shifts if s.parent_id is None]
+
     def time_span(self) -> tuple[datetime, datetime] | None:
-        """活动整体起止 = 最早场次开始 / 最晚场次结束。"""
-        if not self.shifts:
+        """活动整体起止 = 最早服务场次开始 / 最晚服务场次结束。
+
+        培训与彩排常常排在正式服务前一周，算进来的话广场上的活动时间会
+        从彩排那天开始，学生以为要连着来好几天。
+        """
+        rows = self.main_shifts()
+        if not rows:
             return None
-        return (min(s.start_time for s in self.shifts),
-                max(s.end_time for s in self.shifts))
+        return (min(s.start_time for s in rows),
+                max(s.end_time for s in rows))
 
 
 class ActivityManager(Base):
@@ -222,6 +235,10 @@ class Shift(Base):
       pick    报名即选岗位：名额与候补都在岗位上
       assign  截止后分配：报名只锁时段，名额与候补在场次上，
               截止后由一键分配把人分进岗位
+
+    培训与彩排也是场次，只是**附属**于某个服务场次（parent_id）：报名主场次
+    时连带报上，退选时连带退，自己不设名额与候补。这样签到码、到岗大屏、
+    时长计算、时段冲突检测全部原样复用——它们本来就是按场次算的。
     """
     __tablename__ = "shifts"
 
@@ -230,7 +247,18 @@ class Shift(Base):
     name: Mapped[str] = mapped_column(String(128))
     start_time: Mapped[datetime] = mapped_column(DateTime)
     end_time: Mapped[datetime] = mapped_column(DateTime)
+    location: Mapped[str] = mapped_column(String(128), default="")
     mode: Mapped[str] = mapped_column(String(12), default="pick")
+    # —— 附属场次（培训/彩排）——
+    kind: Mapped[str] = mapped_column(String(12), default="service")
+    parent_id: Mapped[str | None] = mapped_column(
+        ForeignKey("shifts.id"), nullable=True, index=True)
+    # 只对主场次的这些岗位生效；空 = 全场次。东门组周五彩排、检录组周六彩排
+    # 是常事，一刀切会把人叫到不该来的场。
+    applies_to_positions: Mapped[list] = mapped_column(JSON, default=list)
+    # 时长怎么认：checkin 签退−签到 / fixed 到场即按场次时长 / none 不计时长。
+    # 把不确定性收在建场次这一次决定里，而不是散在事后逐条核对里。
+    hours_mode: Mapped[str] = mapped_column(String(12), default="checkin")
     # 下面两个数字**只在 assign 模式下有意义**：报名时还没有岗位可选，
     # 名额只能记在场次上。pick 模式下名额与候补都在岗位上，这两个值不参与判断。
     capacity: Mapped[int] = mapped_column(Integer, default=0)
@@ -248,6 +276,19 @@ class Shift(Base):
         cascade="all, delete-orphan")
 
     MODE_LABELS = {"pick": "报名即选岗位", "assign": "截止后统一分配"}
+    KIND_LABELS = {"service": "服务", "training": "培训", "rehearsal": "彩排"}
+    HOURS_LABELS = {"checkin": "扫码计时（签退−签到）",
+                    "fixed": "固定计时（到场即按场次时长）",
+                    "none": "不计时长（只记出勤）"}
+
+    def kind_label(self) -> str:
+        return self.KIND_LABELS.get(self.kind, self.kind)
+
+    def hours_label(self) -> str:
+        return self.HOURS_LABELS.get(self.hours_mode, self.hours_mode)
+
+    def is_attached(self) -> bool:
+        return self.parent_id is not None
 
     def span_text(self) -> str:
         same_day = self.start_time.date() == self.end_time.date()

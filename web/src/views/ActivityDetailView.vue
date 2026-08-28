@@ -30,6 +30,17 @@
               {{ fmtDT(act.reg_start) }} ~ {{ fmtDT(act.reg_end) }}
             </el-descriptions-item>
           </el-descriptions>
+          <div v-if="act.volunteer_requirement || act.volunteer_benefit"
+               style="margin-top:12px">
+            <div v-if="act.volunteer_requirement" class="side-note">
+              <b>志愿者要求</b>
+              <p>{{ act.volunteer_requirement }}</p>
+            </div>
+            <div v-if="act.volunteer_benefit" class="side-note benefit">
+              <b>志愿者保障</b>
+              <p>{{ act.volunteer_benefit }}</p>
+            </div>
+          </div>
           <div v-if="act.qa_group_qr" style="margin-top:10px;display:flex;gap:10px;align-items:center">
             <img :src="act.qa_group_qr" width="86" height="86"
                  style="border-radius:8px;border:1px solid #eceef1" />
@@ -62,6 +73,18 @@
               <span v-if="g.waitlist_count" class="dim">· 候补 {{ g.waitlist_count }}</span>
               <el-progress :percentage="pct(g)" :stroke-width="5" :show-text="false"
                            style="margin-top:4px" />
+            </div>
+            <div v-if="g.attached?.length" class="att-list">
+              <div v-for="s in g.attached" :key="s.id" class="att-item"
+                   :class="{ mine: s.mine }">
+                <el-tag size="small" effect="dark"
+                        :type="s.kind === 'training' ? 'success' : 'warning'">
+                  {{ s.kind_label }}
+                </el-tag>
+                <span>{{ s.time_text }}</span>
+                <span class="dim">{{ s.location || act.location }}</span>
+                <span class="dim">{{ attachedWho(g, s) }}</span>
+              </div>
             </div>
 
             <!-- 报名即选岗位：每个岗位一块 -->
@@ -307,6 +330,30 @@
                     </p>
                   </el-card>
 
+                  <!-- 培训 / 彩排：报了这个场次就要一起去 -->
+                  <div v-if="g.attached?.length" class="att-list">
+                    <div v-for="s in g.attached" :key="s.id" class="att-item"
+                         :class="{ mine: s.mine }">
+                      <el-tag size="small" effect="dark"
+                              :type="s.kind === 'training' ? 'success' : 'warning'">
+                        {{ s.kind_label }}
+                      </el-tag>
+                      <b>{{ s.name }}</b>
+                      <span>{{ s.time_text }}</span>
+                      <span class="dim">{{ s.location || act.location || '地点待定' }}</span>
+                      <span class="dim">{{ attachedWho(g, s) }}</span>
+                      <span class="dim">
+                        {{ s.hours_mode === 'none' ? '不计时长' : '计入志愿时长' }}
+                      </span>
+                      <el-tag v-if="s.mine" size="small" type="primary" effect="plain">
+                        您需要参加
+                      </el-tag>
+                    </div>
+                    <div class="dim" style="font-size:12px">
+                      报名本场次时会自动带上以上时段，退选时一并退出；到场同样需要扫码签到。
+                    </div>
+                  </div>
+
                   <!-- 场次级学习材料 -->
                   <MaterialList v-if="g.attachments?.length" :items="g.attachments"
                                 label="本场次学习材料" />
@@ -535,12 +582,23 @@
             {{ enrollDlg.position ? enrollDlg.position.name
                : (enrollDlg.shift.mode === 'assign' ? '报名截止后由青协统一分配' : '无需选择') }}
           </el-descriptions-item>
+          <el-descriptions-item v-if="enrollExtra.length" label="还需参加">
+            <div v-for="s in enrollExtra" :key="s.id" style="line-height:1.7">
+              {{ s.kind_label }}：{{ s.time_text }}
+              <span class="dim">{{ s.location || act.location || '地点待定' }}</span>
+            </div>
+          </el-descriptions-item>
           <el-descriptions-item label="结果">
             <el-tag :type="willWaitlist ? 'warning' : 'success'" size="small">
               {{ willWaitlist ? '名额已满，将加入候补队列' : '名额充足，报名即生效' }}
             </el-tag>
           </el-descriptions-item>
         </el-descriptions>
+
+        <el-alert v-if="enrollExtra.length && !willWaitlist" type="info" show-icon
+                  :closable="false" style="margin-top:10px"
+                  title="以上培训/彩排会随本次报名一并报上"
+                  description="它们各自需要到场签到；退选本场次时会一并退出。请确认这些时间你都能到。" />
 
         <div class="reassign-box">
           <el-checkbox v-model="enrollDlg.allowReassign" :disabled="willWaitlist">
@@ -601,6 +659,13 @@ const willWaitlist = computed(() => {
   if (!g) return false
   return position ? position.remaining <= 0 : g.remaining <= 0
 })
+// 这次报名会连带哪几场培训/彩排——报之前就要看见，不能报完才发现撞车
+const enrollExtra = computed(() => {
+  const { shift: g, position } = enrollDlg.value
+  if (!g?.attached?.length) return []
+  return g.attached.filter(s => !s.applies_to_positions.length
+    || (position && s.applies_to_positions.includes(position.id)))
+})
 const stationDetail = ref({ visible: false, data: null, groupName: '', groupTime: '' })
 
 const typeColor = t => TYPE_COLORS[t]?.color
@@ -622,6 +687,14 @@ function deadlineTs(g) {
   return new Date(g.my_enrollment.confirm_deadline.replace(' ', 'T').slice(0, 19)).getTime()
 }
 // 我在这个场次的岗位对象（报名后才有；统一分配的场次分配前为 null）
+// 培训/彩排可以只对某几个岗位生效，把「谁要去」写在脸上
+function attachedWho(g, s) {
+  if (!s.applies_to_positions?.length) return '全体参加'
+  const names = (g.positions || [])
+    .filter(p => s.applies_to_positions.includes(p.id)).map(p => p.name)
+  return names.length ? `仅 ${names.join('、')}` : '仅部分岗位'
+}
+
 function myPosition(g) {
   const pid = g.my_enrollment?.position_id
   return pid ? g.positions.find(p => p.id === pid) || null : null
@@ -766,6 +839,24 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .g-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 .reassign-box { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #f7f8fa; }
 .reassign-box .dim { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
+
+/* 活动级的要求与保障 */
+.side-note {
+  border-left: 3px solid var(--el-color-warning); background: #fdf6ec;
+  padding: 8px 12px; border-radius: 0 8px 8px 0; margin-bottom: 8px;
+}
+.side-note.benefit { border-left-color: var(--el-color-success); background: #f0f9eb; }
+.side-note b { font-size: 13px; }
+.side-note p { margin: 2px 0 0; font-size: 13px; line-height: 1.75;
+               white-space: pre-wrap; color: #606266; }
+
+/* 培训 / 彩排：跟在场次后面的附加时段 */
+.att-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.att-item {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 13px; padding: 6px 10px; border-radius: 8px; background: #f7f8fa;
+}
+.att-item.mine { background: var(--el-color-primary-light-9); }
 
 /* 仅场次：没有可展开的岗位，隐藏展开箭头 */
 </style>

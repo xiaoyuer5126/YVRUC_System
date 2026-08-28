@@ -11,7 +11,15 @@
         </div>
         <div class="dim">{{ row.activity.location }}</div>
         <div class="mob-line">
+          <el-tag v-if="row.shift.attached" size="small" effect="dark"
+                  :type="row.shift.kind === 'training' ? 'success' : 'warning'">
+            {{ row.shift.kind_label }}
+          </el-tag>
           {{ row.shift.name }} · {{ row.shift.time_text }}
+        </div>
+        <div v-if="row.shift.attached" class="dim">
+          随「{{ row.shift.parent_name }}」报名，退选请退主场次
+          <template v-if="row.shift.location"> · {{ row.shift.location }}</template>
         </div>
         <div v-if="row.position" class="mob-line">
           <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
@@ -20,7 +28,7 @@
         <div v-else-if="row.status === 'enrolled'" class="dim">岗位待分配</div>
         <div class="mob-line">
           <span class="dim">岗位调剂：</span>
-          <el-tag v-if="isActive(row)" size="small" effect="plain"
+          <el-tag v-if="isActive(row) && !row.shift.attached" size="small" effect="plain"
                   :type="row.allow_reassign ? 'success' : 'info'"
                   @click="toggleReassign(row)">
             {{ row.allow_reassign ? '接受' : '不接受' }}
@@ -37,8 +45,8 @@
           </el-button>
           <el-button v-if="row.status === 'pending_confirm'" size="small" type="primary"
                      @click="confirm(row)">确认转正</el-button>
-          <el-button v-else-if="row.active !== false && isActive(row)" size="small"
-                     type="danger" plain @click="cancel(row)">
+          <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached"
+                     size="small" type="danger" plain @click="cancel(row)">
             {{ row.status === 'waitlisted' ? '退出候补' : '退选' }}
           </el-button>
         </div>
@@ -55,7 +63,15 @@
       </el-table-column>
       <el-table-column label="场次 / 岗位" min-width="180">
         <template #default="{ row }">
+          <el-tag v-if="row.shift.attached" size="small" effect="dark"
+                  :type="row.shift.kind === 'training' ? 'success' : 'warning'">
+            {{ row.shift.kind_label }}
+          </el-tag>
           {{ row.shift.name }}（{{ row.shift.time_text }}）
+          <div v-if="row.shift.attached" class="dim">
+            随「{{ row.shift.parent_name }}」报名
+            <template v-if="row.shift.location"> · {{ row.shift.location }}</template>
+          </div>
           <div v-if="row.position">
             <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
             <span class="dim"> {{ row.position.time_text }} · {{ row.position.location }}</span>
@@ -65,7 +81,7 @@
       </el-table-column>
       <el-table-column label="岗位调剂" width="120">
         <template #default="{ row }">
-          <el-tooltip v-if="isActive(row)" placement="top"
+          <el-tooltip v-if="isActive(row) && !row.shift.attached" placement="top"
                       content="点击切换。仅供负责老师排班时参考，不代表岗位不会被调整">
             <el-tag size="small" effect="plain" style="cursor:pointer"
                     :type="row.allow_reassign ? 'success' : 'info'"
@@ -90,8 +106,8 @@
           <el-button size="small" @click="$router.push('/activity/' + row.activity.id)">查看</el-button>
           <el-button v-if="row.status === 'pending_confirm'" size="small" type="primary"
                      @click="confirm(row)">确认</el-button>
-          <el-button v-else-if="row.active !== false && isActive(row)" size="small" type="danger" plain
-                     @click="cancel(row)">
+          <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached"
+                     size="small" type="danger" plain @click="cancel(row)">
             {{ row.status === 'waitlisted' ? '退出候补' : '退选' }}
           </el-button>
         </template>

@@ -20,7 +20,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session as OrmSession
 
-from .models import Activity, CheckinRecord, Enrollment, User
+from .models import Activity, CheckinRecord, Enrollment, Shift, User
 
 HEADER_FILL = PatternFill("solid", fgColor="9E2235")   # 人大红
 HEADER_FONT = Font(name="微软雅黑", bold=True, color="FFFFFF")
@@ -79,7 +79,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         overview.append(["整体时间",
                          f"{span[0]:%Y-%m-%d %H:%M} ~ {span[1]:%Y-%m-%d %H:%M}"])
     overview.append([])
-    overview.append(["场次", "时间段", "模式", "已报名/名额", "已到岗"])
+    overview.append(["场次", "类型", "时间段", "模式", "已报名/名额", "已到岗"])
     checked = _checked_records(db, activity.id)
     from sqlalchemy import func
     for g in shifts:
@@ -88,10 +88,17 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
                              Enrollment.status == "enrolled").scalar() or 0)
         here = (db.query(func.count(func.distinct(CheckinRecord.user_id)))
                 .filter(CheckinRecord.shift_id == g.id).scalar() or 0)
-        overview.append([g.name, g.span_text(), g.mode_label(),
-                         f"{enrolled}/{g.capacity}", here])
+        # 培训/彩排不招人，名额那一列写它属于哪个服务场次更有用
+        if g.is_attached():
+            parent = db.get(Shift, g.parent_id)
+            quota = f"{enrolled} 人（随「{parent.name if parent else '?'}」）"
+        else:
+            quota = f"{enrolled}/{g.capacity}"
+        overview.append([g.name, g.kind_label(), g.span_text(),
+                         g.mode_label() if not g.is_attached() else "—",
+                         quota, here])
     overview["A1"].font = Font(name="微软雅黑", bold=True, size=14)
-    _style_header(overview, 5)
+    _style_header(overview, 6)
     for col, w in zip("ABCDE", (24, 30, 14, 14, 10)):
         overview.column_dimensions[col].width = w
 

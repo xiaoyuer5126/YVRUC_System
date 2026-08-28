@@ -14,6 +14,7 @@ from ..audit import log as audit_log
 from .. import config
 from ..database import db_session
 from ..deps import require_manager, require_manager_download
+from ..enroll_logic import position_enrolled_count
 from ..exporter import build_activity_workbook
 from ..perm import ensure_activity_manager
 from ..integrations import checkin_gateway, shuzhi
@@ -394,6 +395,62 @@ def export(activity_id: str, db: OrmSession = Depends(db_session),
                  f"attachment; filename*=UTF-8''{quote(filename)}"})
 
 
+@router.get("/activities/{activity_id}/poster")
+def poster(activity_id: str, db: OrmSession = Depends(db_session),
+           user: User = Depends(require_manager)):
+    """招募版活动信息（纯文本，供复制到群里/推送）。
+
+    只写对外能公开的：时间地点、岗位与名额、要求与保障、联系人。
+    不含任何志愿者名单——名单要用「导出排班表」，那条路有下载留痕。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    L: list[str] = [f"【{act.title}】志愿者招募",
+                    f"类型：{act.type}类·{config.type_name(act.type)}"]
+    span = act.time_span()
+    if span:
+        L.append(f"时间：{span[0]:%Y-%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}")
+    L.append(f"地点：{act.location or '待定'}")
+    if act.reg_end:
+        L.append(f"报名截止：{act.reg_end:%Y-%m-%d %H:%M}")
+    if act.intro:
+        L += ["", "【活动简介】", act.intro.strip()]
+    if act.volunteer_requirement:
+        L += ["", "【志愿者要求】", act.volunteer_requirement.strip()]
+    if act.volunteer_benefit:
+        L += ["", "【志愿者保障】", act.volunteer_benefit.strip()]
+
+    L += ["", "【岗位安排】"]
+    for g in sorted(act.main_shifts(), key=lambda x: x.start_time):
+        head = f"◆ {g.name}（{g.span_text()}）"
+        if g.needs_assign():
+            head += f"　名额 {g.capacity} 人，岗位于报名截止后统一分配"
+        L.append(head)
+        for p in sorted(g.positions, key=lambda x: x.sort):
+            left = max(0, p.quota - position_enrolled_count(db, p.id))
+            line = (f"  · {p.name}　{p.quota} 人"
+                    + (f"（剩 {left}）" if left else "（已满）")
+                    + (f"　{p.location}" if p.location else ""))
+            if p.requirement_note:
+                line += f"\n    要求：{p.requirement_note}"
+            L.append(line)
+        for s in sorted((x for x in act.shifts if x.parent_id == g.id),
+                        key=lambda x: x.start_time):
+            who = "全体" if not s.applies_to_positions else "、".join(
+                p.name for p in g.positions if p.id in s.applies_to_positions)
+            L.append(f"  ▷ {s.kind_label()}：{s.span_text()}"
+                     + (f"　{s.location}" if s.location else "")
+                     + f"　（{who}需参加"
+                     + ("，不计时长）" if s.hours_mode == "none" else "，计入时长）"))
+
+    contacts = "；".join(f"{c.get('name', '')} {c.get('phone', '')}".strip()
+                        for c in (act.contacts or []) if isinstance(c, dict))
+    if contacts:
+        L += ["", f"【联系方式】{contacts}"]
+    L += ["", "报名方式：登录人大校青协志愿服务管理平台，在「活动广场」找到本活动报名。"]
+    return {"text": "\n".join(L)}
+
+
 # ======================= 时长录入与回传 =======================
 
 CHECKOUT_GRACE = timedelta(hours=config.CHECKOUT_GRACE_HOURS)
@@ -417,6 +474,26 @@ def effective_checkout(rec: CheckinRecord, g: Shift):
     return None, "pending"
 
 
+def shift_hours(rec: CheckinRecord, g: Shift, t: datetime):
+    """一条签到记录在该场次记多少小时，以及要不要人工过目。
+
+    时长认定方式是建场次时定下的一次决定，不是事后逐条判断：
+      fixed  到场即按场次时长计——两小时的彩排人就在那儿，不值得卡分钟，
+             顺带消灭了「忘记签退」这类麻烦的一大半；
+      none   只记出勤，不产生时长（线上培训）；
+      checkin 签退 − 签到，未签退按宽限期规则兜底并标记待核。
+    """
+    if g.hours_mode == "none":
+        return 0.0, ""
+    if g.hours_mode == "fixed":
+        return (g.end_time - g.start_time).total_seconds() / 3600, ""
+    checkout, kind = effective_checkout(rec, g)
+    if checkout is None:
+        return (min(t, g.end_time) - rec.checkin_at).total_seconds() / 3600, "pending"
+    return ((checkout - rec.checkin_at).total_seconds() / 3600,
+            "auto" if kind == "auto" else "")
+
+
 def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
     """基于签到/签退记录计算时长：签退 - 签到，向上取整至 0.5 小时。
 
@@ -434,20 +511,15 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
         g = db.get(Shift, rec.shift_id)
         if g is None:
             continue
-        checkout, kind = effective_checkout(rec, g)
-        if checkout is None:
-            # 宽限期内未签退：暂按 min(now, 场次结束) 估算
-            eff = min(t, g.end_time)
-            flags.setdefault(rec.user_id, set()).add("pending")
-        else:
-            eff = checkout
-            if kind == "auto":
-                flags.setdefault(rec.user_id, set()).add("auto")
-        hours = (eff - rec.checkin_at).total_seconds() / 3600
+        hours, flag = shift_hours(rec, g, t)
+        if flag:
+            flags.setdefault(rec.user_id, set()).add(flag)
         per_user[rec.user_id] = per_user.get(rec.user_id, 0.0) + max(0.0, hours)
 
     out = []
     for uid_, raw in sorted(per_user.items(), key=lambda kv: -kv[1]):
+        if raw <= 0:
+            continue      # 只去了「不计时长」的场合（如线上培训）：出勤在签到那边看
         u = db.get(User, uid_)
         existing = db.query(HoursRecord).filter(
             HoursRecord.activity_id == act.id, HoursRecord.user_id == uid_,

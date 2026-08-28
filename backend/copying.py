@@ -94,22 +94,43 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=operator.id, added_by=operator.id))
 
-    for src_shift in sorted(src.shifts, key=lambda s: s.sort):
+    def clone(src_shift: Shift, parent_id: str | None,
+              position_map: dict[str, str]) -> Shift:
         shift = Shift(id=uid("s"), activity_id=act.id, name=src_shift.name,
                       start_time=src_shift.start_time + delta,
                       end_time=src_shift.end_time + delta,
                       mode=src_shift.mode, capacity=src_shift.capacity,
                       waitlist_quota=src_shift.waitlist_quota,
-                      note=src_shift.note, sort=src_shift.sort)
+                      note=src_shift.note, sort=src_shift.sort,
+                      location=src_shift.location, kind=src_shift.kind,
+                      hours_mode=src_shift.hours_mode, parent_id=parent_id,
+                      # 适用岗位要换成新岗位的 id，照抄会指向旧活动
+                      applies_to_positions=[
+                          position_map[i]
+                          for i in (src_shift.applies_to_positions or [])
+                          if i in position_map])
         db.add(shift)
         db.flush()
         _copy_attachments(db, "shift", src_shift.id, shift.id, act.id, operator)
+        return shift
+
+    for src_shift in sorted(src.main_shifts(), key=lambda s: s.sort):
+        shift = clone(src_shift, None, {})
+        position_map = {}
         for i, src_pos in enumerate(sorted(src_shift.positions,
                                            key=lambda p: p.sort)):
-            copy_position(db, src_pos, shift, operator, sort=i)
+            position_map[src_pos.id] = copy_position(
+                db, src_pos, shift, operator, sort=i).id
+        for child in sorted((s for s in src.shifts
+                             if s.parent_id == src_shift.id),
+                            key=lambda s: s.start_time):
+            clone(child, shift.id, position_map)
     return act
 
 
 def describe(act: Activity) -> str:
-    n_pos = sum(len(s.positions) for s in act.shifts)
-    return f"{len(act.shifts)} 个场次、{n_pos} 个岗位"
+    mains = act.main_shifts()
+    n_pos = sum(len(s.positions) for s in mains)
+    extra = len(act.shifts) - len(mains)
+    return (f"{len(mains)} 个场次、{n_pos} 个岗位"
+            + (f"、{extra} 个培训/彩排" if extra else ""))

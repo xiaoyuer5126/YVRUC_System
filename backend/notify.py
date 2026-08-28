@@ -68,11 +68,15 @@ def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
         if u is None:
             continue
         position = db.get(Position, enr.position_id) if enr.position_id else None
-        loc = (position.location if position and position.location
-               else act.location or "活动集合点")
+        # 培训/彩排在自己的地点，不在岗位上；地点按「场次 → 岗位 → 活动」取
+        loc = (g.location or (position.location if position else "")
+               or act.location or "活动集合点")
+        if g.is_attached():
+            label = g.kind_label()          # 「培训」「彩排」，不是「待分配」
+        else:
+            label = position.name if position else "待分配"
         wecom.send_user(db, u, "checkin_reminder", activity=act.title,
-                        shift=g.name,
-                        position=position.name if position else "待分配",
+                        shift=g.name, position=label,
                         loc=loc,
                         # activity_id 是「提醒未签收」判权限的依据，不能省
                         data={"activity_id": act.id},

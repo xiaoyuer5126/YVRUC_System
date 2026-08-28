@@ -91,7 +91,7 @@ def staffing_gaps(db: OrmSession, act: Activity) -> list[str]:
     from .models import Enrollment
 
     out = []
-    for s in act.shifts:
+    for s in act.main_shifts():          # 培训/彩排不排岗位
         if not s.positions:
             out.append(f"「{s.name}」还没有岗位"
                        + ("（截止后统一分配，现在正是建岗位的时候：先改回"
@@ -209,6 +209,7 @@ def send_roster_digests(db: OrmSession) -> int:
               .join(Activity, Shift.activity_id == Activity.id)
               .filter(Shift.start_time > t,
                       Shift.start_time <= t + lead,
+                      Shift.parent_id.is_(None),   # 培训/彩排不单独报日报
                       Activity.status.in_(("published", "closed")))
               .all())
     sent = 0

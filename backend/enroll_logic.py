@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session as OrmSession
 
 from . import config, credit
 from .integrations import wecom
-from .models import Activity, Enrollment, Shift, Position, User, now
+from .models import (Activity, CheckinRecord, Enrollment, Shift, Position,
+                     User, now, uid)
 
 ACTIVE = ("enrolled", "waitlisted", "pending_confirm")
 
@@ -46,6 +47,46 @@ def time_conflicts(db: OrmSession, user: User,
                 "waiting": enr.status != "enrolled",
             })
     return out
+
+
+def attached_shifts(db: OrmSession, shift_id: str,
+                    position_id: str | None = None) -> list[Shift]:
+    """某服务场次下的培训/彩排场次；给了岗位就只留对该岗位生效的。"""
+    rows = (db.query(Shift).filter(Shift.parent_id == shift_id)
+            .order_by(Shift.start_time).all())
+    if position_id is None:
+        return rows
+    return [s for s in rows
+            if not s.applies_to_positions
+            or position_id in s.applies_to_positions]
+
+
+def sync_attached(db: OrmSession, enr: Enrollment) -> None:
+    """按主报名的状态与岗位，同步培训/彩排的报名。
+
+    一个入口管所有变化——报名、候补转正、退选、改岗——省得每处各写一遍
+    然后漏掉一处。改岗尤其要紧：东门组周五彩排，人被调去检录组之后，
+    那场彩排就不该再叫他。
+    已经签到过的不删：人确实来了，记录不能凭空消失。
+    """
+    for s in attached_shifts(db, enr.shift_id):
+        want = (enr.status == "enrolled"
+                and (not s.applies_to_positions
+                     or enr.position_id in s.applies_to_positions))
+        row = (db.query(Enrollment)
+               .filter(Enrollment.shift_id == s.id,
+                       Enrollment.user_id == enr.user_id).first())
+        if want and row is None:
+            db.add(Enrollment(id=uid("enr"), activity_id=enr.activity_id,
+                              shift_id=s.id, user_id=enr.user_id,
+                              position_id=None, status="enrolled",
+                              joined_at=now()))
+        elif not want and row is not None:
+            been = db.query(CheckinRecord).filter(
+                CheckinRecord.shift_id == s.id,
+                CheckinRecord.user_id == enr.user_id).count()
+            if not been:
+                db.delete(row)
 
 
 def conflict_message(clashes: list[dict]) -> str:
@@ -331,6 +372,7 @@ def _settle_position(db: OrmSession, enr: Enrollment, user: User,
                         position_time=position.time_text(),
                         position_loc=position.location or "待定")
         elect_leader(db, position)
+    sync_attached(db, enr)
 
 
 def confirm_promotion(db: OrmSession, enr: Enrollment, user: User) -> Enrollment:

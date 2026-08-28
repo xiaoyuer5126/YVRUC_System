@@ -37,6 +37,7 @@
           </template>
         </el-popconfirm>
         <el-button @click="editBase = true">编辑基本信息</el-button>
+        <el-button @click="openPoster">复制活动信息</el-button>
         <el-popconfirm v-if="act.status === 'published'" title="截止后不再接受新报名，确认？"
                        @confirm="transition('close')">
           <template #reference><el-button type="warning">截止报名</el-button></template>
@@ -194,6 +195,40 @@
                ? '截止后统一分配：学生报名只锁时段。报名截止后把本场次改回「报名即选岗位」，建好岗位再一键分配。'
                : '还没有岗位。名额与候补都在岗位上，没有岗位学生就报不了名——请先建好岗位。' }}
           </p>
+
+          <!-- 培训/彩排：本场次的附加时段，报名时连带、签到与时长照常 -->
+          <div class="attached">
+            <div v-for="s in g.attached" :key="s.id" class="att-row">
+              <el-tag size="small" effect="dark"
+                      :type="s.kind === 'training' ? 'success' : 'warning'">
+                {{ s.kind_label }}
+              </el-tag>
+              <b>{{ s.name }}</b>
+              <span class="dim">{{ s.time_text }} · {{ s.location || '地点待定' }}</span>
+              <span class="dim">{{ s.hours_label }}</span>
+              <el-tag size="small" effect="plain">
+                {{ s.applies_to_positions.length
+                   ? '适用：' + positionNames(g, s.applies_to_positions)
+                   : '全场次参加' }}
+              </el-tag>
+              <span class="dim">已带上 {{ s.enrolled }} 人</span>
+              <span style="margin-left:auto">
+                <el-button size="small" link type="primary" :disabled="structureLocked"
+                           @click="openAttached(g, s)">编辑</el-button>
+                <el-popconfirm :title="`删除「${s.name}」？相关签到记录会一并消失`"
+                               @confirm="delShift(s)" :disabled="structureLocked">
+                  <template #reference>
+                    <el-button size="small" link type="danger"
+                               :disabled="structureLocked">删除</el-button>
+                  </template>
+                </el-popconfirm>
+              </span>
+            </div>
+            <el-button size="small" text type="primary" :disabled="structureLocked"
+                       @click="openAttached(g, null)">
+              <el-icon><Plus /></el-icon>&nbsp;添加培训 / 彩排
+            </el-button>
+          </div>
         </div>
         <el-button style="width:100%;margin-top:4px" plain dashed
                    :disabled="structureLocked" @click="openShift(null)">
@@ -696,6 +731,74 @@
       </template>
     </el-dialog>
 
+    <!-- 培训 / 彩排（附属场次） -->
+    <el-dialog v-model="attDlg.visible"
+               :title="(attDlg.editing ? '编辑' : '添加') + '培训 / 彩排'" width="560">
+      <p class="dim" style="margin-top:0;line-height:1.8">
+        挂在「{{ attDlg.parent?.name }}」下面：学生报这个场次时<b>连带报上</b>，
+        退选时连带退。它自己不招人、不设名额，但有自己的签到码、时间与地点，
+        时长按下面选的方式算。
+      </p>
+      <el-form label-width="100px">
+        <el-form-item label="类型" required>
+          <el-radio-group v-model="attForm.kind">
+            <el-radio-button value="training">培训</el-radio-button>
+            <el-radio-button value="rehearsal">彩排</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="名称" required>
+          <el-input v-model="attForm.name" placeholder="如：赛前集中培训" />
+        </el-form-item>
+        <el-form-item label="开始时间" required>
+          <el-date-picker v-model="attForm.start_time" type="datetime" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="结束时间" required>
+          <el-date-picker v-model="attForm.end_time" type="datetime" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="地点">
+          <el-input v-model="attForm.location" placeholder="如：明德楼 0201（留空则用活动地点）" />
+        </el-form-item>
+        <el-form-item label="适用岗位">
+          <el-select v-model="attForm.applies_to_positions" multiple collapse-tags
+                     placeholder="留空 = 全场次都要参加" style="width:100%">
+            <el-option v-for="p in attDlg.parent?.positions || []" :key="p.id"
+                       :value="p.id" :label="p.name" />
+          </el-select>
+          <div class="dim" style="line-height:1.7">
+            只对选中岗位的人生效。<b>后面调岗时会自动跟着走</b>：人被调去别的岗位，
+            这一场就不再叫他。
+          </div>
+        </el-form-item>
+        <el-form-item label="时长认定">
+          <el-radio-group v-model="attForm.hours_mode">
+            <el-radio value="fixed">固定计时</el-radio>
+            <el-radio value="checkin">扫码计时</el-radio>
+            <el-radio value="none">不计时长</el-radio>
+          </el-radio-group>
+          <div class="dim" style="line-height:1.7">
+            {{ HOURS_HINT[attForm.hours_mode] }}
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="attDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="attDlg.busy" @click="saveAttached">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 招募文案：一键复制发群里 -->
+    <el-dialog v-model="posterDlg.visible" title="活动信息（招募版）" width="620">
+      <p class="dim" style="margin-top:0">
+        对外用的纯文本：时间地点、岗位与名额、要求与保障、联系方式。
+        <b>不含志愿者名单</b>——名单请用「导出与时长」里的排班表。
+      </p>
+      <el-input v-model="posterDlg.text" type="textarea" :rows="16" readonly />
+      <template #footer>
+        <el-button @click="posterDlg.visible = false">关闭</el-button>
+        <el-button type="primary" @click="copyPoster">复制全文</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 岗位对话框 -->
     <el-dialog v-model="positionDlg.visible" :title="positionDlg.editing ? '编辑岗位' : '新建岗位'" width="560">
       <el-form label-width="100px">
@@ -878,6 +981,15 @@
           </div>
         </el-form-item>
         <el-form-item label="简介"><el-input v-model="baseForm.intro" type="textarea" :rows="3" /></el-form-item>
+        <!-- 活动级的整体要求与保障；岗位上的「要求原文」讲的是那个岗位特有的事 -->
+        <el-form-item label="志愿者要求">
+          <el-input v-model="baseForm.volunteer_requirement" type="textarea" :rows="2"
+                    placeholder="选填。整个活动共通的要求，如：着深色衣裤、提前 20 分钟到集合点" />
+        </el-form-item>
+        <el-form-item label="志愿者保障">
+          <el-input v-model="baseForm.volunteer_benefit" type="textarea" :rows="2"
+                    placeholder="选填。提供什么，如：午餐与饮水、志愿时长、纪念徽章、意外险" />
+        </el-form-item>
         <el-form-item label="答疑群二维码">
           <div class="contacts-box">
             <el-upload :show-file-list="false" :http-request="uploadBaseQr" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
@@ -1272,6 +1384,76 @@ async function onMaterialChanged() {
   if (id) positionDlg.value.editing = findPosition(id)
 }
 
+// —— 培训 / 彩排 ——
+const HOURS_HINT = {
+  fixed: '到场即按本场时长计，不要求签退。彩排和集中培训人就在那儿，不值得卡分钟，也就没有「忘记签退」这回事。',
+  checkin: '签退 − 签到，与服务场次一致。适合来去时间确实不一样的场合。',
+  none: '只记出勤，不产生志愿时长。适合线上培训。',
+}
+const attDlg = ref({ visible: false, editing: null, parent: null, busy: false })
+const attForm = ref({})
+
+function positionNames(g, ids) {
+  return (g.positions || []).filter(p => ids.includes(p.id))
+    .map(p => p.name).join('、') || '（岗位已删除）'
+}
+
+function openAttached(g, s) {
+  attDlg.value = { visible: true, editing: s, parent: g, busy: false }
+  attForm.value = s ? {
+    kind: s.kind, name: s.name, location: s.location,
+    start_time: new Date(s.start_time.replace(' ', 'T')),
+    end_time: new Date(s.end_time.replace(' ', 'T')),
+    applies_to_positions: [...s.applies_to_positions],
+    hours_mode: s.hours_mode,
+  } : { kind: 'rehearsal', name: '', location: '', start_time: '', end_time: '',
+        applies_to_positions: [], hours_mode: 'fixed' }
+}
+
+async function saveAttached() {
+  const f = attForm.value
+  if (!f.name?.trim()) return ElMessage.warning('请填写名称')
+  if (!f.start_time || !f.end_time) return ElMessage.warning('请选择起止时间')
+  attDlg.value.busy = true
+  try {
+    const body = {
+      name: f.name, kind: f.kind, location: f.location,
+      parent_id: attDlg.value.parent.id,
+      applies_to_positions: f.applies_to_positions,
+      hours_mode: f.hours_mode,
+      start_time: toISO(f.start_time), end_time: toISO(f.end_time),
+    }
+    if (attDlg.value.editing) {
+      await api.patch(`/api/staff/shifts/${attDlg.value.editing.id}`, body)
+    } else {
+      await api.post(`/api/staff/activities/${activityId}/shifts`, body)
+    }
+    ElMessage.success('已保存；已报名的志愿者会自动带上这一场')
+    attDlg.value.visible = false
+    loadAll()
+  } finally { attDlg.value.busy = false }
+}
+
+// —— 招募文案 ——
+const posterDlg = ref({ visible: false, text: '' })
+
+async function openPoster() {
+  const d = await api.get(`/api/staff/activities/${activityId}/poster`)
+  posterDlg.value = { visible: true, text: d.text }
+}
+
+async function copyPoster() {
+  try {
+    await navigator.clipboard.writeText(posterDlg.value.text)
+    ElMessage.success('已复制，可以直接粘到群里')
+  } catch {
+    // 非 https 环境拿不到剪贴板：退回选中文本，让用户自己 Ctrl+C
+    const el = document.querySelector('.el-dialog textarea')
+    el?.select()
+    ElMessage.warning('浏览器不允许自动复制，已全选，请按 Ctrl+C')
+  }
+}
+
 // assign 场次不能建岗位。点按钮的当下就说清楚，并给一步到位的切换——
 // 让人填完一整个表单再被后端 409 拦下，是这里以前最招骂的地方。
 async function addPosition(g) {
@@ -1382,6 +1564,8 @@ watch(editBase, (v) => {
     baseForm.value = {
       title: act.value.title, type: act.value.type, location: act.value.location,
       contacts, intro: act.value.intro,
+      volunteer_requirement: act.value.volunteer_requirement || '',
+      volunteer_benefit: act.value.volunteer_benefit || '',
       qa_group_qr: act.value.qa_group_qr,
     }
     baseRange.value = [

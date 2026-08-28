@@ -159,7 +159,7 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
     force 可以突破名额与条件，单独标记为强制分配并留痕——这正是「强制」的含义。
     """
     from .audit import log as audit_log
-    from .enroll_logic import elect_leader, refill_leader
+    from .enroll_logic import elect_leader, refill_leader, sync_attached
 
     positions = {p.id: p for p in shift.positions}
     rows = []
@@ -225,6 +225,10 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
     for _enr, _old, position, _f in changed:
         if position is not None:
             elect_leader(db, position)
+    # 只对某些岗位生效的培训/彩排要跟着人走：调去检录组之后，
+    # 东门组那场彩排就不该再叫他，检录组那场得叫上他
+    for enr, _old, _p, _f in changed:
+        sync_attached(db, enr)
 
     for enr, _old, position, _f in changed:
         if position is None:
