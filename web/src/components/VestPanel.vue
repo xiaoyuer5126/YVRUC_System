@@ -90,20 +90,26 @@
 
     <el-dialog v-model="qr.visible" :title="'马甲' + qr.label + '码'" width="380">
       <div style="text-align:center" v-if="qr.token">
-        <img :src="`/api/vests/qr.svg?token=${qr.token}&t=${Date.now()}`"
+        <!-- 必须带 base：不传的话码里编的是相对路径，相机只会当一行字显示 -->
+        <img :src="`/api/vests/qr.svg?token=${qr.token}&base=${qrBase()}&t=${Date.now()}`"
              width="260" height="260" alt="马甲二维码" />
         <div class="mono" style="font-size:22px;letter-spacing:4px">{{ qr.token }}</div>
         <div class="dim">请把这张码贴在{{ qr.label }}处，别和另一张弄混</div>
+        <div style="margin-top:10px">
+          <el-input size="small" readonly :model-value="scanUrl">
+            <template #append><el-button @click="copyLink">复制</el-button></template>
+          </el-input>
+        </div>
       </div>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { api, fmtDT } from '../api'
+import { api, fmtDT, pageUrl, qrBase } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
 
@@ -113,6 +119,13 @@ const data = ref(null)
 const loading = ref(false)
 const selected = ref([])
 const qr = ref({ visible: false, token: '', label: '' })
+
+// 模板里不能直接用 location（不在 Vue 模板全局白名单），放 computed
+const scanUrl = computed(() => pageUrl(`/vest/${qr.value.token}`))
+function copyLink() {
+  navigator.clipboard.writeText(scanUrl.value)
+  ElMessage.success('链接已复制')
+}
 
 async function load() {
   loading.value = true

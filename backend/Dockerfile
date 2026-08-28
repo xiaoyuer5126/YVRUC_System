@@ -29,4 +29,7 @@ CMD ["python", "-m", "pytest"]
 # 运行镜像：compose 的 backend 与 seed 都用它
 FROM base AS runtime
 EXPOSE 8000
-CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers：让 request.base_url 认 X-Forwarded-Proto，否则永远是 http，
+# 二维码兜底会给 https 站点拼出 http:// 的网址。只信任内网反代。
+CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", \
+     "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

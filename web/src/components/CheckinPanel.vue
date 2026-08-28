@@ -208,7 +208,8 @@
     <!-- 二维码 -->
     <el-dialog v-model="qrVisible" title="现场签到二维码" width="380">
       <div style="text-align:center" v-if="qrTask">
-        <img :src="`/api/checkin/qr.svg?token=${qrTask.token}&t=${Date.now()}`"
+        <!-- 必须带 base：不传的话码里编的是相对路径，相机只会当一行字显示 -->
+        <img :src="`/api/checkin/qr.svg?token=${qrTask.token}&base=${qrBase()}&t=${Date.now()}`"
              width="280" height="280" alt="签到二维码" />
         <div class="mono" style="font-size:22px;letter-spacing:4px;margin-top:6px">{{ qrTask.token }}</div>
         <div class="dim">学生扫码进入签到页；第一次扫=签到，第二次扫=签退</div>
@@ -267,7 +268,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { api, fmtDT } from '../api'
+import { api, fmtDT, pageUrl, qrBase } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
 import DateRange from './DateRange.vue'
@@ -295,8 +296,7 @@ const pct = computed(() => board.value
   : 0)
 
 // 扫码链接放 computed：模板里不能直接用 location（不在 Vue 模板全局白名单）
-const scanUrl = computed(() =>
-  `${window.location.origin}${window.location.pathname}#/checkin/${qrTask.value?.token || ''}`)
+const scanUrl = computed(() => pageUrl(`/checkin/${qrTask.value?.token || ''}`))
 
 // 批量/单个签到签退仍需 task_id：取「最新生成的激活任务」。
 // 后端列表按创建时间倒序返回，故第一个激活任务即最新。

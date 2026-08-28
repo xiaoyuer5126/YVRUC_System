@@ -1,7 +1,7 @@
 """学生端：活动浏览与报名（冲突检测 / 候补 / 退选 / 转正确认）。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
@@ -14,7 +14,7 @@ from ..integrations import wecom
 from ..locks import shift_lock
 from ..models import Activity, Enrollment, Shift, Position, User, now, uid
 from ..perm import is_activity_manager
-from ..qrcodes import qr_svg
+from ..qrcodes import page_qr
 from ..serializers import activity_brief, activity_detail
 from .approvals import can_review
 
@@ -84,7 +84,7 @@ def get_activity(activity_id: str,
 
 
 @router.get("/{activity_id}/qr.svg", response_class=Response)
-def activity_qr(activity_id: str, base: str = "",
+def activity_qr(request: Request, activity_id: str, base: str = "",
                 db: OrmSession = Depends(db_session)):
     """活动页二维码，贴海报、发群里都用它。内容就是活动详情页的地址。
 
@@ -95,9 +95,7 @@ def activity_qr(activity_id: str, base: str = "",
     act = db.get(Activity, activity_id)
     if act is None:
         raise HTTPException(404, "活动不存在")
-    data = f"{base}/#/activity/{act.id}" if base else f"/#/activity/{act.id}"
-    return Response(content=qr_svg(data), media_type="image/svg+xml",
-                    headers={"Cache-Control": "no-store"})
+    return page_qr(request, f"/activity/{act.id}", base)
 
 
 class EnrollBody(BaseModel):

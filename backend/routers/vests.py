@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as OrmSession
 
@@ -18,7 +18,7 @@ from ..deps import current_user, require_manager
 from ..models import (Activity, Enrollment, Position, User, VestRecord,
                       VestTask, iso, now, uid)
 from ..perm import ensure_activity_manager
-from ..qrcodes import qr_svg
+from ..qrcodes import page_qr
 
 router = APIRouter(prefix="/api/vests", tags=["vests"])
 
@@ -112,10 +112,9 @@ def scan(token: str, body: ScanBody | None = None,
 
 
 @router.get("/qr.svg", response_class=Response)
-def qr(token: str, base: str = ""):
-    data = f"{base}/#/vest/{token}" if base else f"/#/vest/{token}"
-    return Response(content=qr_svg(data), media_type="image/svg+xml",
-                    headers={"Cache-Control": "no-store"})
+def qr(request: Request, token: str, base: str = ""):
+    """领取／归还码。内容是落地页的完整网址，手机扫码直达。"""
+    return page_qr(request, f"/vest/{token}", base)
 
 
 # ======================= 管理端 =======================

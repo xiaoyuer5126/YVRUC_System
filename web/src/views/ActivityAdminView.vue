@@ -930,7 +930,7 @@
           </el-button>
         </div>
         <div class="recruit-qr">
-          <img :src="`/api/activities/${activityId}/qr.svg?base=${qrBase}`"
+          <img :src="`/api/activities/${activityId}/qr.svg?base=${qrBase()}`"
                width="200" height="200" alt="活动二维码" />
           <div class="dim">扫码直达活动详情页</div>
           <el-input size="small" readonly :model-value="shareUrl" style="margin-top:8px">
@@ -1108,7 +1108,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api, download as dl, fmtDT } from '../api'
+import { api, download as dl, fmtDT, pageUrl, qrBase } from '../api'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
 import VestPanel from '../components/VestPanel.vue'
@@ -1528,10 +1528,7 @@ async function saveAttached() {
 }
 
 // —— 活动招募：文案 + 二维码 ——
-const qrBase = computed(() =>
-  encodeURIComponent(`${window.location.origin}${window.location.pathname}`))
-const shareUrl = computed(() =>
-  `${window.location.origin}${window.location.pathname}#/activity/${activityId}`)
+const shareUrl = computed(() => pageUrl(`/activity/${activityId}`))
 
 async function copyShare() {
   try {

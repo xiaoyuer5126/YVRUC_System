@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import config
@@ -20,7 +20,7 @@ from ..deps import current_user
 from ..integrations import checkin_gateway
 from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
                       Shift, Position, User, now, uid)
-from ..qrcodes import qr_svg
+from ..qrcodes import page_qr
 
 router = APIRouter(prefix="/api/checkin", tags=["checkin"])
 
@@ -133,9 +133,6 @@ def do_checkin(token: str, db: OrmSession = Depends(db_session),
 
 
 @router.get("/qr.svg", response_class=Response)
-def qr(token: str, base: str = ""):
-    """签到码二维码。内容为落地页 URL，手机扫码直达。"""
-    data = f"{base}/#/checkin/{token}" if base else f"/#/checkin/{token}"
-    svg = qr_svg(data)
-    return Response(content=svg, media_type="image/svg+xml",
-                    headers={"Cache-Control": "no-store"})
+def qr(request: Request, token: str, base: str = ""):
+    """签到码二维码。内容是签到落地页的完整网址，手机扫码直达。"""
+    return page_qr(request, f"/checkin/{token}", base)

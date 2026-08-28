@@ -66,14 +66,16 @@ def test_超时自动解冻并通知管理者(client, admin, db, enrolled_activi
     editor = row.editing_by
     db.commit()
 
-    # 别断言「全库只解冻了 1 个」：用例之间共用一个库，别处留下的冻结
-    # 会让这条随机失败。要验的是**这一个**被解冻了。
+    # 别按「全库解冻了几个」「这个人收到几条」来断言：用例之间共用一个库，
+    # 别处留下的冻结会一起被解掉，通知也一起发给同一个管理员，这条就随机
+    # 失败。通知标题里带活动名，而活动名每个用例唯一——按它来筛。
     assert scheduled.release_stale_edit_locks(db) >= 1
     db.expire_all()
     assert db.get(Activity, act.id).editing_since is None
     assert (db.query(Notification)
             .filter(Notification.user_id == editor,
-                    Notification.title.like("报名已自动恢复%")).count() == 1)
+                    Notification.title == f"报名已自动恢复｜{act.title}")
+            .count() == 1)
 
 
 def test_未冻结时不能保存并发布(client, admin, enrolled_activity):
