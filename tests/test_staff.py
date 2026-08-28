@@ -457,3 +457,44 @@ def test_扣留的名额不挡住岗位的其它修改(client, admin, db, open_g
         # 降到已报名人数以下仍然要拦
         assert client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
                             json={"quota": 0}).status_code == 400
+
+
+def test_删除草稿要连带清干净引用(client, admin, db):
+    """草稿身上至少永远挂着一条创建者的共管记录，不清就撞外键报 500。"""
+    from backend.models import ActivityManager, ApprovalEvent
+
+    r = client.post("/api/staff/activities", headers=admin,
+                    json={"title": f"待删草稿 {uid('t')}", "organizer": "校青协",
+                          "type": "A", "intro": "x", "location": "x",
+                          "contacts": [{"name": "王", "phone": "13900000000"}],
+                          "reg_start": (now() - timedelta(days=1)).isoformat(),
+                          "reg_end": (now() + timedelta(days=1)).isoformat()})
+    aid = r.json()["id"]
+    assert db.query(ActivityManager).filter(
+        ActivityManager.activity_id == aid).count() == 1
+
+    # 场次、岗位、被驳回过的审批流水都在，一并要能删掉
+    g = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
+                    json={"name": "上午场", "mode": "pick",
+                          "start_time": (now() + timedelta(days=6)).isoformat(),
+                          "end_time": (now() + timedelta(days=6, hours=3)).isoformat()}
+                    ).json()["id"]
+    client.post(f"/api/staff/shifts/{g}/positions", headers=admin,
+                json={"name": "引导", "quota": 2, **POSITION_TEXT})
+    dept = next(d for d in client.get("/api/staff/departments",
+                                      headers=admin).json() if d["has_head"])
+    client.post(f"/api/staff/activities/{aid}/submit", headers=admin,
+                json={"department_id": dept["id"]})
+    client.post(f"/api/staff/activities/{aid}/decide", headers=admin,
+                json={"approve": False, "comment": "先撤下"})
+    assert db.query(ApprovalEvent).filter(
+        ApprovalEvent.activity_id == aid).count() == 2
+
+    assert client.delete(f"/api/staff/activities/{aid}",
+                         headers=admin).status_code == 200
+    db.expire_all()
+    assert db.get(Activity, aid) is None
+    assert db.query(ActivityManager).filter(
+        ActivityManager.activity_id == aid).count() == 0
+    assert db.query(ApprovalEvent).filter(
+        ApprovalEvent.activity_id == aid).count() == 0

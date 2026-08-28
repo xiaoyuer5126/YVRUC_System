@@ -30,8 +30,9 @@ from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, managed_activity_ids,
                      remove_manager)
 from ..integrations import wecom
-from ..models import (Activity, ActivityManager, AuditLog, CheckinRecord,
-                      Enrollment, Notification, Position, Shift, User,
+from ..models import (Activity, ActivityManager, ApprovalEvent, AuditLog,
+                      CheckinRecord, CheckinTask, Enrollment, Notification,
+                      Position, Shift, User, VestRecord, VestTask,
                       iso, now, uid)
 from ..serializers import activity_brief
 
@@ -502,13 +503,23 @@ def finish(activity_id: str, bg: BackgroundTasks,
 @router.delete("/activities/{activity_id}")
 def delete_activity(activity_id: str, db: OrmSession = Depends(db_session),
                     user: User = Depends(require_manager)):
-    """仅草稿可删——发布过的活动承载着报名记录与留痕，不允许物理删除。"""
+    """仅草稿可删——发布过的活动承载着报名记录与留痕，不允许物理删除。
+
+    场次与岗位有 ORM 级联，其余指向本活动的表要自己清：共管名单、审批流水、
+    马甲台账、签到任务。少清一张表，删除就撞外键报 500——草稿活动身上至少
+    永远挂着一条创建者的共管记录。
+    """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     if act.status != "draft":
         raise HTTPException(409, "仅「筹备中」的活动可以删除；"
                                  "已发布的活动请使用「结束活动」归档")
     label = act.title
+    for model in (ActivityManager, ApprovalEvent, VestRecord, VestTask,
+                  CheckinTask, Enrollment):
+        (db.query(model).filter(model.activity_id == activity_id)
+         .delete(synchronize_session=False))
+    db.flush()
     db.delete(act)
     audit_log(db, actor=user, action="delete", target_type="activity",
               target_id=activity_id, target_label=label, activity_id=None,

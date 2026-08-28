@@ -66,7 +66,9 @@ def test_超时自动解冻并通知管理者(client, admin, db, enrolled_activi
     editor = row.editing_by
     db.commit()
 
-    assert scheduled.release_stale_edit_locks(db) == 1
+    # 别断言「全库只解冻了 1 个」：用例之间共用一个库，别处留下的冻结
+    # 会让这条随机失败。要验的是**这一个**被解冻了。
+    assert scheduled.release_stale_edit_locks(db) >= 1
     db.expire_all()
     assert db.get(Activity, act.id).editing_since is None
     assert (db.query(Notification)

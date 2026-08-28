@@ -257,10 +257,13 @@ def main() -> None:
                 return u
             raise RuntimeError("演示人数不够了")
 
-        # 上午场：东门满8 / 检录满7 / 礼仪3（女）/ 医疗2 = 20人确认
+        # 上午场：东门满8 / 检录 6+1扣留=满7 / 礼仪3（女）/ 医疗2
+        # 检录只放 6 个人：下面那位临近退选的占掉第 7 个位子。
+        # 放满 7 再加一条扣留，就成了「已占用 8 > 名额 7」——真实流程走不出
+        # 这种状态（要先报上名才谈得上扣留），演示数据不该自己造一个。
         for _ in range(8):
             enr(take(), sport, m1, 3, position=s_gate)
-        for _ in range(7):
+        for _ in range(6):
             enr(take(), sport, m1, 2, position=s_check)
         for _ in range(3):
             enr(take(lambda u: u.gender == "女"), sport, m1, 2, position=s_etiq)

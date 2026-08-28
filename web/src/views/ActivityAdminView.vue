@@ -30,8 +30,7 @@
       </template>
       <template #extra>
         <!-- 「调整岗位」只在岗位设置那一页出现一次，页头不重复放 -->
-        <el-button @click="shareDlg = true">分享二维码</el-button>
-        <el-button @click="openPoster">生成招募文案</el-button>
+        <el-button @click="openPoster">活动招募</el-button>
         <el-button @click="editBase = true">编辑基本信息</el-button>
         <el-popconfirm v-if="act.status === 'published'" title="截止后不再接受新报名，确认？"
                        @confirm="transition('close')">
@@ -918,27 +917,29 @@
       </template>
     </el-dialog>
 
-    <!-- 活动二维码：贴海报、发群里 -->
-    <el-dialog v-model="shareDlg" title="活动二维码" width="380">
-      <div style="text-align:center">
-        <img :src="`/api/activities/${activityId}/qr.svg?base=${qrBase}`"
-             width="260" height="260" alt="活动二维码" />
-        <div class="dim">扫码直达本活动详情页；未登录的会先要求登录</div>
-        <el-input size="small" readonly :model-value="shareUrl" style="margin-top:10px">
-          <template #append><el-button @click="copyShare">复制链接</el-button></template>
-        </el-input>
+    <!-- 活动招募：文案与二维码在一处，发群、贴海报都从这里拿 -->
+    <el-dialog v-model="posterDlg.visible" title="活动招募" width="760">
+      <div class="recruit">
+        <div class="recruit-text">
+          <div class="dim" style="margin-bottom:6px">
+            对外用的纯文本，<b>不含志愿者名单</b>；要名单请用「导出与时长」里的排班表。
+          </div>
+          <el-input v-model="posterDlg.text" type="textarea" :rows="16" readonly />
+          <el-button type="primary" style="margin-top:10px" @click="copyPoster">
+            复制文案
+          </el-button>
+        </div>
+        <div class="recruit-qr">
+          <img :src="`/api/activities/${activityId}/qr.svg?base=${qrBase}`"
+               width="200" height="200" alt="活动二维码" />
+          <div class="dim">扫码直达活动详情页</div>
+          <el-input size="small" readonly :model-value="shareUrl" style="margin-top:8px">
+            <template #append><el-button @click="copyShare">复制链接</el-button></template>
+          </el-input>
+        </div>
       </div>
-    </el-dialog>
-
-    <!-- 招募文案：一键复制发群里 -->
-    <el-dialog v-model="posterDlg.visible" title="招募文案" width="620">
-      <p class="dim" style="margin-top:0">
-        对外用的纯文本，<b>不含志愿者名单</b>；要名单请用「导出与时长」里的排班表。
-      </p>
-      <el-input v-model="posterDlg.text" type="textarea" :rows="16" readonly />
       <template #footer>
         <el-button @click="posterDlg.visible = false">关闭</el-button>
-        <el-button type="primary" @click="copyPoster">复制全文</el-button>
       </template>
     </el-dialog>
 
@@ -1526,8 +1527,7 @@ async function saveAttached() {
   } finally { attDlg.value.busy = false }
 }
 
-// —— 分享二维码 ——
-const shareDlg = ref(false)
+// —— 活动招募：文案 + 二维码 ——
 const qrBase = computed(() =>
   encodeURIComponent(`${window.location.origin}${window.location.pathname}`))
 const shareUrl = computed(() =>
@@ -1556,8 +1556,7 @@ async function copyPoster() {
     ElMessage.success('已复制，可以直接粘到群里')
   } catch {
     // 非 https 环境拿不到剪贴板：退回选中文本，让用户自己 Ctrl+C
-    const el = document.querySelector('.el-dialog textarea')
-    el?.select()
+    document.querySelector('.recruit-text textarea')?.select()
     ElMessage.warning('浏览器不允许自动复制，已全选，请按 Ctrl+C')
   }
 }
@@ -1982,6 +1981,16 @@ function toISO(v) {
 </script>
 
 <style scoped>
+/* 招募弹窗：宽屏文案与二维码并排，窄屏竖排 */
+.recruit { display: flex; gap: 18px; align-items: flex-start; }
+.recruit-text { flex: 1; min-width: 0; }
+.recruit-qr { width: 210px; flex-shrink: 0; text-align: center; }
+.recruit-qr img { border: 1px solid #eceef1; border-radius: 8px; }
+@media (max-width: 860px) {
+  .recruit { flex-direction: column; }
+  .recruit-qr { width: 100%; }
+}
+
 /* 页头：宽屏一行排开，窄屏由 styles.css 的媒体查询拆成多行 */
 .hd-title { display: inline-flex; align-items: center; gap: 8px; vertical-align: middle; }
 .hd-meta { display: inline; margin-left: 10px; }
