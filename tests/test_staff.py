@@ -420,3 +420,40 @@ def test_活动开始后不能恢复报名(client, admin, db):
     r = client.post(f"/api/staff/activities/{act.id}/reopen", headers=admin,
                     json={"reg_end": (now() + timedelta(hours=1)).isoformat()})
     assert r.status_code == 409 and "已经开始" in r.json()["detail"]
+
+
+def test_扣留的名额不挡住岗位的其它修改(client, admin, db, open_group, take_student):
+    """一个人临近退选，不该把整个岗位锁死。
+
+    扣留是一条已取消的记录占着位子，管理者本来就有「释放」按钮；
+    拿它挡住改培训内容，等于名额一被占满就再也改不了。
+    """
+    # day_offset=0 才是「今天再过 5 小时」；不给的话场次会排到 30 天后
+    act, g = open_group(2, day_offset=0, start_in_hours=5)
+    pos_id = g.test_position_id
+    for _ in range(2):
+        h = login(client, take_student())
+        r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                        headers=h, json={"position_id": pos_id})
+        assert r.status_code == 200, r.text
+    # 报上名之后才截止报名：扣留额外要求「报名已截止」
+    act.reg_end = now() - timedelta(hours=1)
+    db.commit()
+
+    enr = (db.query(Enrollment)
+           .filter(Enrollment.position_id == pos_id,
+                   Enrollment.status == "enrolled").first())
+    who = db.get(User, enr.user_id)
+    assert client.delete(f"/api/activities/enrollments/{enr.id}",
+                         headers=login(client, who.student_id)).status_code == 200
+    db.expire_all()
+    assert db.get(Enrollment, enr.id).seat_held
+
+    # 名额 2 / 已报名 1 / 已占用 2：改培训内容不该被拦
+    with editing(client, admin, act.id):
+        r = client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
+                         json={"training_note": "换个说法"})
+        assert r.status_code == 200, r.text
+        # 降到已报名人数以下仍然要拦
+        assert client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
+                            json={"quota": 0}).status_code == 400

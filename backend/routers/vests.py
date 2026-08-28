@@ -186,8 +186,12 @@ def vest_board(activity_id: str, db: OrmSession = Depends(db_session),
     items.sort(key=lambda x: (x["returned"], not x["taken"], x["name"]))
     taken = sum(1 for x in items if x["taken"])
     returned = sum(1 for x in items if x["returned"])
+    # 未领取：岗位要马甲、但既没在领也没还过的人
+    not_taken = sum(1 for x in items
+                    if x["expected"] and not x["taken"] and not x["returned"])
     return {"tasks": tasks, "expected": len(need), "taken": taken,
-            "returned": returned, "outstanding": taken, "items": items}
+            "returned": returned, "outstanding": taken,
+            "not_taken": not_taken, "items": items}
 
 
 class VestOpBody(BaseModel):
@@ -268,31 +272,64 @@ def vest_batch(activity_id: str, body: VestOpBody,
     return {"ok": True, "done": len(done), "skipped": skipped}
 
 
+class VestRemindBody(BaseModel):
+    action: str = "return"      # take 催领取 / return 催归还
+    need_ack: bool = False
+
+
 @staff.post("/activities/{activity_id}/vests/remind")
-def vest_remind(activity_id: str, db: OrmSession = Depends(db_session),
+def vest_remind(activity_id: str, body: VestRemindBody | None = None,
+                db: OrmSession = Depends(db_session),
                 user: User = Depends(require_manager)):
-    """一键提醒还没归还的人。"""
+    """一键催领取或催归还。
+
+    催领取：岗位要马甲、但还没领的人——活动当天没穿马甲，现场认不出是志愿者。
+    催归还：领了还没还的人。
+    """
     from ..integrations import wecom
 
     ensure_activity_manager(db, user, activity_id)
     act = db.get(Activity, activity_id)
-    rows = (db.query(VestRecord)
-            .filter(VestRecord.activity_id == activity_id,
-                    VestRecord.returned_at.is_(None)).all())
-    if not rows:
-        raise HTTPException(400, "没有未归还的马甲")
-    for r in rows:
-        u = db.get(User, r.user_id)
-        if u is None:
-            continue
+    body = body or VestRemindBody()
+    if body.action not in ACTIONS:
+        raise HTTPException(400, "未知操作")
+
+    if body.action == "return":
+        targets = [(db.get(User, r.user_id), r.vest_no) for r in
+                   db.query(VestRecord)
+                   .filter(VestRecord.activity_id == activity_id,
+                           VestRecord.returned_at.is_(None)).all()]
+        empty_msg = "没有未归还的马甲"
+        title = f"请归还志愿马甲｜{act.title}"
+        text = lambda no: (f"您在「{act.title}」领取的志愿马甲"
+                           + (f"（编号 {no}）" if no else "")
+                           + "还没有归还，请尽快到指定地点扫「归还码」交还。")
+    else:
+        taken = {r.user_id for r in db.query(VestRecord)
+                 .filter(VestRecord.activity_id == activity_id,
+                         VestRecord.returned_at.is_(None)).all()}
+        targets = [(db.get(User, uid_), "")
+                   for uid_ in _need_vest_user_ids(db, activity_id)
+                   if uid_ not in taken]
+        empty_msg = "需要马甲的人都已经领了"
+        title = f"请领取志愿马甲｜{act.title}"
+        text = lambda _no: (f"您在「{act.title}」的岗位需要穿志愿马甲，"
+                            f"目前还没有领取记录。\n"
+                            f"请到指定地点扫「领取码」领取；散场后记得归还。")
+
+    targets = [(u, no) for u, no in targets if u is not None]
+    if not targets:
+        raise HTTPException(400, empty_msg)
+    batch_id = uid("bat") if body.need_ack else None
+    for u, no in targets:
         wecom.send_user(db, u, "custom", data={"activity_id": activity_id},
-                        title=f"请归还志愿马甲｜{act.title}",
-                        content=f"您在「{act.title}」领取的志愿马甲"
-                                + (f"（编号 {r.vest_no}）" if r.vest_no else "")
-                                + "还没有归还，请尽快到指定地点扫「归还码」交还。")
+                        title=title, content=text(no),
+                        need_ack=body.need_ack, batch_id=batch_id)
+    label = "领取" if body.action == "take" else "归还"
     audit_log(db, actor=user, action="update", target_type="vest",
               target_id=activity_id, target_label=act.title,
               activity_id=activity_id,
-              summary=f"提醒 {len(rows)} 位志愿者归还马甲")
+              summary=f"提醒 {len(targets)} 位志愿者{label}马甲"
+                      + ("，要求签收" if body.need_ack else ""))
     db.commit()
-    return {"ok": True, "count": len(rows)}
+    return {"ok": True, "count": len(targets), "batch_id": batch_id}

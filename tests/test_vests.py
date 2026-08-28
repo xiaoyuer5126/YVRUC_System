@@ -119,16 +119,45 @@ def test_台账与手动登记(client, admin, db, vest_activity):
     assert d["taken"] == 1 and d["outstanding"] == 1
     assert d["items"][0]["vest_no"] == "B-7"
 
-    # 未归还可以一键提醒
+    # 未归还可以一键提醒；领了的人就不该再被催领取
     assert client.post(f"{url}/remind", headers=admin,
-                       json={}).json()["count"] == 1
+                       json={"action": "return"}).json()["count"] == 1
+    assert client.post(f"{url}/remind", headers=admin,
+                       json={"action": "take"}).status_code == 400
 
     client.post(f"{url}/batch", headers=admin,
                 json={"action": "return", "student_ids": [a.student_id]})
     d = client.get(url, headers=admin).json()
     assert d["returned"] == 1 and d["outstanding"] == 0
     assert client.post(f"{url}/remind", headers=admin,
-                       json={}).status_code == 400      # 没人可催了
+                       json={"action": "return"}).status_code == 400   # 没人可催了
+
+
+def test_催领取马甲与签收(client, admin, db, vest_activity):
+    """活动当天没穿马甲，现场认不出是志愿者，所以也要能催领取。"""
+    from backend.models import Notification
+
+    act, a, _b = vest_activity
+    _tokens(client, admin, act)
+    url = f"/api/staff/activities/{act.id}/vests"
+
+    assert client.get(url, headers=admin).json()["not_taken"] == 1
+
+    r = client.post(f"{url}/remind", headers=admin,
+                    json={"action": "take", "need_ack": True})
+    assert r.status_code == 200 and r.json()["count"] == 1
+    batch = r.json()["batch_id"]
+    assert batch
+
+    n = (db.query(Notification)
+         .filter(Notification.user_id == a.id,
+                 Notification.title.like("请领取志愿马甲%")).one())
+    assert n.need_ack and n.batch_id == batch
+
+    # 领了之后就不在催领取的名单里了
+    client.post(f"{url}/batch", headers=admin,
+                json={"action": "take", "student_ids": [a.student_id]})
+    assert client.get(url, headers=admin).json()["not_taken"] == 0
 
 
 def test_非本活动管理者看不到台账(client, initiator, vest_activity):

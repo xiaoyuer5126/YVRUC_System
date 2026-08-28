@@ -587,16 +587,20 @@ def _apply_attachment(db: OrmSession, g: Shift, body: ShiftBody,
 
 
 def _validate_shift_capacity(db: OrmSession, g: Shift):
-    """assign 模式的场次总名额校验。pick 模式名额在岗位上，这里不管。"""
+    """assign 模式的场次总名额校验。pick 模式名额在岗位上，这里不管。
+
+    只跟**真人**比，不跟扣留的空位比：扣留是一条已取消的记录占着位子，
+    管理者本来就有「释放」按钮。拿它挡住改备注、改时间，等于一个人临近退选
+    就把整个场次锁死了。
+    """
     if g.is_attached() or not g.needs_assign():
         return
     if g.capacity <= 0:
         raise HTTPException(400, "「截止后统一分配」的场次必须填写人数上限")
-    used = logic.shift_occupied_count(db, g.id)
-    if g.capacity < used:
+    enrolled = logic.shift_enrolled_count(db, g.id)
+    if g.capacity < enrolled:
         raise HTTPException(
-            400, f"人数上限不能小于已占用名额（{used} 人：含已报名报名与"
-                 f"临近退选扣留的名额）")
+            400, f"人数上限不能小于已报名的 {enrolled} 人")
 
 
 def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> int:
@@ -850,9 +854,10 @@ def _validate_position(db: OrmSession, g: Shift, s: Position):
     """
     if s.quota <= 0:
         raise HTTPException(400, "岗位名额必须大于 0")
-    used = logic.position_occupied_count(db, s.id) if s.id else 0
-    if s.quota < used:
-        raise HTTPException(400, f"岗位名额不能小于已占用的 {used} 人")
+    # 同上：只跟已报名的真人比。扣留的空位不该挡住与名额无关的修改
+    enrolled = logic.position_enrolled_count(db, s.id) if s.id else 0
+    if s.quota < enrolled:
+        raise HTTPException(400, f"岗位名额不能小于已报名的 {enrolled} 人")
     if g.needs_assign():
         quota_sum = sum(x.quota for x in g.positions if x.id != s.id) + s.quota
         if quota_sum > g.capacity:

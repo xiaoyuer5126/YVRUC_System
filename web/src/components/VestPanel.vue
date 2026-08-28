@@ -6,9 +6,13 @@
       </el-button>
       <el-button v-if="data?.tasks?.take" size="small" @click="openQR('take')">领取码</el-button>
       <el-button v-if="data?.tasks?.return" size="small" @click="openQR('return')">归还码</el-button>
+      <el-button size="small" type="primary" plain :disabled="!data?.not_taken"
+                 @click="openRemind('take')">
+        提醒领取（{{ data?.not_taken || 0 }} 人）
+      </el-button>
       <el-button size="small" type="warning" plain :disabled="!data?.outstanding"
-                 @click="remind">
-        提醒未归还（{{ data?.outstanding || 0 }} 人）
+                 @click="openRemind('return')">
+        提醒归还（{{ data?.outstanding || 0 }} 人）
       </el-button>
       <span class="dim">领取与归还各一个码，贴在两张桌子上；现场也可手动勾选</span>
     </div>
@@ -68,6 +72,21 @@
         </template>
       </el-table-column>
     </el-table>
+
+    <el-dialog v-model="rm.visible" :title="rm.action === 'take' ? '提醒领取马甲' : '提醒归还马甲'"
+               width="440">
+      <p class="dim" style="margin-top:0;line-height:1.8">
+        {{ rm.action === 'take'
+           ? `发给岗位需要马甲、但还没领的 ${data?.not_taken || 0} 位志愿者。`
+           : `发给领了还没还的 ${data?.outstanding || 0} 位志愿者。` }}
+      </p>
+      <el-checkbox v-model="rm.needAck">要求志愿者点「我已知悉」</el-checkbox>
+      <div class="dim">勾选后可在本活动的「签收情况」里看到谁还没回</div>
+      <template #footer>
+        <el-button @click="rm.visible = false">取消</el-button>
+        <el-button type="primary" :loading="rm.busy" @click="remind">发送</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="qr.visible" :title="'马甲' + qr.label + '码'" width="380">
       <div style="text-align:center" v-if="qr.token">
@@ -142,9 +161,20 @@ async function one(action, row) {
   load()
 }
 
+const rm = ref({ visible: false, action: 'return', needAck: false, busy: false })
+const openRemind = action => {
+  rm.value = { visible: true, action, needAck: false, busy: false }
+}
+
 async function remind() {
-  const d = await api.post(`/api/staff/activities/${props.activityId}/vests/remind`, {})
-  ElMessage.success(`已提醒 ${d.count} 位未归还的志愿者`)
+  rm.value.busy = true
+  try {
+    const d = await api.post(`/api/staff/activities/${props.activityId}/vests/remind`,
+      { action: rm.value.action, need_ack: rm.value.needAck })
+    ElMessage.success(`已提醒 ${d.count} 位志愿者`
+      + (d.batch_id ? '（要求签收）' : ''))
+    rm.value.visible = false
+  } finally { rm.value.busy = false }
 }
 </script>
 

@@ -1,7 +1,7 @@
 """学生端：活动浏览与报名（冲突检测 / 候补 / 退选 / 转正确认）。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
@@ -14,6 +14,7 @@ from ..integrations import wecom
 from ..locks import shift_lock
 from ..models import Activity, Enrollment, Shift, Position, User, now, uid
 from ..perm import is_activity_manager
+from ..qrcodes import qr_svg
 from ..serializers import activity_brief, activity_detail
 
 router = APIRouter(prefix="/api/activities", tags=["activities"])
@@ -69,6 +70,23 @@ def get_activity(activity_id: str,
     # 管理者要能在同一个页面核对培训内容与组长，不必先去后台
     return activity_detail(db, act, user,
                            manager=is_activity_manager(db, user, activity_id))
+
+
+@router.get("/{activity_id}/qr.svg", response_class=Response)
+def activity_qr(activity_id: str, base: str = "",
+                db: OrmSession = Depends(db_session)):
+    """活动页二维码，贴海报、发群里都用它。内容就是活动详情页的地址。
+
+    不要登录态：<img> 标签不会带 Authorization 头，加了鉴权图就是裂的。
+    码里只有一个本来就要公开发出去的链接，扫码后照常要登录才看得到内容。
+    仍然查一下活动在不在，免得打错 id 印出一张扫不出东西的码。
+    """
+    act = db.get(Activity, activity_id)
+    if act is None:
+        raise HTTPException(404, "活动不存在")
+    data = f"{base}/#/activity/{act.id}" if base else f"/#/activity/{act.id}"
+    return Response(content=qr_svg(data), media_type="image/svg+xml",
+                    headers={"Cache-Control": "no-store"})
 
 
 class EnrollBody(BaseModel):

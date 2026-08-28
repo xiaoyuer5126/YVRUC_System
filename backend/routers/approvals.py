@@ -135,6 +135,22 @@ def update_department(dept_id: str, body: DeptBody,
 
 # ======================= 提交与审批 =======================
 
+@router.get("/activities/{activity_id}/submit-check")
+def submit_check(activity_id: str, db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_manager)):
+    """结构够不够格提交。前端在**点「提交审批」按钮时**先问这一下——
+    让人选完部门、写完备注才被拦，白填一遍。"""
+    ensure_activity_manager(db, user, activity_id)
+    act = db.get(Activity, activity_id)
+    if act is None:
+        raise HTTPException(404, "活动不存在")
+    if act.status != "draft":
+        raise HTTPException(409, f"当前状态为「{act.label_status()}」，不能提交审批")
+    from .staff_activities import ensure_ready_to_publish
+    ensure_ready_to_publish(act)
+    return {"ok": True}
+
+
 class SubmitBody(BaseModel):
     department_id: str
     note: str = ""

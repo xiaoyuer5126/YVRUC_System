@@ -30,7 +30,8 @@
       </template>
       <template #extra>
         <!-- 「调整岗位」只在岗位设置那一页出现一次，页头不重复放 -->
-        <el-button @click="openPoster">复制活动信息</el-button>
+        <el-button @click="shareDlg = true">分享二维码</el-button>
+        <el-button @click="openPoster">生成招募文案</el-button>
         <el-button @click="editBase = true">编辑基本信息</el-button>
         <el-popconfirm v-if="act.status === 'published'" title="截止后不再接受新报名，确认？"
                        @confirm="transition('close')">
@@ -189,8 +190,8 @@
               </template>
             </el-table-column>
             <el-table-column prop="location" label="服务地点" min-width="120" />
-            <el-table-column label="名额/已报名" width="130">
-              <template #default="{row}">{{ row.quota }} / {{ row.enrolled }}</template>
+            <el-table-column label="已报名/名额" width="130">
+              <template #default="{row}">{{ row.enrolled }} / {{ row.quota }}</template>
             </el-table-column>
             <el-table-column prop="requirement_desc" label="要求" min-width="140" />
             <el-table-column prop="training_note" label="培训内容" min-width="160" show-overflow-tooltip />
@@ -917,8 +918,20 @@
       </template>
     </el-dialog>
 
+    <!-- 活动二维码：贴海报、发群里 -->
+    <el-dialog v-model="shareDlg" title="活动二维码" width="380">
+      <div style="text-align:center">
+        <img :src="`/api/activities/${activityId}/qr.svg?base=${qrBase}`"
+             width="260" height="260" alt="活动二维码" />
+        <div class="dim">扫码直达本活动详情页；未登录的会先要求登录</div>
+        <el-input size="small" readonly :model-value="shareUrl" style="margin-top:10px">
+          <template #append><el-button @click="copyShare">复制链接</el-button></template>
+        </el-input>
+      </div>
+    </el-dialog>
+
     <!-- 招募文案：一键复制发群里 -->
-    <el-dialog v-model="posterDlg.visible" title="活动信息（招募版）" width="620">
+    <el-dialog v-model="posterDlg.visible" title="招募文案" width="620">
       <p class="dim" style="margin-top:0">
         对外用的纯文本，<b>不含志愿者名单</b>；要名单请用「导出与时长」里的排班表。
       </p>
@@ -1513,6 +1526,22 @@ async function saveAttached() {
   } finally { attDlg.value.busy = false }
 }
 
+// —— 分享二维码 ——
+const shareDlg = ref(false)
+const qrBase = computed(() =>
+  encodeURIComponent(`${window.location.origin}${window.location.pathname}`))
+const shareUrl = computed(() =>
+  `${window.location.origin}${window.location.pathname}#/activity/${activityId}`)
+
+async function copyShare() {
+  try {
+    await navigator.clipboard.writeText(shareUrl.value)
+    ElMessage.success('链接已复制')
+  } catch {
+    ElMessage.warning('浏览器不允许自动复制，请手动选中复制')
+  }
+}
+
 // —— 招募文案 ——
 const posterDlg = ref({ visible: false, text: '' })
 
@@ -1721,6 +1750,10 @@ async function loadApproval() {
 }
 
 async function openSubmit() {
+  // 先验结构再开窗：让人选完部门、写完备注才被告知「场次没岗位」，等于白填
+  try {
+    await api.get(`/api/staff/activities/${activityId}/submit-check`)
+  } catch { return }        // 错误提示由 api 层统一弹出
   depts.value = await api.get('/api/staff/departments')
   submitDlg.value = { visible: true, deptId: '', note: '', busy: false }
 }
