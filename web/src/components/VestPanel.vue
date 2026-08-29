@@ -14,6 +14,7 @@
                  @click="openRemind('return')">
         提醒归还（{{ data?.outstanding || 0 }} 人）
       </el-button>
+      <RefreshBar ref="refresher" :load="load" />
       <span class="dim">领取与归还各一个码，贴在两张桌子上；现场也可手动勾选</span>
     </div>
 
@@ -112,6 +113,7 @@ import { Plus } from '@element-plus/icons-vue'
 import { api, fmtDT, pageUrl, qrBase } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
+import RefreshBar from './RefreshBar.vue'
 
 const props = defineProps({ activityId: { type: String, required: true } })
 const narrow = useNarrow()
@@ -119,6 +121,7 @@ const data = ref(null)
 const loading = ref(false)
 const selected = ref([])
 const qr = ref({ visible: false, token: '', label: '' })
+const refresher = ref(null)
 
 // 模板里不能直接用 location（不在 Vue 模板全局白名单），放 computed
 const scanUrl = computed(() => pageUrl(`/vest/${qr.value.token}`))
@@ -134,7 +137,10 @@ async function load() {
     selected.value = []
   } finally { loading.value = false }
 }
-onMounted(load)
+onMounted(async () => {
+  await load()
+  refresher.value?.markLoaded()
+})
 
 const onSelect = rows => { selected.value = rows }
 const tagText = r => (r.returned ? '已归还' : r.taken ? '未归还' : '未领取')

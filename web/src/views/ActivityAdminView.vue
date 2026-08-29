@@ -263,6 +263,7 @@
           <el-button type="primary" plain @click="openNotify">
             <el-icon><Bell /></el-icon>&nbsp;发送通知
           </el-button>
+          <RefreshBar ref="rosterRefresh" :load="refreshRoster" />
           <span class="dim">发给本活动已报名的志愿者</span>
         </div>
         <el-row :gutter="14">
@@ -468,7 +469,8 @@
 
       <!-- ============ 签到管理 ============ -->
       <el-tab-pane label="签到管理" name="checkin" lazy>
-        <CheckinPanel v-if="currentShift" :shift="currentShift" :activity-id="act.id"
+        <!-- 场次由面板自己选：这一页在盯现场，跟「报名与调配」那边排人是两件事 -->
+        <CheckinPanel v-if="allShifts.length" :activity-id="act.id"
                       :all-shifts="allShifts" />
         <el-empty v-else description="请先创建场次" />
       </el-tab-pane>
@@ -638,6 +640,9 @@
 
       <!-- ============ 管理者 ============ -->
       <el-tab-pane label="签收情况" name="acks" lazy>
+        <div class="toolbar" style="margin-bottom:10px">
+          <RefreshBar ref="ackRefresh" :load="loadBatches" />
+        </div>
         <div class="dim" style="margin-bottom:10px">
           只列要求签收的群发。签收 = 本人点过「我已知悉」，比「已读」硬；
           催办只是催他回去签原来那条，不会多出一条待签收。
@@ -1106,12 +1111,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download as dl, fmtDT, pageUrl, qrBase } from '../api'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
+import RefreshBar from '../components/RefreshBar.vue'
 import VestPanel from '../components/VestPanel.vue'
 import MaterialManager from '../components/MaterialManager.vue'
 import DataCards from '../components/DataCards.vue'
@@ -1141,6 +1147,8 @@ const notifyDlg = ref({ visible: false, saving: false })
 const notifyForm = ref({ scope: 'all', shift_id: '', title: '', content: '',
                          need_ack: false })
 const ackBatches = ref([])
+const ackRefresh = ref(null)
+const rosterRefresh = ref(null)
 
 // —— 签收情况 ——
 async function loadBatches() {
@@ -1341,6 +1349,10 @@ async function loadAll() {
     loadError.value = e.message || '加载失败'
   } finally {
     loading.value = false
+    // 记「更新于」必须等在这之后：loading 为真时整页是骨架屏，页签根本没渲染，
+    // 刷新条的 ref 还是 null，写在 try 里等于没写。
+    await nextTick()
+    rosterRefresh.value?.markLoaded()
   }
 }
 
@@ -1906,6 +1918,14 @@ function loadRoster() {
   moveSel.value = {}
 }
 
+/** 重新拉当前场次的名单。loadRoster 只是把缓存搬到视图上，不发请求。 */
+async function refreshRoster() {
+  const g = currentShift.value
+  if (!g) return
+  g._roster = await api.get(`/api/staff/shifts/${g.id}/roster`)
+  loadRoster()
+}
+
 // 只有「岗位设了组长」的人才能被指定；没岗位的人后端也会拒
 function canBeLeader(row) {
   const p = roster.value?.positions?.find(x => x.id === row.position_id)
@@ -1976,9 +1996,13 @@ async function removeManager(row) {
   } catch { /* toast by api */ }
 }
 // 进入「导出与时长」页签时自动加载时长预览（静默加载，不弹提示）
-watch(tab, t => {
+watch(tab, async t => {
   if (t === 'export') { hoursPreview(true); loadAppeals() }
-  if (t === 'acks') loadBatches()
+  if (t === 'acks') {
+    await loadBatches()
+    await nextTick()                 // lazy 页签这一轮才渲染，ref 要等一帧
+    ackRefresh.value?.markLoaded()   // 首次由这里加载，时刻也要记上
+  }
 })
 watch(currentGroupId, loadRoster)
 watch(() => shifts.value.map(g => g.enrolled).join(','), () => {

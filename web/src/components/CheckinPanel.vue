@@ -1,5 +1,23 @@
 <template>
-  <div v-if="shift">
+  <div v-if="boardShift">
+    <!-- 本页自己管场次，不跟着「报名与调配」走：那边在排人，这边在盯现场，
+         两件事同时在做，共用一个选择等于互相打架 -->
+    <div class="toolbar">
+      <span>签到场次</span>
+      <el-select v-model="boardShiftId" style="width:280px" @change="onSwitchBoard">
+        <el-option v-for="g in shiftOptions" :key="g.id" :value="g.id"
+                   :label="`${g.name}（${g.time_text}）`">
+          <span>{{ g.name }}</span>
+          <el-tag v-if="g.kind !== 'service'" size="small" effect="plain"
+                  style="margin-left:6px">{{ g.kind_label }}</el-tag>
+          <span class="dim" style="margin-left:8px">{{ g.time_text }}</span>
+        </el-option>
+      </el-select>
+      <!-- 刷新条放在这里而不是看板里：换场次时看板会整块卸载重建，
+           待在里面的话组件跟着重来一次，「更新于」被清空 -->
+      <RefreshBar ref="boardRefresh" :load="loadBoard" />
+    </div>
+
     <div class="toolbar">
       <el-button type="primary" size="small" @click="openCreate">
         <el-icon><Plus /></el-icon>&nbsp;生成签到码
@@ -25,7 +43,7 @@
         <div class="dim">
           <b>{{ row.shift_name }}</b>
           <template v-if="row.shift_kind !== 'service'">（{{ row.shift_kind_label }}）</template>
-          <template v-if="row.shift_id === shift.id"> · 当前大屏</template><br />
+          <template v-if="row.shift_id === boardShiftId"> · 当前大屏</template><br />
           {{ row.mode === 'position' ? `分岗位·${row.position_name}` : '统一签到' }} ·
           {{ fmtDT(row.valid_from) }} ~ {{ fmtDT(row.valid_to) }} · 已签 {{ row.count }} 人
         </div>
@@ -49,7 +67,7 @@
           <el-tag v-if="row.shift_kind !== 'service'" size="small" effect="plain">
             {{ row.shift_kind_label }}
           </el-tag>
-          <el-tag v-if="row.shift_id === shift.id" size="small" type="success"
+          <el-tag v-if="row.shift_id === boardShiftId" size="small" type="success"
                   effect="plain">当前大屏</el-tag>
         </template>
       </el-table-column>
@@ -79,10 +97,12 @@
       </el-table-column>
     </el-table>
 
-    <!-- 实时大屏：按场次拉取，不依赖激活任务 -->
+    <!-- 到岗看板：按场次拉取，不依赖激活任务 -->
     <template v-if="board">
-      <div class="section-title">{{ board.shift_name }} · 实时到岗
-        <el-tag size="small" effect="plain">每5秒刷新</el-tag>
+      <div class="section-title">{{ board.shift_name }} · 到岗情况
+        <el-tag v-if="board.kind !== 'service'" size="small" effect="plain">
+          {{ board.kind_label }}
+        </el-tag>
       </div>
       <el-row :gutter="14">
         <el-col :span="6">
@@ -292,7 +312,7 @@
         <el-form-item v-if="reminderScope === 'position'" label="岗位" required>
           <el-select v-model="reminderPositions" multiple placeholder="可多选"
                      style="width:100%">
-            <el-option v-for="p in shift.positions" :key="p.id" :value="p.id"
+            <el-option v-for="p in boardShift?.positions || []" :key="p.id" :value="p.id"
                        :label="p.name" />
           </el-select>
         </el-form-item>
@@ -313,33 +333,37 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT, pageUrl, qrBase } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
 import DateRange from './DateRange.vue'
+import RefreshBar from './RefreshBar.vue'
 
 const props = defineProps({
-  shift: { type: Object, required: true },     // 大屏显示的场次
-  activityId: { type: String, default: '' },   // 兜底：序列化器缺 activity_id 时由父级传入
-  allShifts: { type: Array, default: () => [] },  // 主场次 + 培训/彩排，供生成时选
+  activityId: { type: String, required: true },
+  allShifts: { type: Array, required: true },  // 主场次 + 培训/彩排
 })
 
 // 与后端 config.CHECKIN_WINDOW_PAD_MINUTES 保持一致
 const WINDOW_PAD = 30
 const route = useRoute()
-const actId = computed(() => props.activityId || props.shift.activity_id)  // vuecheck: script-only
+const actId = computed(() => props.activityId)   // vuecheck: script-only
 
 const creating = ref(false)
 const form = ref({ shift_id: '', mode: 'shift', position_id: '', range: [] })
 
-// 父级没传就退回当前这一场，至少还能给它建码
-const shiftOptions = computed(
-  () => (props.allShifts.length ? props.allShifts : [props.shift]))
+const shiftOptions = computed(() => props.allShifts)
 const formShift = computed(
   () => shiftOptions.value.find(g => g.id === form.value.shift_id))
+
+// 本页自己持有的场次选择，与「报名与调配」互不影响
+const boardShiftId = ref('')
+const boardShift = computed(
+  () => shiftOptions.value.find(g => g.id === boardShiftId.value))
+
 const narrow = useNarrow()
 const tasks = ref([])
 const board = ref(null)
@@ -347,7 +371,7 @@ const qrVisible = ref(false)
 const qrTask = ref(null)
 const manualSid = ref('')
 const selected = ref([])
-let timer = null
+const boardRefresh = ref(null)
 
 const pct = computed(() => board.value
   ? Math.min(100, Math.round(board.value.checked / Math.max(1, board.value.expected) * 100))
@@ -361,16 +385,28 @@ const scanUrl = computed(() => pageUrl(`/checkin/${qrTask.value?.token || ''}`))
 // 结果整屏人被判成「非本场次确认志愿者」全部跳过。后端列表按创建时间倒序，
 // 故本场次第一个激活的即最新。
 const batchTaskId = computed(() => tasks.value.find(
-  t => t.active && t.shift_id === props.shift.id)?.id || '')
+  t => t.active && t.shift_id === boardShiftId.value)?.id || '')
 
 async function loadTasks() {
   tasks.value = await api.get(`/api/staff/activities/${actId.value}/checkin-tasks`)
 }
 
+/** 到岗看板 + 码列表一起拉：现场补签会同时改这两处的数字。 */
 async function loadBoard() {
-  try {
-    board.value = await api.get(`/api/staff/shifts/${props.shift.id}/board`)
-  } catch { /* toast by api；轮询失败保留旧数据 */ }
+  if (!boardShiftId.value) return
+  const [b] = await Promise.all([
+    api.get(`/api/staff/shifts/${boardShiftId.value}/board`),
+    loadTasks(),
+  ])
+  board.value = b
+}
+
+/** 换场次：看板整份换掉，先前勾选的人不再属于这一场，必须清空。 */
+function onSwitchBoard() {
+  board.value = null
+  selected.value = []
+  manualSid.value = ''
+  boardRefresh.value?.fire()
 }
 
 function onSelect(rows) { selected.value = rows }
@@ -401,18 +437,16 @@ async function quick(action) {
   loadBoard()
 }
 
-onMounted(() => {
-  loadTasks().then(() => {
-    const qrt = route.query.qr   // 深链：?qr=GALA01 直接打开二维码弹窗
-    if (qrt) {
-      const row = tasks.value.find(t => t.token === String(qrt).toUpperCase())
-      if (row) { qrTask.value = row; qrVisible.value = true }
-    }
-  })
-  loadBoard()
-  timer = setInterval(loadBoard, 5000)
+onMounted(async () => {
+  // 深链 ?qr=GALA01 直接打开二维码弹窗，并把看板切到那张码所在的场次
+  const qrt = route.query.qr
+  await loadTasks()
+  const row = qrt && tasks.value.find(t => t.token === String(qrt).toUpperCase())
+  boardShiftId.value = row?.shift_id || shiftOptions.value[0]?.id || ''
+  if (row) { qrTask.value = row; qrVisible.value = true }
+  await loadBoard()
+  boardRefresh.value?.markLoaded()
 })
-onUnmounted(() => clearInterval(timer))
 
 /** 默认可签时段：场次起止各外扩 WINDOW_PAD 分钟。
  *
@@ -427,8 +461,7 @@ function defaultRange(g) {
 }
 
 function openCreate() {
-  const g = shiftOptions.value.find(x => x.id === props.shift.id)
-             || shiftOptions.value[0]
+  const g = boardShift.value || shiftOptions.value[0]
   form.value = { shift_id: g?.id || '', mode: 'shift', position_id: '',
                  range: defaultRange(g) }
   creating.value = true
@@ -478,7 +511,7 @@ const reminding = ref(false)
 
 // 现场催场往往是「东门那三个人没到」，所以可以只催某个岗位组或岗位
 const positionGroups = computed(() => [...new Set(
-  (props.shift.positions || []).map(p => p.group_name).filter(Boolean))])
+  (boardShift.value?.positions || []).map(p => p.group_name).filter(Boolean))])
 
 const reminderDlg = ref(false)
 const reminderScope = ref('all')
@@ -506,7 +539,7 @@ async function sendReminder() {
   reminding.value = true
   try {
     const d = await api.post(
-      `/api/staff/shifts/${props.shift.id}/checkin-reminder`, body)
+      `/api/staff/shifts/${boardShiftId.value}/checkin-reminder`, body)
     ElMessage.success(`已向${d.scope}的 ${d.count} 位未签到志愿者发送提醒`
       + (d.batch_id ? '（要求签收）' : ''))
     reminderDlg.value = false
