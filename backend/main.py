@@ -61,11 +61,12 @@ async def lifespan(_app: FastAPI):
     if config.DEMO_LOGIN_PASSWORD:
         logger.warning("演示登录已启用（口令登录）。接入统一身份认证后请清空 "
                        "RUCVA_DEMO_PASSWORD")
-    task = asyncio.create_task(_sweeper())
+    task = asyncio.create_task(_sweeper()) if config.RUN_SWEEPER else None
     yield
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
+    if task is not None:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 def create_app() -> FastAPI:

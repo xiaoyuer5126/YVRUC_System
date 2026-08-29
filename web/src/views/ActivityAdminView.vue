@@ -468,7 +468,8 @@
 
       <!-- ============ 签到管理 ============ -->
       <el-tab-pane label="签到管理" name="checkin" lazy>
-        <CheckinPanel v-if="currentShift" :shift="currentShift" :activity-id="act.id" />
+        <CheckinPanel v-if="currentShift" :shift="currentShift" :activity-id="act.id"
+                      :all-shifts="allShifts" />
         <el-empty v-else description="请先创建场次" />
       </el-tab-pane>
 
@@ -1345,6 +1346,22 @@ async function loadAll() {
 
 const shifts = computed(() => act.value?.shifts || [])
 const currentShift = computed(() => shifts.value.find(g => g.id === currentGroupId.value))
+
+/** 拉平的场次清单：主场次 + 各自挂着的培训/彩排。
+ *
+ * 详情接口只在顶层给主场次，培训/彩排嵌在 attached 里。签到码要能给培训场次
+ * 生成——hours_mode 是「按签到计」的培训，签不了到就没时长。
+ */
+const allShifts = computed(() => shifts.value.flatMap(g => [
+  { id: g.id, name: g.name, kind: g.kind, kind_label: g.kind_label,
+    time_text: g.time_text, start_time: g.start_time, end_time: g.end_time,
+    positions: g.positions || [] },
+  ...(g.attached || []).map(a => ({
+    id: a.id, name: a.name, kind: a.kind, kind_label: a.kind_label,
+    time_text: a.time_text, start_time: a.start_time, end_time: a.end_time,
+    // 培训/彩排自己不设岗位（用 applies_to_positions 圈人），只能统一签到
+    positions: [], parent_name: g.name })),
+]))
 const unassignedCount = computed(() =>
   (roster.value.enrolled || []).filter(x => !x.position_id).length)
 const pendingPromo = computed(() => roster.value.waitlist.some(w => w.status === 'pending_confirm'))

@@ -40,6 +40,10 @@ os.environ["RUCVA_DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["RUCVA_REDIS_URL"] = os.environ.get(
     "RUCVA_TEST_REDIS_URL", "redis://127.0.0.1:6380/1")
 os.environ.setdefault("RUCVA_DEMO_PASSWORD", "test-pass")
+# 关掉后台定时任务：每建一个 TestClient 都会触发一次立即扫描，它在另一个
+# 线程里跟用例抢同一批数据（解冻、递补、状态流转），断言会随机多算一份。
+# 定时任务本身在 test_scheduled.py 里直接调函数来验，不靠这个循环。
+os.environ["RUCVA_DISABLE_SWEEPER"] = "1"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

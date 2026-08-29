@@ -58,13 +58,14 @@ def create_task(shift_id: str, body: TaskBody,
             raise HTTPException(400, "分岗位签到必须指定本场次下的岗位")
     token = checkin_gateway.create_task(body.mode, g.id,
                                         position.id if position else "")
+    pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
                        position_id=position.id if position else None,
                        mode=body.mode, token=token,
                        valid_from=(datetime.fromisoformat(body.valid_from)
-                                   if body.valid_from else g.start_time),
+                                   if body.valid_from else g.start_time - pad),
                        valid_to=(datetime.fromisoformat(body.valid_to)
-                                 if body.valid_to else g.end_time),
+                                 if body.valid_to else g.end_time + pad),
                        created_by=user.id)
     db.add(task)
     label = f"{position.name}" if position else f"{g.name}·统一签到"
@@ -92,7 +93,10 @@ def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
         n = (db.query(func.count(CheckinRecord.id))
              .filter(CheckinRecord.task_id == t.id).scalar() or 0)
         out.append({"id": t.id, "token": t.token, "mode": t.mode,
-                    "shift_name": g.name,
+                    # shift_id 前端要用：一个活动多场次时，码表要按场次分辨，
+                    # 手动补签也只能打到当前这块大屏对应的那一场上
+                    "shift_id": t.shift_id, "shift_name": g.name,
+                    "shift_kind": g.kind, "shift_kind_label": g.kind_label(),
                     "position_name": st.name if st else "",
                     "valid_from": iso(t.valid_from), "valid_to": iso(t.valid_to),
                     "active": t.active, "count": n})

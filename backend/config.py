@@ -31,6 +31,11 @@ DEMO_LOGIN_PASSWORD = os.environ.get("RUCVA_DEMO_PASSWORD", "").strip()
 # 接口文档（/docs、/openapi.json）仅在显式打开时暴露
 EXPOSE_API_DOCS = os.environ.get("RUCVA_EXPOSE_DOCS", "").strip() == "1"
 
+# 后台定时任务循环（见 main._sweeper）。测试里要关掉：每建一个 TestClient
+# 都会触发一次立即扫描，它在另一个线程里跟用例抢同一批数据——用例刚把编辑态
+# 改成超时，扫描线程也看见了，于是解冻通知发了两条，断言随机失败。
+RUN_SWEEPER = os.environ.get("RUCVA_DISABLE_SWEEPER", "").strip() != "1"
+
 # —— 业务规则常量（与《志愿者服务规范.docx》《设计方案》对齐） ——
 CREDIT_FULL = 100          # 信用分满分
 CREDIT_FREEZE_BELOW = 60   # 低于该分数冻结报名
@@ -54,6 +59,11 @@ EDIT_LOCK_HOURS = 2
 
 # 场次开始前多久自动推送签到提醒（管理者也可在签到面板手动补发）
 CHECKIN_REMINDER_MINUTES = 30
+
+# 生成签到码时默认的可签时段：场次起止各外扩这么多分钟。
+# 卡着场次时间开闸的话，提前到岗的人签不了、拖堂散场的人也签不了，
+# 现场只能改时段或补签。管理者仍可在生成时自行调整。
+CHECKIN_WINDOW_PAD_MINUTES = 30
 
 # 活动开始前多少天起，每天给管理者推一条人员变动摘要
 ROSTER_DIGEST_DAYS = 3
