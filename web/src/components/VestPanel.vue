@@ -39,8 +39,7 @@
     <DataCards v-if="narrow" :rows="data?.items || []" title-key="name"
                row-key="student_id"
                :fields="[{ key: 'student_id', label: '学号' },
-                         { key: 'position', label: '岗位' },
-                         { key: 'vest_no', label: '编号', hideEmpty: true }]"
+                         { key: 'position', label: '岗位' }]"
                empty="还没有需要马甲的志愿者">
       <template #extra="{ row }">
         <el-tag size="small" :type="tagType(row)">{{ tagText(row) }}</el-tag>
@@ -58,9 +57,6 @@
       <el-table-column prop="name" label="姓名" width="110" />
       <el-table-column prop="student_id" label="学号" width="120" />
       <el-table-column prop="position" label="岗位" min-width="130" />
-      <el-table-column label="编号" width="100">
-        <template #default="{ row }">{{ row.vest_no || '—' }}</template>
-      </el-table-column>
       <el-table-column label="状态" width="120">
         <template #default="{ row }">
           <el-tag size="small" :type="tagType(row)">{{ tagText(row) }}</el-tag>
@@ -165,17 +161,8 @@ async function batch(action) {
 }
 
 async function one(action, row) {
-  let vestNo = ''
-  if (action === 'take') {
-    try {
-      const r = await ElMessageBox.prompt(`${row.name} 领取马甲`, '登记领取',
-        { inputPlaceholder: '马甲编号（选填）', confirmButtonText: '登记',
-          cancelButtonText: '取消', inputValue: row.vest_no || '' })
-      vestNo = r.value || ''
-    } catch { return }
-  }
   await api.post(`/api/staff/activities/${props.activityId}/vests/batch`,
-    { action, student_ids: [row.student_id], vest_no: vestNo })
+    { action, student_ids: [row.student_id] })
   ElMessage.success('已登记')
   load()
 }

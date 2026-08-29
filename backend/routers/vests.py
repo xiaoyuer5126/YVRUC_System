@@ -61,18 +61,13 @@ def task_info(token: str, db: OrmSession = Depends(db_session),
         "need_vest": user.id in _need_vest_user_ids(db, task.activity_id),
         "taken_at": iso(rec.taken_at) if rec else None,
         "returned_at": iso(rec.returned_at) if rec and rec.returned_at else None,
-        "vest_no": rec.vest_no if rec else "",
     }
 
 
-class ScanBody(BaseModel):
-    vest_no: str = ""       # 领取时可顺手录编号，不填也行
-
-
 @router.post("/scan/{token}")
-def scan(token: str, body: ScanBody | None = None,
-         db: OrmSession = Depends(db_session),
+def scan(token: str, db: OrmSession = Depends(db_session),
          user: User = Depends(current_user)):
+    """扫码领取／归还。码本身已经指明了动作，不需要再传任何东西。"""
     task = db.query(VestTask).filter(VestTask.token == token.upper()).first()
     if task is None:
         raise HTTPException(404, "马甲码无效")
@@ -96,8 +91,6 @@ def scan(token: str, body: ScanBody | None = None,
             rec = VestRecord(id=uid("vst"), activity_id=task.activity_id,
                              user_id=user.id, taken_method="scan")
             db.add(rec)
-        if body and body.vest_no.strip():
-            rec.vest_no = body.vest_no.strip()[:32]
         db.commit()
         return {"ok": True, "action": "take", "message": "马甲已领取，散场后记得归还"}
 
@@ -178,7 +171,6 @@ def vest_board(activity_id: str, db: OrmSession = Depends(db_session),
             "expected": uid_ in need,
             "taken": r is not None and r.returned_at is None,
             "returned": bool(r and r.returned_at),
-            "vest_no": r.vest_no if r else "",
             "taken_at": iso(r.taken_at) if r else None,
             "returned_at": iso(r.returned_at) if r and r.returned_at else None,
         })
@@ -196,7 +188,6 @@ def vest_board(activity_id: str, db: OrmSession = Depends(db_session),
 class VestOpBody(BaseModel):
     action: str                     # take / return / cancel_take / cancel_return
     student_ids: list[str]
-    vest_no: str = ""
 
 
 @staff.post("/activities/{activity_id}/vests/batch")
@@ -234,8 +225,6 @@ def vest_batch(activity_id: str, body: VestOpBody,
                 rec.taken_at = now()
                 rec.returned_at = None
                 rec.returned_method = ""
-            if body.vest_no.strip():
-                rec.vest_no = body.vest_no.strip()[:32]
         elif body.action == "return":
             if rec is None:
                 skipped.append(f"{u.name}（没有领取记录）")
@@ -294,35 +283,33 @@ def vest_remind(activity_id: str, body: VestRemindBody | None = None,
         raise HTTPException(400, "未知操作")
 
     if body.action == "return":
-        targets = [(db.get(User, r.user_id), r.vest_no) for r in
+        targets = [db.get(User, r.user_id) for r in
                    db.query(VestRecord)
                    .filter(VestRecord.activity_id == activity_id,
                            VestRecord.returned_at.is_(None)).all()]
         empty_msg = "没有未归还的马甲"
         title = f"请归还志愿马甲｜{act.title}"
-        text = lambda no: (f"您在「{act.title}」领取的志愿马甲"
-                           + (f"（编号 {no}）" if no else "")
-                           + "还没有归还，请尽快到指定地点扫「归还码」交还。")
+        text = (f"您在「{act.title}」领取的志愿马甲还没有归还，"
+                f"请尽快到指定地点扫「归还码」交还。")
     else:
         taken = {r.user_id for r in db.query(VestRecord)
                  .filter(VestRecord.activity_id == activity_id,
                          VestRecord.returned_at.is_(None)).all()}
-        targets = [(db.get(User, uid_), "")
+        targets = [db.get(User, uid_)
                    for uid_ in _need_vest_user_ids(db, activity_id)
                    if uid_ not in taken]
         empty_msg = "需要马甲的人都已经领了"
         title = f"请领取志愿马甲｜{act.title}"
-        text = lambda _no: (f"您在「{act.title}」的岗位需要穿志愿马甲，"
-                            f"目前还没有领取记录。\n"
-                            f"请到指定地点扫「领取码」领取；散场后记得归还。")
+        text = (f"您在「{act.title}」的岗位需要穿志愿马甲，目前还没有领取记录。\n"
+                f"请到指定地点扫「领取码」领取；散场后记得归还。")
 
-    targets = [(u, no) for u, no in targets if u is not None]
+    targets = [u for u in targets if u is not None]
     if not targets:
         raise HTTPException(400, empty_msg)
     batch_id = uid("bat") if body.need_ack else None
-    for u, no in targets:
+    for u in targets:
         wecom.send_user(db, u, "custom", data={"activity_id": activity_id},
-                        title=title, content=text(no),
+                        title=title, content=text,
                         need_ack=body.need_ack, batch_id=batch_id)
     label = "领取" if body.action == "take" else "归还"
     audit_log(db, actor=user, action="update", target_type="vest",

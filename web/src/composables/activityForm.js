@@ -9,6 +9,7 @@ export function emptyActivity() {
     title: '', organizer: '', type: 'A', location: '',
     contacts: [{ name: '', phone: '' }], intro: '',
     volunteer_requirement: '', volunteer_benefit: '', qa_group_qr: '',
+    recruit_campuses: [], recruit_stages: [],
   }
 }
 
@@ -23,6 +24,8 @@ export function activityToForm(act) {
     volunteer_requirement: act.volunteer_requirement || '',
     volunteer_benefit: act.volunteer_benefit || '',
     qa_group_qr: act.qa_group_qr || '',
+    recruit_campuses: act.recruit_campuses || [],
+    recruit_stages: act.recruit_stages || [],
   }
 }
 

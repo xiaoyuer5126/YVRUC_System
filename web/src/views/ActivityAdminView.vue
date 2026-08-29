@@ -31,15 +31,19 @@
       <template #extra>
         <!-- 「调整岗位」只在岗位设置那一页出现一次，页头不重复放 -->
         <el-button @click="openPoster">活动招募</el-button>
-        <el-button @click="editBase = true">编辑基本信息</el-button>
+        <el-button v-if="act.status !== 'finished'"
+                   @click="editBase = true">编辑基本信息</el-button>
         <el-popconfirm v-if="act.status === 'published'" title="截止后不再接受新报名，确认？"
                        @confirm="transition('close')">
           <template #reference><el-button type="warning">截止报名</el-button></template>
         </el-popconfirm>
         <el-button v-else-if="act.status === 'closed'" type="warning" plain
                    @click="openReopen">恢复报名</el-button>
-        <el-popconfirm v-if="['published','closed'].includes(act.status)"
-                       title="结束活动，确认？" @confirm="transition('finish')">
+        <!-- 只在「已截止」时出现：报名还开着就宣布结束，等于让正在报名的人
+             报进一个已经收摊的活动 -->
+        <el-popconfirm v-if="act.status === 'closed'"
+                       title="结束活动后不能再修改任何信息，确认？"
+                       @confirm="transition('finish')">
           <template #reference><el-button type="danger">结束活动</el-button></template>
         </el-popconfirm>
         <el-button v-if="act.status === 'draft'" type="primary" @click="openSubmit">
@@ -86,7 +90,16 @@
           <b>报名即选岗位</b>：名额与候补在各岗位上，发布前建好。
           <b>截止后统一分配</b>：名额记在场次上，岗位等报名截止后再建。
         </el-alert>
-        <el-alert v-if="structureLocked" type="info" show-icon :closable="false"
+        <!-- 已结束的活动是终态：时长按当时的岗位与名单算过并报送了，
+             再改就跟报出去的账对不上，连「调整岗位」的入口都不给 -->
+        <el-alert v-if="act.status === 'finished'" type="info" show-icon
+                  :closable="false" style="margin-bottom:12px"
+                  title="活动已结束，安排与信息均为只读">
+          <div style="line-height:1.8">
+            时长已按结束时的岗位与名单结算，不再接受修改；如确需更正请联系管理员。
+          </div>
+        </el-alert>
+        <el-alert v-else-if="structureLocked" type="info" show-icon :closable="false"
                   style="margin-bottom:12px">
           <template #title>
             只读——改场次与岗位要先进入调整状态
@@ -794,6 +807,19 @@
             <span class="dim" style="margin-left:10px">满员后可排队的人数，0 = 不设候补</span>
           </el-form-item>
         </template>
+        <el-form-item label="条件要求">
+          <div class="two-col">
+            <el-select v-model="groupForm.campusReq" multiple clearable collapse-tags
+                       placeholder="校区（不限）">
+              <el-option v-for="c in campuses" :key="c" :value="c" :label="c" />
+            </el-select>
+            <el-select v-model="groupForm.stageReq" multiple clearable collapse-tags
+                       placeholder="学段（不限）">
+              <el-option v-for="s in stages" :key="s" :value="s" :label="s" />
+            </el-select>
+          </div>
+          <div class="dim">硬性条件：不满足的人报名本场次时会被拦下</div>
+        </el-form-item>
         <el-form-item label="备注"><el-input v-model="groupForm.note" /></el-form-item>
       </el-form>
       <template #footer>
@@ -977,13 +1003,15 @@
           <div class="dim">报名时可表态愿任，先到先得；组长退出后自动递补</div>
         </el-form-item>
         <el-form-item label="条件要求">
-          <el-select v-model="stationForm.genderReq" clearable placeholder="性别限制（可选）" style="width:180px;margin-right:8px">
-            <el-option value="女" label="限女生" /><el-option value="男" label="限男生" />
-          </el-select>
-          <el-select v-model="stationForm.collegeReq" multiple clearable collapse-tags
-                     placeholder="限定学院（可选）" style="width:260px">
-            <el-option v-for="c in colleges" :key="c" :value="c" :label="c" />
-          </el-select>
+          <div class="two-col">
+            <el-select v-model="stationForm.genderReq" clearable placeholder="性别（不限）">
+              <el-option value="女" label="限女生" /><el-option value="男" label="限男生" />
+            </el-select>
+            <el-select v-model="stationForm.collegeReq" multiple clearable collapse-tags
+                       placeholder="学院（不限）">
+              <el-option v-for="c in colleges" :key="c" :value="c" :label="c" />
+            </el-select>
+          </div>
           <div class="dim">硬性条件：不满足的人报名时就会被拦下，一键分配也不会排入</div>
         </el-form-item>
         <el-form-item label="要求原文" required><el-input v-model="stationForm.requirement_note"
@@ -1132,6 +1160,16 @@ const narrow = useNarrow()
 const tab = ref(String(route.query.tab || 'tree'))   // 支持 ?tab=roster 直达页签
 const types = ref({})
 const colleges = ref([])
+const campuses = ref([])
+const stages = ref([])
+
+/** {校区: [...], 学段: [...]}，空的那项不写进去——写了空数组等于「限定为空」。 */
+function scopeTags(campusReq, stageReq) {
+  const tags = {}
+  if (campusReq?.length) tags['校区'] = campusReq
+  if (stageReq?.length) tags['学段'] = stageReq
+  return tags
+}
 const loading = ref(false)
 const notFound = ref(false)
 const loadError = ref('')
@@ -1400,8 +1438,10 @@ function openShift(g) {
     end_time: new Date(g.end_time.replace(' ', 'T')),
     capacity: g.capacity, mode: g.mode || 'pick', note: g.note,
     waitlist_quota: g.waitlist_quota ?? 3,
+    campusReq: g.requirement_tags?.校区 || [],
+    stageReq: g.requirement_tags?.学段 || [],
   } : { name: '', start_time: '', end_time: '', capacity: 10, mode: 'pick', note: '',
-        waitlist_quota: 3 }
+        waitlist_quota: 3, campusReq: [], stageReq: [] }
   shiftDlg.value.visible = true
 }
 // 切到「截止后统一分配」会作废学生已经选好的岗位——弹窗前先算清楚有几个人
@@ -1440,6 +1480,7 @@ async function saveShift() {
       name: f.name, capacity: f.capacity, mode: f.mode, note: f.note,
       waitlist_quota: f.waitlist_quota ?? 3,
       start_time: toISO(f.start_time), end_time: toISO(f.end_time),
+      requirement_tags: scopeTags(f.campusReq, f.stageReq),
     }
     let cleared = 0
     if (shiftDlg.value.editing) {
@@ -1686,6 +1727,8 @@ onMounted(async () => {
   const c = await api.get('/api/auth/constants')
   types.value = c.activity_types
   colleges.value = c.colleges
+  campuses.value = c.campuses || []
+  stages.value = c.stages || []
   loadAll()
 })
 
@@ -2019,6 +2062,9 @@ function toISO(v) {
 </script>
 
 <style scoped>
+/* 两个条件选择框并排占满一行；窄屏自动叠成两行 */
+.two-col { display: flex; gap: 8px; width: 100%; flex-wrap: wrap; }
+.two-col > * { flex: 1 1 180px; min-width: 0; }
 /* 招募弹窗：宽屏文案与二维码并排，窄屏竖排 */
 .recruit { display: flex; gap: 18px; align-items: flex-start; }
 .recruit-text { flex: 1; min-width: 0; }

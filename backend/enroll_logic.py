@@ -155,18 +155,20 @@ def has_room(db: OrmSession, shift: Shift, position=None) -> bool:
     return position_occupied_count(db, position.id) < position.quota
 
 
-# ======================= 岗位硬性条件 =======================
+# ======================= 硬性条件（场次与岗位共用） =======================
 
-def unmet_requirements(user: User, position: Position) -> list[str]:
-    """志愿者不满足该岗位的哪些硬性条件。空 = 可以报。
+def profile_fields(user: User) -> dict[str, str]:
+    """条件标签 → 志愿者档案里对应的值。场次、岗位、招募范围都按这张表匹配。"""
+    return {"性别": user.gender or "", "学院": user.college or "",
+            "年级": str(user.grade or ""),
+            "校区": user.campus or "", "学段": user.stage or ""}
 
-    条件是 {标签: 值或值列表}，标签对应志愿者档案里的字段。
-    报名时直接拦截，一键分配时同样作为硬约束。
-    """
-    fields = {"性别": user.gender or "", "学院": user.college or "",
-              "年级": str(user.grade or "")}
+
+def unmet_for_tags(user: User, tags: dict | None) -> list[str]:
+    """志愿者不满足 {标签: 值或值列表} 里的哪几条。空 = 都满足。"""
+    fields = profile_fields(user)
     unmet = []
-    for tag, value in (position.requirement_tags or {}).items():
+    for tag, value in (tags or {}).items():
         mine = fields.get(tag)
         if mine is None:      # 未知标签不拦人，否则一个错别字能把所有人挡在外面
             continue
@@ -175,6 +177,29 @@ def unmet_requirements(user: User, position: Position) -> list[str]:
         if allowed and mine not in allowed:
             unmet.append(f"{tag}需为 {'/'.join(allowed)}（您是 {mine or '未填写'}）")
     return unmet
+
+
+def unmet_requirements(user: User, position: Position) -> list[str]:
+    """志愿者不满足该岗位的哪些硬性条件。空 = 可以报。
+
+    报名时直接拦截，一键分配时同样作为硬约束。
+    """
+    return unmet_for_tags(user, position.requirement_tags)
+
+
+def unmet_shift_requirements(user: User, shift) -> list[str]:
+    """场次级的硬性条件。assign 模式下报名时还没有岗位，只能靠这一层筛人。"""
+    return unmet_for_tags(user, shift.requirement_tags)
+
+
+def unmet_recruit_scope(user: User, act) -> list[str]:
+    """招募范围：活动一刀切限定校区/学段，空 = 不限。"""
+    tags = {}
+    if act.recruit_campuses:
+        tags["校区"] = act.recruit_campuses
+    if act.recruit_stages:
+        tags["学段"] = act.recruit_stages
+    return unmet_for_tags(user, tags)
 
 
 # ======================= 组长 =======================

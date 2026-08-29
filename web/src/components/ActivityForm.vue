@@ -35,6 +35,20 @@
         </el-button>
       </div>
     </el-form-item>
+    <!-- 招募范围：两个都留空 = 面向全校。更细的差别走场次/岗位的条件要求 -->
+    <el-form-item label="招募范围">
+      <div class="two-col">
+        <el-select v-model="f.recruit_campuses" multiple clearable collapse-tags
+                   placeholder="校区（不限）">
+          <el-option v-for="c in campuses" :key="c" :value="c" :label="c" />
+        </el-select>
+        <el-select v-model="f.recruit_stages" multiple clearable collapse-tags
+                   placeholder="学段（不限）">
+          <el-option v-for="s in stages" :key="s" :value="s" :label="s" />
+        </el-select>
+      </div>
+      <div class="dim">留空即不限。不在范围内的同学报名时会被拦下</div>
+    </el-form-item>
     <el-form-item label="报名窗口" required>
       <DateRange v-model="range" start-placeholder="报名开始时间" end-placeholder="报名截止时间" />
       <div class="dim" style="line-height:1.7">
@@ -81,9 +95,10 @@
  *
  * 只管字段与校验，不管按钮：调用方拿 validate() 校验、拿 body() 取提交体。
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Upload } from '@element-plus/icons-vue'
+import { api } from '../api'
 import { auth } from '../store'
 import DateRange from './DateRange.vue'
 
@@ -100,6 +115,14 @@ const range = computed({
   set: v => emit('update:range', v),
 })
 const qrUploading = ref(false)
+const campuses = ref([])
+const stages = ref([])
+
+onMounted(async () => {
+  const c = await api.get('/api/auth/constants', { silent: true })
+  campuses.value = c.campuses || []
+  stages.value = c.stages || []
+})
 
 async function uploadQr({ file }) {
   const fd = new FormData()
@@ -128,4 +151,7 @@ async function uploadQr({ file }) {
 .qr-preview img { width: 96px; height: 96px; object-fit: contain;
                   border: 1px solid #eceef1; border-radius: 8px; }
 .dim { margin-top: 4px; }
+/* 两个选择框并排占满一行；窄屏自动叠成两行 */
+.two-col { display: flex; gap: 8px; width: 100%; flex-wrap: wrap; }
+.two-col > * { flex: 1 1 200px; min-width: 0; }
 </style>

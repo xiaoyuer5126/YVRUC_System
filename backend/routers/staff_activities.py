@@ -44,6 +44,7 @@ ACTIVITY_FIELDS = {
     "contact_info": "公示联系方式", "contacts": "公示联系人",
     "qa_group_qr": "答疑群二维码",
     "volunteer_requirement": "志愿者要求", "volunteer_benefit": "志愿者保障",
+    "recruit_campuses": "招募校区", "recruit_stages": "招募学段",
     "reg_start": "报名开始", "reg_end": "报名截止",
 }
 
@@ -126,8 +127,44 @@ class ActivityBody(BaseModel):
     # 都选填：整体要求（着装、集合）与保障（餐食、时长、纪念品）
     volunteer_requirement: str = ""
     volunteer_benefit: str = ""
+    # 招募范围：限定校区/学段，空 = 不限
+    recruit_campuses: list[str] = []
+    recruit_stages: list[str] = []
     reg_start: str | None = None
     reg_end: str | None = None
+
+
+def _clean_scope(raw: list[str], allowed: list[str], label: str) -> list[str]:
+    """校验并去重一组条件值（校区/学段）。
+
+    必须落在允许集合里：这些值是拿去跟志愿者档案里的字段逐字比对的，
+    放一个错别字进来，条件永远匹配不上，所有人都被挡在外面且看不出为什么。
+    """
+    out = []
+    for v in raw or []:
+        v = str(v).strip()
+        if not v:
+            continue
+        if v not in allowed:
+            raise HTTPException(400, f"{label}「{v}」不在可选范围内")
+        if v not in out:
+            out.append(v)
+    return out
+
+
+def _clean_requirement_tags(raw: dict) -> dict:
+    """场次/岗位的条件要求。只认识的标签留下，值按各自的可选集合校验。"""
+    known = {"校区": config.CAMPUSES, "学段": config.STAGES,
+             "学院": config.COLLEGES, "性别": ["男", "女"]}
+    out = {}
+    for tag, value in (raw or {}).items():
+        if tag not in known:
+            raise HTTPException(400, f"未知的条件标签「{tag}」")
+        vals = value if isinstance(value, list) else [value]
+        vals = _clean_scope(vals, known[tag], tag)
+        if vals:
+            out[tag] = vals
+    return out
 
 
 def _clean_contacts(raw: list[dict]) -> list[dict]:
@@ -171,6 +208,10 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                    qa_group_qr=body.qa_group_qr, cover_hue=body.cover_hue,
                    volunteer_requirement=body.volunteer_requirement.strip(),
                    volunteer_benefit=body.volunteer_benefit.strip(),
+                   recruit_campuses=_clean_scope(body.recruit_campuses,
+                                                 config.CAMPUSES, "校区"),
+                   recruit_stages=_clean_scope(body.recruit_stages,
+                                               config.STAGES, "学段"),
                    reg_start=reg_start, reg_end=reg_end,
                    created_by=user.id, status="draft")
     act.contacts = contacts
@@ -197,6 +238,7 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
                     user: User = Depends(require_manager)):
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
+    _ensure_not_finished(act)
     before = {k: getattr(act, k) for k in ACTIVITY_FIELDS}
     before["type"] = act.type
     for key in ACTIVITY_FIELDS:
@@ -207,6 +249,10 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
             setattr(act, key, _parse_dt(value))
         elif key == "contacts":
             act.contacts = _clean_contacts(value)
+        elif key == "recruit_campuses":
+            act.recruit_campuses = _clean_scope(value, config.CAMPUSES, "校区")
+        elif key == "recruit_stages":
+            act.recruit_stages = _clean_scope(value, config.STAGES, "学段")
         else:
             if key == "type" and value not in config_types():
                 raise HTTPException(400, "活动类型必须是 A/B/C/D")
@@ -265,6 +311,7 @@ def start_editing(activity_id: str, db: OrmSession = Depends(db_session),
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
+    _ensure_not_finished(act)
     if act.status == "draft":
         raise HTTPException(409, "筹备中的活动可直接编辑，无需暂停报名")
     if act.editing_since is not None:
@@ -516,8 +563,10 @@ def reopen(activity_id: str, body: ReopenBody,
 def finish(activity_id: str, bg: BackgroundTasks,
            db: OrmSession = Depends(db_session),
            user: User = Depends(require_manager)):
+    # 只能从「已截止」结束：报名还开着就宣布结束，等于让正在报名的人
+    # 报进一个已经收摊的活动。先截止，再结束。
     return _transition(activity_id, "finished", "finish", "结束活动",
-                       ("published", "closed"), db, user, bg)
+                       ("closed",), db, user, bg)
 
 
 @router.delete("/activities/{activity_id}")
@@ -572,6 +621,8 @@ class ShiftBody(BaseModel):
     kind: str = "service"
     parent_id: str = ""
     applies_to_positions: list[str] = []
+    # 场次级硬性条件：{"校区": [...], "学段": [...]}，空 = 不限
+    requirement_tags: dict = {}
 
 
 def _validate_shift_times(start: datetime, end: datetime):
@@ -591,6 +642,7 @@ def _apply_attachment(db: OrmSession, g: Shift, body: ShiftBody,
         raise HTTPException(400, "场次类型不合法")
     g.hours_mode = body.hours_mode
     g.kind = body.kind
+    g.requirement_tags = _clean_requirement_tags(body.requirement_tags)
     if not body.parent_id:
         if body.kind != "service":
             raise HTTPException(400, "培训/彩排必须挂在一个服务场次下")
@@ -705,7 +757,7 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
 SHIFT_FIELDS = {"name": "场次名", "start_time": "开始时间", "end_time": "结束时间",
                 "capacity": "人数上限", "mode": "岗位模式", "note": "备注",
                 "location": "地点", "hours_mode": "时长认定",
-                "waitlist_quota": "候补名额"}
+                "waitlist_quota": "候补名额", "requirement_tags": "条件要求"}
 
 
 @router.patch("/shifts/{shift_id}")
@@ -729,6 +781,8 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
             if v not in HOURS_MODES:
                 raise HTTPException(400, "时长认定方式不合法")
             g.hours_mode = v
+        elif key == "requirement_tags":
+            g.requirement_tags = _clean_requirement_tags(v)
         else:
             setattr(g, key, v)
     if "applies_to_positions" in body and g.is_attached():
@@ -838,6 +892,16 @@ POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
                    "requirement_note": "要求原文", "training_note": "培训内容"}
 
 
+def _ensure_not_finished(act: Activity) -> None:
+    """已结束的活动一律不再改。
+
+    时长是按结束那一刻的岗位与名单算出来并报送的；事后再改岗位、改名额、
+    改基本信息，改的是一份已经生效的记录，跟报出去的账对不上。
+    """
+    if act.status == "finished":
+        raise HTTPException(409, "活动已结束，不能再修改；如确需更正请联系管理员")
+
+
 def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:
     """改场次/岗位之前，活动必须处于编辑态。
 
@@ -847,6 +911,7 @@ def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:
     保存时把这批改动一次性通知到人。
     """
     act = _act(db, activity_id)
+    _ensure_not_finished(act)
     if act.status != "draft" and act.editing_since is None:
         raise HTTPException(
             409, "请先点右上角「调整岗位（暂停报名）」再修改场次与岗位——"
@@ -910,7 +975,7 @@ def create_position(shift_id: str, body: PositionBody,
                 needs_leader=body.needs_leader,
                 needs_vest=body.needs_vest,
                 group_name=body.group_name.strip(),
-                requirement_tags=body.requirement_tags or {},
+                requirement_tags=_clean_requirement_tags(body.requirement_tags),
                 requirement_note=body.requirement_note.strip(),
                 training_note=body.training_note.strip(),
                 sort=len(g.positions))
@@ -942,7 +1007,10 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
     for key in POSITION_FIELDS:
         if key not in body:
             continue
-        setattr(s, key, body[key])
+        if key == "requirement_tags":
+            s.requirement_tags = _clean_requirement_tags(body[key])
+        else:
+            setattr(s, key, body[key])
     _validate_position(db, g, s)
     _require_position_text(s)
 

@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import text
 
+from . import config
 from .database import SessionLocal, engine, init_db
 from .qrcodes import qr_svg
 from .models import (Activity, ActivityManager, AuditLog, CheckinRecord,
@@ -100,6 +101,8 @@ def main() -> None:
             u = User(id=uid("u"), student_id=sid, name=name,
                      gender="女" if name[1] in "砚慕" else "男",
                      college="校团委" if "admin" in roles else "校青年志愿者协会",
+                     campus="中关村校区",
+                     stage="" if utype == "teacher" else "硕士研究生",
                      phone=f"139{sid[-4:]}0000", email=f"{sid}@ruc.edu.cn",
                      wechat=f"wx_{sid}",
                      # 学生类型（如青协同学）同样要求手机号/微信/证件号齐全
@@ -133,6 +136,10 @@ def main() -> None:
                                              f"{100 + i:03d}",
                      name=nm, gender=GENDERS[i % 2], college=college,
                      grade=grade,
+                     # 校区/学段轮着发：招募范围与场次条件要筛得出人，
+                     # 全塞同一个值的话，一加条件就是「谁都报不了」或「谁都能报」
+                     campus=config.CAMPUSES[i % len(config.CAMPUSES)],
+                     stage=config.STAGES[i % len(config.STAGES)],
                      phone="138" + str(random.randint(10000000, 99999999)),
                      email=f"ruc{grade}_{i}@163.com",
                      wechat=f"wx{i}",

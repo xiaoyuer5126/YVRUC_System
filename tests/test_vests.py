@@ -68,14 +68,13 @@ def test_扫码领取与归还(client, admin, db, vest_activity):
     info = client.get(f"/api/vests/task/{take}", headers=h).json()
     assert info["action"] == "take" and info["need_vest"] is True
 
-    assert client.post(f"/api/vests/scan/{take}", headers=h,
-                       json={"vest_no": "A-012"}).status_code == 200
+    assert client.post(f"/api/vests/scan/{take}", headers=h).status_code == 200
     rec = db.query(VestRecord).filter(VestRecord.activity_id == act.id,
                                       VestRecord.user_id == a.id).one()
-    assert rec.vest_no == "A-012" and rec.returned_at is None
+    assert rec.taken_at is not None and rec.returned_at is None
 
     # 重复领取被拦
-    r = client.post(f"/api/vests/scan/{take}", headers=h, json={})
+    r = client.post(f"/api/vests/scan/{take}", headers=h)
     assert r.status_code == 409 and "已经领过" in r.json()["detail"]
 
     assert client.post(f"/api/vests/scan/{ret}", headers=h, json={}).status_code == 200
@@ -112,12 +111,11 @@ def test_台账与手动登记(client, admin, db, vest_activity):
     assert [x["name"] for x in d["items"]] == [a.name]
 
     r = client.post(f"{url}/batch", headers=admin,
-                    json={"action": "take", "student_ids": [a.student_id],
-                          "vest_no": "B-7"})
+                    json={"action": "take", "student_ids": [a.student_id]})
     assert r.status_code == 200 and r.json()["done"] == 1
     d = client.get(url, headers=admin).json()
     assert d["taken"] == 1 and d["outstanding"] == 1
-    assert d["items"][0]["vest_no"] == "B-7"
+    assert d["items"][0]["taken"] is True
 
     # 未归还可以一键提醒；领了的人就不该再被催领取
     assert client.post(f"{url}/remind", headers=admin,

@@ -137,6 +137,16 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
             403, f"信用分低于{config.CREDIT_FREEZE_BELOW}分，报名权限冻结至 "
                  f"{user.credit_frozen_until:%Y-%m-%d}")
 
+    # 招募范围（活动级）与场次条件：不满足的人根本不该出现在这场的名单上。
+    # assign 模式下报名时没有岗位可选，岗位那层条件轮不到，只能靠这两层。
+    scope = logic.unmet_recruit_scope(user, act)
+    if scope:
+        raise HTTPException(403, f"本活动的招募范围不含您：{'；'.join(scope)}")
+    unmet_shift = logic.unmet_shift_requirements(user, g)
+    if unmet_shift:
+        raise HTTPException(403, f"您不满足场次「{g.name}」的条件："
+                                 f"{'；'.join(unmet_shift)}")
+
     # 限制准入（《志愿者服务规范》）：按活动**发生时间**判定——
     # 「招募在限制期内、活动已出限制期」的允许报名。
     if (user.restricted_types and act.type in user.restricted_types

@@ -11,17 +11,10 @@
             <el-descriptions-item label="当前状态">
               <el-tag size="small" :type="stateType">{{ stateText }}</el-tag>
             </el-descriptions-item>
-            <el-descriptions-item v-if="task.vest_no" label="马甲编号">
-              {{ task.vest_no }}
-            </el-descriptions-item>
             <el-descriptions-item v-if="task.taken_at" label="领取时间">
               {{ task.taken_at.replace('T', ' ') }}
             </el-descriptions-item>
           </el-descriptions>
-
-          <el-input v-if="task.action === 'take' && !task.taken_at"
-                    v-model="vestNo" placeholder="马甲编号（选填，方便核对归还）"
-                    style="margin-top:12px" maxlength="32" />
 
           <el-button :type="task.action === 'take' ? 'primary' : 'warning'" size="large"
                      style="width:100%;margin-top:18px"
@@ -58,7 +51,6 @@ const loading = ref(true)
 const submitting = ref(false)
 const done = ref(false)
 const doneMsg = ref('')
-const vestNo = ref('')
 
 const state = computed(() => {   // vuecheck: script-only
   const t = task.value
@@ -93,7 +85,7 @@ onMounted(load)
 async function doScan() {
   submitting.value = true
   try {
-    const d = await api.post(`/api/vests/scan/${token}`, { vest_no: vestNo.value })
+    const d = await api.post(`/api/vests/scan/${token}`)
     doneMsg.value = d.message
     done.value = true
     ElMessage.success(d.message)

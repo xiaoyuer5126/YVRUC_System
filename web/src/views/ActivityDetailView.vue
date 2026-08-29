@@ -33,6 +33,10 @@
             <el-descriptions-item label="报名窗口">
               {{ fmtDT(act.reg_start) }} ~ {{ fmtDT(act.reg_end) }}
             </el-descriptions-item>
+            <!-- 招募范围写在明处：不在范围内的人不该报到一半才被拦下 -->
+            <el-descriptions-item label="招募范围">
+              {{ act.recruit_scope_text }}
+            </el-descriptions-item>
           </el-descriptions>
           <div v-if="act.volunteer_requirement || act.volunteer_benefit"
                style="margin-top:12px">
@@ -573,6 +577,7 @@
             · 另有 {{ groupDetail.data.held_seats }} 个名额因临近退选被扣留，不再释放</span>
         </el-descriptions-item>
         <el-descriptions-item label="剩余名额">{{ groupDetail.data.remaining }}</el-descriptions-item>
+        <el-descriptions-item label="条件要求">{{ groupDetail.data.requirement_desc }}</el-descriptions-item>
         <el-descriptions-item label="说明">{{ groupDetail.data.note || '—' }}</el-descriptions-item>
       </el-descriptions>
     </el-dialog>

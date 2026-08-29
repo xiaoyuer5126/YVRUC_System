@@ -57,6 +57,9 @@ class User(Base):
     gender: Mapped[str] = mapped_column(String(8), default="")
     college: Mapped[str] = mapped_column(String(64), default="")
     grade: Mapped[str] = mapped_column(String(16), default="")       # 如 2023
+    # 校区与学段：招募范围、场次与岗位的条件要求都按这两项筛人
+    campus: Mapped[str] = mapped_column(String(32), default="")
+    stage: Mapped[str] = mapped_column(String(16), default="")       # 本科生/硕士研究生/…
     phone: Mapped[str] = mapped_column(String(32), default="")
     email: Mapped[str] = mapped_column(String(128), default="")
     # 数智人大拿不到微信号/身份证号，需志愿者自行完善后才能报名
@@ -133,6 +136,7 @@ class User(Base):
         return {
             "id": self.id, "name": self.name, "student_id": self.student_id,
             "gender": self.gender, "college": self.college, "grade": self.grade,
+            "campus": self.campus, "stage": self.stage,
             "user_type": self.user_type, "roles": self.roles or [],
             "role_label": self.active_role_label(),
         }
@@ -203,6 +207,10 @@ class Activity(Base):
     # 特有的事，这两条讲的是整个活动共通的：着装、集合、餐食、时长、纪念品。
     volunteer_requirement: Mapped[str] = mapped_column(Text, default="")
     volunteer_benefit: Mapped[str] = mapped_column(Text, default="")
+    # 招募范围：限定校区与学段，空列表 = 不限。整个活动一刀切，
+    # 更细的差别（这一场只要研究生）走场次/岗位各自的条件要求。
+    recruit_campuses: Mapped[list] = mapped_column(JSON, default=list)
+    recruit_stages: Mapped[list] = mapped_column(JSON, default=list)
 
     status: Mapped[str] = mapped_column(String(16), default="draft")
     # draft 草稿 / pending 待审批 / approved 待发布 /
@@ -344,6 +352,9 @@ class Shift(Base):
     # 时长怎么认：checkin 签退−签到 / fixed 到场即按场次时长 / none 不计时长。
     # 把不确定性收在建场次这一次决定里，而不是散在事后逐条核对里。
     hours_mode: Mapped[str] = mapped_column(String(12), default="checkin")
+    # 本场次的硬性条件 {标签: 值列表}，空 = 不限。与岗位上的条件同一套匹配
+    # 规则（见 enroll_logic.unmet_for_tags），报名时直接拦截。
+    requirement_tags: Mapped[dict] = mapped_column(JSON, default=dict)
     # 下面两个数字**只在 assign 模式下有意义**：报名时还没有岗位可选，
     # 名额只能记在场次上。pick 模式下名额与候补都在岗位上，这两个值不参与判断。
     capacity: Mapped[int] = mapped_column(Integer, default=0)
@@ -629,7 +640,6 @@ class VestRecord(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    vest_no: Mapped[str] = mapped_column(String(32), default="")   # 编号，选填
     taken_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     taken_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
     taken_method: Mapped[str] = mapped_column(String(12), default="scan")

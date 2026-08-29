@@ -58,6 +58,24 @@ def display_status(act: Activity) -> tuple[str, str]:
     return "closed", "已截止"
 
 
+def tags_desc(tags: dict | None) -> str:
+    """把 {标签: [值…]} 写成人话：「校区：中关村校区；学段：本科生/硕士研究生」。"""
+    parts = []
+    for tag, value in (tags or {}).items():
+        vals = value if isinstance(value, list) else [value]
+        vals = [str(v) for v in vals if str(v).strip()]
+        if vals:
+            parts.append(f"{tag}：{'/'.join(vals)}")
+    return "；".join(parts)
+
+
+def recruit_scope_text(act) -> str:
+    """招募范围的一句话说明；两项都没限就是「面向全校」。"""
+    text = tags_desc({"校区": act.recruit_campuses or [],
+                      "学段": act.recruit_stages or []})
+    return text or "面向全校"
+
+
 def opens_in(act: Activity) -> int:
     """距报名开始还有多少秒；已经开始或没设开始时间给 0。
 
@@ -210,6 +228,8 @@ def attached_out(db: OrmSession, s: Shift, my_enr=None) -> dict:
         "start_time": iso_of(s.start_time), "end_time": iso_of(s.end_time),
         "time_text": s.span_text(), "location": s.location,
         "hours_mode": s.hours_mode, "hours_label": s.hours_label(),
+        "requirement_tags": s.requirement_tags or {},
+        "requirement_desc": tags_desc(s.requirement_tags) or "不限",
         "applies_to_positions": applies,
         "enrolled": shift_enrolled_count(db, s.id),
         "mine": mine,        # 我这次报名要不要去这一场
@@ -256,6 +276,8 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
         "parent_id": g.parent_id,
         "applies_to_positions": g.applies_to_positions or [],
         "hours_mode": g.hours_mode, "hours_label": g.hours_label(),
+        "requirement_tags": g.requirement_tags or {},
+        "requirement_desc": tags_desc(g.requirement_tags) or "不限",
         # 本场次附带的培训/彩排：学生看的是「报这个岗位还要去哪几场」
         "attached": [attached_out(db, s, my_enr)
                      for s in sorted(
@@ -298,6 +320,9 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
         "contact_info": act.contact_info,
         "qa_group_qr": act.qa_group_qr or "",
         "volunteer_requirement": act.volunteer_requirement,
+        "recruit_campuses": act.recruit_campuses or [],
+        "recruit_stages": act.recruit_stages or [],
+        "recruit_scope_text": recruit_scope_text(act),
         "volunteer_benefit": act.volunteer_benefit,
         # 培训/彩排不单列，它们挂在各自主场次的 attached 里
         "shifts": sorted([shift_out(db, g, user, manager=manager)

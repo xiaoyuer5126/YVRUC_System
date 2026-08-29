@@ -189,3 +189,47 @@ def test_到点之后重拉就开了(client, db, open_group, take_student):
     assert client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                        headers=t,
                        json={"position_id": g.test_position_id}).status_code == 200
+
+
+# ======================= 结束活动是终态 =======================
+
+def test_报名中不能直接结束(client, admin, db, two_shifts):
+    """报名还开着就宣布结束，等于让正在报名的人报进一个已经收摊的活动。"""
+    act = db.get(Activity, two_shifts)
+    act.status = "published"
+    db.commit()
+    r = client.post(f"/api/staff/activities/{two_shifts}/finish", headers=admin)
+    assert r.status_code == 409 and "不允许该操作" in r.json()["detail"]
+
+    # 先截止再结束
+    assert client.post(f"/api/staff/activities/{two_shifts}/close",
+                       headers=admin).status_code == 200
+    assert client.post(f"/api/staff/activities/{two_shifts}/finish",
+                       headers=admin).status_code == 200
+    db.expire_all()
+    assert db.get(Activity, two_shifts).status == "finished"
+
+
+def test_已结束的活动改不了任何东西(client, admin, db, two_shifts):
+    act = db.get(Activity, two_shifts)
+    act.status = "finished"
+    db.commit()
+    gid = act.shifts[0].id
+    pid = act.shifts[0].positions[0].id
+
+    def refused(r):
+        return r.status_code == 409 and "活动已结束" in r.json()["detail"]
+
+    assert refused(client.patch(f"/api/staff/activities/{two_shifts}",
+                                headers=admin, json={"title": "改个名"}))
+    # 连「调整岗位」的入口都不给：不进编辑态就动不了结构，这一层先堵死
+    assert refused(client.post(f"/api/staff/activities/{two_shifts}/edit-lock",
+                               headers=admin))
+    assert refused(client.patch(f"/api/staff/shifts/{gid}", headers=admin,
+                                json={"name": "改场次"}))
+    assert refused(client.patch(f"/api/staff/positions/{pid}", headers=admin,
+                                json={"quota": 9}))
+    assert refused(client.post(f"/api/staff/shifts/{gid}/positions",
+                               headers=admin,
+                               json={"name": "新岗", "quota": 1, **POSITION_TEXT}))
+    assert refused(client.delete(f"/api/staff/positions/{pid}", headers=admin))
