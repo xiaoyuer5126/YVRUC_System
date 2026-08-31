@@ -130,7 +130,7 @@
             </el-tag>
             <span class="dim">{{ g.start_time.slice(5,16).replace('T',' ') }}
               ~ {{ g.end_time.slice(5,16).replace('T',' ') }}</span>
-            <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}` : `岗位合计 ${sumQuota(g)}` }}</span>
+            <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}（待分配）` : `岗位合计 ${g.capacity}` }}</span>
             <el-tag v-if="!g.positions.length"
                     size="small" :type="g.mode === 'assign' ? 'info' : 'danger'"
                     :effect="g.mode === 'assign' ? 'plain' : 'dark'">
@@ -199,6 +199,8 @@
               <template #default="{row}">
                 <el-link type="primary" :underline="false"
                          @click="showStationDetail(g, row)">{{ row.name }}</el-link>
+                <el-tag v-if="row.is_placeholder" size="small" type="warning" effect="plain"
+                        style="margin-left:6px">占位</el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="location" label="服务地点" min-width="120" />
@@ -779,9 +781,10 @@
               学生报名时自己挑岗位；<b>名额与候补都在各个岗位上设置</b>，这里不设总人数。
             </template>
             <template v-else>
-              学生报名只锁时段、不挑岗位，<b>名额与候补记在场次上</b>；
-              岗位在报名截止后建——那时把本场次改回「报名即选岗位」，
-              再建岗位并运行一键分配。
+              学生报名时不挑岗位，全部落在自动生成的<b>「待分配」岗位</b>上，
+              名额与候补记在它头上；报名截止后把本场次改回「报名即选岗位」，
+              建好真实岗位再一键分配，人就从「待分配」里挪出去。
+              <b>已有人报名后不能再改回本模式</b>——那会作废他们选定的岗位。
             </template>
           </div>
           <!-- 改成 assign 会作废学生已经选好的岗位，先把代价摆出来 -->
@@ -1444,36 +1447,27 @@ function openShift(g) {
         waitlist_quota: 3, campusReq: [], stageReq: [] }
   shiftDlg.value.visible = true
 }
-// 切到「截止后统一分配」会作废学生已经选好的岗位——弹窗前先算清楚有几个人
-const modeSwitchAffected = computed(() => {   // vuecheck: script-only
-  const g = shiftDlg.value.editing
-  if (!g || g.mode !== 'pick' || groupForm.value.mode !== 'assign') return 0
-  return Math.max(0, (g.enrolled || 0) - (g.unassigned_count || 0))
-})
+/** 切模式的后果说明。反向切（pick → assign）只在没人报名时允许，
+ *  有人之后后端直接 409——那会作废他们已经选定的岗位。 */
 const modeSwitchCost = computed(() => {
   const g = shiftDlg.value.editing
   if (!g || g.mode === groupForm.value.mode) return ''
   if (groupForm.value.mode === 'assign') {
-    return modeSwitchAffected.value
-      ? `改为「截止后统一分配」会清空 ${modeSwitchAffected.value} 位志愿者已经选定的岗位，`
-        + '由你在报名截止后重新分配；这批人会在「保存并发布」时收到变更通知。'
-      : '改为「截止后统一分配」后，名额口径从各岗位转到场次的「人数上限」，'
-        + '学生报名时不再挑岗位。'
+    return g.enrolled
+      ? `本场次已有 ${g.enrolled} 人报名，不能改回「截止后统一分配」——`
+        + '那会作废他们已经选定的岗位。如确需改，请新建场次。'
+      : '改为「截止后统一分配」后，学生报名时不再挑岗位，'
+        + '全部落在自动生成的「待分配」岗位上。'
   }
-  return '改为「报名即选岗位」后，名额口径从场次的「人数上限」转到各个岗位；'
-    + '已经报上名的人不受影响，但他们仍是「待分配」，需要你手动指派或一键分配。'
+  return '改为「报名即选岗位」后可以开始建岗位。「待分配」岗位会留下来，'
+    + '里面是还没安排的人——一键分配会把他们挪进新岗位，排不下的留在里面；'
+    + '空了之后可以删掉它。'
 })
 
 async function saveShift() {
   const f = groupForm.value
   if (!f.name?.trim()) return ElMessage.warning('请填写场次名称')
   if (!f.start_time || !f.end_time) return ElMessage.warning('请选择起止时间')
-  if (modeSwitchAffected.value) {
-    try {
-      await ElMessageBox.confirm(modeSwitchCost.value, '确认切换岗位模式？',
-        { type: 'warning', confirmButtonText: '确认切换', cancelButtonText: '再想想' })
-    } catch { return }
-  }
   savingGroup.value = true
   try {
     const body = {
@@ -1482,16 +1476,12 @@ async function saveShift() {
       start_time: toISO(f.start_time), end_time: toISO(f.end_time),
       requirement_tags: scopeTags(f.campusReq, f.stageReq),
     }
-    let cleared = 0
     if (shiftDlg.value.editing) {
-      cleared = (await api.patch(
-        `/api/staff/shifts/${shiftDlg.value.editing.id}`, body)).cleared || 0
+      await api.patch(`/api/staff/shifts/${shiftDlg.value.editing.id}`, body)
     } else {
       await api.post(`/api/staff/activities/${activityId}/shifts`, body)
     }
-    ElMessage.success(cleared
-      ? `已保存；${cleared} 位志愿者的岗位已清空，待重新分配（操作留痕）`
-      : '已保存（操作留痕）')
+    ElMessage.success('已保存（操作留痕）')
     shiftDlg.value.visible = false
     loadAll()
   } catch { /* 错误提示由 api 层统一弹出 */ } finally {

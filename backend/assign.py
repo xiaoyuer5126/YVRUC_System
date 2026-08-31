@@ -42,6 +42,10 @@ def match(candidates: list[tuple[str, list[str]]],
         if prefer and prefer.get(who) in options:
             # 连续性优先：先试他上一个场次待的岗位
             options = [prefer[who]] + [o for o in options if o != prefer[who]]
+        # 一个岗位在一次增广里只看一次：进来先记进 seen，有空位就坐下，
+        # 没空位再请里面的人让一让。让位这一步同样受 seen 约束——不然被挤走
+        # 的人会回头去挤同一批岗位，递归呈指数爆炸。名额充足时根本走不到
+        # 让位这一层，所以这个坑一直没露出来；名额不够时它会直接把请求挂死。
         for pid in options:
             if pid in seen:
                 continue
@@ -50,8 +54,6 @@ def match(candidates: list[tuple[str, list[str]]],
                 slots[pid].append(who)
                 placed[who] = pid
                 return True
-        # 名额都满了：请占着位子的人让一让（他们自己再去找别处）
-        for pid in options:
             for occupant in list(slots[pid]):
                 slots[pid].remove(occupant)
                 placed.pop(occupant, None)
@@ -75,7 +77,9 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
     continuity=True 时，如果这个人在本活动的其它场次已经排过同名岗位，
     优先让他还待在那个岗位——多天活动里换来换去，交接成本全落在现场。
     """
-    positions = sorted(shift.positions, key=lambda p: p.sort)
+    # 占位岗位不参与分配：它是「还没安排的人」待的地方，人只能从里面出去。
+    # 把它当成候选岗位的话，匹配会心安理得地把人留在原地，等于什么也没分。
+    positions = sorted(shift.real_positions(), key=lambda p: p.sort)
     if not positions:
         raise ValueError("请先在该场次下创建岗位，再运行一键分配")
 
@@ -109,6 +113,8 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
         u = users[r.id]
         target = placed.get(r.id)
         if target is None:
+            # 排不下不等于出局：他仍然待在原来的岗位（assign 场次就是占位岗位），
+            # 管理者可以加岗位、扩名额再跑一次，或者手动指派。
             reason = ("没有满足条件的岗位"
                       if not _eligible_positions(u, positions)
                       else "可去的岗位名额已满")
@@ -140,7 +146,8 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
 
     return {
         "shift": {"id": shift.id, "name": shift.name,
-                  "time": shift.span_text(), "capacity": shift.capacity},
+                  "time": shift.span_text(),
+                  "capacity": shift.total_capacity()},
         "continuity": continuity,
         "plan": plan,
         "unassigned": unassigned,

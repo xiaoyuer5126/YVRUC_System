@@ -49,7 +49,9 @@ def copy_position(db: OrmSession, src: Position, target: Shift,
                  requirement_tags=dict(src.requirement_tags or {}),
                  requirement_note=src.requirement_note,
                  training_note=src.training_note,
-                 needs_leader=src.needs_leader, sort=sort)
+                 needs_leader=src.needs_leader, needs_vest=src.needs_vest,
+                 group_name=src.group_name,
+                 is_placeholder=src.is_placeholder, sort=sort)
     db.add(p)
     db.flush()
     _copy_attachments(db, "position", src.id, p.id,
@@ -99,8 +101,7 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
         shift = Shift(id=uid("s"), activity_id=act.id, name=src_shift.name,
                       start_time=src_shift.start_time + delta,
                       end_time=src_shift.end_time + delta,
-                      mode=src_shift.mode, capacity=src_shift.capacity,
-                      waitlist_quota=src_shift.waitlist_quota,
+                      mode=src_shift.mode,
                       note=src_shift.note, sort=src_shift.sort,
                       location=src_shift.location, kind=src_shift.kind,
                       hours_mode=src_shift.hours_mode, parent_id=parent_id,

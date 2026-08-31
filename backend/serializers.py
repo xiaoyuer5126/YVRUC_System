@@ -58,6 +58,10 @@ def display_status(act: Activity) -> tuple[str, str]:
     return "closed", "已截止"
 
 
+# 占位岗位给学生看的说法。管理端仍叫「待分配」——那是给老师看的账。
+PLACEHOLDER_LABEL = "暂不选岗位 · 由负责老师后续统一分配"
+
+
 def tags_desc(tags: dict | None) -> str:
     """把 {标签: [值…]} 写成人话：「校区：中关村校区；学段：本科生/硕士研究生」。"""
     parts = []
@@ -116,6 +120,22 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
     }
 
 
+def _unassigned_count(db: OrmSession, g: Shift) -> int:
+    """本场次还没安排到真实岗位的人数。
+
+    「截止后统一分配」的场次里，这些人待在占位岗位上；pick 场次里也可能有
+    岗位为空的（岗位被删过，或管理员手工补录）。两种都算。
+    """
+    holder = g.placeholder()
+    q = (db.query(Enrollment)
+         .filter(Enrollment.shift_id == g.id,
+                 Enrollment.status == "enrolled"))
+    if holder is None:
+        return q.filter(Enrollment.position_id.is_(None)).count()
+    return q.filter((Enrollment.position_id.is_(None))
+                    | (Enrollment.position_id == holder.id)).count()
+
+
 def position_out(db: OrmSession, p: Position, user=None, *,
                  enrolled: bool = False, manager: bool = False,
                  same_group: bool = False) -> dict:
@@ -146,6 +166,12 @@ def position_out(db: OrmSession, p: Position, user=None, *,
         "requirement_desc": p.requirement_desc() or "不限",
         "requirement_note": p.requirement_note,
         "group_name": p.group_name,
+        "is_placeholder": p.is_placeholder,
+        # assign 场次里它不是一个岗位，是「这一场怎么报」的说明，所以换个说法。
+        # 切成 pick 之后它就是个普通岗位（人从里面往外挪），照常显示本名。
+        "display_name": (PLACEHOLDER_LABEL
+                         if p.is_placeholder and p.shift.needs_assign()
+                         else p.name),
         "sort": p.sort,
     }
     visible = enrolled or manager
@@ -261,13 +287,12 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
         "enroll_deadline": iso_of(deadline),
         "enroll_open": not opens_in(g.activity) and now() <= deadline,
         "started": now() >= g.start_time,
-        # 名额：assign 模式记在场次上，pick 模式是各岗位之和
+        # 名额一律是各岗位之和；assign 场次的名额挂在占位岗位上
         "capacity": capacity,
         "enrolled": shift_enrolled_count(db, g.id),
         "remaining": max(0, capacity - shift_occupied_count(db, g.id)),
         "held_seats": (shift_occupied_count(db, g.id)
                        - shift_enrolled_count(db, g.id)),
-        "waitlist_quota": g.waitlist_quota,
         "needs_assign": g.needs_assign(),
         "mode": g.mode,
         "mode_label": g.mode_label(),
@@ -288,13 +313,12 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
                                    manager=manager,
                                    same_group=_same_group(db, my_enr, p))
                       for p in positions],
-        # 已报名但还没岗位的人数：pick 模式下岗位名额之和不够时就有人落空，
-        # 管理者需要当场看见这个缺口，而不是等分配面板报「未排上」
-        "unassigned_count": (db.query(Enrollment)
-                             .filter(Enrollment.shift_id == g.id,
-                                     Enrollment.status == "enrolled",
-                                     Enrollment.position_id.is_(None)).count()),
-        "position_quota_sum": sum(p.quota for p in positions),
+        # 还没安排到真实岗位的人：待在占位岗位里的，加上岗位为空的
+        # （岗位被删或管理员补录留下的）。管理者要当场看见这个缺口，
+        # 而不是等分配面板报「未排上」。
+        "unassigned_count": _unassigned_count(db, g),
+        # 真实岗位的名额之和，不含占位——拿它跟已报名比才看得出还差多少位子
+        "position_quota_sum": sum(p.quota for p in g.real_positions()),
         "attachments": attachments_out(db, "shift", g.id),
         "waitlist_count": len(waitlist_rows(db, g.id)),
     }

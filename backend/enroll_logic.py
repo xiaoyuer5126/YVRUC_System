@@ -142,14 +142,11 @@ def position_occupied_count(db: OrmSession, position_id: str) -> int:
 
 
 def has_room(db: OrmSession, shift: Shift, position=None) -> bool:
-    """还有没有正式名额。
+    """还有没有正式名额。名额只记在岗位上，场次不再自己存一份。
 
-    名额记在哪一层取决于场次模式：
-      assign  报名时还没有岗位可选，名额记在场次上；
-      pick    名额记在所选岗位上，场次不设总数。
+    assign 模式下报名时看似「没有岗位可选」，其实落在占位岗位上——
+    调用方（报名接口）负责把它解析成 shift.placeholder()。
     """
-    if shift.needs_assign():
-        return shift_occupied_count(db, shift.id) < shift.capacity
     if position is None:
         return False
     return position_occupied_count(db, position.id) < position.quota

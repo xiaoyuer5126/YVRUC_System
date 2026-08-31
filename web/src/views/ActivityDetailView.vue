@@ -125,16 +125,19 @@
             </div>
 
             <!-- 报名即选岗位：每个岗位一块 -->
-            <template v-if="g.mode === 'pick' && g.positions.length">
+            <template v-if="g.positions.length">
               <div v-for="s in g.positions" :key="s.id" class="m-pos"
                    :class="{ mine: myStationId(g) === s.id, blocked: s.eligible === false }">
                 <div class="m-pos-head">
                   <!-- 桌面端是 el-link，手机端原来是普通文本，看不出能点 -->
                   <el-link class="m-pos-name" type="primary" :underline="false"
-                           @click="showStationDetail(g, s)">{{ s.name }}</el-link>
+                           @click="showStationDetail(g, s)">{{ s.display_name }}</el-link>
                   <span class="dim">{{ s.enrolled }}/{{ s.quota }}</span>
                 </div>
-                <div class="m-pos-meta dim">
+                <div v-if="s.is_placeholder" class="m-pos-meta dim">
+                  {{ g.note || '报名只锁定时段；岗位在报名截止后统一分配，结果经企业微信通知。' }}
+                </div>
+                <div v-else class="m-pos-meta dim">
                   {{ s.location || '地点待定' }}
                   <template v-if="s.requirement_desc !== '不限'"> · {{ s.requirement_desc }}</template>
                   <template v-if="s.needs_leader"> · 设组长</template>
@@ -177,12 +180,10 @@
               </div>
             </template>
 
-            <!-- 截止后统一分配：报名按钮留在场次上 -->
+            <!-- 一个岗位都没有：只可能是管理者还没建，报不了 -->
             <template v-else>
               <p class="dim" style="margin:8px 0 0">
-                {{ g.mode === 'assign'
-                   ? (g.note || '本场次报名只锁定时段；报名截止后由青协统一分配岗位。')
-                   : '本场次尚未设置岗位，请联系负责老师。' }}
+                本场次尚未设置岗位，请联系负责老师。
               </p>
               <div class="m-pos-act" style="margin-top:8px">
                 <template v-if="g.my_enrollment">
@@ -254,12 +255,14 @@
               <template #default="{ row: g }">
                 <div style="padding:6px 12px 6px 40px">
                   <!-- 直接定二级：岗位表格 -->
-                  <template v-if="g.mode === 'pick' && g.positions.length">
+                  <!-- 报名一律选岗位。「截止后统一分配」的场次只有一条，
+                       就是那个写明「暂不选岗位」的占位。 -->
+                  <template v-if="g.positions.length">
                     <el-table :data="g.positions" size="small" border>
                       <el-table-column label="岗位" min-width="150">
                         <template #default="{ row: s }">
                           <el-link type="primary" :underline="false" style="font-weight:600"
-                                   @click="showStationDetail(g, s)">{{ s.name }}</el-link>
+                                   @click="showStationDetail(g, s)">{{ s.display_name }}</el-link>
                           <el-tag v-if="myStationId(g) === s.id" size="small" type="success"
                                   effect="light" style="margin-left:6px">已选</el-tag>
                           <el-tag v-if="s.needs_leader" size="small" type="warning"
@@ -338,9 +341,6 @@
                       同场次只能选一个岗位；满员可点「候补」，按顺序递补（转正需 2 小时内确认）。
                     </div>
                   </template>
-                  <p v-else-if="g.mode === 'assign'" class="dim" style="margin:4px 0">
-                    {{ g.note || '本场次报名只锁定时段；报名截止后由青协统一分配岗位，结果经企业微信通知。' }}
-                  </p>
                   <p v-else class="dim" style="margin:4px 0">本场次尚未设置岗位，请联系负责老师。</p>
 
                   <!-- 已报名：把自己岗位的培训内容与材料直接摊开 -->

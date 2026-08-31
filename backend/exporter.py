@@ -93,7 +93,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
             parent = db.get(Shift, g.parent_id)
             quota = f"{enrolled} 人（随「{parent.name if parent else '?'}」）"
         else:
-            quota = f"{enrolled}/{g.capacity}"
+            quota = f"{enrolled}/{g.total_capacity()}"
         overview.append([g.name, g.kind_label(), g.span_text(),
                          g.mode_label() if not g.is_attached() else "—",
                          quota, here])
@@ -151,9 +151,14 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         for idx in range(6, len(header) + 1):
             ws.column_dimensions[get_column_letter(idx)].width = 14
 
-        # 未分配名单（有岗位且有人没分到时才有意义）
+        # 未分配名单（有岗位且有人没分到时才有意义）。
+        # 「待分配」占位岗位里的人也算——他们在表里挂着一个岗位名，
+        # 但那不是真岗位，现场按它去点名会找不到地方。
         if has_positions:
-            unassigned = [(e, u) for e, u in rows if not e.position_id]
+            holder = g.placeholder()
+            unassigned = [(e, u) for e, u in rows
+                          if not e.position_id
+                          or (holder and e.position_id == holder.id)]
             if unassigned:
                 start = ws.max_row + 2
                 ws.cell(row=start, column=1,

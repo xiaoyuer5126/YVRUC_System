@@ -665,46 +665,60 @@ def _apply_attachment(db: OrmSession, g: Shift, body: ShiftBody,
     g.parent_id = parent.id
     g.applies_to_positions = list(body.applies_to_positions)
     g.mode = "pick"          # 附属场次不选岗位，模式对它没有意义
-    g.capacity = 0
-    g.waitlist_quota = 0
 
 
-def _validate_shift_capacity(db: OrmSession, g: Shift):
-    """assign 模式的场次总名额校验。pick 模式名额在岗位上，这里不管。
+PLACEHOLDER_NAME = "待分配"
 
-    只跟**真人**比，不跟扣留的空位比：扣留是一条已取消的记录占着位子，
-    管理者本来就有「释放」按钮。拿它挡住改备注、改时间，等于一个人临近退选
-    就把整个场次锁死了。
+
+def _sync_placeholder(db: OrmSession, g: Shift, capacity: int,
+                      waitlist_quota: int) -> None:
+    """「截止后统一分配」的场次自动带一个占位岗位，名额记在它头上。
+
+    这样名额只有一个来源（岗位），报名、候补、签到、马甲全都不必再为
+    「没有岗位的报名」单开一套账。学生看到的是一个写明「暂不选岗位」的
+    选项，不是一个真岗位。
     """
     if g.is_attached() or not g.needs_assign():
         return
-    if g.capacity <= 0:
+    if capacity <= 0:
         raise HTTPException(400, "「截止后统一分配」的场次必须填写人数上限")
-    enrolled = logic.shift_enrolled_count(db, g.id)
-    if g.capacity < enrolled:
-        raise HTTPException(
-            400, f"人数上限不能小于已报名的 {enrolled} 人")
+    holder = g.placeholder()
+    if holder is None:
+        holder = Position(id=uid("p"), shift_id=g.id, name=PLACEHOLDER_NAME,
+                          is_placeholder=True, sort=-1,
+                          requirement_note="报名截止后由负责老师统一分配岗位",
+                          training_note="岗位确定后另行通知")
+        db.add(holder)
+        g.positions.append(holder)
+    enrolled = logic.position_enrolled_count(db, holder.id) if holder.id else 0
+    if capacity < enrolled:
+        raise HTTPException(400, f"人数上限不能小于已报名的 {enrolled} 人")
+    holder.quota = capacity
+    holder.waitlist_quota = waitlist_quota
 
 
 def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> int:
-    """切换场次模式，返回被清空岗位的人数。
+    """切换场次模式。返回 0，签名保留是因为调用方还在报「影响人数」。
 
-    改成 assign 意味着「岗位由截止后统一分配」，报名时选定的岗位一律作废——
-    否则分配面板里会混着一批「已经有岗位」的人，谁也说不清是谁定的。
-    这是一次实打实的减损，所以要把人数报出去：前端拿它弹二次确认，
-    留痕里也写清楚清了几个人，不能悄悄改掉学生已经看到的安排。
+    assign → pick 是正常流程：报名截止后改模式、建岗位、跑一键分配。
+    占位岗位跟着留下来，仍然带着 is_placeholder 标记——它现在是个普通岗位
+    （能改能删），但一键分配不会往里排人，所以人只出不进，排不下的自然
+    留在里面。空了之后管理者自己删掉。
+
+    pick → assign 只在**一个人都没报**时允许。反向切要作废所有人已经选定的
+    岗位，那是一次实打实的减损；与其做一个带二次确认的破坏性操作，不如
+    干脆不给——建错模式的场次删了重建就是。
     """
     if mode not in SHIFT_MODES:
         raise HTTPException(400, "场次模式必须是 pick 或 assign")
-    if mode == "assign" and g.mode != "assign":
-        cleared = (db.query(Enrollment)
-                   .filter(Enrollment.shift_id == g.id,
-                           Enrollment.position_id.isnot(None))
-                   .update({"position_id": None, "assigned_at": None,
-                            "assigned_by": None, "assign_forced": False},
-                           synchronize_session=False))
-        g.mode = mode
-        return cleared
+    if mode == "assign" and g.mode != "assign" and g.id:
+        live = (db.query(Enrollment)
+                .filter(Enrollment.shift_id == g.id,
+                        Enrollment.status.in_(logic.ACTIVE)).count())
+        if live:
+            raise HTTPException(
+                409, f"「{g.name}」已有 {live} 人报名，不能改回「截止后统一分配」——"
+                     f"那会作废他们已经选定的岗位。如确需改，请新建场次。")
     g.mode = mode
     return 0
 
@@ -718,14 +732,15 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
     start, end = _parse_dt(body.start_time), _parse_dt(body.end_time)
     _validate_shift_times(start, end)
     g = Shift(id=uid("g"), activity_id=act.id, name=body.name.strip(),
-                      start_time=start, end_time=end, capacity=body.capacity,
+                      start_time=start, end_time=end,
                       note=body.note.strip(), sort=len(act.shifts),
-                      location=body.location.strip(),
-                      waitlist_quota=body.waitlist_quota)
+                      location=body.location.strip())
     _apply_shift_mode(db, g, body.mode)
     _apply_attachment(db, g, body, act)
-    _validate_shift_capacity(db, g)
     db.add(g)
+    db.flush()
+    # 占位岗位要等场次落库拿到 id 之后再建
+    _sync_placeholder(db, g, body.capacity, body.waitlist_quota)
     db.flush()
     if g.is_attached():
         parent = db.get(Shift, g.parent_id)
@@ -754,10 +769,11 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
     return {"id": g.id}
 
 
+# 名额与候补不在这张表里：它们记在占位岗位上，由 _sync_placeholder 处理
 SHIFT_FIELDS = {"name": "场次名", "start_time": "开始时间", "end_time": "结束时间",
-                "capacity": "人数上限", "mode": "岗位模式", "note": "备注",
+                "mode": "岗位模式", "note": "备注",
                 "location": "地点", "hours_mode": "时长认定",
-                "waitlist_quota": "候补名额", "requirement_tags": "条件要求"}
+                "requirement_tags": "条件要求"}
 
 
 @router.patch("/shifts/{shift_id}")
@@ -797,7 +813,12 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
                             Enrollment.status == "enrolled").all()):
             logic.sync_attached(db, enr)
     _validate_shift_times(g.start_time, g.end_time)
-    _validate_shift_capacity(db, g)
+    # 名额与候补落到占位岗位上；没传就沿用它当前的值
+    holder = g.placeholder()
+    _sync_placeholder(db, g,
+                      int(body.get("capacity", holder.quota if holder else 0)),
+                      int(body.get("waitlist_quota",
+                                   holder.waitlist_quota if holder else 3)))
 
     def fmt(v):
         if isinstance(v, datetime):
@@ -1611,7 +1632,8 @@ def add_walkin(shift_id: str, body: dict,
             reasons.append(f"时段与{logic.conflict_message(clashes)}冲突")
         if not logic.has_room(db, g, position):
             reasons.append(f"「{position.name}」名额已满（上限{position.quota}人）"
-                           if position else f"场次名额已满（上限{g.capacity}人）")
+                           if position else
+                           f"场次名额已满（上限{g.total_capacity()}人）")
         if reasons and not force:
             raise HTTPException(409, f"{u.name}：{'；'.join(reasons)}。"
                                      f"确认添加请勾选强制")

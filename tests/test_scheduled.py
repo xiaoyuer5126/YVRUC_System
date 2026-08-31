@@ -31,7 +31,7 @@ def make_activity(db):
                           start_time=now() + timedelta(hours=start_in_hours),
                           end_time=now() + timedelta(hours=start_in_hours
                                                      + duration_hours),
-                          capacity=5, mode="assign", sort=0)
+                          mode="assign", sort=0)
         db.add(g)
         db.commit()
         return act, g

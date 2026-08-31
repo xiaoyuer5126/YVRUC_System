@@ -27,7 +27,7 @@ def draft_activity(db):
     db.add(Shift(id=uid("g"), activity_id=act.id, name="草稿场次",
                          start_time=now() + timedelta(days=40),
                          end_time=now() + timedelta(days=40, hours=3),
-                         capacity=5, mode="assign", sort=0))
+                          mode="assign", sort=0))
     db.commit()
     return act
 
@@ -74,7 +74,7 @@ def assigned_group(db):
     g = Shift(id=uid("g"), activity_id=act.id, name="待分配场次",
                       start_time=now() + timedelta(days=50),
                       end_time=now() + timedelta(days=50, hours=4),
-                      capacity=4, mode="assign", sort=0)
+                          mode="assign", sort=0)
     db.add(g)
     db.flush()
     s1 = Position(id=uid("s"), shift_id=g.id, name="岗位甲", quota=2, sort=0)
@@ -139,7 +139,7 @@ def test_moving_unwilling_volunteer_is_allowed_but_recorded(
 def test_walkin_needs_force_when_group_is_full(client, admin, db,
                                                assigned_group, take_student):
     act, g, s1, _s2 = assigned_group
-    for _ in range(g.capacity):
+    for _ in range(g.total_capacity()):
         u = db.query(User).filter(User.student_id == take_student()).one()
         db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
                           user_id=u.id, status="enrolled", joined_at=now()))
@@ -171,7 +171,7 @@ def test_unchecked_out_hours_need_review(client, admin, db, take_student):
     g = Shift(id=uid("g"), activity_id=act.id, name="已结束场次",
                       start_time=now() - timedelta(days=2),
                       end_time=now() - timedelta(days=2) + timedelta(hours=4),
-                      capacity=5, mode="assign", sort=0)
+                          mode="assign", sort=0)
     db.add(g)
     db.flush()
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
@@ -288,9 +288,13 @@ def test_统一分配的场次必须先切模式才能加岗位(client, admin, d
     assert len(db.get(Shift, g.id).positions) == 3
 
 
-def test_切成统一分配会报出清空了几个人(client, admin, db, assigned_group,
-                                        take_student):
-    """清空是实打实的减损，不能悄悄发生——接口要把人数交回去。"""
+def test_有人报名就不能改回统一分配(client, admin, db, assigned_group,
+                                    take_student):
+    """反向切模式要作废所有人已经选定的岗位，是一次实打实的减损。
+
+    与其做一个带二次确认的破坏性操作，不如干脆不给：建错模式的场次
+    删了重建就是。
+    """
     act, g, p1, _p2 = assigned_group
     u = db.query(User).filter(User.student_id == take_student()).one()
     db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
@@ -302,15 +306,31 @@ def test_切成统一分配会报出清空了几个人(client, admin, db, assign
     with editing(client, admin, act.id):
         r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
                          json={"mode": "assign"})
-        assert r.status_code == 200, r.text
-        assert r.json()["cleared"] == 1
+        assert r.status_code == 409
+        assert "已有 1 人报名" in r.json()["detail"]
 
+    db.expire_all()
+    assert db.get(Shift, g.id).mode == "pick"
     enr = db.query(Enrollment).filter(Enrollment.user_id == u.id,
                                       Enrollment.shift_id == g.id).one()
-    assert enr.position_id is None
-    logs = client.get(f"/api/staff/audit-logs?activity_id={act.id}",
-                      headers=admin).json()["items"]
-    assert any("已清空 1 人的岗位" in l["summary"] for l in logs)
+    assert enr.position_id == p1.id, "被拦下就不该动任何人的岗位"
+
+
+def test_没人报名时可以切回统一分配(client, admin, db, assigned_group):
+    """建错模式是常事，一个人都还没报的时候不该逼人删了重建。"""
+    act, g, _p1, _p2 = assigned_group
+    g.mode = "pick"
+    db.commit()
+    with editing(client, admin, act.id):
+        # 切成 assign 必须给人数上限：名额记在自动生成的占位岗位上
+        r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+                         json={"mode": "assign", "capacity": 12})
+        assert r.status_code == 200, r.text
+    db.expire_all()
+    row = db.get(Shift, g.id)
+    assert row.mode == "assign"
+    holder = row.placeholder()
+    assert holder is not None and holder.quota == 12
 
 
 def test_答疑群二维码非必填(client, admin):

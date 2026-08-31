@@ -130,16 +130,18 @@ def open_group(db):
         g = Shift(id=uid("g"), activity_id=act.id, name="测试场次",
                   start_time=now() + start,
                   end_time=now() + start + timedelta(hours=3),
-                  capacity=capacity, mode=mode,
-                  waitlist_quota=waitlist_quota, sort=0)
+                  mode=mode, sort=0)
         db.add(g)
         db.flush()
-        # 名额在岗位上，所以每个测试场次都带一个岗位；assign 模式的场次
-        # 报名时不选岗位，名额看场次自己的 capacity。
-        p = Position(id=uid("p"), shift_id=g.id, name="测试岗位",
+        # 名额一律在岗位上。assign 模式的场次带的是「待分配」占位岗位——
+        # 报名的人都落在它上面，跟线上建场次时自动生成的那个是一回事。
+        p = Position(id=uid("p"), shift_id=g.id,
+                     name="待分配" if mode == "assign" else "测试岗位",
+                     is_placeholder=(mode == "assign"),
                      quota=capacity, waitlist_quota=waitlist_quota,
                      requirement_tags=requirement_tags or {},
-                     needs_leader=needs_leader, sort=0, **POSITION_TEXT)
+                     needs_leader=needs_leader,
+                     sort=-1 if mode == "assign" else 0, **POSITION_TEXT)
         db.add(p)
         db.commit()
         g.test_position_id = p.id

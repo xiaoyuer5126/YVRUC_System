@@ -322,11 +322,19 @@ def main() -> None:
         b1 = Shift(id=uid("g"), activity_id=book.id, name="周六全天场",
                            start_time=dt(days=5, base=t0.replace(hour=9)),
                            end_time=dt(days=5, base=t0.replace(hour=17)),
-                           capacity=20, mode="assign",
-                           waitlist_quota=3,
+                           mode="assign",
                            note="具体岗位（分拣/搬运/上架）报名截止后由排班程序统一分配",
                            sort=0)
         db.add(b1)
+        db.flush()
+        # 「截止后统一分配」的场次自带一个占位岗位，名额记在它头上，
+        # 报名的人都落在这里，等报名截止后由一键分配挪进真实岗位
+        b1_hold = Position(id=uid("p"), shift_id=b1.id, name="待分配",
+                           is_placeholder=True, quota=20, waitlist_quota=3,
+                           sort=-1,
+                           requirement_note="报名截止后由负责老师统一分配岗位",
+                           training_note="岗位确定后另行通知")
+        db.add(b1_hold)
         db.flush()
         frozen_id = frozen.id
         cnt = 0
@@ -335,7 +343,7 @@ def main() -> None:
                 continue
             db.add(Enrollment(id=uid("enr"), activity_id=book.id,
                               shift_id=b1.id, user_id=u.id, status="enrolled",
-                              source="self",
+                              source="self", position_id=b1_hold.id,
                               allow_reassign=random.random() > 0.25,
                               joined_at=dt(days=-2, minutes=cnt * 7)))
             cnt += 1

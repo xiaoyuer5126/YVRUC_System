@@ -168,19 +168,23 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
 
     _check_eligibility(db, user, act, g)
 
-    # 岗位有效性与硬性条件（与名额无关，锁外先判）
-    position = None
-    if body.position_id:
+    # 岗位有效性与硬性条件（与名额无关，锁外先判）。
+    # 「截止后统一分配」的场次不让学生挑岗位，一律落到占位岗位上——
+    # 名额、候补、签到、马甲全都挂在岗位上，报名却不给岗位的话，
+    # 这些账就得再记一套。
+    if g.needs_assign():
+        position = g.placeholder()
+        if position is None:
+            raise HTTPException(409, f"场次「{g.name}」尚未就绪，请联系负责老师")
+    elif body.position_id:
         position = db.get(Position, body.position_id)
         if position is None or position.shift_id != g.id:
             raise HTTPException(400, "岗位无效")
-        if g.needs_assign():
-            raise HTTPException(400, "该场次的岗位由报名截止后统一分配，无需选择")
         unmet = logic.unmet_requirements(user, position)
         if unmet:
             raise HTTPException(
                 403, f"您不满足「{position.name}」的报名条件：{'；'.join(unmet)}")
-    elif not g.needs_assign():
+    else:
         raise HTTPException(400, "请选择具体岗位")
 
     # ★ 时段冲突（粗粒度）：与所有有效报名的场次比区间，重叠即拦截。
@@ -228,13 +232,10 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
             ok, why = credit.can_join_waitlist(user)
             if not ok:
                 raise HTTPException(403, why)
-            # 队列上限：pick 模式按岗位算，assign 模式按场次算
-            queued = logic.waitlist_rows(db, g.id)
-            if position is not None:
-                queued = [r for r in queued if r.position_id == position.id]
-                limit = position.waitlist_quota
-            else:
-                limit = g.waitlist_quota
+            # 队列上限按岗位算；assign 场次的队列就排在占位岗位上
+            queued = [r for r in logic.waitlist_rows(db, g.id)
+                      if r.position_id == position.id]
+            limit = position.waitlist_quota
             if len(queued) >= limit:
                 raise HTTPException(409, f"候补名额已满（上限{limit}人）")
             enr.status = "waitlisted"

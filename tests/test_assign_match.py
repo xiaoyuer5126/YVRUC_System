@@ -86,3 +86,37 @@ def test_连续性不能以牺牲总人数为代价():
     candidates = [("A", ["p1", "p2"]), ("B", ["p1"])]
     placed = match(candidates, {"p1": 1, "p2": 1}, prefer={"A": "p1"})
     assert len(placed) == 2
+
+
+def test_名额不够时不会卡死(monkeypatch):
+    """让位那一层必须受 seen 约束，否则被挤走的人回头再挤同一批岗位。
+
+    名额充足时走不到让位这一层，所以这个坑一直没露出来；名额一旦不够，
+    请求会直接挂死（实测 18 人抢 14 个位子就再也回不来）。
+    """
+    import time
+
+    from backend.assign import match
+
+    n, quota = 18, {"A": 8, "B": 6}
+    candidates = [(f"u{i}", ["A", "B"]) for i in range(n)]
+    t0 = time.time()
+    placed = match(candidates, quota)
+    assert time.time() - t0 < 2, "名额不够就算不出来 = 挂死"
+    assert len(placed) == 14, f"14 个位子该排满，实际 {len(placed)}"
+    assert sum(1 for p in placed.values() if p == "A") == 8
+    assert sum(1 for p in placed.values() if p == "B") == 6
+    # 先到先得：排上的是前 14 个人
+    assert set(placed) == {f"u{i}" for i in range(14)}
+
+
+def test_让位仍然能救回被贪心挡住的人():
+    """文档里那个例子：甲不限(1)、乙限女(1)，顺序 女A、男B。
+
+    贪心让女A占了甲，男B进不了乙；正确解是女A→乙、男B→甲。
+    加了 seen 约束之后这条路必须还在。
+    """
+    from backend.assign import match
+
+    placed = match([("A", ["甲", "乙"]), ("B", ["甲"])], {"甲": 1, "乙": 1})
+    assert placed == {"A": "乙", "B": "甲"}

@@ -355,10 +355,6 @@ class Shift(Base):
     # 本场次的硬性条件 {标签: 值列表}，空 = 不限。与岗位上的条件同一套匹配
     # 规则（见 enroll_logic.unmet_for_tags），报名时直接拦截。
     requirement_tags: Mapped[dict] = mapped_column(JSON, default=dict)
-    # 下面两个数字**只在 assign 模式下有意义**：报名时还没有岗位可选，
-    # 名额只能记在场次上。pick 模式下名额与候补都在岗位上，这两个值不参与判断。
-    capacity: Mapped[int] = mapped_column(Integer, default=0)
-    waitlist_quota: Mapped[int] = mapped_column(Integer, default=3)
     note: Mapped[str] = mapped_column(String(512), default="")
     sort: Mapped[int] = mapped_column(Integer, default=0)
     # 签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
@@ -400,10 +396,26 @@ class Shift(Base):
         return self.mode == "assign"
 
     def total_capacity(self) -> int:
-        """场次总名额：assign 模式记在场次上，pick 模式是各岗位之和。"""
-        if self.needs_assign():
-            return self.capacity
+        """场次总名额 = 各岗位名额之和。
+
+        名额只有这一个来源。「截止后统一分配」的场次也有岗位——建场次时
+        自动带一个占位岗位，报名的人都落在它上面，名额记在它头上。
+        """
         return sum(p.quota for p in self.positions)
+
+    def placeholder(self):
+        """占位岗位：「截止后统一分配」场次里那个装「还没安排的人」的桶。
+
+        建 assign 场次时自动生成，学生报名就落在它上面。切成 pick 模式后
+        它仍然带着这个标记——一键分配据此**不把它当作分配目标**，
+        于是人只会从它里面出去、不会被排进来，排不下的自然留在里面。
+        标记不影响它作为普通岗位被改名、改名额、删除（空了才删得掉）。
+        """
+        return next((p for p in self.positions if p.is_placeholder), None)
+
+    def real_positions(self) -> list["Position"]:
+        """真正的岗位，不含占位。一键分配只往这些里面排。"""
+        return [p for p in self.positions if not p.is_placeholder]
 
 
 class Position(Base):
@@ -429,6 +441,8 @@ class Position(Base):
     # 岗位组：同一场次内组名相同的岗位共用一名组长（如「东门片区」下的
     # 引导/检录/医疗点）。留空 = 该岗位自成一组，行为与从前一致。
     group_name: Mapped[str] = mapped_column(String(64), default="")
+    # 占位岗位：「截止后统一分配」场次自动建的那一个，见 Shift.placeholder()
+    is_placeholder: Mapped[bool] = mapped_column(Boolean, default=False)
     sort: Mapped[int] = mapped_column(Integer, default=0)
 
     shift: Mapped[Shift] = relationship(back_populates="positions")

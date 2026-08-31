@@ -78,17 +78,25 @@ def test_大屏以确认名单为主表并标出组长(client, admin, db, enroll
 
 def test_未分配名单只在有岗位时出现(client, admin, db, enrolled_activity,
                                   take_student):
-    """assign 模式下没分岗位的人要单独列出来，不能悄悄消失。"""
+    """待在「待分配」占位岗位里的人要单独列出来，不能悄悄混进正式名单。
+
+    他们在表里挂着一个岗位名，但那不是真岗位，现场照它点名会找不到地方。
+    """
+    from backend.models import Position
+
     act, shift, _u = enrolled_activity
     shift.mode = "assign"
-    shift.capacity = 10
+    # 把原来的测试岗位改成占位岗位，模拟「截止后统一分配」的场次
+    holder = shift.positions[0]
+    holder.is_placeholder = True
+    holder.quota = 10
     db.commit()
 
     sid = take_student()
     t = login(client, sid)
     r = client.post(f"/api/activities/{act.id}/shifts/{shift.id}/enroll",
                     headers=t, json={})
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
 
     token = admin["Authorization"].split()[1]
     r = client.get(f"/api/staff/activities/{act.id}/export.xlsx?token={token}")

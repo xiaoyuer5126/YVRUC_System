@@ -117,7 +117,7 @@ def test_同一个活动里没开场的那一场照常报名(client, db, open_gr
     past = Shift(id=uid("g"), activity_id=act.id, name="昨天那场",
                  start_time=now() - timedelta(days=1, hours=3),
                  end_time=now() - timedelta(days=1), mode="assign",
-                 capacity=5, sort=1)
+                 sort=1)
     db.add(past)
     db.commit()
 
@@ -135,7 +135,7 @@ def test_详情里给出每场自己的报名闸门(client, db, open_group, take
     past = Shift(id=uid("g"), activity_id=act.id, name="昨天那场",
                  start_time=now() - timedelta(days=1, hours=3),
                  end_time=now() - timedelta(days=1), mode="assign",
-                 capacity=5, sort=1)
+                 sort=1)
     db.add(past)
     db.commit()
 

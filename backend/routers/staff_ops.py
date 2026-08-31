@@ -436,7 +436,7 @@ def poster(activity_id: str, db: OrmSession = Depends(db_session),
     for g in sorted(act.main_shifts(), key=lambda x: x.start_time):
         head = f"◆ {g.name}（{g.span_text()}）"
         if g.needs_assign():
-            head += f"　名额 {g.capacity} 人，岗位于报名截止后统一分配"
+            head += f"　名额 {g.total_capacity()} 人，岗位于报名截止后统一分配"
         L.append(head)
         for p in sorted(g.positions, key=lambda x: x.sort):
             left = max(0, p.quota - position_enrolled_count(db, p.id))
