@@ -56,10 +56,10 @@
             <span class="mono">{{ row.wechat || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="id_card_masked" label="身份证（脱敏）" width="130">
+        <el-table-column prop="id_card_masked" label="身份证（脱敏）" width="146">
           <template #default="{row}"><span class="mono dim">{{ row.id_card_masked || '—' }}</span></template>
         </el-table-column>
-        <el-table-column label="信用分" width="90">
+        <el-table-column label="信用分" width="76">
           <template #default="{row}">
             <b :style="{ color: row.credit_score >= 60 ? '#67c23a' : '#f56c6c' }">{{ row.credit_score }}</b>
             <el-tooltip v-if="row.credit_frozen" content="报名已冻结"><el-icon color="#f56c6c"><Lock /></el-icon></el-tooltip>
