@@ -14,6 +14,9 @@
       <el-menu-item v-if="canSee.users()" index="/users">
         <el-icon><UserFilled /></el-icon>用户与信用
       </el-menu-item>
+      <el-menu-item v-if="canSee.roles()" index="/roles">
+        <el-icon><Key /></el-icon>角色管理
+      </el-menu-item>
       <el-menu-item v-if="canSee.integrations()" index="/integrations">
         <el-icon><Link /></el-icon>集成设置
       </el-menu-item>
@@ -31,7 +34,7 @@
 
 <script setup>
 import {
-  Bell, Calendar, Clock, Compass, Document, Link, Odometer, Stamp, Star,
+  Bell, Calendar, Clock, Compass, Document, Key, Link, Odometer, Stamp, Star,
   Tickets, UserFilled,
 } from '@element-plus/icons-vue'
 import { auth, canSee, ROLE_LABELS } from '../store'

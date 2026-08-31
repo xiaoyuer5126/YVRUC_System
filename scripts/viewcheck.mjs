@@ -24,6 +24,7 @@ const PAGES = [
   ['admin', '/users', '用户与信用'],
   ['admin', '/audit', '审计日志'],
   ['admin', '/dashboard', '数据总览'],
+  ['admin', '/roles', '角色管理'],
 ]
 const TOK = { student: readFileSync(`${S}/tok.txt`,'utf8'), admin: readFileSync(`${S}/atok.txt`,'utf8') }
 const USR = { student: readFileSync(`${S}/suser.json`,'utf8'), admin: readFileSync(`${S}/auser.json`,'utf8') }

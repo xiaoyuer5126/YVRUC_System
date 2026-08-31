@@ -59,6 +59,8 @@ export const canSee = {
   manage: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
   audit: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
   users: () => ['admin', 'qingxie'].includes(auth.activeIdentity),
+  // 角色管理改的是权限本身，只给管理员
+  roles: () => auth.activeIdentity === 'admin',
   approvals: () => ['admin', 'qingxie'].includes(auth.activeIdentity),
   integrations: () => auth.activeIdentity === 'admin',
   personal: () => true,

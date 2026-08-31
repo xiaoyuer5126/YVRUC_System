@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { auth, setActiveIdentity, hasIdentity, isManager } from './store'
+import { auth, canSee, setActiveIdentity, hasIdentity, isManager } from './store'
 
 const routes = [
   { path: '/login', component: () => import('./views/LoginView.vue'), meta: { public: true } },
@@ -22,6 +22,7 @@ const routes = [
       { path: 'approvals', component: () => import('./views/ApprovalsView.vue'), meta: { page: 'approvals' } },
       { path: 'audit', component: () => import('./views/AuditLogsView.vue'), meta: { page: 'audit' } },
       { path: 'users', component: () => import('./views/UsersCreditView.vue'), meta: { page: 'users' } },
+      { path: 'roles', component: () => import('./views/RolesView.vue'), meta: { page: 'roles' } },
       { path: 'integrations', component: () => import('./views/IntegrationsView.vue'), meta: { page: 'integrations' } },
     ],
   },
@@ -57,19 +58,14 @@ router.beforeEach((to) => {
   const page = to.meta.page
   if (!page || !auth.user) return
 
-  const need = {
-    dashboard: () => auth.activeIdentity === 'admin',
-    manage: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
-    audit: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
-    users: () => ['admin', 'qingxie'].includes(auth.activeIdentity),
-    approvals: () => ['admin', 'qingxie'].includes(auth.activeIdentity),
-    integrations: () => auth.activeIdentity === 'admin',
-  }[page]
+  // 用 store 里的 canSee，别在这儿抄第二份：抄一份就意味着以后新加页面
+  // 只往一边加——角色管理就这么漏过，菜单里藏住了，直接敲地址却进得去。
+  const need = canSee[page]
   if (!need || need()) return
 
   // 当前视角不够 → 若持有对应身份则自动切换视角放行
   const wanted = {
-    dashboard: 'admin', integrations: 'admin',
+    dashboard: 'admin', integrations: 'admin', roles: 'admin',
     users: hasIdentity('admin') ? 'admin' : 'qingxie',
     approvals: hasIdentity('admin') ? 'admin' : 'qingxie',
     manage: hasIdentity('admin') ? 'admin' : hasIdentity('initiator') ? 'initiator' : 'qingxie',
