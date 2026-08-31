@@ -31,6 +31,11 @@
         <el-descriptions-item label="地点">{{ a.location || '待定' }}</el-descriptions-item>
         <el-descriptions-item label="场次数">{{ a.shifts_count }}</el-descriptions-item>
       </el-descriptions>
+      <!-- 提交人写的说明。审批人就是在这一屏点通过/驳回的，这句话必须在这里 -->
+      <div class="submit-note">
+        <b>提交说明</b>
+        <span :class="{ dim: !a.submit_note }">{{ a.submit_note || '提交时未填写' }}</span>
+      </div>
       <div class="dim" style="margin-top:6px">
         提交于 {{ fmtDT(a.submitted_at) }} ·
         <el-link type="primary" :underline="false"
@@ -194,6 +199,11 @@ async function submitTransfer() {
 </script>
 
 <style scoped>
+.submit-note {
+  margin-top: 8px; padding: 8px 12px; border-radius: 8px;
+  background: var(--el-fill-color-light); font-size: 13px; line-height: 1.75;
+}
+.submit-note b { margin-right: 8px; }
 .item { margin-bottom: 12px; border-radius: 12px; }
 .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .title { font-size: 15px; color: var(--el-color-primary); cursor: pointer; }

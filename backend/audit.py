@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .models import AuditLog, uid
+from .models import Activity, AuditLog, uid
 
 
 def log(db: OrmSession, *, actor, action: str, target_type: str,
@@ -23,6 +23,14 @@ def log(db: OrmSession, *, actor, action: str, target_type: str,
     需要对志愿者公开的，显式传 visible=True，且只限「谁动了我的岗位」
     这类结构性变更：活动信息、场次、岗位的增删改。
     """
+    # 活动公开之前的改动一律不进志愿者的「变更记录」。筹备期的每一次试错
+    # ——建了又删的场次、改来改去的名额——学生从来没见过那些东西，摆出来
+    # 只会让人以为安排一直在变，还把内部过程暴露了出去。
+    # 「变更记录」的意思是「你报名之后发生了什么变化」，得从公开那一刻算起。
+    if visible and activity_id:
+        act = db.get(Activity, activity_id)
+        if act is not None and act.status in ("draft", "pending", "approved"):
+            visible = False
     entry = AuditLog(
         id=uid("aud"),
         actor_id=getattr(actor, "id", None),

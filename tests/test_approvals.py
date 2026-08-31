@@ -246,3 +246,29 @@ def test_只有管理员能指定部长(client, admin, db):
     # 用例之间共用一个库，改完的全局状态要放回去
     client.patch(f"/api/staff/departments/{_liaison(db).id}", headers=admin,
                  json={"head_student_id": QINGXIE_HEAD})
+
+
+def test_提交说明要出现在审批页上(client, admin, db, draft):
+    """审批人就是在那一屏点通过/驳回的，提交时写的话必须在那里看得到。
+
+    以前它只存进流水、发进通知，审批列表接口压根不返回，等于让人在看不到
+    提交说明的情况下拍板。
+    """
+    NOTE = "下午场人力偏紧，麻烦重点看一下"
+    dept = _liaison(db)
+    assert client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                       json={"department_id": dept.id,
+                             "note": NOTE}).status_code == 200
+
+    row = next(x for x in client.get("/api/staff/approvals",
+                                     headers=admin).json() if x["id"] == draft)
+    assert row["submit_note"] == NOTE
+
+
+def test_没写说明就给空串而不是缺字段(client, admin, db, draft):
+    dept = _liaison(db)
+    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                json={"department_id": dept.id})
+    row = next(x for x in client.get("/api/staff/approvals",
+                                     headers=admin).json() if x["id"] == draft)
+    assert row["submit_note"] == ""

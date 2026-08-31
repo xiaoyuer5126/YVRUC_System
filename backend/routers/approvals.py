@@ -348,6 +348,12 @@ def my_approvals(db: OrmSession = Depends(db_session),
         who = db.get(User, act.approval_assignee_id) if act.approval_assignee_id else None
         creator = db.get(User, act.created_by)
         span = act.time_span()
+        # 提交时写的说明。以前只存进流水、发进通知，审批人做决定的这个页面
+        # 反而看不到——最该看到那句话的地方。
+        submit = (db.query(ApprovalEvent)
+                  .filter(ApprovalEvent.activity_id == act.id,
+                          ApprovalEvent.kind == "submit")
+                  .order_by(ApprovalEvent.created_at.desc()).first())
         out.append({
             "id": act.id, "title": act.title, "organizer": act.organizer,
             "type_label": f"{act.type}类", "location": act.location,
@@ -359,6 +365,7 @@ def my_approvals(db: OrmSession = Depends(db_session),
             "assignee": who.name if who else "",
             "mine": act.approval_assignee_id == user.id,
             "creator": creator.name if creator else "",
+            "submit_note": submit.comment if submit else "",
         })
     return out
 

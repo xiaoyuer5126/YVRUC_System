@@ -65,3 +65,71 @@ def test_默认不公开(db):
     entry = log(db, actor=None, action="test", target_type="x",
                 summary="随手记一条")
     assert entry.visible is False
+
+
+# ======================= 发布之前的改动不对学生公开 =======================
+
+def test_筹备期的改动不进志愿者的变更记录(client, admin, db, take_student):
+    """草稿/待审批期间建场次、改名额，学生从来没见过，不该摆给他看。
+
+    「变更记录」的意思是「你报名之后发生了什么变化」，得从公开那一刻算起。
+    """
+    from datetime import timedelta
+
+    from backend.models import Activity, now
+    from conftest import POSITION_TEXT
+
+    r = client.post("/api/staff/activities", headers=admin,
+                    json={"title": f"筹备期留痕 {now():%H%M%S%f}",
+                          "organizer": "校青协", "type": "A", "intro": "x",
+                          "location": "世纪馆",
+                          "contacts": [{"name": "王", "phone": "13900000000"}],
+                          "reg_start": (now() - timedelta(hours=1)).isoformat(),
+                          "reg_end": (now() + timedelta(days=2)).isoformat()})
+    aid = r.json()["id"]
+    gid = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
+                      json={"name": "上午场", "mode": "pick",
+                            "start_time": (now() + timedelta(days=5)).isoformat(),
+                            "end_time": (now() + timedelta(days=5, hours=3)).isoformat()}
+                      ).json()["id"]
+    pid = client.post(f"/api/staff/shifts/{gid}/positions", headers=admin,
+                      json={"name": "引导岗", "quota": 3, **POSITION_TEXT}
+                      ).json()["id"]
+    client.patch(f"/api/staff/positions/{pid}", headers=admin, json={"quota": 5})
+
+    # 发布之前：这些留痕都在，但一条都不该对学生可见
+    assert _visible_summaries(client, admin, aid) == []
+
+    act = db.get(Activity, aid)
+    act.status = "published"
+    db.commit()
+    t = login(client, take_student())
+    assert _visible_summaries(client, t, aid) == []
+
+    # 发布之后的改动才进得去
+    client.post(f"/api/staff/activities/{aid}/edit-lock", headers=admin)
+    client.patch(f"/api/staff/positions/{pid}", headers=admin, json={"quota": 8})
+    got = _visible_summaries(client, t, aid)
+    assert len(got) == 1 and "修改岗位「引导岗」" in got[0]
+
+
+def test_审批中的改动同样不可见(client, admin, db, take_student):
+    """待审批、待发布都还没公开，跟草稿是一回事。"""
+    from datetime import timedelta
+
+    from backend.models import Activity, now
+
+    r = client.post("/api/staff/activities", headers=admin,
+                    json={"title": f"审批期留痕 {now():%H%M%S%f}",
+                          "organizer": "校青协", "type": "A", "intro": "x",
+                          "location": "世纪馆",
+                          "contacts": [{"name": "王", "phone": "13900000000"}],
+                          "reg_start": (now() - timedelta(hours=1)).isoformat(),
+                          "reg_end": (now() + timedelta(days=2)).isoformat()})
+    aid = r.json()["id"]
+    for status in ("pending", "approved"):
+        db.get(Activity, aid).status = status
+        db.commit()
+        client.patch(f"/api/staff/activities/{aid}", headers=admin,
+                     json={"location": f"改到 {status}"})
+        assert _visible_summaries(client, admin, aid) == [], status
