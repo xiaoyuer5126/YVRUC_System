@@ -14,6 +14,8 @@
       </el-form-item>
       <el-form-item label="微信号" required>
         <el-input v-model="form.wechat" placeholder="请输入微信号" maxlength="64" />
+        <!-- 只提示不校验：初始号也是能加上的，拦下来反而挡住一部分人 -->
+        <div class="dim">请不要填写 wxid_ 开头的初始微信号</div>
       </el-form-item>
 
       <el-form-item v-if="!form.no_mainland_id" label="身份证号"

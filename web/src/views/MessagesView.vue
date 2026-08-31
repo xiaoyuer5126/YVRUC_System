@@ -12,7 +12,9 @@
               :title="`有 ${pendingAck} 条通知需要您签收`"
               description="签收是向负责老师确认「我已看到」；只是打开消息不算签收。" />
     <el-card v-for="n in items" :key="n.id" shadow="never" class="msg"
-             :class="{ unread: !n.read, ack: n.need_ack && !n.acked_at }">
+             :class="{ unread: !n.read, ack: n.need_ack && !n.acked_at,
+                       clickable: n.data?.activity_id }"
+             @click="openActivity(n)">
       <div class="row">
         <el-tag size="small" effect="plain" :type="tagType(n.template_key)">{{ tagLabel(n.template_key) }}</el-tag>
         <el-tag v-if="n.need_ack" size="small"
@@ -20,11 +22,11 @@
                 :effect="n.acked_at ? 'plain' : 'dark'">
           {{ n.acked_at ? '已签收' : '需签收' }}
         </el-tag>
-        <b>{{ n.title }}</b>
-        <span class="dim" style="margin-left:auto">{{ fmtDT(n.created_at) }}</span>
+        <span class="dim time">{{ fmtDT(n.created_at) }}</span>
+        <b class="msg-title">{{ n.title }}</b>
       </div>
       <p class="content" style="white-space:pre-wrap">{{ n.content }}</p>
-      <div v-if="n.need_ack" class="ack-bar">
+      <div v-if="n.need_ack" class="ack-bar" @click.stop>
         <template v-if="n.acked_at">
           <span class="dim">已于 {{ fmtDT(n.acked_at) }} 签收</span>
         </template>
@@ -41,8 +43,17 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
+
+const router = useRouter()
+
+/** 通知里带了活动就点进去。候补转正、签到提醒这类看完总要去活动页操作。 */
+function openActivity(n) {
+  const id = n.data?.activity_id
+  if (id) router.push('/activity/' + id)
+}
 
 const items = ref([])
 const unread = ref(0)
@@ -94,6 +105,14 @@ async function ack(n) {
   margin-top: 10px; padding-top: 10px;
   border-top: 1px dashed var(--el-border-color);
 }
-.row { display: flex; align-items: center; gap: 8px; }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.time { margin-left: auto; }
+.msg.clickable { cursor: pointer; }
+.msg.clickable:hover { box-shadow: 0 2px 12px rgba(0, 0, 0, .08); }
+/* 手机上一行放不下「类型 + 标题 + 时间」：标题整条落到第二行，
+   第一行只留类型标签和时间 */
+@media (max-width: 700px) {
+  .msg-title { order: 9; flex: 0 0 100%; margin-top: 4px; line-height: 1.5; }
+}
 .content { margin: 8px 0 0; color: #606266; line-height: 1.75; font-size: 13.5px; }
 </style>

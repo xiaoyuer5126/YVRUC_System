@@ -129,7 +129,9 @@
               <div v-for="s in g.positions" :key="s.id" class="m-pos"
                    :class="{ mine: myStationId(g) === s.id, blocked: s.eligible === false }">
                 <div class="m-pos-head">
-                  <span class="m-pos-name" @click="showStationDetail(g, s)">{{ s.name }}</span>
+                  <!-- 桌面端是 el-link，手机端原来是普通文本，看不出能点 -->
+                  <el-link class="m-pos-name" type="primary" :underline="false"
+                           @click="showStationDetail(g, s)">{{ s.name }}</el-link>
                   <span class="dim">{{ s.enrolled }}/{{ s.quota }}</span>
                 </div>
                 <div class="m-pos-meta dim">
@@ -951,6 +953,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .m-pos.blocked { opacity: .7; }
 .m-pos-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .m-pos-name { font-weight: 600; font-size: 14px; }
+.m-pos-name :deep(.el-link__inner) { font-weight: 600; }
 .m-pos-meta { margin-top: 3px; line-height: 1.6; }
 .m-pos-act { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .m-pos-why { margin-top: 6px; font-size: 12px; color: #e6a23c; }

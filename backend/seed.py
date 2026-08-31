@@ -542,15 +542,16 @@ def main() -> None:
         db.commit()
 
         # ---------- 通知样例 ----------
-        def notify(u, key, title, content, when, read=False):
+        def notify(u, key, title, content, when, read=False, act_id=""):
             db.add(Notification(id=uid("ntf"), user_id=u.id, template_key=key,
                                 title=title, content=content, read=read,
+                                data={"activity_id": act_id} if act_id else {},
                                 created_at=when))
 
         notify(pc_user, "waitlist_promoted", "候补转正待确认｜校运动会开幕式志愿服务",
                f"「校运动会开幕式志愿服务」· 上午场 有名额释放，您已按候补顺序转正！\n"
                f"请在 {e_pc.confirm_deadline:%m-%d %H:%M} 前确认，超时名额顺延。",
-               dt(hours=-1))
+               dt(hours=-1), act_id=sport.id)
         notify(wl_user, "waitlist_queued", "已加入候补｜校运动会开幕式志愿服务",
                "「校运动会开幕式志愿服务」· 上午场 名额已满，您已加入候补队列，当前第 2 位。",
                dt(days=-1))

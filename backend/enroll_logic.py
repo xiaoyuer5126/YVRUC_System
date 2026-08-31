@@ -372,7 +372,9 @@ def promote_head(db: OrmSession, shift: Shift,
     head.confirm_deadline = now() + timedelta(hours=config.PROMOTE_CONFIRM_HOURS)
     user = db.get(User, head.user_id)
     activity = db.get(Activity, head.activity_id)
+    # 带上 activity_id：这条通知看完就要去活动页确认，消息卡片据此可点击跳转
     wecom.send_user(db, user, "waitlist_promoted",
+                    data={"activity_id": activity.id},
                     activity=activity.title, shift=shift.name,
                     deadline=f"{head.confirm_deadline:%m-%d %H:%M}")
     return head

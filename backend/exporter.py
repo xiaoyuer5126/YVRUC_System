@@ -20,7 +20,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session as OrmSession
 
-from .models import Activity, CheckinRecord, Enrollment, Shift, User
+from .models import Activity, CheckinRecord, Enrollment, Shift, User, now
 
 HEADER_FILL = PatternFill("solid", fgColor="9E2235")   # 人大红
 HEADER_FONT = Font(name="微软雅黑", bold=True, color="FFFFFF")
@@ -109,8 +109,18 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         rows = (db.query(Enrollment, User)
                 .filter(Enrollment.shift_id == g.id,
                         Enrollment.status == "enrolled")
-                .join(User, Enrollment.user_id == User.id)
-                .order_by(User.college, User.name).all())
+                .join(User, Enrollment.user_id == User.id).all())
+        # 这张表是拿去现场点名的，所以按现场的组织方式排：先按岗位分块，
+        # 块内组长排头（点名时先找他），其余按报名先后。
+        # 没岗位的（统一分配还没排完）沉到最后，一眼看得出还差谁没安排。
+        def _order(pair):
+            enr, u = pair
+            st = positions.get(enr.position_id) if enr.position_id else None
+            return (0 if st else 1,            # 有岗位的在前
+                    st.sort if st else 0,      # 岗位按管理者排的顺序
+                    0 if enr.is_leader else 1,  # 组长置顶，但仍在本岗位内
+                    enr.joined_at or now())     # 其余按报名时间
+        rows.sort(key=_order)
 
         ws = wb.create_sheet(_safe_sheet_name(g.name, used_names))
         has_positions = bool(positions)

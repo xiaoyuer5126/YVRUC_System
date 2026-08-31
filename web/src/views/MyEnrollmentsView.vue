@@ -30,11 +30,14 @@
         <div v-else-if="row.status === 'enrolled'" class="dim">岗位待分配</div>
         <div class="mob-line">
           <span class="dim">岗位调剂：</span>
-          <el-tag v-if="isActive(row) && !row.shift.attached" size="small" effect="plain"
-                  :type="row.allow_reassign ? 'success' : 'info'"
-                  @click="toggleReassign(row)">
-            {{ row.allow_reassign ? '接受' : '不接受' }}
-          </el-tag>
+          <template v-if="isActive(row) && !row.shift.attached">
+            <el-tag size="small" effect="plain"
+                    :type="row.allow_reassign ? 'success' : 'info'">
+              {{ row.allow_reassign ? '接受' : '不接受' }}
+            </el-tag>
+            <el-button size="small" link type="primary"
+                       @click="toggleReassign(row)">修改</el-button>
+          </template>
           <span v-else class="dim">—</span>
           <template v-if="row.status === 'enrolled'">
             <span class="dim" style="margin-left:10px">签到：</span>
@@ -84,16 +87,20 @@
           <div v-else-if="row.status === 'enrolled'" class="dim">岗位待分配</div>
         </template>
       </el-table-column>
-      <el-table-column label="岗位调剂" width="120">
+      <el-table-column label="岗位调剂" width="160">
         <template #default="{ row }">
-          <el-tooltip v-if="isActive(row) && !row.shift.attached" placement="top"
-                      content="点击切换。仅供负责老师排班时参考，不代表岗位不会被调整">
-            <el-tag size="small" effect="plain" style="cursor:pointer"
-                    :type="row.allow_reassign ? 'success' : 'info'"
-                    @click="toggleReassign(row)">
+          <!-- 状态归状态、操作归操作：点标签切换太隐蔽，也容易误触 -->
+          <template v-if="isActive(row) && !row.shift.attached">
+            <el-tag size="small" effect="plain"
+                    :type="row.allow_reassign ? 'success' : 'info'">
               {{ row.allow_reassign ? '接受' : '不接受' }}
             </el-tag>
-          </el-tooltip>
+            <el-tooltip placement="top"
+                        content="仅供负责老师排班时参考，不代表岗位不会被调整">
+              <el-button size="small" link type="primary"
+                         @click="toggleReassign(row)">修改</el-button>
+            </el-tooltip>
+          </template>
           <span v-else class="dim">—</span>
         </template>
       </el-table-column>

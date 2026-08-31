@@ -16,6 +16,7 @@
 
       <DataCards v-if="narrow" :rows="users" title-key="name" v-loading="loading"
                  :fields="[{ key: 'student_id', label: '学号' },
+                           { key: 'wechat', label: '微信号', hideEmpty: true },
                            { key: 'college', label: '学院' },
                            { key: 'phone', label: '手机号' },
                            { key: 'id_card_masked', label: '证件号', hideEmpty: true }]"
@@ -50,7 +51,12 @@
         <el-table-column prop="gender" label="性别" width="60" />
         <el-table-column prop="college" label="学院" min-width="120" />
         <el-table-column prop="phone" label="手机号" width="120" />
-        <el-table-column prop="id_card_masked" label="身份证（脱敏）" width="150">
+        <el-table-column label="微信号" width="120">
+          <template #default="{row}">
+            <span class="mono">{{ row.wechat || '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="id_card_masked" label="身份证（脱敏）" width="130">
           <template #default="{row}"><span class="mono dim">{{ row.id_card_masked || '—' }}</span></template>
         </el-table-column>
         <el-table-column label="信用分" width="90">
@@ -68,12 +74,16 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="170" fixed="right">
+        <el-table-column label="操作" width="205" fixed="right">
           <template #default="{row}">
-            <el-button size="small" link type="primary"
-                       @click="openCredit(row)">调整信用</el-button>
-            <el-button size="small" link type="danger" @click="openViolation(row)">登记违规</el-button>
-            <el-button size="small" link @click="openRestrict(row)">限制准入</el-button>
+            <!-- nowrap：三个按钮必须在一行，列宽也要够，否则挤成三行 -->
+            <div class="ops">
+              <el-button size="small" link type="primary"
+                         @click="openCredit(row)">调整信用</el-button>
+              <el-button size="small" link type="danger"
+                         @click="openViolation(row)">登记违规</el-button>
+              <el-button size="small" link @click="openRestrict(row)">限制准入</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -287,6 +297,8 @@ async function saveRestrict() {
 </script>
 
 <style scoped>
+.ops { display: flex; gap: 10px; align-items: center; white-space: nowrap; }
+.ops :deep(.el-button + .el-button) { margin-left: 0; }
 .toolbar { display:flex; gap:12px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
 .toolbar .dim { flex: 1 1 100%; }   /* 说明文字独占一行，别把工具条撑宽 */
 .suggest { border:1px solid var(--el-border-color); border-radius:8px; padding:12px 14px; }

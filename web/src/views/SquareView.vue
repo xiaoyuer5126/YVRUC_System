@@ -1,14 +1,16 @@
 <template>
   <div class="page">
+    <!-- 手机上「标题+注释」和筛选挤一行会把注释压成两三行；
+         改成第一行标题与筛选各占一头，注释整条落到第二行 -->
     <div class="hero">
-      <div>
+      <div class="hero-top">
         <h2>活动广场</h2>
-        <p>选择感兴趣的活动，报名即锁定时段；名额满员自动进入候补队列。</p>
+        <el-radio-group v-model="scope" @change="load">
+          <el-radio-button value="open">报名中</el-radio-button>
+          <el-radio-button value="all">全部</el-radio-button>
+        </el-radio-group>
       </div>
-      <el-radio-group v-model="scope" @change="load">
-        <el-radio-button value="open">报名中</el-radio-button>
-        <el-radio-button value="all">全部</el-radio-button>
-      </el-radio-group>
+      <p>选择感兴趣的活动，报名即锁定时段；名额满员自动进入候补队列。</p>
     </div>
 
     <div v-if="list.length" class="card-grid">
@@ -81,9 +83,10 @@ onMounted(load)
 </script>
 
 <style scoped>
-.hero { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
-.hero h2 { margin:0 0 4px; }
-.hero p { margin:0; color:#909399; font-size:13px; }
+.hero { margin-bottom:18px; }
+.hero-top { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.hero h2 { margin:0; }
+.hero p { margin:6px 0 0; color:#909399; font-size:13px; line-height:1.7; }
 .square-card { padding:16px 18px; }
 .card-top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .card-title {
