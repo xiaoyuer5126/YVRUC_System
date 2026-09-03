@@ -461,6 +461,10 @@
                     <template #reference>
                       <el-button size="small" type="primary" plain>释放名额</el-button>
                     </template>
+                  </el-popconfirm>
+                </template>
+              </DataCards>
+            </template>
             <el-card shadow="never" class="wl-card">
               <template #header><b>候补队列</b>
                 <span class="dim">（按报名时间排序，同一岗位内排队）</span></template>
