@@ -22,8 +22,8 @@ from sqlalchemy import text
 from . import config
 from .database import SessionLocal, engine, init_db
 from .qrcodes import qr_svg
-from .models import (Activity, ActivityManager, AuditLog, CheckinRecord,
-                     CheckinTask, CreditLog, Enrollment, HoursRecord,
+from .models import (Activity, ViolationRecord, ActivityManager, AuditLog, CheckinRecord,
+                     CheckinTask, Enrollment, HoursRecord,
                      Notification, Shift, Position, User, uid)
 
 random.seed(42)
@@ -161,26 +161,8 @@ def main() -> None:
         taoran.phone = ""
         taoran.wechat = ""
 
-        # 特殊状态学生（信用冻结 / 限制准入 / 放弃候补×2）
-        frozen = students[11]
-        frozen.credit_score = 55
-        frozen.credit_frozen_until = dt(days=20)
-        db.add(CreditLog(id=uid("crd"), user_id=frozen.id, delta=-5,
-                         after_score=95, reason="临近退选：距「校园开放日」开始不足24小时",
-                         created_at=dt(days=-21)))
-        db.add(CreditLog(id=uid("crd"), user_id=frozen.id, delta=-40,
-                         after_score=55, reason="C类活动确认后无故缺席且无法联系",
-                         operator_id=wang.id, created_at=dt(days=-19)))
-
-        restricted = students[23]
-        restricted.restricted_types = ["C", "D"]
-        restricted.restricted_until = dt(days=25)
-        db.add(CreditLog(id=uid("crd"), user_id=restricted.id, delta=-10,
-                         after_score=90, reason="大型校级活动临场消极志愿（限制准入C/D至%s）"
-                         % (dt(days=25).strftime("%Y-%m-%d")),
-                         operator_id=wang.id, created_at=dt(days=-15)))
-
-        students[35].abandon_count = 2
+        # 留一位没报过任何活动的学生，演示「干净档案」
+        spare = students[11]
         db.commit()
 
         # ---------- 岗位助手（无时间：职责/地点/名额/要求） ----------
@@ -297,11 +279,6 @@ def main() -> None:
                        position=s_check, assigned=False)
         late_enr.cancel_type = "late"
         late_enr.seat_held = True
-        late_user.credit_score = 95
-        db.add(CreditLog(id=uid("crd"), user_id=late_user.id, delta=-5,
-                         after_score=95,
-                         reason="临近退选：距「校运动会开幕式志愿服务·上午场」开始不足24小时",
-                         created_at=dt(hours=-5)))
 
         # 下午场 13人
         for _ in range(6):
@@ -341,10 +318,10 @@ def main() -> None:
                            training_note="岗位确定后另行通知")
         db.add(b1_hold)
         db.flush()
-        frozen_id = frozen.id
+        spare_id = spare.id
         cnt = 0
         for u in students:
-            if cnt >= 18 or u.id == frozen_id:
+            if cnt >= 18 or u.id == spare_id:
                 continue
             db.add(Enrollment(id=uid("enr"), activity_id=book.id,
                               shift_id=b1.id, user_id=u.id, status="enrolled",
@@ -387,7 +364,7 @@ def main() -> None:
                               assigned_at=dt(days=-1),
                               joined_at=dt(days=-1)))
         rest = [u for u in students
-                if u.id not in book_ids and u.id != frozen_id][:4]
+                if u.id not in book_ids and u.id != spare_id][:4]
         for u in rest:
             db.add(Enrollment(id=uid("enr"), activity_id=fair.id,
                               shift_id=f1.id, user_id=u.id, status="enrolled",
@@ -548,10 +525,16 @@ def main() -> None:
             dt(days=-22))
         aud("hours_upload", "hours", elder.id, elder.title, elder.id,
             "回传 8 人时长至数智人大（回执号 MOCK-ELDER-0008）", dt(days=-5))
-        aud("restriction", "user", restricted.id,
-            f"{restricted.name}（{restricted.student_id}）", None,
-            "限制准入：不得参与C/D类活动至%s（依据《志愿者服务规范》）"
-            % (dt(days=25).strftime("%Y-%m-%d")), dt(days=-15))
+        # 一条违规记录：只记不罚，青协在档案里看得到
+        vio_user = students[23]
+        db.add(ViolationRecord(id=uid("vio"), user_id=vio_user.id,
+                               activity_id=elder.id, activity_title=elder.title,
+                               kind="late", detail="迟到 40 分钟，未提前告知",
+                               operator_id=wang.id, created_at=dt(days=-15)))
+        aud("violation", "user", vio_user.id,
+            f"{vio_user.name}（{vio_user.student_id}）", elder.id,
+            f"违规登记：迟到早退「{elder.title}」——迟到 40 分钟，未提前告知",
+            dt(days=-15))
         db.commit()
 
         # ---------- 通知样例 ----------
@@ -573,11 +556,6 @@ def main() -> None:
                    "您已成功报名「校运动会开幕式志愿服务」，时段已锁定。\n"
                    "如无法参加请提前24小时退选。", dt(days=-2, hours=-3),
                    read=bool(random.random() < 0.5))
-        notify(frozen, "credit_penalty", "信用分变动提醒",
-               "您的信用分 -40 分（当前 55 分）。\n事由：C类活动确认后无故缺席且无法联系\n"
-               "⚠️ 信用分低于60分，报名权限冻结至 %s。" %
-               frozen.credit_frozen_until.strftime("%Y-%m-%d"),
-               dt(days=-19))
         db.commit()
         print("SEED OK:")
         print("  用户:", db.query(User).count())
@@ -589,7 +567,7 @@ def main() -> None:
         print("  时长记录:", db.query(HoursRecord).count())
         print("  审计日志:", db.query(AuditLog).count())
         print("  待确认演示账号:", pc_user.student_id, pc_user.name)
-        print("  冻结演示账号:", frozen.student_id, frozen.name)
+        print("  空档案演示账号:", spare.student_id, spare.name)
     finally:
         db.close()
 

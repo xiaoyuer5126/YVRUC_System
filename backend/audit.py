@@ -49,7 +49,6 @@ ACTION_LABELS = {
     "publish": "发布", "close": "截止报名", "finish": "结束活动",
     "assign": "岗位分配", "assign_manual": "手动调岗", "force_assign": "强制分配",
     "export": "导出", "hours_confirm": "确认时长", "hours_upload": "回传时长",
-    "credit_adjust": "信用分调整", "restriction": "限制准入设置",
     "violation": "违规登记",
     "checkin_task": "签到任务", "manual_checkin": "手动补签",
     "integration": "集成配置", "copy": "复制",

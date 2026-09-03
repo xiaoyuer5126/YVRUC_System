@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, credit, enroll_logic as logic
+from .. import config, enroll_logic as logic
 from ..database import db_session
 from ..deps import current_user
 from .. import notify
@@ -106,7 +106,7 @@ class EnrollBody(BaseModel):
 
 def _check_eligibility(db: OrmSession, user: User, act: Activity,
                        g: Shift) -> None:
-    """报名资格：活动状态、报名窗、用户类型、资料、信用、限制准入。
+    """报名资格：活动状态、报名窗、用户类型、资料、招募范围与场次条件。
 
     与名额无关的校验全在这里，锁外先跑一遍，把明确报不了的人挡在锁外面。
     """
@@ -132,11 +132,6 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
     if not user.profile_complete():
         raise HTTPException(403, "请先完善个人信息（手机号/微信号/身份证号）后再报名")
 
-    if user.credit_frozen_until and user.credit_frozen_until > t:
-        raise HTTPException(
-            403, f"信用分低于{config.CREDIT_FREEZE_BELOW}分，报名权限冻结至 "
-                 f"{user.credit_frozen_until:%Y-%m-%d}")
-
     # 招募范围（活动级）与场次条件：不满足的人根本不该出现在这场的名单上。
     # assign 模式下报名时没有岗位可选，岗位那层条件轮不到，只能靠这两层。
     scope = logic.unmet_recruit_scope(user, act)
@@ -146,15 +141,6 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
     if unmet_shift:
         raise HTTPException(403, f"您不满足场次「{g.name}」的条件："
                                  f"{'；'.join(unmet_shift)}")
-
-    # 限制准入（《志愿者服务规范》）：按活动**发生时间**判定——
-    # 「招募在限制期内、活动已出限制期」的允许报名。
-    if (user.restricted_types and act.type in user.restricted_types
-            and user.restricted_until and g.start_time <= user.restricted_until):
-        types = "、".join(user.restricted_types)
-        raise HTTPException(
-            403, f"您处于限制准入名单（不得参与{types}类活动，"
-                 f"至 {user.restricted_until:%Y-%m-%d}），无法报名本活动")
 
 
 @router.post("/{activity_id}/shifts/{shift_id}/enroll")
@@ -228,10 +214,6 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
             if position is not None:
                 enr.assigned_at = enr.joined_at
         else:
-            # 名额满了才轮到候补，此时才检查候补资格
-            ok, why = credit.can_join_waitlist(user)
-            if not ok:
-                raise HTTPException(403, why)
             # 队列上限按岗位算；assign 场次的队列就排在占位岗位上
             queued = [r for r in logic.waitlist_rows(db, g.id)
                       if r.position_id == position.id]
@@ -370,8 +352,7 @@ def cancel_enroll(enrollment_id: str,
 
     with shift_lock(g.id):
         if enr.status == "pending_confirm":
-            # 放弃候补转正：顺延下一位并计数
-            credit.register_abandon(db, user)
+            # 放弃候补转正：名额顺延下一位
             enr.status = "cancelled"
             enr.cancel_type = "abandoned"
             enr.confirm_deadline = None
@@ -380,8 +361,7 @@ def cancel_enroll(enrollment_id: str,
             logic.promote_all(db, g)
             db.commit()
             return {"ok": True, "effect": "abandoned",
-                    "message": "已放弃候补转正，名额顺延下一位。"
-                               f"连续{config.MAX_ABANDON_TIMES}次放弃将暂停候补资格。"}
+                    "message": "已放弃候补转正，名额顺延下一位。"}
 
         if enr.status == "waitlisted":
             enr.status = "cancelled"
@@ -397,9 +377,9 @@ def cancel_enroll(enrollment_id: str,
 
         hours_left = (g.start_time - t).total_seconds() / 3600
         late = hours_left < config.LATE_CANCEL_HOURS
-        # 报名还开着就说明平台仍在招人：此时把位子废掉自相矛盾——
+        # 临近退选记一笔（青协在档案里能看到次数），但名额只在「报名已截止」
+        # 时才扣留：报名还开着说明平台仍在招人，把位子废掉自相矛盾——
         # 新人能报、候补能转正，唯独这个位子空着谁都不能用。
-        # 所以扣分只看「距开始满不满 24 小时」，扣留还要求「报名已截止」。
         reg_closed = bool(act.reg_end and t > act.reg_end)
         hold_seat = late and reg_closed
 
@@ -413,13 +393,7 @@ def cancel_enroll(enrollment_id: str,
         logic.record_change(
             db, user, enr, "cancel",
             f"距开始 {hours_left:.1f} 小时"
-            + ("，扣分并扣留名额" if hold_seat else "，扣分" if late else ""))
-        score = None
-        if late:
-            score = credit.apply_delta(
-                db, user, -config.LATE_CANCEL_PENALTY,
-                f"临近退选：距「{act.title}·{g.name}」开始不足"
-                f"{config.LATE_CANCEL_HOURS}小时", activity_id=act.id)
+            + ("，临近退选并扣留名额" if hold_seat else "，临近退选" if late else ""))
         db.commit()
 
         notify.notify_late_dropout(db, enr, user)
@@ -429,15 +403,12 @@ def cancel_enroll(enrollment_id: str,
             logic.on_leader_vacated(db, vacated)
         db.commit()
 
-    if not late:
-        return {"ok": True, "effect": "released",
-                "message": "退选成功，名额已释放给候补队列。"}
-    tail = ("；该名额已按规则扣留，如需补人请联系负责老师。" if hold_seat
-            else "；报名尚未截止，名额已释放给候补队列。")
-    return {"ok": True, "effect": "penalized", "credit_score": score,
-            "message": f"距开始不足{config.LATE_CANCEL_HOURS}小时退选，"
-                       f"扣除信用分{config.LATE_CANCEL_PENALTY}分"
-                       f"（当前{score}分）{tail}"}
+    if hold_seat:
+        return {"ok": True, "effect": "held",
+                "message": f"距开始不足{config.LATE_CANCEL_HOURS}小时且报名已截止，"
+                           f"该名额已按规则扣留，如需补人请联系负责老师。"}
+    return {"ok": True, "effect": "released",
+            "message": "退选成功，名额已释放给候补队列。"}
 
 
 @router.post("/enrollments/{enrollment_id}/confirm-promotion")

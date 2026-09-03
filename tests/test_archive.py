@@ -1,0 +1,119 @@
+"""志愿者档案：只记不罚。
+
+青协能看到一个人参与过的活动、违规记录、临近退选次数；平台不据此拦任何人。
+"""
+from __future__ import annotations
+
+from datetime import timedelta
+
+from backend.models import Enrollment, User, ViolationRecord, now
+from conftest import login, student_row
+
+HEAD, CORE, MEMBER = "2025004", "2025005", "2025006"
+
+
+def _late_cancel(client, db, open_group, take_student):
+    """造一次「临近退选」：报名已截止、距开场不足 24 小时。"""
+    act, g = open_group(2, day_offset=0, start_in_hours=5)
+    sid = take_student()
+    t = login(client, sid)
+    assert client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                       headers=t, json={"position_id": g.test_position_id}
+                       ).status_code == 200
+    act.reg_end = now() - timedelta(minutes=1)
+    db.commit()
+    enr = (db.query(Enrollment)
+           .filter(Enrollment.shift_id == g.id,
+                   Enrollment.user_id == student_row(db, sid).id).one())
+    r = client.delete(f"/api/activities/enrollments/{enr.id}", headers=t)
+    assert r.status_code == 200, r.text
+    return act, sid, r.json()
+
+
+def test_临近退选只扣留名额不扣任何分(client, db, open_group, take_student):
+    act, sid, body = _late_cancel(client, db, open_group, take_student)
+    assert body["effect"] == "held"
+    assert "分" not in body["message"]
+    u = student_row(db, sid)
+    assert not hasattr(u, "credit_score")
+    # 之后照样能报别的活动
+    act2, g2 = open_group(3)
+    assert client.post(f"/api/activities/{act2.id}/shifts/{g2.id}/enroll",
+                       headers=login(client, sid),
+                       json={"position_id": g2.test_position_id}).status_code == 200
+
+
+def test_档案里数得出临近退选次数(client, admin, db, open_group, take_student):
+    act, sid, _ = _late_cancel(client, db, open_group, take_student)
+    u = student_row(db, sid)
+    d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
+    assert d["late_cancel_count"] == 1
+    assert any(h["activity_id"] == act.id and h["cancel_type"] == "late"
+               for h in d["history"])
+
+
+def test_登记违规只是记录(client, admin, db, enrolled_activity):
+    act, shift, u = enrolled_activity
+    r = client.post("/api/staff/violations", headers=admin,
+                    json={"user_id": u.id, "activity_id": act.id,
+                          "kind": "late", "detail": "迟到 20 分钟"})
+    assert r.status_code == 200, r.text
+    d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
+    assert [v["kind_label"] for v in d["violations"]] == ["迟到早退"]
+    # 没有任何字段说他被限制了
+    assert "restricted_types" not in d["user"]
+
+
+def test_没报名本活动的人登记不了(client, admin, db, enrolled_activity, take_student):
+    act, _shift, _u = enrolled_activity
+    other = student_row(db, take_student())
+    r = client.post("/api/staff/violations", headers=admin,
+                    json={"user_id": other.id, "activity_id": act.id,
+                          "kind": "late", "detail": "x"})
+    assert r.status_code == 400 and "没有报名本活动" in r.json()["detail"]
+
+
+def test_撤销违规登记(client, admin, db, enrolled_activity):
+    act, _shift, u = enrolled_activity
+    vid = client.post("/api/staff/violations", headers=admin,
+                      json={"user_id": u.id, "activity_id": act.id,
+                            "kind": "other", "detail": "登记错了"}).json()["id"]
+    assert client.delete(f"/api/staff/violations/{vid}", headers=admin).status_code == 200
+    assert db.get(ViolationRecord, vid) is None
+
+
+# ======================= 谁能看档案 =======================
+
+def test_全校名册只给管理员会长团部长(client, db, take_student):
+    u = student_row(db, take_student())
+    assert client.get(f"/api/staff/users/{u.id}/archive",
+                      headers=login(client, HEAD)).status_code == 200
+    for sid in (CORE, MEMBER):
+        assert client.get(f"/api/staff/users/{u.id}/archive",
+                          headers=login(client, sid)).status_code == 403, sid
+
+
+def test_活动管理者只能看报了本活动的人(client, admin, initiator, db,
+                                    enrolled_activity, take_student):
+    act, _shift, u = enrolled_activity
+    url = f"/api/staff/activities/{act.id}/volunteers/{u.id}/archive"
+    assert client.get(url, headers=admin).status_code == 200
+    # 不是这个活动的管理者：不行
+    assert client.get(url, headers=initiator).status_code == 403
+    # 是管理者，但对方没报这场：不行
+    stranger = student_row(db, take_student())
+    assert client.get(f"/api/staff/activities/{act.id}/volunteers/{stranger.id}/archive",
+                      headers=admin).status_code == 403
+
+
+def test_部门成员在活动里也看不了档案(client, db, enrolled_activity):
+    from backend.models import ActivityManager, uid
+
+    act, _shift, u = enrolled_activity
+    member = db.query(User).filter(User.student_id == MEMBER).one()
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id, user_id=member.id,
+                           added_by=member.id))
+    db.commit()
+    r = client.get(f"/api/staff/activities/{act.id}/volunteers/{u.id}/archive",
+                   headers=login(client, MEMBER))
+    assert r.status_code == 403

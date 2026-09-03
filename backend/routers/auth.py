@@ -18,10 +18,9 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import config
 from ..database import db_session
 from ..deps import create_session, current_token, current_user
-from .. import violations
 from ..integrations import sso
 from ..locks import clear_failures, failure_count, note_failure
-from ..models import Session, User
+from ..models import Session, User, ViolationRecord
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -133,19 +132,13 @@ def constants(user: User = Depends(current_user)):
     from ..integrations import DEFAULTS
     return {
         "activity_types": config.ACTIVITY_TYPES,
-        "violation_kinds": violations.KINDS,
-        "restriction_months": config.RESTRICTION_MONTHS,
+        "violation_kinds": ViolationRecord.KINDS,
         "colleges": config.COLLEGES,
         "campuses": config.CAMPUSES,
         "stages": config.STAGES,
-        "credit": {
-            "full": config.CREDIT_FULL,
-            "freeze_below": config.CREDIT_FREEZE_BELOW,
-            "freeze_days": config.CREDIT_FREEZE_DAYS,
-            "late_cancel_penalty": config.LATE_CANCEL_PENALTY,
+        "rules": {
             "late_cancel_hours": config.LATE_CANCEL_HOURS,
             "confirm_hours": config.PROMOTE_CONFIRM_HOURS,
-            "max_abandon": config.MAX_ABANDON_TIMES,
         },
         "integration_labels": {k: v["label"] for k, v in DEFAULTS.items()},
     }

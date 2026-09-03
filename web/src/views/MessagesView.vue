@@ -66,7 +66,6 @@ const TAGS = {
   waitlist_promoted: ['danger', '候补转正'],
   assignment: ['primary', '岗位分配'],
   activity_changed: ['warning', '活动变更'],
-  credit_penalty: ['danger', '信用变动'],
   checkin_reminder: ['info', '签到提醒'],
 }
 const tagType = k => TAGS[k]?.[0] || 'info'

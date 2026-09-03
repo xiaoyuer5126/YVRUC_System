@@ -62,34 +62,10 @@ def test_waitlisted_group_also_locks_the_slot(client, open_group, take_student):
     assert enroll(client, h, act2, g2).status_code == 409
 
 
-def test_waitlist_ban_does_not_block_normal_enroll(client, db, open_group,
-                                                   take_student):
-    """连续放弃候补惩罚的是排队权，有空位时照样能正常报名。"""
-    act, g = open_group(5)
-    student = student_row(db, take_student())
-    student.waitlist_banned_until = now() + timedelta(days=30)
-    db.commit()
-
-    r = enroll(client, login(client, student.student_id), act, g)
-    assert r.status_code == 200 and r.json()["status"] == "enrolled"
-
-
-def test_waitlist_ban_blocks_queueing(client, db, open_group, take_student):
-    act, g = open_group(1)
-    enroll(client, login(client, take_student()), act, g)        # 先占满
-
-    banned = student_row(db, take_student())
-    banned.waitlist_banned_until = now() + timedelta(days=30)
-    db.commit()
-
-    r = enroll(client, login(client, banned.student_id), act, g)
-    assert r.status_code == 403 and "候补资格" in r.json()["detail"]
-
-
 def test_late_cancel_holds_the_seat(client, admin, db, open_group, take_student):
-    """开始前 24 小时内 + 报名已截止：扣分，且名额被扣留占位。
+    """开始前 24 小时内 + 报名已截止：名额被扣留占位。
 
-    报名还开着时只扣分不扣留（见 test_seat_hold.py）：平台仍在招人，
+    报名还开着时只记临近退选、不扣留（见 test_seat_hold.py）：平台仍在招人，
     这时把位子废掉，等于新人能报、候补能转正，唯独这个位子谁都不能用。
     """
     act, g = open_group(1, day_offset=0, start_in_hours=5)
@@ -100,7 +76,7 @@ def test_late_cancel_holds_the_seat(client, admin, db, open_group, take_student)
     db.commit()
 
     assert client.delete(f"/api/activities/enrollments/{enr_id}",
-                         headers=h).json()["effect"] == "penalized"
+                         headers=h).json()["effect"] == "held"
     db.expunge_all()
     assert db.get(Enrollment, enr_id).seat_held is True
 

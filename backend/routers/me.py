@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from ..database import db_session
 from ..deps import current_user
-from ..models import (Activity, CheckinRecord, CreditLog, Enrollment,
+from ..models import (Activity, CheckinRecord, Enrollment,
                       HoursAppeal, HoursRecord, Notification, Shift, Position,
                       User, iso, now, uid)
 from ..notify import notify_managers
@@ -181,25 +181,6 @@ def ack_notification(notification_id: str,
         n.read = True
         db.commit()
     return {"ok": True, "acked_at": iso(n.acked_at)}
-
-
-@router.get("/credit")
-def my_credit(db: OrmSession = Depends(db_session), user=Depends(current_user)):
-    logs = (db.query(CreditLog).filter(CreditLog.user_id == user.id)
-            .order_by(CreditLog.created_at.desc()).limit(50).all())
-    frozen = bool(user.credit_frozen_until and user.credit_frozen_until > now())
-    return {
-        "score": user.credit_score,
-        "frozen": frozen,
-        "frozen_until": iso_of(user.credit_frozen_until),
-        "abandon_count": user.abandon_count,
-        "waitlist_banned_until": iso_of(user.waitlist_banned_until),
-        "restricted_types": user.restricted_types or [],
-        "restricted_until": iso_of(user.restricted_until),
-        "logs": [{
-            "delta": l.delta, "after": l.after_score, "reason": l.reason,
-            "created_at": iso_of(l.created_at)} for l in logs],
-    }
 
 
 @router.get("/hours")

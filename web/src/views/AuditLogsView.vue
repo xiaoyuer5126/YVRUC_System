@@ -12,7 +12,7 @@
           <el-option value="position" label="岗位" />
           <el-option value="assignment" label="岗位分配" />
           <el-option value="enrollment" label="报名记录" />
-          <el-option value="user" label="用户/信用" />
+          <el-option value="user" label="用户/档案" />
           <el-option value="export" label="导出" />
           <el-option value="hours" label="时长" />
           <el-option value="integration" label="集成配置" />

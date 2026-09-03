@@ -682,7 +682,7 @@
 
         <el-alert v-if="needLateWarn(enrollDlg.shift)" type="warning" :closable="false"
                   style="margin-top:10px"
-                  title="距该场次开始已不足 24 小时：报名后再退选将扣除信用分，且名额不再释放" />
+                  title="距该场次开始已不足 24 小时：报名后再退选，名额将被扣留不再释放" />
       </template>
       <template #footer>
         <el-button @click="enrollDlg.visible = false">再想想</el-button>
@@ -747,7 +747,7 @@ function deadlineTs(g) {
   return new Date(g.my_enrollment.confirm_deadline.replace(' ', 'T').slice(0, 19)).getTime()
 }
 // 我在这个场次的岗位对象（报名后才有；统一分配的场次分配前为 null）
-// 培训/彩排请假：服务场次不来是退选（有信用分规则），这里只管附属时段
+// 培训/彩排请假：服务场次不来是退选（有名额扣留规则），这里只管附属时段
 async function toggleExcuse(s) {
   if (s.excused) {
     await api.post(`/api/activities/enrollments/${s.my_enrollment_id}/excuse`,
@@ -903,13 +903,13 @@ async function cancelEnroll(g) {
   const late = !canCancel(g)
   try {
     await ElMessageBox.confirm(
-      late ? '距开始不足24小时：退选将扣除信用分5分，且该名额会被扣留、不再释放给任何人，'
-             + '你本人之后也无法再报名这个场次。确定退选吗？'
-           : '正常退选不扣信用分，名额将按候补顺序自动递补。',
+      late ? '距开始不足24小时：报名已截止的话，该名额会被扣留、不再释放给任何人，'
+             + '你本人之后也无法再报名这个场次，并记一次临近退选。确定退选吗？'
+           : '名额将按候补顺序自动递补。',
       '确认退选', { type: 'warning', confirmButtonText: '确定退选', cancelButtonText: '取消' })
   } catch { return }
   const d = await api.del(`/api/activities/enrollments/${enrId}`)
-  ElMessage[d.effect === 'penalized' ? 'warning' : 'success'](d.message)
+  ElMessage[d.effect === 'held' ? 'warning' : 'success'](d.message)
   load()
 }
 

@@ -130,9 +130,9 @@
 
     <el-alert type="info" :closable="false" style="margin-top:16px">
       <p style="margin:0;font-size:12.5px;line-height:1.9">
-        信用规则：开始前 <b>24 小时以上</b>退选无惩罚，名额自动递补给候补；
-        <b>24 小时内</b>退选扣除信用分 5 分，该名额被扣留、不再释放（本人也无法再报该场次）；放弃候补连续 3 次暂停本学期候补资格；
-        信用分低于 60 分冻结报名 30 天。
+        退选规则：开始前 <b>24 小时以上</b>退选，名额自动递补给候补；
+        <b>24 小时内</b>且报名已截止时退选，该名额被扣留、不再释放（本人也无法再报该场次），
+        并记一次临近退选。请尽早决定，把位子留给等着的同学。
       </p>
     </el-alert>
 
@@ -217,12 +217,12 @@ async function cancel(row) {
   const start = new Date(g.start_time.replace(' ', 'T'))
   const late = Date.now() > start.getTime() - 24 * 3600e3
   await ElMessageBox.confirm(
-    late ? '距开始不足24小时：退选将扣信用分5分，该名额会被扣留、不再释放给任何人，'
-           + '你本人之后也无法再报名这个场次。确定吗？'
-         : '正常退选不扣分，名额将自动递补候补队列。确定退选吗？',
+    late ? '距开始不足24小时：报名已截止的话，该名额会被扣留、不再释放给任何人，'
+           + '你本人之后也无法再报名这个场次，并记一次临近退选。确定吗？'
+         : '名额将自动递补候补队列。确定退选吗？',
     '退选确认', { type: 'warning' })
   const d = await api.del(`/api/activities/enrollments/${row.id}`)
-  ElMessage[d.effect === 'penalized' ? 'warning' : 'success'](d.message)
+  ElMessage[d.effect === 'held' ? 'warning' : 'success'](d.message)
   load()
 }
 </script>

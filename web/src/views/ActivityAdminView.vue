@@ -17,6 +17,10 @@
     </el-result>
   </div>
   <div class="page page-wide" v-else-if="act">
+    <!-- 志愿者档案与违规登记：都从名单里点进来，限本活动的人 -->
+    <ArchiveDrawer ref="archiveDrawer" />
+    <ViolationDialog ref="violationDlg" :activity-id="activityId" @saved="loadAll" />
+
     <el-page-header @back="$router.push('/manage')" title="返回列表">
       <!-- 窄屏下标题与副信息各占一行：一行挤不下活动名+状态+时间地点 -->
       <template #content>
@@ -298,7 +302,7 @@
                   </template>
                   <div style="line-height:1.7">
                     报名截止与活动开始前 24 小时都已过：此时转正的人只剩不到一天准备，
-                    他再退选还要扣分，所以不再自动递补。确需补人请逐个「转正」。
+                    他再退选名额也只能扣留，所以停止自动递补。确需补人请逐个「转正」。
                   </div>
                 </el-alert>
                 <div v-for="w in roster.waitlist" :key="w.enrollment_id" class="wl-row">
@@ -366,12 +370,17 @@
                              @click="setLeader(row, false)">取消组长</el-button>
                   <el-button v-else-if="canBeLeader(row)" size="small" link
                              @click="setLeader(row, true)">设为组长</el-button>
+                  <el-button size="small" link @click="openArchive(row.user)">档案</el-button>
+                  <el-button size="small" link type="danger"
+                             @click="violationDlg.open(row.user)">登记违规</el-button>
                 </template>
               </DataCards>
               <el-table v-else :data="roster.enrolled" size="small" max-height="300" style="margin-bottom:14px">
                 <el-table-column label="姓名" width="110">
               <template #default="{row}">
-                {{ row.user.name }}
+                <el-link type="primary" :underline="false" @click="openArchive(row.user)">
+                  {{ row.user.name }}
+                </el-link>
                 <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark"
                         style="margin-left:4px">组长</el-tag>
                 <el-tooltip v-else-if="row.leader_willing" content="愿意担任组长">
@@ -417,6 +426,12 @@
                       </el-button>
                     </el-tooltip>
                     <span v-else class="dim">—</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="违规" width="70">
+                  <template #default="{row}">
+                    <el-button size="small" link type="danger"
+                               @click="violationDlg.open(row.user)">登记</el-button>
                   </template>
                 </el-table-column>
                 <el-table-column v-if="roster.positions.length" label="调岗" width="210">
@@ -1157,6 +1172,8 @@ import VestPanel from '../components/VestPanel.vue'
 import MaterialManager from '../components/MaterialManager.vue'
 import DataCards from '../components/DataCards.vue'
 import ActivityForm from '../components/ActivityForm.vue'
+import ArchiveDrawer from '../components/ArchiveDrawer.vue'
+import ViolationDialog from '../components/ViolationDialog.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'
 import { DAY_END, auth } from '../store'
@@ -1984,11 +2001,18 @@ async function releaseSeat(row) {
   loadAll()
 }
 
+const archiveDrawer = ref(null)
+const violationDlg = ref(null)
+// 只看得到报了本活动的人的档案；接口会按活动校验
+function openArchive(u) {
+  archiveDrawer.value.open(`/api/staff/activities/${activityId}/volunteers/${u.id}/archive`)
+}
+
 async function setLeader(row, on) {
   const d = await api.post(`/api/staff/enrollments/${row.enrollment_id}/leader`,
                            { is_leader: on })
   ElMessage.success(on ? `已指定 ${row.user.name} 为组长`
-                       : `已取消 ${row.user.name} 的组长身份，由下一位有意愿者接任`)
+                       : `已取消 ${row.user.name} 的组长身份，请另指一位`)
   loadAll()
   return d
 }

@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import or_
 from sqlalchemy.orm import Session as OrmSession
 
-from . import config, credit
+from . import config
 from .integrations import wecom
 from .models import (Activity, CheckinRecord, Enrollment, Shift, Position,
                      User, now, uid)
@@ -376,7 +376,6 @@ def promote_directly(db: OrmSession, enr: Enrollment, user: User) -> Enrollment:
     enr.status = "enrolled"
     enr.confirm_deadline = None
     enr.promoted_at = now()
-    credit.reset_abandon_if_confirmed(user)
     shift = db.get(Shift, enr.shift_id)
     _settle_position(db, enr, user, shift)
     return enr
@@ -411,7 +410,6 @@ def confirm_promotion(db: OrmSession, enr: Enrollment, user: User) -> Enrollment
     shift = db.get(Shift, enr.shift_id)
     enr.status = "enrolled"
     enr.confirm_deadline = None
-    credit.reset_abandon_if_confirmed(user)
     _settle_position(db, enr, user, shift)
     return enr
 
@@ -438,7 +436,6 @@ def expire_stale_promotions(db: OrmSession) -> int:
             db.refresh(fresh)
             if fresh.status != "pending_confirm" or fresh.confirm_deadline >= now():
                 continue      # 用户在这一瞬间点了确认
-            credit.register_abandon(db, db.get(User, fresh.user_id))
             fresh.status = "cancelled"
             fresh.cancel_type = "expired"
             db.commit()

@@ -36,15 +36,11 @@ EXPOSE_API_DOCS = os.environ.get("RUCVA_EXPOSE_DOCS", "").strip() == "1"
 # 改成超时，扫描线程也看见了，于是解冻通知发了两条，断言随机失败。
 RUN_SWEEPER = os.environ.get("RUCVA_DISABLE_SWEEPER", "").strip() != "1"
 
-# —— 业务规则常量（与《志愿者服务规范.docx》《设计方案》对齐） ——
-CREDIT_FULL = 100          # 信用分满分
-CREDIT_FREEZE_BELOW = 60   # 低于该分数冻结报名
-CREDIT_FREEZE_DAYS = 30    # 冻结时长（天）
-LATE_CANCEL_PENALTY = 5    # 开始前 24 小时内退选扣分
+# —— 业务规则常量 ——
+# 平台不对志愿者做任何限制：没有信用分、没有准入名单。临近退选只影响那个
+# 名额（报名已截止时扣留不释放），并记一次「临近退选」供青协在档案里查看。
 LATE_CANCEL_HOURS = 24     # 「临近」阈值（小时）
 PROMOTE_CONFIRM_HOURS = 2  # 候补转正确认窗口（小时）
-MAX_ABANDON_TIMES = 3      # 连续放弃候补次数上限，超过暂停本学期候补资格
-ABANDON_BAN_DAYS = 120     # 「本学期」按 120 天近似
 
 # 签退宽限：场次结束后这么久内仍可自行签退，超时按场次结束时间兜底并标记待核
 CHECKOUT_GRACE_HOURS = 2
@@ -88,10 +84,6 @@ ACTIVITY_TYPES = {
 
 def type_name(code: str) -> str:
     return ACTIVITY_TYPES.get(code, {}).get("name", code)
-
-# 限制准入的统一时长（月）。《规范》正文只显式写了「三个月内不得参与X类」，
-# 基础限制的时长在原文里是一张图片、提取不到，与青协确认后按三个月执行。
-RESTRICTION_MONTHS = 3
 
 # 学院清单（演示用，覆盖主要书院/学院）
 COLLEGES = [

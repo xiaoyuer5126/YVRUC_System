@@ -1,4 +1,4 @@
-"""临近退选的名额：扣分与扣留解耦，扣留可由管理者释放。"""
+"""临近退选的名额：只在报名已截止时扣留，扣留可由管理者释放。"""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -27,7 +27,7 @@ def _one_seat(client, db, open_group, take_student, *, reg_end_in_hours):
     return act, g, taker, enr
 
 
-def test_报名未截止时临近退选扣分但不扣留(client, db, open_group, take_student):
+def test_报名未截止时临近退选不扣留(client, db, open_group, take_student):
     """平台还在招人，把位子废掉自相矛盾。"""
     act, g, taker, enr = _one_seat(client, db, open_group, take_student,
                                    reg_end_in_hours=5)
@@ -35,7 +35,7 @@ def test_报名未截止时临近退选扣分但不扣留(client, db, open_group
                       headers=login(client, taker))
     assert r.status_code == 200
     body = r.json()
-    assert body["effect"] == "penalized"           # 分照扣
+    assert body["effect"] == "released"            # 名额照常释放
     assert "已释放" in body["message"]
     db.expire_all()
     assert db.get(Enrollment, enr.id).seat_held is False
@@ -50,7 +50,7 @@ def test_报名已截止时临近退选扣留名额(client, db, open_group, take
                                    reg_end_in_hours=-1)
     r = client.delete(f"/api/activities/enrollments/{enr.id}",
                       headers=login(client, taker))
-    assert r.json()["effect"] == "penalized"
+    assert r.json()["effect"] == "held"
     assert "扣留" in r.json()["message"]
     db.expire_all()
     assert db.get(Enrollment, enr.id).seat_held is True

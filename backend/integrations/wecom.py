@@ -1,7 +1,7 @@
 """企业微信适配：模板消息推送。
 
 模板库对应《设计方案》四.3「消息模板库」五个场景：
-  报名成功 / 候补转正 / 岗位分配 / 活动变更警告 / 信用扣分提醒
+  报名成功 / 候补转正 / 岗位分配 / 活动变更警告
 
 MockWecom：演示模式，把消息落库（notifications 表），前端「消息中心」即收件箱。
 HttpWecom：生产实现占位——学校提供 corp_id/agent_id/secret 后，
@@ -25,7 +25,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "signup_success": (
         "报名成功｜{activity}",
         "您已成功报名「{activity}」· {shift}。\n时间：{time}\n{detail}"
-        "\n\n如无法参加，请提前24小时在平台退选，临近退选将扣除信用分。"),
+        "\n\n如无法参加，请提前24小时在平台退选，让名额及时给到候补的同学。"),
     "waitlist_queued": (
         "已加入候补｜{activity}",
         "「{activity}」· {shift} 名额已满，您已加入候补队列，当前第 {pos} 位。"
@@ -33,8 +33,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "waitlist_promoted": (
         "候补转正待确认｜{activity}",
         "「{activity}」· {shift} 有名额释放，您已按候补顺序转正！\n"
-        "请在 {deadline} 前点击确认，超时未确认名额将顺延下一位"
-        "并记一次“放弃候补”（连续3次暂停本学期候补资格）。"),
+        "请在 {deadline} 前点击确认，超时未确认名额将顺延下一位。"),
     "assignment": (
         "岗位分配通知｜{activity}",
         "您在「{activity}」· {shift} 的岗位已确定：\n"
@@ -42,10 +41,6 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "activity_changed": (
         "活动变更提醒｜{activity}",
         "「{activity}」信息变更：\n{change_summary}\n\n请留意最新安排。"),
-    "credit_penalty": (
-        "信用分变动提醒",
-        "您的信用分 {delta:+d} 分（当前 {score} 分）。\n事由：{reason}{extra}\n"
-        "请珍惜志愿服务记录，合理安排时间。"),
     "leader_appointed": (
         "您已成为岗位组长｜{activity}",
         "您在「{activity}」的岗位「{position}」已被推举为组长。\n"

@@ -73,16 +73,6 @@ class User(Base):
     user_type: Mapped[str] = mapped_column(String(12), default="student")  # teacher / student
     roles: Mapped[list] = mapped_column(JSON, default=list)                # ["student", ...]
 
-    # —— 信用体系 ——
-    credit_score: Mapped[int] = mapped_column(Integer, default=config.CREDIT_FULL)
-    credit_frozen_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    abandon_count: Mapped[int] = mapped_column(Integer, default=0)   # 连续放弃候补次数
-    waitlist_banned_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
-    # —— 限制准入（《志愿者服务规范》）：不得参与的活动类型 + 截止时间 ——
-    restricted_types: Mapped[list] = mapped_column(JSON, default=list)   # ["C","D"]
-    restricted_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
     # —— 青协内部层级（只对 qingxie 身份有意义）——
     #   council 会长团：除集成设置外与管理员同权
     #   head    部长：本部门活动全部可见，审本部门的活动，可设本部门的骨干/成员
@@ -175,8 +165,6 @@ class User(Base):
 
     def full(self) -> dict:
         """含联系方式。仅在本人/有权限的后台接口下发。"""
-        frozen = self.credit_frozen_until and self.credit_frozen_until > now()
-        banned = self.waitlist_banned_until and self.waitlist_banned_until > now()
         return {
             **self.brief(),
             "phone": self.phone, "email": self.email, "wechat": self.wechat,
@@ -184,13 +172,6 @@ class User(Base):
             # 只回脱敏值：让本人看得出「已经填过了」，又不把号原样发出去
             "id_card_masked": self.masked_id_card(),
             "profile_complete": self.profile_complete(),
-            "credit_score": self.credit_score,
-            "credit_frozen": bool(frozen),
-            "credit_frozen_until": iso(self.credit_frozen_until),
-            "abandon_count": self.abandon_count,
-            "waitlist_banned": bool(banned),
-            "restricted_types": self.restricted_types or [],
-            "restricted_until": iso(self.restricted_until),
         }
 
 
@@ -632,19 +613,6 @@ class CheckinRecord(Base):
 
 # ======================= 信用分 / 时长 / 审计 / 通知 / 集成配置 =======================
 
-class CreditLog(Base):
-    __tablename__ = "credit_logs"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(32), index=True)
-    delta: Mapped[int] = mapped_column(Integer)
-    after_score: Mapped[int] = mapped_column(Integer)
-    reason: Mapped[str] = mapped_column(String(256))
-    activity_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    operator_id: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 空=系统规则
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
-
-
 class HoursRecord(Base):
     __tablename__ = "hours_records"
 
@@ -734,27 +702,27 @@ class HoursAppeal(Base):
 
 
 class ViolationRecord(Base):
-    """违规记录（《志愿者服务规范》「限制准入名单」的一行）。
+    """违规记录：活动结束后由管理者在名单里登记的一行。
 
-    规范要求每一条违规单独作一行、活动结束后由负责人填写。系统按累计次数
-    给出限制准入建议，最终生效的类型与截止日由操作者确认后写入 User。
+    只是记录，不产生任何后果——平台不对志愿者做任何限制。青协工作人员在
+    志愿者档案里能看到这些记录、他参与过的活动和临近退选的次数，仅此而已。
     """
     __tablename__ = "violation_records"
 
+    KINDS = {"late": "迟到早退", "leave": "无故请假", "contact": "无法取得联系",
+             "passive": "消极志愿", "other": "其他"}
+
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
-    activity_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    activity_id: Mapped[str] = mapped_column(String(32), index=True)
     activity_title: Mapped[str] = mapped_column(String(128), default="")
-    activity_type: Mapped[str] = mapped_column(String(2))     # A/B/C/D
-    kind: Mapped[str] = mapped_column(String(16))             # violations.KINDS
-    detail: Mapped[str] = mapped_column(String(512), default="")   # 违规情况简述
-    has_proof: Mapped[bool] = mapped_column(Boolean, default=False)  # 请假是否有证明
-    # 本次登记实际生效的限制（操作者确认后的值）
-    applied_types: Mapped[list] = mapped_column(JSON, default=list)
-    applied_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    basis: Mapped[str] = mapped_column(String(256), default="")    # 依据条文
+    kind: Mapped[str] = mapped_column(String(16))
+    detail: Mapped[str] = mapped_column(String(512), default="")   # 情况简述
     operator_id: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    def kind_label(self) -> str:
+        return self.KINDS.get(self.kind, self.kind)
 
 
 class AuditLog(Base):

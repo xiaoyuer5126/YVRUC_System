@@ -1,9 +1,10 @@
-"""教师/青协端：工作台统计（仅管理员）、审计日志、用户与信用（管理员/青协）、集成设置（仅管理员）。
+"""管理端：工作台统计、审计日志、志愿者档案与违规记录、集成设置。
 
 页面可见性：
-  · 数据总览、集成设置 → 仅管理员
-  · 审计日志 → 活动发起方/青协/管理员（非管理员只看自己管理的活动）
-  · 用户与信用 → 管理员 / 青协
+  · 数据总览 → 管理员 / 会长团；集成设置 → 仅管理员
+  · 审计日志 → 活动发起方/青协/管理员（非全权者只看自己能管的活动）
+  · 志愿者档案（全校名册）→ 管理员 / 会长团 / 部长；
+    活动内点姓名看档案 → 该活动的管理者，且只限报了这场活动的人
 """
 from __future__ import annotations
 
@@ -15,14 +16,12 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from ..audit import ACTION_LABELS, log as audit_log
-from .. import config, violations
-from ..credit import apply_delta
 from ..database import db_session
 from ..deps import (require_admin, require_archive_page, require_council, require_manager)
 from ..integrations import all_configs, save_config
 from ..models import (Activity, AuditLog, CheckinRecord, Enrollment,
-                      HoursRecord, User, ViolationRecord, iso, now, uid)
-from ..perm import managed_activity_ids
+                      HoursRecord, Shift, User, ViolationRecord, iso, now, uid)
+from ..perm import ensure_activity_manager, managed_activity_ids
 
 router = APIRouter(prefix="/api/staff", tags=["staff-admin"])
 
@@ -69,24 +68,6 @@ def overview(db: OrmSession = Depends(db_session),
     colleges = [{"college": c or "未填写", "count": n}
                 for c, n in sorted(college_rows, key=lambda x: -x[1])[:8]]
 
-    # 信用分布
-    credit_buckets = [
-        {"label": "90-100", "min": 90}, {"label": "75-89", "min": 75},
-        {"label": "60-74", "min": 60}, {"label": "<60", "min": 0}]
-    bucket_out = []
-    for b in credit_buckets:
-        q = db.query(func.count(User.id)).filter(User.user_type == "student")
-        if b["label"] == "90-100":
-            q = q.filter(User.credit_score >= 90)
-        elif b["label"] == "75-89":
-            q = q.filter(User.credit_score >= 75, User.credit_score < 90)
-        elif b["label"] == "60-74":
-            q = q.filter(User.credit_score >= 60, User.credit_score < 75)
-        else:
-            q = q.filter(User.credit_score < 60)
-        bucket_out.append({"label": b["label"],
-                           "count": q.scalar() or 0})
-
     logs = (db.query(AuditLog).order_by(AuditLog.created_at.desc())
             .limit(8).all())
 
@@ -103,7 +84,6 @@ def overview(db: OrmSession = Depends(db_session),
         "activity_status": by_status,
         "enroll_trend": trend,
         "colleges": colleges,
-        "credit_buckets": bucket_out,
         "recent_logs": [l.out() for l in logs],
     }
 
@@ -159,160 +139,135 @@ def list_users(q: str = "", college: str = "",
     } for u in rows]
 
 
-class CreditBody(BaseModel):
-    delta: int
-    reason: str
+# ======================= 志愿者档案 =======================
+
+def _archive(db: OrmSession, u: User) -> dict:
+    """一个人的志愿档案：参与过的活动、违规记录、临近退选次数。
+
+    只是给青协看的记录，不产生任何后果——平台不对志愿者做限制。
+    """
+    rows = (db.query(Enrollment, Activity, Shift)
+            .join(Activity, Enrollment.activity_id == Activity.id)
+            .join(Shift, Enrollment.shift_id == Shift.id)
+            .filter(Enrollment.user_id == u.id, Shift.parent_id.is_(None))
+            .order_by(Shift.start_time.desc()).all())
+    checked = {r[0] for r in db.query(CheckinRecord.shift_id)
+               .filter(CheckinRecord.user_id == u.id).all()}
+    history = [{
+        "enrollment_id": e.id, "activity_id": a.id, "activity_title": a.title,
+        "shift_name": g.name, "time_text": g.span_text(),
+        "status": e.status, "cancel_type": e.cancel_type,
+        "checked_in": g.id in checked,
+    } for e, a, g in rows]
+    violations = (db.query(ViolationRecord)
+                  .filter(ViolationRecord.user_id == u.id)
+                  .order_by(ViolationRecord.created_at.desc()).all())
+    return {
+        "user": {**u.full(),
+                 "id_card_masked": ("无内地身份证号" if u.no_mainland_id
+                                    else u.masked_id_card())},
+        "history": history,
+        "late_cancel_count": sum(1 for h in history if h["cancel_type"] == "late"),
+        "violations": [{
+            "id": v.id, "activity_id": v.activity_id,
+            "activity_title": v.activity_title,
+            "kind": v.kind, "kind_label": v.kind_label(), "detail": v.detail,
+            "created_at": iso(v.created_at),
+        } for v in violations],
+    }
 
 
-@router.post("/users/{user_id}/credit")
-def adjust_credit(user_id: str, body: CreditBody,
-                  db: OrmSession = Depends(db_session),
-                  operator: User = Depends(require_archive_page)):
+@router.get("/users/{user_id}/archive")
+def user_archive(user_id: str, db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_archive_page)):
+    """全校名册入口：管理员 / 会长团 / 部长。"""
     u = db.get(User, user_id)
     if u is None:
         raise HTTPException(404, "用户不存在")
-    score = apply_delta(db, u, body.delta, body.reason,
-                        operator_id=operator.id)
-    audit_log(db, actor=operator, action="credit_adjust", target_type="user",
-              target_id=u.id, target_label=f"{u.name}（{u.student_id}）",
-              summary=f"信用分 {body.delta:+d} → {score} 分，事由：{body.reason}",
-              changes=[{"field": "credit_score", "label": "信用分",
-                        "old": str(score - body.delta), "new": str(score)}])
-    db.commit()
-    return {"ok": True, "score": score}
+    return _archive(db, u)
 
 
-# ——— 违规登记（《志愿者服务规范》限制准入名单） ———
+@router.get("/activities/{activity_id}/volunteers/{user_id}/archive")
+def activity_volunteer_archive(activity_id: str, user_id: str,
+                               db: OrmSession = Depends(db_session),
+                               user: User = Depends(require_manager)):
+    """活动内点姓名看档案：得是这个活动的管理者，且对方报了这场活动。
 
-class ViolationPreviewBody(BaseModel):
+    院系二级团体也能查自己活动的人，但翻不到别人。部门成员不给。
+    """
+    if user.is_trainee():
+        raise HTTPException(403, "部门成员为学习权限，不能查看志愿者档案")
+    ensure_activity_manager(db, user, activity_id)
+    u = db.get(User, user_id)
+    if u is None:
+        raise HTTPException(404, "用户不存在")
+    enrolled = (db.query(Enrollment)
+                .filter(Enrollment.activity_id == activity_id,
+                        Enrollment.user_id == user_id).first())
+    if enrolled is None:
+        raise HTTPException(403, "只能查看报了本活动的志愿者")
+    return _archive(db, u)
+
+
+# ======================= 违规记录 =======================
+
+class ViolationBody(BaseModel):
     user_id: str
     activity_id: str
     kind: str
-    has_proof: bool = False
+    detail: str = ""
 
 
-def _violation_context(db: OrmSession, body: ViolationPreviewBody):
+@router.post("/violations")
+def create_violation(body: ViolationBody,
+                     db: OrmSession = Depends(db_session),
+                     operator: User = Depends(require_manager)):
+    """在活动的志愿者名单里登记一条违规。只记录，不产生任何后果。"""
+    ensure_activity_manager(db, operator, body.activity_id)
     u = db.get(User, body.user_id)
     if u is None:
         raise HTTPException(404, "用户不存在")
     act = db.get(Activity, body.activity_id)
     if act is None:
         raise HTTPException(404, "活动不存在")
-    if body.kind not in violations.KINDS:
+    if body.kind not in ViolationRecord.KINDS:
         raise HTTPException(400, "违规类型不合法")
-    return u, act
-
-
-@router.post("/violations/preview")
-def preview_violation(body: ViolationPreviewBody,
-                      db: OrmSession = Depends(db_session),
-                      operator: User = Depends(require_archive_page)):
-    """按规范算出建议的限制准入，不落库。"""
-    u, act = _violation_context(db, body)
-    s = violations.suggest(db, u, act.type, body.kind, has_proof=body.has_proof)
-    return {
-        "user": {"name": u.name, "student_id": u.student_id},
-        "activity": {"title": act.title, "type": act.type},
-        "suggest_types": s["types"], "suggest_until": iso(s["until"]),
-        "basis": s["basis"], "notes": s["notes"],
-        "history_count": s["history_count"], "kind_label": s["kind_label"],
-    }
-
-
-class ViolationBody(ViolationPreviewBody):
-    detail: str = ""
-    types: list[str] = []          # 操作者确认后的限制类型
-    until: str | None = None       # 操作者确认后的截止日
-
-
-@router.post("/violations")
-def create_violation(body: ViolationBody,
-                     db: OrmSession = Depends(db_session),
-                     operator: User = Depends(require_archive_page)):
-    """登记一条违规并按确认后的口径落限制准入。"""
-    u, act = _violation_context(db, body)
     if not body.detail.strip():
-        raise HTTPException(400, "请填写违规情况简述")
-    types = [t for t in body.types if t in config.ACTIVITY_TYPES]
-    until = None
-    if body.until:
-        try:
-            until = datetime.fromisoformat(body.until)
-        except ValueError:
-            raise HTTPException(400, "时间格式不合法")
-    if types and until is None:
-        raise HTTPException(400, "限制准入必须给出截止日期")
-
-    s = violations.suggest(db, u, act.type, body.kind, has_proof=body.has_proof)
-    old = f"{'/'.join(u.restricted_types or []) or '无'} 至 {iso(u.restricted_until) or '—'}"
-    violations.apply_restriction(db, u, types, until)
-    new = f"{'/'.join(types) or '无'} 至 {iso(until) or '—'}"
+        raise HTTPException(400, "请填写情况简述")
+    if not (db.query(Enrollment)
+            .filter(Enrollment.activity_id == act.id,
+                    Enrollment.user_id == u.id).first()):
+        raise HTTPException(400, f"{u.name} 没有报名本活动")
 
     record = ViolationRecord(
         id=uid("vio"), user_id=u.id, activity_id=act.id,
-        activity_title=act.title, activity_type=act.type, kind=body.kind,
-        detail=body.detail.strip(), has_proof=body.has_proof,
-        applied_types=types, applied_until=until, basis=s["basis"],
-        operator_id=operator.id)
+        activity_title=act.title, kind=body.kind,
+        detail=body.detail.strip(), operator_id=operator.id)
     db.add(record)
     audit_log(db, actor=operator, action="violation", target_type="user",
               target_id=u.id, target_label=f"{u.name}（{u.student_id}）",
               activity_id=act.id,
-              summary=f"违规登记：{s['kind_label']}·{act.type}类「{act.title}」"
-                      f"（第{s['history_count']}次）→ 限制准入 {new}",
-              changes=[{"field": "restriction", "label": "限制准入",
-                        "old": old, "new": new}])
+              summary=f"违规登记：{record.kind_label()}「{act.title}」——"
+                      f"{body.detail.strip()}")
     db.commit()
-    return {"ok": True, "id": record.id, "restricted_types": types,
-            "restricted_until": iso(until)}
+    return {"ok": True, "id": record.id}
 
 
-@router.get("/users/{user_id}/violations")
-def list_violations(user_id: str, db: OrmSession = Depends(db_session),
-                    operator: User = Depends(require_archive_page)):
-    rows = (db.query(ViolationRecord)
-            .filter(ViolationRecord.user_id == user_id)
-            .order_by(ViolationRecord.created_at.desc()).all())
-    return [{
-        "id": v.id, "activity_title": v.activity_title,
-        "activity_type": v.activity_type,
-        "kind": v.kind, "kind_label": violations.KINDS.get(v.kind, v.kind),
-        "detail": v.detail, "basis": v.basis,
-        "applied_types": v.applied_types or [],
-        "applied_until": iso(v.applied_until),
-        "created_at": iso(v.created_at),
-    } for v in rows]
-
-
-class RestrictionBody(BaseModel):
-    types: list[str] = []
-    until: str | None = None
-
-
-@router.post("/users/{user_id}/restriction")
-def set_restriction(user_id: str, body: RestrictionBody,
-                    db: OrmSession = Depends(db_session),
-                    operator: User = Depends(require_archive_page)):
-    """手动设置限制准入。违规登记走 /violations，这里用于纠正与撤销。"""
-    u = db.get(User, user_id)
-    if u is None:
-        raise HTTPException(404, "用户不存在")
-    types = [t for t in body.types if t in config.ACTIVITY_TYPES]
-    until = None
-    if body.until:
-        try:
-            until = datetime.fromisoformat(body.until)
-        except ValueError:
-            raise HTTPException(400, "时间格式不合法")
-    old = f"{','.join(u.restricted_types or [])} 至 {iso(u.restricted_until)}"
-    u.restricted_types = types
-    u.restricted_until = until
-    new = f"{','.join(types)} 至 {iso(until)}"
-    audit_log(db, actor=operator, action="restriction", target_type="user",
-              target_id=u.id, target_label=f"{u.name}（{u.student_id}）",
-              summary=f"限制准入：{old} → {new}",
-              changes=[{"field": "restriction", "label": "限制准入",
-                        "old": old, "new": new}])
+@router.delete("/violations/{record_id}")
+def delete_violation(record_id: str, db: OrmSession = Depends(db_session),
+                     operator: User = Depends(require_manager)):
+    """登记错了可以撤，留痕。"""
+    v = db.get(ViolationRecord, record_id)
+    if v is None:
+        raise HTTPException(404, "记录不存在")
+    ensure_activity_manager(db, operator, v.activity_id)
+    u = db.get(User, v.user_id)
+    audit_log(db, actor=operator, action="violation", target_type="user",
+              target_id=v.user_id,
+              target_label=f"{u.name}（{u.student_id}）" if u else v.user_id,
+              activity_id=v.activity_id,
+              summary=f"撤销违规登记：{v.kind_label()}「{v.activity_title}」")
+    db.delete(v)
     db.commit()
     return {"ok": True}
 

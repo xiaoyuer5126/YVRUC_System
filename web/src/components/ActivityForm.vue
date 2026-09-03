@@ -16,7 +16,6 @@
       </el-radio-group>
       <div class="dim" style="line-height:1.8">
         <b>{{ f.type }}类·{{ types[f.type]?.full }}</b>：{{ types[f.type]?.desc }}<br />
-        类型决定违规后的限制准入口径（《志愿者服务规范》）。
       </div>
     </el-form-item>
     <el-form-item label="活动地点" required>

@@ -48,8 +48,6 @@
                 </el-dropdown-item>
                 <el-dropdown-item divided command="my"
                                   v-if="auth.user.user_type === 'student'">我的报名</el-dropdown-item>
-                <el-dropdown-item command="credit"
-                                  v-if="auth.user.user_type === 'student'">我的信用分</el-dropdown-item>
                 <el-dropdown-item command="hours"
                                   v-if="auth.user.user_type === 'student'">我的志愿时长</el-dropdown-item>
                 <el-dropdown-item divided command="profile"

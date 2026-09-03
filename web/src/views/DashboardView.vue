@@ -23,12 +23,7 @@
       </el-col>
     </el-row>
     <el-row :gutter="14" style="margin-top:16px" v-if="d">
-      <el-col :span="9">
-        <el-card shadow="never"><template #header><b>学生信用分布</b></template>
-          <div ref="creditEl" style="height:230px"></div>
-        </el-card>
-      </el-col>
-      <el-col :span="15">
+      <el-col :span="24">
         <el-card shadow="never">
           <template #header><b>最近操作留痕</b>
             <router-link to="/audit" style="float:right;font-size:12px">全部 →</router-link>
@@ -61,7 +56,6 @@ const narrow = useNarrow()
 const d = ref(null)
 const trendEl = ref()
 const pieEl = ref()
-const creditEl = ref()
 
 const cards = computed(() => d.value ? [
   { label: '注册学生', value: d.value.cards.students, color: '#1f5aa8' },
@@ -89,16 +83,6 @@ function draw() {
     series: [{ type: 'pie', radius: ['38%', '68%'],
       data: d.value.colleges.map(x => ({ name: x.college, value: x.count })),
       label: { fontSize: 10 } }],
-  })
-  echarts.init(creditEl.value).setOption({
-    tooltip: {},
-    grid: { left: 34, right: 12, top: 18, bottom: 24 },
-    xAxis: { type: 'category', data: d.value.credit_buckets.map(b => b.label) },
-    yAxis: { type: 'value', minInterval: 1 },
-    series: [{ type: 'bar', barWidth: 34,
-      data: d.value.credit_buckets.map((b, i) => ({
-        value: b.count,
-        itemStyle: { color: i === 3 ? '#f56c6c' : '#9e2235' } })) }],
   })
 }
 

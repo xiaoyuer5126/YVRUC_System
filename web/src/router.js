@@ -13,7 +13,6 @@ const routes = [
       { path: 'activity/:id', component: () => import('./views/ActivityDetailView.vue') },
       { path: 'my', component: () => import('./views/MyEnrollmentsView.vue') },
       { path: 'messages', component: () => import('./views/MessagesView.vue') },
-      { path: 'credit', component: () => import('./views/CreditView.vue') },
       { path: 'hours', component: () => import('./views/HoursView.vue') },
       // —— 教师/青协端 ——
       { path: 'dashboard', component: () => import('./views/DashboardView.vue'), meta: { page: 'dashboard' } },
@@ -21,7 +20,7 @@ const routes = [
       { path: 'manage/:id', component: () => import('./views/ActivityAdminView.vue'), meta: { page: 'manage' } },
       { path: 'approvals', component: () => import('./views/ApprovalsView.vue'), meta: { page: 'approvals' } },
       { path: 'audit', component: () => import('./views/AuditLogsView.vue'), meta: { page: 'audit' } },
-      { path: 'users', component: () => import('./views/UsersCreditView.vue'), meta: { page: 'users' } },
+      { path: 'users', component: () => import('./views/VolunteerArchiveView.vue'), meta: { page: 'users' } },
       { path: 'roles', component: () => import('./views/RolesView.vue'), meta: { page: 'roles' } },
       { path: 'integrations', component: () => import('./views/IntegrationsView.vue'), meta: { page: 'integrations' } },
     ],
@@ -50,7 +49,7 @@ router.beforeEach((to) => {
   }
 
   // 工作台视角不显示个人板块：个人页仅学生视角可进
-  const personalPages = ['square', 'my', 'credit', 'hours']
+  const personalPages = ['square', 'my', 'hours']
   if (manageView && personalPages.includes(to.path.slice(1))) {
     return '/manage'
   }

@@ -12,7 +12,7 @@
       </el-menu-item>
       <el-menu-item index="/audit"><el-icon><Document /></el-icon>审计日志</el-menu-item>
       <el-menu-item v-if="canSee.users()" index="/users">
-        <el-icon><UserFilled /></el-icon>用户与信用
+        <el-icon><UserFilled /></el-icon>志愿者档案
       </el-menu-item>
       <el-menu-item v-if="canSee.roles()" index="/roles">
         <el-icon><Key /></el-icon>角色管理
@@ -25,7 +25,6 @@
       <div class="menu-cap">志愿服务</div>
       <el-menu-item index="/square"><el-icon><Compass /></el-icon>活动广场</el-menu-item>
       <el-menu-item index="/my"><el-icon><Tickets /></el-icon>我的报名</el-menu-item>
-      <el-menu-item index="/credit"><el-icon><Star /></el-icon>信用分</el-menu-item>
       <el-menu-item index="/hours"><el-icon><Clock /></el-icon>志愿时长</el-menu-item>
     </template>
     <el-menu-item index="/messages"><el-icon><Bell /></el-icon>消息通知</el-menu-item>
@@ -34,7 +33,7 @@
 
 <script setup>
 import {
-  Bell, Calendar, Clock, Compass, Document, Key, Link, Odometer, Stamp, Star,
+  Bell, Calendar, Clock, Compass, Document, Key, Link, Odometer, Stamp,
   Tickets, UserFilled,
 } from '@element-plus/icons-vue'
 import { auth, canSee, ROLE_LABELS } from '../store'
