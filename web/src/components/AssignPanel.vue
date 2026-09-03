@@ -1,22 +1,17 @@
 <template>
-  <div v-loading="loading">
+  <div v-loading="loading || solving">
     <!-- 模式说明 -->
     <el-alert v-if="pickModeAllAssigned" type="info" :closable="false" style="margin-bottom:10px"
               title="本场次报名时已各自选定岗位"
               description="主要服务于「截止后统一分配」的场次；已有岗位的人试算时会保持现状，可直接改下方的建议岗位。" />
 
-    <!-- 工具条 -->
+    <!-- 一键分配、补录这些动作放在父级「已报名名单」那一行；这里只留试算选项 -->
     <div class="toolbar">
-      <el-button type="primary" size="small" :loading="solving" @click="runPreview">
-        <el-icon><MagicStick /></el-icon>&nbsp;一键分配（试算）
-      </el-button>
       <el-checkbox v-model="continuity" size="small">尽量同一人同一岗位</el-checkbox>
       <el-tooltip placement="top"
                   content="本活动其它场次已排过同名岗位的人，优先还待在那个岗位——多天活动里换来换去，交接成本全落在现场">
         <el-icon class="dim"><QuestionFilled /></el-icon>
       </el-tooltip>
-      <el-button size="small" @click="$emit('reload')">刷新名单</el-button>
-      <el-button size="small" type="success" plain @click="walkinVisible = true">补录志愿者</el-button>
       <span style="margin-left:auto" class="dim" v-if="preview">
         已报名 {{ preview.total_enrolled }} 人 · 建议 {{ preview.total_assigned }} 人上岗
       </span>
@@ -138,7 +133,7 @@
       </div>
     </template>
 
-    <el-empty v-else description="点击「运行智能排班」开始二次分配——同一套算法驱动：先到先得、摊平、保底、条件过滤、冲突规避，规则可在上方自定义"
+    <el-empty v-else description="点击名单上方的「一键分配」开始试算——同一套算法驱动：先到先得、摊平、保底、条件过滤、冲突规避，规则可在上方自定义"
               :image-size="80" />
 
     <!-- 补录 -->
@@ -177,6 +172,10 @@ const props = defineProps({
   unassignedCount: { type: Number, default: 0 },   // 已报名但还没有岗位的人数
 })
 const emit = defineEmits(['reload'])
+
+// 父级的「已报名名单」那一行触发试算与补录
+function openWalkin() { walkinVisible.value = true }
+defineExpose({ runPreview, openWalkin, solving })
 
 const loading = ref(false)
 const solving = ref(false)
