@@ -432,9 +432,13 @@ class Position(Base):
     # 硬性条件 {标签: 值或值列表}，空 = 不限。报名时直接拦截，
     # 一键分配时同样作为硬约束（见 assign.py）。
     requirement_tags: Mapped[dict] = mapped_column(JSON, default=dict)
-    requirement_note: Mapped[str] = mapped_column(String(512), default="")
+    # 三段给志愿者看的文字：服务任务（做什么，必填）/ 岗位要求（对人的要求，
+    # 选填）/ 培训内容（到岗前要知道的，必填）。「岗位要求」是文字说明，
+    # 与 requirement_tags 那种系统拿去拦人的硬条件不是一回事。
+    service_task: Mapped[str] = mapped_column(String(512), default="")
+    position_requirement: Mapped[str] = mapped_column(String(512), default="")
     training_note: Mapped[str] = mapped_column(String(512), default="")
-    # 需要组长：报名时志愿者可表态愿意担任，先到先得，管理者可改判
+    # 需要组长：由管理者在名单里指定；报名时志愿者可表态愿意担任，供参考
     needs_leader: Mapped[bool] = mapped_column(Boolean, default=False)
     # 本岗位是否需要领志愿马甲；报名时就要让人看到，现场才不会白跑一趟
     needs_vest: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -525,7 +529,7 @@ class Enrollment(Base):
     allow_reassign: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # —— 组长 ——
-    # 报名时表态愿意担任；先到先得，同岗位第一个有意愿的人自动成为组长。
+    # 报名时表态愿意担任。只是给管理者看的参考，不决定谁当选。
     leader_willing: Mapped[bool] = mapped_column(Boolean, default=False)
     is_leader: Mapped[bool] = mapped_column(Boolean, default=False)
 

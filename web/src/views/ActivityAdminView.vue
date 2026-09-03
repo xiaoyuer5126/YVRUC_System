@@ -270,7 +270,7 @@
       </el-tab-pane>
 
       <!-- ============ 报名与调配 ============ -->
-      <el-tab-pane name="roster">
+      <el-tab-pane v-if="isPublic" name="roster">
         <template #label>报名与调配
           <el-badge v-if="pendingPromo" value="!" type="danger" />
         </template>
@@ -483,7 +483,7 @@
       </el-tab-pane>
 
       <!-- ============ 签到管理 ============ -->
-      <el-tab-pane label="签到管理" name="checkin" lazy>
+      <el-tab-pane v-if="isPublic" label="签到管理" name="checkin" lazy>
         <!-- 场次由面板自己选：这一页在盯现场，跟「报名与调配」那边排人是两件事 -->
         <CheckinPanel v-if="allShifts.length" :activity-id="act.id"
                       :all-shifts="allShifts" />
@@ -491,12 +491,12 @@
       </el-tab-pane>
 
       <!-- ============ 志愿马甲 ============ -->
-      <el-tab-pane label="志愿马甲" name="vest" lazy>
+      <el-tab-pane v-if="isPublic" label="志愿马甲" name="vest" lazy>
         <VestPanel :activity-id="act.id" />
       </el-tab-pane>
 
       <!-- ============ 导出与时长 ============ -->
-      <el-tab-pane name="export" lazy>
+      <el-tab-pane v-if="isPublic" name="export" lazy>
         <template #label>导出与时长
           <el-badge v-if="pendingAppeals" :value="pendingAppeals" type="danger" />
         </template>
@@ -654,7 +654,7 @@
       </el-tab-pane>
 
       <!-- ============ 管理者 ============ -->
-      <el-tab-pane label="签收情况" name="acks" lazy>
+      <el-tab-pane v-if="isPublic" label="签收情况" name="acks" lazy>
         <div class="toolbar" style="margin-bottom:10px">
           <RefreshBar ref="ackRefresh" :load="loadBatches" />
         </div>
@@ -1003,7 +1003,7 @@
         </el-form-item>
         <el-form-item label="组长">
           <el-checkbox v-model="stationForm.needs_leader">本组需要一名组长</el-checkbox>
-          <div class="dim">报名时可表态愿任，先到先得；组长退出后自动递补</div>
+          <div class="dim">由你在「志愿者管理」名单里指定；报名时志愿者可表态愿任，供你参考。组长退出后会提醒你重新指定</div>
         </el-form-item>
         <el-form-item label="条件要求">
           <div class="two-col">
@@ -1017,8 +1017,11 @@
           </div>
           <div class="dim">硬性条件：不满足的人报名时就会被拦下，一键分配也不会排入</div>
         </el-form-item>
-        <el-form-item label="要求原文" required><el-input v-model="stationForm.requirement_note"
-                    placeholder="给志愿者看的说明，如：需全程站立，着深色衣裤" /></el-form-item>
+        <el-form-item label="服务任务" required><el-input v-model="stationForm.service_task"
+                    placeholder="这个岗位做什么，如：在北门引导来访家长，协助检录" /></el-form-item>
+        <!-- 岗位要求是给人看的文字，与上面「条件要求」那种系统拿去拦人的硬条件不同 -->
+        <el-form-item label="岗位要求"><el-input v-model="stationForm.position_requirement"
+                    placeholder="选填。对志愿者的要求，如：需全程站立，着深色衣裤" /></el-form-item>
         <el-form-item label="培训内容" required><el-input v-model="stationForm.training_note"
                     type="textarea" :rows="2"
                     placeholder="到岗前需要知道的事：流程、话术、应急联系人" /></el-form-item>
@@ -1084,7 +1087,8 @@
         <el-descriptions-item label="名额">{{ sdData.enrolled }}/{{ sdData.quota }}
           <span class="dim">（同场次岗位互斥）</span></el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ sdData.requirement_desc }}</el-descriptions-item>
-        <el-descriptions-item label="要求说明">{{ sdData.requirement_note || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="服务任务">{{ sdData.service_task || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="岗位要求">{{ sdData.position_requirement || '—' }}</el-descriptions-item>
         <el-descriptions-item label="培训内容">{{ sdData.training_note || '—' }}</el-descriptions-item>
       </el-descriptions>
     </el-dialog>
@@ -1161,6 +1165,10 @@ const route = useRoute()
 const act = ref(null)
 const narrow = useNarrow()
 const tab = ref(String(route.query.tab || 'tree'))   // 支持 ?tab=roster 直达页签
+// 未发布（草稿/待审批/待发布）只留 岗位设置 / 管理者 / 变更记录：那时一个报名的人
+// 都没有，名单、签到、马甲、导出、签收全是空页
+const isPublic = computed(() =>
+  ['published', 'closed', 'finished'].includes(act.value?.status))
 const types = ref({})
 const colleges = ref([])
 const campuses = ref([])
@@ -1653,20 +1661,21 @@ function openStation(st, g) {
     group_name: st.group_name || '',
     genderReq: (st.requirement_tags?.性别) || '',
     collegeReq: st.requirement_tags?.学院 || [],
-    requirement_note: st.requirement_note, training_note: st.training_note,
+    service_task: st.service_task, position_requirement: st.position_requirement || '',
+    training_note: st.training_note,
   } : {
     name: '', location: '', quota: 2, waitlist_quota: 3, needs_leader: false,
     needs_vest: false,
     group_name: '',
     genderReq: '', collegeReq: [],
-    requirement_note: '', training_note: '',
+    service_task: '', position_requirement: '', training_note: '',
   }
 }
 async function saveStation() {
   const f = stationForm.value
   if (!f.name?.trim()) return ElMessage.warning('请填写岗位名称')
   for (const [key, label] of [['location', '服务地点'],
-                              ['requirement_note', '要求原文'],
+                              ['service_task', '服务任务'],
                               ['training_note', '培训内容']]) {
     if (!f[key]?.trim()) return ElMessage.warning(`请填写${label}`)
   }
@@ -1680,7 +1689,8 @@ async function saveStation() {
       waitlist_quota: f.waitlist_quota, needs_leader: f.needs_leader,
       needs_vest: !!f.needs_vest,
       group_name: f.group_name || '',
-      requirement_tags: tags, requirement_note: f.requirement_note,
+      requirement_tags: tags, service_task: f.service_task,
+      position_requirement: f.position_requirement || '',
       training_note: f.training_note,
     }
     if (positionDlg.value.editing) {

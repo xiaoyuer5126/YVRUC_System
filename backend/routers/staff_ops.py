@@ -443,8 +443,8 @@ def poster(activity_id: str, db: OrmSession = Depends(db_session),
             line = (f"  · {p.name}　{p.quota} 人"
                     + (f"（剩 {left}）" if left else "（已满）")
                     + (f"　{p.location}" if p.location else ""))
-            if p.requirement_note:
-                line += f"\n    要求：{p.requirement_note}"
+            if p.service_task:
+                line += f"\n    服务任务：{p.service_task}"
             L.append(line)
         for s in sorted((x for x in act.shifts if x.parent_id == g.id),
                         key=lambda x: x.start_time):

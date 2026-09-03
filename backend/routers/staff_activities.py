@@ -686,7 +686,7 @@ def _sync_placeholder(db: OrmSession, g: Shift, capacity: int,
     if holder is None:
         holder = Position(id=uid("p"), shift_id=g.id, name=PLACEHOLDER_NAME,
                           is_placeholder=True, sort=-1,
-                          requirement_note="报名截止后由负责老师统一分配岗位",
+                          service_task="报名截止后由负责老师统一分配岗位",
                           training_note="岗位确定后另行通知")
         db.add(holder)
         g.positions.append(holder)
@@ -899,7 +899,8 @@ class PositionBody(BaseModel):
     waitlist_quota: int = Field(default=3, ge=0)
     group_name: str = ""
     requirement_tags: dict = {}
-    requirement_note: str = ""
+    service_task: str = ""
+    position_requirement: str = ""       # 选填
     training_note: str = ""
     needs_leader: bool = False
     needs_vest: bool = False
@@ -910,7 +911,8 @@ POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
                    "waitlist_quota": "候补名额", "needs_leader": "需要组长",
                    "needs_vest": "需要马甲",
                    "requirement_tags": "条件要求",
-                   "requirement_note": "要求原文", "training_note": "培训内容"}
+                   "service_task": "服务任务", "position_requirement": "岗位要求",
+                   "training_note": "培训内容"}
 
 
 def _ensure_not_finished(act: Activity) -> None:
@@ -957,7 +959,7 @@ def _ensure_pick_mode_for_positions(g: Shift) -> None:
 def _require_position_text(s: Position) -> None:
     """三项说明是志愿者到岗前唯一能看到的信息，缺一项现场就要被问一次。"""
     for value, label in ((s.location, "服务地点"),
-                         (s.requirement_note, "要求原文"),
+                         (s.service_task, "服务任务"),
                          (s.training_note, "培训内容")):
         if not (value or "").strip():
             raise HTTPException(400, f"请填写岗位「{s.name}」的{label}")
@@ -997,7 +999,8 @@ def create_position(shift_id: str, body: PositionBody,
                 needs_vest=body.needs_vest,
                 group_name=body.group_name.strip(),
                 requirement_tags=_clean_requirement_tags(body.requirement_tags),
-                requirement_note=body.requirement_note.strip(),
+                service_task=body.service_task.strip(),
+                position_requirement=body.position_requirement.strip(),
                 training_note=body.training_note.strip(),
                 sort=len(g.positions))
     _validate_position(db, g, s)
@@ -1036,11 +1039,11 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
     _require_position_text(s)
 
     # 组长开关变化要落到人身上：关掉了还留着组长标记，导出表和大屏就会
-    # 显示一个「不存在的岗位角色」；打开了则当场按报名先后选一个。
+    # 显示一个「不存在的岗位角色」；打开了则提醒管理者去指定一位。
     if s.needs_leader != before_raw["needs_leader"]:
         if s.needs_leader:
             db.flush()
-            logic.elect_leader(db, s)
+            logic.notify_leader_vacancy(db, s)
         else:
             (db.query(Enrollment)
              .filter(Enrollment.position_id == s.id,
@@ -1486,10 +1489,10 @@ class LeaderBody(BaseModel):
 def set_leader(enrollment_id: str, body: LeaderBody,
                db: OrmSession = Depends(db_session),
                user: User = Depends(require_manager)):
-    """指定或取消组长。
+    """指定或取消组长。组长只由管理者指定，系统不自动选人。
 
-    自动产生的组长是按报名先后来的，负责老师可以改判。一个岗位只能有一个
-    组长——指定新人时先把原来的摘掉，否则导出表和大屏会出现两个组长。
+    一个组只能有一个组长——指定新人时先把原来的摘掉，否则导出表和大屏会
+    出现两个组长。
     """
     enr = db.get(Enrollment, enrollment_id)
     if enr is None:
@@ -1526,20 +1529,15 @@ def set_leader(enrollment_id: str, body: LeaderBody,
                         position_loc=position.location or "待定")
     else:
         enr.is_leader = False
-        # 同时清掉本人的意愿：否则他还是按报名先后排最前的那个「有意愿的人」，
-        # 补位时会被立刻重新选回来，取消就成了空操作。
-        # 老师若改主意，仍可用本接口直接指定他。
-        enr.leader_willing = False
-        summary = (f"取消 {target.name} 的岗位「{position.name}」组长身份"
-                   f"（同时撤下其组长意愿，由下一位有意愿者接任）")
+        summary = f"取消 {target.name} 的岗位「{position.name}」组长身份"
 
     audit_log(db, actor=user, action="update", target_type="enrollment",
               target_id=enr.id, target_label=target.name,
               activity_id=enr.activity_id, summary=summary)
     db.commit()
-    # 取消之后按报名先后自动补一个，别让岗位空着没人负责
+    # 取消之后不自动补人：组长只由管理者指定，空缺了就提醒他再指一位
     if not body.is_leader:
-        logic.refill_leader(db, position.id)
+        logic.on_leader_vacated(db, position.id)
         db.commit()
     return {"ok": True, "is_leader": enr.is_leader}
 

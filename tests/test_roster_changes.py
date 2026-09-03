@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from backend import scheduled
-from backend.models import Activity, Notification, Position, now, uid
+from backend.models import Activity, Enrollment, Notification, Position, now, uid
 from conftest import POSITION_TEXT, login
 
 
@@ -100,6 +100,14 @@ def test_组长联系方式只给同组正式志愿者(client, admin, db, enroll
     leader_sid = take_student()
     assert _enroll(client, act, shift, leader_sid, position_id=pos.id,
                    leader_willing=True).status_code == 200
+    # 组长由管理者指定
+    from backend.models import User
+    leader_uid = db.query(User).filter(User.student_id == leader_sid).one().id
+    leader_enr = (db.query(Enrollment)
+                  .filter(Enrollment.user_id == leader_uid,
+                          Enrollment.shift_id == shift.id).one())
+    assert client.post(f"/api/staff/enrollments/{leader_enr.id}/leader",
+                       headers=admin, json={"is_leader": True}).status_code == 200
 
     def positions_seen_by(sid):
         d = client.get(f"/api/activities/{act.id}",

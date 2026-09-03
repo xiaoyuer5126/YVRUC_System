@@ -19,7 +19,7 @@ def test_未报名看不到培训内容与组长(client, admin, db, enrolled_act
     assert p["attachments"] == []
     assert p["leader_name"] == ""
     # 招募信息该看的还得看得到
-    assert p["requirement_note"] and p["quota"] and p["location"]
+    assert p["service_task"] and p["quota"] and p["location"]
 
 
 def test_报名后能看到培训内容(client, db, enrolled_activity):

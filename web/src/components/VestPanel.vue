@@ -1,7 +1,8 @@
 <template>
   <div v-loading="loading">
     <div class="toolbar">
-      <el-button type="primary" size="small" @click="ensureTasks">
+      <!-- 码是幂等的，生成过就不必再点；按钮留着只会让人以为还能再生成一套 -->
+      <el-button v-if="!data?.tasks?.take" type="primary" size="small" @click="ensureTasks">
         <el-icon><Plus /></el-icon>&nbsp;生成领取 / 归还码
       </el-button>
       <el-button v-if="data?.tasks?.take" size="small" @click="openQR('take')">领取码</el-button>

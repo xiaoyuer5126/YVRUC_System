@@ -94,7 +94,7 @@ def login(client: TestClient, student_id: str) -> dict:
 
 
 # 岗位的服务地点、要求原文、培训内容都是必填（志愿者到岗前只能看到这些）
-POSITION_TEXT = {"location": "北门", "requirement_note": "无特殊要求",
+POSITION_TEXT = {"location": "北门", "service_task": "无特殊要求",
                  "training_note": "现场由负责人统一讲解"}
 
 

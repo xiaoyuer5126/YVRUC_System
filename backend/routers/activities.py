@@ -246,8 +246,6 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         db.flush()
         logic.record_change(db, user, enr,
                             "enroll" if enr.status == "enrolled" else "waitlist")
-        if enr.status == "enrolled" and position is not None:
-            logic.elect_leader(db, position)
 
         if enr.status == "enrolled":
             logic.sync_attached(db, enr)      # 培训/彩排连带报上
@@ -428,7 +426,7 @@ def cancel_enroll(enrollment_id: str,
         if not hold_seat:
             logic.promote_all(db, g)     # 名额放回去，候补按顺序递补
         if was_leader:
-            logic.refill_leader(db, vacated)
+            logic.on_leader_vacated(db, vacated)
         db.commit()
 
     if not late:

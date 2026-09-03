@@ -220,35 +220,26 @@ def group_needs_leader(positions: list[Position]) -> bool:
     return any(p.needs_leader for p in positions)
 
 
-def elect_leader(db: OrmSession, position: Position) -> Enrollment | None:
-    """按报名先后从有意愿的人里选出**本组**组长。已有组长则不动。
+def notify_leader_vacancy(db: OrmSession, position: Position) -> bool:
+    """本组需要组长却没有了，提醒管理者去指定。返回是否真的空缺。
 
-    组长退选、被调剂走、或岗位刚需要组长时都走这里；一个都没有就返回 None，
-    名单页会显红标提示老师手动指定。组长本人照常占一个岗位名额——
-    他也是来服务的，不是纯协调。
+    组长**只由管理者指定**，系统不再按报名先后自动选人、也不自动递补——
+    组长要协调现场，谁合适只有管理者知道。报名时的「我愿意担任组长」
+    仍然保留，那是给管理者看的参考，不决定谁当选。
     """
+    from .notify import notify_managers
+
     positions = group_positions(db, position)
     if not group_needs_leader(positions):
-        return None
-    ids = [p.id for p in positions]
-    rows = (db.query(Enrollment)
-            .filter(Enrollment.position_id.in_(ids),
-                    Enrollment.status == "enrolled")
-            .order_by(Enrollment.joined_at).all())
-    if any(r.is_leader for r in rows):
-        return next(r for r in rows if r.is_leader)
-    head = next((r for r in rows if r.leader_willing), None)
-    if head is None:
-        return None
-    head.is_leader = True
-    user = db.get(User, head.user_id)
-    activity = db.get(Activity, head.activity_id)
-    own = db.get(Position, head.position_id)
-    wecom.send_user(db, user, "leader_appointed", activity=activity.title,
-                    position=leader_scope_label(positions, own),
-                    position_time=own.time_text(),
-                    position_loc=own.location or "待定")
-    return head
+        return False
+    if group_leader(db, position) is not None:
+        return False
+    activity = db.get(Activity, position.shift.activity_id)
+    scope = leader_scope_label(positions, position)
+    notify_managers(db, activity.id, f"[组长空缺] {activity.title}",
+                    f"「{position.shift.name}·{scope}」目前没有组长，"
+                    f"请到「志愿者管理」名单里指定一位。")
+    return True
 
 
 def leader_scope_label(positions: list[Position], own: Position) -> str:
@@ -267,13 +258,13 @@ def group_leader(db: OrmSession, position: Position) -> Enrollment | None:
                     Enrollment.status == "enrolled").first())
 
 
-def refill_leader(db: OrmSession, position_id: str | None) -> None:
-    """组长空缺时补位。退选、调岗、取消组长身份之后都要调一次。"""
+def on_leader_vacated(db: OrmSession, position_id: str | None) -> None:
+    """组长退选、被调走、被取消之后调一次：空缺了就提醒管理者，不自动补。"""
     if not position_id:
         return
     position = db.get(Position, position_id)
     if position is not None:
-        elect_leader(db, position)
+        notify_leader_vacancy(db, position)
 
 
 # ======================= 人员变动流水 =======================
@@ -409,7 +400,6 @@ def _settle_position(db: OrmSession, enr: Enrollment, user: User,
                         shift=shift.name, position=position.name,
                         position_time=position.time_text(),
                         position_loc=position.location or "待定")
-        elect_leader(db, position)
     sync_attached(db, enr)
 
 

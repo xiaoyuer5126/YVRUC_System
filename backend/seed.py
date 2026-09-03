@@ -187,7 +187,7 @@ def main() -> None:
                 leader=False, waitlist=3):
             p = Position(id=uid("p"), shift_id=shift.id, name=name,
                          location=loc, quota=quota, waitlist_quota=waitlist,
-                         requirement_tags=tags or {}, requirement_note=note,
+                         requirement_tags=tags or {}, service_task=note,
                          training_note=train, needs_leader=leader)
             db.add(p)
             return p
@@ -332,7 +332,7 @@ def main() -> None:
         b1_hold = Position(id=uid("p"), shift_id=b1.id, name="待分配",
                            is_placeholder=True, quota=20, waitlist_quota=3,
                            sort=-1,
-                           requirement_note="报名截止后由负责老师统一分配岗位",
+                           service_task="报名截止后由负责老师统一分配岗位",
                            training_note="岗位确定后另行通知")
         db.add(b1_hold)
         db.flush()

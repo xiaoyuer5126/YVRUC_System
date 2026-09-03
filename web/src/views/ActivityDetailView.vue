@@ -361,8 +361,11 @@
                     <p v-if="myPosition(g).training_note" class="mine-note">
                       <b>培训内容：</b>{{ myPosition(g).training_note }}
                     </p>
-                    <p v-if="myPosition(g).requirement_note" class="mine-note">
-                      <b>服务要求：</b>{{ myPosition(g).requirement_note }}
+                    <p v-if="myPosition(g).service_task" class="mine-note">
+                      <b>服务任务：</b>{{ myPosition(g).service_task }}
+                    </p>
+                    <p v-if="myPosition(g).position_requirement" class="mine-note">
+                      <b>岗位要求：</b>{{ myPosition(g).position_requirement }}
                     </p>
                     <MaterialList v-if="myPosition(g).attachments?.length"
                                   :items="myPosition(g).attachments"
@@ -594,7 +597,8 @@
           <span class="dim">（岗位之间互斥，一场次一人一个岗位）</span>
         </el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ stationDetail.data.requirement_desc }}</el-descriptions-item>
-        <el-descriptions-item label="要求说明">{{ stationDetail.data.requirement_note || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="服务任务">{{ stationDetail.data.service_task || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="岗位要求">{{ stationDetail.data.position_requirement || '—' }}</el-descriptions-item>
         <el-descriptions-item label="培训内容">
           <template v-if="stationDetail.data.training_visible">
             {{ stationDetail.data.training_note || '—' }}
@@ -669,7 +673,7 @@
             愿意担任本岗位组长
           </el-checkbox>
           <div v-if="enrollDlg.position?.needs_leader" class="dim" style="margin-top:2px">
-            该岗位需要一名组长，按报名先后从有意愿的人里产生；负责老师可改判
+            该岗位需要一名组长，由负责老师从有意愿的人里指定；勾选表示你愿意
           </div>
           <p class="dim">
             仅供负责老师排班参考：不勾选也可能被调整，但名单上会标注你的意愿。

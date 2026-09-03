@@ -26,6 +26,13 @@ def _setup(client, db, admin, enrolled_activity, take_student, n=3):
         assert r.status_code == 200, r.text
         from conftest import student_row
         people.append(student_row(db, sid))
+    # 组长不再自动产生：由管理者指定第一个报名的人
+    head = (db.query(Enrollment)
+            .filter(Enrollment.position_id == pos.id,
+                    Enrollment.status == "enrolled")
+            .order_by(Enrollment.joined_at).first())
+    assert client.post(f"/api/staff/enrollments/{head.id}/leader", headers=admin,
+                       json={"is_leader": True}).status_code == 200
     return act, shift, pos, people
 
 
@@ -132,7 +139,8 @@ def test_一个岗位只会有一个组长(client, admin, db, enrolled_activity,
     assert len(leaders) == 1 and leaders[0].id == other.id
 
 
-def test_取消组长后自动补位(client, admin, db, enrolled_activity, take_student):
+def test_取消组长后不自动补位(client, admin, db, enrolled_activity, take_student):
+    """组长只由管理者指定：取消之后位子空着，等他再指一位。"""
     act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
                                      take_student, n=3)
     leader = (db.query(Enrollment)
@@ -142,10 +150,9 @@ def test_取消组长后自动补位(client, admin, db, enrolled_activity, take_
                     headers=admin, json={"is_leader": False})
     assert r.status_code == 200
     db.expire_all()
-    leaders = (db.query(Enrollment)
-               .filter(Enrollment.position_id == pos.id,
-                       Enrollment.is_leader.is_(True)).all())
-    assert len(leaders) == 1 and leaders[0].id != leader.id, "该由下一个有意愿的人接任"
+    assert (db.query(Enrollment)
+            .filter(Enrollment.position_id == pos.id,
+                    Enrollment.is_leader.is_(True)).count()) == 0
 
 
 def test_关掉组长开关会清掉组长标记(client, admin, db, enrolled_activity,
