@@ -156,7 +156,7 @@ def remind_stale_approvals(db: OrmSession) -> int:
                 f"还没有处理。\n请到「活动审批」通过或驳回；"
                 f"确实不该由您批，可以转交。")
         targets = [who] + [p for p in db.query(User)
-                           .filter(User.qingxie_post == "president").all()
+                           .filter(User.qingxie_post == "council").all()
                            if p is not None and p.id != (who.id if who else "")]
         for t in targets:
             if t is None:

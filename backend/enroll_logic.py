@@ -223,9 +223,8 @@ def group_needs_leader(positions: list[Position]) -> bool:
 def notify_leader_vacancy(db: OrmSession, position: Position) -> bool:
     """本组需要组长却没有了，提醒管理者去指定。返回是否真的空缺。
 
-    组长**只由管理者指定**，系统不再按报名先后自动选人、也不自动递补——
-    组长要协调现场，谁合适只有管理者知道。报名时的「我愿意担任组长」
-    仍然保留，那是给管理者看的参考，不决定谁当选。
+    组长**只由管理者指定**——组长要协调现场，谁合适只有管理者知道。
+    报名时的「我愿意担任组长」是给管理者看的参考，不决定谁当选。
     """
     from .notify import notify_managers
 

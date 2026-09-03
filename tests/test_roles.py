@@ -58,10 +58,10 @@ def test_不能移除自己的管理员身份(client, admin, db):
 
     # 别的身份照常能加减
     assert client.put(f"/api/staff/roles/{me.id}", headers=admin,
-                      json={"roles": ["admin", "qingxie", "initiator"]}
-                      ).status_code == 200
+                      json={"roles": ["admin", "qingxie", "initiator"],
+                            "qingxie_post": "council"}).status_code == 200
     client.put(f"/api/staff/roles/{me.id}", headers=admin,
-               json={"roles": ["admin", "qingxie"]})
+               json={"roles": ["admin", "qingxie"], "qingxie_post": "council"})
 
 
 def test_至少保留一个身份(client, admin, db, take_student):
@@ -103,7 +103,7 @@ def test_撤销唯一管理者的身份会被拦住(client, admin, db, sole_mana
                    json={"roles": ["student"]})
     assert r.status_code == 409
     detail = r.json()["detail"]
-    assert "唯一管理者" in detail and act.title in detail
+    assert "唯一能操作的管理者" in detail and act.title in detail
     db.expire_all()
     assert "initiator" in db.get(User, u.id).roles, "被拦下就不该改"
 
@@ -127,11 +127,17 @@ def test_已结束的活动不拦(client, admin, db, sole_manager):
                       json={"roles": ["student"]}).status_code == 200
 
 
-def test_保留青协身份就不算撤(client, admin, db, sole_manager):
-    """还持有管理类身份的话，活动照样管得了，没有孤儿问题。"""
+def test_保留能写的青协层级就不算撤(client, admin, db, sole_manager):
+    """改成部门骨干仍然能操作活动，没有孤儿问题；改成部门成员就等于撤了。"""
     u, _act = sole_manager
+    dept = db.query(Department).first()
     assert client.put(f"/api/staff/roles/{u.id}", headers=admin,
-                      json={"roles": ["student", "qingxie"]}).status_code == 200
+                      json={"roles": ["student", "qingxie"], "qingxie_post": "core",
+                            "department_id": dept.id}).status_code == 200
+    r = client.put(f"/api/staff/roles/{u.id}", headers=admin,
+                   json={"roles": ["student", "qingxie"], "qingxie_post": "member",
+                         "department_id": dept.id})
+    assert r.status_code == 409 and "唯一能操作" in r.json()["detail"]
 
 
 # ======================= 青协职务与部门 =======================
@@ -179,14 +185,13 @@ def test_不再是青协就清掉职务与部门(client, admin, db, take_student
     assert row.qingxie_post == "member" and row.department_id is None
 
 
-def test_会长设得上去(client, admin, db, take_student):
-    """换届时会长换人，以前只能改数据库。"""
+def test_会长团设得上去(client, admin, db, take_student):
     u = student_row(db, take_student())
     assert client.put(f"/api/staff/roles/{u.id}", headers=admin,
                       json={"roles": ["student", "qingxie"],
-                            "qingxie_post": "president"}).status_code == 200
+                            "qingxie_post": "council"}).status_code == 200
     db.expire_all()
-    assert db.get(User, u.id).is_president()
+    assert db.get(User, u.id).is_council()
 
 
 def test_改身份要留痕(client, admin, db, take_student):

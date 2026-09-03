@@ -20,7 +20,11 @@ async function request(method, url, body, opts = {}) {
     const detail = typeof data.detail === 'string'
       ? data.detail
       : (data.detail?.message || JSON.stringify(data.detail) || `请求失败(${resp.status})`)
-    if (!opts.silent && !opts.skipErrorToast) ElMessage.error(detail)
+    if (!opts.silent && !opts.skipErrorToast) {
+      // 部门成员走完整个流程、在最后一步被拦下，这是设计好的学习权限，不是出错
+      if (data.detail?.code === 'TRAINEE_READONLY') ElMessage.warning(detail)
+      else ElMessage.error(detail)
+    }
     const err = new Error(detail)
     err.status = resp.status
     err.data = data.detail

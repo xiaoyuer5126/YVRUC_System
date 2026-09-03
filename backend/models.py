@@ -83,21 +83,49 @@ class User(Base):
     restricted_types: Mapped[list] = mapped_column(JSON, default=list)   # ["C","D"]
     restricted_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    # —— 青协内部职务（只对 qingxie 身份有意义）——
-    # 部长是本部门活动的默认审批人；会长可以接管任何一条审批。
+    # —— 青协内部层级（只对 qingxie 身份有意义）——
+    #   council 会长团：除集成设置外与管理员同权
+    #   head    部长：本部门活动全部可见，审本部门的活动，可设本部门的骨干/成员
+    #   core    部门骨干：只看自己被加进管理者的活动
+    #   member  部门成员：本部门活动只读，可以点、提交时被拦（学习权限）
     department_id: Mapped[str | None] = mapped_column(
         ForeignKey("departments.id"), nullable=True, index=True)
     qingxie_post: Mapped[str] = mapped_column(String(12), default="member")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
-    POST_LABELS = {"president": "会长", "head": "部长", "member": "干事"}
+    POST_LABELS = {"council": "会长团", "head": "部长",
+                   "core": "部门骨干", "member": "部门成员"}
 
     def post_label(self) -> str:
         return self.POST_LABELS.get(self.qingxie_post, self.qingxie_post)
 
-    def is_president(self) -> bool:
-        return self.has_role("qingxie") and self.qingxie_post == "president"
+    def post(self) -> str | None:
+        """青协层级；不是青协身份就没有层级。"""
+        return self.qingxie_post if self.has_role("qingxie") else None
+
+    def is_council(self) -> bool:
+        return self.post() == "council"
+
+    def is_head(self) -> bool:
+        return self.post() == "head"
+
+    def is_trainee(self) -> bool:
+        """部门成员：学习权限，任何写操作都会被拦。
+
+        同时持有管理员或活动发起方身份的人不算——那两种身份本身就能写，
+        青协层级只描述他在青协里的位置。
+        """
+        return (self.post() == "member" and not self.is_admin()
+                and not self.has_role("initiator"))
+
+    def can_write(self) -> bool:
+        """能不能真正改数据。部门成员之外都能。"""
+        return not self.is_trainee()
+
+    def has_full_access(self) -> bool:
+        """看得到全部活动、能管全部审批：管理员与会长团。"""
+        return self.is_admin() or self.is_council()
 
     def has_role(self, *roles: str) -> bool:
         return bool(set(roles) & set(self.roles or []))
@@ -139,6 +167,10 @@ class User(Base):
             "campus": self.campus, "stage": self.stage,
             "user_type": self.user_type, "roles": self.roles or [],
             "role_label": self.active_role_label(),
+            "qingxie_post": self.post(),
+            "post_label": self.post_label() if self.post() else "",
+            "department_id": self.department_id or "",
+            "is_trainee": self.is_trainee(),
         }
 
     def full(self) -> dict:

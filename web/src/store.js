@@ -53,15 +53,23 @@ export const isAdmin = () => hasIdentity('admin')
 export const isManager = () =>
   isAdmin() || hasIdentity('initiator') || hasIdentity('qingxie')
 
+// 青协层级：会长团 / 部长 / 部门骨干 / 部门成员。只在青协视角下有意义
+export const post = () => (auth.user?.qingxie_post || '')
+const qx = (...posts) => auth.activeIdentity === 'qingxie' && posts.includes(post())
+// 管理员视角，或会长团视角：除集成设置外同权
+const full = () => auth.activeIdentity === 'admin' || qx('council')
+export const isTrainee = () => auth.activeIdentity === 'qingxie' && post() === 'member'
+
+export const POST_LABELS = { council: '会长团', head: '部长', core: '部门骨干', member: '部门成员' }
+
 // —— 页面可见性（按当前身份视角） ——
 export const canSee = {
-  dashboard: () => auth.activeIdentity === 'admin',
+  dashboard: () => full(),
   manage: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
   audit: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
-  users: () => ['admin', 'qingxie'].includes(auth.activeIdentity),
-  // 角色管理改的是权限本身，只给管理员
-  roles: () => auth.activeIdentity === 'admin',
-  approvals: () => ['admin', 'qingxie'].includes(auth.activeIdentity),
+  users: () => full() || qx('head'),
+  roles: () => full() || qx('head'),
+  approvals: () => full() || qx('head'),
   integrations: () => auth.activeIdentity === 'admin',
   personal: () => true,
 }

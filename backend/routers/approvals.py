@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session as OrmSession
 
 from ..audit import log as audit_log
 from ..database import db_session
-from ..deps import current_user, require_admin, require_manager
+from ..deps import (current_user, require_approver, require_council,
+                    require_manager)
 from ..integrations import wecom
 from ..models import (Activity, ApprovalEvent, Department, User, iso, now, uid)
 from ..perm import ensure_activity_manager
@@ -49,14 +50,9 @@ def _dept_head(db: OrmSession, dept_id: str) -> User | None:
                     User.qingxie_post == "head").first())
 
 
-def _presidents(db: OrmSession) -> list[User]:
-    return db.query(User).filter(User.qingxie_post == "president").all()
-
-
 def _can_decide(db: OrmSession, user: User, act: Activity) -> bool:
-    """能不能拍这一条：当前审批人、会长、或平台管理员。"""
-    return (act.approval_assignee_id == user.id
-            or user.is_president() or user.is_admin())
+    """能不能拍这一条：当前审批人、会长团、或平台管理员。"""
+    return act.approval_assignee_id == user.id or user.has_full_access()
 
 
 def can_review(db: OrmSession, user: User, act: Activity) -> bool:
@@ -111,7 +107,7 @@ class DeptBody(BaseModel):
 @router.patch("/departments/{dept_id}")
 def update_department(dept_id: str, body: DeptBody,
                       db: OrmSession = Depends(db_session),
-                      user: User = Depends(require_admin)):
+                      user: User = Depends(require_council)):
     """改部门名/说明、指定部长。换届时用。"""
     d = db.get(Department, dept_id)
     if d is None:
@@ -165,7 +161,7 @@ def submit_check(activity_id: str, db: OrmSession = Depends(db_session),
 
 
 class SubmitBody(BaseModel):
-    department_id: str
+    department_id: str = ""      # 留空 = 沿用活动的归口部门
     note: str = ""
 
 
@@ -182,13 +178,12 @@ def submit(activity_id: str, body: SubmitBody,
         raise HTTPException(409, f"当前状态为「{act.label_status()}」，不能提交审批")
     from .staff_activities import ensure_ready_to_publish
     ensure_ready_to_publish(act)
-    dept = db.get(Department, body.department_id)
+    # 归口部门：这活动归哪个部门，就由那个部门的部长审。青协的人建活动时
+    # 已经按所在部门预填了，提交时可以改；发起方建的在这里选。
+    dept_id = body.department_id.strip() or act.approval_dept_id or ""
+    dept = db.get(Department, dept_id) if dept_id else None
     if dept is None:
-        raise HTTPException(400, "请选择审批部门")
-    # 自己部门的活动不能自己批；会长的活动没人能批，允许自批但留痕
-    if (user.has_role("qingxie") and user.department_id == dept.id
-            and not user.is_president()):
-        raise HTTPException(400, "不能选择自己所在的部门审批，请另选一个部门")
+        raise HTTPException(400, "请选择归口部门")
     head = _dept_head(db, dept.id)
     if head is None:
         raise HTTPException(400, f"「{dept.name}」还没有指定部长，请联系管理员")
@@ -221,7 +216,7 @@ class DecideBody(BaseModel):
 @router.post("/activities/{activity_id}/decide")
 def decide(activity_id: str, body: DecideBody,
            db: OrmSession = Depends(db_session),
-           user: User = Depends(current_user)):
+           user: User = Depends(require_manager)):
     """通过或驳回。通过后活动回到发起方手里，由他自己点发布。"""
     act = db.get(Activity, activity_id)
     if act is None:
@@ -234,12 +229,22 @@ def decide(activity_id: str, body: DecideBody,
     if not body.approve and len(comment) < 2:
         raise HTTPException(400, "驳回必须写明理由，发起方才知道改什么")
 
+    # 部长自己发起的活动归口自己部门、由自己审——允许，但流水里标明是本人
+    submit = (db.query(ApprovalEvent)
+              .filter(ApprovalEvent.activity_id == act.id,
+                      ApprovalEvent.kind == "submit")
+              .order_by(ApprovalEvent.created_at.desc()).first())
+    self_review = submit is not None and submit.actor_id == user.id
+    who = f"{user.name}·本人审批" if self_review else user.name
+    if self_review:
+        comment = f"【本人审批】{comment}" if comment else "【本人审批】"
+
     act.approval_comment = comment
     if body.approve:
         act.status = "approved"
         act.approved_at = now()
         _event(db, act, "approve", user, comment=comment)
-        summary = f"审批通过（{user.name}）" + (f"：{comment}" if comment else "")
+        summary = f"审批通过（{who}）" + (f"：{comment}" if comment else "")
         title, body_text = (
             f"审批通过｜{act.title}",
             f"「{act.title}」已通过校青协审批，现在可以在活动管理页点「发布」"
@@ -248,7 +253,7 @@ def decide(activity_id: str, body: DecideBody,
         act.status = "draft"
         act.approval_assignee_id = None
         _event(db, act, "reject", user, comment=comment)
-        summary = f"审批驳回（{user.name}）：{comment}"
+        summary = f"审批驳回（{who}）：{comment}"
         title, body_text = (
             f"审批未通过｜{act.title}",
             f"「{act.title}」未通过校青协审批。\n意见：{comment}\n"
@@ -274,8 +279,13 @@ class TransferBody(BaseModel):
 @router.post("/activities/{activity_id}/transfer-approval")
 def transfer(activity_id: str, body: TransferBody,
              db: OrmSession = Depends(db_session),
-             user: User = Depends(current_user)):
-    """把审批转交给别的部门或别的人。必须写理由，三方都会收到通知。"""
+             user: User = Depends(require_manager)):
+    """把审批转交给别的部门或别的人。必须写理由，三方都会收到通知。
+
+    转交审批就是改归口：转给哪个部门（或哪个部门的人），活动就归那个部门，
+    部长的活动列表、部门成员的可见范围都跟着变。转给会长团（没有部门）时
+    归口不动，只是换个人拍板。
+    """
     act = db.get(Activity, activity_id)
     if act is None:
         raise HTTPException(404, "活动不存在")
@@ -295,6 +305,8 @@ def transfer(activity_id: str, body: TransferBody,
             raise HTTPException(404, "该学号不存在")
         if not target.has_role("qingxie"):
             raise HTTPException(400, f"{target.name} 不是青协身份，不能审批")
+        if not target.can_write():
+            raise HTTPException(400, f"{target.name} 是部门成员（学习权限），不能审批")
         if target.department_id:
             dept = db.get(Department, target.department_id)
     elif body.department_id:
@@ -337,10 +349,10 @@ def transfer(activity_id: str, body: TransferBody,
 
 @router.get("/approvals")
 def my_approvals(db: OrmSession = Depends(db_session),
-                 user: User = Depends(require_manager)):
-    """待我审批的活动。会长与管理员看全部待审批。"""
+                 user: User = Depends(require_approver)):
+    """待我审批的活动。会长团与管理员看全部待审批，部长看自己名下的。"""
     q = db.query(Activity).filter(Activity.status == "pending")
-    if not (user.is_president() or user.is_admin()):
+    if not user.has_full_access():
         q = q.filter(Activity.approval_assignee_id == user.id)
     out = []
     for act in q.order_by(Activity.submitted_at).all():

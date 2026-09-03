@@ -64,10 +64,10 @@ router.beforeEach((to) => {
   if (!need || need()) return
 
   // 当前视角不够 → 若持有对应身份则自动切换视角放行
+  const adminOr = hasIdentity('admin') ? 'admin' : 'qingxie'
   const wanted = {
-    dashboard: 'admin', integrations: 'admin', roles: 'admin',
-    users: hasIdentity('admin') ? 'admin' : 'qingxie',
-    approvals: hasIdentity('admin') ? 'admin' : 'qingxie',
+    integrations: 'admin',
+    dashboard: adminOr, roles: adminOr, users: adminOr, approvals: adminOr,
     manage: hasIdentity('admin') ? 'admin' : hasIdentity('initiator') ? 'initiator' : 'qingxie',
     audit: hasIdentity('admin') ? 'admin' : hasIdentity('initiator') ? 'initiator' : 'qingxie',
   }[page]

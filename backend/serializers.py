@@ -348,6 +348,7 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
         "recruit_campuses": act.recruit_campuses or [],
         "recruit_stages": act.recruit_stages or [],
         "recruit_scope_text": recruit_scope_text(act),
+        "approval_dept_id": act.approval_dept_id or "",
         "volunteer_benefit": act.volunteer_benefit,
         # 培训/彩排不单列，它们挂在各自主场次的 attached 里
         "shifts": sorted([shift_out(db, g, user, manager=manager)

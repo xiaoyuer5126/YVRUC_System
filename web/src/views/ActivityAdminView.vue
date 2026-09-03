@@ -1823,7 +1823,9 @@ async function openSubmit() {
     await api.get(`/api/staff/activities/${activityId}/submit-check`)
   } catch { return }        // 错误提示由 api 层统一弹出
   depts.value = await api.get('/api/staff/departments')
-  submitDlg.value = { visible: true, deptId: '', note: '', busy: false }
+  // 青协的人建的活动已经按所在部门预填了归口，这里带出来，可以改
+  submitDlg.value = { visible: true, deptId: act.value?.approval_dept_id || '',
+                      note: '', busy: false }
 }
 
 async function doSubmit() {

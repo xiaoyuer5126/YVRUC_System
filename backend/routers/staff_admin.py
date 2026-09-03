@@ -18,7 +18,7 @@ from ..audit import ACTION_LABELS, log as audit_log
 from .. import config, violations
 from ..credit import apply_delta
 from ..database import db_session
-from ..deps import require_admin, require_manager, require_users_page
+from ..deps import (require_admin, require_archive_page, require_council, require_manager)
 from ..integrations import all_configs, save_config
 from ..models import (Activity, AuditLog, CheckinRecord, Enrollment,
                       HoursRecord, User, ViolationRecord, iso, now, uid)
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/staff", tags=["staff-admin"])
 
 @router.get("/overview")
 def overview(db: OrmSession = Depends(db_session),
-             user: User = Depends(require_admin)):
+             user: User = Depends(require_council)):
     t = now()
     total_students = (db.query(func.count(User.id))
                       .filter(User.user_type == "student").scalar() or 0)
@@ -143,7 +143,7 @@ def audit_logs(activity_id: str = "", target_type: str = "",
 @router.get("/users")
 def list_users(q: str = "", college: str = "",
                db: OrmSession = Depends(db_session),
-               user: User = Depends(require_users_page)):
+               user: User = Depends(require_archive_page)):
     query = db.query(User).filter(User.user_type == "student")
     if q:
         like = f"%{q.strip()}%"
@@ -167,7 +167,7 @@ class CreditBody(BaseModel):
 @router.post("/users/{user_id}/credit")
 def adjust_credit(user_id: str, body: CreditBody,
                   db: OrmSession = Depends(db_session),
-                  operator: User = Depends(require_users_page)):
+                  operator: User = Depends(require_archive_page)):
     u = db.get(User, user_id)
     if u is None:
         raise HTTPException(404, "用户不存在")
@@ -206,7 +206,7 @@ def _violation_context(db: OrmSession, body: ViolationPreviewBody):
 @router.post("/violations/preview")
 def preview_violation(body: ViolationPreviewBody,
                       db: OrmSession = Depends(db_session),
-                      operator: User = Depends(require_users_page)):
+                      operator: User = Depends(require_archive_page)):
     """按规范算出建议的限制准入，不落库。"""
     u, act = _violation_context(db, body)
     s = violations.suggest(db, u, act.type, body.kind, has_proof=body.has_proof)
@@ -228,7 +228,7 @@ class ViolationBody(ViolationPreviewBody):
 @router.post("/violations")
 def create_violation(body: ViolationBody,
                      db: OrmSession = Depends(db_session),
-                     operator: User = Depends(require_users_page)):
+                     operator: User = Depends(require_archive_page)):
     """登记一条违规并按确认后的口径落限制准入。"""
     u, act = _violation_context(db, body)
     if not body.detail.strip():
@@ -269,7 +269,7 @@ def create_violation(body: ViolationBody,
 
 @router.get("/users/{user_id}/violations")
 def list_violations(user_id: str, db: OrmSession = Depends(db_session),
-                    operator: User = Depends(require_users_page)):
+                    operator: User = Depends(require_archive_page)):
     rows = (db.query(ViolationRecord)
             .filter(ViolationRecord.user_id == user_id)
             .order_by(ViolationRecord.created_at.desc()).all())
@@ -292,7 +292,7 @@ class RestrictionBody(BaseModel):
 @router.post("/users/{user_id}/restriction")
 def set_restriction(user_id: str, body: RestrictionBody,
                     db: OrmSession = Depends(db_session),
-                    operator: User = Depends(require_users_page)):
+                    operator: User = Depends(require_archive_page)):
     """手动设置限制准入。违规登记走 /violations，这里用于纠正与撤销。"""
     u = db.get(User, user_id)
     if u is None:

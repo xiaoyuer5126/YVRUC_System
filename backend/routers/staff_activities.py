@@ -213,6 +213,10 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                    recruit_stages=_clean_scope(body.recruit_stages,
                                                config.STAGES, "学段"),
                    reg_start=reg_start, reg_end=reg_end,
+                   # 归口部门：青协的人建的活动归自己部门，部长从草稿期就看得到；
+                   # 会长团与发起方建的留空，提交审批时再选
+                   approval_dept_id=(user.department_id
+                                     if user.has_role("qingxie") else None),
                    created_by=user.id, status="draft")
     act.contacts = contacts
     db.add(act)
@@ -1119,6 +1123,9 @@ def list_managers(activity_id: str, db: OrmSession = Depends(db_session),
         "id": u.id, "name": u.name, "student_id": u.student_id,
         "college": u.college, "roles": u.roles or [],
         "role_label": u.active_role_label(),
+        "post_label": u.post_label() if u.post() else "",
+        # 部门成员在名单里只能看：界面上要标出来，别让人以为多了个能干活的
+        "is_trainee": u.is_trainee(),
         "is_creator": u.id == act.created_by,
     } for u in users if u]
 
@@ -1535,7 +1542,7 @@ def set_leader(enrollment_id: str, body: LeaderBody,
               target_id=enr.id, target_label=target.name,
               activity_id=enr.activity_id, summary=summary)
     db.commit()
-    # 取消之后不自动补人：组长只由管理者指定，空缺了就提醒他再指一位
+    # 组长只由管理者指定：空缺了提醒他再指一位
     if not body.is_leader:
         logic.on_leader_vacated(db, position.id)
         db.commit()

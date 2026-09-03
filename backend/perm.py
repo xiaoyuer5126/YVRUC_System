@@ -1,31 +1,55 @@
-"""活动级权限：多人共管。
+"""活动级权限：谁看得到、管得了哪个活动。
 
-  · 创建者自动成为管理者（created_by 仅作记录，不产生额外权限）；
-  · 管理者之间权限完全相同，可互相添加/移除（创建者不可被移除）；
-  · 被添加者必须持有 活动发起方/青协 身份；管理员无需添加，天然可见/可操作全部。
+  · 管理员、会长团：全部活动。
+  · 部长、部门成员：本部门（归口部门 = 自己的部门）的全部活动，加上自己
+    被加进共管名单的。部门成员只能看，写请求在 deps._guard_trainee 被拦。
+  · 部门骨干、活动发起方：只有自己被加进共管名单的。
+  · 共管名单：创建者自动进入（不可被移除）；管理者之间权限相同，可互相
+    添加/移除；被添加者必须持有 活动发起方/青协 身份。
 """
 from __future__ import annotations
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session as OrmSession
 
-from .models import ActivityManager, User, uid
+from .models import Activity, ActivityManager, User, uid
+
+
+def _dept_scoped(user: User) -> bool:
+    """按归口部门看活动的人：部长与部门成员。"""
+    return user.department_id is not None and user.post() in ("head", "member")
 
 
 def managed_activity_ids(db: OrmSession, user: User) -> list[str] | None:
-    """该用户可见的活动 id 列表；None = 不限（管理员）。"""
-    if user.is_admin():
+    """该用户可见的活动 id 列表；None = 不限。"""
+    if user.has_full_access():
         return None
-    rows = (db.query(ActivityManager.activity_id)
-            .filter(ActivityManager.user_id == user.id).all())
-    return [r[0] for r in rows]
+    ids = {r[0] for r in db.query(ActivityManager.activity_id)
+           .filter(ActivityManager.user_id == user.id).all()}
+    if _dept_scoped(user):
+        ids |= {r[0] for r in db.query(Activity.id)
+                .filter(Activity.approval_dept_id == user.department_id).all()}
+    return list(ids)
 
 
 def is_activity_manager(db: OrmSession, user: User, activity_id: str) -> bool:
-    if user.is_admin():
+    if user.has_full_access():
         return True
-    return db.query(ActivityManager).filter_by(
-        activity_id=activity_id, user_id=user.id).first() is not None
+    if db.query(ActivityManager).filter_by(
+            activity_id=activity_id, user_id=user.id).first() is not None:
+        return True
+    if _dept_scoped(user):
+        act = db.get(Activity, activity_id)
+        return act is not None and act.approval_dept_id == user.department_id
+    return False
+
+
+def writing_manager_ids(db: OrmSession, activity_id: str) -> list[str]:
+    """共管名单里**真能操作**的人。部门成员在名单里也只能看，不算数。"""
+    rows = (db.query(User)
+            .join(ActivityManager, ActivityManager.user_id == User.id)
+            .filter(ActivityManager.activity_id == activity_id).all())
+    return [u.id for u in rows if u.can_write()]
 
 
 def ensure_activity_manager(db: OrmSession, user: User, activity_id: str) -> None:

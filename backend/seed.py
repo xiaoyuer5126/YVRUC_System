@@ -93,8 +93,10 @@ def main() -> None:
             # 学号, 姓名, 类型, 身份
             ("2025001", "王砚秋", "teacher", ["admin", "qingxie"]),  # 管理员：见全部
             ("2025002", "李慕清", "teacher", ["initiator"]),          # 发起方：仅自己管理的活动
-            ("2025003", "张远航", "student", ["qingxie", "student"]), # 青协（学生类型）：会长
+            ("2025003", "张远航", "student", ["qingxie", "student"]), # 青协：会长团
             ("2025004", "周砚", "student", ["qingxie", "student"]),     # 青协：对外联络部部长
+            ("2025005", "林骁", "student", ["qingxie", "student"]),     # 青协：对外联络部骨干
+            ("2025006", "苏昀", "student", ["qingxie", "student"]),     # 青协：对外联络部成员（学习权限）
         ]
         users: dict[str, User] = {}
         for sid, name, utype, roles in staff_specs:
@@ -118,11 +120,14 @@ def main() -> None:
         from backend.routers.approvals import ensure_departments
         from backend.models import Department
         ensure_departments(db)
-        zhang.qingxie_post = "president"
+        zhang.qingxie_post = "council"
+        wang.qingxie_post = "council"      # 管理员同时在会长团
         liaison = (db.query(Department)
                    .filter(Department.name == "对外联络部").one())
-        users["2025004"].department_id = liaison.id
-        users["2025004"].qingxie_post = "head"
+        for sid, post in (("2025004", "head"), ("2025005", "core"),
+                          ("2025006", "member")):
+            users[sid].department_id = liaison.id
+            users[sid].qingxie_post = post
         db.commit()
 
         colleges = ["明理书院", "新闻学院", "法学院", "财政金融学院", "经济学院",

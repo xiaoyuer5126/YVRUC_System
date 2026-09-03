@@ -47,8 +47,8 @@
     <template v-if="isAdmin">
       <div class="section-title" style="margin-top:20px">部门与部长</div>
       <el-alert type="info" :closable="false" style="margin-bottom:10px">
-        部长是本部门活动的默认审批人。<b>没有部长的部门无法被选为审批部门</b>，
-        换届后记得来这里改。会长可以接管任何一条审批。
+        活动归口到哪个部门，就由那个部门的部长审。<b>没有部长的部门无法被选为归口部门</b>，
+        换届后记得来这里改。会长团可以接管任何一条审批。
       </el-alert>
       <el-table :data="depts" size="small">
         <el-table-column prop="name" label="部门" min-width="140" />
@@ -97,7 +97,7 @@
       <p class="dim" style="margin-top:0">{{ tr.row?.title }}</p>
       <el-form label-width="88px">
         <el-form-item label="转交给">
-          <el-select v-model="tr.deptId" placeholder="选择部门（转给该部门部长）"
+          <el-select v-model="tr.deptId" placeholder="选择部门（转给该部门部长，活动归口随之改为该部门）"
                      style="width:100%" clearable>
             <el-option v-for="d in depts" :key="d.id" :value="d.id"
                        :label="d.name + (d.head_name ? `（${d.head_name}）` : '（未设部长）')"
@@ -133,7 +133,10 @@ const depts = ref([])
 const loading = ref(false)
 const dlg = ref({ visible: false, row: null, approve: true, comment: '', busy: false })
 const hd = ref({ visible: false, row: null, studentId: '', busy: false })
-const isAdmin = computed(() => auth.activeIdentity === 'admin')
+// 部门与部长的维护：管理员或会长团
+const isAdmin = computed(() =>
+  auth.activeIdentity === 'admin'
+  || (auth.activeIdentity === 'qingxie' && auth.user?.qingxie_post === 'council'))
 
 function openHead(row) {
   hd.value = { visible: true, row, studentId: '', busy: false }

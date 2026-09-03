@@ -71,6 +71,11 @@
         </div>
       </el-aside>
       <el-main class="app-main">
+        <!-- 部门成员：按钮都在、都能点，只是最后一步不会保存。提示条常驻，
+             否则他点了保存没生效，会以为系统坏了 -->
+        <el-alert v-if="isTrainee()" type="warning" :closable="false" show-icon
+                  class="trainee-bar"
+                  title="你当前是部门成员（学习权限）：可以走完每一个流程，但提交时不会真正保存" />
         <router-view />
       </el-main>
     </el-container>
@@ -99,7 +104,7 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, Bell, Check, Fold } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { auth, canSee, clearAuth, setActiveIdentity, ROLE_LABELS } from '../store'
+import { auth, canSee, clearAuth, isTrainee, setActiveIdentity, ROLE_LABELS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import ProfileDialog from '../components/ProfileDialog.vue'
 import SideMenu from '../components/SideMenu.vue'
@@ -155,6 +160,7 @@ async function onCommand(cmd) {
 </script>
 
 <style scoped>
+.trainee-bar { margin-bottom: 12px; }
 /* 固定视口高度：侧边栏恒定满高，右侧内容独立滚动 */
 .app-root { height: 100vh; }
 .app-body { height: calc(100vh - 56px); }
