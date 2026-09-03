@@ -151,6 +151,8 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
     g = _get_group(db, shift_id)
     if g.activity_id != act.id:
         raise HTTPException(400, "场次不属于该活动")
+    if act.is_screened():
+        raise HTTPException(409, "本活动需填写报名表申请，由负责老师筛选后录取")
 
     _check_eligibility(db, user, act, g)
 
@@ -230,6 +232,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                             "enroll" if enr.status == "enrolled" else "waitlist")
 
         if enr.status == "enrolled":
+            enr.group_qr_seen = True          # 接口返回时就弹给本人看
             logic.sync_attached(db, enr)      # 培训/彩排连带报上
             extra = "".join(
                 f"\n{s.kind_label()}：{s.span_text()}"
@@ -259,6 +262,9 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         "is_leader": enr.is_leader,
         "message": ("报名成功！名额已锁定。" if enr.status == "enrolled"
                     else "名额已满，已为您加入候补队列（候补默认接受岗位调剂）。"),
+        # 报上了就把联络群给到本人；候补的等转正再给
+        "contact_group_qr": (act.contact_group_qr
+                             if enr.status == "enrolled" else ""),
     }
 
 
@@ -338,6 +344,8 @@ def cancel_enroll(enrollment_id: str,
     enr = db.get(Enrollment, enrollment_id)
     if enr is None or enr.user_id != user.id:
         raise HTTPException(404, "报名记录不存在")
+    if enr.status == "applied":
+        raise HTTPException(409, "申请中的活动请在活动页「撤回申请」")
     if enr.status == "cancelled":
         raise HTTPException(400, "该记录已退选")
     g = db.get(Shift, enr.shift_id)
@@ -426,10 +434,13 @@ def confirm_promotion(enrollment_id: str,
             raise HTTPException(409, "确认窗口已超时，名额已顺延")
         logic.confirm_promotion(db, enr, user)
         logic.record_change(db, user, enr, "promote")
+        enr.group_qr_seen = True          # 接口返回时就弹给本人看
         db.commit()
     st_name = ""
     if enr.position_id:
         st = db.get(Position, enr.position_id)
         st_name = f"岗位：{st.name}（{st.location}）"
+    act = db.get(Activity, enr.activity_id)
     return {"ok": True, "position_id": enr.position_id,
-            "message": f"确认成功，已恢复正式报名。{st_name}"}
+            "message": f"确认成功，已恢复正式报名。{st_name}",
+            "contact_group_qr": act.contact_group_qr}

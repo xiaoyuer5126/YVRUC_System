@@ -15,8 +15,7 @@ from .enroll_logic import (enroll_deadline, group_leader, group_needs_leader,
                            time_conflicts, unmet_requirements,
                            waitlist_position, waitlist_rows)
 from . import config
-from .models import (Activity, Attachment, AuditLog, Enrollment, Position,
-                     Shift, User, iso, now)
+from .models import (Activity, Application, Attachment, AuditLog, Enrollment, FormQuestion, Position, Shift, User, iso, now)
 
 
 def iso_of(dt):
@@ -101,9 +100,9 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
     span = act.time_span()
     ds_code, ds_label = display_status(act)
     return {
-        "id": act.id, "title": act.title, "type": act.type,
+        "id": act.id, "title": act.title, "recruit_mode": act.recruit_mode,
         "organizer": act.organizer,
-        "type_label": f"{act.type}类·{config.type_name(act.type)}", "status": act.status,
+        "recruit_label": act.recruit_label(), "status": act.status,
         "status_label": act.label_status(), "location": act.location,
         "intro": act.intro[:120], "cover_hue": act.cover_hue,
         "display_status": ds_code, "display_label": ds_label,
@@ -337,13 +336,42 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
     return out
 
 
+def application_out(db: OrmSession, act: Activity, user=None) -> dict:
+    """报名后筛选的活动：报名表题目，以及这个人自己的申请（没有则 None）。"""
+    questions = (db.query(FormQuestion)
+                 .filter(FormQuestion.activity_id == act.id)
+                 .order_by(FormQuestion.sort).all())
+    app = None
+    if user is not None:
+        app = (db.query(Application)
+               .filter(Application.activity_id == act.id,
+                       Application.user_id == user.id).first())
+    wanted = []
+    if app is not None:
+        rows = (db.query(Enrollment, Shift)
+                .join(Shift, Enrollment.shift_id == Shift.id)
+                .filter(Enrollment.activity_id == act.id,
+                        Enrollment.user_id == user.id,
+                        Shift.parent_id.is_(None))
+                .order_by(Shift.sort).all())
+        wanted = [{"shift_id": g.id, "shift_name": g.name, "status": e.status,
+                   "cancel_type": e.cancel_type} for e, g in rows]
+    return {
+        "questions": [q.out() for q in questions],
+        "mine": ({"id": app.id, "status": app.status,
+                  "status_label": app.status_label(),
+                  "answers": app.answers or {}, "wanted": wanted,
+                  "created_at": iso_of(app.created_at)}
+                 if app else None),
+    }
+
+
 def activity_detail(db: OrmSession, act: Activity, user=None,
                     include_logs: bool = True, *, manager: bool = False) -> dict:
     out = activity_brief(db, act)
     out.update({
         "intro": act.intro,
         "contact_info": act.contact_info,
-        "qa_group_qr": act.qa_group_qr or "",
         "volunteer_requirement": act.volunteer_requirement,
         "recruit_campuses": act.recruit_campuses or [],
         "recruit_stages": act.recruit_stages or [],
@@ -355,6 +383,11 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
                           for g in act.main_shifts()],
                          key=lambda x: x["start_time"]),
     })
+    # 联络群二维码不公开：志愿者报名成功后才弹给本人，管理者在后台能看
+    if manager:
+        out["contact_group_qr"] = act.contact_group_qr or ""
+    if act.is_screened():
+        out["application"] = application_out(db, act, user)
     if include_logs:
         logs = (db.query(AuditLog)
                 .filter(AuditLog.activity_id == act.id, AuditLog.visible.is_(True))

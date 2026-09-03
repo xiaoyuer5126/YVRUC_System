@@ -15,10 +15,10 @@ from conftest import ADMIN, login, student_row
 def live_group(client, db, admin, take_student):
     """一个正在进行的场次 + 一名已确认的志愿者。"""
     admin_user = db.query(User).filter(User.student_id == ADMIN).one()
-    act = Activity(id=uid("act"), title=f"签到测试 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"签到测试 {uid('t')}",
                    intro="x", location="集合点",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
-                   qa_group_qr="x", status="published",
+                   contact_group_qr="x", status="published",
                    reg_start=now() - timedelta(days=1),
                    reg_end=now() + timedelta(days=1),
                    created_by=admin_user.id)
@@ -86,7 +86,7 @@ def test_checkin_needs_login(client, live_group):
 def two_shift_act(client, db, admin):
     """一个活动 + 上午场（带岗位）+ 挂在它下面的赛前培训。"""
     admin_user = db.query(User).filter(User.student_id == ADMIN).one()
-    act = Activity(id=uid("act"), title=f"多场次签到 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"多场次签到 {uid('t')}",
                    intro="x", location="世纪馆", organizer="校青协",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
                    status="published", reg_start=now() - timedelta(days=1),

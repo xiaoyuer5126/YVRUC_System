@@ -75,11 +75,9 @@ export const canSee = {
 }
 
 // 颜色是前端的事；名称与释义以后端 /api/auth/constants 为准，别在这里抄第二份
-export const TYPE_COLORS = {
-  A: { label: 'A类·常规单次', color: '#67c23a' },
-  B: { label: 'B类·常规长期', color: '#409eff' },
-  C: { label: 'C类·大型校级', color: '#e6a23c' },
-  D: { label: 'D类·重大活动', color: '#f56c6c' },
+export const MODE_COLORS = {
+  instant: { color: '#67c23a' },     // 即选即得
+  screened: { color: '#409eff' },    // 报名后筛选
 }
 
 // 日期区间选择器的默认时刻：先点日期时，起止会预填成当天的第一刻与最后一刻，

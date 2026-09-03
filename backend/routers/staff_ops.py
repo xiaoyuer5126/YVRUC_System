@@ -418,7 +418,7 @@ def poster(activity_id: str, db: OrmSession = Depends(db_session),
     act = _act(db, activity_id)
     L: list[str] = [f"【{act.title}】志愿者招募",
                     f"主办：{act.organizer or '—'}",
-                    f"类型：{act.type}类·{config.type_name(act.type)}"]
+                    f"类型：{act.recruit_label()}"]
     span = act.time_span()
     if span:
         L.append(f"时间：{span[0]:%Y-%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}")

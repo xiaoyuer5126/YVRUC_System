@@ -1,4 +1,4 @@
-"""学生端「我的」：报名记录、消息通知、信用分、志愿时长。"""
+"""学生端「我的」：报名记录、消息通知、志愿时长。"""
 from __future__ import annotations
 
 import re
@@ -43,7 +43,8 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         CheckinRecord.shift_id == enr.shift_id).first()
     return {
         "id": enr.id,
-        "activity": {"id": act.id, "title": act.title, "type": act.type,
+        "activity": {"id": act.id, "title": act.title,
+                     "recruit_mode": act.recruit_mode,
                      "status": act.status, "location": act.location},
         "shift": {"id": g.id, "name": g.name, "time_text": g.span_text(),
                   "start_time": iso_of(g.start_time),
@@ -66,6 +67,12 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "confirm_deadline": iso_of(enr.confirm_deadline),
         "checked_in": rec is not None,
         "checkout_at": iso(rec.checkout_at) if rec else None,
+        # 联络群二维码只给已报上的人；没弹过的由前端弹一次并回写 seen。
+        # 培训/彩排是随主场次带上的，不单独弹
+        "contact_group_qr": (act.contact_group_qr
+                             if enr.status == "enrolled" else ""),
+        "group_qr_pending": (enr.status == "enrolled" and not enr.group_qr_seen
+                             and not g.is_attached()),
     }
 
 
@@ -83,10 +90,31 @@ def my_enrollments(db: OrmSession = Depends(db_session),
     for r in rows:
         if r.shift_id in seen and r.status == "cancelled":
             continue
+        # 筛选时录到了别的场次：那几条意向记录没有信息量，不列
+        if r.cancel_type == "not_chosen":
+            continue
         if r.status != "cancelled":
             seen.add(r.shift_id)
         out.append(_enrollment_row(db, r))
     return out
+
+
+@router.post("/enrollments/{enrollment_id}/group-qr-seen")
+def group_qr_seen(enrollment_id: str, db: OrmSession = Depends(db_session),
+                  user=Depends(current_user)):
+    """联络群二维码弹过一次了，之后只在「我的报名」里按需看。
+
+    一个活动一个群，按活动标记：同一活动下的其他场次不再弹。
+    """
+    enr = db.get(Enrollment, enrollment_id)
+    if enr is None or enr.user_id != user.id:
+        raise HTTPException(404, "报名记录不存在")
+    (db.query(Enrollment)
+     .filter(Enrollment.activity_id == enr.activity_id,
+             Enrollment.user_id == user.id)
+     .update({"group_qr_seen": True}, synchronize_session=False))
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/enrollments/{enrollment_id}/team")

@@ -22,9 +22,7 @@ from sqlalchemy import text
 from . import config
 from .database import SessionLocal, engine, init_db
 from .qrcodes import qr_svg
-from .models import (Activity, ViolationRecord, ActivityManager, AuditLog, CheckinRecord,
-                     CheckinTask, Enrollment, HoursRecord,
-                     Notification, Shift, Position, User, uid)
+from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, User, ViolationRecord, uid)
 
 random.seed(42)
 
@@ -54,10 +52,10 @@ def fake_id_card(birth: str, seq: int) -> str:
 
 
 def demo_qr(label: str) -> str:
-    """演示用答疑群二维码（内联 SVG，不依赖外部文件）。
+    """演示用志愿者联络群二维码（内联 SVG，不依赖外部文件）。
 
-    创建活动时二维码是必填项，种子数据不给的话活动详情页就是一片空白，
-    看起来像功能没做。
+    创建活动时二维码是必填项，报名成功后要弹给志愿者看，种子数据不给的话
+    弹窗就是一片空白，看起来像功能没做。
     """
     import base64
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160">'
@@ -200,14 +198,14 @@ def main() -> None:
 
         # ---------- 活动1：运动会（报名中·直接定二级） ----------
         sport = Activity(id=uid("act"), title="校运动会开幕式志愿服务", organizer="校青年志愿者协会",
-                         type="C", cover_hue=350,
+                         recruit_mode="instant", cover_hue=350,
                          intro="全校秋季运动会开幕式需要大量志愿者支持，涉及引导、检录、礼仪、医疗辅助等岗位。"
-                               "请仔细核对时间后报名；开始前24小时内退选将扣除信用分。",
+                               "请仔细核对时间后报名；如无法参加请提前 24 小时退选。",
                          location="世纪馆田径场",
                          contact_info="青协项目部 李慕清 138xxxx0002（微信同）",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"},
                                    {"name": "王砚秋", "phone": "13950010000"}],
-                         qa_group_qr=demo_qr("RUCVA-QA-GROUP"),
+                         contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
                          status="published",
                          reg_start=dt(days=-3), reg_end=dt(days=2),
                          created_by=wang.id, created_at=dt(days=-4))
@@ -290,13 +288,13 @@ def main() -> None:
 
         # ---------- 活动2：图书整理周（报名中·二级待定） ----------
         book = Activity(id=uid("act"), title="图书馆图书整理周·周六专场", organizer="图书馆",
-                        type="B", cover_hue=210,
+                        recruit_mode="instant", cover_hue=210,
                         intro="图书馆馆藏调整需要大批志愿者参与图书下架、搬运与重新上架。"
                               "具体分工将在报名截止后由青协统一排班公布。",
                         location="图书馆（明德楼）",
                         contact_info="青协项目部 lib-vol@ruc.edu.cn",
                         contacts=[{"name": "张远航", "phone": "13950030000"}],
-                        qa_group_qr=demo_qr("RUCVA-QA-GROUP"),
+                        contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
                         status="published",
                         reg_start=dt(days=-2), reg_end=dt(days=3),
                         created_by=wang.id, created_at=dt(days=-3))
@@ -332,12 +330,12 @@ def main() -> None:
 
         # ---------- 活动3：招生咨询会（报名中·仅一级） ----------
         fair = Activity(id=uid("act"), title="校园开放日·招生咨询志愿讲解", organizer="本科生招生办公室",
-                        type="A", cover_hue=150,
+                        recruit_mode="instant", cover_hue=150,
                         intro="面向来访考生家长的咨询引导志愿服务。岗位简单，无需分岗位，"
                               "报名即锁定时段。",
                         location="明德广场", contact_info="招办协同 张远航",
                         contacts=[{"name": "张远航", "phone": "13950030000"}],
-                        qa_group_qr=demo_qr("RUCVA-QA-GROUP"),
+                        contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
                         status="published", reg_start=dt(days=-1),
                         reg_end=dt(days=4), created_by=zhang.id,
                         created_at=dt(days=-2))
@@ -374,13 +372,13 @@ def main() -> None:
 
         # ---------- 活动4：校庆晚会当日保障（已截止·签到进行中·今天全天） ----------
         gala = Activity(id=uid("act"), title="校庆文艺晚会·当日保障", organizer="校团委",
-                        type="D", cover_hue=280,
+                        recruit_mode="instant", cover_hue=280,
                         intro="校庆晚会当天全流程保障，已截止报名。请按分配岗位准时到岗并扫码签到。",
                         location="明德堂",
                         contact_info="青协办公室 张远航",
                         contacts=[{"name": "王砚秋", "phone": "13950010000"},
                                   {"name": "张远航", "phone": "13950030000"}],
-                        qa_group_qr=demo_qr("RUCVA-QA-GROUP"),
+                        contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
                         status="closed", reg_start=dt(days=-6), reg_end=dt(days=-2),
                         created_by=zhang.id, created_at=dt(days=-7))
         db.add(gala)
@@ -424,13 +422,13 @@ def main() -> None:
 
         # ---------- 活动5：敬老院（已结束·仅一级·时长已回传） ----------
         elder = Activity(id=uid("act"), title="社区敬老院陪伴服务（秋）", organizer="文学院青年志愿者协会",
-                         type="A", cover_hue=30,
+                         recruit_mode="instant", cover_hue=30,
                          intro="每周定期前往附近社区敬老院陪伴老人，聊天读报、组织小活动。"
                                "岗位简单，仅按场次报名。",
                          location="海淀街道敬老院",
                          contact_info="青协项目部 李慕清",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
-                         qa_group_qr=demo_qr("RUCVA-QA-GROUP"),
+                         contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
                          status="finished", reg_start=dt(days=-20),
                          reg_end=dt(days=-12), created_by=limu.id,
                          created_at=dt(days=-22))
@@ -467,6 +465,64 @@ def main() -> None:
 
         db.commit()
 
+        # ---------- 活动6：迎新周（报名中·报名后筛选） ----------
+        # 志愿者填一份表、勾意向场次；截止后由管理者录取并安排岗位
+        fresh = Activity(id=uid("act"), title="新生迎新周·志愿者选拔",
+                         organizer="校青年志愿者协会",
+                         recruit_mode="screened", cover_hue=190,
+                         intro="迎新周需要一批能独立带队的志愿者，请如实填写报名表；"
+                               "报名截止后由青协统一筛选，录取结果通过企业微信通知。",
+                         location="东门迎新广场",
+                         contact_info="青协项目部 李慕清",
+                         contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
+                         contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
+                         status="published",
+                         reg_start=dt(days=-2), reg_end=dt(days=5),
+                         created_by=limu.id, created_at=dt(days=-3))
+        db.add(fresh)
+        db.flush()
+        fresh_shifts = []
+        for i, (name, h0, h1) in enumerate([("报到日上午", 8, 12), ("报到日下午", 13, 17)]):
+            g = Shift(id=uid("g"), activity_id=fresh.id, name=name,
+                      start_time=dt(days=8, base=t0.replace(hour=h0, minute=0)),
+                      end_time=dt(days=8, base=t0.replace(hour=h1, minute=0)),
+                      mode="assign", sort=i, location="东门迎新广场")
+            db.add(g)
+            db.flush()
+            db.add(Position(id=uid("p"), shift_id=g.id, name="待分配",
+                            is_placeholder=True, quota=12, waitlist_quota=3,
+                            sort=-1, location="东门迎新广场",
+                            service_task="录取后由负责老师安排具体岗位",
+                            training_note="到岗后统一讲解"))
+            fresh_shifts.append(g)
+        db.flush()
+        q_exp = FormQuestion(id=uid("q"), activity_id=fresh.id, kind="single",
+                             title="是否参加过迎新志愿服务",
+                             options=["参加过", "没有参加过"], sort=0)
+        q_job = FormQuestion(id=uid("q"), activity_id=fresh.id, kind="multi",
+                             title="可承担的工作（可多选）",
+                             options=["引导带路", "行李搬运", "报到登记", "外语接待"], sort=1)
+        q_intro = FormQuestion(id=uid("q"), activity_id=fresh.id, kind="text",
+                               title="一句话介绍自己", sort=2)
+        q_file = FormQuestion(id=uid("q"), activity_id=fresh.id, kind="file",
+                              title="相关证明材料（选填）", required=False, sort=3)
+        db.add_all([q_exp, q_job, q_intro, q_file])
+        db.flush()
+        for i, u in enumerate(students[28:34]):
+            wanted = fresh_shifts if i % 3 == 0 else [fresh_shifts[i % 2]]
+            db.add(Application(id=uid("app"), activity_id=fresh.id, user_id=u.id,
+                               answers={q_exp.id: "参加过" if i % 2 else "没有参加过",
+                                        q_job.id: ["引导带路", "报到登记"][: 1 + i % 2],
+                                        q_intro.id: f"我是{u.college}的{u.name}，"
+                                                    f"熟悉校园，愿意全程参与。"},
+                               created_at=dt(days=-1, minutes=i * 40)))
+            for g in wanted:
+                db.add(Enrollment(id=uid("enr"), activity_id=fresh.id,
+                                  shift_id=g.id, user_id=u.id, status="applied",
+                                  source="self",
+                                  joined_at=dt(days=-1, minutes=i * 40)))
+        db.commit()
+
         # ---------- 活动管理者（创建者自动成为管理者，另配多人共管） ----------
         acts_by_title = {a.title: a for a in db.query(Activity).all()}
         mgr_plan = [
@@ -475,6 +531,7 @@ def main() -> None:
             ("校园开放日·招生咨询志愿讲解", [zhang]),
             ("校庆文艺晚会·当日保障", [zhang]),
             ("社区敬老院陪伴服务（秋）", [limu]),
+            ("新生迎新周·志愿者选拔", [limu, wang]),
         ]
         for title, mgrs in mgr_plan:
             act = acts_by_title[title]

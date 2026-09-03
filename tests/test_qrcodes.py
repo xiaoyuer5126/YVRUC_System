@@ -24,7 +24,7 @@ PUBLIC = "https://v.ruc.edu.cn"
 def qr_activity(client, admin, db):
     """一个已发布的活动 + 一个场次，用来取三种 token。"""
     admin_user = db.query(User).filter(User.student_id == ADMIN).one()
-    act = Activity(id=uid("act"), title=f"二维码测试 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"二维码测试 {uid('t')}",
                    intro="x", location="世纪馆", organizer="校青协",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
                    status="published", reg_start=now() - timedelta(days=1),

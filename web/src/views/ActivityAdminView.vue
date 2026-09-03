@@ -89,11 +89,19 @@
         <template #label>岗位设置
           <el-badge v-if="treeAlerts.length" value="!" type="danger" />
         </template>
-        <el-alert type="info" :closable="false" style="margin-bottom:12px">
+        <el-alert v-if="act.recruit_mode === 'screened'" type="info" :closable="false"
+                  style="margin-bottom:12px">
+          报名后筛选：志愿者填报名表、勾意向场次，报名截止后你在「志愿者管理」里录取。
+          场次一律<b>截止后统一分配</b>，录取的人先落在「待分配」，再排进具体岗位。
+        </el-alert>
+        <el-alert v-else type="info" :closable="false" style="margin-bottom:12px">
           场次管时间，岗位管具体的事，同场次的岗位互斥（一人只占一个）。
           <b>报名即选岗位</b>：名额与候补在各岗位上，发布前建好。
           <b>截止后统一分配</b>：名额记在场次上，岗位等报名截止后再建。
         </el-alert>
+        <FormBuilder v-if="act.recruit_mode === 'screened'" :key="act.status"
+                     :activity-id="act.id" :editable="!isPublic"
+                     style="margin-bottom:12px" />
         <!-- 已结束的活动是终态：时长按当时的岗位与名单算过并报送了，
              再改就跟报出去的账对不上，连「调整岗位」的入口都不给 -->
         <el-alert v-if="act.status === 'finished'" type="info" show-icon
@@ -291,6 +299,11 @@
           </el-button>
           <span class="dim">发给本活动已报名的志愿者</span>
         </div>
+
+        <!-- 报名后筛选：先录取，录取的人才进下面的名单 -->
+        <ApplicationList v-if="act.recruit_mode === 'screened'" :activity-id="act.id"
+                         style="margin-bottom:14px"
+                         @archive="openArchive" @changed="loadAll" />
 
         <template v-if="currentShift">
           <!-- 已报名名单：满宽；动作按钮都在这一行 -->
@@ -802,12 +815,18 @@
       <el-form label-width="100px">
         <el-form-item label="名称" required><el-input v-model="groupForm.name" placeholder="如：上午场" /></el-form-item>
         <el-form-item label="场次模式" required>
-          <el-radio-group v-model="groupForm.mode">
+          <!-- 报名后筛选：新场次一律统一分配，录取的人先落「待分配」；
+               录取完再像别的场次一样改回「报名即选岗位」建真实岗位 -->
+          <el-radio-group v-if="!screenedNew" v-model="groupForm.mode">
             <el-radio-button value="pick">报名即选岗位</el-radio-button>
             <el-radio-button value="assign">截止后统一分配</el-radio-button>
           </el-radio-group>
           <div class="dim" style="margin-top:4px;line-height:1.7">
-            <template v-if="groupForm.mode === 'pick'">
+            <template v-if="screenedNew">
+              报名后筛选的活动：志愿者只勾意向场次，录取的人先落在<b>「待分配」</b>上，
+              名额记在它头上；录取完把本场次改回「报名即选岗位」，建好真实岗位再一键分配。
+            </template>
+            <template v-else-if="groupForm.mode === 'pick'">
               学生报名时自己挑岗位；<b>名额与候补都在各个岗位上设置</b>，这里不设总人数。
             </template>
             <template v-else>
@@ -1166,7 +1185,7 @@
 
     <!-- 基本信息编辑 -->
     <el-dialog v-model="editBase" title="编辑活动基本信息" width="620">
-      <ActivityForm v-model="baseForm" v-model:range="baseRange" :types="types" />
+      <ActivityForm v-model="baseForm" v-model:range="baseRange" :modes="modes" />
       <template #footer>
         <el-button @click="editBase = false">取消</el-button>
         <el-button type="primary" :loading="savingBase" @click="saveBase">保存并通知变更</el-button>
@@ -1189,6 +1208,8 @@ import DataCards from '../components/DataCards.vue'
 import ActivityForm from '../components/ActivityForm.vue'
 import ArchiveDrawer from '../components/ArchiveDrawer.vue'
 import ViolationDialog from '../components/ViolationDialog.vue'
+import FormBuilder from '../components/FormBuilder.vue'
+import ApplicationList from '../components/ApplicationList.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'
 import { DAY_END, auth } from '../store'
@@ -1201,7 +1222,7 @@ const tab = ref(String(route.query.tab || 'tree'))   // 支持 ?tab=roster 直�
 // 都没有，名单、签到、马甲、导出、签收全是空页
 const isPublic = computed(() =>
   ['published', 'closed', 'finished'].includes(act.value?.status))
-const types = ref({})
+const modes = ref({})
 const colleges = ref([])
 const campuses = ref([])
 const stages = ref([])
@@ -1483,10 +1504,14 @@ function openShift(g) {
     waitlist_quota: g.waitlist_quota ?? 3,
     campusReq: g.requirement_tags?.校区 || [],
     stageReq: g.requirement_tags?.学段 || [],
-  } : { name: '', start_time: '', end_time: '', capacity: 10, mode: 'pick', note: '',
+  } : { name: '', start_time: '', end_time: '', capacity: 10, note: '',
+        mode: act.value.recruit_mode === 'screened' ? 'assign' : 'pick',
         waitlist_quota: 3, campusReq: [], stageReq: [] }
   shiftDlg.value.visible = true
 }
+// 报名后筛选的活动新建场次：模式没得选，一律统一分配
+const screenedNew = computed(
+  () => act.value?.recruit_mode === 'screened' && !shiftDlg.value.editing)
 /** 切模式的后果说明。反向切（pick → assign）只在没人报名时允许，
  *  有人之后后端直接 409——那会作废他们已经选定的岗位。 */
 const modeSwitchCost = computed(() => {
@@ -1757,7 +1782,7 @@ async function delStation(st) {
 onMounted(async () => {
   activityId = route.params.id
   const c = await api.get('/api/auth/constants')
-  types.value = c.activity_types
+  modes.value = c.recruit_modes
   colleges.value = c.colleges
   campuses.value = c.campuses || []
   stages.value = c.stages || []

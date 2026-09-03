@@ -30,6 +30,16 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "已加入候补｜{activity}",
         "「{activity}」· {shift} 名额已满，您已加入候补队列，当前第 {pos} 位。"
         "\n有名额释放时将按顺序通知您确认。"),
+    "application_accepted": (
+        "录取通知｜{activity}",
+        "恭喜！您已被「{activity}」录取，安排在 {shift}（{time}）。"
+        "\n具体岗位以负责老师后续分配为准。请到「我的报名」查看联络群二维码，"
+        "入群后请把群昵称改为「姓名+电话」。"),
+    # 措辞留余地：这一次没排上不代表什么，也不留任何记录
+    "application_rejected": (
+        "报名结果｜{activity}",
+        "感谢您报名「{activity}」。本次名额有限，暂未能安排您参加，"
+        "期待下次活动再见。"),
     "waitlist_promoted": (
         "候补转正待确认｜{activity}",
         "「{activity}」· {shift} 有名额释放，您已按候补顺序转正！\n"

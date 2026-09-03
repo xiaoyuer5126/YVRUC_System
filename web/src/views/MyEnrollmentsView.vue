@@ -48,10 +48,14 @@
           <el-button size="small" @click="$router.push('/activity/' + row.activity.id)">
             查看活动
           </el-button>
+          <el-button v-if="row.contact_group_qr" size="small" plain
+                     @click="showQr(row)">查看联络群</el-button>
           <el-button v-if="row.is_leader" size="small" type="warning" plain
                      @click="openTeam(row)">组员名单</el-button>
           <el-button v-if="row.status === 'pending_confirm'" size="small" type="primary"
                      @click="confirm(row)">确认转正</el-button>
+          <el-button v-else-if="row.status === 'applied'" size="small" type="danger" plain
+                     @click="withdraw(row)">撤回申请</el-button>
           <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached"
                      size="small" type="danger" plain @click="cancel(row)">
             {{ row.status === 'waitlisted' ? '退出候补' : '退选' }}
@@ -113,13 +117,17 @@
           <span v-else class="dim">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="150" fixed="right">
+      <el-table-column label="操作" width="230" fixed="right">
         <template #default="{ row }">
           <el-button size="small" @click="$router.push('/activity/' + row.activity.id)">查看</el-button>
+          <el-button v-if="row.contact_group_qr" size="small" plain
+                     @click="showQr(row)">联络群</el-button>
           <el-button v-if="row.is_leader" size="small" type="warning" plain
                      @click="openTeam(row)">组员</el-button>
           <el-button v-if="row.status === 'pending_confirm'" size="small" type="primary"
                      @click="confirm(row)">确认</el-button>
+          <el-button v-else-if="row.status === 'applied'" size="small" type="danger" plain
+                     @click="withdraw(row)">撤回申请</el-button>
           <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached"
                      size="small" type="danger" plain @click="cancel(row)">
             {{ row.status === 'waitlisted' ? '退出候补' : '退选' }}
@@ -135,6 +143,8 @@
         并记一次临近退选。请尽早决定，把位子留给等着的同学。
       </p>
     </el-alert>
+
+    <GroupQrDialog ref="groupQr" />
 
     <el-dialog v-model="teamDlg.visible" :title="'组员名单 · ' + (teamDlg.data?.scope || '')"
                width="560">
@@ -175,12 +185,18 @@ import { api } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import EnrollStatusTag from '../components/EnrollStatusTag.vue'
 import CheckinStatusTag from '../components/CheckinStatusTag.vue'
+import GroupQrDialog from '../components/GroupQrDialog.vue'
 import DataCards from '../components/DataCards.vue'
 
 const narrow = useNarrow()
 const rows = ref([])
 const loading = ref(false)
 const teamDlg = ref({ visible: false, data: null })
+const groupQr = ref(null)
+
+function showQr(row) {
+  groupQr.value.open({ qr: row.contact_group_qr, title: row.activity.title })
+}
 
 // 组长看本组组员的联系方式。范围是同一岗位组，后端每次查看都留痕。
 async function openTeam(row) {
@@ -196,8 +212,21 @@ function isActive(r) {
 async function load() {
   loading.value = true
   try { rows.value = await api.get('/api/me/enrollments') } finally { loading.value = false }
+  // 候补转正/录取之后第一次进来：联络群二维码弹一次，弹过就记下
+  const pending = rows.value.find(r => r.group_qr_pending)
+  if (pending) {
+    groupQr.value.open({ qr: pending.contact_group_qr, title: pending.activity.title,
+                         enrollmentId: pending.id })
+  }
 }
 onMounted(load)
+
+async function withdraw(row) {
+  await ElMessageBox.confirm('撤回后可以重新申请。确定撤回吗？', '撤回申请', { type: 'warning' })
+  await api.del(`/api/activities/${row.activity.id}/apply`)
+  ElMessage.success('已撤回申请')
+  load()
+}
 
 async function confirm(row) {
   const d = await api.post(`/api/activities/enrollments/${row.id}/confirm-promotion`)

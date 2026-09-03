@@ -117,10 +117,10 @@ def open_group(db):
         start = timedelta(days=day_offset if day_offset is not None
                           else next(seq), hours=start_in_hours)
         admin = db.query(User).filter(User.student_id == ADMIN).one()
-        act = Activity(id=uid("act"), title=f"测试活动 {uid('t')}", type="A",
+        act = Activity(id=uid("act"), title=f"测试活动 {uid('t')}",
                        intro="用例生成", location="测试地点",
                        contacts=[{"name": "测试", "phone": "13900000000"}],
-                       qa_group_qr="x", status="published",
+                       contact_group_qr="x", status="published",
                        reg_start=now() - timedelta(days=1),
                        reg_end=now() + timedelta(days=365),
                        created_by=admin.id)
@@ -212,10 +212,10 @@ def make_enrolled_activity(db, take_student):
                                 Position, Shift, now, uid)
 
     admin_user = student_row(db, ADMIN)
-    act = Activity(id=uid("act"), title=f"通知测试活动 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"通知测试活动 {uid('t')}",
                    intro="x", location="世纪馆",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
-                   qa_group_qr="x", status="published",
+                   contact_group_qr="x", status="published",
                    reg_start=now() - timedelta(days=1),
                    reg_end=now() + timedelta(days=2), created_by=admin_user.id)
     db.add(act)

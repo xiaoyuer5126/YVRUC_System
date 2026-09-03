@@ -131,7 +131,7 @@ def me(user: User = Depends(current_user)):
 def constants(user: User = Depends(current_user)):
     from ..integrations import DEFAULTS
     return {
-        "activity_types": config.ACTIVITY_TYPES,
+        "recruit_modes": config.RECRUIT_MODES,
         "violation_kinds": ViolationRecord.KINDS,
         "colleges": config.COLLEGES,
         "campuses": config.CAMPUSES,

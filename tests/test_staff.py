@@ -15,10 +15,10 @@ from conftest import (ADMIN, POSITION_TEXT, QINGXIE, approve, editing,
 @pytest.fixture
 def draft_activity(db):
     admin = db.query(User).filter(User.student_id == ADMIN).one()
-    act = Activity(id=uid("act"), title="尚未发布的草稿活动", type="A",
+    act = Activity(id=uid("act"), title="尚未发布的草稿活动",
                    intro="筹备中", location="待定",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
-                   qa_group_qr="x", status="draft",
+                   contact_group_qr="x", status="draft",
                    reg_start=now(), reg_end=now() + timedelta(days=3),
                    created_by=admin.id)
     db.add(act)
@@ -62,10 +62,10 @@ def test_non_manager_cannot_touch_others_activity(client, initiator,
 def assigned_group(db):
     """一个二级待定的场次，两个岗位，两个已确认的人。"""
     admin = db.query(User).filter(User.student_id == ADMIN).one()
-    act = Activity(id=uid("act"), title=f"分配测试 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"分配测试 {uid('t')}",
                    intro="x", location="x",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
-                   qa_group_qr="x", status="closed",
+                   contact_group_qr="x", status="closed",
                    reg_start=now() - timedelta(days=2), reg_end=now(),
                    created_by=admin.id)
     db.add(act)
@@ -158,10 +158,10 @@ def test_walkin_needs_force_when_group_is_full(client, admin, db,
 def test_unchecked_out_hours_need_review(client, admin, db, take_student):
     """扫码即走的人不能和全程服务的人一样自动拿满时长。"""
     admin_user = db.query(User).filter(User.student_id == ADMIN).one()
-    act = Activity(id=uid("act"), title=f"时长测试 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"时长测试 {uid('t')}",
                    intro="x", location="x",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
-                   qa_group_qr="x", status="finished",
+                   contact_group_qr="x", status="finished",
                    reg_start=now() - timedelta(days=9),
                    reg_end=now() - timedelta(days=8),
                    created_by=admin_user.id)
@@ -228,8 +228,13 @@ def test_copy_activity_shifts_times_and_drops_enrollments(
                       joined_at=now()))
     db.commit()
 
+    # 新活动新群：不传二维码不给复制
     r = client.post(f"/api/staff/activities/{act.id}/copy", headers=admin,
                     json={"shift_days": 7, "title": "复制出来的活动"})
+    assert r.status_code == 400 and "联络群" in r.json()["detail"]
+    r = client.post(f"/api/staff/activities/{act.id}/copy", headers=admin,
+                    json={"shift_days": 7, "title": "复制出来的活动",
+                          "contact_group_qr": "data:new"})
     assert r.status_code == 200
     new_id = r.json()["id"]
 
@@ -333,23 +338,31 @@ def test_没人报名时可以切回统一分配(client, admin, db, assigned_gro
     assert holder is not None and holder.quota == 12
 
 
-def test_答疑群二维码非必填(client, admin):
-    """群二维码是选填：不是每个活动都建群。"""
+def test_联络群二维码必填且不公开(client, admin, take_student):
+    """每场活动一个联络群：建活动就要传二维码；详情页不放，报名成功才给本人。"""
+    body = {"title": "无群活动", "organizer": "校青协", "intro": "x",
+            "location": "世纪馆",
+            "contacts": [{"name": "王", "phone": "13900000000"}],
+            "reg_start": (now() - timedelta(days=1)).isoformat(),
+            "reg_end": (now() + timedelta(days=1)).isoformat()}
+    r = client.post("/api/staff/activities", headers=admin, json=body)
+    assert r.status_code == 400 and "联络群" in r.json()["detail"]
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"title": "无群活动", "organizer": "校青协", "type": "A", "intro": "x",
-                          "location": "世纪馆",
-                          "contacts": [{"name": "王", "phone": "13900000000"}],
-                          "reg_start": (now() - timedelta(days=1)).isoformat(),
-                          "reg_end": (now() + timedelta(days=1)).isoformat()})
+                    json={**body, "contact_group_qr": "data:qr"})
     assert r.status_code == 200, r.text
-    d = client.get(f"/api/activities/{r.json()['id']}", headers=admin).json()
-    assert d["qa_group_qr"] == ""
+    act_id = r.json()["id"]
+    assert client.get(f"/api/activities/{act_id}",
+                      headers=admin).json()["contact_group_qr"] == "data:qr"
+    # 改成空也不行
+    r = client.patch(f"/api/staff/activities/{act_id}", headers=admin,
+                     json={"contact_group_qr": ""})
+    assert r.status_code == 400
 
 
 def test_没有岗位的场次不能发布(client, admin, db):
     """pick 模式没岗位就是没名额，发出去学生一个都报不了。"""
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"title": "空场次活动", "organizer": "校青协", "type": "A", "intro": "x",
+                    json={"contact_group_qr": "x", "title": "空场次活动", "organizer": "校青协", "intro": "x",
                           "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
@@ -383,7 +396,7 @@ def test_恢复报名必须重设截止时间(client, admin, db, take_student):
     from backend.models import Activity, ActivityManager
 
     admin_user = db.query(User).filter(User.student_id == ADMIN).one()
-    act = Activity(id=uid("act"), title=f"恢复报名 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"恢复报名 {uid('t')}",
                    intro="x", location="x", organizer="校青协",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
                    status="closed", reg_start=now() - timedelta(days=3),
@@ -425,7 +438,7 @@ def test_场次都开过了就不能恢复报名(client, admin, db):
     from backend.models import Activity, ActivityManager
 
     admin_user = db.query(User).filter(User.student_id == ADMIN).one()
-    act = Activity(id=uid("act"), title=f"已开始 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"已开始 {uid('t')}",
                    intro="x", location="x", organizer="校青协",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
                    status="closed", reg_start=now() - timedelta(days=3),
@@ -485,8 +498,8 @@ def test_删除草稿要连带清干净引用(client, admin, db):
     from backend.models import ActivityManager, ApprovalEvent
 
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"title": f"待删草稿 {uid('t')}", "organizer": "校青协",
-                          "type": "A", "intro": "x", "location": "x",
+                    json={"contact_group_qr": "x", "title": f"待删草稿 {uid('t')}", "organizer": "校青协",
+                          "intro": "x", "location": "x",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
                           "reg_end": (now() + timedelta(days=1)).isoformat()})

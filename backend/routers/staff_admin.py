@@ -149,7 +149,11 @@ def _archive(db: OrmSession, u: User) -> dict:
     rows = (db.query(Enrollment, Activity, Shift)
             .join(Activity, Enrollment.activity_id == Activity.id)
             .join(Shift, Enrollment.shift_id == Shift.id)
-            .filter(Enrollment.user_id == u.id, Shift.parent_id.is_(None))
+            .filter(Enrollment.user_id == u.id, Shift.parent_id.is_(None),
+                    # 筛选没录上、录到了别的场次、自己撤回的申请都不是经历，
+                    # 档案里不留
+                    Enrollment.cancel_type.notin_(
+                        ["rejected", "not_chosen", "withdrawn"]))
             .order_by(Shift.start_time.desc()).all())
     checked = {r[0] for r in db.query(CheckinRecord.shift_id)
                .filter(CheckinRecord.user_id == u.id).all()}

@@ -5,8 +5,8 @@
       <template #content>
         <span class="hd-title">{{ act.title }}</span>
         <span class="hd-tags">
-          <el-tag :color="typeColor(act.type)" effect="dark" style="border:none">
-            {{ act.type_label }}
+          <el-tag :color="modeColor(act.recruit_mode)" effect="dark" style="border:none">
+            {{ act.recruit_label }}
           </el-tag>
           <el-tag :type="statusType">{{ act.display_label }}</el-tag>
         </span>
@@ -49,11 +49,6 @@
               <p>{{ act.volunteer_benefit }}</p>
             </div>
           </div>
-          <div v-if="act.qa_group_qr" style="margin-top:10px;display:flex;gap:10px;align-items:center">
-            <img :src="act.qa_group_qr" width="86" height="86"
-                 style="border-radius:8px;border:1px solid #eceef1" />
-            <span class="dim">扫码入群，自愿加入<br />（平台仅作为二维码展示容器）</span>
-          </div>
         </el-card>
 
         <!-- 审批人看的是同一个页面，只是活动还没公开；不另做一套只读页 -->
@@ -76,12 +71,17 @@
           <span class="dim">时间到自动开放，不用刷新页面</span>
         </div>
 
-        <div class="section-title">岗位安排<span class="dim" style="font-weight:400;margin-left:8px">
+        <div v-if="screenedApplying" class="section-title">报名申请<span class="dim" style="font-weight:400;margin-left:8px">
+          勾选意向场次并填写报名表，截止后由负责老师筛选录取</span></div>
+        <div v-else class="section-title">岗位安排<span class="dim" style="font-weight:400;margin-left:8px">
           点击岗位名称可查看详情；点击行首箭头展开岗位</span></div>
+
+        <!-- 报名后筛选：没录取之前只有申请入口，岗位等录取后再看 -->
+        <ApplicationPanel v-if="screenedApplying" :act="act" @changed="load" />
 
         <!-- 窄屏：场次与岗位改成竖排卡片。手机上选岗位是最要紧的动作，
              不能藏在表格的展开箭头后面，所以岗位直接铺开。 -->
-        <div v-if="narrow" class="m-shifts">
+        <div v-else-if="narrow" class="m-shifts">
           <el-card v-for="g in act.shifts" :key="g.id" shadow="never" class="m-shift">
             <div class="m-shift-head">
               <b @click="showGroupDetail(g)">{{ g.name }}</b>
@@ -693,6 +693,7 @@
     </el-dialog>
 
     <ProfileDialog ref="profileDialog" />
+    <GroupQrDialog ref="groupQr" />
   </div>
 </template>
 
@@ -701,8 +702,10 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT } from '../api'
-import { TYPE_COLORS } from '../store'
+import { MODE_COLORS } from '../store'
 import ProfileDialog from '../components/ProfileDialog.vue'
+import GroupQrDialog from '../components/GroupQrDialog.vue'
+import ApplicationPanel from '../components/ApplicationPanel.vue'
 import MaterialList from '../components/MaterialList.vue'
 import { useNarrow } from '../composables/useNarrow'
 import { Clock, Warning } from '@element-plus/icons-vue'
@@ -728,7 +731,7 @@ const enrollExtra = computed(() => {
 })
 const stationDetail = ref({ visible: false, data: null, groupName: '', groupTime: '' })
 
-const typeColor = t => TYPE_COLORS[t]?.color
+const modeColor = m => MODE_COLORS[m]?.color
 // 与广场共用同一套：状态按时间算，颜色也要一致，否则两处对同一个活动说法不同
 const STATUS_TYPES = {
   draft: 'warning', upcoming: 'primary', published: 'success',
@@ -802,10 +805,17 @@ function canCancel(g) {
  * 按 min(活动报名截止, 本场开场) 算）。支教那种连办八周的活动，第三周了还开着
  * 报名很正常，但第一周那场早就不该再收人。
  */
+// 报名后筛选：录取前只有申请入口；录取之后才看岗位安排
+const screenedApplying = computed(
+  () => act.value?.recruit_mode === 'screened'
+        && act.value.application?.mine?.status !== 'accepted')
+
 function openFor(g) {
   return act.value?.status === 'published' && g.enroll_open
+         && act.value.recruit_mode !== 'screened'
 }
 function closedText(g) {
+  if (act.value?.recruit_mode === 'screened') return '录取后由负责老师安排'
   if (act.value?.status !== 'published') return '不在报名期'
   if (act.value.opens_in) return '未开始报名'
   return g.started ? '本场已开场' : '本场报名已截止'
@@ -861,6 +871,7 @@ async function submitEnroll() {
         allow_reassign: allowReassign, leader_willing: leaderWilling })
     enrollDlg.value.visible = false
     ElMessage.success(d.message)
+    groupQr.value.open({ qr: d.contact_group_qr, title: act.value.title })
     load()
   } catch (e) {
     // 资料未完善被拦截：提示后弹出资料表单，补全后即可报名
@@ -917,10 +928,12 @@ async function confirmPromo(g) {
   const d = await api.post(
     `/api/activities/enrollments/${g.my_enrollment.enrollment_id}/confirm-promotion`)
   ElMessage.success(d.message)
+  groupQr.value.open({ qr: d.contact_group_qr, title: act.value.title })
   load()
 }
 
 const profileDialog = ref(null)
+const groupQr = ref(null)
 const openProfileDialog = () => profileDialog.value.open(true)
 </script>
 

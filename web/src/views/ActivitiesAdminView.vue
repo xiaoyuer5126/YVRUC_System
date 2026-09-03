@@ -15,7 +15,7 @@
         </template>
         <template #body="{ row }">
           <div class="dim" style="line-height:1.8">
-            {{ row.type_label }} · 场次 {{ row.shifts_count }} ·
+            {{ row.recruit_label }} · 场次 {{ row.shifts_count }} ·
             已报名 {{ row.total_enrolled }}/{{ row.total_capacity }}
             <span v-if="row.waitlist_count">· 候补 {{ row.waitlist_count }}</span>
           </div>
@@ -43,8 +43,8 @@
         </el-table-column>
         <el-table-column label="类型" width="130">
           <template #default="{row}">
-            <el-tag size="small" effect="plain" :color="typeColor(row.type)" style="border:none;color:#fff">
-              {{ row.type_label }}
+            <el-tag size="small" effect="plain" :color="modeColor(row.recruit_mode)" style="border:none;color:#fff">
+              {{ row.recruit_label }}
             </el-tag>
           </template>
         </el-table-column>
@@ -90,7 +90,7 @@
 
     <!-- 新建活动 -->
     <el-dialog v-model="creating" title="新建活动（筹备期）" width="620">
-      <ActivityForm v-model="form" v-model:range="createRange" :types="types" />
+      <ActivityForm v-model="form" v-model:range="createRange" :modes="modes" />
       <template #footer>
         <el-button @click="creating = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="save">创建草稿</el-button>
@@ -100,7 +100,7 @@
     <!-- 复制活动：只带结构，落草稿并直接进编辑页 -->
     <el-dialog v-model="copyDlg.visible" title="复制活动" width="500">
       <p class="dim" style="margin-top:0;line-height:1.8">
-        复制「{{ copyDlg.source?.title }}」的<b>结构</b>：活动信息、场次、岗位、学习材料。<br />
+        复制「{{ copyDlg.source?.title }}」的<b>结构</b>：活动信息、场次、岗位、学习材料、报名表。<br />
         报名、签到、时长与留痕都不会带过来；副本落「筹备中」，共管名单只有您自己。
       </p>
       <el-form label-width="96px">
@@ -116,6 +116,19 @@
         <el-form-item label="新活动名称">
           <el-input v-model="copyDlg.title"
                     :placeholder="`${copyDlg.source?.title}（副本）`" />
+        </el-form-item>
+        <!-- 新活动新群：二维码不随复制带过来，在这里就要传新图 -->
+        <el-form-item label="联络群二维码" required>
+          <div>
+            <el-upload :show-file-list="false" :http-request="uploadCopyQr"
+                       accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
+              <el-button type="primary" plain :loading="copyDlg.uploading">
+                上传新活动的联络群二维码
+              </el-button>
+            </el-upload>
+            <div class="dim">每场活动一个新群，原活动的二维码不会带过来</div>
+            <img v-if="copyDlg.qr" :src="copyDlg.qr" class="copy-qr" />
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -133,9 +146,10 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
-import { TYPE_COLORS } from '../store'
+import { MODE_COLORS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import { activityBody, emptyActivity, validateActivity } from '../composables/activityForm'
+import { uploadImage } from '../composables/uploadImage'
 import ActivityForm from '../components/ActivityForm.vue'
 import DataCards from '../components/DataCards.vue'
 
@@ -145,19 +159,28 @@ const list = ref([])
 const loading = ref(false)
 const creating = ref(false)
 const saving = ref(false)
-const types = ref({})
+const modes = ref({})
 const copyDlg = ref({ visible: false, source: null, title: '', shiftDays: 7,
-                      busy: false })
+                      qr: '', uploading: false, busy: false })
 const form = ref({})
 const createRange = ref([])
 
-const typeColor = t => TYPE_COLORS[t]?.color
+const modeColor = m => MODE_COLORS[m]?.color
 const statusType = s => ({ published: 'success', closed: 'info', draft: 'info', pending: 'warning', approved: 'primary', finished: 'info' }[s])
 const pct = r => Math.min(100, Math.round(r.total_enrolled / Math.max(1, r.total_capacity) * 100))
 
 function openCopy(row) {
   copyDlg.value = { visible: true, source: row, title: '', shiftDays: 7,
-                    busy: false }
+                    qr: '', uploading: false, busy: false }
+}
+
+async function uploadCopyQr({ file }) {
+  copyDlg.value.uploading = true
+  try {
+    copyDlg.value.qr = await uploadImage(file)
+  } catch (e) {
+    ElMessage.error(e.message || '上传失败')
+  } finally { copyDlg.value.uploading = false }
 }
 
 // 延期后场次落在哪天，边填边看，省得复制完才发现日子不对
@@ -174,10 +197,11 @@ const copyPreview = computed(() => {
 
 async function doCopy() {
   const d = copyDlg.value
+  if (!d.qr) return ElMessage.warning('请先上传新活动的联络群二维码')
   d.busy = true
   try {
     const r = await api.post(`/api/staff/activities/${d.source.id}/copy`,
-      { title: d.title, shift_days: d.shiftDays })
+      { title: d.title, shift_days: d.shiftDays, contact_group_qr: d.qr })
     d.visible = false
     ElMessage.success(`已复制为「${r.title}」，请核对时间与岗位后发布`)
     router.push(`/manage/${r.id}`)      // 复制完直接进编辑页
@@ -188,7 +212,7 @@ async function load() {
   loading.value = true
   try {
     list.value = await api.get('/api/staff/activities')
-    types.value = (await api.get('/api/auth/constants')).activity_types
+    modes.value = (await api.get('/api/auth/constants')).recruit_modes
   } finally { loading.value = false }
 }
 onMounted(load)
@@ -236,4 +260,6 @@ async function delActivity(row) {
 .contact-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
 .qr-preview { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .qr-preview img { max-width: 160px; max-height: 160px; border-radius: 8px; border: 1px solid #e4e7ed; }
+.copy-qr { width: 96px; height: 96px; margin-top: 6px; object-fit: contain;
+           border: 1px solid #eceef1; border-radius: 8px; }
 </style>

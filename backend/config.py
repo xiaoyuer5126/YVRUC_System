@@ -68,22 +68,21 @@ ROSTER_DIGEST_DAYS = 3
 # 断点续传和对象存储，代价远超收益。
 MAX_MATERIAL_BYTES = 50 * 1024 * 1024
 
-# 活动类型（《志愿者服务规范》「限制准入标准·1 活动类型定位」，名称与释义均为原文）。
-# 类型直接决定违规后的限制准入口径，创建活动时必须让老师看清释义再选。
-ACTIVITY_TYPES = {
-    "A": {"name": "常规单次", "full": "常规类型单次活动",
-          "desc": "单次进行、不要求志愿者长期参与的一般性活动"},
-    "B": {"name": "常规长期", "full": "常规类型长期活动",
-          "desc": "需要志愿者长期参与的活动"},
-    "C": {"name": "大型校级", "full": "大型校级活动志愿服务",
-          "desc": "具有较高的时间纪律要求和志愿者临场表现要求的大型活动"},
-    "D": {"name": "重大活动", "full": "重大活动",
-          "desc": "具有重要的政治意义，对志愿者有非常严格要求的活动"},
+# 活动类型：决定志愿者怎么进来。
+#   instant  即选即得——报名即生效（或按名额进候补），场次自己决定选不选岗位；
+#   screened 报名后筛选——志愿者填一份报名表并勾意向场次，报名截止后由管理者
+#            挑人、定场次与岗位；申请不限人数，未录取会收到通知。
+RECRUIT_MODES = {
+    "instant": {"name": "即选即得",
+                "desc": "报名即生效，名额满了自动进候补"},
+    "screened": {"name": "报名后筛选",
+                 "desc": "志愿者填报名表，报名截止后由你筛选并安排岗位"},
 }
 
 
-def type_name(code: str) -> str:
-    return ACTIVITY_TYPES.get(code, {}).get("name", code)
+def recruit_name(code: str) -> str:
+    return RECRUIT_MODES.get(code, {}).get("name", code)
+
 
 # 学院清单（演示用，覆盖主要书院/学院）
 COLLEGES = [

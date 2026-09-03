@@ -205,13 +205,17 @@ class Activity(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     title: Mapped[str] = mapped_column(String(128))
-    type: Mapped[str] = mapped_column(String(2), default="A")         # A/B/C/D
+    # 志愿者怎么进来：instant 即选即得 / screened 报名后筛选（见 config.RECRUIT_MODES）
+    recruit_mode: Mapped[str] = mapped_column(String(12), default="instant")
     intro: Mapped[str] = mapped_column(Text, default="")
     location: Mapped[str] = mapped_column(String(128), default="")
     contact_info: Mapped[str] = mapped_column(String(256), default="")   # 公示联系方式
     # 结构化联系人（多人）：[{"name": 姓名, "phone": 电话}]；导出/展示优先用它
     contacts: Mapped[list] = mapped_column(JSON, default=list)
-    qa_group_qr: Mapped[str] = mapped_column(Text, default="")           # 答疑群二维码(dataURL)，平台只做展示容器
+    # 志愿者联络群二维码（dataURL）。必填；不在活动详情公开，报名成功/候补转正/
+    # 录取之后弹给本人一次，之后在「我的报名」里随时能再看。复制活动不带它——
+    # 每场活动一个新群。
+    contact_group_qr: Mapped[str] = mapped_column(Text, default="")
     cover_hue: Mapped[int] = mapped_column(Integer, default=0)           # 封面色相（演示用渐变色卡）
     # 谁办的这场活动：校青协 / 某院系志愿团体 / 学校某部门。必填——
     # 审批时靠它判断该由哪个部门归口，志愿者也要知道自己报的是谁的活动。
@@ -265,6 +269,12 @@ class Activity(Base):
 
     def label_status(self) -> str:
         return self.STATUS_LABELS.get(self.status, self.status)
+
+    def is_screened(self) -> bool:
+        return self.recruit_mode == "screened"
+
+    def recruit_label(self) -> str:
+        return config.recruit_name(self.recruit_mode)
 
     def main_shifts(self) -> list["Shift"]:
         """服务场次。培训/彩排是附属场次，不参与名额、时间跨度与广场展示。"""
@@ -487,7 +497,8 @@ class Attachment(Base):
     __tablename__ = "attachments"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    owner_type: Mapped[str] = mapped_column(String(12))      # shift / position
+    # shift / position：学习材料；application：报名表里志愿者上传的文件
+    owner_type: Mapped[str] = mapped_column(String(12))
     owner_id: Mapped[str] = mapped_column(String(32), index=True)
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
     kind: Mapped[str] = mapped_column(String(8), default="file")   # file / link
@@ -500,6 +511,53 @@ class Attachment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+# ======================= 报名后筛选：报名表与申请 =======================
+
+class FormQuestion(Base):
+    """报名表里的一道题。一个活动一份表，题目按 sort 排。"""
+    __tablename__ = "form_questions"
+
+    KINDS = {"single": "单选", "multi": "多选", "text": "填空", "file": "文件上传"}
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(8))
+    title: Mapped[str] = mapped_column(String(200))
+    options: Mapped[list] = mapped_column(JSON, default=list)   # 单选/多选的选项
+    required: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+
+    def out(self) -> dict:
+        return {"id": self.id, "kind": self.kind, "kind_label": self.KINDS.get(self.kind, self.kind),
+                "title": self.title, "options": self.options or [],
+                "required": self.required, "sort": self.sort}
+
+
+class Application(Base):
+    """一个人对一个活动的申请，一活动只填一次。
+
+    意向场次不放在这里：申请时按每个意向场次各写一条 status=applied 的
+    Enrollment——时段冲突、名单、录取都沿用报名那一套，不必另起一套账。
+    """
+    __tablename__ = "applications"
+    __table_args__ = (Index("uq_application", "activity_id", "user_id", unique=True),)
+
+    STATUS_LABELS = {"applied": "待筛选", "accepted": "已录取",
+                     "rejected": "未录取", "withdrawn": "已撤回"}
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    answers: Mapped[dict] = mapped_column(JSON, default=dict)   # 题目 id → 答案
+    status: Mapped[str] = mapped_column(String(12), default="applied", index=True)
+    decided_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    def status_label(self) -> str:
+        return self.STATUS_LABELS.get(self.status, self.status)
+
+
 # ======================= 报名 / 候补 / 分配 =======================
 
 class Enrollment(Base):
@@ -507,14 +565,16 @@ class Enrollment(Base):
     也就是同场次下只能占一个岗位——候补和正式都算。
 
     status 流转：
-      enrolled        正式报名（即选即得 / 候补转正确认 / 管理员添加）
+      applied          报名后筛选：已申请这一场，等管理者挑（时段照样算占用）
+      enrolled         正式报名（即选即得 / 候补转正确认 / 筛选录取 / 管理员添加）
       waitlisted       候补排队（按 joined_at 先后）
       pending_confirm  候补转正，等待用户在 confirm_deadline 前确认
-      cancelled        已退选（cancel_type: normal 正常 / late 临近扣分 /
+      cancelled        已退选（cancel_type: normal 正常 / late 临近 /
                                      expired 放弃候补超时 / abandoned 主动放弃候补 /
-                                     shift_deleted 场次被删除）
+                                     shift_deleted 场次被删除 / rejected 未录取 /
+                                     not_chosen 录取到了别的场次 / withdrawn 撤回申请）
 
-    seat_held：临近退选（开始前 24 小时内）扣分且**名额不再释放**，
+    seat_held：临近退选（开始前 24 小时内、报名已截止）**名额不再释放**，
     该记录虽已 cancelled 但仍占着一个名额，防止有人临期退了、别人补进来、
     再退一次，把现场人数搅乱。
     """
@@ -524,7 +584,7 @@ class Enrollment(Base):
         # 这是并发抢报的兜底：Redis 锁没拿住也插不进第二条。
         Index("uq_enrollment_live", "shift_id", "user_id", unique=True,
               postgresql_where=text(
-                  "status IN ('enrolled', 'waitlisted', 'pending_confirm')"
+                  "status IN ('applied', 'enrolled', 'waitlisted', 'pending_confirm')"
                   " OR seat_held")),
     )
 
@@ -536,6 +596,9 @@ class Enrollment(Base):
     status: Mapped[str] = mapped_column(String(24), default="enrolled", index=True)
     cancel_type: Mapped[str] = mapped_column(String(16), default="")
     seat_held: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    # 联络群二维码只弹一次：报名成功/转正/录取后弹过就记下来，之后在
+    # 「我的报名」里自己点开看
+    group_qr_seen: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # 是否接受管理者把自己调到别的岗位。**只是参考**——管理者依然可以调，
     # 界面上会提示「本人不接受调剂」。候补必须接受调剂（报名时强制为真）。

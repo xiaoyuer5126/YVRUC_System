@@ -39,10 +39,10 @@ from ..serializers import activity_brief
 router = APIRouter(prefix="/api/staff", tags=["staff"])
 
 ACTIVITY_FIELDS = {
-    "title": "名称", "type": "类型", "intro": "简介", "location": "地点",
-    "organizer": "组织单位",
+    "title": "名称", "recruit_mode": "活动类型", "intro": "简介",
+    "location": "地点", "organizer": "组织单位",
     "contact_info": "公示联系方式", "contacts": "公示联系人",
-    "qa_group_qr": "答疑群二维码",
+    "contact_group_qr": "志愿者联络群二维码",
     "volunteer_requirement": "志愿者要求", "volunteer_benefit": "志愿者保障",
     "recruit_campuses": "招募校区", "recruit_stages": "招募学段",
     "reg_start": "报名开始", "reg_end": "报名截止",
@@ -117,12 +117,12 @@ def list_all(db: OrmSession = Depends(db_session),
 class ActivityBody(BaseModel):
     title: str = Field(max_length=128)
     organizer: str = Field(default="", max_length=64)
-    type: str = "A"
+    recruit_mode: str = "instant"
     intro: str = ""
     location: str = ""
     contact_info: str = ""
     contacts: list[dict] = []
-    qa_group_qr: str = ""
+    contact_group_qr: str = ""
     cover_hue: int = 0
     # 都选填：整体要求（着装、集合）与保障（餐食、时长、纪念品）
     volunteer_requirement: str = ""
@@ -191,21 +191,25 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
         raise HTTPException(400, "请填写活动名称")
     if not body.organizer.strip():
         raise HTTPException(400, "请填写组织单位")
-    if body.type not in config_types():
-        raise HTTPException(400, "活动类型必须是 A/B/C/D")
+    if body.recruit_mode not in config.RECRUIT_MODES:
+        raise HTTPException(400, "请选择活动类型")
     if not body.location.strip():
         raise HTTPException(400, "请填写活动地点")
     contacts = _clean_contacts(body.contacts)
     if not body.intro.strip():
         raise HTTPException(400, "请填写活动简介")
+    if not body.contact_group_qr.strip():
+        raise HTTPException(400, "请上传志愿者联络群二维码")
     reg_start, reg_end = _parse_dt(body.reg_start), _parse_dt(body.reg_end)
     if reg_start is None or reg_end is None:
         raise HTTPException(400, "请选择报名开始与截止时间")
-    act = Activity(id=uid("act"), title=body.title.strip(), type=body.type,
+    act = Activity(id=uid("act"), title=body.title.strip(),
+                   recruit_mode=body.recruit_mode,
                    organizer=body.organizer.strip(),
                    intro=body.intro.strip(), location=body.location.strip(),
                    contact_info=body.contact_info.strip(),
-                   qa_group_qr=body.qa_group_qr, cover_hue=body.cover_hue,
+                   contact_group_qr=body.contact_group_qr.strip(),
+                   cover_hue=body.cover_hue,
                    volunteer_requirement=body.volunteer_requirement.strip(),
                    volunteer_benefit=body.volunteer_benefit.strip(),
                    recruit_campuses=_clean_scope(body.recruit_campuses,
@@ -231,11 +235,6 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
     return {"id": act.id}
 
 
-def config_types():
-    from .. import config
-    return set(config.ACTIVITY_TYPES)
-
-
 @router.patch("/activities/{activity_id}")
 def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
                     db: OrmSession = Depends(db_session),
@@ -244,7 +243,6 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
     act = _act(db, activity_id)
     _ensure_not_finished(act)
     before = {k: getattr(act, k) for k in ACTIVITY_FIELDS}
-    before["type"] = act.type
     for key in ACTIVITY_FIELDS:
         if key not in body:
             continue
@@ -257,9 +255,13 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
             act.recruit_campuses = _clean_scope(value, config.CAMPUSES, "校区")
         elif key == "recruit_stages":
             act.recruit_stages = _clean_scope(value, config.STAGES, "学段")
+        elif key == "recruit_mode":
+            _apply_recruit_mode(db, act, value)
+        elif key == "contact_group_qr":
+            if not str(value).strip():
+                raise HTTPException(400, "志愿者联络群二维码不能为空")
+            act.contact_group_qr = str(value).strip()
         else:
-            if key == "type" and value not in config_types():
-                raise HTTPException(400, "活动类型必须是 A/B/C/D")
             setattr(act, key, value)
     if "reg_end" in body:
         ensure_reg_end_in_range(act)
@@ -284,6 +286,32 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
               visible=True)
     db.commit()
     return {"ok": True, "changes": changes}
+
+
+def _apply_recruit_mode(db: OrmSession, act: Activity, value: str) -> None:
+    """改活动类型。公开之后不给改：即选即得已经有人占了岗位，报名后筛选
+    已经有人填了表，两边的账互相对不上。"""
+    if value not in config.RECRUIT_MODES:
+        raise HTTPException(400, "请选择活动类型")
+    if value == act.recruit_mode:
+        return
+    if act.status not in ("draft", "pending", "approved"):
+        raise HTTPException(409, "活动已公开，不能再改活动类型")
+    act.recruit_mode = value
+    # 报名后筛选：志愿者只勾意向场次，岗位等录取后再分——场次统一改成
+    # 「截止后统一分配」，录取的人才有占位岗位可落。名额沿用已有的：
+    # 真实岗位的名额之和，或原来占位上的人数上限。
+    if value == "screened":
+        for g in act.main_shifts():
+            holder = g.placeholder()
+            capacity = (sum(p.quota for p in g.real_positions())
+                        or (holder.quota if holder else 0))
+            if capacity <= 0:
+                raise HTTPException(
+                    400, f"场次「{g.name}」还没有名额，请先给它填人数上限或建岗位")
+            g.mode = "assign"
+            _sync_placeholder(db, g, capacity,
+                              holder.waitlist_quota if holder else 3)
 
 
 def _notify_activity_bg(activity_id: str, template: str, **kw):
@@ -367,6 +395,7 @@ def finish_editing(activity_id: str, bg: BackgroundTasks,
 class CopyActivityBody(BaseModel):
     title: str = ""
     shift_days: int = 7      # 所有时间整体平移多少天
+    contact_group_qr: str = ""   # 新活动新群，复制时就要传新图
 
 
 @router.post("/activities/{activity_id}/copy")
@@ -379,8 +408,11 @@ def copy_activity_route(activity_id: str, body: CopyActivityBody,
     title = body.title.strip() or f"{src.title}（副本）"
     if len(title) > 128:
         raise HTTPException(400, "活动名称过长")
+    if not body.contact_group_qr.strip():
+        raise HTTPException(400, "请上传新活动的志愿者联络群二维码")
     act = copying.copy_activity(db, src, user, title=title,
-                                shift_days=body.shift_days)
+                                shift_days=body.shift_days,
+                                contact_group_qr=body.contact_group_qr.strip())
     audit_log(db, actor=user, action="copy", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"复制自「{src.title}」（{copying.describe(src)}），"
@@ -458,6 +490,8 @@ def publish(activity_id: str, db: OrmSession = Depends(db_session),
 
 def ensure_ready_to_publish(act: Activity) -> None:
     """结构上够不够格公开。提交审批与发布都走这一道，别让审批人替发起方查。"""
+    if not act.contact_group_qr:
+        raise HTTPException(400, "请先在基本信息里上传志愿者联络群二维码")
     if not act.main_shifts():
         raise HTTPException(400, "请先至少创建一个场次")
     # 「报名即选岗位」的场次没有岗位就等于没有名额，发出去学生一个都报不了
@@ -739,7 +773,8 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                       start_time=start, end_time=end,
                       note=body.note.strip(), sort=len(act.shifts),
                       location=body.location.strip())
-    _apply_shift_mode(db, g, body.mode)
+    # 报名后筛选的活动：岗位等录取后再分，新场次一律「截止后统一分配」
+    _apply_shift_mode(db, g, "assign" if act.is_screened() else body.mode)
     _apply_attachment(db, g, body, act)
     db.add(g)
     db.flush()

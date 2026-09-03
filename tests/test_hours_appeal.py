@@ -15,7 +15,7 @@ from conftest import ADMIN, POSITION_TEXT, login, student_row
 def served(db, take_student):
     """一个已结束的活动 + 一名签到签退过的志愿者（4 小时）。"""
     admin = db.query(User).filter(User.student_id == ADMIN).one()
-    act = Activity(id=uid("act"), title=f"申诉测试 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"申诉测试 {uid('t')}",
                    intro="x", location="世纪馆",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
                    status="finished", reg_start=now() - timedelta(days=10),

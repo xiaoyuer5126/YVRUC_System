@@ -29,8 +29,8 @@ def dept_activity(client, db):
     """一个归口对外联络部、由部长建的草稿，带一个场次一个岗位。"""
     head = login(client, HEAD)
     r = client.post("/api/staff/activities", headers=head,
-                    json={"title": f"部门活动 {uid('t')}", "organizer": "校青协",
-                          "type": "A", "intro": "x", "location": "世纪馆",
+                    json={"contact_group_qr": "x", "title": f"部门活动 {uid('t')}", "organizer": "校青协",
+                          "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
                           "reg_end": (now() + timedelta(days=5)).isoformat()})
@@ -207,7 +207,7 @@ def test_部门成员不算能操作的管理者(client, admin, db, take_student
     writer = student_row(db, take_student())
     writer.roles = ["student", "initiator"]
     member = _user(db, MEMBER)
-    act = Activity(id=uid("act"), title=f"只剩学习权限 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"只剩学习权限 {uid('t')}",
                    intro="x", location="世纪馆", organizer="校青协",
                    contacts=[{"name": "王", "phone": "13900000000"}],
                    status="published", reg_start=now() - timedelta(days=1),

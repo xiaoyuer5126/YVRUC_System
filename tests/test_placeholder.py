@@ -21,8 +21,8 @@ ASSIGN = {"name": "统一分配场", "mode": "assign", "capacity": 3,
 def assign_shift(client, admin, db):
     """一个草稿活动 + 一个 assign 场次（自动带占位岗位）。"""
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"title": f"占位测试 {uid('t')}", "organizer": "校青协",
-                          "type": "A", "intro": "x", "location": "世纪馆",
+                    json={"contact_group_qr": "x", "title": f"占位测试 {uid('t')}", "organizer": "校青协",
+                          "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(hours=1)).isoformat(),
                           "reg_end": (now() + timedelta(days=3)).isoformat()})

@@ -17,8 +17,8 @@ CORE = "2025005"                # 林骁，对外联络部骨干
 def draft(client, admin, db):
     """一个结构完整、可以提交审批的草稿。"""
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"title": f"待审批活动 {uid('t')}", "organizer": "文学院青协",
-                          "type": "A", "intro": "x", "location": "世纪馆",
+                    json={"contact_group_qr": "x", "title": f"待审批活动 {uid('t')}", "organizer": "文学院青协",
+                          "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
                           "reg_end": (now() + timedelta(days=5)).isoformat()})
@@ -169,8 +169,8 @@ def test_青协建的活动自动归口自己部门(client, db, draft):
     """提交时不选部门也能交：归口已经按创建者所在部门预填。"""
     head = login(client, QINGXIE_HEAD)
     r = client.post("/api/staff/activities", headers=head,
-                    json={"title": f"归口预填 {uid('t')}", "organizer": "校青协",
-                          "type": "A", "intro": "x", "location": "世纪馆",
+                    json={"contact_group_qr": "x", "title": f"归口预填 {uid('t')}", "organizer": "校青协",
+                          "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
                           "reg_end": (now() + timedelta(days=5)).isoformat()})

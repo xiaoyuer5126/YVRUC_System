@@ -17,8 +17,8 @@
       <div v-for="a in list" :key="a.id" class="act-card square-card"
            @click="$router.push('/activity/' + a.id)">
         <div class="card-top">
-          <el-tag size="small" effect="dark" :color="typeColor(a.type)" style="border:none">
-            {{ a.type_label }}
+          <el-tag size="small" effect="dark" :color="modeColor(a.recruit_mode)" style="border:none">
+            {{ a.recruit_label }}
           </el-tag>
           <el-tag size="small" :type="statusType(a.display_status)">{{ a.display_label }}</el-tag>
         </div>
@@ -42,7 +42,8 @@
     <el-empty v-else description="暂无活动" />
 
     <p class="dim" style="margin-top:26px">
-      活动类型依据《志愿者服务规范》：A 常规单次 / B 常规长期 / C 大型校级 / D 重大活动。
+      活动类型：<b>即选即得</b>——报名即生效，名额满了进候补；
+      <b>报名后筛选</b>——填一份报名表并勾意向场次，截止后由主办方筛选录取。
     </p>
   </div>
 </template>
@@ -50,11 +51,11 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { api } from '../api'
-import { TYPE_COLORS } from '../store'
+import { MODE_COLORS } from '../store'
 
 const scope = ref('open')
 const list = ref([])
-const typeColor = t => TYPE_COLORS[t]?.color
+const modeColor = m => MODE_COLORS[m]?.color
 
 // 展示状态 → el-tag type 颜色
 // 展示状态 → el-tag 颜色。以后端 display_status 为准，别在这里另算一套

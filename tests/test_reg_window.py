@@ -19,8 +19,8 @@ from conftest import POSITION_TEXT, login
 def two_shifts(client, admin, db):
     """一个草稿 + 两个服务场次（第 3 天、第 9 天），报名截止在第 5 天。"""
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"title": f"报名窗口 {uid('t')}", "organizer": "校青协",
-                          "type": "A", "intro": "x", "location": "世纪馆",
+                    json={"contact_group_qr": "x", "title": f"报名窗口 {uid('t')}", "organizer": "校青协",
+                          "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
                           "reg_end": (now() + timedelta(days=5)).isoformat()})

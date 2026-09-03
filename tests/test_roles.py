@@ -85,7 +85,7 @@ def sole_manager(client, admin, db, take_student):
     sid = take_student()
     u = student_row(db, sid)
     u.roles = ["student", "initiator"]
-    act = Activity(id=uid("act"), title=f"孤儿活动 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"孤儿活动 {uid('t')}",
                    intro="x", location="世纪馆", organizer="校青协",
                    contacts=[{"name": "王", "phone": "13900000000"}],
                    status="published", reg_start=now() - timedelta(days=1),

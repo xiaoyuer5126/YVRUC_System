@@ -368,7 +368,7 @@ def my_approvals(db: OrmSession = Depends(db_session),
                   .order_by(ApprovalEvent.created_at.desc()).first())
         out.append({
             "id": act.id, "title": act.title, "organizer": act.organizer,
-            "type_label": f"{act.type}类", "location": act.location,
+            "recruit_label": act.recruit_label(), "location": act.location,
             "time_text": (f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}"
                           if span else "待定"),
             "shifts_count": len(act.main_shifts()),

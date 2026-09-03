@@ -15,7 +15,7 @@ def act_with_positions(db, take_student):
     admin = db.query(User).filter(User.student_id == ADMIN).one()
     from backend.models import ActivityManager
 
-    act = Activity(id=uid("act"), title=f"彩排测试 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"彩排测试 {uid('t')}",
                    intro="x", location="世纪馆",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
                    status="published",
@@ -162,7 +162,7 @@ def test_彩排时间冲突会拦住报名(client, admin, db, act_with_positions
     _add_attached(client, admin, act, g, days=5)
 
     admin_user = db.query(User).filter(User.student_id == ADMIN).one()
-    other = Activity(id=uid("act"), title=f"撞车活动 {uid('t')}", type="A",
+    other = Activity(id=uid("act"), title=f"撞车活动 {uid('t')}",
                      intro="x", location="x",
                      contacts=[{"name": "测试", "phone": "13900000000"}],
                      status="published", reg_start=now() - timedelta(days=1),

@@ -12,7 +12,7 @@
     <el-card v-for="a in rows" :key="a.id" shadow="never" class="item">
       <div class="head">
         <b class="title" @click="$router.push('/activity/' + a.id)">{{ a.title }}</b>
-        <el-tag size="small" effect="plain">{{ a.type_label }}</el-tag>
+        <el-tag size="small" effect="plain">{{ a.recruit_label }}</el-tag>
         <el-tag v-if="!a.mine" size="small" type="info" effect="plain">
           当前审批人：{{ a.assignee }}
         </el-tag>

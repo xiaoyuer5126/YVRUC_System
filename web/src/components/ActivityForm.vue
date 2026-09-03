@@ -9,13 +9,16 @@
       <div class="dim">谁办的这场活动，会展示给志愿者，也是审批时判断归口的依据</div>
     </el-form-item>
     <el-form-item label="活动类型" required>
-      <el-radio-group v-model="f.type">
-        <el-radio-button v-for="(t, key) in types" :key="key" :value="key">
-          {{ key }}类·{{ t.name }}
+      <el-radio-group v-model="f.recruit_mode">
+        <el-radio-button v-for="(m, key) in modes" :key="key" :value="key">
+          {{ m.name }}
         </el-radio-button>
       </el-radio-group>
       <div class="dim" style="line-height:1.8">
-        <b>{{ f.type }}类·{{ types[f.type]?.full }}</b>：{{ types[f.type]?.desc }}<br />
+        {{ modes[f.recruit_mode]?.desc }}
+        <template v-if="f.recruit_mode === 'screened'">
+          ；报名表在「岗位设置」里设计，场次一律截止后统一分配
+        </template>
       </div>
     </el-form-item>
     <el-form-item label="活动地点" required>
@@ -69,7 +72,7 @@
       <el-input v-model="f.volunteer_benefit" type="textarea" :rows="2"
                 placeholder="选填。提供什么，如：午餐与饮水、志愿时长、纪念徽章、意外险" />
     </el-form-item>
-    <el-form-item label="答疑群二维码">
+    <el-form-item label="联络群二维码" required>
       <div class="contacts-box">
         <el-upload :show-file-list="false" :http-request="uploadQr"
                    accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
@@ -77,10 +80,13 @@
             <el-icon><Upload /></el-icon>&nbsp;上传二维码图片
           </el-button>
         </el-upload>
-        <div class="dim">选填，png/jpg/webp 不超过 2MB；所有人可扫码入群</div>
-        <div v-if="f.qa_group_qr" class="qr-preview">
-          <img :src="f.qa_group_qr" alt="答疑群二维码" />
-          <el-button link type="danger" size="small" @click="f.qa_group_qr = ''">移除图片</el-button>
+        <div class="dim">
+          志愿者联络群，png/jpg/webp 不超过 2MB。不在活动详情公开，报名成功/候补转正/录取后
+          弹给本人一次，之后在「我的报名」里查看
+        </div>
+        <div v-if="f.contact_group_qr" class="qr-preview">
+          <img :src="f.contact_group_qr" alt="联络群二维码" />
+          <el-button link type="danger" size="small" @click="f.contact_group_qr = ''">移除图片</el-button>
         </div>
       </div>
     </el-form-item>
@@ -98,13 +104,13 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { auth } from '../store'
+import { uploadImage } from '../composables/uploadImage'
 import DateRange from './DateRange.vue'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },   // 表单数据
   range: { type: Array, default: () => [] },      // 报名窗口 [开始, 结束]
-  types: { type: Object, default: () => ({}) },
+  modes: { type: Object, default: () => ({}) },
 })
 const emit = defineEmits(['update:modelValue', 'update:range'])
 
@@ -124,18 +130,9 @@ onMounted(async () => {
 })
 
 async function uploadQr({ file }) {
-  const fd = new FormData()
-  fd.append('file', file)
   qrUploading.value = true
   try {
-    const headers = {}
-    if (auth.token) headers.Authorization = `Bearer ${auth.token}`
-    const resp = await fetch('/api/staff/upload-image', { method: 'POST', headers, body: fd })
-    const d = await resp.json().catch(() => ({}))
-    if (!resp.ok) {
-      throw new Error(typeof d.detail === 'string' ? d.detail : `上传失败(${resp.status})`)
-    }
-    f.value.qa_group_qr = d.url
+    f.value.contact_group_qr = await uploadImage(file)
     ElMessage.success('二维码已上传')
   } catch (e) {
     ElMessage.error(e.message || '上传失败')

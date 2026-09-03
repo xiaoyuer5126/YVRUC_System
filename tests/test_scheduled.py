@@ -17,10 +17,10 @@ def make_activity(db):
     def _make(status: str, *, reg_end_in_hours: float, start_in_hours: float,
               duration_hours: float = 3):
         admin = db.query(User).filter(User.student_id == ADMIN).one()
-        act = Activity(id=uid("act"), title=f"流转测试 {uid('t')}", type="A",
+        act = Activity(id=uid("act"), title=f"流转测试 {uid('t')}",
                        intro="x", location="x",
                        contacts=[{"name": "测试", "phone": "13900000000"}],
-                       qa_group_qr="x", status=status,
+                       contact_group_qr="x", status=status,
                        reg_start=now() - timedelta(days=3),
                        reg_end=now() + timedelta(hours=reg_end_in_hours),
                        created_by=admin.id)

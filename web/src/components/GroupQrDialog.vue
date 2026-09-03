@@ -1,0 +1,47 @@
+<!-- 志愿者联络群二维码。报名成功/候补转正/录取后弹一次，之后在「我的报名」里点开看。 -->
+<template>
+  <el-dialog v-model="visible" title="志愿者联络群" width="380" align-center>
+    <div class="qr-box">
+      <img :src="qr" alt="联络群二维码" />
+      <p class="title">{{ title }}</p>
+      <p class="dim">
+        请扫码加入本活动的联络群，入群后把群昵称改为<b>「姓名+电话」</b>，
+        方便负责老师联系你。
+      </p>
+      <p class="dim">之后可在「我的报名」里随时查看。</p>
+    </div>
+    <template #footer>
+      <el-button type="primary" @click="visible = false">知道了</el-button>
+    </template>
+  </el-dialog>
+</template>
+
+<script setup>
+import { ref } from 'vue'
+import { api } from '../api'
+
+const visible = ref(false)
+const qr = ref('')
+const title = ref('')
+
+/** 传 enrollmentId 时顺手标记「弹过了」，下次进「我的报名」不再自动弹。 */
+function open({ qr: image, title: name, enrollmentId }) {
+  if (!image) return
+  qr.value = image
+  title.value = name || ''
+  visible.value = true
+  if (enrollmentId) {
+    api.post(`/api/me/enrollments/${enrollmentId}/group-qr-seen`, {}, { silent: true })
+      .catch(() => {})
+  }
+}
+defineExpose({ open })
+</script>
+
+<style scoped>
+.qr-box { text-align: center; }
+.qr-box img { width: 200px; height: 200px; object-fit: contain;
+              border: 1px solid #eceef1; border-radius: 10px; }
+.title { margin: 10px 0 4px; font-weight: 600; }
+.qr-box .dim { margin: 4px 0; line-height: 1.7; }
+</style>

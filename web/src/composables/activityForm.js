@@ -6,9 +6,9 @@
 
 export function emptyActivity() {
   return {
-    title: '', organizer: '', type: 'A', location: '',
+    title: '', organizer: '', recruit_mode: 'instant', location: '',
     contacts: [{ name: '', phone: '' }], intro: '',
-    volunteer_requirement: '', volunteer_benefit: '', qa_group_qr: '',
+    volunteer_requirement: '', volunteer_benefit: '', contact_group_qr: '',
     recruit_campuses: [], recruit_stages: [],
   }
 }
@@ -19,11 +19,11 @@ export function activityToForm(act) {
     ? act.contacts.map(c => ({ name: c.name || '', phone: c.phone || '' }))
     : [{ name: '', phone: '' }]
   return {
-    title: act.title, organizer: act.organizer || '', type: act.type,
+    title: act.title, organizer: act.organizer || '', recruit_mode: act.recruit_mode,
     location: act.location, contacts, intro: act.intro,
     volunteer_requirement: act.volunteer_requirement || '',
     volunteer_benefit: act.volunteer_benefit || '',
-    qa_group_qr: act.qa_group_qr || '',
+    contact_group_qr: act.contact_group_qr || '',
     recruit_campuses: act.recruit_campuses || [],
     recruit_stages: act.recruit_stages || [],
   }
@@ -33,7 +33,7 @@ export function activityToForm(act) {
 export function validateActivity(f, range) {
   if (!f.title?.trim()) return '请填写活动名称'
   if (!f.organizer?.trim()) return '请填写组织单位'
-  if (!f.type) return '请选择活动类型'
+  if (!f.recruit_mode) return '请选择活动类型'
   if (!f.location?.trim()) return '请填写活动地点'
   if (!f.contacts?.length) return '请至少添加一位公示联系人'
   for (const c of f.contacts) {
@@ -44,6 +44,7 @@ export function validateActivity(f, range) {
     return '请选择报名开始与截止时间'
   }
   if (!f.intro?.trim()) return '请填写活动简介'
+  if (!f.contact_group_qr) return '请上传志愿者联络群二维码'
   return ''
 }
 

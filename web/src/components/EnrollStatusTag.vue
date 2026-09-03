@@ -1,6 +1,7 @@
 <!-- 报名状态标签。表格与窄屏卡片共用，免得两处各写一套判断。 -->
 <template>
-  <el-tag v-if="row.status === 'enrolled'" type="success">已报名</el-tag>
+  <el-tag v-if="row.status === 'applied'" type="primary">待筛选</el-tag>
+  <el-tag v-else-if="row.status === 'enrolled'" type="success">已报名</el-tag>
   <el-tag v-else-if="row.status === 'waitlisted'" type="warning">
     候补中{{ row.waitlist_position ? ` 第${row.waitlist_position}位` : '' }}
   </el-tag>
@@ -22,7 +23,7 @@ const props = defineProps({ row: { type: Object, required: true } })
 
 const CANCEL_LABELS = {
   normal: '已退选', abandoned: '已放弃候补', expired: '确认超时',
-  shift_deleted: '场次已取消',
+  shift_deleted: '场次已取消', rejected: '未录取', withdrawn: '已撤回申请',
 }
 
 const cancelLabel = computed(() => CANCEL_LABELS[props.row.cancel_type] || '已取消')

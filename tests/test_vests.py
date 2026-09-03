@@ -14,7 +14,7 @@ from conftest import ADMIN, POSITION_TEXT, login, student_row
 def vest_activity(db, take_student):
     """一个活动：需要马甲的岗位一个、不需要的一个，各报一人。"""
     admin = db.query(User).filter(User.student_id == ADMIN).one()
-    act = Activity(id=uid("act"), title=f"马甲测试 {uid('t')}", type="A",
+    act = Activity(id=uid("act"), title=f"马甲测试 {uid('t')}",
                    intro="x", location="世纪馆", organizer="校青协",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
                    status="published", reg_start=now() - timedelta(days=1),

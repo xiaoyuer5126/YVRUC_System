@@ -20,7 +20,8 @@ from .integrations import wecom
 from .models import (Activity, CheckinRecord, Enrollment, Shift, Position,
                      User, now, uid)
 
-ACTIVE = ("enrolled", "waitlisted", "pending_confirm")
+# 申请中的场次同样占着时段：申请就拦冲突，不等录取
+ACTIVE = ("applied", "enrolled", "waitlisted", "pending_confirm")
 
 
 def overlaps(a1, a2, b1, b2) -> bool:

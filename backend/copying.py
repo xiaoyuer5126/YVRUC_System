@@ -14,8 +14,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .models import (Activity, ActivityManager, Attachment, Position, Shift,
-                     User, uid)
+from .models import (Activity, ActivityManager, Attachment, FormQuestion, Position, Shift, User, uid)
 
 
 def _copy_attachments(db: OrmSession, src_type: str, src_id: str,
@@ -80,13 +79,20 @@ def copy_positions_to(db: OrmSession, sources: list[Position],
 
 
 def copy_activity(db: OrmSession, src: Activity, operator: User, *,
-                  title: str, shift_days: int) -> Activity:
+                  title: str, shift_days: int, contact_group_qr: str) -> Activity:
     """整活动复制。所有时间整体平移 shift_days 天，落「筹备中」。"""
     delta = timedelta(days=shift_days)
-    act = Activity(id=uid("act"), title=title, type=src.type, intro=src.intro,
+    # 联络群二维码不带：每场活动一个新群，复制时就要求传新图
+    act = Activity(id=uid("act"), title=title, recruit_mode=src.recruit_mode,
+                   intro=src.intro, organizer=src.organizer,
                    location=src.location, contact_info=src.contact_info,
                    contacts=[dict(c) for c in (src.contacts or [])],
-                   qa_group_qr=src.qa_group_qr, cover_hue=src.cover_hue,
+                   contact_group_qr=contact_group_qr, cover_hue=src.cover_hue,
+                   volunteer_requirement=src.volunteer_requirement,
+                   volunteer_benefit=src.volunteer_benefit,
+                   recruit_campuses=list(src.recruit_campuses or []),
+                   recruit_stages=list(src.recruit_stages or []),
+                   approval_dept_id=src.approval_dept_id,
                    status="draft",
                    reg_start=(src.reg_start + delta) if src.reg_start else None,
                    reg_end=(src.reg_end + delta) if src.reg_end else None,
@@ -127,6 +133,11 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
                              if s.parent_id == src_shift.id),
                             key=lambda s: s.start_time):
             clone(child, shift.id, position_map)
+    for q in (db.query(FormQuestion).filter(FormQuestion.activity_id == src.id)
+              .order_by(FormQuestion.sort).all()):
+        db.add(FormQuestion(id=uid("q"), activity_id=act.id, kind=q.kind,
+                            title=q.title, options=list(q.options or []),
+                            required=q.required, sort=q.sort))
     return act
 
 
