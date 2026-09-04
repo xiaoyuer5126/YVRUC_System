@@ -551,6 +551,10 @@
           <el-button type="primary" @click="doExport">
             <el-icon><Download /></el-icon>&nbsp;导出排班表 Excel
           </el-button>
+          <el-button v-if="act.recruit_mode === 'screened'" type="primary" plain
+                     @click="doExportApplications">
+            <el-icon><Download /></el-icon>&nbsp;导出报名表结果 Excel
+          </el-button>
           <span class="dim">按场次分 Sheet，含姓名学号手机号与签到状态，可直接交付现场；下载已留痕。</span>
         </div>
 
@@ -1883,6 +1887,10 @@ async function transition(action) {
 
 // —— 导出与时长 ——
 function doExport() { dl(`/api/staff/activities/${activityId}/export.xlsx`) }
+// 报名表结果：一人一行、一题一列，筛选是在表格里做的事
+function doExportApplications() {
+  dl(`/api/staff/activities/${activityId}/applications.xlsx`)
+}
 
 // —— 提交审批 ——
 const approval = ref(null)

@@ -6,6 +6,7 @@
         <b>申请名单</b>
         <span class="dim">{{ pendingCount }} 人待筛选 · 共 {{ apps.length }} 人</span>
         <el-button size="small" link type="primary" @click="load">刷新</el-button>
+        <el-button size="small" link type="primary" @click="exportXlsx">导出 Excel</el-button>
         <span class="al-actions">
           <el-select v-model="targetShift" clearable size="small" style="width:230px"
                      placeholder="录取到：各自的第一意向" @change="targetPosition = ''">
@@ -108,6 +109,10 @@ const busy = ref(false)
 const pendingCount = computed(() => apps.value.filter(a => a.status === 'applied').length)
 const selectable = row => row.status === 'applied'
 const onSelect = rows => { selected.value = rows }
+
+function exportXlsx() {
+  dl(`/api/staff/activities/${props.activityId}/applications.xlsx`)
+}
 
 async function load() {
   loading.value = true

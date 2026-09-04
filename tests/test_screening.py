@@ -396,3 +396,45 @@ def test_报名成功即弹联络群(client, admin, db, enrolled_activity, take_
     assert row["contact_group_qr"] == "x" and not row["group_qr_pending"]
     # 志愿者看的活动详情里没有二维码
     assert "contact_group_qr" not in client.get(f"/api/activities/{act.id}", headers=t).json()
+
+
+def test_报名表结果导出excel(client, admin, db, take_student):
+    """一人一行、一题一列；被条件挡掉的题留空。"""
+    from io import BytesIO
+    from openpyxl import load_workbook
+
+    act_id, ids, q = _create_screened(client, admin, db)
+    sids = [take_student() for _ in range(2)]
+    for i, sid in enumerate(sids):
+        r = client.post(f"/api/activities/{act_id}/apply", headers=login(client, sid),
+                        json={"shift_ids": ids[:1] if i else ids,
+                              "answers": _answers(q), "leader_willing": bool(i)})
+        assert r.status_code == 200, r.text
+    lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
+    client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
+                json={"application_ids": [lst["applications"][0]["id"]],
+                      "accept": True, "shift_id": ids[0]})
+
+    r = client.get(f"/api/staff/activities/{act_id}/applications.xlsx", headers=admin)
+    assert r.status_code == 200
+    ws = load_workbook(BytesIO(r.content)).active
+    rows = list(ws.values)
+    header = list(rows[0])
+    assert header[:2] == ["姓名", "学号"]
+    assert header[-4:] == ["参加过吗", "能做什么", "介绍自己", "证明材料"]
+    assert "内部提示分" in header and "组长意愿" in header
+    assert len(rows) == 3
+    first = dict(zip(header, rows[1]))
+    assert first["参加过吗"] == "是" and first["能做什么"] == "引导、登记"
+    assert first["录取结果"] == "已录取" and "（录取）" in first["意向场次"]
+    assert dict(zip(header, rows[2]))["组长意愿"] == "愿意"
+
+    # 即选即得的活动没有报名表
+    other = client.post("/api/staff/activities", headers=admin,
+                        json={"title": f"即选即得 {now():%H%M%S%f}", "organizer": "校青协",
+                              "intro": "x", "location": "东门", "contact_group_qr": "q",
+                              "contacts": [{"name": "王", "phone": "13900000000"}],
+                              "reg_start": now().isoformat(),
+                              "reg_end": (now() + timedelta(days=1)).isoformat()}).json()["id"]
+    assert client.get(f"/api/staff/activities/{other}/applications.xlsx",
+                      headers=admin).status_code == 409

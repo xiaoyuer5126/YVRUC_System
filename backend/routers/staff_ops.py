@@ -15,7 +15,7 @@ from .. import config
 from ..database import db_session
 from ..deps import require_manager, require_manager_download
 from ..enroll_logic import position_enrolled_count
-from ..exporter import build_activity_workbook
+from ..exporter import build_activity_workbook, build_application_workbook
 from ..perm import ensure_activity_manager
 from ..integrations import checkin_gateway, shuzhi, wecom
 from ..notify import notify_checkin
@@ -397,6 +397,29 @@ def export(activity_id: str, db: OrmSession = Depends(db_session),
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"导出排班表《{filename}》"
                       "（生产版将强制加密，密码经企业微信单独发送）")
+    db.commit()
+    from urllib.parse import quote
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument"
+                        ".spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f"attachment; filename*=UTF-8''{quote(filename)}"})
+
+
+@router.get("/activities/{activity_id}/applications.xlsx")
+def export_applications(activity_id: str, db: OrmSession = Depends(db_session),
+                        user: User = Depends(require_manager_download)):
+    """报名表结果导出。筛选是在表格里做的事，答案摊平成一人一行。"""
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    if not act.is_screened():
+        raise HTTPException(409, "只有「报名后筛选」的活动有报名表")
+    buf = build_application_workbook(db, act)
+    stamp = now().strftime("%Y%m%d_%H%M")
+    filename = f"{act.title}_报名表_{stamp}.xlsx"
+    audit_log(db, actor=user, action="export", target_type="export",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=f"导出报名表结果《{filename}》")
     db.commit()
     from urllib.parse import quote
     return StreamingResponse(

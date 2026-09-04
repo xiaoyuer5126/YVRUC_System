@@ -20,6 +20,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session as OrmSession
 
+from . import scoring
 from .models import Activity, CheckinRecord, Enrollment, Shift, User, now
 
 HEADER_FILL = PatternFill("solid", fgColor="9E2235")   # 人大红
@@ -167,6 +168,69 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
                 for i, (_e, u) in enumerate(unassigned, start=start + 1):
                     ws.cell(row=i, column=1, value=u.name)
                     ws.cell(row=i, column=2, value=u.student_id)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def build_application_workbook(db: OrmSession, activity: Activity) -> BytesIO:
+    """报名表结果：一人一行，一题一列。
+
+    筛选是在表格里做的事——把答案摊平了导出来，部长们习惯在 Excel 里排序、
+    筛选、分工看。被显示条件挡掉的题对那个人本来就不存在，留空。
+    """
+    from .models import Application, Attachment, Enrollment, FormQuestion, Shift
+
+    questions = (db.query(FormQuestion)
+                 .filter(FormQuestion.activity_id == activity.id)
+                 .order_by(FormQuestion.sort).all())
+    apps = (db.query(Application)
+            .filter(Application.activity_id == activity.id)
+            .order_by(Application.created_at).all())
+    shifts = {g.id: g for g in activity.main_shifts()}
+    positions = {p.id: p for g in shifts.values() for p in g.positions}
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "报名表结果"
+    header = ["姓名", "学号", "学院", "校区", "学段", "手机号", "提交时间",
+              "意向场次", "录取结果", "组长意愿", "内部提示分"]
+    header += [q.title for q in questions]
+    ws.append(header)
+    _style_header(ws, len(header))
+
+    for app in apps:
+        u = db.get(User, app.user_id)
+        rows = (db.query(Enrollment)
+                .filter(Enrollment.activity_id == activity.id,
+                        Enrollment.user_id == app.user_id).all())
+        wanted = []
+        for e in rows:
+            g = shifts.get(e.shift_id)
+            if g is None:
+                continue
+            st = positions.get(e.position_id) if e.position_id else None
+            mark = "（录取）" if e.status == "enrolled" else ""
+            wanted.append(f"{g.name}{'·' + st.name if st else ''}{mark}")
+        line = [u.name, u.student_id, u.college, u.campus, u.stage, u.phone,
+                f"{app.created_at:%Y-%m-%d %H:%M}", "、".join(wanted),
+                app.status_label(), "愿意" if app.leader_willing else "",
+                scoring.score_of(db, u.id)]
+        for q in questions:
+            v = (app.answers or {}).get(q.id)
+            if q.kind == "file" and v:
+                att = db.get(Attachment, str(v))
+                v = att.title if att else ""
+            elif isinstance(v, list):
+                v = "、".join(v)
+            line.append(v if v is not None else "")
+        ws.append(line)
+
+    ws.column_dimensions["A"].width = 12
+    for i in range(len(header) - len(questions) + 1, len(header) + 1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = 26
 
     buf = BytesIO()
     wb.save(buf)
