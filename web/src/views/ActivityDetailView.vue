@@ -72,16 +72,21 @@
         </div>
 
         <div v-if="screenedApplying" class="section-title">报名申请<span class="dim" style="font-weight:400;margin-left:8px">
-          勾选意向场次并填写报名表，截止后由负责老师筛选录取</span></div>
+          勾选意向场次并填写报名表，截止后由负责老师筛选录取；
+          场次与岗位见下方安排</span></div>
         <div v-else class="section-title">岗位安排<span class="dim" style="font-weight:400;margin-left:8px">
           点击岗位名称可查看详情；点击行首箭头展开岗位</span></div>
 
-        <!-- 报名后筛选：没录取之前只有申请入口，岗位等录取后再看 -->
-        <ApplicationPanel v-if="screenedApplying" :act="act" @changed="load" />
+        <!-- 报名后筛选：先是申请入口，下面照旧列场次与岗位——
+             审批人要在同一页看完整安排，学生也要先知道自己在报什么 -->
+        <ApplicationPanel v-if="screenedApplying" :act="act" @changed="load"
+                          style="margin-bottom:14px" />
+        <div v-if="screenedApplying" class="section-title">场次与岗位<span class="dim" style="font-weight:400;margin-left:8px">
+          仅供了解；录取后由负责老师安排到具体岗位</span></div>
 
         <!-- 窄屏：场次与岗位改成竖排卡片。手机上选岗位是最要紧的动作，
              不能藏在表格的展开箭头后面，所以岗位直接铺开。 -->
-        <div v-else-if="narrow" class="m-shifts">
+        <div v-if="narrow" class="m-shifts">
           <el-card v-for="g in act.shifts" :key="g.id" shadow="never" class="m-shift">
             <div class="m-shift-head">
               <b @click="showGroupDetail(g)">{{ g.name }}</b>

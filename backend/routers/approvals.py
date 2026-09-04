@@ -1,4 +1,4 @@
-"""活动审批：发起方提交 → 校青协部长审批 → 通过后由发起方自己发布。
+"""活动审批：发起方提交 → 校青协部长审批 → 通过即发布（可在提交时关掉）。
 
 状态流：
     草稿 →[提交]→ 待审批 →[通过]→ 待发布 →[发布]→ 报名中 …
@@ -163,6 +163,7 @@ def submit_check(activity_id: str, db: OrmSession = Depends(db_session),
 class SubmitBody(BaseModel):
     department_id: str = ""      # 留空 = 沿用活动的归口部门
     note: str = ""
+    auto_publish: bool = True    # 通过即发布；不勾就停在「待发布」
 
 
 @router.post("/activities/{activity_id}/submit")
@@ -189,6 +190,7 @@ def submit(activity_id: str, body: SubmitBody,
         raise HTTPException(400, f"「{dept.name}」还没有指定部长，请联系管理员")
 
     act.status = "pending"
+    act.auto_publish = body.auto_publish
     act.approval_dept_id = dept.id
     act.approval_assignee_id = head.id
     act.approval_comment = ""
@@ -217,7 +219,12 @@ class DecideBody(BaseModel):
 def decide(activity_id: str, body: DecideBody,
            db: OrmSession = Depends(db_session),
            user: User = Depends(require_manager)):
-    """通过或驳回。通过后活动回到发起方手里，由他自己点发布。"""
+    """通过或驳回。
+
+    通过即发布：报名什么时候开放由「报名开始时间」决定，发布只是让活动出现在
+    广场上，多一步手动发布只是让发起方再登录一次点个按钮。提交审批时可以关掉
+    这一项，那就停在「待发布」等发起方自己点。
+    """
     act = db.get(Activity, activity_id)
     if act is None:
         raise HTTPException(404, "活动不存在")
@@ -244,11 +251,19 @@ def decide(activity_id: str, body: DecideBody,
         act.status = "approved"
         act.approved_at = now()
         _event(db, act, "approve", user, comment=comment)
-        summary = f"审批通过（{who}）" + (f"：{comment}" if comment else "")
+        published = False
+        if act.auto_publish:
+            from .staff_activities import publish_approved
+            publish_approved(db, act, user)
+            published = True
+        summary = (f"审批通过（{who}）" + ("并发布" if published else "")
+                   + (f"：{comment}" if comment else ""))
         title, body_text = (
             f"审批通过｜{act.title}",
-            f"「{act.title}」已通过校青协审批，现在可以在活动管理页点「发布」"
-            f"开始报名。" + (f"\n审批意见：{comment}" if comment else ""))
+            f"「{act.title}」已通过校青协审批"
+            + (f"并发布，报名于 {iso(act.reg_start)} 开始。" if published
+               else "，现在可以在活动管理页点「发布」开始报名。")
+            + (f"\n审批意见：{comment}" if comment else ""))
     else:
         act.status = "draft"
         act.approval_assignee_id = None

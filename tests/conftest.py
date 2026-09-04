@@ -245,8 +245,9 @@ def enrolled_activity(db, take_student):
     return make_enrolled_activity(db, take_student)
 
 
-def approve(client, headers, activity_id):
+def approve(client, headers, activity_id, auto_publish=True):
     """走一遍审批：提交给一个有部长的部门 → 通过。要发布活动就得先过这关。
+    默认「通过即发布」，回来活动就在报名中了。
 
     挑「有部长的」而不是第一个：部长可以被改到别的部门去，用例之间共用
     一个库，写死下标会被别的用例改出来的状态坑掉。
@@ -255,7 +256,8 @@ def approve(client, headers, activity_id):
              if d["has_head"]]
     assert depts, "没有任何部门设了部长，无法走审批"
     r = client.post(f"/api/staff/activities/{activity_id}/submit", headers=headers,
-                    json={"department_id": depts[0]["id"]})
+                    json={"department_id": depts[0]["id"],
+                          "auto_publish": auto_publish})
     assert r.status_code == 200, r.text
     r = client.post(f"/api/staff/activities/{activity_id}/decide", headers=headers,
                     json={"approve": True})

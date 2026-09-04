@@ -234,12 +234,15 @@ class Activity(Base):
     # published 报名中 / closed 已截止 / finished 已结束
 
     # —— 审批 ——
-    # 所有活动发布前都要过校青协；通过后回到发起方手里，由他自己点发布。
+    # 所有活动发布前都要过校青协。默认通过即发布；提交时可以关掉这一项，
+    # 那就停在「待发布」，由发起方挑时候自己点。
     approval_dept_id: Mapped[str | None] = mapped_column(
         ForeignKey("departments.id"), nullable=True, index=True)
     approval_assignee_id: Mapped[str | None] = mapped_column(
         String(32), nullable=True, index=True)
     approval_comment: Mapped[str] = mapped_column(String(512), default="")
+    # 提交审批时勾的：通过即发布。不勾就停在「待发布」，由发起方自己点。
+    auto_publish: Mapped[bool] = mapped_column(Boolean, default=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # 提醒过一次就记下来，别每分钟催一遍
@@ -543,7 +546,7 @@ class Application(Base):
     __table_args__ = (Index("uq_application", "activity_id", "user_id", unique=True),)
 
     STATUS_LABELS = {"applied": "待筛选", "accepted": "已录取",
-                     "rejected": "未录取", "withdrawn": "已撤回"}
+                     "rejected": "未录取"}
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
@@ -574,7 +577,7 @@ class Enrollment(Base):
       cancelled        已退选（cancel_type: normal 正常 / late 临近 /
                                      expired 放弃候补超时 / abandoned 主动放弃候补 /
                                      shift_deleted 场次被删除 / rejected 未录取 /
-                                     not_chosen 录取到了别的场次 / withdrawn 撤回申请）
+                                     not_chosen 录取到了别的场次）
 
     seat_held：临近退选（开始前 24 小时内、报名已截止）**名额不再释放**，
     该记录虽已 cancelled 但仍占着一个名额，防止有人临期退了、别人补进来、

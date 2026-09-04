@@ -70,7 +70,22 @@
       <span class="dim" style="margin-left:10px">一个活动只填一次；录取前可撤回</span>
     </template>
 
-    <el-empty v-else :image-size="50" :description="closedText" />
+    <!-- 不在报名期：审批人和路过的人也该看得到这份表长什么样 -->
+    <template v-else>
+      <el-alert type="info" :closable="false" :title="closedText" style="margin-bottom:12px" />
+      <div class="apply-head"><b>报名表</b>
+        <span class="dim">报名开放后填写，并勾选意向场次</span>
+      </div>
+      <ol v-if="questions.length" class="preview">
+        <li v-for="q in questions" :key="q.id">
+          {{ q.title }}
+          <el-tag size="small" effect="plain" style="margin:0 6px">{{ q.kind_label }}</el-tag>
+          <el-tag v-if="q.required" size="small" type="warning" effect="plain">必填</el-tag>
+          <div v-if="q.options?.length" class="dim">选项：{{ q.options.join(' / ') }}</div>
+        </li>
+      </ol>
+      <el-empty v-else description="还没有设置题目" :image-size="50" />
+    </template>
   </el-card>
 </template>
 
@@ -148,4 +163,5 @@ async function withdraw() {
 .apply-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .shift-opt { display: flex; align-items: center; height: auto; margin: 4px 0; }
 .file-row { display: flex; align-items: center; gap: 10px; }
+.preview { margin: 6px 0 0; padding-left: 20px; line-height: 2; }
 </style>

@@ -43,7 +43,7 @@ def test_草稿不能绕过审批直接发布(client, admin, draft):
     assert r.status_code == 409 and "先提交校青协审批" in r.json()["detail"]
 
 
-def test_提交后由部长通过再由发起方发布(client, admin, db, draft):
+def test_提交后由部长通过即发布(client, admin, db, draft):
     dept = _liaison(db)
     r = client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
                     json={"department_id": dept.id, "note": "校庆相关"})
@@ -58,13 +58,42 @@ def test_提交后由部长通过再由发起方发布(client, admin, db, draft)
 
     r = client.post(f"/api/staff/activities/{draft}/decide", headers=head,
                     json={"approve": True, "comment": "同意"})
+    assert r.status_code == 200 and r.json()["status"] == "published"
+    db.expire_all()
+    assert db.get(Activity, draft).status == "published"
+    # 报名开始时间没到也照样发布，广场上显示倒计时
+    assert db.get(Activity, draft).reg_start is not None
+
+
+def test_关掉通过即发布就停在待发布(client, admin, db, draft):
+    """想踩着某个时刻自己放出去的，通过后活动还在发起方手里。"""
+    head = login(client, QINGXIE_HEAD)
+    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                json={"department_id": _liaison(db).id, "auto_publish": False})
+    r = client.post(f"/api/staff/activities/{draft}/decide", headers=head,
+                    json={"approve": True})
     assert r.status_code == 200 and r.json()["status"] == "approved"
     db.expire_all()
-    assert db.get(Activity, draft).status == "approved"      # 不自动上线
-
-    # 通过后才轮到发起方发布
+    assert db.get(Activity, draft).status == "approved"
     assert client.post(f"/api/staff/activities/{draft}/publish",
                        headers=admin).status_code == 200
+    db.expire_all()
+    assert db.get(Activity, draft).status == "published"
+
+
+def test_审批期间把安排改坏了就通不过(client, admin, db, draft):
+    """提交之后发起方还能改；通过的那一刻活动就上线，不能带着窟窿出去。"""
+    head = login(client, QINGXIE_HEAD)
+    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                json={"department_id": _liaison(db).id})
+    act = db.get(Activity, draft)
+    act.contact_group_qr = ""
+    db.commit()
+    r = client.post(f"/api/staff/activities/{draft}/decide", headers=head,
+                    json={"approve": True})
+    assert r.status_code == 400 and "联络群" in r.json()["detail"]
+    db.expire_all()
+    assert db.get(Activity, draft).status == "pending"
 
 
 def test_驳回必须写理由并退回草稿(client, admin, db, draft):
@@ -257,7 +286,6 @@ def test_活动一旦公开审批人就退回普通视角(client, admin, db, dra
                 json={"student_id": CORE, "reason": "请骨干看"})
     client.post(f"/api/staff/activities/{draft}/decide", headers=core,
                 json={"approve": True})
-    client.post(f"/api/staff/activities/{draft}/publish", headers=admin)
 
     d = client.get(f"/api/activities/{draft}", headers=core).json()
     assert d["review_preview"] is False

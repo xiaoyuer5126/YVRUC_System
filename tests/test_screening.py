@@ -120,7 +120,8 @@ def test_申请时就拦时段冲突(client, admin, db, enrolled_activity, take_
     assert r.status_code == 409 and r.json()["detail"]["conflicts"]
 
 
-def test_撤回申请(client, admin, db, take_student):
+def test_撤回申请后可以重新填(client, admin, db, take_student):
+    """撤回等于没申请过：改答案、改意向场次都是先撤回再重填。"""
     act_id, ids, q = _create_screened(client, admin, db)
     t = login(client, take_student())
     client.post(f"/api/activities/{act_id}/apply", headers=t,
@@ -132,8 +133,20 @@ def test_撤回申请(client, admin, db, take_student):
                          headers=t).status_code == 409
     assert client.delete(f"/api/activities/{act_id}/apply", headers=t).status_code == 200
     assert client.delete(f"/api/activities/{act_id}/apply", headers=t).status_code == 409
+
     d = client.get(f"/api/activities/{act_id}", headers=t).json()
-    assert d["application"]["mine"]["status"] == "withdrawn"
+    assert d["application"]["mine"] is None
+    assert not [r for r in client.get("/api/me/enrollments", headers=t).json()
+                if r["activity"]["id"] == act_id]
+    # 重新填一份，只报一个场次
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"shift_ids": ids[:1], "answers": _answers(q, 参加过吗="否")})
+    assert r.status_code == 200, r.text
+    mine = client.get(f"/api/activities/{act_id}", headers=t).json()["application"]["mine"]
+    assert len(mine["wanted"]) == 1
+    # 管理者的申请名单里只有重填的这一份
+    lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
+    assert len(lst["applications"]) == 1
 
 
 def test_录取与未录取(client, admin, db, take_student):

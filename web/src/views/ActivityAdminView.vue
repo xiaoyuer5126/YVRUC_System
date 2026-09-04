@@ -70,7 +70,9 @@
     <el-alert v-if="act.status === 'pending'" type="warning" show-icon :closable="false"
               style="margin:12px 0"
               :title="`已提交${approval?.department || ''}审批，等待 ${approval?.assignee || ''} 处理`"
-              description="审批期间可以继续调整安排；通过后回到你手里，由你点「保存并发布」开始报名。" />
+              :description="act.auto_publish
+                ? '审批期间可以继续调整安排；一旦通过，活动立即发布，报名按你设的开始时间开闸。'
+                : '审批期间可以继续调整安排；通过后回到你手里，由你点「保存并发布」开始报名。'" />
     <el-alert v-else-if="act.status === 'approved'" type="success" show-icon :closable="false"
               style="margin:12px 0" title="审批已通过，可以发布了"
               :description="approval?.comment ? ('审批意见：' + approval.comment) : ''" />
@@ -937,8 +939,7 @@
     <!-- 提交审批 -->
     <el-dialog v-model="submitDlg.visible" title="提交校青协审批" width="500">
       <p class="dim" style="margin-top:0;line-height:1.8">
-        所有活动发布前都要过校青协。选一个归口部门，提交给该部门部长；
-        通过后活动回到你手里，由你自己点发布。
+        所有活动发布前都要过校青协。选一个归口部门，提交给该部门部长。
       </p>
       <el-form label-width="88px">
         <el-form-item label="审批部门" required>
@@ -951,6 +952,18 @@
         <el-form-item label="给审批人">
           <el-input v-model="submitDlg.note" type="textarea" :rows="2"
                     placeholder="选填，补充说明" />
+        </el-form-item>
+        <el-form-item label="通过之后">
+          <div>
+            <el-radio-group v-model="submitDlg.autoPublish">
+              <el-radio :value="true">通过即发布</el-radio>
+              <el-radio :value="false">通过后我自己点发布</el-radio>
+            </el-radio-group>
+            <div class="dim">
+              报名什么时候开放由「报名开始时间」决定，发布只是让活动出现在广场上。
+              想踩着某个时刻手动放出去，就选后一个。
+            </div>
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -1886,7 +1899,7 @@ async function openSubmit() {
   depts.value = await api.get('/api/staff/departments')
   // 青协的人建的活动已经按所在部门预填了归口，这里带出来，可以改
   submitDlg.value = { visible: true, deptId: act.value?.approval_dept_id || '',
-                      note: '', busy: false }
+                      note: '', autoPublish: true, busy: false }
 }
 
 async function doSubmit() {
@@ -1895,7 +1908,8 @@ async function doSubmit() {
   d.busy = true
   try {
     const r = await api.post(`/api/staff/activities/${activityId}/submit`,
-                             { department_id: d.deptId, note: d.note })
+                             { department_id: d.deptId, note: d.note,
+                               auto_publish: d.autoPublish })
     ElMessage.success(`已提交，等待 ${r.assignee} 审批`)
     d.visible = false
     loadAll()

@@ -387,8 +387,8 @@ def test_没有岗位的场次不能发布(client, admin, db):
     client.post(f"/api/staff/shifts/{shift_id}/positions", headers=admin,
                 json={"name": "引导", "quota": 3, **POSITION_TEXT})
     approve(client, admin, aid)
-    assert client.post(f"/api/staff/activities/{aid}/publish",
-                       headers=admin).status_code == 200
+    assert client.get(f"/api/activities/{aid}",
+                      headers=admin).json()["status"] == "published"
 
 
 def test_恢复报名必须重设截止时间(client, admin, db, take_student):

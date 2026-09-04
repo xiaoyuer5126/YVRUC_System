@@ -470,6 +470,7 @@ def copy_positions_route(shift_id: str, body: CopyPositionsBody,
 @router.post("/activities/{activity_id}/publish")
 def publish(activity_id: str, db: OrmSession = Depends(db_session),
             user: User = Depends(require_manager)):
+    """手动发布。只有提交审批时关掉了「通过即发布」的活动才会走到这里。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     # 所有活动发布前都要过校青协：草稿要先提交审批，通过后才轮到这一步
@@ -477,6 +478,14 @@ def publish(activity_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(409, "请先提交校青协审批，通过后再发布")
     if act.status != "approved":
         raise HTTPException(409, f"当前状态为「{act.label_status()}」，不能发布")
+    publish_approved(db, act, user)
+    db.commit()
+    return {"ok": True}
+
+
+def publish_approved(db: OrmSession, act: Activity, user: User) -> None:
+    """把审批通过的活动放到广场上。审批人拍板时自动走这里，
+    关掉了「通过即发布」的则由发起方点按钮走这里。不提交事务，交给调用方。"""
     ensure_ready_to_publish(act)
     act.status = "published"
     if act.reg_start is None:
@@ -484,12 +493,11 @@ def publish(activity_id: str, db: OrmSession = Depends(db_session),
     audit_log(db, actor=user, action="publish", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary="发布活动，开始报名")
-    db.commit()
-    return {"ok": True}
 
 
 def ensure_ready_to_publish(act: Activity) -> None:
-    """结构上够不够格公开。提交审批与发布都走这一道，别让审批人替发起方查。"""
+    """结构上够不够格公开。提交审批与发布都走这一道——审批期间发起方还能
+    继续改，真上线的那一刻不能带着窟窿出去。"""
     if not act.contact_group_qr:
         raise HTTPException(400, "请先在基本信息里上传志愿者联络群二维码")
     if not act.main_shifts():

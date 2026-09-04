@@ -222,19 +222,30 @@ def _validate_answers(db: OrmSession, act: Activity, user: User,
 @router.delete("/activities/{activity_id}/apply")
 def withdraw(activity_id: str, db: OrmSession = Depends(db_session),
              user: User = Depends(current_user)):
-    """撤回申请。录取之后就是正式报名，走退选那条路。"""
+    """撤回申请：把申请与意向记录整条删掉。
+
+    撤回等于没申请过——报名期内还能重新填一份，改答案、改意向场次都走这条路
+    （一个活动只填一次，不给改，那就只能先撤回再重填）。录取之后不是申请了，
+    走退选。
+    """
     act = _act(db, activity_id)
     app = (db.query(Application)
            .filter(Application.activity_id == act.id,
                    Application.user_id == user.id).first())
-    if app is None or app.status != "applied":
+    if app is None:
         raise HTTPException(409, "没有可撤回的申请")
-    app.status = "withdrawn"
-    for e in (db.query(Enrollment)
-              .filter(Enrollment.activity_id == act.id,
-                      Enrollment.user_id == user.id,
-                      Enrollment.status == "applied").all()):
-        e.status, e.cancel_type = "cancelled", "withdrawn"
+    if app.status != "applied":
+        raise HTTPException(
+            409, "申请已经处理过了" + ("；退出请到「我的报名」退选"
+                                      if app.status == "accepted" else ""))
+    (db.query(Enrollment)
+     .filter(Enrollment.activity_id == act.id, Enrollment.user_id == user.id,
+             Enrollment.status == "applied")
+     .delete(synchronize_session=False))
+    audit_log(db, actor=user, action="cancel", target_type="enrollment",
+              target_id=app.id, target_label=user.name, activity_id=act.id,
+              summary=f"{user.name}（{user.student_id}）撤回了报名申请")
+    db.delete(app)
     db.commit()
     return {"ok": True}
 
