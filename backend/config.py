@@ -37,9 +37,25 @@ EXPOSE_API_DOCS = os.environ.get("RUCVA_EXPOSE_DOCS", "").strip() == "1"
 RUN_SWEEPER = os.environ.get("RUCVA_DISABLE_SWEEPER", "").strip() != "1"
 
 # —— 业务规则常量 ——
-# 平台不对志愿者做任何限制：没有信用分、没有准入名单。临近退选只影响那个
-# 名额（报名已截止时扣留不释放），并记一次「临近退选」供青协在档案里查看。
+# 平台不对志愿者做任何限制：没有准入名单，也不拦任何人报名。临近退选只影响
+# 那个名额（报名已截止时扣留不释放），并记一次「临近退选」供青协查看。
 LATE_CANCEL_HOURS = 24     # 「临近」阈值（小时）
+
+# 内部提示分（backend/scoring.py）。只给青协工作人员看，作用仅限于在名单上
+# 挂一个感叹号。权重先按这套跑，回头由部长们定夺再改这里就行——分数是现算的，
+# 改了立刻全平台生效，不会留下对不上的历史值。
+SCORE_BASE = 100            # 起始分，也是上限
+SCORE_MIN = 0
+SCORE_ALERT_BELOW = 60      # 低于它，名单上姓名旁挂感叹号
+SCORE_PER_ACTIVITY = 5      # 顺利参与一次活动加回来的分
+LATE_CANCEL_WEIGHT = 5      # 一次临近退选扣多少
+VIOLATION_WEIGHTS = {       # 一次违规扣多少，最重一档 20
+    "late": 10,       # 迟到早退
+    "leave": 15,      # 无故请假
+    "contact": 20,    # 无法取得联系
+    "passive": 10,    # 消极志愿
+    "other": 5,       # 其他
+}
 PROMOTE_CONFIRM_HOURS = 2  # 候补转正确认窗口（小时）
 
 # 签退宽限：场次结束后这么久内仍可自行签退，超时按场次结束时间兜底并标记待核

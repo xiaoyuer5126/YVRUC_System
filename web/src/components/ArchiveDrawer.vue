@@ -21,7 +21,24 @@
         <div class="stat" :class="{ warn: d.violations.length }">
           <b>{{ d.violations.length }}</b><span class="dim">条违规记录</span>
         </div>
+        <div class="stat" :class="{ warn: d.score.score_alert }">
+          <b>{{ d.score.score }}</b><span class="dim">内部提示分</span>
+        </div>
       </div>
+
+      <!-- 提示分只给青协内部看：不公开给志愿者，也不拦任何人报名 -->
+      <div class="section-title">提示分明细</div>
+      <div class="score-items">
+        <span v-for="(it, i) in d.score.items" :key="i" class="score-item">
+          {{ it.label }}<template v-if="it.count > 1"> ×{{ it.count }}</template>
+          <b :class="{ minus: it.delta < 0 }">{{ it.delta > 0 ? '+' : '' }}{{ it.delta }}</b>
+        </span>
+      </div>
+      <p class="dim" style="margin:4px 0 0">
+        低于 {{ d.score.alert_below }} 分时名单上会挂感叹号，提醒排班的人看一眼这一页。
+        顺利参与一次活动加 {{ perActivity }} 分，分数会自己长回来。
+        不对志愿者公开，也不影响报名。
+      </p>
 
       <div class="section-title">违规记录</div>
       <el-empty v-if="!d.violations.length" :image-size="50" description="没有违规记录" />
@@ -60,6 +77,10 @@ const loading = ref(false)
 const d = ref(null)
 
 const served = computed(() => d.value ? d.value.history.filter(h => h.checked_in).length : 0)
+// 加分那一项就是「顺利参与一次」的权重，直接从明细里取，别在前端抄第二份
+const perActivity = computed(
+  () => d.value?.score.items.find(i => i.label === '顺利参与活动')?.delta
+        / (d.value?.score.items.find(i => i.label === '顺利参与活动')?.count || 1) || 5)
 
 async function open(url) {
   visible.value = true
@@ -83,6 +104,9 @@ function tagType(h) {
 </script>
 
 <style scoped>
+.score-items { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; }
+.score-item b { margin-left: 4px; color: var(--el-color-success); }
+.score-item b.minus { color: var(--el-color-danger); }
 .stats { display: flex; gap: 10px; margin: 14px 0; }
 .stat { flex: 1; text-align: center; padding: 10px 6px; border-radius: 10px;
         background: var(--el-fill-color-light); }

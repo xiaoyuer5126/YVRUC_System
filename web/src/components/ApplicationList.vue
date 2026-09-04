@@ -50,6 +50,7 @@
       </el-table-column>
       <el-table-column label="姓名" width="110">
         <template #default="{ row }">
+          <ScoreAlert :user="row.user" />
           <el-link type="primary" :underline="false" @click="$emit('archive', row.user)">
             {{ row.user.name }}
           </el-link>
@@ -89,6 +90,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download as dl, fmtDT } from '../api'
+import ScoreAlert from './ScoreAlert.vue'
 
 const props = defineProps({ activityId: { type: String, required: true } })
 const emit = defineEmits(['archive', 'changed'])

@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
-from .. import assign, config, copying
+from .. import assign, config, copying, scoring
 from ..audit import diff_changes, log as audit_log
 from ..database import db_session
 from ..deps import require_manager
@@ -1374,7 +1374,7 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
             "enrollment_id": e.id,
             "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
                      "college": u.college, "gender": u.gender, "phone": u.phone,
-                     "grade": u.grade},
+                     "grade": u.grade, **scoring.brief(db, u.id)},
             "position_id": e.position_id,
             "position_name": st.name if st else "",
             "position_group": st.group_name if st else "",

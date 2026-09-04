@@ -17,7 +17,7 @@ from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, enroll_logic as logic
+from .. import config, enroll_logic as logic, scoring
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import current_user, require_manager
@@ -374,7 +374,7 @@ def list_applications(activity_id: str, db: OrmSession = Depends(db_session),
             "created_at": app.created_at.isoformat(timespec="minutes"),
             "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
                      "college": u.college, "campus": u.campus, "stage": u.stage,
-                     "phone": u.phone},
+                     "phone": u.phone, **scoring.brief(db, u.id)},
             "wanted": wanted, "answers": answers,
             "leader_willing": app.leader_willing,
         })

@@ -352,6 +352,7 @@
                          @click="setLeader(row, false)">取消组长</el-button>
               <el-button v-else-if="canBeLeader(row)" size="small" link
                          @click="setLeader(row, true)">设为组长</el-button>
+              <ScoreAlert :user="row.user" />
               <el-button size="small" link @click="openArchive(row.user)">档案</el-button>
               <el-button size="small" link type="danger"
                          @click="violationDlg.open(row.user)">登记违规</el-button>
@@ -360,6 +361,7 @@
           <el-table v-else :data="roster.enrolled" size="small" max-height="300" style="margin-bottom:14px">
             <el-table-column label="姓名" width="110">
           <template #default="{row}">
+            <ScoreAlert :user="row.user" />
             <el-link type="primary" :underline="false" @click="openArchive(row.user)">
               {{ row.user.name }}
             </el-link>
@@ -1224,6 +1226,7 @@ import DataCards from '../components/DataCards.vue'
 import ActivityForm from '../components/ActivityForm.vue'
 import ArchiveDrawer from '../components/ArchiveDrawer.vue'
 import DateTimeField from '../components/DateTimeField.vue'
+import ScoreAlert from '../components/ScoreAlert.vue'
 import ViolationDialog from '../components/ViolationDialog.vue'
 import FormBuilder from '../components/FormBuilder.vue'
 import ApplicationList from '../components/ApplicationList.vue'

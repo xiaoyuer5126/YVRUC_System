@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
+from .. import scoring
 from ..audit import ACTION_LABELS, log as audit_log
 from ..database import db_session
 from ..deps import (require_admin, require_archive_page, require_council, require_manager)
@@ -169,6 +170,7 @@ def _archive(db: OrmSession, u: User) -> dict:
                  "id_card_masked": ("无内地身份证号" if u.no_mainland_id
                                     else u.masked_id_card())},
         "history": history,
+        "score": scoring.detail(db, u),
         "late_cancel_count": sum(1 for h in history if h["cancel_type"] == "late"),
         "violations": [{
             "id": v.id, "activity_id": v.activity_id,

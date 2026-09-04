@@ -117,3 +117,30 @@ def test_部门成员在活动里也看不了档案(client, db, enrolled_activit
     r = client.get(f"/api/staff/activities/{act.id}/volunteers/{u.id}/archive",
                    headers=login(client, MEMBER))
     assert r.status_code == 403
+
+
+def test_提示分按违规与参与现算(client, admin, db, enrolled_activity):
+    """分数不落库：登记一条违规立刻掉分，销掉就长回来。"""
+    _act, _shift, u = enrolled_activity
+    base = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
+    assert base["score"]["score"] == 100 and base["score"]["score_alert"] is False
+
+    ids = []
+    for kind in ("contact", "leave", "late", "passive"):
+        r = client.post("/api/staff/violations", headers=admin,
+                        json={"user_id": u.id, "activity_id": _act.id,
+                              "kind": kind, "detail": "演示"})
+        assert r.status_code == 200, r.text
+        ids.append(r.json()["id"])
+    d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
+    assert d["score"]["score"] == 100 - 20 - 15 - 10 - 10
+    assert d["score"]["score_alert"] is True
+
+    # 名单上这个人要挂感叹号
+    roster = client.get(f"/api/staff/shifts/{_shift.id}/roster", headers=admin).json()
+    me = next(r for r in roster["enrolled"] if r["user"]["id"] == u.id)
+    assert me["user"]["score_alert"] is True and me["user"]["score"] == 45
+
+    client.delete(f"/api/staff/violations/{ids[0]}", headers=admin)
+    d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
+    assert d["score"]["score"] == 65 and d["score"]["score_alert"] is False
