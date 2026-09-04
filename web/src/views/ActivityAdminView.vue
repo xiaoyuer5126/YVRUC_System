@@ -35,8 +35,7 @@
       <template #extra>
         <!-- 「调整岗位」只在岗位设置那一页出现一次，页头不重复放 -->
         <el-button @click="openPoster">活动招募</el-button>
-        <el-button v-if="act.status !== 'finished'"
-                   @click="editBase = true">编辑基本信息</el-button>
+        <el-button v-if="!isOver" @click="editBase = true">编辑基本信息</el-button>
         <el-popconfirm v-if="act.status === 'published'" title="截止后不再接受新报名，确认？"
                        @confirm="transition('close')">
           <template #reference><el-button type="warning">截止报名</el-button></template>
@@ -104,13 +103,13 @@
         <FormBuilder v-if="act.recruit_mode === 'screened'" :key="act.status"
                      :activity-id="act.id" :editable="!isPublic"
                      style="margin-bottom:12px" />
-        <!-- 已结束的活动是终态：时长按当时的岗位与名单算过并报送了，
-             再改就跟报出去的账对不上，连「调整岗位」的入口都不给 -->
-        <el-alert v-if="act.status === 'finished'" type="info" show-icon
-                  :closable="false" style="margin-bottom:12px"
-                  title="活动已结束，安排与信息均为只读">
+        <!-- 结束之后是终态：时长按当时的岗位与名单结的账，再改就对不上，
+             连「调整岗位」的入口都不给 -->
+        <el-alert v-if="isOver" type="info" show-icon :closable="false"
+                  style="margin-bottom:12px"
+                  :title="`活动${act.status_label}，安排与信息均为只读`">
           <div style="line-height:1.8">
-            时长已按结束时的岗位与名单结算，不再接受修改；如确需更正请联系管理员。
+            时长按结束时的岗位与名单结算，不再接受修改；如确需更正请联系管理员。
           </div>
         </el-alert>
         <el-alert v-else-if="structureLocked" type="info" show-icon :closable="false"
@@ -610,10 +609,15 @@
               确认正常签退的
             </el-button>
           </el-tooltip>
-          <el-button v-if="!hoursState.locked_at" type="success"
-                     :disabled="!enrolledCount" @click="openApprove">
-            确认核准时长
-          </el-button>
+          <el-tooltip :disabled="!!confirmedCount" placement="top"
+                      content="先确认时长（或手动补录），才有账可以核准">
+            <span>
+              <el-button v-if="!hoursState.locked_at" type="success"
+                         :disabled="!confirmedCount" @click="openApprove">
+                确认核准时长
+              </el-button>
+            </span>
+          </el-tooltip>
           <el-button v-if="hoursState.approved_at && !hoursState.locked_at"
                      type="warning" plain @click="lockHoursNow">立即锁定</el-button>
           <el-button v-if="hoursState.locked_at" type="warning" plain
@@ -1314,7 +1318,7 @@ const tab = ref(String(route.query.tab || 'tree'))   // 支持 ?tab=roster 直�
 // 未发布（草稿/待审批/待发布）只留 岗位设置 / 管理者 / 变更记录：那时一个报名的人
 // 都没有，名单、签到、马甲、导出、签收全是空页
 const isPublic = computed(() =>
-  ['published', 'closed', 'finished'].includes(act.value?.status))
+  ['published', 'closed', 'finished', 'completed'].includes(act.value?.status))
 const modes = ref({})
 const colleges = ref([])
 const campuses = ref([])
@@ -1456,7 +1460,11 @@ const structureLocked = computed(
   () => !!act.value && act.value.status !== 'draft' && !act.value.editing)
 
 // 报名是否已经截止：截止后还有人没岗位，就不再是「等着分」而是漏排了
-const regClosed = computed(() => ['closed', 'finished'].includes(act.value?.status))
+const regClosed = computed(
+  () => ['closed', 'finished', 'completed'].includes(act.value?.status))
+// 活动办完了：结构与基本信息都是只读
+const isOver = computed(
+  () => ['finished', 'completed'].includes(act.value?.status))
 
 function unassignedHint(g) {
   if (g.mode === 'pick') {
@@ -1537,6 +1545,9 @@ async function loadAll() {
     logs.value = logsResp.items || []
     await loadManagers()
     loadAppeals()      // 标签上的红点要一进页面就在，不能等切到那一页才知道
+    // ?tab=export 直达：watch(tab) 不会触发，时长这一页要在这里加载，
+    // 否则核准按钮拿不到申诉截止时间的默认值
+    if (tab.value === 'export') hoursPreview(true)
     loadApproval()
     if (!currentGroupId.value && shifts.value.length) {
       currentGroupId.value = shifts.value[0].id
@@ -1574,7 +1585,9 @@ const allShifts = computed(() => shifts.value.flatMap(g => [
 const unassignedCount = computed(() =>
   (roster.value.enrolled || []).filter(x => !x.position_id).length)
 const pendingPromo = computed(() => roster.value.waitlist.some(w => w.status === 'pending_confirm'))
-const enrolledCount = computed(() => hours.value.filter(h => h.status === 'enrolled').length)
+// 已经确认下来的时长条数（含手动补录）：有账才谈得上核准
+const confirmedCount = computed(
+  () => hours.value.filter(h => h.confirmed).length + manualHours.value.length)
 
 function sumQuota(g) {
   return g.positions.reduce((s, x) => s + x.quota, 0)
@@ -2260,7 +2273,9 @@ async function removeManager(row) {
     await loadManagers()
   } catch { /* toast by api */ }
 }
-// 进入「导出与时长」页签时自动加载时长预览（静默加载，不弹提示）
+// 切到「导出与时长」页签时自动加载时长预览（静默加载，不弹提示）。
+// ?tab=export 直达时 tab 一开始就是它，这个 watch 不会触发——那一路由
+// loadAll 负责补上。
 watch(tab, async t => {
   if (t === 'export') { hoursPreview(true); loadAppeals() }
   if (t === 'acks') {
