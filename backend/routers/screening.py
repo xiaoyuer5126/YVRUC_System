@@ -1,5 +1,8 @@
 """报名后筛选：管理者设计报名表，志愿者填一次表并勾意向场次，截止后由管理者
-挑人、定场次。录取的人落进所选场次的占位岗位，再由一键分配/手动指派进真实岗位。
+挑人。
+
+场次照旧分两种：「报名即选岗位」的场次要连意向岗位一起勾，录取时直接落到他选的
+那个岗位；「截止后统一分配」的场次只勾场次，录取后落在占位岗位上等统一分配。
 
 申请不限人数；申请时就按意向场次拦时段冲突（跟即选即得一个口径）；未录取只发
 一条留余地的通知，不留任何影响以后报名的记录。
@@ -20,8 +23,7 @@ from ..database import db_session
 from ..deps import current_user, require_manager
 from ..integrations import wecom
 from ..locks import shift_lock
-from ..models import (Activity, Application, Attachment, Enrollment,
-                      FormQuestion, Shift, User, now, uid)
+from ..models import (Activity, Application, Attachment, Enrollment, FormQuestion, Position, Shift, User, now, uid)
 from ..perm import ensure_activity_manager, is_activity_manager
 from ..serializers import application_out
 from .materials import EXT_TYPES, MATERIAL_DIR
@@ -54,6 +56,7 @@ class QuestionBody(BaseModel):
     title: str = Field(max_length=200)
     options: list[str] = []
     required: bool = True
+    show_if: dict = {}            # {"question_id": ..., "values": [...]}
 
 
 class FormBody(BaseModel):
@@ -80,6 +83,8 @@ def save_form(activity_id: str, body: FormBody,
         raise HTTPException(409, "活动已公开，报名表不能再改")
     existing = {q.id: q for q in _questions(db, activity_id)}
     keep: set[str] = set()
+    # 显示条件只能挂在前面的选择题上：往后指会绕成环，答一道题跳一道题就说不清了
+    earlier: dict[str, list[str]] = {}
     for i, q in enumerate(body.questions):
         if q.kind not in FormQuestion.KINDS:
             raise HTTPException(400, f"第 {i + 1} 题的题型不合法")
@@ -89,13 +94,17 @@ def save_form(activity_id: str, body: FormBody,
         options = [o.strip() for o in q.options if o.strip()]
         if q.kind in ("single", "multi") and len(options) < 2:
             raise HTTPException(400, f"「{title}」至少要有两个选项")
+        show_if = _clean_show_if(q.show_if, earlier, title)
         row = existing.get(q.id) if q.id else None
         if row is None:
             row = FormQuestion(id=uid("q"), activity_id=activity_id, kind=q.kind)
             db.add(row)
         row.kind, row.title, row.options, row.required, row.sort = (
             q.kind, title, options, q.required, i)
+        row.show_if = show_if
         keep.add(row.id)
+        if q.kind in ("single", "multi"):
+            earlier[row.id] = options
     for qid, row in existing.items():
         if qid not in keep:
             db.delete(row)
@@ -104,6 +113,42 @@ def save_form(activity_id: str, body: FormBody,
               summary=f"保存报名表（{len(body.questions)} 题）")
     db.commit()
     return {"ok": True, "questions": [q.out() for q in _questions(db, activity_id)]}
+
+
+def _clean_show_if(raw: dict, earlier: dict[str, list[str]], title: str) -> dict:
+    """校验一道题的显示条件：必须挂在**前面**某道单选/多选题的某几个选项上。"""
+    qid = str((raw or {}).get("question_id") or "").strip()
+    if not qid:
+        return {}
+    if qid not in earlier:
+        raise HTTPException(400, f"「{title}」的显示条件只能挂在前面的单选/多选题上")
+    values = [str(v) for v in (raw.get("values") or []) if str(v) in earlier[qid]]
+    if not values:
+        raise HTTPException(400, f"请为「{title}」的显示条件选择至少一个选项")
+    return {"question_id": qid, "values": values}
+
+
+def visible_questions(questions: list[FormQuestion],
+                      answers: dict) -> list[FormQuestion]:
+    """按已填答案算出这份表当前该显示哪几道题。
+
+    题目按 sort 排，条件只指向前面的题，所以一遍扫下来就够了：
+    被条件挡掉的题，挂在它下面的题也跟着挡掉。
+    """
+    shown, out = set(), []
+    for q in questions:
+        cond = q.show_if or {}
+        qid = cond.get("question_id")
+        if qid:
+            if qid not in shown:
+                continue
+            answer = answers.get(qid)
+            picked = answer if isinstance(answer, list) else [answer]
+            if not any(v in (cond.get("values") or []) for v in picked):
+                continue
+        shown.add(q.id)
+        out.append(q)
+    return out
 
 
 # ======================= 志愿者：填表申请 =======================
@@ -144,6 +189,8 @@ async def upload_answer_file(activity_id: str, file: UploadFile = File(...),
 
 class ApplyBody(BaseModel):
     shift_ids: list[str]
+    # 「报名即选岗位」的场次要连岗位一起勾：场次 id → 岗位 id
+    positions: dict[str, str] = {}
     answers: dict = {}
     leader_willing: bool = False
 
@@ -164,9 +211,11 @@ def apply(activity_id: str, body: ApplyBody,
                          for g in shifts):
         raise HTTPException(400, "请至少勾选一个可参加的场次")
 
-    # 每个意向场次都要过一遍资格与时段冲突：申请就拦，不等录取
+    # 每个意向场次都要过一遍资格、岗位与时段冲突：申请就拦，不等录取
+    wanted: list[tuple[Shift, Position | None]] = []
     for g in shifts:
         _check_eligibility(db, user, act, g)
+        wanted.append((g, _wanted_position(db, user, g, body.positions or {})))
         clashes = logic.time_conflicts(db, user, g)
         if clashes:
             raise HTTPException(409, {
@@ -178,9 +227,10 @@ def apply(activity_id: str, body: ApplyBody,
     app = Application(id=uid("app"), activity_id=act.id, user_id=user.id,
                       answers=answers, leader_willing=body.leader_willing)
     db.add(app)
-    for g in shifts:
+    for g, position in wanted:
         db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
                           user_id=user.id, status="applied", joined_at=now(),
+                          position_id=position.id if position else None,
                           allow_reassign=True))
     db.flush()
     audit_log(db, actor=user, action="enroll", target_type="enrollment",
@@ -192,10 +242,26 @@ def apply(activity_id: str, body: ApplyBody,
             "message": "申请已提交。报名截止后由负责老师筛选，结果会通知您。"}
 
 
+def _wanted_position(db: OrmSession, user: User, g: Shift,
+                     picks: dict) -> Position | None:
+    """「报名即选岗位」的场次要连岗位一起勾；统一分配的场次不用挑。"""
+    if g.needs_assign():
+        return None
+    position = db.get(Position, picks.get(g.id) or "")
+    if position is None or position.shift_id != g.id or position.is_placeholder:
+        raise HTTPException(400, f"请为「{g.name}」选择一个意向岗位")
+    unmet = logic.unmet_requirements(user, position)
+    if unmet:
+        raise HTTPException(
+            403, f"您不满足「{position.name}」的报名条件：{'；'.join(unmet)}")
+    return position
+
+
 def _validate_answers(db: OrmSession, act: Activity, user: User,
                       raw: dict) -> dict:
+    """逐题校验。被显示条件挡掉的题不校验也不存——它对这个人不存在。"""
     out = {}
-    for q in _questions(db, act.id):
+    for q in visible_questions(_questions(db, act.id), raw):
         v = raw.get(q.id)
         empty = v is None or v == "" or v == []
         if q.required and empty:
@@ -252,6 +318,28 @@ def withdraw(activity_id: str, db: OrmSession = Depends(db_session),
 
 # ======================= 管理者：筛选 =======================
 
+def _position_name(db: OrmSession, enr: Enrollment) -> str:
+    """这条意向/报名落在哪个岗位。占位岗位对志愿者就是「待分配」，照样显示。"""
+    p = db.get(Position, enr.position_id) if enr.position_id else None
+    return p.name if p else ""
+
+
+def _accept_position(db: OrmSession, g: Shift, target: Enrollment,
+                     override: str) -> Position:
+    """录取到哪个岗位：管理者指定的 > 他自己勾的意向岗位 > 场次的占位岗位。"""
+    if override:
+        position = db.get(Position, override)
+        if position is None or position.shift_id != g.id:
+            raise HTTPException(400, "指定的岗位不属于这个场次")
+        return position
+    position = db.get(Position, target.position_id) if target.position_id else None
+    if position is None:
+        position = g.placeholder()
+    if position is None:
+        raise HTTPException(409, f"场次「{g.name}」还没有岗位，请先建好岗位再录取")
+    return position
+
+
 @router.get("/staff/activities/{activity_id}/applications")
 def list_applications(activity_id: str, db: OrmSession = Depends(db_session),
                       user: User = Depends(require_manager)):
@@ -270,6 +358,7 @@ def list_applications(activity_id: str, db: OrmSession = Depends(db_session),
                         Enrollment.user_id == app.user_id,
                         Enrollment.shift_id.in_(list(shifts))).all())
         wanted = [{"shift_id": e.shift_id, "shift_name": shifts[e.shift_id].name,
+                   "position_name": _position_name(db, e),
                    "status": e.status, "cancel_type": e.cancel_type}
                   for e in rows if e.shift_id in shifts]
         answers = []
@@ -291,6 +380,10 @@ def list_applications(activity_id: str, db: OrmSession = Depends(db_session),
         })
     return {"questions": [q.out() for q in questions], "applications": out,
             "shifts": [{"id": g.id, "name": g.name, "time_text": g.span_text(),
+                        "mode": g.mode,
+                        "positions": [{"id": p.id, "name": p.name,
+                                       "quota": p.quota}
+                                      for p in g.real_positions()],
                         "capacity": g.total_capacity(),
                         "enrolled": logic.shift_enrolled_count(db, g.id)}
                        for g in sorted(shifts.values(), key=lambda x: x.sort)]}
@@ -300,6 +393,7 @@ class DecideBody(BaseModel):
     application_ids: list[str]
     accept: bool
     shift_id: str = ""        # 录取到哪一场；空 = 各自的第一意向
+    position_id: str = ""     # 一并定岗位；空 = 用他自己勾的意向岗位
 
 
 @router.post("/staff/activities/{activity_id}/applications/decide")
@@ -308,8 +402,9 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
            user: User = Depends(require_manager)):
     """批量录取或不录取。
 
-    录取：进所选场次的占位岗位（名额不够就拦，让管理者先扩人数上限），
-    其余意向场次作废；再由一键分配或手动指派进真实岗位。
+    录取：「报名即选岗位」的场次落到他勾的那个岗位（也可以在这里统一改成
+    别的岗位），「截止后统一分配」的场次落到占位岗位上等一键分配。名额不够
+    就拦下，让管理者先扩人数上限。其余意向场次作废。
     不录取：意向场次全部作废，通知一句留余地的话；档案里不留痕迹。
     """
     ensure_activity_manager(db, user, activity_id)
@@ -341,17 +436,16 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
             if target is None:
                 raise HTTPException(409, f"{u.name} 的申请没有可用的场次")
             g = db.get(Shift, target.shift_id)
-            holder = g.placeholder()
-            if holder is None:
-                raise HTTPException(409, f"场次「{g.name}」没有占位岗位，请先检查场次设置")
+            position = _accept_position(db, g, target, body.position_id)
             with shift_lock(g.id):
-                if not logic.has_room(db, g, holder):
+                if not logic.has_room(db, g, position):
                     raise HTTPException(
-                        409, f"场次「{g.name}」名额已满（{holder.quota} 人），"
-                             f"请先在场次设置里调大人数上限")
+                        409, f"「{g.name}·{position.name}」名额已满"
+                             f"（{position.quota} 人），请先调大人数上限"
+                             f"或换一个岗位")
                 target.status = "enrolled"
                 target.leader_willing = app.leader_willing
-                target.position_id = holder.id
+                target.position_id = position.id
                 target.assigned_at = now()
                 target.assigned_by = user.id
                 for e in rows:
@@ -363,8 +457,11 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                 logic.sync_attached(db, target)
             wecom.send_user(db, u, "application_accepted",
                             data={"activity_id": act.id},
-                            activity=act.title, shift=g.name, time=g.span_text())
-            done.append(f"{u.name}→{g.name}")
+                            activity=act.title, shift=g.name, time=g.span_text(),
+                            detail=("岗位：" + position.name
+                                    if not position.is_placeholder
+                                    else "具体岗位将于稍后公布"))
+            done.append(f"{u.name}→{g.name}·{position.name}")
         else:
             for e in rows:
                 e.status, e.cancel_type = "cancelled", "rejected"

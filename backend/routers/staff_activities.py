@@ -298,20 +298,6 @@ def _apply_recruit_mode(db: OrmSession, act: Activity, value: str) -> None:
     if act.status not in ("draft", "pending", "approved"):
         raise HTTPException(409, "活动已公开，不能再改活动类型")
     act.recruit_mode = value
-    # 报名后筛选：志愿者只勾意向场次，岗位等录取后再分——场次统一改成
-    # 「截止后统一分配」，录取的人才有占位岗位可落。名额沿用已有的：
-    # 真实岗位的名额之和，或原来占位上的人数上限。
-    if value == "screened":
-        for g in act.main_shifts():
-            holder = g.placeholder()
-            capacity = (sum(p.quota for p in g.real_positions())
-                        or (holder.quota if holder else 0))
-            if capacity <= 0:
-                raise HTTPException(
-                    400, f"场次「{g.name}」还没有名额，请先给它填人数上限或建岗位")
-            g.mode = "assign"
-            _sync_placeholder(db, g, capacity,
-                              holder.waitlist_quota if holder else 3)
 
 
 def _notify_activity_bg(activity_id: str, template: str, **kw):
@@ -781,8 +767,7 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                       start_time=start, end_time=end,
                       note=body.note.strip(), sort=len(act.shifts),
                       location=body.location.strip())
-    # 报名后筛选的活动：岗位等录取后再分，新场次一律「截止后统一分配」
-    _apply_shift_mode(db, g, "assign" if act.is_screened() else body.mode)
+    _apply_shift_mode(db, g, body.mode)
     _apply_attachment(db, g, body, act)
     db.add(g)
     db.flush()

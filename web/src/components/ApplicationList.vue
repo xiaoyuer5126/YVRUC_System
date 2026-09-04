@@ -8,9 +8,15 @@
         <el-button size="small" link type="primary" @click="load">刷新</el-button>
         <span class="al-actions">
           <el-select v-model="targetShift" clearable size="small" style="width:230px"
-                     placeholder="录取到：各自的第一意向">
+                     placeholder="录取到：各自的第一意向" @change="targetPosition = ''">
             <el-option v-for="g in shifts" :key="g.id" :value="g.id"
                        :label="`${g.name}（${g.enrolled}/${g.capacity}）`" />
+          </el-select>
+          <!-- 选岗位的场次可以在这里统一改岗位；不选就用各人勾的意向岗位 -->
+          <el-select v-if="targetPositions.length" v-model="targetPosition" clearable
+                     size="small" style="width:200px" placeholder="岗位：按各人意向">
+            <el-option v-for="p in targetPositions" :key="p.id" :value="p.id"
+                       :label="`${p.name}（${p.quota} 人）`" />
           </el-select>
           <el-button type="success" size="small" :disabled="!selected.length"
                      :loading="busy" @click="decide(true)">录取</el-button>
@@ -62,7 +68,7 @@
           <el-tag v-for="w in row.wanted" :key="w.shift_id" size="small" effect="plain"
                   style="margin:0 6px 2px 0"
                   :type="w.status === 'enrolled' ? 'success' : (w.status === 'applied' ? 'primary' : 'info')">
-            {{ w.shift_name }}
+            {{ w.shift_name }}{{ w.position_name ? ' · ' + w.position_name : '' }}
           </el-tag>
         </template>
       </el-table-column>
@@ -92,6 +98,9 @@ const apps = ref([])
 const shifts = ref([])
 const selected = ref([])
 const targetShift = ref('')
+const targetPosition = ref('')
+const targetPositions = computed(
+  () => shifts.value.find(g => g.id === targetShift.value)?.positions || [])
 const loading = ref(false)
 const busy = ref(false)
 const pendingCount = computed(() => apps.value.filter(a => a.status === 'applied').length)
@@ -119,7 +128,7 @@ async function decide(accept) {
   try {
     const d = await api.post(`/api/staff/activities/${props.activityId}/applications/decide`,
       { application_ids: selected.value.map(a => a.id), accept,
-        shift_id: targetShift.value || '' })
+        shift_id: targetShift.value || '', position_id: targetPosition.value || '' })
     ElMessage.success(`${accept ? '已录取' : '已处理'} ${d.count} 人`)
     await load()
     emit('changed')

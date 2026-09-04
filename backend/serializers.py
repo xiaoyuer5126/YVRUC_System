@@ -354,8 +354,12 @@ def application_out(db: OrmSession, act: Activity, user=None) -> dict:
                         Enrollment.user_id == user.id,
                         Shift.parent_id.is_(None))
                 .order_by(Shift.sort).all())
-        wanted = [{"shift_id": g.id, "shift_name": g.name, "status": e.status,
-                   "cancel_type": e.cancel_type} for e, g in rows]
+        wanted = []
+        for e, g in rows:
+            p = db.get(Position, e.position_id) if e.position_id else None
+            wanted.append({"shift_id": g.id, "shift_name": g.name,
+                           "position_name": p.name if p else "",
+                           "status": e.status, "cancel_type": e.cancel_type})
     return {
         "questions": [q.out() for q in questions],
         "mine": ({"id": app.id, "status": app.status,

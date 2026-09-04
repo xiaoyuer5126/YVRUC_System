@@ -13,10 +13,12 @@
       <div class="dim" style="margin:6px 0 10px">
         意向场次：
         <el-tag v-for="w in mine.wanted" :key="w.shift_id" size="small" effect="plain"
-                style="margin-right:6px">{{ w.shift_name }}</el-tag>
+                style="margin-right:6px">
+          {{ w.shift_name }}{{ w.position_name ? ' · ' + w.position_name : '' }}
+        </el-tag>
       </div>
-      <el-descriptions v-if="questions.length" :column="1" size="small" border>
-        <el-descriptions-item v-for="q in questions" :key="q.id" :label="q.title">
+      <el-descriptions v-if="answeredQuestions.length" :column="1" size="small" border>
+        <el-descriptions-item v-for="q in answeredQuestions" :key="q.id" :label="q.title">
           {{ answerText(q) }}
         </el-descriptions-item>
       </el-descriptions>
@@ -33,15 +35,28 @@
     <template v-else-if="open">
       <el-form label-position="top">
         <el-form-item label="意向场次（可多选）" required>
-          <el-checkbox-group v-model="form.shift_ids">
-            <el-checkbox v-for="g in act.shifts" :key="g.id" :value="g.id"
-                         :disabled="!g.enroll_open" class="shift-opt">
-              {{ g.name }} · {{ g.time_text }}
-              <span class="dim">（名额 {{ g.capacity }}{{ g.location ? ' · ' + g.location : '' }}）</span>
-            </el-checkbox>
-          </el-checkbox-group>
+          <div style="width:100%">
+            <el-checkbox-group v-model="form.shift_ids">
+              <el-checkbox v-for="g in act.shifts" :key="g.id" :value="g.id"
+                           :disabled="!g.enroll_open" class="shift-opt">
+                {{ g.name }} · {{ g.time_text }}
+                <span class="dim">（名额 {{ g.capacity }}{{ g.location ? ' · ' + g.location : '' }}）</span>
+              </el-checkbox>
+            </el-checkbox-group>
+            <!-- 「报名即选岗位」的场次要连岗位一起勾；统一分配的录取后再排 -->
+            <div v-for="g in pickShifts" :key="g.id" class="pos-pick">
+              <span>{{ g.name }} 的意向岗位</span>
+              <el-select v-model="form.positions[g.id]" placeholder="选择岗位"
+                         style="width:260px">
+                <el-option v-for="p in realPositions(g)" :key="p.id" :value="p.id"
+                           :disabled="p.eligible === false"
+                           :label="`${p.name}（${p.enrolled}/${p.quota}）`" />
+              </el-select>
+            </div>
+          </div>
         </el-form-item>
-        <el-form-item v-for="q in questions" :key="q.id" :label="q.title" :required="q.required">
+        <el-form-item v-for="q in shownQuestions" :key="q.id" :label="q.title"
+                      :required="q.required">
           <el-radio-group v-if="q.kind === 'single'" v-model="form.answers[q.id]">
             <el-radio v-for="o in q.options" :key="o" :value="o">{{ o }}</el-radio>
           </el-radio-group>
@@ -108,8 +123,35 @@ const closedText = computed(() => {
   return props.act.opens_in ? '未开始报名' : '报名已截止'
 })
 
-const form = reactive({ shift_ids: [], answers: {}, leader_willing: false })
+const form = reactive({ shift_ids: [], positions: {}, answers: {},
+                        leader_willing: false })
 for (const q of questions.value) form.answers[q.id] = q.kind === 'multi' ? [] : ''
+
+// 只显示条件成立的题。条件挂在前面的选择题上，一遍扫下来就够了；
+// 被挡掉的题不填、也不提交答案——后端按同一套规则再算一次。
+const shownQuestions = computed(() => {
+  const shown = new Set()
+  const out = []
+  for (const q of questions.value) {
+    const cond = q.show_if || {}
+    if (cond.question_id) {
+      if (!shown.has(cond.question_id)) continue
+      const a = form.answers[cond.question_id]
+      const picked = Array.isArray(a) ? a : [a]
+      if (!picked.some(v => (cond.values || []).includes(v))) continue
+    }
+    shown.add(q.id)
+    out.push(q)
+  }
+  return out
+})
+
+// 需要勾岗位的场次：勾中了、且是「报名即选岗位」
+const pickShifts = computed(() => props.act.shifts.filter(
+  g => form.shift_ids.includes(g.id) && g.mode !== 'assign'))
+const realPositions = g => g.positions.filter(p => !p.is_placeholder)
+const answeredQuestions = computed(
+  () => questions.value.filter(q => q.id in (mine.value?.answers || {})))
 const files = reactive({})
 const uploading = ref('')
 const submitting = ref(false)
@@ -136,16 +178,22 @@ async function uploadFile(q, file) {
 
 async function submit() {
   if (!form.shift_ids.length) return ElMessage.warning('请至少勾选一个意向场次')
-  for (const q of questions.value) {
+  for (const g of pickShifts.value) {
+    if (!form.positions[g.id]) return ElMessage.warning(`请为「${g.name}」选择意向岗位`)
+  }
+  const answers = {}
+  for (const q of shownQuestions.value) {
     const v = form.answers[q.id]
     if (q.required && (v === '' || v === undefined || (Array.isArray(v) && !v.length))) {
       return ElMessage.warning(`「${q.title}」为必填`)
     }
+    answers[q.id] = v
   }
   submitting.value = true
   try {
     const d = await api.post(`/api/activities/${props.act.id}/apply`,
-                             { shift_ids: form.shift_ids, answers: form.answers,
+                             { shift_ids: form.shift_ids, answers,
+                               positions: form.positions,
                                leader_willing: form.leader_willing })
     ElMessage.success(d.message)
     emit('changed')
@@ -162,6 +210,7 @@ async function withdraw() {
 <style scoped>
 .apply-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .shift-opt { display: flex; align-items: center; height: auto; margin: 4px 0; }
+.pos-pick { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 .file-row { display: flex; align-items: center; gap: 10px; }
 .preview { margin: 6px 0 0; padding-left: 20px; line-height: 2; }
 </style>

@@ -53,21 +53,135 @@ def _answers(questions, **override):
     return base
 
 
-def test_筛选活动的场次一律统一分配(client, admin, db):
-    act_id, ids, _q = _create_screened(client, admin, db, status="draft")
-    d = client.get(f"/api/activities/{act_id}", headers=admin).json()
-    assert d["recruit_mode"] == "screened"
-    assert all(g["mode"] == "assign" for g in d["shifts"])
-    assert all(any(p["is_placeholder"] for p in g["positions"]) for g in d["shifts"])
-    # 就算传 pick 也落成统一分配
-    start = now() + timedelta(days=6)
+def _pick_shift(client, admin, act_id, name="选岗场", *, days=6, positions=("引导", "登记")):
+    """给筛选活动加一个「报名即选岗位」的场次，返回 (场次 id, 岗位 id 列表)。"""
+    start = now() + timedelta(days=days)
     r = client.post(f"/api/staff/activities/{act_id}/shifts", headers=admin,
-                    json={"name": "加场", "mode": "pick", "capacity": 5,
+                    json={"name": name, "mode": "pick",
                           "start_time": start.isoformat(),
-                          "end_time": (start + timedelta(hours=2)).isoformat()})
+                          "end_time": (start + timedelta(hours=3)).isoformat()})
     assert r.status_code == 200, r.text
+    gid = r.json()["id"]
+    pids = []
+    for p in positions:
+        rp = client.post(f"/api/staff/shifts/{gid}/positions", headers=admin,
+                         json={"name": p, "quota": 2, "location": "东门",
+                               "service_task": "现场服务",
+                               "training_note": "到岗讲解"})
+        assert rp.status_code == 200, rp.text
+        pids.append(rp.json()["id"])
+    return gid, pids
+
+
+def test_筛选活动的两类场次都能用(client, admin, db):
+    """统一分配的场次只勾场次；报名即选岗位的场次连岗位一起勾。"""
+    act_id, ids, _q = _create_screened(client, admin, db, status="draft")
+    gid, _pids = _pick_shift(client, admin, act_id)
     d = client.get(f"/api/activities/{act_id}", headers=admin).json()
-    assert next(g for g in d["shifts"] if g["name"] == "加场")["mode"] == "assign"
+    modes = {g["name"]: g["mode"] for g in d["shifts"]}
+    assert modes["第1场"] == "assign" and modes["选岗场"] == "pick"
+    assert any(p["is_placeholder"]
+               for g in d["shifts"] if g["id"] == ids[0] for p in g["positions"])
+
+
+def test_报名即选岗位的场次要连岗位一起勾(client, admin, db, take_student):
+    act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
+    gid, pids = _pick_shift(client, admin, act_id)
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+    t = login(client, take_student())
+
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"shift_ids": [gid], "answers": _answers(q)})
+    assert r.status_code == 400 and "意向岗位" in r.json()["detail"]
+
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"shift_ids": [gid], "positions": {gid: pids[1]},
+                          "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+    mine = client.get(f"/api/activities/{act_id}", headers=t).json()["application"]["mine"]
+    assert mine["wanted"][0]["position_name"] == "登记"
+
+    # 录取后就在他勾的那个岗位上，不用再分配
+    lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
+    assert lst["shifts"][0]["mode"] == "pick"
+    assert [p["name"] for p in lst["shifts"][0]["positions"]] == ["引导", "登记"]
+    r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
+                    json={"application_ids": [lst["applications"][0]["id"]],
+                          "accept": True})
+    assert r.status_code == 200, r.text
+    row = (db.query(Enrollment)
+           .filter(Enrollment.activity_id == act_id,
+                   Enrollment.status == "enrolled").one())
+    assert row.position_id == pids[1]
+
+
+def test_录取时可以把人放到别的岗位(client, admin, db, take_student):
+    act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
+    gid, pids = _pick_shift(client, admin, act_id)
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+    t = login(client, take_student())
+    client.post(f"/api/activities/{act_id}/apply", headers=t,
+                json={"shift_ids": [gid], "positions": {gid: pids[0]},
+                      "answers": _answers(q)})
+    lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
+    r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
+                    json={"application_ids": [lst["applications"][0]["id"]],
+                          "accept": True, "shift_id": gid, "position_id": pids[1]})
+    assert r.status_code == 200, r.text
+    row = (db.query(Enrollment)
+           .filter(Enrollment.activity_id == act_id,
+                   Enrollment.status == "enrolled").one())
+    assert row.position_id == pids[1]
+
+
+def test_题目按显示条件出现(client, admin, db, take_student):
+    """挂条件的题只在选了指定选项时出现：不出现就不填、也不存答案。"""
+    act_id, ids, _q = _create_screened(client, admin, db, status="draft")
+    base = client.get(f"/api/staff/activities/{act_id}/form", headers=admin).json()
+    yes_no = base["questions"][0]        # 单选：参加过吗
+    r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
+                   json={"questions": [
+                       {"id": yes_no["id"], "kind": "single", "title": "参加过吗",
+                        "options": ["是", "否"]},
+                       {"kind": "text", "title": "上次做了什么",
+                        "show_if": {"question_id": yes_no["id"], "values": ["是"]}},
+                   ]})
+    assert r.status_code == 200, r.text
+    q_all = r.json()["questions"]
+    follow = q_all[1]["id"]
+    assert q_all[1]["show_if"]["values"] == ["是"]
+
+    # 条件只能挂在前面的选择题上
+    bad = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
+                     json={"questions": [
+                         {"kind": "text", "title": "先问细节",
+                          "show_if": {"question_id": yes_no["id"], "values": ["是"]}},
+                         {"id": yes_no["id"], "kind": "single", "title": "参加过吗",
+                          "options": ["是", "否"]}]})
+    assert bad.status_code == 400 and "前面" in bad.json()["detail"]
+
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+    # 选「否」：跟进题不出现，不填也能交，答案里不留它
+    t = login(client, take_student())
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"shift_ids": ids[:1],
+                          "answers": {yes_no["id"]: "否", follow: "不该存下来"}})
+    assert r.status_code == 200, r.text
+    mine = client.get(f"/api/activities/{act_id}", headers=t).json()["application"]["mine"]
+    assert follow not in mine["answers"]
+
+    # 选「是」：跟进题是必填，不填就交不了
+    t2 = login(client, take_student())
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t2,
+                    json={"shift_ids": ids[:1], "answers": {yes_no["id"]: "是"}})
+    assert r.status_code == 400 and "上次做了什么" in r.json()["detail"]
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t2,
+                    json={"shift_ids": ids[:1],
+                          "answers": {yes_no["id"]: "是", follow: "带过路"}})
+    assert r.status_code == 200, r.text
 
 
 def test_填表申请_必填校验_只能填一次(client, admin, db, take_student):

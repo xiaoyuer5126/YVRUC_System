@@ -528,12 +528,16 @@ class FormQuestion(Base):
     title: Mapped[str] = mapped_column(String(200))
     options: Mapped[list] = mapped_column(JSON, default=list)   # 单选/多选的选项
     required: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 显示条件 {"question_id": 前面某道单选/多选题, "values": [选中其一才显示这道]}。
+    # 空 = 一直显示。条件不成立时这道题不显示、不校验、也不存答案。
+    show_if: Mapped[dict] = mapped_column(JSON, default=dict)
     sort: Mapped[int] = mapped_column(Integer, default=0)
 
     def out(self) -> dict:
         return {"id": self.id, "kind": self.kind, "kind_label": self.KINDS.get(self.kind, self.kind),
                 "title": self.title, "options": self.options or [],
-                "required": self.required, "sort": self.sort}
+                "required": self.required, "show_if": self.show_if or {},
+                "sort": self.sort}
 
 
 class Application(Base):
