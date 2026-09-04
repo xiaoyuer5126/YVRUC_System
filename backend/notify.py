@@ -95,15 +95,22 @@ def notify(db: OrmSession, user: User, title: str, content: str, *,
 
 
 def notify_managers(db: OrmSession, activity_id: str, title: str,
-                    content: str) -> int:
-    """通知该活动的全部管理者。"""
+                    content: str, *, duty: str = "") -> int:
+    """通知该活动的管理者。
+
+    duty 指明这条消息属于哪一摊事（见 ActivityManager.DUTIES）：分了工的人
+    只收自己那摊，没分工的人什么都收。一场大活动十几个管理者，每条变动都
+    群发的结果就是所有人都把通知关掉。
+    """
     from .models import ActivityManager
 
-    ids = [r[0] for r in db.query(ActivityManager.user_id)
-           .filter(ActivityManager.activity_id == activity_id).all()]
+    rows = (db.query(ActivityManager)
+            .filter(ActivityManager.activity_id == activity_id).all())
     n = 0
-    for uid_ in ids:
-        u = db.get(User, uid_)
+    for row in rows:
+        if duty and row.duties and duty not in row.duties:
+            continue
+        u = db.get(User, row.user_id)
         if u is not None:
             wecom.send_user(db, u, "custom", title=title, content=content)
             n += 1
@@ -136,4 +143,5 @@ def notify_late_dropout(db: OrmSession, enr, user: User) -> None:
         f"{user.name}（{user.student_id}）退出了「{where}」，"
         f"距开始不足 {config.LATE_CANCEL_HOURS} 小时。\n"
         f"该场次当前 {enrolled}/{capacity} 人"
-        + (f"，缺 {gap} 人。" if gap else "，人数已满。"))
+        + (f"，缺 {gap} 人。" if gap else "，人数已满。"),
+        duty="roster")

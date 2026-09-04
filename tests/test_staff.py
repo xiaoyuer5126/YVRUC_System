@@ -9,7 +9,7 @@ from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, Shift, Position,
                             User, now, uid)
 from conftest import (ADMIN, POSITION_TEXT, QINGXIE, approve, editing,
-                      login)
+                      login, student_row)
 
 
 @pytest.fixture
@@ -532,3 +532,46 @@ def test_删除草稿要连带清干净引用(client, admin, db):
         ActivityManager.activity_id == aid).count() == 0
     assert db.query(ApprovalEvent).filter(
         ApprovalEvent.activity_id == aid).count() == 0
+
+
+def test_管理者分工只筛通知不限操作(client, admin, db, enrolled_activity,
+                                    take_student):
+    """分了工的人只收自己那摊的通知；没分工的照收全部，操作权限一点不变。"""
+    from backend.models import ActivityManager, Notification
+    from backend.notify import notify_managers
+
+    act, shift, _u = enrolled_activity
+    other = student_row(db, take_student())
+    other.roles = ["student", "initiator"]
+    db.commit()
+    r = client.post(f"/api/staff/activities/{act.id}/managers", headers=admin,
+                    json={"student_id": other.student_id})
+    assert r.status_code == 200, r.text
+
+    d = client.get(f"/api/staff/activities/{act.id}/managers", headers=admin).json()
+    assert "hours" in d["duties"] and "roster" in d["duties"]
+    assert all(m["duties"] == [] for m in d["items"])
+
+    r = client.patch(
+        f"/api/staff/activities/{act.id}/managers/{other.id}/duties",
+        headers=admin, json={"duties": ["hours"]})
+    assert r.status_code == 200 and r.json()["duties"] == ["hours"]
+    assert client.patch(
+        f"/api/staff/activities/{act.id}/managers/{other.id}/duties",
+        headers=admin, json={"duties": ["nope"]}).status_code == 400
+
+    before = db.query(Notification).filter(Notification.user_id == other.id).count()
+    notify_managers(db, act.id, "[人员变动] 测试", "只发给管志愿者管理的人",
+                    duty="roster")
+    db.commit()
+    assert db.query(Notification).filter(
+        Notification.user_id == other.id).count() == before
+    notify_managers(db, act.id, "[时长申诉] 测试", "这条他要收", duty="hours")
+    db.commit()
+    assert db.query(Notification).filter(
+        Notification.user_id == other.id).count() == before + 1
+
+    # 分工不影响能不能干活：他照样能进这场活动的名单
+    them = login(client, other.student_id)
+    assert client.get(f"/api/staff/shifts/{shift.id}/roster",
+                      headers=them).status_code == 200

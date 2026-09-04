@@ -15,7 +15,7 @@ from .audit import log as audit_log
 from .enroll_logic import expire_stale_promotions
 from .integrations import wecom
 from .models import Activity, Shift, User, now
-from .notify import notify_checkin, notify_enrolled
+from .notify import notify_checkin, notify_enrolled, notify_managers
 from .perm import activity_manager_ids
 
 logger = logging.getLogger(__name__)
@@ -157,16 +157,11 @@ def notify_managers_to_assign(db: OrmSession, act: Activity) -> None:
     if not gaps:
         return
     lines = "\n".join(f"· {g}" for g in gaps)
-    for uid_ in activity_manager_ids(db, act.id):
-        who = db.get(User, uid_)
-        if who is None:
-            continue
-        wecom.send_user(db, who, "custom",
-                        title=f"报名已截止，请排岗｜{act.title}",
-                        content=f"「{act.title}」报名已截止，还有场次没排完：\n"
-                                f"{lines}\n"
-                                f"请进入活动管理的「岗位设置」补齐岗位，"
-                                f"再到「报名与调配」运行一键分配。")
+    notify_managers(db, act.id, f"报名已截止，请排岗｜{act.title}",
+                    f"「{act.title}」报名已截止，还有场次没排完：\n"
+                    f"{lines}\n"
+                    f"请进入活动管理的「岗位设置」补齐岗位，"
+                    f"再到「志愿者管理」运行一键分配。", duty="roster")
     logger.info("活动「%s」已截止，提醒管理者排岗：%s", act.title, "；".join(gaps))
 
 
@@ -315,7 +310,7 @@ def send_roster_digests(db: OrmSession) -> int:
             f"过去 24 小时：新增 {joined} 人，退出 {left} 人。\n"
             f"当前 {enrolled}/{capacity} 人"
             + (f"，缺 {gap} 人。" if gap else "，人数已满。")
-            + f"\n场次开始：{g.start_time:%m-%d %H:%M}")
+            + f"\n场次开始：{g.start_time:%m-%d %H:%M}", duty="roster")
         sent += 1
     if shifts:
         db.commit()

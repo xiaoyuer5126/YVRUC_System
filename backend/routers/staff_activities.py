@@ -1146,9 +1146,11 @@ def list_managers(activity_id: str, db: OrmSession = Depends(db_session),
                   user: User = Depends(require_manager)):
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    ids = activity_manager_ids(db, activity_id)
-    users = [db.get(User, i) for i in ids]
-    return [{
+    rows = (db.query(ActivityManager)
+            .filter(ActivityManager.activity_id == activity_id).all())
+    duties = {r.user_id: r.duties or [] for r in rows}
+    users = [db.get(User, i) for i in activity_manager_ids(db, activity_id)]
+    return {"duties": ActivityManager.DUTIES, "items": [{
         "id": u.id, "name": u.name, "student_id": u.student_id,
         "college": u.college, "roles": u.roles or [],
         "role_label": u.active_role_label(),
@@ -1156,11 +1158,17 @@ def list_managers(activity_id: str, db: OrmSession = Depends(db_session),
         # 部门成员在名单里只能看：界面上要标出来，别让人以为多了个能干活的
         "is_trainee": u.is_trainee(),
         "is_creator": u.id == act.created_by,
-    } for u in users if u]
+        # 管理员天然是管理者，名单里没有他那一行，也就没有分工可言
+        "duties": duties.get(u.id, []),
+    } for u in users if u]}
 
 
 class ManagerBody(BaseModel):
     student_id: str
+
+
+class DutiesBody(BaseModel):
+    duties: list[str]
 
 
 @router.post("/activities/{activity_id}/managers")
@@ -1180,6 +1188,33 @@ def add_activity_manager(activity_id: str, body: ManagerBody,
               summary=f"添加活动管理者：{target.name}（{target.student_id}）")
     db.commit()
     return {"ok": True, "id": row.id}
+
+
+@router.patch("/activities/{activity_id}/managers/{user_id}/duties")
+def set_manager_duties(activity_id: str, user_id: str, body: DutiesBody,
+                       db: OrmSession = Depends(db_session),
+                       user: User = Depends(require_manager)):
+    """给某位管理者分工。只影响通知发给谁，不限制他能做什么。"""
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    row = (db.query(ActivityManager)
+           .filter(ActivityManager.activity_id == activity_id,
+                   ActivityManager.user_id == user_id).first())
+    if row is None:
+        raise HTTPException(404, "他不在本活动的管理者名单里")
+    unknown = [d for d in body.duties if d not in ActivityManager.DUTIES]
+    if unknown:
+        raise HTTPException(400, f"未知的分工：{'、'.join(unknown)}")
+    row.duties = list(dict.fromkeys(body.duties))
+    target = db.get(User, user_id)
+    labels = "、".join(ActivityManager.DUTIES[d] for d in row.duties)
+    audit_log(db, actor=user, action="update", target_type="activity",
+              target_id=activity_id, target_label=act.title,
+              activity_id=activity_id,
+              summary=f"{target.name if target else user_id} 的分工改为"
+                      f"{labels or '全部通知'}")
+    db.commit()
+    return {"ok": True, "duties": row.duties}
 
 
 @router.delete("/activities/{activity_id}/managers/{user_id}")

@@ -350,6 +350,8 @@ class ActivityManager(Base):
     · 创建者自动成为管理者，且**不可被移除**（created_by 只是记录信息，
       权限上不特殊）；
     · 管理者之间权限完全相同，任何管理者可添加/移除其他管理者；
+    · duties 只管**通知发给谁**，不限制谁能做什么：一场活动十几个管理者，
+      时长申诉没必要惊动管马甲的人。留空 = 什么通知都收。
     · 被添加者必须持有 活动发起方/青协 身份（管理员无需添加，天然可见全部）。
     """
     __tablename__ = "activity_managers"
@@ -358,7 +360,11 @@ class ActivityManager(Base):
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     added_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    duties: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    DUTIES = {"roster": "志愿者管理", "checkin": "签到", "vest": "志愿马甲",
+              "hours": "志愿时长"}
 
 
 class Shift(Base):

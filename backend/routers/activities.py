@@ -310,7 +310,7 @@ def set_excuse(enrollment_id: str, body: ExcuseBody,
             db, act.id, f"[{g.kind_label()}请假] {act.title}",
             f"{user.name}（{user.student_id}）无法参加「{g.name}」"
             f"（{g.span_text()}），距开始不足 {config.LATE_CANCEL_HOURS} 小时。\n"
-            f"事由：{reason}")
+            f"事由：{reason}", duty="roster")
     db.commit()
     return {"ok": True, "excused": enr.excused}
 

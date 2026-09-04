@@ -776,7 +776,9 @@
       <el-tab-pane label="管理者" name="managers" lazy>
         <el-alert type="info" :closable="false" style="margin-bottom:12px">
           一个活动可由多人共同管理：创建者自动成为管理者（<b>不可被移除</b>，但权限上不特殊）；
-          管理者之间权限完全相同，可互相添加/移除；被添加者须持有 <b>活动发起方/青协</b> 身份。
+          管理者之间权限完全相同，可互相添加/移除；被添加者须持有 <b>活动发起方/青协</b> 身份。<br />
+          <b>分工只管通知发给谁</b>，不限制谁能做什么：负责时长的人不必被签到、马甲的消息打扰。
+          留空表示什么通知都收。
         </el-alert>
         <el-card shadow="never">
           <div class="toolbar" style="margin-bottom:10px">
@@ -789,6 +791,14 @@
                                { key: 'role_label', label: '身份' }]">
             <template #extra="{ row }">
               <el-tag v-if="row.is_creator" size="small" type="warning" effect="plain">创建者</el-tag>
+            </template>
+            <template #body="{ row }">
+              <el-select :model-value="row.duties" multiple collapse-tags size="small"
+                         style="width:100%" placeholder="接收全部通知"
+                         @update:model-value="v => saveDuties(row, v)">
+                <el-option v-for="(label, key) in dutyOptions" :key="key"
+                           :value="key" :label="label" />
+              </el-select>
             </template>
             <template #actions="{ row }">
               <el-popconfirm v-if="!row.is_creator && row.id !== auth.user.id"
@@ -808,6 +818,16 @@
               <template #default="{row}">
                 <el-tag v-if="row.is_creator" size="small" type="warning" effect="light">创建者</el-tag>
                 <el-tag v-else size="small" effect="plain">管理者</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="通知分工" min-width="240">
+              <template #default="{row}">
+                <el-select :model-value="row.duties" multiple collapse-tags
+                           size="small" style="width:100%" placeholder="接收全部通知"
+                           @update:model-value="v => saveDuties(row, v)">
+                  <el-option v-for="(label, key) in dutyOptions" :key="key"
+                             :value="key" :label="label" />
+                </el-select>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="100">
@@ -1515,7 +1535,7 @@ async function loadAll() {
     })
     const logsResp = await api.get(`/api/staff/audit-logs?activity_id=${activityId}&size=50`)
     logs.value = logsResp.items || []
-    managers.value = await api.get(`/api/staff/activities/${activityId}/managers`)
+    await loadManagers()
     loadAppeals()      // 标签上的红点要一进页面就在，不能等切到那一页才知道
     loadApproval()
     if (!currentGroupId.value && shifts.value.length) {
@@ -2208,20 +2228,36 @@ async function applyMove(row) {
   }
 }
 
+const dutyOptions = ref({})
+
+async function loadManagers() {
+  const d = await api.get(`/api/staff/activities/${activityId}/managers`)
+  managers.value = d.items
+  dutyOptions.value = d.duties
+}
+
+// 分工只影响通知发给谁，改了立刻生效，不用另点保存
+async function saveDuties(row, duties) {
+  row.duties = duties
+  await api.patch(
+    `/api/staff/activities/${activityId}/managers/${row.id}/duties`, { duties })
+  ElMessage.success(duties.length ? '已更新通知分工' : '已改为接收全部通知')
+}
+
 async function addManager() {
   try {
     await api.post(`/api/staff/activities/${activityId}/managers`,
                    { student_id: newMgrSid.value })
     ElMessage.success('已添加')
     newMgrSid.value = ''
-    managers.value = await api.get(`/api/staff/activities/${activityId}/managers`)
+    await loadManagers()
   } catch { /* toast by api */ }
 }
 async function removeManager(row) {
   try {
     await api.del(`/api/staff/activities/${activityId}/managers/${row.id}`)
     ElMessage.success('已移除')
-    managers.value = await api.get(`/api/staff/activities/${activityId}/managers`)
+    await loadManagers()
   } catch { /* toast by api */ }
 }
 // 进入「导出与时长」页签时自动加载时长预览（静默加载，不弹提示）
