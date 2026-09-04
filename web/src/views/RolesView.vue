@@ -101,7 +101,8 @@
             </el-radio-group>
             <div class="dim" style="line-height:1.7">
               会长团：除集成设置外与管理员同权 · 部长：审本部门活动，管本部门骨干/成员 ·
-              骨干：只管自己被加进的活动 · 成员：学习权限，能看能点，提交不保存
+              骨干：只管自己被加进的活动 · 成员：跟着归属的骨干看同样的活动，
+              能看能点，提交不保存
             </div>
           </el-form-item>
           <el-form-item v-if="dlg.post !== 'council'" label="所属部门" required>
@@ -110,6 +111,20 @@
               <el-option v-for="d in depts" :key="d.id" :value="d.id" :label="d.name" />
             </el-select>
             <div class="dim">部长审的是本部门的活动；骨干与成员也要归属部门，部长才看得到他们</div>
+          </el-form-item>
+          <!-- 成员是跟着某个人学做事的，可见范围就是那位骨干的可见范围 -->
+          <el-form-item v-if="dlg.post === 'member'" label="归属骨干" required>
+            <el-select v-model="dlg.supervisorId" placeholder="选择本部门的骨干"
+                       style="width:100%" :disabled="!dlg.deptId">
+              <el-option v-for="c in cores" :key="c.id" :value="c.id"
+                         :label="`${c.name}（${c.student_id}）`" />
+            </el-select>
+            <div class="dim">
+              成员看到的活动与他归属的骨干完全一致。
+              <template v-if="dlg.deptId && !cores.length">
+                这个部门还没有骨干，请先设一位。
+              </template>
+            </div>
           </el-form-item>
         </template>
       </el-form>
@@ -122,7 +137,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { auth } from '../store'
@@ -167,9 +182,21 @@ function open(row) {
     post: row.qingxie_post || 'member',
     // 部长拉人进部门：部门就是他自己的，不用选
     deptId: row.department_id || (headOnly.value ? auth.user.department_id : ''),
+    supervisorId: row.supervisor_id || '',
     busy: false,
   }
+  loadCores()
 }
+
+// 归属骨干的候选：跟着所选部门走
+const cores = ref([])
+async function loadCores() {
+  const dept = dlg.value.deptId
+  cores.value = dept
+    ? await api.get(`/api/staff/roles/cores?department_id=${dept}`)
+    : []
+}
+watch(() => dlg.value.deptId, loadCores)
 
 async function save() {
   const d = dlg.value
@@ -177,7 +204,8 @@ async function save() {
   d.busy = true
   try {
     await api.put(`/api/staff/roles/${d.row.id}`,
-                  { roles: d.roles, qingxie_post: d.post, department_id: d.deptId })
+                  { roles: d.roles, qingxie_post: d.post, department_id: d.deptId,
+                    supervisor_id: d.supervisorId })
     ElMessage.success('已保存')
     d.visible = false
     load()

@@ -100,6 +100,19 @@ def _orphaned_activities(db: OrmSession, target: User,
     return orphans
 
 
+def _check_supervisor(db: OrmSession, target: User, body: "RoleBody",
+                      dept_id: str | None) -> str:
+    """部门成员必须归属一位本部门的骨干：他的可见范围就是跟着这个人走的。"""
+    boss = db.get(User, body.supervisor_id.strip()) if body.supervisor_id.strip() else None
+    if boss is None:
+        raise HTTPException(400, "部门成员必须指定归属的部门骨干")
+    if boss.id == target.id:
+        raise HTTPException(400, "不能归属自己")
+    if boss.post() != "core" or boss.department_id != dept_id:
+        raise HTTPException(400, f"{boss.name} 不是这个部门的骨干")
+    return boss.id
+
+
 def _row(u: User, me: User, depts: dict[str, str]) -> dict:
     return {
         "id": u.id, "student_id": u.student_id, "name": u.name,
@@ -109,8 +122,22 @@ def _row(u: User, me: User, depts: dict[str, str]) -> dict:
         "post_label": u.post_label() if u.post() else "",
         "department_id": u.department_id or "",
         "department": depts.get(u.department_id, ""),
+        "supervisor_id": u.supervisor_id or "",
         "is_me": u.id == me.id,
     }
+
+
+@router.get("/roles/cores")
+def list_cores(department_id: str = "", db: OrmSession = Depends(db_session),
+               user: User = Depends(require_role_manager)):
+    """某部门的骨干名单，给「部门成员归属谁」这个选择框用。"""
+    dept_id = department_id.strip() or user.department_id
+    rows = (db.query(User)
+            .filter(User.department_id == dept_id,
+                    User.qingxie_post == "core")
+            .order_by(User.name).all())
+    return [{"id": u.id, "name": u.name, "student_id": u.student_id}
+            for u in rows if u.has_role("qingxie")]
 
 
 @router.get("/roles")
@@ -146,6 +173,7 @@ class RoleBody(BaseModel):
     roles: list[str]
     qingxie_post: str = "member"
     department_id: str = ""
+    supervisor_id: str = ""     # 部门成员归属哪位骨干
 
 
 @router.put("/roles/{user_id}")
@@ -188,6 +216,8 @@ def set_roles(user_id: str, body: RoleBody,
             raise HTTPException(400, f"{User.POST_LABELS[body.qingxie_post]}必须指定所属部门")
         target.qingxie_post = body.qingxie_post
         target.department_id = dept_id
+        target.supervisor_id = (_check_supervisor(db, target, body, dept_id)
+                                if body.qingxie_post == "member" else None)
         if body.qingxie_post == "head":
             for old in (db.query(User)
                         .filter(User.department_id == dept_id,
@@ -198,6 +228,7 @@ def set_roles(user_id: str, body: RoleBody,
         # 不是青协了，层级与部门一并清掉，免得留下「非青协的部长」
         target.qingxie_post = "member"
         target.department_id = None
+        target.supervisor_id = None
 
     after = (target.roles, target.qingxie_post, target.department_id)
     if before != after:

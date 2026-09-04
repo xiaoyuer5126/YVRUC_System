@@ -126,6 +126,8 @@ def main() -> None:
                           ("2025006", "member")):
             users[sid].department_id = liaison.id
             users[sid].qingxie_post = post
+        # 成员跟着骨干：苏昀看到的活动与林骁一模一样
+        users["2025006"].supervisor_id = users["2025005"].id
         db.commit()
 
         colleges = ["明理书院", "新闻学院", "法学院", "财政金融学院", "经济学院",

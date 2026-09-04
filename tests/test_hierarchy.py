@@ -87,11 +87,28 @@ def test_部门成员对每一个写接口都被拦在写库之前(client):
     assert not leaked, "这些接口没有被学习权限拦住：\n" + "\n".join(leaked)
 
 
-def test_部门成员看得到本部门活动但改不了(client, db, dept_activity):
+def _add_core_manager(db, activity_id):
+    """把 2025006 归属的那位骨干加进共管名单——成员的可见范围跟着他走。"""
+    core_user = _user(db, CORE)
+    db.add(ActivityManager(id=uid("mgr"), activity_id=activity_id,
+                           user_id=core_user.id, added_by=core_user.id))
+    db.commit()
+
+
+def test_部门成员跟着归属的骨干看同样的活动(client, db, dept_activity):
+    """成员是跟着某个人学做事的：骨干看得到什么，他就看得到什么，但只能看。"""
     aid, g = dept_activity
     member = login(client, MEMBER)
+    core_user = _user(db, CORE)
+    # 骨干还没被加进这个活动，所以成员也看不到
+    assert aid not in [a["id"] for a in
+                       client.get("/api/staff/activities", headers=member).json()]
+
+    db.add(ActivityManager(id=uid("mgr"), activity_id=aid, user_id=core_user.id,
+                           added_by=core_user.id))
+    db.commit()
     ids = [a["id"] for a in client.get("/api/staff/activities", headers=member).json()]
-    assert aid in ids, "本部门的活动要看得到"
+    assert aid in ids, "归属骨干管的活动要跟着看得到"
     assert client.get(f"/api/activities/{aid}", headers=member).status_code == 200
     r = client.patch(f"/api/staff/activities/{aid}", headers=member,
                      json={"title": "改不了"})
@@ -102,6 +119,7 @@ def test_部门成员看得到本部门活动但改不了(client, db, dept_activ
 
 def test_部门成员不能导出也不能查档案(client, db, dept_activity):
     aid, _g = dept_activity
+    _add_core_manager(db, aid)
     member = login(client, MEMBER)
     tok = member["Authorization"].split()[1]
     r = client.get(f"/api/staff/activities/{aid}/export.xlsx?token={tok}")
@@ -111,6 +129,7 @@ def test_部门成员不能导出也不能查档案(client, db, dept_activity):
 
 def test_试算不被学习权限拦(client, db, dept_activity):
     aid, g = dept_activity
+    _add_core_manager(db, aid)
     member = login(client, MEMBER)
     r = client.post(f"/api/staff/shifts/{g}/assign/preview", headers=member, json={})
     assert r.status_code != 403, r.text
@@ -154,11 +173,19 @@ def test_部长只能在本部门设骨干或成员(client, db, take_student):
     other = db.query(Department).filter(Department.id != dept.id).first()
     u = student_row(db, take_student())
 
-    # 设成本部门成员：可以
+    # 设成本部门成员：要指定归属的骨干，不指定不给过
+    body = {"roles": ["student", "qingxie"], "qingxie_post": "member",
+            "department_id": dept.id}
+    r = client.put(f"/api/staff/roles/{u.id}", headers=head, json=body)
+    assert r.status_code == 400 and "归属" in r.json()["detail"]
+    cores = client.get(f"/api/staff/roles/cores?department_id={dept.id}",
+                       headers=head).json()
+    assert cores, "对外联络部应当有骨干"
     r = client.put(f"/api/staff/roles/{u.id}", headers=head,
-                   json={"roles": ["student", "qingxie"], "qingxie_post": "member",
-                         "department_id": dept.id})
+                   json={**body, "supervisor_id": cores[0]["id"]})
     assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(User, u.id).supervisor_id == cores[0]["id"]
     # 升成骨干：可以
     assert client.put(f"/api/staff/roles/{u.id}", headers=head,
                       json={"roles": ["student", "qingxie"], "qingxie_post": "core",
@@ -172,7 +199,7 @@ def test_部长只能在本部门设骨干或成员(client, db, take_student):
     # 设到别的部门：不行
     r = client.put(f"/api/staff/roles/{u.id}", headers=head,
                    json={"roles": ["student", "qingxie"], "qingxie_post": "member",
-                         "department_id": other.id})
+                         "department_id": other.id, "supervisor_id": cores[0]["id"]})
     assert r.status_code == 403
     # 给管理员身份：不行
     r = client.put(f"/api/staff/roles/{u.id}", headers=head,

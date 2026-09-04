@@ -81,6 +81,10 @@ class User(Base):
     department_id: Mapped[str | None] = mapped_column(
         ForeignKey("departments.id"), nullable=True, index=True)
     qingxie_post: Mapped[str] = mapped_column(String(12), default="member")
+    # 部门成员跟着哪位部门骨干学：可见范围与他一致（见 perm.managed_activity_ids）。
+    # 只对 qingxie_post="member" 有意义。
+    supervisor_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 

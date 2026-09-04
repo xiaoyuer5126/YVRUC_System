@@ -1,9 +1,11 @@
 """活动级权限：谁看得到、管得了哪个活动。
 
   · 管理员、会长团：全部活动。
-  · 部长、部门成员：本部门（归口部门 = 自己的部门）的全部活动，加上自己
-    被加进共管名单的。部门成员只能看，写请求在 deps._guard_trainee 被拦。
+  · 部长：本部门（归口部门 = 自己的部门）的全部活动，加上自己被加进共管
+    名单的。
   · 部门骨干、活动发起方：只有自己被加进共管名单的。
+  · 部门成员：跟着自己归属的那位骨干，看到的和他一模一样——成员是跟着某个
+    人学做事的，不是跟着整个部门。只能看，写请求在 deps._guard_trainee 被拦。
   · 共管名单：创建者自动进入（不可被移除）；管理者之间权限相同，可互相
     添加/移除；被添加者必须持有 活动发起方/青协 身份。
 """
@@ -16,8 +18,15 @@ from .models import Activity, ActivityManager, User, uid
 
 
 def _dept_scoped(user: User) -> bool:
-    """按归口部门看活动的人：部长与部门成员。"""
-    return user.department_id is not None and user.post() in ("head", "member")
+    """按归口部门看整个部门活动的人：只有部长。"""
+    return user.department_id is not None and user.post() == "head"
+
+
+def _supervisor(db: OrmSession, user: User) -> User | None:
+    """部门成员归属的那位骨干。没指定就没有可见范围可继承。"""
+    if user.post() != "member" or not user.supervisor_id:
+        return None
+    return db.get(User, user.supervisor_id)
 
 
 def managed_activity_ids(db: OrmSession, user: User) -> list[str] | None:
@@ -29,6 +38,9 @@ def managed_activity_ids(db: OrmSession, user: User) -> list[str] | None:
     if _dept_scoped(user):
         ids |= {r[0] for r in db.query(Activity.id)
                 .filter(Activity.approval_dept_id == user.department_id).all()}
+    boss = _supervisor(db, user)
+    if boss is not None:
+        ids |= set(managed_activity_ids(db, boss) or [])
     return list(ids)
 
 
@@ -41,6 +53,9 @@ def is_activity_manager(db: OrmSession, user: User, activity_id: str) -> bool:
     if _dept_scoped(user):
         act = db.get(Activity, activity_id)
         return act is not None and act.approval_dept_id == user.department_id
+    boss = _supervisor(db, user)
+    if boss is not None:
+        return is_activity_manager(db, boss, activity_id)
     return False
 
 
