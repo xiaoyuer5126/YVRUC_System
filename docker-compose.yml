@@ -1,4 +1,4 @@
-# 人大校青协志愿服务管理平台 · Docker 全栈编排
+# 志愿服务管理平台 · Docker 全栈编排
 #
 #   cp .env.example .env && 填好口令                # 首次
 #   docker compose up -d --build                    # 启动全套

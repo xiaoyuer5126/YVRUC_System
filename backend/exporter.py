@@ -63,7 +63,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
     # ---------- 概览 Sheet ----------
     overview = wb.active
     overview.title = "活动概览"
-    overview.append(["人大校青协志愿服务管理平台 · 排班表导出"])
+    overview.append(["志愿服务管理平台 · 排班表导出"])
     overview.append(["活动名称", activity.title])
     overview.append(["活动类型", f"{activity.recruit_label()} · {activity.label_status()}"])
     # 公示联系方式优先用结构化 contacts（"姓名 电话"，多人分号连接），

@@ -3,7 +3,7 @@
     <el-card class="login-card">
       <div class="head">
         <div class="logo">志</div>
-        <h2>人大校青协志愿服务管理平台</h2>
+        <h2>志愿服务管理平台</h2>
         <p class="dim">
           {{ mode === 'demo' ? '统一身份认证尚未接通，当前为开发组内测登录'
                              : '通过微人大统一身份认证登录' }}

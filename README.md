@@ -1,4 +1,4 @@
-# 人大校青协志愿服务管理平台
+# 志愿服务管理平台
 
 FastAPI + SQLAlchemy（PostgreSQL）+ Redis + Vue3 / Element Plus / ECharts（Vite 构建）。
 覆盖「活动发布 → 选课式报名 → 候补流转 → 一键分配 → 扫码签到签退 → 时长回传」全链路。

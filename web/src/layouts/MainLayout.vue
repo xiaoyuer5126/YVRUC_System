@@ -9,9 +9,9 @@
         <div class="brand" @click="$router.push('/')">
           <div class="logo">志</div>
           <div class="brand-text">
-            <div class="name">{{ narrow ? '校青协志愿平台' : '人大校青协志愿服务管理平台' }}</div>
+            <div class="name">{{ narrow ? '志愿服务平台' : '志愿服务管理平台' }}</div>
             <div v-if="!narrow" class="sub">
-              Volunteer Service Management · 中国人民大学青年志愿者协会
+              Volunteer Service Management · 中国人民大学
             </div>
           </div>
         </div>
@@ -83,7 +83,7 @@
       <div class="drawer-head">
         <div class="logo">志</div>
         <div>
-          <div class="name">校青协志愿平台</div>
+          <div class="name">志愿服务平台</div>
           <div class="drawer-sub">
             {{ auth.user?.name }} · {{ ROLE_LABELS[auth.activeIdentity] || '学生' }}视角
           </div>

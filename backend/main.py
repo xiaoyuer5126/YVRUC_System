@@ -1,4 +1,4 @@
-"""人大校青协志愿服务管理平台 · FastAPI 入口。
+"""志愿服务管理平台 · FastAPI 入口。
 
 单进程同时提供：
   · /api/**      业务接口
@@ -71,7 +71,7 @@ async def lifespan(_app: FastAPI):
 
 def create_app() -> FastAPI:
     docs = "/docs" if config.EXPOSE_API_DOCS else None
-    app = FastAPI(title="人大校青协志愿服务管理平台", version="1.0.0",
+    app = FastAPI(title="志愿服务管理平台", version="1.0.0",
                   lifespan=lifespan, docs_url=docs, redoc_url=None,
                   openapi_url="/openapi.json" if config.EXPOSE_API_DOCS else None)
     init_db()

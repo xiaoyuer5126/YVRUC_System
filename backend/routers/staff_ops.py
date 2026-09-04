@@ -459,7 +459,7 @@ def poster(activity_id: str, db: OrmSession = Depends(db_session),
                         for c in (act.contacts or []) if isinstance(c, dict))
     if contacts:
         L += ["", f"【联系方式】{contacts}"]
-    L += ["", "报名方式：登录人大校青协志愿服务管理平台，在「活动广场」找到本活动报名。"]
+    L += ["", "报名方式：登录志愿服务管理平台，在「活动广场」找到本活动报名。"]
     return {"text": "\n".join(L)}
 
 
