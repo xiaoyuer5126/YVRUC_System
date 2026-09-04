@@ -51,6 +51,12 @@
       </el-table-column>
       <el-table-column label="学号" prop="user.student_id" width="110" />
       <el-table-column label="学院" prop="user.college" min-width="120" />
+      <el-table-column label="组长意愿" width="90">
+        <template #default="{ row }">
+          <el-tag v-if="row.leader_willing" size="small" type="warning" effect="plain">愿意</el-tag>
+          <span v-else class="dim">—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="意向场次" min-width="180">
         <template #default="{ row }">
           <el-tag v-for="w in row.wanted" :key="w.shift_id" size="small" effect="plain"

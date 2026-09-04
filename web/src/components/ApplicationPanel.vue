@@ -7,6 +7,9 @@
         <el-tag :type="STATUS_TYPE[mine.status]" size="small">{{ mine.status_label }}</el-tag>
         <span class="dim">提交于 {{ fmtDT(mine.created_at) }}</span>
       </div>
+      <div v-if="mine.leader_willing" class="dim" style="margin-top:4px">
+        已表态愿意担任组长
+      </div>
       <div class="dim" style="margin:6px 0 10px">
         意向场次：
         <el-tag v-for="w in mine.wanted" :key="w.shift_id" size="small" effect="plain"
@@ -56,6 +59,12 @@
             <span v-if="files[q.id]" class="dim">{{ files[q.id] }}</span>
           </div>
         </el-form-item>
+        <el-form-item>
+          <div>
+            <el-checkbox v-model="form.leader_willing">愿意担任组长（如岗位需要）</el-checkbox>
+            <div class="dim">组长由负责老师从有意愿的人里指定，不勾也不影响录取</div>
+          </div>
+        </el-form-item>
       </el-form>
       <el-button type="primary" :loading="submitting" @click="submit">提交申请</el-button>
       <span class="dim" style="margin-left:10px">一个活动只填一次；录取前可撤回</span>
@@ -84,7 +93,7 @@ const closedText = computed(() => {
   return props.act.opens_in ? '未开始报名' : '报名已截止'
 })
 
-const form = reactive({ shift_ids: [], answers: {} })
+const form = reactive({ shift_ids: [], answers: {}, leader_willing: false })
 for (const q of questions.value) form.answers[q.id] = q.kind === 'multi' ? [] : ''
 const files = reactive({})
 const uploading = ref('')
@@ -121,7 +130,8 @@ async function submit() {
   submitting.value = true
   try {
     const d = await api.post(`/api/activities/${props.act.id}/apply`,
-                             { shift_ids: form.shift_ids, answers: form.answers })
+                             { shift_ids: form.shift_ids, answers: form.answers,
+                               leader_willing: form.leader_willing })
     ElMessage.success(d.message)
     emit('changed')
   } finally { submitting.value = false }

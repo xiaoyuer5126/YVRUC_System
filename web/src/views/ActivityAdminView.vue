@@ -840,13 +840,16 @@
           <el-alert v-if="modeSwitchCost" type="warning" show-icon :closable="false"
                     style="margin-top:8px" :title="modeSwitchCost" />
         </el-form-item>
+        <el-alert type="info" :closable="false" style="margin-bottom:14px">
+          这里只填本场次的<b>服务时间</b>。培训与彩排在场次建好后用「添加培训/彩排」
+          单独加，它们的时间不算进本场次，也不计入服务时长。
+        </el-alert>
         <el-form-item label="开始时间" required>
-          <el-date-picker v-model="groupForm.start_time" type="datetime" style="width:100%"
-                          @change="onShiftStartPicked" />
+          <DateTimeField v-model="groupForm.start_time" :default-time="DAY_START"
+                         @change="onShiftStartPicked" />
         </el-form-item>
         <el-form-item label="结束时间" required>
-          <el-date-picker v-model="groupForm.end_time" type="datetime" style="width:100%"
-                          :default-time="DAY_END" />
+          <DateTimeField v-model="groupForm.end_time" :default-time="DAY_END" />
         </el-form-item>
         <!-- 名额与候补只属于「截止后统一分配」：报名即选岗位时它们在岗位上 -->
         <template v-if="groupForm.mode === 'assign'">
@@ -898,10 +901,10 @@
           <el-input v-model="attForm.name" placeholder="如：赛前集中培训" />
         </el-form-item>
         <el-form-item label="开始时间" required>
-          <el-date-picker v-model="attForm.start_time" type="datetime" style="width:100%" />
+          <DateTimeField v-model="attForm.start_time" :default-time="DAY_START" />
         </el-form-item>
         <el-form-item label="结束时间" required>
-          <el-date-picker v-model="attForm.end_time" type="datetime" style="width:100%" />
+          <DateTimeField v-model="attForm.end_time" :default-time="DAY_END" />
         </el-form-item>
         <el-form-item label="地点">
           <el-input v-model="attForm.location" placeholder="如：明德楼 0201（留空则用活动地点）" />
@@ -964,8 +967,8 @@
       </p>
       <el-form label-width="110px">
         <el-form-item label="新的截止时间" required>
-          <el-date-picker v-model="reopenDlg.regEnd" type="datetime" style="width:100%"
-                          :default-time="DAY_END" placeholder="晚于此刻，且不晚于最后一个场次开始" />
+          <DateTimeField v-model="reopenDlg.regEnd" :default-time="DAY_END"
+                         placeholder="晚于此刻，且不晚于最后一个场次开始" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -1207,12 +1210,13 @@ import MaterialManager from '../components/MaterialManager.vue'
 import DataCards from '../components/DataCards.vue'
 import ActivityForm from '../components/ActivityForm.vue'
 import ArchiveDrawer from '../components/ArchiveDrawer.vue'
+import DateTimeField from '../components/DateTimeField.vue'
 import ViolationDialog from '../components/ViolationDialog.vue'
 import FormBuilder from '../components/FormBuilder.vue'
 import ApplicationList from '../components/ApplicationList.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'
-import { DAY_END, auth } from '../store'
+import { DAY_END, DAY_START, auth } from '../store'
 
 const route = useRoute()
 const act = ref(null)
@@ -2130,8 +2134,7 @@ function toISO(v) {
 
 <style scoped>
 /* 名单标题行：左边标题，右边一排动作；窄屏各占一行 */
-.roster-head { display: flex; justify-content: space-between; align-items: center;
-               gap: 10px; flex-wrap: wrap; }
+.roster-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .roster-actions { display: inline-flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 /* 两个条件选择框并排占满一行；窄屏自动叠成两行 */
 .two-col { display: flex; gap: 8px; width: 100%; flex-wrap: wrap; }

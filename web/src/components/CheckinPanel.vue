@@ -246,8 +246,12 @@
           </el-select>
         </el-form-item>
         <el-form-item label="可签时段">
-          <DateRange v-model="form.range"
-                     start-placeholder="开放签到" end-placeholder="停止签到" />
+          <div class="two-col">
+            <DateTimeField :model-value="form.range[0]" placeholder="开放签到"
+                           @update:model-value="setWindowStart" />
+            <DateTimeField :model-value="form.range[1]" placeholder="停止签到"
+                           @update:model-value="setWindowEnd" />
+          </div>
           <div class="dim">
             默认比场次起止各放宽 {{ WINDOW_PAD }} 分钟：提前到岗的人能先签，
             拖堂散场的人也还签得了。可自行调整。
@@ -339,7 +343,7 @@ import { ElMessage } from 'element-plus'
 import { api, fmtDT, pageUrl, qrBase } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
-import DateRange from './DateRange.vue'
+import DateTimeField from './DateTimeField.vue'
 import RefreshBar from './RefreshBar.vue'
 
 const props = defineProps({
@@ -550,9 +554,15 @@ async function toggle(row) {
   await api.patch(`/api/staff/checkin-tasks/${row.id}`, { active: !row.active })
   loadTasks(); loadBoard()
 }
+
+function setWindowStart(v) { form.value.range = [v || '', form.value.range[1] || ''] }
+function setWindowEnd(v) { form.value.range = [form.value.range[0] || '', v || ''] }
 </script>
 
 <style scoped>
+/* 起止两个选择器并排；窄屏自动叠成两行 */
+.two-col { display: flex; gap: 8px; width: 100%; flex-wrap: wrap; }
+.two-col > * { flex: 1 1 180px; min-width: 0; }
 .toolbar { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
 .big-card { text-align:center; border-radius:12px; }
 .ratio b { font-size:30px; color: var(--ruc-red); }

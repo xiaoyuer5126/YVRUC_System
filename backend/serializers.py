@@ -361,6 +361,7 @@ def application_out(db: OrmSession, act: Activity, user=None) -> dict:
         "mine": ({"id": app.id, "status": app.status,
                   "status_label": app.status_label(),
                   "answers": app.answers or {}, "wanted": wanted,
+                  "leader_willing": app.leader_willing,
                   "created_at": iso_of(app.created_at)}
                  if app else None),
     }

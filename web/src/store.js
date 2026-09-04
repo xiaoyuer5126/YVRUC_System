@@ -80,10 +80,7 @@ export const MODE_COLORS = {
   screened: { color: '#409eff' },    // 报名后筛选
 }
 
-// 日期区间选择器的默认时刻：先点日期时，起止会预填成当天的第一刻与最后一刻，
-// 省得每次都手动把结束时间从 00:00 拖到 23:59
-export const RANGE_DEFAULT_TIME = [
-  new Date(2000, 0, 1, 0, 0, 0),
-  new Date(2000, 0, 1, 23, 59, 59),
-]
+// 只点了日期没点时刻时补的默认时刻：开始给上班点，截止给当天最后一分钟，
+// 省得每次都手动把截止时间从 00:00 拖到 23:59
+export const DAY_START = new Date(2000, 0, 1, 8, 0, 0)
 export const DAY_END = new Date(2000, 0, 1, 23, 59, 59)

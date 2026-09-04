@@ -549,6 +549,8 @@ class Application(Base):
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     answers: Mapped[dict] = mapped_column(JSON, default=dict)   # 题目 id → 答案
+    # 表态愿意当组长，录取时带到报名记录上；只是给管理者的参考
+    leader_willing: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(12), default="applied", index=True)
     decided_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

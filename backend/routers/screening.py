@@ -145,6 +145,7 @@ async def upload_answer_file(activity_id: str, file: UploadFile = File(...),
 class ApplyBody(BaseModel):
     shift_ids: list[str]
     answers: dict = {}
+    leader_willing: bool = False
 
 
 @router.post("/activities/{activity_id}/apply")
@@ -175,7 +176,7 @@ def apply(activity_id: str, body: ApplyBody,
 
     answers = _validate_answers(db, act, user, body.answers)
     app = Application(id=uid("app"), activity_id=act.id, user_id=user.id,
-                      answers=answers)
+                      answers=answers, leader_willing=body.leader_willing)
     db.add(app)
     for g in shifts:
         db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
@@ -275,6 +276,7 @@ def list_applications(activity_id: str, db: OrmSession = Depends(db_session),
                      "college": u.college, "campus": u.campus, "stage": u.stage,
                      "phone": u.phone},
             "wanted": wanted, "answers": answers,
+            "leader_willing": app.leader_willing,
         })
     return {"questions": [q.out() for q in questions], "applications": out,
             "shifts": [{"id": g.id, "name": g.name, "time_text": g.span_text(),
@@ -337,6 +339,7 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                         409, f"场次「{g.name}」名额已满（{holder.quota} 人），"
                              f"请先在场次设置里调大人数上限")
                 target.status = "enrolled"
+                target.leader_willing = app.leader_willing
                 target.position_id = holder.id
                 target.assigned_at = now()
                 target.assigned_by = user.id

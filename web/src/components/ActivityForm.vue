@@ -52,7 +52,12 @@
       <div class="dim">留空即不限。不在范围内的同学报名时会被拦下</div>
     </el-form-item>
     <el-form-item label="报名窗口" required>
-      <DateRange v-model="range" start-placeholder="报名开始时间" end-placeholder="报名截止时间" />
+      <div class="two-col">
+        <DateTimeField v-model="regStart" placeholder="报名开始时间"
+                       :default-time="DAY_START" />
+        <DateTimeField v-model="regEnd" placeholder="报名截止时间"
+                       :default-time="DAY_END" />
+      </div>
       <div class="dim" style="line-height:1.7">
         活动时间不用填：会根据场次时间自动计算并显示。<br />
         截止时间不能晚于最后一个场次的开始时间；每个场次还会在<b>自己开场时</b>
@@ -104,8 +109,9 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { DAY_END, DAY_START } from '../store'
 import { uploadImage } from '../composables/uploadImage'
-import DateRange from './DateRange.vue'
+import DateTimeField from './DateTimeField.vue'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },   // 表单数据
@@ -115,10 +121,16 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'update:range'])
 
 const f = computed(() => props.modelValue)
-const range = computed({
-  get: () => props.range,
-  set: v => emit('update:range', v),
-})
+// 起止各自成一个字段，拼回调用方拿的 [开始, 截止]
+function setRange(i, v) {
+  const next = [props.range?.[0] || '', props.range?.[1] || '']
+  next[i] = v || ''
+  emit('update:range', next[0] || next[1] ? next : [])
+}
+const regStart = computed({ get: () => props.range?.[0] || '',
+                            set: v => setRange(0, v) })
+const regEnd = computed({ get: () => props.range?.[1] || '',
+                          set: v => setRange(1, v) })
 const qrUploading = ref(false)
 const campuses = ref([])
 const stages = ref([])

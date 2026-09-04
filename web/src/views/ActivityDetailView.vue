@@ -668,12 +668,11 @@
           <div v-if="willWaitlist" class="dim" style="margin-top:2px">
             候补必须接受调剂：有空位的岗位才好把排队的人调过去
           </div>
-          <el-checkbox v-if="enrollDlg.position?.needs_leader"
-                       v-model="enrollDlg.leaderWilling" style="display:block;margin-top:6px">
-            愿意担任本岗位组长
+          <el-checkbox v-model="enrollDlg.leaderWilling" style="display:block;margin-top:6px">
+            愿意担任组长（如本岗位需要）
           </el-checkbox>
-          <div v-if="enrollDlg.position?.needs_leader" class="dim" style="margin-top:2px">
-            该岗位需要一名组长，由负责老师从有意愿的人里指定；勾选表示你愿意
+          <div class="dim" style="margin-top:2px">
+            组长由负责老师从有意愿的人里指定。现在没设组长的岗位，之后也可能要设。
           </div>
           <p class="dim">
             仅供负责老师排班参考：不勾选也可能被调整，但名单上会标注你的意愿。
@@ -715,7 +714,7 @@ const narrow = useNarrow()
 const act = ref(null)
 const groupDetail = ref({ visible: false, data: null })
 const enrollDlg = ref({ visible: false, shift: null, position: null,
-                        leaderWilling: true,
+                        leaderWilling: false,
                         allowReassign: true, submitting: false })
 const willWaitlist = computed(() => {
   const { shift: g, position } = enrollDlg.value
@@ -857,7 +856,7 @@ function doEnroll(g, position) {
     return ElMessage.warning('请先展开该场次，选择一个岗位')
   }
   enrollDlg.value = { visible: true, shift: g, position, allowReassign: true,
-                      leaderWilling: true,
+                      leaderWilling: false,
                       submitting: false }
 }
 
