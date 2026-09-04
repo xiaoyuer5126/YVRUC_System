@@ -10,8 +10,8 @@
       </el-col>
       <el-col :span="8">
         <el-card shadow="never" class="stat">
-          <div class="big">{{ data.uploaded }}</div>
-          <div class="dim">已回传数智人大（小时）</div>
+          <div class="big">{{ data.locked }}</div>
+          <div class="dim">已锁定（小时）</div>
         </el-card>
       </el-col>
       <el-col :span="8">
@@ -23,20 +23,20 @@
     </el-row>
     <el-card shadow="never">
       <template #header><b>时长明细</b><span class="dim" style="font-weight:400;margin-left:8px">
-        依据签到记录由青协确认后回传数智人大；数值有出入可以提异议
+        依据签到记录，由负责老师核准；核准后到申诉截止之前，数值有出入可以提异议
       </span></template>
       <DataCards v-if="narrow" :rows="data.records" title-key="activity_title"
-                 :fields="[{ key: 'created_at', label: '确认时间', format: fmtDT },
-                           { key: 'upload_ref', label: '回执号', hideEmpty: true }]"
+                 :fields="[{ key: 'created_at', label: '记录时间', format: fmtDT },
+                           { key: 'appeal_deadline', label: '申诉截止',
+                             format: fmtDT, hideEmpty: true }]"
                  empty="还没有时长记录">
         <template #extra="{ row }">
           <b style="font-size:16px;color:var(--el-color-primary)">{{ row.hours }}h</b>
         </template>
         <template #body="{ row }">
-          <el-tag v-if="row.status === 'uploaded'" type="success" effect="light" size="small">
-            已回传数智人大
+          <el-tag :type="stateOf(row).type" effect="light" size="small">
+            {{ stateOf(row).text }}
           </el-tag>
-          <el-tag v-else type="warning" effect="light" size="small">已确认，待回传</el-tag>
           <AppealTag :row="row" />
         </template>
         <template #actions="{ row }">
@@ -50,15 +50,16 @@
         <el-table-column label="时长（小时）" width="110">
           <template #default="{ row }"><b>{{ row.hours }}</b></template>
         </el-table-column>
-        <el-table-column label="状态" width="230">
+        <el-table-column label="状态" width="250">
           <template #default="{ row }">
-            <el-tag v-if="row.status === 'uploaded'" type="success" effect="light">已回传</el-tag>
-            <el-tag v-else type="warning" effect="light">已确认待回传</el-tag>
-            <span v-if="row.upload_ref" class="dim mono" style="margin-left:6px">{{ row.upload_ref }}</span>
+            <el-tag :type="stateOf(row).type" effect="light">{{ stateOf(row).text }}</el-tag>
+            <span v-if="row.can_appeal" class="dim" style="margin-left:6px">
+              申诉截止 {{ fmtDT(row.appeal_deadline) }}
+            </span>
             <AppealTag :row="row" />
           </template>
         </el-table-column>
-        <el-table-column label="确认时间" width="130">
+        <el-table-column label="记录时间" width="130">
           <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="120">
@@ -139,6 +140,13 @@ async function submitAppeal() {
     d.visible = false
     load()
   } finally { d.busy = false }
+}
+
+// 三态：还没核准（本人只当参考）→ 已核准可申诉 → 已锁定，账结了
+function stateOf(row) {
+  if (row.locked) return { type: 'success', text: '已锁定' }
+  if (row.approved) return { type: 'warning', text: '已核准，可申诉' }
+  return { type: 'info', text: '待核准' }
 }
 </script>
 

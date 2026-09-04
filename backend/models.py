@@ -230,8 +230,8 @@ class Activity(Base):
     recruit_stages: Mapped[list] = mapped_column(JSON, default=list)
 
     status: Mapped[str] = mapped_column(String(16), default="draft")
-    # draft 草稿 / pending 待审批 / approved 待发布 /
-    # published 报名中 / closed 已截止 / finished 已结束
+    # draft 草稿 / pending 待审批 / approved 待发布 / published 报名中 /
+    # closed 已截止 / finished 已结束 / completed 已完成（时长已锁定）
 
     # —— 审批 ——
     # 所有活动发布前都要过校青协。默认通过即发布；提交时可以关掉这一项，
@@ -252,6 +252,17 @@ class Activity(Base):
     reg_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reg_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # —— 志愿时长 ——
+    # 核准 = 把这场活动的时长定下来，通知每个人查看，并给一段申诉时间。
+    # 截止时没人申诉就自动锁定，活动同时落「已完成」；有人申诉就通知管理者，
+    # 改完再核准一次，来回几次都行，也可以不理会申诉直接锁定。
+    hours_approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True)
+    appeal_deadline: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True)
+    hours_locked_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True)
+
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
@@ -268,10 +279,13 @@ class Activity(Base):
 
     STATUS_LABELS = {"draft": "草稿", "pending": "待审批", "approved": "待发布",
                      "published": "报名中", "closed": "已截止",
-                     "finished": "已结束"}
+                     "finished": "已结束", "completed": "已完成"}
 
     def label_status(self) -> str:
         return self.STATUS_LABELS.get(self.status, self.status)
+
+    def hours_locked(self) -> bool:
+        return self.hours_locked_at is not None
 
     def is_screened(self) -> bool:
         return self.recruit_mode == "screened"
@@ -683,22 +697,48 @@ class CheckinRecord(Base):
     checkout_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
-# ======================= 信用分 / 时长 / 审计 / 通知 / 集成配置 =======================
+# ======================= 时长 / 审计 / 通知 / 集成配置 =======================
 
 class HoursRecord(Base):
+    """一个人在一场活动里的志愿时长。
+
+    时长就存在本平台，不外发。核准与锁定记在活动上（hours_approved_at /
+    appeal_deadline / hours_locked_at）：一场活动的账一起结，不必逐条记状态。
+    """
     __tablename__ = "hours_records"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
     hours: Mapped[float] = mapped_column(Float)
-    status: Mapped[str] = mapped_column(String(16), default="enrolled")  # enrolled/uploaded
     source: Mapped[str] = mapped_column(String(12), default="checkin")    # checkin 签到统计 / manual 手动添加
     note: Mapped[str] = mapped_column(String(256), default="")            # 手动添加时的备注
-    upload_ref: Mapped[str] = mapped_column(String(64), default="")       # 数智人大回执号
-    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     confirmed_by: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class HoursUnlockRequest(Base):
+    """锁定之后还要改时长，得先报审批。
+
+    锁定的意思就是这场活动的账结了。之后再改，得让归口部长知道改什么、为什么
+    改——所以走一条明面上的申请，而不是给管理者留一个「再解锁一次」的按钮。
+    """
+    __tablename__ = "hours_unlock_requests"
+
+    STATUS_LABELS = {"pending": "待审批", "approved": "已同意", "rejected": "已驳回"}
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    activity_id: Mapped[str] = mapped_column(String(32), index=True)
+    reason: Mapped[str] = mapped_column(String(512))
+    requested_by: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    status: Mapped[str] = mapped_column(String(12), default="pending", index=True)
+    reply: Mapped[str] = mapped_column(String(512), default="")
+    handled_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    def status_label(self) -> str:
+        return self.STATUS_LABELS.get(self.status, self.status)
 
 
 class VestTask(Base):

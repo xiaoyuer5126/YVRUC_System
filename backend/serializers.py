@@ -39,8 +39,8 @@ def display_status(act: Activity) -> tuple[str, str]:
         return "draft", "待审批"
     if act.status == "approved":
         return "draft", "待发布"
-    if act.status == "finished":
-        return "finished", "已结束"
+    if act.status in ("finished", "completed"):
+        return "finished", act.label_status()
 
     span = act.time_span()
     if span and t > span[1]:

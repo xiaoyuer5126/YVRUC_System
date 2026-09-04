@@ -64,4 +64,4 @@ def detail(db: OrmSession, user: User) -> dict:
         items.append({"label": "顺利参与活动", "count": done,
                       "delta": config.SCORE_PER_ACTIVITY * done})
     return {**brief(db, user.id), "alert_below": config.SCORE_ALERT_BELOW,
-            "items": items}
+            "per_activity": config.SCORE_PER_ACTIVITY, "items": items}

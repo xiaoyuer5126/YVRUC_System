@@ -2,9 +2,35 @@
   <div class="page">
     <h2>活动审批</h2>
     <el-alert type="info" :closable="false" style="margin-bottom:12px">
-      所有活动发布前都要过校青协。通过后活动回到<b>发起方</b>手里，由他自己点发布；
-      驳回必须写理由。不该由你批的可以<b>转交</b>，转交要写理由，三方都会收到通知。
+      所有活动发布前都要过校青协。默认<b>通过即发布</b>（发起方提交时可以改成
+      自己点发布）；驳回必须写理由。不该由你批的可以<b>转交</b>，转交要写理由，
+      三方都会收到通知。
     </el-alert>
+
+    <!-- 时长锁定之后要改，走这条。批的是「能不能改」，改成多少仍由管理者填 -->
+    <template v-if="unlocks.length">
+      <div class="section-title" style="margin-top:0">时长解锁申请</div>
+      <el-card v-for="u in unlocks" :key="u.id" shadow="never" class="item">
+        <div class="head">
+          <b class="title" @click="$router.push('/manage/' + u.activity_id + '?tab=export')">
+            {{ u.activity_title }}
+          </b>
+          <el-tag size="small" type="warning" effect="plain">申请解锁时长</el-tag>
+          <span style="margin-left:auto">
+            <el-button size="small" type="success" @click="decideUnlock(u, true)">同意</el-button>
+            <el-button size="small" type="danger" plain
+                       @click="decideUnlock(u, false)">驳回</el-button>
+          </span>
+        </div>
+        <div class="submit-note">
+          <b>理由</b><span>{{ u.reason }}</span>
+        </div>
+        <div class="dim" style="margin-top:6px">
+          {{ u.requested_by }} 提交于 {{ fmtDT(u.created_at) }}
+        </div>
+      </el-card>
+      <div class="section-title">待审批活动</div>
+    </template>
 
     <el-empty v-if="!rows.length && !loading" :image-size="70"
               description="没有待你审批的活动" />
@@ -122,13 +148,14 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import { auth } from '../store'
 
 const narrow = useNarrow()
 const rows = ref([])
+const unlocks = ref([])
 const depts = ref([])
 const loading = ref(false)
 const dlg = ref({ visible: false, row: null, approve: true, comment: '', busy: false })
@@ -158,10 +185,25 @@ async function load() {
   loading.value = true
   try {
     rows.value = await api.get('/api/staff/approvals')
+    unlocks.value = await api.get('/api/staff/hours-unlocks')
     depts.value = await api.get('/api/staff/departments')
   } finally { loading.value = false }
 }
 onMounted(load)
+
+// 同意解锁 = 允许管理者改这场活动已经锁定的时长；改完他要重新核准
+async function decideUnlock(row, approve) {
+  let reply = ''
+  if (!approve) {
+    const r = await ElMessageBox.prompt('驳回要写明理由，申请人看得到。', '驳回解锁申请',
+                                        { inputValidator: v => (v || '').trim().length >= 2
+                                                               || '至少 2 个字' })
+    reply = r.value.trim()
+  }
+  await api.post(`/api/staff/hours-unlocks/${row.id}/decide`, { approve, reply })
+  ElMessage.success(approve ? '已同意解锁' : '已驳回')
+  load()
+}
 
 function decide(row, approve) {
   dlg.value = { visible: true, row, approve, comment: '', busy: false }

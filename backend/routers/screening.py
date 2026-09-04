@@ -157,7 +157,7 @@ def visible_questions(questions: list[FormQuestion],
 def student_form(activity_id: str, db: OrmSession = Depends(db_session),
                  user: User = Depends(current_user)):
     act = _act(db, activity_id)
-    if act.status not in ("published", "closed", "finished") \
+    if act.status not in ("published", "closed", "finished", "completed") \
             and not is_activity_manager(db, user, act.id):
         raise HTTPException(404, "活动不存在")
     return application_out(db, act, user)

@@ -948,13 +948,14 @@ POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
 
 
 def _ensure_not_finished(act: Activity) -> None:
-    """已结束的活动一律不再改。
+    """已结束或已完成的活动一律不再改。
 
-    时长是按结束那一刻的岗位与名单算出来并报送的；事后再改岗位、改名额、
-    改基本信息，改的是一份已经生效的记录，跟报出去的账对不上。
+    时长是按结束那一刻的岗位与名单算出来的；事后再改岗位、改名额、
+    改基本信息，改的是一份已经生效的记录，跟结出来的账对不上。
     """
-    if act.status == "finished":
-        raise HTTPException(409, "活动已结束，不能再修改；如确需更正请联系管理员")
+    if act.status in ("finished", "completed"):
+        raise HTTPException(
+            409, f"活动{act.label_status()}，不能再修改；如确需更正请联系管理员")
 
 
 def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:

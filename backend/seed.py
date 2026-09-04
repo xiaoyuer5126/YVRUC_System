@@ -8,7 +8,7 @@
     进后台建岗位后一键智能排班
   · 校园开放日招生咨询（A类·报名中·仅一级）——简单活动无需岗位
   · 校庆文艺晚会（D类·已截止·签到进行中）——统一+分岗位签到码、实时大屏
-  · 社区敬老院陪伴服务（A类·已结束·仅一级）——时长已报名并回传数智人大
+  · 社区敬老院陪伴服务（仅一级·已完成）——时长已核准并锁定
 
 运行：python -m backend.seed   （重复执行会先清空重建）
 """
@@ -420,7 +420,7 @@ def main() -> None:
                                 created_by=wang.id)
         db.add(task_back)
 
-        # ---------- 活动5：敬老院（已结束·仅一级·时长已回传） ----------
+        # ---------- 活动5：敬老院（仅一级·已完成·时长已锁定） ----------
         elder = Activity(id=uid("act"), title="社区敬老院陪伴服务（秋）", organizer="文学院青年志愿者协会",
                          recruit_mode="instant", cover_hue=30,
                          intro="每周定期前往附近社区敬老院陪伴老人，聊天读报、组织小活动。"
@@ -429,7 +429,10 @@ def main() -> None:
                          contact_info="青协项目部 李慕清",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
                          contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
-                         status="finished", reg_start=dt(days=-20),
+                         status="completed", reg_start=dt(days=-20),
+                         hours_approved_at=dt(days=-6),
+                         appeal_deadline=dt(days=-5),
+                         hours_locked_at=dt(days=-5),
                          reg_end=dt(days=-12), created_by=limu.id,
                          created_at=dt(days=-22))
         db.add(elder)
@@ -460,8 +463,7 @@ def main() -> None:
                                  checkin_at=e1.start_time + timedelta(minutes=5 + i)))
             db.add(HoursRecord(id=uid("hrs"), activity_id=elder.id,
                                user_id=u.id, hours=3.0,
-                               status="uploaded", upload_ref="MOCK-ELDER-0008",
-                               uploaded_at=dt(days=-5), confirmed_by=wang.id))
+                               confirmed_by=wang.id))
 
         db.commit()
 
@@ -580,9 +582,9 @@ def main() -> None:
         aud("create", "activity", elder.id, elder.title, elder.id,
             "创建活动「社区敬老院陪伴服务（秋）」（仅场次模式）",
             dt(days=-22))
-        aud("hours_upload", "hours", elder.id, elder.title, elder.id,
-            "回传 8 人时长至数智人大（回执号 MOCK-ELDER-0008）", dt(days=-5))
-        # 一条违规记录：只记不罚，青协在档案里看得到
+        aud("hours_confirm", "hours", elder.id, elder.title, elder.id,
+            "锁定志愿时长，活动标记为已完成（申诉截止无人申诉，系统自动锁定）",
+            dt(days=-5))
         vio_user = students[23]
         db.add(ViolationRecord(id=uid("vio"), user_id=vio_user.id,
                                activity_id=elder.id, activity_title=elder.title,

@@ -30,6 +30,15 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "已加入候补｜{activity}",
         "「{activity}」· {shift} 名额已满，您已加入候补队列，当前第 {pos} 位。"
         "\n有名额释放时将按顺序通知您确认。"),
+    "hours_approved": (
+        "志愿时长已核准｜{activity}",
+        "「{activity}」的志愿时长已核准：您本次记 {hours} 小时。"
+        "\n请在平台「志愿时长」页核对；如有出入，请于 {deadline} 前提出申诉。"
+        "\n到时无人申诉即自动锁定，之后修改需要报审批。"),
+    "hours_locked": (
+        "志愿时长已锁定｜{activity}",
+        "「{activity}」的志愿时长已锁定，本次记 {hours} 小时，活动已完成。"
+        "\n感谢您的参与！"),
     "application_accepted": (
         "录取通知｜{activity}",
         "恭喜！您已被「{activity}」录取，安排在 {shift}（{time}）。"

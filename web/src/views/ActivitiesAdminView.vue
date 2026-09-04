@@ -166,7 +166,7 @@ const form = ref({})
 const createRange = ref([])
 
 const modeColor = m => MODE_COLORS[m]?.color
-const statusType = s => ({ published: 'success', closed: 'info', draft: 'info', pending: 'warning', approved: 'primary', finished: 'info' }[s])
+const statusType = s => ({ published: 'success', closed: 'info', draft: 'info', pending: 'warning', approved: 'primary', finished: 'info', completed: 'success' }[s])
 const pct = r => Math.min(100, Math.round(r.total_enrolled / Math.max(1, r.total_capacity) * 100))
 
 function openCopy(row) {

@@ -205,8 +205,8 @@ def test_unchecked_out_hours_need_review(client, admin, db, take_student):
 
     after = client.get(f"/api/staff/activities/{act.id}/hours",
                        headers=admin).json()["items"]
-    got = {i["user"]["id"]: i["status"] for i in after}
-    assert got[stayer.id] == "enrolled" and got[quitter.id] is None
+    got = {i["user"]["id"]: i["confirmed"] for i in after}
+    assert got[stayer.id] is True and got[quitter.id] is False
 
 
 def test_qingxie_sees_users_page_initiator_does_not(client, initiator):

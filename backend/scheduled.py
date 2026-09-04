@@ -31,6 +31,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("reminders", send_checkin_reminders),
                       ("digests", send_roster_digests),
                       ("approvals", remind_stale_approvals),
+                      ("hours_locked", lock_hours_when_due),
                       ("unlocked", release_stale_edit_locks)):
         try:
             result[name] = job(db)
@@ -81,6 +82,44 @@ def auto_advance_activities(db: OrmSession) -> int:
     if changed:
         db.commit()
     return changed
+
+
+def lock_hours_when_due(db: OrmSession) -> int:
+    """申诉截止时间到了、又没人申诉的活动，自动锁定时长并落「已完成」。
+
+    有人正在申诉就先放着——管理者收到过通知了，处理完再核准一次或者手动锁定。
+    """
+    from .models import HoursAppeal, HoursRecord
+
+    t = now()
+    rows = (db.query(Activity)
+            .filter(Activity.hours_locked_at.is_(None),
+                    Activity.appeal_deadline.isnot(None),
+                    Activity.appeal_deadline < t).all())
+    locked = 0
+    for act in rows:
+        pending = (db.query(HoursAppeal)
+                   .filter(HoursAppeal.activity_id == act.id,
+                           HoursAppeal.status == "pending").count())
+        if pending:
+            continue
+        act.hours_locked_at = t
+        act.status = "completed"
+        audit_log(db, actor=None, action="hours_confirm", target_type="hours",
+                  target_id=act.id, target_label=act.title, activity_id=act.id,
+                  summary=f"申诉截止（{act.appeal_deadline:%m-%d %H:%M}）无人申诉，"
+                          f"系统自动锁定志愿时长并标记活动为已完成")
+        for r in db.query(HoursRecord).filter(
+                HoursRecord.activity_id == act.id).all():
+            u = db.get(User, r.user_id)
+            if u is not None:
+                wecom.send_user(db, u, "hours_locked",
+                                data={"activity_id": act.id},
+                                activity=act.title, hours=f"{r.hours:g}")
+        locked += 1
+    if locked:
+        db.commit()
+    return locked
 
 
 def staffing_gaps(db: OrmSession, act: Activity) -> list[str]:

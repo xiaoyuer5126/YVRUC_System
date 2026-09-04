@@ -26,7 +26,7 @@
       <template #content>
         <div class="hd-title">
           <b>{{ act.title }}</b>
-          <el-tag size="small" :type="{published:'success',closed:'info',draft:'info',pending:'warning',approved:'primary',finished:'info'}[act.status]">
+          <el-tag size="small" :type="{published:'success',closed:'info',draft:'info',pending:'warning',approved:'primary',finished:'info',completed:'success'}[act.status]">
             {{ act.status_label }}
           </el-tag>
         </div>
@@ -610,9 +610,47 @@
               确认正常签退的
             </el-button>
           </el-tooltip>
-          <el-button type="success" @click="uploadHours" :disabled="!enrolledCount">回传数智人大</el-button>
-          <el-tag size="small" effect="plain">对接状态见「集成设置」（当前为演示回执）</el-tag>
+          <el-button v-if="!hoursState.locked_at" type="success"
+                     :disabled="!enrolledCount" @click="openApprove">
+            确认核准时长
+          </el-button>
+          <el-button v-if="hoursState.approved_at && !hoursState.locked_at"
+                     type="warning" plain @click="lockHoursNow">立即锁定</el-button>
+          <el-button v-if="hoursState.locked_at" type="warning" plain
+                     @click="openUnlock">申请解锁</el-button>
         </div>
+
+        <!-- 核准之后这一段就是这场活动的账本状态 -->
+        <el-alert v-if="hoursState.locked_at" type="success" show-icon :closable="false"
+                  style="margin:10px 0"
+                  :title="`时长已于 ${fmtDT(hoursState.locked_at)} 锁定，活动已完成`">
+          <div style="line-height:1.8">
+            锁定后时长不再改动。确需更正请点「申请解锁」，写清改什么、为什么改，
+            由归口部长审批。
+            <template v-if="hoursState.unlock_request">
+              <br />最近一条解锁申请：{{ hoursState.unlock_request.status_label }}
+              · {{ hoursState.unlock_request.reason }}
+              <template v-if="hoursState.unlock_request.reply">
+                （意见：{{ hoursState.unlock_request.reply }}）
+              </template>
+            </template>
+          </div>
+        </el-alert>
+        <el-alert v-else-if="hoursState.approved_at" type="warning" show-icon
+                  :closable="false" style="margin:10px 0"
+                  :title="`已核准，申诉截止 ${fmtDT(hoursState.appeal_deadline)}`">
+          <div style="line-height:1.8">
+            志愿者已收到各自的时长，可在截止前提出申诉。到点没有申诉就自动锁定并把
+            活动标记为「已完成」；<b>有申诉就不会自动锁定</b>——改完再核准一次，
+            或者直接「立即锁定」。
+            <template v-if="hoursState.pending_appeals">
+              <br />当前有 <b>{{ hoursState.pending_appeals }}</b> 条申诉待处理。
+            </template>
+          </div>
+        </el-alert>
+        <el-alert v-else type="info" show-icon :closable="false" style="margin:10px 0"
+                  title="时长还没核准，志愿者看不到，也提不了申诉"
+                  description="先算好、核对完，再点「确认核准时长」——那一刻起每个人都会收到自己的时长。" />
         <div v-if="hours.length" class="scroll-x">
         <el-table :data="hours" size="small" style="margin-top:10px;min-width:660px"
                   max-height="360" @selection-change="onHoursSelect">
@@ -648,12 +686,9 @@
               <span v-else class="dim">正常签退</span>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="150">
+          <el-table-column label="状态" width="120">
             <template #default="{row}">
-              <el-tag v-if="row.status === 'uploaded'" type="success" effect="light">
-                已回传 {{ row.upload_ref }}
-              </el-tag>
-              <el-tag v-else-if="row.status === 'enrolled'" type="warning" effect="light">已报名</el-tag>
+              <el-tag v-if="row.confirmed" type="success" effect="light">已确认</el-tag>
               <el-tag v-else effect="info">待确认</el-tag>
             </template>
           </el-table-column>
@@ -687,17 +722,11 @@
             <el-table-column prop="student_id" label="学号" width="120" />
             <el-table-column prop="hours" label="时长(h)" width="90" />
             <el-table-column prop="note" label="备注" min-width="160" />
-            <el-table-column label="状态" width="110">
-              <template #default="{row}">
-                <el-tag v-if="row.status === 'uploaded'" type="success" effect="light">已回传</el-tag>
-                <el-tag v-else type="warning" effect="light">已报名</el-tag>
-              </template>
-            </el-table-column>
             <el-table-column label="操作" width="80">
               <template #default="{row}">
-                <el-button v-if="row.status !== 'uploaded'" size="small" link type="danger"
+                <el-button v-if="!hoursState.locked_at" size="small" link type="danger"
                            @click="delManualHours(row)">删除</el-button>
-                <span v-else class="dim">—</span>
+                <span v-else class="dim">已锁定</span>
               </template>
             </el-table-column>
           </el-table>
@@ -939,6 +968,26 @@
       <template #footer>
         <el-button @click="attDlg.visible = false">取消</el-button>
         <el-button type="primary" :loading="attDlg.busy" @click="saveAttached">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 核准时长：定下账、通知本人，并给一段申诉时间 -->
+    <el-dialog v-model="approveDlg.visible" title="确认核准时长" width="480">
+      <p class="dim" style="margin-top:0;line-height:1.8">
+        核准之后，每位志愿者都会收到自己这次记多少小时，并可在截止前提出申诉。
+        到点没有申诉，系统自动锁定并把活动标记为「已完成」。
+      </p>
+      <el-form label-width="100px">
+        <el-form-item label="申诉截止" required>
+          <DateTimeField v-model="approveDlg.deadline" :default-time="DAY_END" />
+          <div class="dim">默认第二天中午；大家一般当天就自己看了</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="approveDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="approveDlg.busy" @click="doApprove">
+          核准并通知
+        </el-button>
       </template>
     </el-dialog>
 
@@ -1372,6 +1421,8 @@ const hours = ref([])
 const hoursLoading = ref(false)
 const hoursSel = ref([])                       // 时长表勾选行
 const manualHours = ref([])                    // 手动添加的时长记录
+const hoursState = ref({})                     // 核准/锁定状态，这一页按它决定给哪些按钮
+const approveDlg = ref({ visible: false, deadline: '', busy: false })
 const mh = ref({ userIds: [], hours: 0.5, note: '' })
 
 // 手动加时长的候选人 = 本活动全部场次的已报名志愿者（含未签到的）
@@ -1437,7 +1488,7 @@ const logs = ref([])
 const ACTION_LABELS = {
   create: '创建', update: '修改', delete: '删除', publish: '发布', close: '截止',
   finish: '结束', assign: '分配', assign_manual: '手动调岗', force_assign: '强制分配',
-  export: '导出', hours_confirm: '确认时长', hours_upload: '回传时长',
+  export: '导出', hours_confirm: '时长核准',
   view_team: '查看组员',
 }
 const actionLabel = a => ACTION_LABELS[a] || a
@@ -1987,6 +2038,7 @@ async function hoursPreview(silent = false) {
       name: m.name || m.user?.name || '',
       student_id: m.student_id || m.user?.student_id || '',
     }))
+    hoursState.value = d
     hoursSel.value = []
     if (!hours.value.length && !silent) ElMessage.info('暂无签到数据')
   } finally { hoursLoading.value = false }
@@ -2029,16 +2081,54 @@ async function addManualHours() {
   } catch { /* toast by api */ }
 }
 
-// 删除手动时长（已回传的不允许删除）
 async function delManualHours(row) {
-  if (row.status === 'uploaded') return ElMessage.warning('已回传数智人大的记录不可删除')
   await api.del(`/api/staff/activities/${activityId}/hours/manual/${row.record_id}`)
   ElMessage.success('已删除')
   hoursPreview(true)
 }
-async function uploadHours() {
-  const d = await api.post(`/api/staff/activities/${activityId}/hours/upload`)
-  ElMessage.success(`已回传 ${d.count} 人，回执号 ${d.receipt_no}`)
+
+// 核准：定下这场活动的时长，通知每个人，并给一段申诉时间
+function openApprove() {
+  approveDlg.value = {
+    visible: true, busy: false,
+    deadline: new Date(hoursState.value.default_deadline.replace(' ', 'T')),
+  }
+}
+async function doApprove() {
+  const d = approveDlg.value
+  if (!d.deadline) return ElMessage.warning('请选择申诉截止时间')
+  d.busy = true
+  try {
+    const r = await api.post(`/api/staff/activities/${activityId}/hours/approve`,
+                             { appeal_deadline: toISO(d.deadline) })
+    ElMessage.success(r.message)
+    d.visible = false
+    hoursPreview(true)
+    loadAll()
+  } finally { d.busy = false }
+}
+
+async function lockHoursNow() {
+  const pending = hoursState.value.pending_appeals
+  await ElMessageBox.confirm(
+    pending ? `还有 ${pending} 条申诉没处理，锁定后按现有时长结账、且不能再改。确定吗？`
+            : '锁定后这场活动的时长不再改动，活动标记为「已完成」。确定吗？',
+    '锁定志愿时长', { type: 'warning' })
+  await api.post(`/api/staff/activities/${activityId}/hours/lock`, {})
+  ElMessage.success('已锁定，活动标记为已完成')
+  hoursPreview(true)
+  loadAll()
+}
+
+// 锁定之后要改，报归口部长审批
+async function openUnlock() {
+  const { value } = await ElMessageBox.prompt(
+    '写清要改什么、为什么改，归口部长看到的就是这句话。', '申请解锁时长',
+    { inputType: 'textarea', inputPlaceholder: '如：漏算了两位同学的加班时长',
+      inputValidator: v => (v || '').trim().length >= 5 || '至少 5 个字' })
+  await api.post(`/api/staff/activities/${activityId}/hours/unlock-request`,
+                 { reason: value.trim() })
+  ElMessage.success('已提交，等归口部长审批')
   hoursPreview(true)
 }
 

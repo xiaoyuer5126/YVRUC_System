@@ -36,7 +36,7 @@
       </div>
       <p class="dim" style="margin:4px 0 0">
         低于 {{ d.score.alert_below }} 分时名单上会挂感叹号，提醒排班的人看一眼这一页。
-        顺利参与一次活动加 {{ perActivity }} 分，分数会自己长回来。
+        顺利参与一次活动加 {{ d.score.per_activity }} 分，分数会自己长回来。
         不对志愿者公开，也不影响报名。
       </p>
 
@@ -77,10 +77,6 @@ const loading = ref(false)
 const d = ref(null)
 
 const served = computed(() => d.value ? d.value.history.filter(h => h.checked_in).length : 0)
-// 加分那一项就是「顺利参与一次」的权重，直接从明细里取，别在前端抄第二份
-const perActivity = computed(
-  () => d.value?.score.items.find(i => i.label === '顺利参与活动')?.delta
-        / (d.value?.score.items.find(i => i.label === '顺利参与活动')?.count || 1) || 5)
 
 async function open(url) {
   visible.value = true

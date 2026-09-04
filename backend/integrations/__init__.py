@@ -20,7 +20,7 @@ DEFAULTS: dict[str, dict] = {
         "app_key": "",
         "app_secret": "",
         "mode_hint": "只读API实时查询 / 每日同步宽表，二选一，由学校确定",
-        "capabilities": ["按学号取身份信息", "活动结束回传志愿时长"],
+        "capabilities": ["按学号取身份信息"],
     },
     "wecom_work": {
         "label": "企业微信",
@@ -30,7 +30,7 @@ DEFAULTS: dict[str, dict] = {
         "corp_secret": "",
         "mode_hint": "向学号对应的成员推送应用消息模板",
         "capabilities": ["报名成功通知", "候补转正通知", "岗位分配通知",
-                          "活动变更警告", "信用扣分提醒"],
+                          "活动变更警告", "时长核准通知"],
     },
     "checkin_gateway": {
         "label": "签到码系统",

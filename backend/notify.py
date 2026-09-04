@@ -87,6 +87,13 @@ def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
     return n
 
 
+def notify(db: OrmSession, user: User, title: str, content: str, *,
+           data: dict | None = None, need_ack: bool = False) -> None:
+    """给一个人发一条通知。用在没必要做成模板的一次性事务上。"""
+    wecom.send_user(db, user, "custom", data=data, need_ack=need_ack,
+                    title=title, content=content)
+
+
 def notify_managers(db: OrmSession, activity_id: str, title: str,
                     content: str) -> int:
     """通知该活动的全部管理者。"""

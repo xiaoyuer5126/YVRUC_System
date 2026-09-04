@@ -26,7 +26,7 @@ def valid_id_card(value: str) -> bool:
     """18 位居民身份证号校验（含末位校验码）。
 
     在校学生均为 18 位号，不放行 15 位旧号——填错一位就是一条对不上人的记录，
-    而这个号会跟着时长回传到数智人大。
+    而这个号是志愿服务记录对到人身上的依据。
     """
     if not re.fullmatch(r"\d{17}[\dX]", value):
         return False
@@ -217,26 +217,34 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
             .filter(HoursRecord.user_id == user.id)
             .order_by(HoursRecord.created_at.desc()).all())
     total = sum(r.hours for r in rows)
-    uploaded = sum(r.hours for r in rows if r.status == "uploaded")
+    acts = {a.id: a for a in db.query(Activity)
+            .filter(Activity.id.in_([r.activity_id for r in rows] or [""])).all()}
+    locked = sum(r.hours for r in rows
+                 if acts.get(r.activity_id) and acts[r.activity_id].hours_locked())
     appeals = {a.record_id: a for a in db.query(HoursAppeal)
                .filter(HoursAppeal.user_id == user.id)
                .order_by(HoursAppeal.created_at).all()}
     out = []
     for r in rows:
-        act = db.get(Activity, r.activity_id)
+        act = acts.get(r.activity_id)
         a = appeals.get(r.id)
+        # 申诉只在「已核准、还没锁定、且没到截止时间」这段窗口里开着
+        open_window = bool(
+            act and act.hours_approved_at and not act.hours_locked()
+            and (act.appeal_deadline is None or now() < act.appeal_deadline))
         out.append({"id": r.id, "activity_title": act.title if act else "",
-                    "hours": r.hours, "status": r.status,
-                    "upload_ref": r.upload_ref,
+                    "hours": r.hours,
+                    "approved": bool(act and act.hours_approved_at),
+                    "locked": bool(act and act.hours_locked()),
+                    "appeal_deadline": iso_of(act.appeal_deadline) if act else None,
                     "created_at": iso_of(r.created_at),
-                    # 已回传的记录不能再动，申诉入口也就不该出现
-                    "can_appeal": r.status != "uploaded" and (
+                    "can_appeal": open_window and (
                         a is None or a.status == "rejected"),
                     "appeal": ({"status": a.status, "label": a.status_label(),
                                 "claimed_hours": a.claimed_hours,
                                 "reason": a.reason, "reply": a.reply}
                                if a else None)})
-    return {"total": round(total, 1), "uploaded": round(uploaded, 1),
+    return {"total": round(total, 1), "locked": round(locked, 1),
             "records": out}
 
 
@@ -252,8 +260,15 @@ def appeal_hours(record_id: str, body: AppealBody,
     r = db.get(HoursRecord, record_id)
     if r is None or r.user_id != user.id:
         raise HTTPException(404, "时长记录不存在")
-    if r.status == "uploaded":
-        raise HTTPException(409, "该记录已回传数智人大，不可再申诉；请联系负责老师")
+    act = db.get(Activity, r.activity_id)
+    if act is None or act.hours_approved_at is None:
+        raise HTTPException(409, "这条时长还没核准，等负责老师核准后再看")
+    if act.hours_locked():
+        raise HTTPException(409, "该活动的时长已锁定，不可再申诉；请联系负责老师")
+    if act.appeal_deadline and now() > act.appeal_deadline:
+        raise HTTPException(
+            409, f"申诉已于 {act.appeal_deadline:%m-%d %H:%M} 截止；"
+                 f"如确有问题请联系负责老师")
     reason = body.reason.strip()
     if len(reason) < 5:
         raise HTTPException(400, "请把情况写清楚（至少 5 个字），管理者才好判断")
@@ -270,11 +285,11 @@ def appeal_hours(record_id: str, body: AppealBody,
                        user_id=user.id, old_hours=r.hours,
                        claimed_hours=round(body.claimed_hours, 2),
                        reason=reason))
-    act = db.get(Activity, r.activity_id)
-    notify_managers(db, r.activity_id, f"[时长申诉] {act.title if act else ''}",
+    notify_managers(db, r.activity_id, f"[时长申诉] {act.title}",
                     f"{user.name}（{user.student_id}）对时长提出异议：\n"
                     f"{r.hours:g}h → 申报 {body.claimed_hours:g}h\n"
                     f"理由：{reason}\n"
+                    f"有申诉在处理中，时长不会自动锁定——"
                     f"请到活动的「导出与时长」页处理。")
     db.commit()
     return {"ok": True}
