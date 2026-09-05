@@ -273,6 +273,7 @@
                    : '全场次参加' }}
               </el-tag>
               <span class="dim">已带上 {{ s.enrolled }} 人</span>
+              <span v-if="s.note" class="dim">备注：{{ s.note }}</span>
               <span style="margin-left:auto">
                 <el-button size="small" link type="primary" :disabled="structureLocked"
                            @click="openAttached(g, s)">编辑</el-button>
@@ -997,6 +998,10 @@
         </el-form-item>
         <el-form-item label="地点">
           <el-input v-model="attForm.location" placeholder="如：明德楼 0201（留空则用活动地点）" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="attForm.note" placeholder="如：请自带笔记本；线上培训链接活动前一天发群里" />
+          <div class="dim">志愿者报名时和报名后都看得到，招募文案里也会带上</div>
         </el-form-item>
         <el-form-item label="适用岗位">
           <el-select v-model="attForm.applies_to_positions" multiple collapse-tags
@@ -1776,12 +1781,12 @@ function positionNames(g, ids) {
 function openAttached(g, s) {
   attDlg.value = { visible: true, editing: s, parent: g, busy: false }
   attForm.value = s ? {
-    kind: s.kind, name: s.name, location: s.location,
+    kind: s.kind, name: s.name, location: s.location, note: s.note || '',
     start_time: new Date(s.start_time.replace(' ', 'T')),
     end_time: new Date(s.end_time.replace(' ', 'T')),
     applies_to_positions: [...s.applies_to_positions],
     hours_mode: s.hours_mode,
-  } : { kind: 'rehearsal', name: '', location: '', start_time: '', end_time: '',
+  } : { kind: 'rehearsal', name: '', location: '', note: '', start_time: '', end_time: '',
         applies_to_positions: [], hours_mode: 'fixed' }
 }
 
@@ -1792,7 +1797,7 @@ async function saveAttached() {
   attDlg.value.busy = true
   try {
     const body = {
-      name: f.name, kind: f.kind, location: f.location,
+      name: f.name, kind: f.kind, location: f.location, note: f.note || '',
       parent_id: attDlg.value.parent.id,
       applies_to_positions: f.applies_to_positions,
       hours_mode: f.hours_mode,

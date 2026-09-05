@@ -491,7 +491,8 @@ def poster(activity_id: str, db: OrmSession = Depends(db_session),
             L.append(f"  ▷ {s.kind_label()}：{s.span_text()}"
                      + (f"　{s.location}" if s.location else "")
                      + f"　（{who}需参加"
-                     + ("，不计时长）" if s.hours_mode == "none" else "，计入时长）"))
+                     + ("，不计时长）" if s.hours_mode == "none" else "，计入时长）")
+                     + (f"\n    备注：{s.note}" if s.note else ""))
 
     contacts = "；".join(f"{c.get('name', '')} {c.get('phone', '')}".strip()
                         for c in (act.contacts or []) if isinstance(c, dict))

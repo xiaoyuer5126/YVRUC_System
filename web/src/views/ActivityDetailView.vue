@@ -116,6 +116,7 @@
                 <span>{{ s.time_text }}</span>
                 <span class="dim">{{ s.location || act.location }}</span>
                 <span class="dim">{{ attachedWho(g, s) }}</span>
+                <span v-if="s.note" class="dim">备注：{{ s.note }}</span>
                 <template v-if="s.mine">
                   <el-tag size="small" :type="s.excused ? 'info' : 'primary'" effect="plain">
                     {{ s.excused ? '已请假' : '要参加' }}
@@ -414,6 +415,7 @@
                       <span class="dim">
                         {{ s.hours_mode === 'none' ? '不计时长' : '计入志愿时长' }}
                       </span>
+                      <span v-if="s.note" class="dim">备注：{{ s.note }}</span>
                       <template v-if="s.mine">
                         <el-tag size="small" :type="s.excused ? 'info' : 'primary'"
                                 effect="plain">
@@ -671,6 +673,7 @@
             <div v-for="s in enrollExtra" :key="s.id" style="line-height:1.7">
               {{ s.kind_label }}：{{ s.time_text }}
               <span class="dim">{{ s.location || act.location || '地点待定' }}</span>
+              <div v-if="s.note" class="dim">备注：{{ s.note }}</div>
             </div>
           </el-descriptions-item>
           <el-descriptions-item label="结果">

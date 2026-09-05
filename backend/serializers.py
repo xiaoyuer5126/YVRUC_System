@@ -258,6 +258,7 @@ def attached_out(db: OrmSession, s: Shift, my_enr=None) -> dict:
         "id": s.id, "name": s.name, "kind": s.kind, "kind_label": s.kind_label(),
         "start_time": iso_of(s.start_time), "end_time": iso_of(s.end_time),
         "time_text": s.span_text(), "location": s.location,
+        "note": s.note,
         "hours_mode": s.hours_mode, "hours_label": s.hours_label(),
         "requirement_tags": s.requirement_tags or {},
         "requirement_desc": tags_desc(s.requirement_tags) or "不限",
