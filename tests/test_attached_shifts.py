@@ -254,14 +254,18 @@ def test_培训必须挂在服务场次下(client, admin, db, act_with_positions
 def test_招募文案带上岗位与彩排(client, admin, db, act_with_positions):
     act, g, east, _c = act_with_positions
     _add_attached(client, admin, act, g, positions=[east.id])
+    from backend import config
+
     client.patch(f"/api/staff/activities/{act.id}", headers=admin,
                  json={"volunteer_requirement": "需全程站立",
-                       "volunteer_benefit": "提供午餐与纪念徽章"})
+                       "volunteer_benefit": "提供午餐与纪念徽章",
+                       "recruit_stages": [config.STAGES[0]]})
 
     text = client.get(f"/api/staff/activities/{act.id}/poster",
                       headers=admin).json()["text"]
     for want in ("志愿者招募", "东门引导", "检录台", "需全程站立",
-                 "提供午餐与纪念徽章", "彩排", "排练厅", "东门引导需参加"):
+                 "提供午餐与纪念徽章", "彩排", "排练厅", "东门引导需参加",
+                 f"招募范围：学段：{config.STAGES[0]}"):
         assert want in text, f"招募文案里少了「{want}」\n{text}"
     # 招募文案对外，不能带名单
     assert "学号" not in text

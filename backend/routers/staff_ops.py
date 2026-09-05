@@ -22,7 +22,7 @@ from ..notify import notify, notify_checkin
 from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
                       HoursAppeal, HoursRecord, HoursUnlockRequest, Shift,
                       Position, User, iso, now, uid)
-from ..serializers import iso_of
+from ..serializers import iso_of, recruit_scope_text
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
 
@@ -457,6 +457,7 @@ def poster(activity_id: str, db: OrmSession = Depends(db_session),
     if span:
         L.append(f"时间：{span[0]:%Y-%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}")
     L.append(f"地点：{act.location or '待定'}")
+    L.append(f"招募范围：{recruit_scope_text(act)}")
     if act.reg_end:
         L.append(f"报名截止：{act.reg_end:%Y-%m-%d %H:%M}")
     if act.intro:
