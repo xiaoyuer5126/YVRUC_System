@@ -11,7 +11,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from ..audit import log as audit_log
-from .. import config
+from .. import config, hours as hours_flow
 from ..database import db_session
 from ..deps import require_manager, require_manager_download
 from ..enroll_logic import position_enrolled_count
@@ -471,6 +471,8 @@ def poster(activity_id: str, db: OrmSession = Depends(db_session),
                 line += f"\n    服务任务：{p.service_task}"
             if p.attire_text():
                 line += f"\n    志愿服装：{p.attire_text()}"
+            if p.pay_text():
+                line += f"\n    报酬方式：{p.pay_text()}"
             L.append(line)
         for s in sorted((x for x in act.shifts if x.parent_id == g.id),
                         key=lambda x: x.start_time):
@@ -495,15 +497,9 @@ class ApproveHoursBody(BaseModel):
     appeal_deadline: str = ""     # 留空 = 明天中午
 
 
-def _default_appeal_deadline() -> datetime:
-    """默认申诉截止：第二天中午。大家一般当天就自己看了，留一夜足够。"""
-    t = now() + timedelta(days=1)
-    return t.replace(hour=12, minute=0, second=0, microsecond=0)
-
-
 def _parse_deadline(raw: str) -> datetime:
     if not raw.strip():
-        return _default_appeal_deadline()
+        return hours_flow.default_appeal_deadline()
     try:
         deadline = datetime.fromisoformat(raw.strip().replace(" ", "T"))
     except ValueError:
@@ -536,15 +532,6 @@ def _hours_approvers(db: OrmSession, act: Activity) -> list[User]:
             seen.add(u.id)
             uniq.append(u)
     return uniq
-
-
-def _lock_hours(db: OrmSession, act: Activity, user: User, reason: str) -> None:
-    """锁定这场活动的时长，并把活动落「已完成」。不提交事务。"""
-    act.hours_locked_at = now()
-    act.status = "completed"
-    audit_log(db, actor=user, action="hours_confirm", target_type="hours",
-              target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"锁定志愿时长，活动标记为已完成（{reason}）")
 
 
 CHECKOUT_GRACE = timedelta(hours=config.CHECKOUT_GRACE_HOURS)
@@ -626,8 +613,18 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
             "pending": "pending" in fl,      # 未签退（宽限期内）
             "auto_checkout": "auto" in fl,   # 超时自动按场次结束时间
             "confirmed": existing is not None,
+            **_volunteer_side(existing),
         })
     return out
+
+
+def _volunteer_side(rec: HoursRecord | None) -> dict:
+    """志愿者本人那一边的表态：报酬方式与确认时间。"""
+    if rec is None:
+        return {"reward": "hours", "reward_label": "志愿时长",
+                "volunteer_confirmed_at": None}
+    return {"reward": rec.reward, "reward_label": rec.reward_label(),
+            "volunteer_confirmed_at": iso_of(rec.confirmed_at)}
 
 
 @router.get("/activities/{activity_id}/hours")
@@ -644,7 +641,8 @@ def hours_preview(activity_id: str, db: OrmSession = Depends(db_session),
         manual.append({"id": r.id, "name": u.name if u else "?",
                        "student_id": u.student_id if u else "",
                        "hours": r.hours, "note": r.note,
-                       "created_at": iso(r.created_at)})
+                       "created_at": iso(r.created_at),
+                       **_volunteer_side(r)})
     pending_appeals = (db.query(HoursAppeal)
                        .filter(HoursAppeal.activity_id == act.id,
                                HoursAppeal.status == "pending").count())
@@ -658,7 +656,7 @@ def hours_preview(activity_id: str, db: OrmSession = Depends(db_session),
             "appeal_deadline": iso_of(act.appeal_deadline),
             "locked_at": iso_of(act.hours_locked_at),
             "pending_appeals": pending_appeals,
-            "default_deadline": iso(_default_appeal_deadline()),
+            "default_deadline": iso(hours_flow.default_appeal_deadline()),
             "unlock_request": ({"id": unlock.id, "status": unlock.status,
                                 "status_label": unlock.status_label(),
                                 "reason": unlock.reason, "reply": unlock.reply,
@@ -905,10 +903,12 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
 def hours_approve(activity_id: str, body: ApproveHoursBody,
                   db: OrmSession = Depends(db_session),
                   user: User = Depends(require_manager)):
-    """确认核准时长：把账定下来，逐个通知本人，并给一段申诉时间。
+    """确认核准时长：把账定下来，逐个通知本人，并给一段确认/申诉时间。
 
-    申诉截止之前志愿者可以提异议；到点没人提，定时任务自动锁定并把活动落
-    「已完成」。有人提了就通知管理者，改完再核准一次即可，来回几次都行。
+    截止之前志愿者要么确认无误（顺带选志愿时长还是劳务），要么提申诉；
+    到点没表态的按「没问题 + 志愿时长」处理，定时任务自动锁定并把活动落
+    「已完成」。有人申诉就通知管理者，改完再核准一次：这一次只惊动数值
+    变过、或者申诉过的人，别人的确认照旧有效。
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
@@ -918,28 +918,41 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
             .filter(HoursRecord.activity_id == act.id).all())
     if not rows:
         # 一条时长都没有的活动没什么可申诉的，直接结账
-        _lock_hours(db, act, user, "没有任何时长记录，核准时直接锁定")
+        hours_flow.lock_hours(db, act, user, "没有任何时长记录，核准时直接锁定")
         db.commit()
         return {"ok": True, "locked": True, "count": 0,
                 "message": "这场活动没有时长记录，已直接锁定并标记为已完成"}
 
+    since = act.hours_approved_at
+    appealed = set()
+    if since is not None:
+        appealed = {a.user_id for a in db.query(HoursAppeal)
+                    .filter(HoursAppeal.activity_id == act.id,
+                            HoursAppeal.created_at >= since).all()}
     act.hours_approved_at = now()
     act.appeal_deadline = deadline
+    notified = 0
     for r in rows:
+        fresh = r.approved_hours is None or r.approved_hours != r.hours
+        if since is not None and not fresh and r.user_id not in appealed:
+            continue          # 上一轮通知过、数值没变、也没申诉：不再打扰
+        r.approved_hours = r.hours
+        r.confirmed_at = None
         u = db.get(User, r.user_id)
         if u is None:
             continue
+        notified += 1
         wecom.send_user(
             db, u, "hours_approved", data={"activity_id": act.id},
             activity=act.title, hours=f"{r.hours:g}",
             deadline=f"{deadline:%Y-%m-%d %H:%M}")
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"核准 {len(rows)} 人的志愿时长，"
-                      f"申诉截止 {deadline:%Y-%m-%d %H:%M}")
+              summary=(f"{'再次' if since else ''}核准志愿时长，通知 {notified} 人，"
+                       f"确认/申诉截止 {deadline:%Y-%m-%d %H:%M}"))
     db.commit()
-    return {"ok": True, "locked": False, "count": len(rows),
-            "message": f"已核准 {len(rows)} 人的时长并通知本人，"
+    return {"ok": True, "locked": False, "count": notified,
+            "message": f"已核准并通知 {notified} 人，"
                        f"{deadline:%m-%d %H:%M} 前无人申诉即自动锁定"}
 
 
@@ -964,7 +977,7 @@ def hours_lock(activity_id: str, body: LockHoursBody | None = None,
     reason = "管理者手动锁定" + (f"（{note}）" if note else "")
     if pending:
         reason += f"；{pending} 条申诉未处理，已按现有时长结账"
-    _lock_hours(db, act, user, reason)
+    hours_flow.lock_hours(db, act, user, reason)
     db.commit()
     return {"ok": True, "pending_appeals": pending}
 

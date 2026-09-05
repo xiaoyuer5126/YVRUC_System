@@ -46,7 +46,8 @@ def overview(db: OrmSession = Depends(db_session),
     checked_today = (db.query(func.count(func.distinct(CheckinRecord.user_id)))
                      .filter(CheckinRecord.checkin_at >= t - timedelta(days=1))
                      .scalar() or 0)
-    hours_total = db.query(func.coalesce(func.sum(HoursRecord.hours), 0.0)).scalar()
+    hours_total = (db.query(func.coalesce(func.sum(HoursRecord.hours), 0.0))
+                   .filter(HoursRecord.reward == "hours").scalar())
 
     # 近 14 天报名趋势：拉出来在内存按天聚合（演示规模无性能问题，
     # 且 SQLite/PG 的日期函数差异就不用管了）

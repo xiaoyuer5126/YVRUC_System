@@ -658,9 +658,10 @@
                   :closable="false" style="margin:10px 0"
                   :title="`已核准，申诉截止 ${fmtDT(hoursState.appeal_deadline)}`">
           <div style="line-height:1.8">
-            志愿者已收到各自的时长，可在截止前提出申诉。到点没有申诉就自动锁定并把
-            活动标记为「已完成」；<b>有申诉就不会自动锁定</b>——改完再核准一次，
-            或者直接「立即锁定」。
+            志愿者已收到各自的时长，截止前要么确认无误（岗位可选劳务的顺带选志愿时长还是劳务），
+            要么提出申诉；没表态的按「无误 + 志愿时长」处理。到点没有申诉就自动锁定并把
+            活动标记为「已完成」；<b>有申诉就不会自动锁定</b>——改完再核准一次（只会再问
+            申诉过或数值变过的人），或者直接「立即锁定」。
             <template v-if="hoursState.pending_appeals">
               <br />当前有 <b>{{ hoursState.pending_appeals }}</b> 条申诉待处理。
             </template>
@@ -710,6 +711,9 @@
               <el-tag v-else effect="info">待确认</el-tag>
             </template>
           </el-table-column>
+          <el-table-column v-if="hoursState.approved_at" label="本人表态" width="170">
+            <template #default="{row}"><VolunteerSide :row="row" /></template>
+          </el-table-column>
         </el-table>
         </div>
         <p class="dim" style="margin-top:8px">
@@ -740,6 +744,9 @@
             <el-table-column prop="student_id" label="学号" width="120" />
             <el-table-column prop="hours" label="时长(h)" width="90" />
             <el-table-column prop="note" label="备注" min-width="160" />
+            <el-table-column v-if="hoursState.approved_at" label="本人表态" width="170">
+              <template #default="{row}"><VolunteerSide :row="row" /></template>
+            </el-table-column>
             <el-table-column label="操作" width="80">
               <template #default="{row}">
                 <el-button v-if="!hoursState.locked_at" size="small" link type="danger"
@@ -1012,8 +1019,8 @@
     <!-- 核准时长：定下账、通知本人，并给一段申诉时间 -->
     <el-dialog v-model="approveDlg.visible" title="确认核准时长" width="480">
       <p class="dim" style="margin-top:0;line-height:1.8">
-        核准之后，每位志愿者都会收到自己这次记多少小时，并可在截止前提出申诉。
-        到点没有申诉，系统自动锁定并把活动标记为「已完成」。
+        核准之后，每位志愿者都会收到自己这次记多少小时，截止前确认无误或提出申诉。
+        到点没有申诉，系统自动锁定并把活动标记为「已完成」；没表态的按志愿时长记。
       </p>
       <el-form label-width="100px">
         <el-form-item label="申诉截止" required>
@@ -1168,6 +1175,13 @@
                       : '服装备注（必填）：如 白色上衣、深色长裤、运动鞋'" />
           <div class="dim">报名时志愿者就能看到；统一发放的在「志愿服装」页扫码或手动登记领取与归还</div>
         </el-form-item>
+        <el-form-item label="报酬方式">
+          <el-checkbox v-model="stationForm.pay_optional">本岗位可选劳务</el-checkbox>
+          <el-input v-if="stationForm.pay_optional" v-model="stationForm.pay_note"
+                    style="margin-top:6px"
+                    placeholder="劳务备注（必填）：如 按校内标准计，活动后一周内发放" />
+          <div class="dim">不勾则只记志愿时长。勾了的话，志愿者在核准后确认时长时可选劳务，选劳务这次就不记时长</div>
+        </el-form-item>
         <el-form-item label="组长">
           <el-checkbox v-model="stationForm.needs_leader">本组需要一名组长</el-checkbox>
           <div class="dim">由你在「志愿者管理」名单里指定；报名时志愿者可表态愿任，供你参考。组长退出后会提醒你重新指定</div>
@@ -1257,6 +1271,7 @@
         <el-descriptions-item label="服务任务">{{ sdData.service_task || '—' }}</el-descriptions-item>
         <el-descriptions-item label="岗位要求">{{ sdData.position_requirement || '—' }}</el-descriptions-item>
         <el-descriptions-item label="志愿服装">{{ sdData.attire_text || '不需要' }}</el-descriptions-item>
+        <el-descriptions-item label="报酬方式">{{ sdData.pay_text || '志愿时长' }}</el-descriptions-item>
         <el-descriptions-item label="培训内容">{{ sdData.training_note || '—' }}</el-descriptions-item>
       </el-descriptions>
     </el-dialog>
@@ -1314,9 +1329,9 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
 import { api, download as dl, fmtDT, pageUrl, qrBase } from '../api'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
@@ -1784,6 +1799,15 @@ async function saveAttached() {
   } finally { attDlg.value.busy = false }
 }
 
+// 时长表里志愿者本人那一格：确认了没、选的志愿时长还是劳务
+const VolunteerSide = (props) => {
+  const r = props.row
+  if (!r.volunteer_confirmed_at) return h('span', { class: 'dim' }, '未表态')
+  return h(ElTag, { size: 'small', effect: 'plain',
+                    type: r.reward === 'pay' ? 'warning' : 'success' },
+           () => `已确认 · ${r.reward_label}`)
+}
+
 // —— 急招置顶 ——
 const pinBusy = ref(false)
 async function togglePin() {
@@ -1859,6 +1883,7 @@ function openStation(st, g) {
     name: st.name, location: st.location, quota: st.quota,
     waitlist_quota: st.waitlist_quota, needs_leader: st.needs_leader,
     attire: st.attire || 'none', attire_note: st.attire_note || '',
+    pay_optional: !!st.pay_optional, pay_note: st.pay_note || '',
     group_name: st.group_name || '',
     genderReq: (st.requirement_tags?.性别) || '',
     collegeReq: st.requirement_tags?.学院 || [],
@@ -1867,6 +1892,7 @@ function openStation(st, g) {
   } : {
     name: '', location: '', quota: 2, waitlist_quota: 3, needs_leader: false,
     attire: 'none', attire_note: '',
+    pay_optional: false, pay_note: '',
     group_name: '',
     genderReq: '', collegeReq: [],
     service_task: '', position_requirement: '', training_note: '',
@@ -1883,6 +1909,7 @@ async function saveStation() {
   if (f.attire !== 'none' && !f.attire_note?.trim()) {
     return ElMessage.warning('请填写服装备注')
   }
+  if (f.pay_optional && !f.pay_note?.trim()) return ElMessage.warning('请填写劳务备注')
   savingStation.value = true
   try {
     const tags = {}
@@ -1892,6 +1919,7 @@ async function saveStation() {
       name: f.name, quota: f.quota, location: f.location,
       waitlist_quota: f.waitlist_quota, needs_leader: f.needs_leader,
       attire: f.attire, attire_note: f.attire === 'none' ? '' : f.attire_note,
+      pay_optional: !!f.pay_optional, pay_note: f.pay_optional ? f.pay_note : '',
       group_name: f.group_name || '',
       requirement_tags: tags, service_task: f.service_task,
       position_requirement: f.position_requirement || '',

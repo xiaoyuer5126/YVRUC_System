@@ -23,7 +23,8 @@
     </el-row>
     <el-card shadow="never">
       <template #header><b>时长明细</b><span class="dim" style="font-weight:400;margin-left:8px">
-        依据签到记录，由负责老师核准；核准后到申诉截止之前，数值有出入可以提异议
+        依据签到记录，由负责老师核准；核准后请在截止前确认无误，数值有出入可以提异议。
+        到点没表态视为确认无误、按志愿时长记
       </span></template>
       <DataCards v-if="narrow" :rows="data.records" title-key="activity_title"
                  :fields="[{ key: 'created_at', label: '记录时间', format: fmtDT },
@@ -40,6 +41,10 @@
           <AppealTag :row="row" />
         </template>
         <template #actions="{ row }">
+          <el-button v-if="row.can_confirm" size="small" type="primary"
+                     :plain="!!row.confirmed_at" @click="openConfirm(row)">
+            {{ row.confirmed_at ? '改报酬方式' : '确认无误' }}
+          </el-button>
           <el-button v-if="row.can_appeal" size="small" plain @click="openAppeal(row)">
             时长有异议
           </el-button>
@@ -50,11 +55,11 @@
         <el-table-column label="时长（小时）" width="110">
           <template #default="{ row }"><b>{{ row.hours }}</b></template>
         </el-table-column>
-        <el-table-column label="状态" width="250">
+        <el-table-column label="状态" width="290">
           <template #default="{ row }">
             <el-tag :type="stateOf(row).type" effect="light">{{ stateOf(row).text }}</el-tag>
-            <span v-if="row.can_appeal" class="dim" style="margin-left:6px">
-              申诉截止 {{ fmtDT(row.appeal_deadline) }}
+            <span v-if="row.can_confirm || row.can_appeal" class="dim" style="margin-left:6px">
+              截止 {{ fmtDT(row.appeal_deadline) }}
             </span>
             <AppealTag :row="row" />
           </template>
@@ -62,17 +67,41 @@
         <el-table-column label="记录时间" width="130">
           <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="120">
+        <el-table-column label="操作" width="200">
           <template #default="{ row }">
+            <el-button v-if="row.can_confirm" size="small" type="primary"
+                       :plain="!!row.confirmed_at" @click="openConfirm(row)">
+              {{ row.confirmed_at ? '改报酬方式' : '确认无误' }}
+            </el-button>
             <el-button v-if="row.can_appeal" size="small" plain @click="openAppeal(row)">
               有异议
             </el-button>
-            <span v-else class="dim">—</span>
+            <span v-if="!row.can_confirm && !row.can_appeal" class="dim">—</span>
           </template>
         </el-table-column>
       </el-table>
       <el-empty v-if="!data.records.length" description="参加活动并完成签到后，时长会出现在这里" :image-size="80" />
     </el-card>
+
+    <el-dialog v-model="cf.visible" title="确认时长" width="440">
+      <p class="dim" style="margin-top:0;line-height:1.8">
+        「{{ cf.row?.activity_title }}」记 <b>{{ cf.row?.hours }}</b> 小时。确认后到截止前仍可改。
+      </p>
+      <el-form label-width="88px">
+        <el-form-item label="报酬方式">
+          <el-radio-group v-model="cf.reward">
+            <el-radio value="hours">记志愿时长</el-radio>
+            <el-radio value="pay" :disabled="!cf.row?.pay_allowed">劳务（不记时长）</el-radio>
+          </el-radio-group>
+          <div v-if="cf.row?.pay_allowed" class="dim">{{ cf.row.pay_note }}</div>
+          <div v-else class="dim">本岗位只记志愿时长</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="cf.visible = false">取消</el-button>
+        <el-button type="primary" :loading="cf.busy" @click="submitConfirm">确认无误</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="dlg.visible" title="时长有异议" width="480">
       <p class="dim" style="margin-top:0;line-height:1.8">
@@ -123,6 +152,21 @@ const AppealTag = (props) => {
     : tag
 }
 
+const cf = ref({ visible: false, row: null, reward: 'hours', busy: false })
+function openConfirm(row) {
+  cf.value = { visible: true, row, reward: row.reward || 'hours', busy: false }
+}
+async function submitConfirm() {
+  const c = cf.value
+  c.busy = true
+  try {
+    const d = await api.post(`/api/me/hours/${c.row.id}/confirm`, { reward: c.reward })
+    ElMessage.success(`已确认，按${d.reward_label}记`)
+    c.visible = false
+    load()
+  } finally { c.busy = false }
+}
+
 const dlg = ref({ visible: false, row: null, hours: 1, reason: '', busy: false })
 
 function openAppeal(row) {
@@ -142,10 +186,12 @@ async function submitAppeal() {
   } finally { d.busy = false }
 }
 
-// 三态：还没核准（本人只当参考）→ 已核准可申诉 → 已锁定，账结了
+// 还没核准（本人只当参考）→ 已核准待表态 / 已确认 → 已锁定，账结了
 function stateOf(row) {
-  if (row.locked) return { type: 'success', text: '已锁定' }
-  if (row.approved) return { type: 'warning', text: '已核准，可申诉' }
+  const how = row.reward === 'pay' ? '劳务' : '志愿时长'
+  if (row.locked) return { type: 'success', text: `已锁定 · ${how}` }
+  if (row.approved && row.confirmed_at) return { type: 'success', text: `已确认 · ${how}` }
+  if (row.approved) return { type: 'warning', text: '已核准，请确认或申诉' }
   return { type: 'info', text: '待核准' }
 }
 </script>

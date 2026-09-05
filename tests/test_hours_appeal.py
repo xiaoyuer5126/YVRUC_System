@@ -297,3 +297,105 @@ def test_非本活动管理者不能处理申诉(client, admin, initiator, db, s
                    headers=admin).json()[0]
     assert client.post(f"/api/staff/hours-appeals/{a['id']}/resolve",
                        headers=initiator, json={"accept": True}).status_code == 403
+
+
+# ======================= 本人确认与报酬方式 =======================
+
+def _served_pay_position(db, act):
+    pos = (db.query(Position).join(Shift, Position.shift_id == Shift.id)
+           .filter(Shift.activity_id == act.id).first())
+    pos.pay_optional, pos.pay_note = True, "按校内标准，活动后一周内发放"
+    db.commit()
+
+
+def test_确认无误并选劳务就不记时长(client, admin, db, served):
+    """岗位开了劳务，本人核准后可以选劳务；账上这次就不算志愿时长。"""
+    act, _g, u = served
+    _served_pay_position(db, act)
+    _confirm(client, admin, act)
+    stu = login(client, u.student_id)
+    rec = _record(client, stu)
+    assert rec["can_confirm"] and rec["pay_allowed"] and "校内标准" in rec["pay_note"]
+    r = client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu,
+                    json={"reward": "pay"})
+    assert r.status_code == 200 and r.json()["reward"] == "pay"
+    d = client.get("/api/me/hours", headers=stu).json()
+    assert d["total"] == 0 and d["records"][0]["reward_label"] == "劳务"
+    assert d["records"][0]["confirmed_at"]
+    # 截止前可以改主意
+    client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu,
+                json={"reward": "hours"})
+    assert client.get("/api/me/hours", headers=stu).json()["total"] == 4.0
+
+
+def test_岗位没开劳务就选不了(client, admin, db, served):
+    act, _g, u = served
+    _confirm(client, admin, act)
+    stu = login(client, u.student_id)
+    rec = _record(client, stu)
+    assert not rec["pay_allowed"]
+    r = client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu,
+                    json={"reward": "pay"})
+    assert r.status_code == 400 and "没有开放劳务" in r.json()["detail"]
+    assert client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu,
+                       json={"reward": "hours"}).status_code == 200
+
+
+def test_到点未表态视同确认并按志愿时长记(client, admin, db, served):
+    from backend import scheduled
+
+    act, _g, u = served
+    _served_pay_position(db, act)
+    _confirm(client, admin, act)
+    db.expire_all()
+    db.get(Activity, act.id).appeal_deadline = now() - timedelta(minutes=1)
+    db.commit()
+    assert scheduled.lock_hours_when_due(db) >= 1
+    db.expire_all()
+    rec = db.query(HoursRecord).filter(HoursRecord.activity_id == act.id).one()
+    assert rec.confirmed_at is not None and rec.reward == "hours"
+    stu = login(client, u.student_id)
+    assert client.get("/api/me/hours", headers=stu).json()["locked"] == 4.0
+    # 锁定之后改不了主意
+    assert client.post(f"/api/me/hours/{rec.id}/confirm", headers=stu,
+                       json={"reward": "pay"}).status_code == 409
+
+
+def test_再次核准只惊动申诉过或数值变过的人(client, admin, db, served, take_student):
+    """别人已经确认过、数值也没动，第二轮不该再收一遍通知、也不该丢掉确认。"""
+    from backend.models import HoursAppeal
+
+    act, g, u = served
+    # 再来一位志愿者：手动补录 2 小时，第一轮就确认无误
+    other = student_row(db, take_student())
+    r = client.post(f"/api/staff/activities/{act.id}/hours/manual", headers=admin,
+                    json={"items": [{"student_id": other.student_id, "hours": 2}]})
+    assert r.status_code == 200, r.text
+    _confirm(client, admin, act)
+    o = login(client, other.student_id)
+    orec = _record(client, o)
+    assert client.post(f"/api/me/hours/{orec['id']}/confirm", headers=o,
+                       json={"reward": "hours"}).status_code == 200
+
+    stu = login(client, u.student_id)
+    rec = _record(client, stu)
+    client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu,
+                json={"claimed_hours": 3, "reason": "忘记签退，实际提前走了"})
+    assert not _record(client, stu)["can_confirm"]     # 申诉处理中不能确认
+    a = client.get(f"/api/staff/activities/{act.id}/hours-appeals",
+                   headers=admin).json()[0]
+    client.post(f"/api/staff/hours-appeals/{a['id']}/resolve", headers=admin,
+                json={"accept": True})
+
+    def approved_notices(user_id):
+        return (db.query(Notification)
+                .filter(Notification.user_id == user_id,
+                        Notification.title.like("志愿时长已核准%")).count())
+
+    r = client.post(f"/api/staff/activities/{act.id}/hours/approve",
+                    headers=admin, json={})
+    assert r.status_code == 200 and r.json()["count"] == 1
+    assert approved_notices(u.id) == 2 and approved_notices(other.id) == 1
+    assert _record(client, o)["confirmed_at"]            # 确认照旧有效
+    after = _record(client, stu)
+    assert after["hours"] == 3.0 and not after["confirmed_at"] and after["can_confirm"]

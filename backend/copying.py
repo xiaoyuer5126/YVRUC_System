@@ -51,6 +51,7 @@ def copy_position(db: OrmSession, src: Position, target: Shift,
                  training_note=src.training_note,
                  needs_leader=src.needs_leader, attire=src.attire,
                  attire_note=src.attire_note,
+                 pay_optional=src.pay_optional, pay_note=src.pay_note,
                  group_name=src.group_name,
                  is_placeholder=src.is_placeholder, sort=sort)
     db.add(p)

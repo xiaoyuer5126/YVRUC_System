@@ -89,7 +89,8 @@ def lock_hours_when_due(db: OrmSession) -> int:
 
     有人正在申诉就先放着——管理者收到过通知了，处理完再核准一次或者手动锁定。
     """
-    from .models import HoursAppeal, HoursRecord
+    from .hours import lock_hours
+    from .models import HoursAppeal
 
     t = now()
     rows = (db.query(Activity)
@@ -103,19 +104,9 @@ def lock_hours_when_due(db: OrmSession) -> int:
                            HoursAppeal.status == "pending").count())
         if pending:
             continue
-        act.hours_locked_at = t
-        act.status = "completed"
-        audit_log(db, actor=None, action="hours_confirm", target_type="hours",
-                  target_id=act.id, target_label=act.title, activity_id=act.id,
-                  summary=f"申诉截止（{act.appeal_deadline:%m-%d %H:%M}）无人申诉，"
-                          f"系统自动锁定志愿时长并标记活动为已完成")
-        for r in db.query(HoursRecord).filter(
-                HoursRecord.activity_id == act.id).all():
-            u = db.get(User, r.user_id)
-            if u is not None:
-                wecom.send_user(db, u, "hours_locked",
-                                data={"activity_id": act.id},
-                                activity=act.title, hours=f"{r.hours:g}")
+        lock_hours(db, act, None,
+                   f"确认/申诉截止（{act.appeal_deadline:%m-%d %H:%M}）无人申诉，"
+                   f"系统自动锁定；未表态的按志愿时长记")
         locked += 1
     if locked:
         db.commit()

@@ -994,12 +994,15 @@ class PositionBody(BaseModel):
     needs_leader: bool = False
     attire: str = "none"                 # none / issued / own
     attire_note: str = ""                # 统一发放或自备时必填
+    pay_optional: bool = False           # 可选劳务
+    pay_note: str = ""                   # 可选劳务时必填：标准与发放方式
 
 
 POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
                    "group_name": "岗位组",
                    "waitlist_quota": "候补名额", "needs_leader": "需要组长",
                    "attire": "志愿服装", "attire_note": "服装备注",
+                   "pay_optional": "可选劳务", "pay_note": "劳务备注",
                    "requirement_tags": "条件要求",
                    "service_task": "服务任务", "position_requirement": "岗位要求",
                    "training_note": "培训内容"}
@@ -1059,6 +1062,9 @@ def _require_position_text(s: Position) -> None:
     if s.attire != "none" and not (s.attire_note or "").strip():
         raise HTTPException(400, f"请填写岗位「{s.name}」的服装备注"
                                  "（发放地点时间，或自备的样式要求）")
+    if s.pay_optional and not (s.pay_note or "").strip():
+        raise HTTPException(400, f"请填写岗位「{s.name}」的劳务备注"
+                                 "（标准与发放方式）")
 
 
 def _validate_position(db: OrmSession, g: Shift, s: Position):
@@ -1093,6 +1099,7 @@ def create_position(shift_id: str, body: PositionBody,
                 waitlist_quota=body.waitlist_quota,
                 needs_leader=body.needs_leader,
                 attire=body.attire, attire_note=body.attire_note.strip(),
+                pay_optional=body.pay_optional, pay_note=body.pay_note.strip(),
                 group_name=body.group_name.strip(),
                 requirement_tags=_clean_requirement_tags(body.requirement_tags),
                 service_task=body.service_task.strip(),

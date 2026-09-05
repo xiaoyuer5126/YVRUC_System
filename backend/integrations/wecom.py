@@ -33,11 +33,12 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "hours_approved": (
         "志愿时长已核准｜{activity}",
         "「{activity}」的志愿时长已核准：您本次记 {hours} 小时。"
-        "\n请在平台「志愿时长」页核对；如有出入，请于 {deadline} 前提出申诉。"
-        "\n到时无人申诉即自动锁定，之后修改需要报审批。"),
+        "\n请于 {deadline} 前到平台「志愿时长」页确认无误，或提出申诉；"
+        "岗位可选劳务的，确认时可以选择按劳务计。"
+        "\n到时未表态视为确认无误、按志愿时长记，之后修改需要报审批。"),
     "hours_locked": (
         "志愿时长已锁定｜{activity}",
-        "「{activity}」的志愿时长已锁定，本次记 {hours} 小时，活动已完成。"
+        "「{activity}」的志愿时长已锁定，{result}，活动已完成。"
         "\n感谢您的参与！"),
     "application_accepted": (
         "录取通知｜{activity}",

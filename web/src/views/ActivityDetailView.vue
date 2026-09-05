@@ -147,6 +147,7 @@
                   <template v-if="s.requirement_desc !== '不限'"> · {{ s.requirement_desc }}</template>
                   <template v-if="s.needs_leader"> · 设组长</template>
                   <template v-if="s.attire !== 'none'"> · 服装{{ s.attire_label }}</template>
+                  <template v-if="s.pay_optional"> · 可选劳务</template>
                   <template v-if="s.material_count"> · 材料 {{ s.material_count }}</template>
                 </div>
                 <div class="m-pos-act">
@@ -238,6 +239,9 @@
               <p v-if="myPosition(g).attire_text" class="mine-note">
                 <b>志愿服装：</b>{{ myPosition(g).attire_text }}
               </p>
+              <p v-if="myPosition(g).pay_text" class="mine-note">
+                <b>报酬方式：</b>{{ myPosition(g).pay_text }}（核准时长时再选）
+              </p>
               <MaterialList v-if="myPosition(g).attachments?.length"
                             :items="myPosition(g).attachments" label="本岗位学习材料" />
             </el-card>
@@ -279,6 +283,8 @@
                           </el-tag>
                           <el-tag v-if="s.attire !== 'none'" size="small" type="primary"
                                   effect="plain" style="margin-left:6px">服装{{ s.attire_label }}</el-tag>
+                          <el-tag v-if="s.pay_optional" size="small" type="warning"
+                                  effect="plain" style="margin-left:6px">可选劳务</el-tag>
                           <el-tag v-if="s.material_count" size="small" effect="plain"
                                   style="margin-left:6px"
                                   :type="s.training_visible ? 'success' : 'info'">
@@ -377,6 +383,9 @@
                     </p>
                     <p v-if="myPosition(g).attire_text" class="mine-note">
                       <b>志愿服装：</b>{{ myPosition(g).attire_text }}
+                    </p>
+                    <p v-if="myPosition(g).pay_text" class="mine-note">
+                      <b>报酬方式：</b>{{ myPosition(g).pay_text }}（核准时长时再选）
                     </p>
                     <MaterialList v-if="myPosition(g).attachments?.length"
                                   :items="myPosition(g).attachments"
@@ -611,6 +620,7 @@
         <el-descriptions-item label="服务任务">{{ stationDetail.data.service_task || '—' }}</el-descriptions-item>
         <el-descriptions-item label="岗位要求">{{ stationDetail.data.position_requirement || '—' }}</el-descriptions-item>
         <el-descriptions-item label="志愿服装">{{ stationDetail.data.attire_text || '不需要' }}</el-descriptions-item>
+        <el-descriptions-item label="报酬方式">{{ stationDetail.data.pay_text || '志愿时长' }}</el-descriptions-item>
         <el-descriptions-item label="培训内容">
           <template v-if="stationDetail.data.training_visible">
             {{ stationDetail.data.training_note || '—' }}

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
+from .. import hours as hours_flow
 from ..database import db_session
 from ..deps import current_user
 from ..models import (Activity, CheckinRecord, Enrollment,
@@ -216,11 +217,13 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
     rows = (db.query(HoursRecord)
             .filter(HoursRecord.user_id == user.id)
             .order_by(HoursRecord.created_at.desc()).all())
-    total = sum(r.hours for r in rows)
+    # 选了劳务的那次不计入时长：账上只有志愿时长
+    total = sum(r.hours for r in rows if r.counts_hours())
     acts = {a.id: a for a in db.query(Activity)
             .filter(Activity.id.in_([r.activity_id for r in rows] or [""])).all()}
     locked = sum(r.hours for r in rows
-                 if acts.get(r.activity_id) and acts[r.activity_id].hours_locked())
+                 if r.counts_hours() and acts.get(r.activity_id)
+                 and acts[r.activity_id].hours_locked())
     appeals = {a.record_id: a for a in db.query(HoursAppeal)
                .filter(HoursAppeal.user_id == user.id)
                .order_by(HoursAppeal.created_at).all()}
@@ -228,24 +231,65 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
     for r in rows:
         act = acts.get(r.activity_id)
         a = appeals.get(r.id)
-        # 申诉只在「已核准、还没锁定、且没到截止时间」这段窗口里开着
+        # 确认与申诉只在「已核准、还没锁定、且没到截止时间」这段窗口里开着
         open_window = bool(
             act and act.hours_approved_at and not act.hours_locked()
             and (act.appeal_deadline is None or now() < act.appeal_deadline))
+        pay_pos = hours_flow.pay_position(db, r.activity_id, user.id)
         out.append({"id": r.id, "activity_title": act.title if act else "",
                     "hours": r.hours,
+                    "reward": r.reward, "reward_label": r.reward_label(),
+                    "confirmed_at": iso_of(r.confirmed_at),
                     "approved": bool(act and act.hours_approved_at),
                     "locked": bool(act and act.hours_locked()),
                     "appeal_deadline": iso_of(act.appeal_deadline) if act else None,
                     "created_at": iso_of(r.created_at),
+                    # 有申诉在处理中就先别确认；处理完再核准一次会重新问
+                    "can_confirm": open_window and (
+                        a is None or a.status != "pending"),
                     "can_appeal": open_window and (
                         a is None or a.status == "rejected"),
+                    "pay_allowed": pay_pos is not None,
+                    "pay_note": pay_pos.pay_note if pay_pos else "",
                     "appeal": ({"status": a.status, "label": a.status_label(),
                                 "claimed_hours": a.claimed_hours,
                                 "reason": a.reason, "reply": a.reply}
                                if a else None)})
     return {"total": round(total, 1), "locked": round(locked, 1),
             "records": out}
+
+
+class ConfirmHoursBody(BaseModel):
+    reward: str = "hours"      # hours 记志愿时长 / pay 劳务（岗位可选劳务时才行）
+
+
+@router.post("/hours/{record_id}/confirm")
+def confirm_hours(record_id: str, body: ConfirmHoursBody,
+                  db: OrmSession = Depends(db_session), user=Depends(current_user)):
+    """本人确认这条时长没问题，并选定报酬方式。截止前可以改主意再点一次。"""
+    r = db.get(HoursRecord, record_id)
+    if r is None or r.user_id != user.id:
+        raise HTTPException(404, "时长记录不存在")
+    act = db.get(Activity, r.activity_id)
+    if act is None or act.hours_approved_at is None:
+        raise HTTPException(409, "这条时长还没核准，等负责老师核准后再看")
+    if act.hours_locked():
+        raise HTTPException(409, "该活动的时长已锁定")
+    if act.appeal_deadline and now() > act.appeal_deadline:
+        raise HTTPException(409, f"确认已于 {act.appeal_deadline:%m-%d %H:%M} 截止，"
+                                 f"已按志愿时长记")
+    if (db.query(HoursAppeal)
+            .filter(HoursAppeal.record_id == r.id,
+                    HoursAppeal.status == "pending").first()):
+        raise HTTPException(409, "您的申诉还在处理中，处理完负责老师会再核准一次")
+    if body.reward not in HoursRecord.REWARD_LABELS:
+        raise HTTPException(400, "报酬方式只能是 志愿时长 / 劳务")
+    if body.reward == "pay" and hours_flow.pay_position(db, act.id, user.id) is None:
+        raise HTTPException(400, "您的岗位没有开放劳务，只能记志愿时长")
+    r.reward = body.reward
+    r.confirmed_at = now()
+    db.commit()
+    return {"ok": True, "reward": r.reward, "reward_label": r.reward_label()}
 
 
 class AppealBody(BaseModel):
@@ -285,6 +329,7 @@ def appeal_hours(record_id: str, body: AppealBody,
                        user_id=user.id, old_hours=r.hours,
                        claimed_hours=round(body.claimed_hours, 2),
                        reason=reason))
+    r.confirmed_at = None       # 提了异议就不算确认过，改完再问一次
     notify_managers(db, r.activity_id, f"[时长申诉] {act.title}",
                     f"{user.name}（{user.student_id}）对时长提出异议：\n"
                     f"{r.hours:g}h → 申报 {body.claimed_hours:g}h\n"

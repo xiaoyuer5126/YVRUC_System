@@ -497,6 +497,10 @@ class Position(Base):
     # 后两种必须带备注（发放地点时间，或自备的样式要求），报名时就要让人看到。
     attire: Mapped[str] = mapped_column(String(8), default="none")
     attire_note: Mapped[str] = mapped_column(String(256), default="")
+    # 报酬方式：默认只记志愿时长；勾了「可选劳务」的岗位，志愿者在核准后
+    # 确认时长时可以选劳务，选了平台就不记这次时长。备注写标准与发放方式。
+    pay_optional: Mapped[bool] = mapped_column(Boolean, default=False)
+    pay_note: Mapped[str] = mapped_column(String(256), default="")
     # 岗位组：同一场次内组名相同的岗位共用一名组长（如「东门片区」下的
     # 引导/检录/医疗点）。留空 = 该岗位自成一组，行为与从前一致。
     group_name: Mapped[str] = mapped_column(String(64), default="")
@@ -516,6 +520,12 @@ class Position(Base):
         if self.attire == "none":
             return ""
         return self.attire_label() + (f"，{self.attire_note}" if self.attire_note else "")
+
+    def pay_text(self) -> str:
+        """报酬方式一句话；只记时长的岗位为空。"""
+        if not self.pay_optional:
+            return ""
+        return "可选劳务" + (f"，{self.pay_note}" if self.pay_note else "")
 
     def time_text(self) -> str:
         """岗位无独立时间：展示所属场次的时段。"""
@@ -740,7 +750,22 @@ class HoursRecord(Base):
     source: Mapped[str] = mapped_column(String(12), default="checkin")    # checkin 签到统计 / manual 手动添加
     note: Mapped[str] = mapped_column(String(256), default="")            # 手动添加时的备注
     confirmed_by: Mapped[str] = mapped_column(String(32), default="")
+    # 志愿者本人的确认：核准后到申诉截止之间，本人看过说没问题，并选定报酬方式
+    # （hours 记志愿时长 / pay 劳务，选劳务就不计入时长）。到点没表态的按
+    # 「没问题 + 志愿时长」处理，锁定时补上确认时间。
+    reward: Mapped[str] = mapped_column(String(8), default="hours")
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 上一次核准时通知本人的数值：再次核准只惊动数值变过、或申诉过的人
+    approved_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    REWARD_LABELS = {"hours": "志愿时长", "pay": "劳务"}
+
+    def reward_label(self) -> str:
+        return self.REWARD_LABELS.get(self.reward, self.reward)
+
+    def counts_hours(self) -> bool:
+        return self.reward == "hours"
 
 
 class HoursUnlockRequest(Base):

@@ -21,7 +21,8 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session as OrmSession
 
 from . import scoring
-from .models import Activity, CheckinRecord, Enrollment, Shift, User, now
+from .models import (Activity, CheckinRecord, Enrollment, HoursRecord, Shift,
+                     User, now)
 
 HEADER_FILL = PatternFill("solid", fgColor="9E2235")   # 人大红
 HEADER_FONT = Font(name="微软雅黑", bold=True, color="FFFFFF")
@@ -168,6 +169,26 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
                 for i, (_e, u) in enumerate(unassigned, start=start + 1):
                     ws.cell(row=i, column=1, value=u.name)
                     ws.cell(row=i, column=2, value=u.student_id)
+
+    # ---------- 志愿时长 Sheet：有账才有这一页 ----------
+    hours_rows = (db.query(HoursRecord, User)
+                  .join(User, HoursRecord.user_id == User.id)
+                  .filter(HoursRecord.activity_id == activity.id)
+                  .order_by(User.name).all())
+    if hours_rows:
+        ws = wb.create_sheet(_safe_sheet_name("志愿时长", used_names))
+        header = ["姓名", "学号", "学院", "时长(h)", "报酬方式", "本人确认",
+                  "来源", "备注"]
+        ws.append(header)
+        _style_header(ws, len(header))
+        for rec, u in hours_rows:
+            ws.append([u.name, u.student_id, u.college, rec.hours,
+                       rec.reward_label(),
+                       rec.confirmed_at.strftime("%m-%d %H:%M") if rec.confirmed_at else "未确认",
+                       "签到统计" if rec.source == "checkin" else "手动添加",
+                       rec.note])
+        for idx, w in enumerate((12, 14, 16, 10, 10, 14, 10, 24), start=1):
+            ws.column_dimensions[get_column_letter(idx)].width = w
 
     buf = BytesIO()
     wb.save(buf)
