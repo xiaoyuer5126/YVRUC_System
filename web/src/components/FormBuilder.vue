@@ -1,10 +1,14 @@
-<!-- 报名后筛选的报名表：题目在这里设计，志愿者申请时填。公开之后锁定。 -->
+<!-- 报名表：题目在这里设计。即选即得的活动在报名弹窗里答，报名后筛选的申请时填。
+     公开之后锁定。 -->
 <template>
   <el-card shadow="never" v-loading="loading">
     <template #header>
       <div class="fb-head">
         <b>报名表</b>
-        <span class="dim">志愿者申请时填写；意向场次由系统自动列出，不用出题</span>
+        <span class="dim">
+          {{ screened ? '志愿者申请时填写；意向场次由系统自动列出，不用出题'
+                      : '选填。设了题目，志愿者报名时就要答；答案在「志愿者管理」名单里看' }}
+        </span>
         <el-button v-if="editable" type="primary" size="small" :loading="saving"
                    style="margin-left:auto" @click="save">保存报名表</el-button>
       </div>
@@ -67,6 +71,7 @@ import { api } from '../api'
 const props = defineProps({
   activityId: { type: String, required: true },
   editable: { type: Boolean, default: false },
+  screened: { type: Boolean, default: false },   // 报名后筛选：表是申请的一部分
 })
 
 const KINDS = { single: '单选', multi: '多选', text: '填空', file: '文件上传' }

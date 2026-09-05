@@ -1,5 +1,7 @@
-"""报名后筛选：管理者设计报名表，志愿者填一次表并勾意向场次，截止后由管理者
-挑人。
+"""报名表与报名后筛选。
+
+报名表两种活动都能用：即选即得的活动在报名弹窗里答题，答案记在报名记录上；
+报名后筛选的活动填一次表并勾意向场次，截止后由管理者挑人。
 
 场次照旧分两种：「报名即选岗位」的场次要连意向岗位一起勾，录取时直接落到他选的
 那个岗位；「截止后统一分配」的场次只勾场次，录取后落在占位岗位上等统一分配。
@@ -33,11 +35,11 @@ router = APIRouter(prefix="/api", tags=["screening"])
 EDITABLE_FORM_STATUSES = ("draft", "pending", "approved")
 
 
-def _act(db: OrmSession, activity_id: str) -> Activity:
+def _act(db: OrmSession, activity_id: str, *, screened: bool = True) -> Activity:
     act = db.get(Activity, activity_id)
     if act is None:
         raise HTTPException(404, "活动不存在")
-    if not act.is_screened():
+    if screened and not act.is_screened():
         raise HTTPException(409, "这不是「报名后筛选」的活动")
     return act
 
@@ -67,7 +69,7 @@ class FormBody(BaseModel):
 def staff_form(activity_id: str, db: OrmSession = Depends(db_session),
                user: User = Depends(require_manager)):
     ensure_activity_manager(db, user, activity_id)
-    act = _act(db, activity_id)
+    act = _act(db, activity_id, screened=False)
     return {"editable": act.status in EDITABLE_FORM_STATUSES,
             "questions": [q.out() for q in _questions(db, activity_id)]}
 
@@ -78,7 +80,7 @@ def save_form(activity_id: str, body: FormBody,
               user: User = Depends(require_manager)):
     """整份表一次保存。发布之后锁定——已经有人按这份表填了，改题等于改答案。"""
     ensure_activity_manager(db, user, activity_id)
-    act = _act(db, activity_id)
+    act = _act(db, activity_id, screened=False)
     if act.status not in EDITABLE_FORM_STATUSES:
         raise HTTPException(409, "活动已公开，报名表不能再改")
     existing = {q.id: q for q in _questions(db, activity_id)}
@@ -168,7 +170,7 @@ async def upload_answer_file(activity_id: str, file: UploadFile = File(...),
                              db: OrmSession = Depends(db_session),
                              user: User = Depends(current_user)):
     """报名表里的文件题。先传文件拿 id，提交答案时把 id 填进去。"""
-    act = _act(db, activity_id)
+    act = _act(db, activity_id, screened=False)
     ext = Path(file.filename or "").suffix.lower().lstrip(".")
     if ext not in EXT_TYPES:
         raise HTTPException(400, f"不支持的文件类型（可上传 {'/'.join(sorted(EXT_TYPES))}）")
@@ -223,7 +225,7 @@ def apply(activity_id: str, body: ApplyBody,
                            f"{logic.conflict_message(clashes)}",
                 "conflicts": clashes})
 
-    answers = _validate_answers(db, act, user, body.answers)
+    answers = validate_answers(db, act, user, body.answers)
     app = Application(id=uid("app"), activity_id=act.id, user_id=user.id,
                       answers=answers, leader_willing=body.leader_willing)
     db.add(app)
@@ -257,8 +259,8 @@ def _wanted_position(db: OrmSession, user: User, g: Shift,
     return position
 
 
-def _validate_answers(db: OrmSession, act: Activity, user: User,
-                      raw: dict) -> dict:
+def validate_answers(db: OrmSession, act: Activity, user: User,
+                     raw: dict) -> dict:
     """逐题校验。被显示条件挡掉的题不校验也不存——它对这个人不存在。"""
     out = {}
     for q in visible_questions(_questions(db, act.id), raw):
@@ -318,6 +320,19 @@ def withdraw(activity_id: str, db: OrmSession = Depends(db_session),
 
 # ======================= 管理者：筛选 =======================
 
+def answers_out(db: OrmSession, questions: list[FormQuestion],
+                answers: dict | None) -> list[dict]:
+    """一份答案按题目顺序展开给管理端看；文件题带上附件 id 与文件名。"""
+    out = []
+    for q in questions:
+        v = (answers or {}).get(q.id)
+        if q.kind == "file" and v:
+            att = db.get(Attachment, str(v))
+            v = {"attachment_id": att.id, "title": att.title} if att else None
+        out.append({"question_id": q.id, "title": q.title,
+                    "kind": q.kind, "value": v})
+    return out
+
 def _position_name(db: OrmSession, enr: Enrollment) -> str:
     """这条意向/报名落在哪个岗位。占位岗位对志愿者就是「待分配」，照样显示。"""
     p = db.get(Position, enr.position_id) if enr.position_id else None
@@ -361,14 +376,7 @@ def list_applications(activity_id: str, db: OrmSession = Depends(db_session),
                    "position_name": _position_name(db, e),
                    "status": e.status, "cancel_type": e.cancel_type}
                   for e in rows if e.shift_id in shifts]
-        answers = []
-        for q in questions:
-            v = (app.answers or {}).get(q.id)
-            if q.kind == "file" and v:
-                att = db.get(Attachment, str(v))
-                v = {"attachment_id": att.id, "title": att.title} if att else None
-            answers.append({"question_id": q.id, "title": q.title,
-                            "kind": q.kind, "value": v})
+        answers = answers_out(db, questions, app.answers)
         out.append({
             "id": app.id, "status": app.status, "status_label": app.status_label(),
             "created_at": app.created_at.isoformat(timespec="minutes"),

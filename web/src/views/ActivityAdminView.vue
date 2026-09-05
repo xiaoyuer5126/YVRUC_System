@@ -107,9 +107,8 @@
           <b>报名即选岗位</b>：名额与候补在各岗位上，发布前建好。
           <b>截止后统一分配</b>：名额记在场次上，岗位等报名截止后再建。
         </el-alert>
-        <FormBuilder v-if="act.recruit_mode === 'screened'" :key="act.status"
-                     :activity-id="act.id" :editable="!isPublic"
-                     style="margin-bottom:12px" />
+        <FormBuilder :key="act.status" :activity-id="act.id" :editable="!isPublic"
+                     :screened="act.recruit_mode === 'screened'" style="margin-bottom:12px" />
         <!-- 结束之后是终态：时长按当时的岗位与名单结的账，再改就对不上，
              连「调整岗位」的入口都不给 -->
         <el-alert v-if="isOver" type="info" show-icon :closable="false"
@@ -344,6 +343,9 @@
                                { key: 'position_name', label: '岗位',
                                  format: v => v || '待分配' }]"
                      empty="还没有确认的志愿者">
+            <template v-if="roster.questions?.length" #body="{ row }">
+              <AnswerList :answers="row.answers" />
+            </template>
             <template #extra="{ row }">
               <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
               <el-tag v-if="row.checked_in" size="small" type="success" effect="light">已到岗</el-tag>
@@ -372,6 +374,9 @@
             </template>
           </DataCards>
           <el-table v-else :data="roster.enrolled" size="small" max-height="300" style="margin-bottom:14px">
+            <el-table-column v-if="roster.questions?.length" type="expand" width="30">
+              <template #default="{ row }"><AnswerList :answers="row.answers" /></template>
+            </el-table-column>
             <el-table-column label="姓名" width="110">
           <template #default="{row}">
             <ScoreAlert :user="row.user" />
@@ -1345,6 +1350,7 @@ import DateTimeField from '../components/DateTimeField.vue'
 import ScoreAlert from '../components/ScoreAlert.vue'
 import ViolationDialog from '../components/ViolationDialog.vue'
 import FormBuilder from '../components/FormBuilder.vue'
+import AnswerList from '../components/AnswerList.vue'
 import ApplicationList from '../components/ApplicationList.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'

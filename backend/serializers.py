@@ -402,6 +402,11 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
                                    for g in act.shifts for p in g.positions)
     if act.is_screened():
         out["application"] = application_out(db, act, user)
+    else:
+        # 即选即得的报名表：题目直接给，报名弹窗里答；答案记在报名记录上
+        out["questions"] = [q.out() for q in db.query(FormQuestion)
+                            .filter(FormQuestion.activity_id == act.id)
+                            .order_by(FormQuestion.sort).all()]
     if include_logs:
         logs = (db.query(AuditLog)
                 .filter(AuditLog.activity_id == act.id, AuditLog.visible.is_(True))

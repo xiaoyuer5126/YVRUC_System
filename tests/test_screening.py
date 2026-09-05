@@ -438,3 +438,40 @@ def test_报名表结果导出excel(client, admin, db, take_student):
                               "reg_end": (now() + timedelta(days=1)).isoformat()}).json()["id"]
     assert client.get(f"/api/staff/activities/{other}/applications.xlsx",
                       headers=admin).status_code == 409
+
+
+# ======================= 即选即得也能设报名表 =======================
+
+def test_即选即得的报名表在报名时答(client, admin, db, open_group, take_student):
+    """题目挂在活动上，报名弹窗里答；答案记在报名记录上，名单和导出都看得到。"""
+    from backend.models import Activity as Act
+
+    act, g = open_group(3)
+    db.get(Act, act.id).status = "draft"
+    db.commit()
+    r = client.put(f"/api/staff/activities/{act.id}/form", headers=admin,
+                   json={"questions": [
+                       {"kind": "single", "title": "会开车吗", "options": ["会", "不会"]},
+                       {"kind": "text", "title": "紧急联系人", "required": True},
+                   ]})
+    assert r.status_code == 200, r.text
+    q_drive, q_contact = (q["id"] for q in r.json()["questions"])
+    db.get(Act, act.id).status = "published"
+    db.commit()
+
+    h = login(client, take_student())
+    d = client.get(f"/api/activities/{act.id}", headers=h).json()
+    assert [q["title"] for q in d["questions"]] == ["会开车吗", "紧急联系人"]
+    url = f"/api/activities/{act.id}/shifts/{g.id}/enroll"
+    r = client.post(url, headers=h, json={"position_id": g.test_position_id,
+                                          "answers": {q_drive: "会"}})
+    assert r.status_code == 400 and "紧急联系人" in r.json()["detail"]
+    r = client.post(url, headers=h, json={"position_id": g.test_position_id,
+                                          "answers": {q_drive: "会",
+                                                      q_contact: "张三 13800000000"}})
+    assert r.status_code == 200, r.text
+
+    roster = client.get(f"/api/staff/shifts/{g.id}/roster", headers=admin).json()
+    assert [q["title"] for q in roster["questions"]] == ["会开车吗", "紧急联系人"]
+    row = roster["enrolled"][0]
+    assert [a["value"] for a in row["answers"]] == ["会", "张三 13800000000"]

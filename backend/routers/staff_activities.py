@@ -32,10 +32,11 @@ from ..perm import (activity_manager_ids, add_manager,
 from ..integrations import wecom
 from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
                       AttireRecord, AttireTask, AuditLog,
-                      CheckinRecord, CheckinTask, Enrollment, Notification,
-                      Position, Shift, User,
+                      CheckinRecord, CheckinTask, Enrollment, FormQuestion,
+                      Notification, Position, Shift, User,
                       iso, now, uid)
 from ..serializers import activity_brief
+from .screening import answers_out
 
 router = APIRouter(prefix="/api/staff", tags=["staff"])
 
@@ -1474,12 +1475,17 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
     positions = sorted(g.positions, key=lambda s: s.sort)
     checked_ids = {r[0] for r in db.query(CheckinRecord.user_id)
                    .filter(CheckinRecord.shift_id == g.id).all()}
+    # 即选即得的报名表答案挂在报名记录上；筛选活动的在「报名申请」那张表里看
+    questions = [] if act.is_screened() else (
+        db.query(FormQuestion).filter(FormQuestion.activity_id == act.id)
+        .order_by(FormQuestion.sort).all())
 
     def user_row(e: Enrollment) -> dict:
         u = db.get(User, e.user_id)
         st = db.get(Position, e.position_id) if e.position_id else None
         return {
             "enrollment_id": e.id,
+            "answers": answers_out(db, questions, e.answers) if questions else [],
             "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
                      "college": u.college, "gender": u.gender, "phone": u.phone,
                      "grade": u.grade, **scoring.brief(db, u.id)},
@@ -1524,6 +1530,7 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
                        AuditLog.action.in_(tuple(logic.ROSTER_ACTIONS)))
                .order_by(AuditLog.created_at.desc()).limit(30).all())
     return {
+        "questions": [q.out() for q in questions],
         "roster_changes": [{
             "action": c.action,
             "action_label": logic.ROSTER_ACTIONS.get(c.action, c.action),

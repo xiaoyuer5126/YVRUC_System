@@ -666,6 +666,8 @@ class Enrollment(Base):
     # —— 组长 ——
     # 报名时表态愿意担任。只是给管理者看的参考，不决定谁当选。
     leader_willing: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 即选即得活动的报名表答案（题目 id → 答案）；报名后筛选的答案在 Application 上
+    answers: Mapped[dict] = mapped_column(JSON, default=dict)
     is_leader: Mapped[bool] = mapped_column(Boolean, default=False)
 
     position_id: Mapped[str | None] = mapped_column(

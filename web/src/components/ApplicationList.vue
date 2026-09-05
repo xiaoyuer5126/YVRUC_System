@@ -34,19 +34,7 @@
       <el-table-column type="selection" width="36" :selectable="selectable" />
       <el-table-column type="expand" width="30">
         <template #default="{ row }">
-          <el-descriptions :column="1" size="small" border style="margin:4px 0 4px 30px">
-            <el-descriptions-item v-for="a in row.answers" :key="a.question_id" :label="a.title">
-              <template v-if="a.kind === 'file'">
-                <el-link v-if="a.value" type="primary" :underline="false"
-                         @click="dl(`/api/materials/${a.value.attachment_id}`)">
-                  {{ a.value.title }}
-                </el-link>
-                <span v-else class="dim">未上传</span>
-              </template>
-              <span v-else-if="Array.isArray(a.value)">{{ a.value.join('、') || '—' }}</span>
-              <span v-else style="white-space:pre-wrap">{{ a.value || '—' }}</span>
-            </el-descriptions-item>
-          </el-descriptions>
+          <AnswerList :answers="row.answers" style="margin:4px 0 4px 30px" />
         </template>
       </el-table-column>
       <el-table-column label="姓名" width="110">
@@ -92,6 +80,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download as dl, fmtDT } from '../api'
 import ScoreAlert from './ScoreAlert.vue'
+import AnswerList from './AnswerList.vue'
 
 const props = defineProps({ activityId: { type: String, required: true } })
 const emit = defineEmits(['archive', 'changed'])

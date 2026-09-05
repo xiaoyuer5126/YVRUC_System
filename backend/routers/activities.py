@@ -135,6 +135,7 @@ class EnrollBody(BaseModel):
     position_id: str | None = None    # pick 模式必填；assign 模式留空
     allow_reassign: bool = True       # 是否接受管理者调剂岗位（仅作参考）
     leader_willing: bool = False      # 是否愿意担任该岗位组长
+    answers: dict = {}                # 活动设了报名表时的答案（题目 id → 答案）
 
 
 def _check_eligibility(db: OrmSession, user: User, act: Activity,
@@ -188,6 +189,9 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         raise HTTPException(409, "本活动需填写报名表申请，由负责老师筛选后录取")
 
     _check_eligibility(db, user, act, g)
+    # 报名表答案：题目不存在就是空表，答案照样为空
+    from .screening import validate_answers
+    answers = validate_answers(db, act, user, body.answers or {})
 
     # 岗位有效性与硬性条件（与名额无关，锁外先判）。
     # 「截止后统一分配」的场次不让学生挑岗位，一律落到占位岗位上——
@@ -241,7 +245,8 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         enr = Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
                          user_id=user.id, joined_at=now(),
                          allow_reassign=body.allow_reassign,
-                         leader_willing=body.leader_willing)
+                         leader_willing=body.leader_willing,
+                         answers=answers)
         if position is not None:
             enr.position_id = position.id
         if logic.has_room(db, g, position):

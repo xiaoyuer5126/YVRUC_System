@@ -683,6 +683,12 @@
                   title="以上培训/彩排会随本次报名一并报上"
                   description="它们各自需要到场签到；退选本场次时会一并退出。请确认这些时间你都能到。" />
 
+        <!-- 活动设了报名表：报名时一并答，答案跟着报名记录走 -->
+        <el-form v-if="act.questions?.length" label-position="top" style="margin-top:12px">
+          <QuestionFields ref="enrollFields" v-model="enrollDlg.answers" :questions="act.questions"
+                          :upload-url="`/api/activities/${act.id}/apply/upload`" />
+        </el-form>
+
         <div class="reassign-box">
           <el-checkbox v-model="enrollDlg.allowReassign" :disabled="willWaitlist">
             接受岗位调剂
@@ -736,6 +742,7 @@ import ProfileDialog from '../components/ProfileDialog.vue'
 import GroupQrDialog from '../components/GroupQrDialog.vue'
 import ApplicationPanel from '../components/ApplicationPanel.vue'
 import MaterialList from '../components/MaterialList.vue'
+import QuestionFields from '../components/QuestionFields.vue'
 import { useNarrow } from '../composables/useNarrow'
 import { Clock, Warning } from '@element-plus/icons-vue'
 
@@ -893,18 +900,25 @@ function doEnroll(g, position) {
     return ElMessage.warning('请先展开该场次，选择一个岗位')
   }
   enrollDlg.value = { visible: true, shift: g, position, allowReassign: true,
-                      leaderWilling: false,
+                      leaderWilling: false, answers: {},
                       submitting: false }
 }
 
+const enrollFields = ref(null)
 async function submitEnroll() {
   const { shift: g, position, allowReassign, leaderWilling } = enrollDlg.value
+  let answers = {}
+  if (enrollFields.value) {
+    const got = enrollFields.value.collect()
+    if (got.error) return ElMessage.warning(got.error)
+    answers = got.answers
+  }
   enrollDlg.value.submitting = true
   try {
     const d = await api.post(
       `/api/activities/${act.value.id}/shifts/${g.id}/enroll`,
       { position_id: position ? position.id : null,
-        allow_reassign: allowReassign, leader_willing: leaderWilling })
+        allow_reassign: allowReassign, leader_willing: leaderWilling, answers })
     enrollDlg.value.visible = false
     ElMessage.success(d.message)
     groupQr.value.open({ qr: d.contact_group_qr, title: act.value.title })

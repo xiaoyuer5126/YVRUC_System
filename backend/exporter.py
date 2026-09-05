@@ -21,8 +21,8 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session as OrmSession
 
 from . import scoring
-from .models import (Activity, CheckinRecord, Enrollment, HoursRecord, Shift,
-                     User, now)
+from .models import (Activity, Attachment, CheckinRecord, Enrollment,
+                     FormQuestion, HoursRecord, Shift, User, now)
 
 HEADER_FILL = PatternFill("solid", fgColor="9E2235")   # 人大红
 HEADER_FONT = Font(name="微软雅黑", bold=True, color="FFFFFF")
@@ -56,6 +56,18 @@ def _style_header(ws, ncols: int) -> None:
         cell.font = HEADER_FONT
         cell.alignment = CENTER
     ws.freeze_panes = "A2"
+
+
+def _answer_cell(db: OrmSession, q: FormQuestion, v) -> str:
+    """一格答案：多选顿号连接，文件题写文件名。"""
+    if v is None or v == "" or v == []:
+        return ""
+    if q.kind == "file":
+        att = db.get(Attachment, str(v))
+        return att.title if att else ""
+    if isinstance(v, list):
+        return "、".join(str(x) for x in v)
+    return str(v)
 
 
 def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
@@ -104,6 +116,12 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
     for col, w in zip("ABCDE", (24, 30, 14, 14, 10)):
         overview.column_dimensions[col].width = w
 
+    # 即选即得的报名表答案挂在报名记录上，一题一列跟在签到后面；
+    # 筛选活动的答案在「报名表结果」那份导出里
+    questions = [] if activity.is_screened() else (
+        db.query(FormQuestion).filter(FormQuestion.activity_id == activity.id)
+        .order_by(FormQuestion.sort).all())
+
     # ---------- 每个场次一个 Sheet ----------
     used_names: set[str] = {"活动概览"}
     for g in shifts:
@@ -130,6 +148,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         header += (["岗位组", "岗位", "组长", "服务地点", "接受调剂"]
                    if has_positions else [])
         header += ["签到状态", "签退时间"]
+        header += [q.title for q in questions]
         ws.append(header)
         _style_header(ws, len(header))
 
@@ -146,6 +165,8 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
             line += ["已到岗 ✓" if rec else "未签到"]
             line += [rec.checkout_at.strftime("%m-%d %H:%M")
                      if rec and rec.checkout_at else "—"]
+            line += [_answer_cell(db, q, (enr.answers or {}).get(q.id))
+                     for q in questions]
             ws.append(line)
 
         for idx, w in enumerate((12, 14, 16, 15, 18), start=1):
