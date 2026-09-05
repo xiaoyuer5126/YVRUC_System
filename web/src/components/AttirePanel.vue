@@ -41,7 +41,7 @@
                row-key="student_id"
                :fields="[{ key: 'student_id', label: '学号' },
                          { key: 'position', label: '岗位' }]"
-               empty="还没有需要马甲的志愿者">
+               empty="还没有需要领取服装的志愿者">
       <template #extra="{ row }">
         <el-tag size="small" :type="tagType(row)">{{ tagText(row) }}</el-tag>
       </template>
@@ -71,11 +71,11 @@
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="rm.visible" :title="rm.action === 'take' ? '提醒领取马甲' : '提醒归还马甲'"
+    <el-dialog v-model="rm.visible" :title="rm.action === 'take' ? '提醒领取服装' : '提醒归还服装'"
                width="440">
       <p class="dim" style="margin-top:0;line-height:1.8">
         {{ rm.action === 'take'
-           ? `发给岗位需要马甲、但还没领的 ${data?.not_taken || 0} 位志愿者。`
+           ? `发给岗位统一发放服装、但还没领的 ${data?.not_taken || 0} 位志愿者。`
            : `发给领了还没还的 ${data?.outstanding || 0} 位志愿者。` }}
       </p>
       <el-checkbox v-model="rm.needAck">要求志愿者点「我已知悉」</el-checkbox>
@@ -86,11 +86,11 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="qr.visible" :title="'马甲' + qr.label + '码'" width="380">
+    <el-dialog v-model="qr.visible" :title="'服装' + qr.label + '码'" width="380">
       <div style="text-align:center" v-if="qr.token">
         <!-- 必须带 base：不传的话码里编的是相对路径，相机只会当一行字显示 -->
-        <img :src="`/api/vests/qr.svg?token=${qr.token}&base=${qrBase()}&t=${Date.now()}`"
-             width="260" height="260" alt="马甲二维码" />
+        <img :src="`/api/attire/qr.svg?token=${qr.token}&base=${qrBase()}&t=${Date.now()}`"
+             width="260" height="260" alt="服装二维码" />
         <div class="mono" style="font-size:22px;letter-spacing:4px">{{ qr.token }}</div>
         <div class="dim">请把这张码贴在{{ qr.label }}处，别和另一张弄混</div>
         <div style="margin-top:10px">
@@ -121,7 +121,7 @@ const qr = ref({ visible: false, token: '', label: '' })
 const refresher = ref(null)
 
 // 模板里不能直接用 location（不在 Vue 模板全局白名单），放 computed
-const scanUrl = computed(() => pageUrl(`/vest/${qr.value.token}`))
+const scanUrl = computed(() => pageUrl(`/attire/${qr.value.token}`))
 function copyLink() {
   navigator.clipboard.writeText(scanUrl.value)
   ElMessage.success('链接已复制')
@@ -130,7 +130,7 @@ function copyLink() {
 async function load() {
   loading.value = true
   try {
-    data.value = await api.get(`/api/staff/activities/${props.activityId}/vests`)
+    data.value = await api.get(`/api/staff/activities/${props.activityId}/attire`)
     selected.value = []
   } finally { loading.value = false }
 }
@@ -144,7 +144,7 @@ const tagText = r => (r.returned ? '已归还' : r.taken ? '未归还' : '未领
 const tagType = r => (r.returned ? 'success' : r.taken ? 'warning' : 'info')
 
 async function ensureTasks() {
-  await api.post(`/api/staff/activities/${props.activityId}/vest-tasks`, {})
+  await api.post(`/api/staff/activities/${props.activityId}/attire-tasks`, {})
   ElMessage.success('领取码与归还码已就绪')
   load()
 }
@@ -155,14 +155,14 @@ function openQR(action) {
 }
 
 async function batch(action) {
-  await api.post(`/api/staff/activities/${props.activityId}/vests/batch`,
+  await api.post(`/api/staff/activities/${props.activityId}/attire/batch`,
     { action, student_ids: selected.value.map(r => r.student_id) })
   ElMessage.success('已登记')
   load()
 }
 
 async function one(action, row) {
-  await api.post(`/api/staff/activities/${props.activityId}/vests/batch`,
+  await api.post(`/api/staff/activities/${props.activityId}/attire/batch`,
     { action, student_ids: [row.student_id] })
   ElMessage.success('已登记')
   load()
@@ -176,7 +176,7 @@ const openRemind = action => {
 async function remind() {
   rm.value.busy = true
   try {
-    const d = await api.post(`/api/staff/activities/${props.activityId}/vests/remind`,
+    const d = await api.post(`/api/staff/activities/${props.activityId}/attire/remind`,
       { action: rm.value.action, need_ack: rm.value.needAck })
     ElMessage.success(`已提醒 ${d.count} 位志愿者`
       + (d.batch_id ? '（要求签收）' : ''))

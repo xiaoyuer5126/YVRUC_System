@@ -160,7 +160,8 @@ def position_out(db: OrmSession, p: Position, user=None, *,
         "held_seats": occupied - n_enrolled,
         "waitlist_quota": p.waitlist_quota, "waitlist_count": queued,
         "needs_leader": p.needs_leader,
-        "needs_vest": p.needs_vest,
+        "attire": p.attire, "attire_label": p.attire_label(),
+        "attire_note": p.attire_note, "attire_text": p.attire_text(),
         "requirement_tags": p.requirement_tags or {},
         "requirement_desc": p.requirement_desc() or "不限",
         "service_task": p.service_task,
@@ -392,6 +393,9 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
     # 联络群二维码不公开：志愿者报名成功后才弹给本人，管理者在后台能看
     if manager:
         out["contact_group_qr"] = act.contact_group_qr or ""
+        # 有岗位统一发放服装，后台才有「志愿服装」页；自备的没有台账可管
+        out["attire_issued"] = any(p.attire == "issued"
+                                   for g in act.shifts for p in g.positions)
     if act.is_screened():
         out["application"] = application_out(db, act, user)
     if include_logs:

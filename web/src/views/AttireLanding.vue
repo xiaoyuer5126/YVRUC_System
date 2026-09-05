@@ -4,7 +4,7 @@
       <template v-if="task">
         <div class="ok-icon" v-if="done">✓</div>
         <h2 style="margin:6px 0 2px">{{ task.activity_title }}</h2>
-        <p class="dim" style="margin:0 0 14px">志愿马甲 · {{ task.action_label }}码</p>
+        <p class="dim" style="margin:0 0 14px">志愿服装 · {{ task.action_label }}码</p>
 
         <template v-if="!done">
           <el-descriptions :column="1" border size="small">
@@ -30,10 +30,10 @@
         </el-result>
 
         <p class="dim foot">领取与归还是两个码，请对应扫描；<br />
-          台账实时回流青协后台。</p>
+          台账实时回流活动后台。</p>
       </template>
-      <el-result v-else-if="!loading" icon="warning" title="马甲码无效"
-                 sub-title="请确认扫的是本次活动的马甲码" />
+      <el-result v-else-if="!loading" icon="warning" title="服装码无效"
+                 sub-title="请确认扫的是本次活动的服装码" />
     </el-card>
   </div>
 </template>
@@ -55,7 +55,7 @@ const doneMsg = ref('')
 const state = computed(() => {   // vuecheck: script-only
   const t = task.value
   if (!t) return 'none'
-  if (!t.need_vest) return 'not_required'
+  if (!t.need_attire) return 'not_required'
   if (!t.active) return 'closed'
   if (t.action === 'take') return t.taken_at && !t.returned_at ? 'taken' : 'ready'
   if (!t.taken_at) return 'no_record'
@@ -63,8 +63,8 @@ const state = computed(() => {   // vuecheck: script-only
 })
 const TEXT = {
   ready: '可以操作', taken: '您已领取，散场后请归还',
-  returned: '您已归还', closed: '该马甲码已关闭',
-  not_required: '您在本活动的岗位不需要马甲',
+  returned: '您已归还', closed: '该服装码已关闭',
+  not_required: '您在本活动的岗位服装不由平台统一发放',
   no_record: '没有您的领取记录',
 }
 const stateText = computed(() => TEXT[state.value] || '')
@@ -72,12 +72,12 @@ const stateType = computed(() => (
   { ready: 'success', taken: 'warning', returned: 'info' }[state.value] || 'danger'))
 const canAct = computed(() => state.value === 'ready')
 const actionText = computed(() => (
-  task.value?.action === 'take' ? '领取马甲' : '归还马甲'))
+  task.value?.action === 'take' ? '领取服装' : '归还服装'))
 
 async function load() {
   loading.value = true
   try {
-    task.value = await api.get(`/api/vests/task/${token}`, { silent: true })
+    task.value = await api.get(`/api/attire/task/${token}`, { silent: true })
   } catch { task.value = null } finally { loading.value = false }
 }
 onMounted(load)
@@ -85,7 +85,7 @@ onMounted(load)
 async function doScan() {
   submitting.value = true
   try {
-    const d = await api.post(`/api/vests/scan/${token}`)
+    const d = await api.post(`/api/attire/scan/${token}`)
     doneMsg.value = d.message
     done.value = true
     ElMessage.success(d.message)

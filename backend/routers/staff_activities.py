@@ -32,7 +32,7 @@ from ..perm import (activity_manager_ids, add_manager,
 from ..integrations import wecom
 from ..models import (Activity, ActivityManager, ApprovalEvent, AuditLog,
                       CheckinRecord, CheckinTask, Enrollment, Notification,
-                      Position, Shift, User, VestRecord, VestTask,
+                      Position, Shift, User, AttireRecord, AttireTask,
                       iso, now, uid)
 from ..serializers import activity_brief
 
@@ -607,7 +607,7 @@ def delete_activity(activity_id: str, db: OrmSession = Depends(db_session),
     """仅草稿可删——发布过的活动承载着报名记录与留痕，不允许物理删除。
 
     场次与岗位有 ORM 级联，其余指向本活动的表要自己清：共管名单、审批流水、
-    马甲台账、签到任务。少清一张表，删除就撞外键报 500——草稿活动身上至少
+    服装台账、签到任务。少清一张表，删除就撞外键报 500——草稿活动身上至少
     永远挂着一条创建者的共管记录。
     """
     ensure_activity_manager(db, user, activity_id)
@@ -616,7 +616,7 @@ def delete_activity(activity_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(409, "仅「筹备中」的活动可以删除；"
                                  "已发布的活动请使用「结束活动」归档")
     label = act.title
-    for model in (ActivityManager, ApprovalEvent, VestRecord, VestTask,
+    for model in (ActivityManager, ApprovalEvent, AttireRecord, AttireTask,
                   CheckinTask, Enrollment):
         (db.query(model).filter(model.activity_id == activity_id)
          .delete(synchronize_session=False))
@@ -706,7 +706,7 @@ def _sync_placeholder(db: OrmSession, g: Shift, capacity: int,
                       waitlist_quota: int) -> None:
     """「截止后统一分配」的场次自动带一个占位岗位，名额记在它头上。
 
-    这样名额只有一个来源（岗位），报名、候补、签到、马甲全都不必再为
+    这样名额只有一个来源（岗位），报名、候补、签到、服装全都不必再为
     「没有岗位的报名」单开一套账。学生看到的是一个写明「暂不选岗位」的
     选项，不是一个真岗位。
     """
@@ -935,13 +935,14 @@ class PositionBody(BaseModel):
     position_requirement: str = ""       # 选填
     training_note: str = ""
     needs_leader: bool = False
-    needs_vest: bool = False
+    attire: str = "none"                 # none / issued / own
+    attire_note: str = ""                # 统一发放或自备时必填
 
 
 POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
                    "group_name": "岗位组",
                    "waitlist_quota": "候补名额", "needs_leader": "需要组长",
-                   "needs_vest": "需要马甲",
+                   "attire": "志愿服装", "attire_note": "服装备注",
                    "requirement_tags": "条件要求",
                    "service_task": "服务任务", "position_requirement": "岗位要求",
                    "training_note": "培训内容"}
@@ -996,6 +997,11 @@ def _require_position_text(s: Position) -> None:
                          (s.training_note, "培训内容")):
         if not (value or "").strip():
             raise HTTPException(400, f"请填写岗位「{s.name}」的{label}")
+    if s.attire not in Position.ATTIRE_LABELS:
+        raise HTTPException(400, "志愿服装只能是 不需要 / 统一发放 / 志愿者自备")
+    if s.attire != "none" and not (s.attire_note or "").strip():
+        raise HTTPException(400, f"请填写岗位「{s.name}」的服装备注"
+                                 "（发放地点时间，或自备的样式要求）")
 
 
 def _validate_position(db: OrmSession, g: Shift, s: Position):
@@ -1029,7 +1035,7 @@ def create_position(shift_id: str, body: PositionBody,
                 location=body.location.strip(), quota=body.quota,
                 waitlist_quota=body.waitlist_quota,
                 needs_leader=body.needs_leader,
-                needs_vest=body.needs_vest,
+                attire=body.attire, attire_note=body.attire_note.strip(),
                 group_name=body.group_name.strip(),
                 requirement_tags=_clean_requirement_tags(body.requirement_tags),
                 service_task=body.service_task.strip(),
@@ -1083,12 +1089,14 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
                      Enrollment.is_leader.is_(True))
              .update({"is_leader": False}, synchronize_session=False))
 
-    def fmt(v):
+    def fmt(k, v):
         if isinstance(v, datetime):
             return v.strftime("%m-%d %H:%M")
+        if k == "attire":
+            return Position.ATTIRE_LABELS.get(v, v)
         return v
-    changes = diff_changes({k: fmt(v) for k, v in before_raw.items()},
-                           {k: fmt(getattr(s, k)) for k in POSITION_FIELDS},
+    changes = diff_changes({k: fmt(k, v) for k, v in before_raw.items()},
+                           {k: fmt(k, getattr(s, k)) for k in POSITION_FIELDS},
                            POSITION_FIELDS)
     if changes and act.status != "draft":
         affected = (db.query(Enrollment.user_id)

@@ -469,6 +469,8 @@ def poster(activity_id: str, db: OrmSession = Depends(db_session),
                     + (f"　{p.location}" if p.location else ""))
             if p.service_task:
                 line += f"\n    服务任务：{p.service_task}"
+            if p.attire_text():
+                line += f"\n    志愿服装：{p.attire_text()}"
             L.append(line)
         for s in sorted((x for x in act.shifts if x.parent_id == g.id),
                         key=lambda x: x.start_time):

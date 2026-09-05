@@ -171,11 +171,12 @@ def main() -> None:
         def stn(shift, name, loc, quota, tags=None,
                 note="服从现场安排，提前 15 分钟到岗",
                 train="到岗后由负责人统一讲解岗位职责与应急流程",
-                leader=False, waitlist=3):
+                leader=False, waitlist=3, attire="none", attire_note=""):
             p = Position(id=uid("p"), shift_id=shift.id, name=name,
                          location=loc, quota=quota, waitlist_quota=waitlist,
                          requirement_tags=tags or {}, service_task=note,
-                         training_note=train, needs_leader=leader)
+                         training_note=train, needs_leader=leader,
+                         attire=attire, attire_note=attire_note)
             db.add(p)
             return p
 
@@ -225,12 +226,14 @@ def main() -> None:
         db.flush()
 
         s_gate = stn(m1, "东门引导", "校本部东门", 8, {},
-                     "熟悉校园路线，口齿清晰", "提前30分钟到东门集合培训")
+                     "熟悉校园路线，口齿清晰", "提前30分钟到东门集合培训",
+                     attire="own", attire_note="白色上衣、深色长裤、运动鞋")
         s_check = stn(m1, "检录服务", "田径场检录处", 7, {},
                       "负责运动员检录与号码布发放")
         s_etiq = stn(m1, "颁奖礼仪", "主席台前区", 4,
-                     {"性别": "女"}, "颁奖环节礼仪志愿，着装统一发放",
-                     "赛前一周 19:00 线上培训会议")
+                     {"性别": "女"}, "颁奖环节礼仪志愿",
+                     "赛前一周 19:00 线上培训会议",
+                     attire="issued", attire_note="当天 8:00 在主席台后物资桌领取，散场归还")
         s_med = stn(m1, "医疗辅助", "场地东侧医疗点", 4, {},
                     "协助校医搬运物资、维持秩序", "需参加基础急救常识培训")
         o_order = stn(m2, "秩序维护", "看台入口", 6)

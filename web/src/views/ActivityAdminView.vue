@@ -180,6 +180,7 @@
                      :fields="[{ key: 'group_name', label: '岗位组', hideEmpty: true },
                                { key: 'location', label: '地点' },
                                { key: 'requirement_desc', label: '要求' },
+                               { key: 'attire_text', label: '服装', hideEmpty: true },
                                { key: 'training_note', label: '培训' }]">
             <template #extra="{ row }">
               <el-tag size="small" :type="row.remaining > 0 ? 'success' : 'info'">
@@ -221,6 +222,12 @@
               <template #default="{row}">{{ row.enrolled }} / {{ row.quota }}</template>
             </el-table-column>
             <el-table-column prop="requirement_desc" label="要求" min-width="140" />
+            <el-table-column label="服装" width="90">
+              <template #default="{row}">
+                <span v-if="row.attire === 'none'" class="dim">—</span>
+                <span v-else>{{ row.attire_label }}</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="training_note" label="培训内容" min-width="160" show-overflow-tooltip />
             <el-table-column label="操作" width="130">
               <template #default="{row}">
@@ -536,9 +543,9 @@
         <el-empty v-else description="请先创建场次" />
       </el-tab-pane>
 
-      <!-- ============ 志愿马甲 ============ -->
-      <el-tab-pane v-if="isPublic" label="志愿马甲" name="vest" lazy>
-        <VestPanel :activity-id="act.id" />
+      <!-- ============ 志愿服装 ============ -->
+      <el-tab-pane v-if="isPublic && act.attire_issued" label="志愿服装" name="attire" lazy>
+        <AttirePanel :activity-id="act.id" />
       </el-tab-pane>
 
       <!-- ============ 导出与时长 ============ -->
@@ -781,7 +788,7 @@
         <el-alert type="info" :closable="false" style="margin-bottom:12px">
           一个活动可由多人共同管理：创建者自动成为管理者（<b>不可被移除</b>，但权限上不特殊）；
           管理者之间权限完全相同，可互相添加/移除；被添加者须持有 <b>活动发起方/青协</b> 身份。<br />
-          <b>分工只管通知发给谁</b>，不限制谁能做什么：负责时长的人不必被签到、马甲的消息打扰。
+          <b>分工只管通知发给谁</b>，不限制谁能做什么：负责时长的人不必被签到、服装的消息打扰。
           留空表示什么通知都收。
         </el-alert>
         <el-card shadow="never">
@@ -1141,9 +1148,18 @@
                     placeholder="如：东门片区（选填）" />
           <div class="dim">同一场次内组名相同的岗位共用一名组长；留空则本岗位自成一组</div>
         </el-form-item>
-        <el-form-item label="志愿马甲">
-          <el-checkbox v-model="stationForm.needs_vest">本岗位需要领取志愿马甲</el-checkbox>
-          <div class="dim">报名时志愿者就能看到；领取与归还在「志愿马甲」页扫码或手动登记</div>
+        <el-form-item label="志愿服装">
+          <el-radio-group v-model="stationForm.attire">
+            <el-radio value="none">不需要</el-radio>
+            <el-radio value="issued">统一发放</el-radio>
+            <el-radio value="own">志愿者自备</el-radio>
+          </el-radio-group>
+          <el-input v-if="stationForm.attire !== 'none'" v-model="stationForm.attire_note"
+                    style="margin-top:6px"
+                    :placeholder="stationForm.attire === 'issued'
+                      ? '服装备注（必填）：如 活动当天 8:00 在北门物资桌领取，散场归还'
+                      : '服装备注（必填）：如 白色上衣、深色长裤、运动鞋'" />
+          <div class="dim">报名时志愿者就能看到；统一发放的在「志愿服装」页扫码或手动登记领取与归还</div>
         </el-form-item>
         <el-form-item label="组长">
           <el-checkbox v-model="stationForm.needs_leader">本组需要一名组长</el-checkbox>
@@ -1233,6 +1249,7 @@
         <el-descriptions-item label="条件要求">{{ sdData.requirement_desc }}</el-descriptions-item>
         <el-descriptions-item label="服务任务">{{ sdData.service_task || '—' }}</el-descriptions-item>
         <el-descriptions-item label="岗位要求">{{ sdData.position_requirement || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="志愿服装">{{ sdData.attire_text || '不需要' }}</el-descriptions-item>
         <el-descriptions-item label="培训内容">{{ sdData.training_note || '—' }}</el-descriptions-item>
       </el-descriptions>
     </el-dialog>
@@ -1297,7 +1314,7 @@ import { api, download as dl, fmtDT, pageUrl, qrBase } from '../api'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
 import RefreshBar from '../components/RefreshBar.vue'
-import VestPanel from '../components/VestPanel.vue'
+import AttirePanel from '../components/AttirePanel.vue'
 import MaterialManager from '../components/MaterialManager.vue'
 import DataCards from '../components/DataCards.vue'
 import ActivityForm from '../components/ActivityForm.vue'
@@ -1316,7 +1333,7 @@ const act = ref(null)
 const narrow = useNarrow()
 const tab = ref(String(route.query.tab || 'tree'))   // 支持 ?tab=roster 直达页签
 // 未发布（草稿/待审批/待发布）只留 岗位设置 / 管理者 / 变更记录：那时一个报名的人
-// 都没有，名单、签到、马甲、导出、签收全是空页
+// 都没有，名单、签到、服装、导出、签收全是空页
 const isPublic = computed(() =>
   ['published', 'closed', 'finished', 'completed'].includes(act.value?.status))
 const modes = ref({})
@@ -1822,7 +1839,7 @@ function openStation(st, g) {
   stationForm.value = st ? {
     name: st.name, location: st.location, quota: st.quota,
     waitlist_quota: st.waitlist_quota, needs_leader: st.needs_leader,
-    needs_vest: st.needs_vest,
+    attire: st.attire || 'none', attire_note: st.attire_note || '',
     group_name: st.group_name || '',
     genderReq: (st.requirement_tags?.性别) || '',
     collegeReq: st.requirement_tags?.学院 || [],
@@ -1830,7 +1847,7 @@ function openStation(st, g) {
     training_note: st.training_note,
   } : {
     name: '', location: '', quota: 2, waitlist_quota: 3, needs_leader: false,
-    needs_vest: false,
+    attire: 'none', attire_note: '',
     group_name: '',
     genderReq: '', collegeReq: [],
     service_task: '', position_requirement: '', training_note: '',
@@ -1844,6 +1861,9 @@ async function saveStation() {
                               ['training_note', '培训内容']]) {
     if (!f[key]?.trim()) return ElMessage.warning(`请填写${label}`)
   }
+  if (f.attire !== 'none' && !f.attire_note?.trim()) {
+    return ElMessage.warning('请填写服装备注')
+  }
   savingStation.value = true
   try {
     const tags = {}
@@ -1852,7 +1872,7 @@ async function saveStation() {
     const body = {
       name: f.name, quota: f.quota, location: f.location,
       waitlist_quota: f.waitlist_quota, needs_leader: f.needs_leader,
-      needs_vest: !!f.needs_vest,
+      attire: f.attire, attire_note: f.attire === 'none' ? '' : f.attire_note,
       group_name: f.group_name || '',
       requirement_tags: tags, service_task: f.service_task,
       position_requirement: f.position_requirement || '',

@@ -158,7 +158,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
 
     # 岗位有效性与硬性条件（与名额无关，锁外先判）。
     # 「截止后统一分配」的场次不让学生挑岗位，一律落到占位岗位上——
-    # 名额、候补、签到、马甲全都挂在岗位上，报名却不给岗位的话，
+    # 名额、候补、签到、服装全都挂在岗位上，报名却不给岗位的话，
     # 这些账就得再记一套。
     if g.needs_assign():
         position = g.placeholder()

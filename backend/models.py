@@ -355,7 +355,7 @@ class ActivityManager(Base):
       权限上不特殊）；
     · 管理者之间权限完全相同，任何管理者可添加/移除其他管理者；
     · duties 只管**通知发给谁**，不限制谁能做什么：一场活动十几个管理者，
-      时长申诉没必要惊动管马甲的人。留空 = 什么通知都收。
+      时长申诉没必要惊动管服装的人。留空 = 什么通知都收。
     · 被添加者必须持有 活动发起方/青协 身份（管理员无需添加，天然可见全部）。
     """
     __tablename__ = "activity_managers"
@@ -367,7 +367,7 @@ class ActivityManager(Base):
     duties: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
-    DUTIES = {"roster": "志愿者管理", "checkin": "签到", "vest": "志愿马甲",
+    DUTIES = {"roster": "志愿者管理", "checkin": "签到", "attire": "志愿服装",
               "hours": "志愿时长"}
 
 
@@ -490,8 +490,10 @@ class Position(Base):
     training_note: Mapped[str] = mapped_column(String(512), default="")
     # 需要组长：由管理者在名单里指定；报名时志愿者可表态愿意担任，供参考
     needs_leader: Mapped[bool] = mapped_column(Boolean, default=False)
-    # 本岗位是否需要领志愿马甲；报名时就要让人看到，现场才不会白跑一趟
-    needs_vest: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 志愿服装：none 不需要 / issued 统一发放（进领取归还台账）/ own 志愿者自备。
+    # 后两种必须带备注（发放地点时间，或自备的样式要求），报名时就要让人看到。
+    attire: Mapped[str] = mapped_column(String(8), default="none")
+    attire_note: Mapped[str] = mapped_column(String(256), default="")
     # 岗位组：同一场次内组名相同的岗位共用一名组长（如「东门片区」下的
     # 引导/检录/医疗点）。留空 = 该岗位自成一组，行为与从前一致。
     group_name: Mapped[str] = mapped_column(String(64), default="")
@@ -500,6 +502,17 @@ class Position(Base):
     sort: Mapped[int] = mapped_column(Integer, default=0)
 
     shift: Mapped[Shift] = relationship(back_populates="positions")
+
+    ATTIRE_LABELS = {"none": "不需要", "issued": "统一发放", "own": "志愿者自备"}
+
+    def attire_label(self) -> str:
+        return self.ATTIRE_LABELS.get(self.attire, self.attire)
+
+    def attire_text(self) -> str:
+        """给志愿者看的一句话：方式 + 备注；不需要服装时为空。"""
+        if self.attire == "none":
+            return ""
+        return self.attire_label() + (f"，{self.attire_note}" if self.attire_note else "")
 
     def time_text(self) -> str:
         """岗位无独立时间：展示所属场次的时段。"""
@@ -751,13 +764,13 @@ class HoursUnlockRequest(Base):
         return self.STATUS_LABELS.get(self.status, self.status)
 
 
-class VestTask(Base):
-    """马甲二维码。一场活动两个码：一个领取，一个归还。
+class AttireTask(Base):
+    """服装二维码。一场活动两个码：一个领取，一个归还。
 
     不做「同一个码扫两次」——领取和归还是两个物理动作，发生在活动的两头，
     现场也常常是两张桌子。两个码各贴各的，谁也不会扫错。
     """
-    __tablename__ = "vest_tasks"
+    __tablename__ = "attire_tasks"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
@@ -773,9 +786,9 @@ class VestTask(Base):
         return self.ACTION_LABELS.get(self.action, self.action)
 
 
-class VestRecord(Base):
-    """一个人在一场活动里的马甲台账。一人一条，领了记时间，还了再记一次。"""
-    __tablename__ = "vest_records"
+class AttireRecord(Base):
+    """一个人在一场活动里的服装台账。一人一条，领了记时间，还了再记一次。"""
+    __tablename__ = "attire_records"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
@@ -788,7 +801,7 @@ class VestRecord(Base):
     returned_method: Mapped[str] = mapped_column(String(12), default="")
 
     __table_args__ = (
-        Index("ux_vest_user_activity", "activity_id", "user_id", unique=True),
+        Index("ux_attire_user_activity", "activity_id", "user_id", unique=True),
     )
 
 
