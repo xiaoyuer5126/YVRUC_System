@@ -29,7 +29,7 @@
       <el-table v-else :data="users" size="small" v-loading="loading" max-height="620">
         <el-table-column label="姓名" width="110">
           <template #default="{row}">
-            <el-link type="primary" :underline="false" @click="openArchive(row)">{{ row.name }}</el-link>
+            <el-link type="primary" underline="never" @click="openArchive(row)">{{ row.name }}</el-link>
           </template>
         </el-table-column>
         <el-table-column prop="student_id" label="学号" width="110" />

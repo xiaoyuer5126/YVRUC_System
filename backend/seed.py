@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import text
 
 from . import config
+from .audit import log as audit_log
 from .database import SessionLocal, engine, init_db
 from .qrcodes import qr_svg
 from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, User, ViolationRecord, uid)
@@ -548,38 +549,40 @@ def main() -> None:
         db.commit()
 
         # ---------- 审计留痕 ----------
+        # 走真正的 audit.log 写留痕，只把时间改成过去：visible 的口径
+        # （默认不给志愿者看，只有公开后的结构性变更才标 True）由它一处说了算，
+        # 种子里不另抄一份。签到码、分配结果、时长、违规都是内部留痕。
         def aud(action, target_type, target_id, label, act_id, summary,
-                when, changes=None, visible=True, actor=None):
-            db.add(AuditLog(id=uid("aud"), actor_id=(actor or wang).id,
-                            actor_name=(actor or wang).name, action=action,
+                when, changes=None, visible=False, actor=None):
+            row = audit_log(db, actor=actor or wang, action=action,
                             target_type=target_type, target_id=target_id,
                             target_label=label, activity_id=act_id,
-                            summary=summary, changes=changes or [],
-                            visible=visible, created_at=when))
+                            summary=summary, changes=changes, visible=visible)
+            row.created_at = when
 
         aud("create", "activity", sport.id, sport.title, sport.id,
             "创建活动「校运动会开幕式志愿服务」", dt(days=-4))
         aud("publish", "activity", sport.id, sport.title, sport.id,
-            "发布活动，开始报名", dt(days=-3))
+            "发布活动，开始报名", dt(days=-3), visible=True)
         aud("update", "group", m1.id, "运动会·上午场", sport.id,
             "集合地点由「南门」变更为「东门」",
             dt(days=-1, hours=-6),
             [{"field": "note", "label": "备注",
-              "old": "志愿者南门集合", "new": "志愿者东门集合"}])
+              "old": "志愿者南门集合", "new": "志愿者东门集合"}], visible=True)
         aud("update", "position", s_etiq.id, "运动会·颁奖礼仪", sport.id,
             "礼仪岗增加性别要求（女），并补充线上培训安排",
             dt(days=-2, hours=3),
             [{"field": "requirement_tags", "label": "条件要求",
               "old": "不限", "new": "性别=女"},
              {"field": "training_note", "label": "培训内容",
-              "old": "", "new": "赛前一周 19:00 线上培训会议"}])
+              "old": "", "new": "赛前一周 19:00 线上培训会议"}], visible=True)
         aud("create", "activity", book.id, book.title, book.id,
             "创建活动「图书馆图书整理周·周六专场」（二级待定模式）",
             dt(days=-3))
         aud("publish", "activity", book.id, book.title, book.id,
-            "发布活动，开始报名", dt(days=-2))
+            "发布活动，开始报名", dt(days=-2), visible=True)
         aud("assign", "assignment", c1.id, "晚会·当日班", gala.id,
-            "12 人完成岗位分配（其中强制分配 0 人）", dt(days=-5), visible=True,
+            "12 人完成岗位分配（其中强制分配 0 人）", dt(days=-5),
             actor=users["2025003"])
         aud("create", "checkin", task_gala.id, "晚会签到码 GALA01", gala.id,
             "生成统一签到码 GALA01", dt(days=-1),

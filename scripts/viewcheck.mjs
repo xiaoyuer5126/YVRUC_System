@@ -9,17 +9,28 @@
 // 而空白页永远不会横向溢出——只看溢出会把整页报错判成通过。
 // 这不是假设，是本次适配时真的发生过：漏了一个 import，
 // 「我的报名」整页白屏，纯溢出检查照样给了通过。
+//
+// 「JS 错误」要连 console.error 一起收：Vue 会把 setup 里抛的异常接住、
+// 用 console.error 打出来，页面照常渲染，window.onerror 一声不吭。
+// 一个子组件 setup 崩了，父级拿到的就是个空壳，点按钮才报「不是函数」。
+// 所以活动管理页的每个页签都要打开一遍，子组件只在自己的页签里挂载。
 import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 const CHROME = '/home/xiaoyuer5126/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome'
 const S = process.argv[2], W = +process.argv[3], H = +process.argv[4]
+const ACT = readFileSync(`${S}/act.txt`, 'utf8')
 const PAGES = [
   ['student', '/square', '活动广场'],
-  ['student', `/activity/${readFileSync(`${S}/act.txt`, 'utf8')}`, '活动详情'],
+  ['student', `/activity/${ACT}`, '活动详情'],
   ['student', '/my', '我的报名'],
   ['student', '/hours', '志愿时长'],
   ['student', '/messages', '消息通知'],
   ['admin', '/manage', '活动管理'],
+  ['admin', `/manage/${ACT}?tab=tree`, '场次岗位'],
+  ['admin', `/manage/${ACT}?tab=roster`, '志愿者管理'],
+  ['admin', `/manage/${ACT}?tab=checkin`, '签到管理'],
+  ['admin', `/manage/${ACT}?tab=export`, '导出时长'],
+  ['admin', `/manage/${ACT}?tab=acks`, '签收情况'],
   ['admin', '/users', '志愿者档案'],
   ['admin', '/audit', '审计日志'],
   ['admin', '/dashboard', '数据总览'],
@@ -64,12 +75,25 @@ const PROBE = `(() => {
   });
 })()`
 
+// 每次导航都注入一次：收 window 错误、未处理的 Promise，以及 console.error /
+// 带 deprecat 或 [Vue warn] 的 console.warn（Vue 把 setup 的异常接住后就是这么打的）
+await send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+  window.__errs = [];
+  addEventListener('error', e => window.__errs.push(String(e.message)));
+  addEventListener('unhandledrejection', e => window.__errs.push(String(e.reason)));
+  const ce = console.error.bind(console);
+  console.error = (...a) => { window.__errs.push(a.map(String).join(' ').slice(0, 200)); ce(...a) };
+  const cw = console.warn.bind(console);
+  console.warn = (...a) => {
+    const t = a.map(String).join(' ');
+    if (/deprecat|\\[Vue warn\\]/i.test(t)) window.__errs.push(t.slice(0, 200));
+    cw(...a);
+  };
+})()` })
+
 for (const [who, route, name] of PAGES) {
   await send('Page.navigate', { url: 'http://127.0.0.1:8080/' })
   await sleep(700)
-  await send('Page.addScriptToEvaluateOnNewDocument', { source:
-    "window.__errs=[];addEventListener('error',e=>window.__errs.push(String(e.message)));" +
-    "addEventListener('unhandledrejection',e=>window.__errs.push(String(e.reason)));" })
   await send('Runtime.evaluate', { expression: `
     localStorage.setItem('rucva_token', ${JSON.stringify(TOK[who])});
     localStorage.setItem('rucva_user', ${JSON.stringify(USR[who])});

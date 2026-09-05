@@ -136,7 +136,7 @@
                    :class="{ mine: myStationId(g) === s.id, blocked: s.eligible === false }">
                 <div class="m-pos-head">
                   <!-- 桌面端是 el-link，手机端原来是普通文本，看不出能点 -->
-                  <el-link class="m-pos-name" type="primary" :underline="false"
+                  <el-link class="m-pos-name" type="primary" underline="never"
                            @click="showStationDetail(g, s)">{{ s.display_name }}</el-link>
                   <span class="dim">{{ s.enrolled }}/{{ s.quota }}</span>
                 </div>
@@ -274,7 +274,7 @@
                     <el-table :data="g.positions" size="small" border>
                       <el-table-column label="岗位" min-width="150">
                         <template #default="{ row: s }">
-                          <el-link type="primary" :underline="false" style="font-weight:600"
+                          <el-link type="primary" underline="never" style="font-weight:600"
                                    @click="showStationDetail(g, s)">{{ s.display_name }}</el-link>
                           <el-tag v-if="myStationId(g) === s.id" size="small" type="success"
                                   effect="light" style="margin-left:6px">已选</el-tag>
@@ -441,7 +441,7 @@
             </el-table-column>
             <el-table-column label="场次" min-width="180">
               <template #default="{ row }">
-                <el-link type="primary" :underline="false" style="font-weight:600"
+                <el-link type="primary" underline="never" style="font-weight:600"
                          @click="showGroupDetail(row)">{{ row.name }}</el-link>
                 <el-tag size="small" effect="plain" style="margin-left:6px"
                         :type="row.mode === 'pick' ? 'info' : row.mode === 'assign' ? 'warning' : 'primary'">

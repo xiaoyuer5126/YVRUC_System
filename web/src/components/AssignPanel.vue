@@ -5,7 +5,7 @@
               title="本场次报名时已各自选定岗位"
               description="主要服务于「截止后统一分配」的场次；已有岗位的人试算时会保持现状，可直接改下方的建议岗位。" />
 
-    <!-- 一键分配、补录这些动作放在父级「已报名名单」那一行；这里只留试算选项 -->
+    <!-- 一键分配、补招这些动作放在父级「已报名名单」那一行；这里只留试算选项 -->
     <div class="toolbar">
       <el-checkbox v-model="continuity" size="small">尽量同一人同一岗位</el-checkbox>
       <el-tooltip placement="top"
@@ -136,8 +136,8 @@
     <el-empty v-else description="点击名单上方的「一键分配」开始试算——同一套算法驱动：先到先得、摊平、保底、条件过滤、冲突规避，规则可在上方自定义"
               :image-size="80" />
 
-    <!-- 补录 -->
-    <el-dialog v-model="walkinVisible" title="补录志愿者（现场添加）" width="430">
+    <!-- 补招：现场临时加人 -->
+    <el-dialog v-model="walkinVisible" title="补招志愿者（现场添加）" width="430">
       <el-form label-width="90px">
         <el-form-item label="学号"><el-input v-model="walkin.sid" /></el-form-item>
         <el-form-item label="指定岗位">
@@ -156,7 +156,7 @@
       </el-form>
       <template #footer>
         <el-button @click="walkinVisible = false">取消</el-button>
-        <el-button type="primary" @click="addWalkin">确认补录</el-button>
+        <el-button type="primary" @click="addWalkin">确认补招</el-button>
       </template>
     </el-dialog>
   </div>
@@ -173,16 +173,17 @@ const props = defineProps({
 })
 const emit = defineEmits(['reload'])
 
-// 父级的「已报名名单」那一行触发试算与补录
-function openWalkin() { walkinVisible.value = true }
-defineExpose({ runPreview, openWalkin, solving })
-
 const loading = ref(false)
 const solving = ref(false)
 const applying = ref(false)
 const continuity = ref(true)
 const preview = ref(null)
 const rows = ref([])
+
+// 父级的「已报名名单」那一行触发试算与补招。函数会提升，ref 不会——
+// 暴露给父级的东西必须在声明之后再交出去
+function openWalkin() { walkinVisible.value = true }
+defineExpose({ runPreview, openWalkin, solving })
 const walkinVisible = ref(false)
 const walkin = ref({ sid: '', position: '', force: false, allowReassign: true })
 
@@ -253,7 +254,7 @@ async function addWalkin() {
       student_id: walkin.value.sid, position_id: walkin.value.position || '',
       allow_reassign: walkin.value.allowReassign,
       force: walkin.value.force })
-    ElMessage.success('补录成功')
+    ElMessage.success('补招成功')
     walkinVisible.value = false
     walkin.value = { sid: '', position: '', force: false, allowReassign: true }
     emit('reload')

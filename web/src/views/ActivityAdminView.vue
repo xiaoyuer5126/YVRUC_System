@@ -141,7 +141,7 @@
         <div v-for="g in shifts" :key="g.id" class="group-card"
              :class="{ 'needs-positions': !g.positions.length }">
           <div class="g-head">
-            <el-link type="primary" :underline="false" style="font-weight:600;font-size:14px"
+            <el-link type="primary" underline="never" style="font-weight:600;font-size:14px"
                      @click="showGroupDetail(g)">{{ g.name }}</el-link>
             <el-tag size="small" effect="plain"
                     :type="g.mode === 'assign' ? 'warning' : 'info'">
@@ -217,7 +217,7 @@
             </el-table-column>
             <el-table-column label="岗位" min-width="130">
               <template #default="{row}">
-                <el-link type="primary" :underline="false"
+                <el-link type="primary" underline="never"
                          @click="showStationDetail(g, row)">{{ row.name }}</el-link>
                 <el-tag v-if="row.is_placeholder" size="small" type="warning" effect="plain"
                         style="margin-left:6px">占位</el-tag>
@@ -335,7 +335,7 @@
               </el-button>
               <RefreshBar ref="rosterRefresh" :load="refreshRoster" />
               <el-button size="small" type="success" plain
-                         @click="assignPanel.openWalkin()">补录志愿者</el-button>
+                         @click="assignPanel.openWalkin()">补招志愿者</el-button>
             </span>
           </div>
           <DataCards v-if="narrow" :rows="roster.enrolled" title-key="user.name"
@@ -383,7 +383,7 @@
             <el-table-column label="姓名" width="110">
           <template #default="{row}">
             <ScoreAlert :user="row.user" />
-            <el-link type="primary" :underline="false" @click="openArchive(row.user)">
+            <el-link type="primary" underline="never" @click="openArchive(row.user)">
               {{ row.user.name }}
             </el-link>
             <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark"
@@ -576,7 +576,8 @@
                      @click="doExportApplications">
             <el-icon><Download /></el-icon>&nbsp;导出报名表结果 Excel
           </el-button>
-          <span class="dim">按场次分 Sheet，含姓名学号手机号与签到状态，可直接交付现场；报名表有上传文件的话导出为 zip（Excel + 附件）。下载已留痕。</span>
+          <!-- 说明文字要能换行：窄屏下 toolbar 的子项不收缩，不给宽度就会被裁掉 -->
+          <span class="dim" style="flex:1 1 260px">按场次分 Sheet，含姓名学号手机号与签到状态，可直接交付现场；报名表有上传文件的话导出为 zip（Excel + 附件）。下载已留痕。</span>
         </div>
 
         <!-- 时长申诉：出了岔子的那一条才走这里，不是全员自报 -->

@@ -40,7 +40,7 @@
       <el-table-column label="姓名" width="110">
         <template #default="{ row }">
           <ScoreAlert :user="row.user" />
-          <el-link type="primary" :underline="false" @click="$emit('archive', row.user)">
+          <el-link type="primary" underline="never" @click="$emit('archive', row.user)">
             {{ row.user.name }}
           </el-link>
         </template>

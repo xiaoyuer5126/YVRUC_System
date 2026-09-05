@@ -64,7 +64,7 @@
       </div>
       <div class="dim" style="margin-top:6px">
         提交于 {{ fmtDT(a.submitted_at) }} ·
-        <el-link type="primary" :underline="false"
+        <el-link type="primary" underline="never"
                  @click="$router.push('/activity/' + a.id)">查看完整安排</el-link>
       </div>
     </el-card>

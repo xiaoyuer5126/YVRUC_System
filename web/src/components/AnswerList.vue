@@ -3,7 +3,7 @@
   <el-descriptions :column="1" size="small" border>
     <el-descriptions-item v-for="a in answers" :key="a.question_id" :label="a.title">
       <template v-if="a.kind === 'file'">
-        <el-link v-if="a.value" type="primary" :underline="false"
+        <el-link v-if="a.value" type="primary" underline="never"
                  @click="download(`/api/materials/${a.value.attachment_id}`)">
           {{ a.value.title }}
         </el-link>
