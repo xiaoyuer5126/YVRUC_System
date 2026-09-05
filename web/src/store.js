@@ -72,6 +72,7 @@ export const canSee = {
   approvals: () => full() || qx('head'),
   integrations: () => auth.activeIdentity === 'admin',
   personal: () => true,
+  pin: () => full(),          // 置顶急招：全校层面的调度，会长团/管理员
 }
 
 // 颜色是前端的事；名称与释义以后端 /api/auth/constants 为准，别在这里抄第二份

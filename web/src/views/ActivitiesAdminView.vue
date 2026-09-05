@@ -37,6 +37,8 @@
       <el-table v-else :data="list" v-loading="loading">
         <el-table-column label="活动" min-width="240">
           <template #default="{row}">
+            <el-tag v-if="row.urgent" size="small" type="danger" effect="dark"
+                    style="margin-right:6px">急招</el-tag>
             <b>{{ row.title }}</b>
             <div class="dim">{{ row.location || '待定' }}</div>
           </template>

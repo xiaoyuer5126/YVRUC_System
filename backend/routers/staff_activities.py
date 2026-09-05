@@ -23,7 +23,7 @@ from .. import enroll_logic as logic
 from .. import assign, config, copying, scoring
 from ..audit import diff_changes, log as audit_log
 from ..database import db_session
-from ..deps import require_manager
+from ..deps import require_council, require_manager
 from ..locks import shift_lock
 from ..notify import notify_enrolled
 from ..perm import (activity_manager_ids, add_manager,
@@ -581,6 +581,27 @@ def close(activity_id: str, bg: BackgroundTasks,
     notify_managers_to_assign(db, _act(db, activity_id))
     db.commit()
     return out
+
+
+class PinBody(BaseModel):
+    pinned: bool
+
+
+@router.post("/activities/{activity_id}/pin")
+def pin(activity_id: str, body: PinBody,
+        db: OrmSession = Depends(db_session),
+        user: User = Depends(require_council)):
+    """置顶（急招）/ 取消置顶。只有会长团和管理员能点：急招是全校层面的
+    调度，不是某个活动自己说了算。只对报名中的活动有意义。"""
+    act = _act(db, activity_id)
+    if body.pinned and act.status != "published":
+        raise HTTPException(409, "只有报名中的活动才能置顶为急招")
+    act.pinned_at = now() if body.pinned else None
+    audit_log(db, actor=user, action="update", target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary="置顶为急招" if body.pinned else "取消急招置顶")
+    db.commit()
+    return {"ok": True, "pinned": act.pinned_at is not None}
 
 
 class ReopenBody(BaseModel):

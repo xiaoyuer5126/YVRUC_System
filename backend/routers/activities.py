@@ -93,6 +93,9 @@ def list_activities(scope: str = "open",
     managed = managed_activity_ids(db, user)
     acts = [a for a in acts
             if managed is None or a.id in managed or not _outside_scope(db, user, a)]
+    # 急招的排最前（后置顶的更靠前），其余按创建时间
+    acts.sort(key=lambda a: (a.status != "published" or a.pinned_at is None,
+                             -(a.pinned_at or a.created_at).timestamp()))
     return [activity_brief(db, a) for a in acts]
 
 

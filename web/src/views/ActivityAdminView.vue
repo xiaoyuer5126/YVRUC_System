@@ -29,12 +29,19 @@
           <el-tag size="small" :type="{published:'success',closed:'info',draft:'info',pending:'warning',approved:'primary',finished:'info',completed:'success'}[act.status]">
             {{ act.status_label }}
           </el-tag>
+          <el-tag v-if="act.urgent" size="small" type="danger" effect="dark">急招</el-tag>
         </div>
         <div class="hd-meta dim">{{ act.time_text }} · {{ act.location }}</div>
       </template>
       <template #extra>
         <!-- 「调整岗位」只在岗位设置那一页出现一次，页头不重复放 -->
         <el-button @click="openPoster">活动招募</el-button>
+        <!-- 急招置顶：全校层面的调度，只给会长团/管理员 -->
+        <el-button v-if="canSee.pin() && act.status === 'published'"
+                   :type="act.pinned ? 'danger' : 'default'" :plain="act.pinned"
+                   :loading="pinBusy" @click="togglePin">
+          {{ act.pinned ? '取消急招置顶' : '置顶为急招' }}
+        </el-button>
         <el-button v-if="!isOver" @click="editBase = true">编辑基本信息</el-button>
         <el-popconfirm v-if="act.status === 'published'" title="截止后不再接受新报名，确认？"
                        @confirm="transition('close')">
@@ -1326,7 +1333,7 @@ import FormBuilder from '../components/FormBuilder.vue'
 import ApplicationList from '../components/ApplicationList.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'
-import { DAY_END, DAY_START, auth } from '../store'
+import { DAY_END, DAY_START, auth, canSee } from '../store'
 
 const route = useRoute()
 const act = ref(null)
@@ -1775,6 +1782,18 @@ async function saveAttached() {
     attDlg.value.visible = false
     loadAll()
   } finally { attDlg.value.busy = false }
+}
+
+// —— 急招置顶 ——
+const pinBusy = ref(false)
+async function togglePin() {
+  pinBusy.value = true
+  try {
+    const d = await api.post(`/api/staff/activities/${activityId}/pin`,
+                             { pinned: !act.value.pinned })
+    ElMessage.success(d.pinned ? '已置顶，广场上会标「急招」' : '已取消置顶')
+    await loadAll()
+  } finally { pinBusy.value = false }
 }
 
 // —— 活动招募：文案 + 二维码 ——

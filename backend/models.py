@@ -247,6 +247,9 @@ class Activity(Base):
     approval_comment: Mapped[str] = mapped_column(String(512), default="")
     # 提交审批时勾的：通过即发布。不勾就停在「待发布」，由发起方自己点。
     auto_publish: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 置顶（急招）：会长团/管理员点的，有值即置顶，广场上排最前并挂「急招」。
+    # 只在报名中展示；截止后字段留着，恢复报名时不必再点一次。
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # 提醒过一次就记下来，别每分钟催一遍

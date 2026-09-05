@@ -22,7 +22,10 @@
           </el-tag>
           <el-tag size="small" :type="statusType(a.display_status)">{{ a.display_label }}</el-tag>
         </div>
-        <div class="card-title">{{ a.title }}</div>
+        <div class="card-title">
+          <el-tag v-if="a.urgent" size="small" type="danger" effect="dark" class="urgent">急招</el-tag>
+          {{ a.title }}
+        </div>
         <div v-if="a.organizer" class="meta-row"><el-icon><OfficeBuilding /></el-icon>{{ a.organizer }}</div>
         <div class="meta-row"><el-icon><Clock /></el-icon>{{ a.time_text }}</div>
         <div class="meta-row"><el-icon><Location /></el-icon>{{ a.location || '待定' }}</div>
@@ -94,6 +97,7 @@ onMounted(load)
   margin:10px 0 4px;
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
 }
+.urgent { margin-right:6px; vertical-align:2px; font-weight:600; }
 .countdown-row { display:inline-flex; align-items:center; gap:6px; }
 .countdown-row :deep(.el-statistic__content) {
   font-size:14px; font-weight:600; color:var(--el-color-primary);

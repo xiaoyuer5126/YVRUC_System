@@ -116,6 +116,8 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
         "opens_in": opens_in(act),
         "contacts": act.contacts or [],
         "editing": act.editing_since is not None,
+        "pinned": act.pinned_at is not None,
+        "urgent": act.pinned_at is not None and act.status == "published",
     }
 
 

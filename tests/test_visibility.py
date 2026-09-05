@@ -53,3 +53,27 @@ def test_材料数量始终公开(client, admin, db, enrolled_activity, take_stu
     p = client.get(f"/api/activities/{act.id}",
                    headers=outsider).json()["shifts"][0]["positions"][0]
     assert p["material_count"] == 1 and p["attachments"] == []
+
+
+def test_急招置顶排最前且只有会长团能点(client, admin, initiator, db,
+                                        enrolled_activity, take_student):
+    """急招是全校层面的调度：会长团/管理员置顶，广场上排最前挂「急招」。"""
+    from backend.models import Activity
+
+    act, _g, _u = enrolled_activity
+    url = f"/api/staff/activities/{act.id}/pin"
+    assert client.post(url, headers=initiator, json={"pinned": True}).status_code == 403
+    r = client.post(url, headers=admin, json={"pinned": True})
+    assert r.status_code == 200 and r.json()["pinned"]
+
+    h = login(client, take_student())
+    items = client.get("/api/activities", headers=h).json()
+    assert items[0]["id"] == act.id and items[0]["urgent"]
+
+    # 截止后不再显示急招，但字段留着，恢复报名时不必再点
+    db.get(Activity, act.id).status = "closed"
+    db.commit()
+    items = client.get("/api/activities?scope=all", headers=h).json()
+    me = next(a for a in items if a["id"] == act.id)
+    assert me["pinned"] and not me["urgent"]
+    assert client.post(url, headers=admin, json={"pinned": False}).json()["pinned"] is False
