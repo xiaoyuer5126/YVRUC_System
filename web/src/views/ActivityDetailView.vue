@@ -706,6 +706,14 @@
     <ProfileDialog ref="profileDialog" />
     <GroupQrDialog ref="groupQr" />
   </div>
+  <!-- 转发来的链接：不在招募范围内的人看到的不是 404，而是原因 -->
+  <div v-else-if="blocked" class="page">
+    <el-result icon="warning" title="本活动不面向您招募" :sub-title="blocked">
+      <template #extra>
+        <el-button type="primary" @click="$router.push('/')">回活动广场</el-button>
+      </template>
+    </el-result>
+  </div>
 </template>
 
 <script setup>
@@ -724,6 +732,7 @@ import { Clock, Warning } from '@element-plus/icons-vue'
 const route = useRoute()
 const narrow = useNarrow()
 const act = ref(null)
+const blocked = ref('')
 const groupDetail = ref({ visible: false, data: null })
 const enrollDlg = ref({ visible: false, shift: null, position: null,
                         leaderWilling: false,
@@ -856,7 +865,13 @@ const openFormat = computed(
   () => (act.value?.opens_in > 86400 ? 'DD 天 HH:mm:ss' : 'HH:mm:ss'))
 
 async function load() {
-  act.value = await api.get(`/api/activities/${route.params.id}`)
+  try {
+    act.value = await api.get(`/api/activities/${route.params.id}`, { silent: true })
+  } catch (e) {
+    if (e.status === 403) { blocked.value = e.message; return }
+    ElMessage.error(e.message)
+    return
+  }
   opensAt.value = act.value.opens_in
     ? Date.now() + act.value.opens_in * 1000
     : 0

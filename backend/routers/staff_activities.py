@@ -30,9 +30,10 @@ from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, managed_activity_ids,
                      remove_manager)
 from ..integrations import wecom
-from ..models import (Activity, ActivityManager, ApprovalEvent, AuditLog,
+from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
+                      AttireRecord, AttireTask, AuditLog,
                       CheckinRecord, CheckinTask, Enrollment, Notification,
-                      Position, Shift, User, AttireRecord, AttireTask,
+                      Position, Shift, User,
                       iso, now, uid)
 from ..serializers import activity_brief
 
@@ -265,6 +266,9 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
             setattr(act, key, value)
     if "reg_end" in body:
         ensure_reg_end_in_range(act)
+    if ("recruit_campuses" in body or "recruit_stages" in body) \
+            and not body.get("keep_outsiders"):
+        _refuse_if_enrolled_outside_scope(db, act)
     changes = diff_changes(
         {k: (iso(v) if isinstance(v, datetime) else v) for k, v in before.items()},
         {k: (iso(getattr(act, k)) if isinstance(getattr(act, k), datetime)
@@ -286,6 +290,38 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
               visible=True)
     db.commit()
     return {"ok": True, "changes": changes}
+
+
+def enrolled_outside_scope(db: OrmSession, act: Activity) -> list[dict]:
+    """已报名、候补、待确认或已申请，但落在（新的）招募范围之外的人。"""
+    ids = {r[0] for r in db.query(Enrollment.user_id)
+           .filter(Enrollment.activity_id == act.id,
+                   Enrollment.status.in_(("enrolled", "waitlisted",
+                                          "pending_confirm", "applied"))).all()}
+    ids |= {r[0] for r in db.query(Application.user_id)
+            .filter(Application.activity_id == act.id,
+                    Application.status.in_(("applied", "accepted"))).all()}
+    out = []
+    for u in db.query(User).filter(User.id.in_(ids)).order_by(User.name).all():
+        unmet = logic.unmet_recruit_scope(u, act)
+        if unmet:
+            out.append({"name": u.name, "student_id": u.student_id,
+                        "reason": "；".join(unmet)})
+    return out
+
+
+def _refuse_if_enrolled_outside_scope(db: OrmSession, act: Activity) -> None:
+    """缩小招募范围时，已经报上名的人不能悄悄变成「不该在名单上的人」。
+
+    不自动退任何人：拦下来把名单交给管理者，要么先去名单页处理，
+    要么明确说「这些人保留」再改。
+    """
+    outsiders = enrolled_outside_scope(db, act)
+    if outsiders:
+        raise HTTPException(409, {
+            "code": "OUTSIDERS_ENROLLED",
+            "message": f"有 {len(outsiders)} 位已报名的志愿者不在新的招募范围内",
+            "outsiders": outsiders})
 
 
 def _apply_recruit_mode(db: OrmSession, act: Activity, value: str) -> None:

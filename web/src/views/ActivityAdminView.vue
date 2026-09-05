@@ -1300,7 +1300,7 @@
       <ActivityForm v-model="baseForm" v-model:range="baseRange" :modes="modes" />
       <template #footer>
         <el-button @click="editBase = false">取消</el-button>
-        <el-button type="primary" :loading="savingBase" @click="saveBase">保存并通知变更</el-button>
+        <el-button type="primary" :loading="savingBase" @click="saveBase()">保存并通知变更</el-button>
       </template>
     </el-dialog>
   </div>
@@ -1937,19 +1937,38 @@ watch(editBase, (v) => {
   }
 })
 
-async function saveBase() {
+async function saveBase(keepOutsiders = false) {
   const err = validateActivity(baseForm.value, baseRange.value)
   if (err) return ElMessage.warning(err)
   savingBase.value = true
   try {
     await api.patch(`/api/staff/activities/${activityId}`,
-                    activityBody(baseForm.value, baseRange.value))
+                    { ...activityBody(baseForm.value, baseRange.value),
+                      keep_outsiders: keepOutsiders },
+                    { skipErrorToast: true })
     ElMessage.success('已保存，变更将推送提醒志愿者')
     editBase.value = false
     loadAll()
-  } catch { /* toast by api */ } finally {
+  } catch (e) {
+    if (e.data?.code === 'OUTSIDERS_ENROLLED') return askKeepOutsiders(e.data.outsiders)
+    ElMessage.error(e.message)
+  } finally {
     savingBase.value = false
   }
+}
+
+// 缩小招募范围碰到已报名的范围外志愿者：不自动退任何人，让管理者决定
+async function askKeepOutsiders(outsiders) {
+  const names = outsiders.map(o => `${o.name}（${o.student_id}，${o.reason}）`).join('\n')
+  try {
+    await ElMessageBox.confirm(
+      `以下 ${outsiders.length} 位已报名的志愿者不在新的招募范围内：\n${names}\n\n`
+      + '选「仍然修改」会保留他们的报名；或先到「志愿者管理」处理后再改。',
+      '有志愿者在范围之外',
+      { type: 'warning', confirmButtonText: '仍然修改，保留这些人',
+        cancelButtonText: '先去名单页处理', customStyle: { whiteSpace: 'pre-line' } })
+  } catch { tab.value = 'roster'; return }
+  await saveBase(true)
 }
 
 // —— 发送通知 ——

@@ -12,10 +12,11 @@ from ..deps import current_user
 from .. import notify
 from ..integrations import wecom
 from ..locks import shift_lock
-from ..models import Activity, Enrollment, Shift, Position, User, now, uid
-from ..perm import is_activity_manager
+from ..models import (Activity, Application, Enrollment, Shift, Position,
+                      User, now, uid)
+from ..perm import is_activity_manager, managed_activity_ids
 from ..qrcodes import page_qr
-from ..serializers import activity_brief, activity_detail
+from ..serializers import activity_brief, activity_detail, recruit_scope_text
 from .approvals import can_review
 
 router = APIRouter(prefix="/api/activities", tags=["activities"])
@@ -35,14 +36,38 @@ def _ensure_not_editing(act: Activity) -> None:
                                  "请稍后再试")
 
 
+def _outside_scope(db: OrmSession, user: User, act: Activity) -> bool:
+    """招募范围不含这个人，且他在本活动里没有任何报名/申请记录。
+
+    范围缩小时管理者可以选择保留已报名的人，那些人当然还得看得见自己
+    报了什么。管理者看自己的活动不受此限，在调用处另判。
+    """
+    if not logic.unmet_recruit_scope(user, act):
+        return False
+    involved = (db.query(Enrollment.id)
+                .filter(Enrollment.activity_id == act.id,
+                        Enrollment.user_id == user.id).first() is not None
+                or db.query(Application.id)
+                .filter(Application.activity_id == act.id,
+                        Application.user_id == user.id).first() is not None)
+    return not involved
+
+
 def _get_activity(db: OrmSession, activity_id: str, user: User) -> Activity:
     act = db.get(Activity, activity_id)
     if act is None:
         raise HTTPException(404, "活动不存在")
-    if act.status in PUBLIC_STATUSES:
+    if is_activity_manager(db, user, act.id):
         return act
-    # 还没公开：管理者，以及这条审批线上的人（要看得到安排才批得下去）
-    if is_activity_manager(db, user, act.id) or can_review(db, user, act):
+    if act.status in PUBLIC_STATUSES:
+        # 招募范围外的人打开转发来的链接：不给 404，说清楚为什么看不了
+        if _outside_scope(db, user, act):
+            raise HTTPException(
+                403, f"本活动招募范围为「{recruit_scope_text(act)}」，"
+                     f"不含您（{'；'.join(logic.unmet_recruit_scope(user, act))}）")
+        return act
+    # 还没公开：这条审批线上的人要看得到安排才批得下去
+    if can_review(db, user, act):
         return act
     raise HTTPException(404, "活动不存在")
 
@@ -63,6 +88,11 @@ def list_activities(scope: str = "open",
     if scope == "open":
         q = q.filter(Activity.status == "published")
     acts = q.order_by(Activity.created_at.desc()).all()
+    # 招募范围外的活动不上广场：看得见报不了，只会多一次被拦的失望。
+    # 自己管的活动照常显示，管理者要从这里进详情核对志愿者看到的样子。
+    managed = managed_activity_ids(db, user)
+    acts = [a for a in acts
+            if managed is None or a.id in managed or not _outside_scope(db, user, a)]
     return [activity_brief(db, a) for a in acts]
 
 

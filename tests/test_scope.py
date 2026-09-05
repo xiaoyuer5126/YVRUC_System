@@ -82,6 +82,43 @@ def test_招募范围写在详情里(client, db, scoped):
         f"校区：{CAMPUS_A}；学段：{STAGE_A}/{STAGE_B}"
 
 
+def test_范围外的人广场上看不到详情也进不去(client, admin, db, scoped):
+    """看得见报不了只会多一次被拦的失望；转发来的链接则要说清楚原因。"""
+    act, _g, _u, h = scoped
+    db.get(Activity, act.id).recruit_campuses = [CAMPUS_B]
+    db.commit()
+    assert act.id not in {a["id"] for a in
+                          client.get("/api/activities", headers=h).json()}
+    r = client.get(f"/api/activities/{act.id}", headers=h)
+    assert r.status_code == 403 and CAMPUS_B in r.json()["detail"]
+    # 管理者不受范围限制：要从广场进去核对志愿者看到的样子
+    assert act.id in {a["id"] for a in
+                      client.get("/api/activities", headers=admin).json()}
+    assert client.get(f"/api/activities/{act.id}", headers=admin).status_code == 200
+
+
+def test_缩小范围时已报名的范围外志愿者要先过管理者的眼(client, admin, db, scoped):
+    """不自动退任何人：拦下来列名单，管理者明确说保留才改。"""
+    act, g, u, h = scoped
+    assert _enroll(client, act, g, h).status_code == 200
+    r = client.patch(f"/api/staff/activities/{act.id}", headers=admin,
+                     json={"recruit_campuses": [CAMPUS_B]})
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "OUTSIDERS_ENROLLED"
+    assert [o["student_id"] for o in detail["outsiders"]] == [u.student_id]
+    db.expire_all()
+    assert db.get(Activity, act.id).recruit_campuses == []
+
+    r = client.patch(f"/api/staff/activities/{act.id}", headers=admin,
+                     json={"recruit_campuses": [CAMPUS_B], "keep_outsiders": True})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(Activity, act.id).recruit_campuses == [CAMPUS_B]
+    # 保留下来的人自己仍然能看到这场活动
+    assert client.get(f"/api/activities/{act.id}", headers=h).status_code == 200
+
+
 # ======================= 场次级：条件要求 =======================
 
 def test_场次条件拦人(client, db, scoped):
