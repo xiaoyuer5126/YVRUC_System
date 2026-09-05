@@ -390,19 +390,26 @@ def export(activity_id: str, db: OrmSession = Depends(db_session),
            user: User = Depends(require_manager_download)):
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    buf = build_activity_workbook(db, act)
+    ex = build_activity_workbook(db, act)
     stamp = now().strftime("%Y%m%d_%H%M")
-    filename = f"{act.title}_排班表_{stamp}.xlsx"
+    base = f"{act.title}_排班表_{stamp}"
+    buf, ext = ex.bundle(f"{base}.xlsx")
     # 下载留痕（《设计方案》：后台记录每一次下载操作）
     audit_log(db, actor=user, action="export", target_type="export",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"导出排班表《{filename}》"
+              summary=f"导出排班表《{base}.{ext}》"
                       "（生产版将强制加密，密码经企业微信单独发送）")
     db.commit()
+    return _download(buf, f"{base}.{ext}")
+
+
+def _download(buf, filename: str) -> StreamingResponse:
+    """带中文文件名的下载响应；.zip 是 Excel 加报名表里上传的文件。"""
     from urllib.parse import quote
+    media = ("application/zip" if filename.endswith(".zip") else
+             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     return StreamingResponse(
-        buf, media_type="application/vnd.openxmlformats-officedocument"
-                        ".spreadsheetml.sheet",
+        buf, media_type=media,
         headers={"Content-Disposition":
                  f"attachment; filename*=UTF-8''{quote(filename)}"})
 
@@ -415,19 +422,16 @@ def export_applications(activity_id: str, db: OrmSession = Depends(db_session),
     act = _act(db, activity_id)
     if not act.is_screened():
         raise HTTPException(409, "只有「报名后筛选」的活动有报名表")
-    buf = build_application_workbook(db, act)
+    ex = build_application_workbook(db, act)
     stamp = now().strftime("%Y%m%d_%H%M")
-    filename = f"{act.title}_报名表_{stamp}.xlsx"
+    base = f"{act.title}_报名表_{stamp}"
+    buf, ext = ex.bundle(f"{base}.xlsx")
     audit_log(db, actor=user, action="export", target_type="export",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"导出报名表结果《{filename}》")
+              summary=f"导出报名表结果《{base}.{ext}》"
+                      + ("，含上传的附件" if ext == "zip" else ""))
     db.commit()
-    from urllib.parse import quote
-    return StreamingResponse(
-        buf, media_type="application/vnd.openxmlformats-officedocument"
-                        ".spreadsheetml.sheet",
-        headers={"Content-Disposition":
-                 f"attachment; filename*=UTF-8''{quote(filename)}"})
+    return _download(buf, f"{base}.{ext}")
 
 
 @router.get("/activities/{activity_id}/poster")

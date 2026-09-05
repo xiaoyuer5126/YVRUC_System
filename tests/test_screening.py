@@ -7,7 +7,7 @@ import pytest
 
 from backend.models import (Activity, Application, Enrollment, Notification,
                             User, now)
-from conftest import login
+from conftest import login, student_row
 
 
 def _create_screened(client, admin, db, *, status="published", shifts=2):
@@ -475,3 +475,35 @@ def test_即选即得的报名表在报名时答(client, admin, db, open_group, 
     assert [q["title"] for q in roster["questions"]] == ["会开车吗", "紧急联系人"]
     row = roster["enrolled"][0]
     assert [a["value"] for a in row["answers"]] == ["会", "张三 13800000000"]
+
+
+def test_有文件答案的报名表导出成zip(client, admin, db, take_student):
+    """Excel 里写相对路径并加超链接，附件按「姓名_学号_题目」放在附件目录里。"""
+    import zipfile
+    from io import BytesIO
+    from openpyxl import load_workbook
+
+    act_id, ids, q = _create_screened(client, admin, db)
+    sid = take_student()
+    h = login(client, sid)
+    r = client.post(f"/api/activities/{act_id}/apply/upload", headers=h,
+                    files={"file": ("证明.pdf", b"%PDF-1.4 fake", "application/pdf")})
+    assert r.status_code == 200, r.text
+    r = client.post(f"/api/activities/{act_id}/apply", headers=h,
+                    json={"shift_ids": ids[:1],
+                          "answers": _answers(q, 证明材料=r.json()["id"])})
+    assert r.status_code == 200, r.text
+
+    r = client.get(f"/api/staff/activities/{act_id}/applications.xlsx", headers=admin)
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    z = zipfile.ZipFile(BytesIO(r.content))
+    names = z.namelist()
+    xlsx = next(n for n in names if n.endswith(".xlsx"))
+    att = next(n for n in names if n.startswith("附件/"))
+    u = student_row(db, sid)
+    assert att == f"附件/{u.name}_{u.student_id}_证明材料.pdf"
+    assert z.read(att) == b"%PDF-1.4 fake"
+    ws = load_workbook(BytesIO(z.read(xlsx))).active
+    header = list(ws.values)[0]
+    cell = ws.cell(row=2, column=header.index("证明材料") + 1)
+    assert cell.value == att and cell.hyperlink.target == att

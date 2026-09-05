@@ -13,16 +13,94 @@
 """
 from __future__ import annotations
 
+import re
+import zipfile
 from io import BytesIO
+from pathlib import Path
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session as OrmSession
 
-from . import scoring
+from . import config, scoring
 from .models import (Activity, Attachment, CheckinRecord, Enrollment,
                      FormQuestion, HoursRecord, Shift, User, now)
+
+MATERIAL_DIR = config.DATA_DIR / "materials"
+ATTACH_DIR = "附件"
+
+
+class Export:
+    """一次导出的产物：工作簿，加上答案里引用到的上传文件。
+
+    有文件就打成 zip（Excel + 附件目录），单元格里写相对路径并加超链接，
+    解压后在 Excel 里点得开。不用平台的下载链接——那要登录，发给别人打不开。
+    """
+
+    def __init__(self, db: OrmSession) -> None:
+        self.db = db
+        self.wb = Workbook()
+        self.files: list[tuple[str, Path]] = []      # (包内路径, 磁盘路径)
+        self._used: set[str] = set()
+
+    def attach(self, u: User, q: FormQuestion, attachment_id) -> str:
+        """把一份文件答案登记进包里，返回单元格该写的相对路径；文件不在了给空。"""
+        att = self.db.get(Attachment, str(attachment_id))
+        if att is None:
+            return ""
+        path = MATERIAL_DIR / att.stored_name
+        if not path.exists():
+            return ""
+        ext = Path(att.stored_name).suffix
+        base = re.sub(r'[\\/:*?"<>|]', "_", f"{u.name}_{u.student_id}_{q.title}")
+        arc = f"{ATTACH_DIR}/{base}{ext}"
+        n = 2
+        while arc in self._used:
+            arc = f"{ATTACH_DIR}/{base}({n}){ext}"
+            n += 1
+        self._used.add(arc)
+        self.files.append((arc, path))
+        return arc
+
+    def link(self, cell, arc: str) -> None:
+        cell.value = arc
+        cell.hyperlink = arc
+        cell.font = Font(color="0563C1", underline="single")
+
+    def bundle(self, xlsx_name: str) -> tuple[BytesIO, str]:
+        """(内容, 扩展名)：没有文件就是 .xlsx，有就是 .zip。"""
+        buf = BytesIO()
+        self.wb.save(buf)
+        buf.seek(0)
+        if not self.files:
+            return buf, "xlsx"
+        out = BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr(xlsx_name, buf.getvalue())
+            for arc, path in self.files:
+                z.write(path, arc)
+        out.seek(0)
+        return out, "zip"
+
+    def write_answers(self, ws, u: User, questions: list[FormQuestion],
+                      answers: dict | None, line: list) -> None:
+        """在 line 后面接上一题一列的答案并写入；文件题写包内路径并加超链接。"""
+        links = []
+        for q in questions:
+            v = (answers or {}).get(q.id)
+            if q.kind == "file" and v:
+                arc = self.attach(u, q, v)
+                links.append((len(line) + 1, arc))
+                line.append(arc)
+            elif isinstance(v, list):
+                line.append("、".join(str(x) for x in v))
+            else:
+                line.append("" if v is None else str(v))
+        ws.append(line)
+        for col, arc in links:
+            if arc:
+                self.link(ws.cell(row=ws.max_row, column=col), arc)
 
 HEADER_FILL = PatternFill("solid", fgColor="9E2235")   # 人大红
 HEADER_FONT = Font(name="微软雅黑", bold=True, color="FFFFFF")
@@ -58,20 +136,9 @@ def _style_header(ws, ncols: int) -> None:
     ws.freeze_panes = "A2"
 
 
-def _answer_cell(db: OrmSession, q: FormQuestion, v) -> str:
-    """一格答案：多选顿号连接，文件题写文件名。"""
-    if v is None or v == "" or v == []:
-        return ""
-    if q.kind == "file":
-        att = db.get(Attachment, str(v))
-        return att.title if att else ""
-    if isinstance(v, list):
-        return "、".join(str(x) for x in v)
-    return str(v)
-
-
-def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
-    wb = Workbook()
+def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
+    ex = Export(db)
+    wb = ex.wb
     shifts = sorted(activity.shifts, key=lambda g: g.sort)
 
     # ---------- 概览 Sheet ----------
@@ -165,9 +232,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
             line += ["已到岗 ✓" if rec else "未签到"]
             line += [rec.checkout_at.strftime("%m-%d %H:%M")
                      if rec and rec.checkout_at else "—"]
-            line += [_answer_cell(db, q, (enr.answers or {}).get(q.id))
-                     for q in questions]
-            ws.append(line)
+            ex.write_answers(ws, u, questions, enr.answers, line)
 
         for idx, w in enumerate((12, 14, 16, 15, 18), start=1):
             ws.column_dimensions[get_column_letter(idx)].width = w
@@ -211,19 +276,16 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         for idx, w in enumerate((12, 14, 16, 10, 10, 14, 10, 24), start=1):
             ws.column_dimensions[get_column_letter(idx)].width = w
 
-    buf = BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf
+    return ex
 
 
-def build_application_workbook(db: OrmSession, activity: Activity) -> BytesIO:
+def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
     """报名表结果：一人一行，一题一列。
 
     筛选是在表格里做的事——把答案摊平了导出来，部长们习惯在 Excel 里排序、
     筛选、分工看。被显示条件挡掉的题对那个人本来就不存在，留空。
     """
-    from .models import Application, Attachment, Enrollment, FormQuestion, Shift
+    from .models import Application
 
     questions = (db.query(FormQuestion)
                  .filter(FormQuestion.activity_id == activity.id)
@@ -234,8 +296,8 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> BytesIO:
     shifts = {g.id: g for g in activity.main_shifts()}
     positions = {p.id: p for g in shifts.values() for p in g.positions}
 
-    wb = Workbook()
-    ws = wb.active
+    ex = Export(db)
+    ws = ex.wb.active
     ws.title = "报名表结果"
     header = ["姓名", "学号", "学院", "校区", "学段", "手机号", "提交时间",
               "意向场次", "录取结果", "组长意愿", "内部提示分"]
@@ -260,21 +322,9 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> BytesIO:
                 f"{app.created_at:%Y-%m-%d %H:%M}", "、".join(wanted),
                 app.status_label(), "愿意" if app.leader_willing else "",
                 scoring.score_of(db, u.id)]
-        for q in questions:
-            v = (app.answers or {}).get(q.id)
-            if q.kind == "file" and v:
-                att = db.get(Attachment, str(v))
-                v = att.title if att else ""
-            elif isinstance(v, list):
-                v = "、".join(v)
-            line.append(v if v is not None else "")
-        ws.append(line)
+        ex.write_answers(ws, u, questions, app.answers, line)
 
     ws.column_dimensions["A"].width = 12
     for i in range(len(header) - len(questions) + 1, len(header) + 1):
         ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = 26
-
-    buf = BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf
+    return ex

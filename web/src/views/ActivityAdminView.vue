@@ -573,7 +573,7 @@
                      @click="doExportApplications">
             <el-icon><Download /></el-icon>&nbsp;导出报名表结果 Excel
           </el-button>
-          <span class="dim">按场次分 Sheet，含姓名学号手机号与签到状态，可直接交付现场；下载已留痕。</span>
+          <span class="dim">按场次分 Sheet，含姓名学号手机号与签到状态，可直接交付现场；报名表有上传文件的话导出为 zip（Excel + 附件）。下载已留痕。</span>
         </div>
 
         <!-- 时长申诉：出了岔子的那一条才走这里，不是全员自报 -->
