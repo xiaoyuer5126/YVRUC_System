@@ -434,6 +434,12 @@ def export_applications(activity_id: str, db: OrmSession = Depends(db_session),
     return _download(buf, f"{base}.{ext}")
 
 
+def _indent(text: str, pad: str = "      ") -> str:
+    """多行文字接在「服务任务：」这类标签后面，第二行起缩进到与正文对齐。"""
+    lines = [l.rstrip() for l in text.strip().splitlines()]
+    return ("\n" + pad).join(lines)
+
+
 @router.get("/activities/{activity_id}/poster")
 def poster(activity_id: str, db: OrmSession = Depends(db_session),
            user: User = Depends(require_manager)):
@@ -472,7 +478,7 @@ def poster(activity_id: str, db: OrmSession = Depends(db_session),
                     + (f"（剩 {left}）" if left else "（已满）")
                     + (f"　{p.location}" if p.location else ""))
             if p.service_task:
-                line += f"\n    服务任务：{p.service_task}"
+                line += "\n    服务任务：" + _indent(p.service_task)
             if p.attire_text():
                 line += f"\n    志愿服装：{p.attire_text()}"
             if p.pay_text():

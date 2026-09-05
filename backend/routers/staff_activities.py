@@ -1052,12 +1052,10 @@ def _ensure_pick_mode_for_positions(g: Shift) -> None:
 
 
 def _require_position_text(s: Position) -> None:
-    """三项说明是志愿者到岗前唯一能看到的信息，缺一项现场就要被问一次。"""
-    for value, label in ((s.location, "服务地点"),
-                         (s.service_task, "服务任务"),
-                         (s.training_note, "培训内容")):
-        if not (value or "").strip():
-            raise HTTPException(400, f"请填写岗位「{s.name}」的{label}")
+    """服务任务是志愿者到岗前唯一必看的一句话；地点留空用活动地点，
+    培训内容可以之后再补。"""
+    if not (s.service_task or "").strip():
+        raise HTTPException(400, f"请填写岗位「{s.name}」的服务任务")
     if s.attire not in Position.ATTIRE_LABELS:
         raise HTTPException(400, "志愿服装只能是 不需要 / 统一发放 / 志愿者自备")
     if s.attire != "none" and not (s.attire_note or "").strip():
@@ -1115,7 +1113,7 @@ def create_position(shift_id: str, body: PositionBody,
               target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
               activity_id=act.id,
               summary=f"新建岗位「{s.name}」（{s.time_text()}，"
-                      f"{s.location or '地点待定'}，{s.quota}人）",
+                      f"{s.location or act.location or '地点待定'}，{s.quota}人）",
               visible=True)
     db.commit()
     return {"id": s.id}

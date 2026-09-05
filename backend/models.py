@@ -479,18 +479,18 @@ class Position(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     shift_id: Mapped[str] = mapped_column(ForeignKey("shifts.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
-    location: Mapped[str] = mapped_column(String(128), default="")
+    location: Mapped[str] = mapped_column(String(128), default="")   # 空 = 用活动地点
     quota: Mapped[int] = mapped_column(Integer, default=1)          # 至少 1
     waitlist_quota: Mapped[int] = mapped_column(Integer, default=3)
     # 硬性条件 {标签: 值或值列表}，空 = 不限。报名时直接拦截，
     # 一键分配时同样作为硬约束（见 assign.py）。
     requirement_tags: Mapped[dict] = mapped_column(JSON, default=dict)
-    # 三段给志愿者看的文字：服务任务（做什么，必填）/ 岗位要求（对人的要求，
-    # 选填）/ 培训内容（到岗前要知道的，必填）。「岗位要求」是文字说明，
+    # 三段给志愿者看的多行文字：服务任务（做什么，必填）/ 岗位要求（对人的
+    # 要求，选填）/ 培训内容（到岗前要知道的，选填）。「岗位要求」是文字说明，
     # 与 requirement_tags 那种系统拿去拦人的硬条件不是一回事。
-    service_task: Mapped[str] = mapped_column(String(512), default="")
-    position_requirement: Mapped[str] = mapped_column(String(512), default="")
-    training_note: Mapped[str] = mapped_column(String(512), default="")
+    service_task: Mapped[str] = mapped_column(Text, default="")
+    position_requirement: Mapped[str] = mapped_column(Text, default="")
+    training_note: Mapped[str] = mapped_column(Text, default="")
     # 需要组长：由管理者在名单里指定；报名时志愿者可表态愿意担任，供参考
     needs_leader: Mapped[bool] = mapped_column(Boolean, default=False)
     # 志愿服装：none 不需要 / issued 统一发放（进领取归还台账）/ own 志愿者自备。

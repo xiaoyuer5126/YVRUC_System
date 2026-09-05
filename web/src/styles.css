@@ -59,6 +59,7 @@ body {
 
 .mono { font-family: Consolas, Monaco, monospace; }
 .dim { color: #909399; font-size: 12px; }
+.pre { white-space: pre-wrap; }   /* 多行文字（服务任务、培训内容）按换行显示 */
 .section-title { font-size: 15px; font-weight: 600; margin: 18px 0 10px; display:flex; align-items:center; gap:8px; }
 .section-title::before { content:""; width: 4px; height: 16px; background: var(--el-color-primary);
   border-radius: 2px; display:inline-block; }

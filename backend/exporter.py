@@ -226,7 +226,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
                 line += [(st.group_name if st and st.group_name else "—"),
                          st.name if st else "待分配",
                          "组长 ★" if enr.is_leader else "",
-                         st.location if st else "—",
+                         (st.location or activity.location) if st else "—",
                          "是" if enr.allow_reassign else "否"]
             rec = checked.get(u.id)
             line += ["已到岗 ✓" if rec else "未签到"]

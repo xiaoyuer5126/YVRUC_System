@@ -143,7 +143,7 @@
                   {{ g.note || '报名只锁定时段；岗位在报名截止后统一分配，结果经企业微信通知。' }}
                 </div>
                 <div v-else class="m-pos-meta dim">
-                  {{ s.location || '地点待定' }}
+                  {{ s.location || act.location || '地点待定' }}
                   <template v-if="s.requirement_desc !== '不限'"> · {{ s.requirement_desc }}</template>
                   <template v-if="s.needs_leader"> · 设组长</template>
                   <template v-if="s.attire !== 'none'"> · 服装{{ s.attire_label }}</template>
@@ -224,7 +224,7 @@
             <el-card v-if="myPosition(g)" shadow="never" class="mine-card">
               <div class="mine-title">
                 您的岗位：<b>{{ myPosition(g).name }}</b>
-                <span class="dim">{{ myPosition(g).location || '地点待定' }}</span>
+                <span class="dim">{{ myPosition(g).location || act.location || '地点待定' }}</span>
               </div>
               <p v-if="myPosition(g).leader_name" class="mine-note">
                 <b>组长：</b>{{ myPosition(g).leader_name }}
@@ -292,7 +292,9 @@
                           </el-tag>
                         </template>
                       </el-table-column>
-                      <el-table-column prop="location" label="服务地点" min-width="110" />
+                      <el-table-column label="服务地点" min-width="110">
+                        <template #default="{ row: s }">{{ s.location || act.location }}</template>
+                      </el-table-column>
                       <el-table-column label="名额" width="100">
                         <template #default="{ row: s }">
                           {{ s.enrolled }}/{{ s.quota }}
@@ -361,7 +363,7 @@
                   <el-card v-if="myPosition(g)" shadow="never" class="mine-card">
                     <div class="mine-title">
                       您的岗位：<b>{{ myPosition(g).name }}</b>
-                      <span class="dim">{{ myPosition(g).location || '地点待定' }}</span>
+                      <span class="dim">{{ myPosition(g).location || act.location || '地点待定' }}</span>
                       <el-tag v-if="g.my_enrollment?.status === 'waitlisted'"
                               size="small" type="warning" effect="plain">候补中</el-tag>
                     </div>
@@ -611,19 +613,19 @@
     <el-dialog v-model="stationDetail.visible" :title="(stationDetail.data?.name || '') + ' · 岗位详情'" width="480">
       <el-descriptions v-if="stationDetail.data" :column="1" border>
         <el-descriptions-item label="所属场次">{{ stationDetail.groupName }}（{{ stationDetail.groupTime }}）</el-descriptions-item>
-        <el-descriptions-item label="服务地点">{{ stationDetail.data.location || '待定' }}</el-descriptions-item>
+        <el-descriptions-item label="服务地点">{{ stationDetail.data.location || act.location || '待定' }}</el-descriptions-item>
         <el-descriptions-item label="名额">
           {{ stationDetail.data.enrolled }}/{{ stationDetail.data.quota }}
           <span class="dim">（岗位之间互斥，一场次一人一个岗位）</span>
         </el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ stationDetail.data.requirement_desc }}</el-descriptions-item>
-        <el-descriptions-item label="服务任务">{{ stationDetail.data.service_task || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="岗位要求">{{ stationDetail.data.position_requirement || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="服务任务"><span class="pre">{{ stationDetail.data.service_task || '—' }}</span></el-descriptions-item>
+        <el-descriptions-item label="岗位要求"><span class="pre">{{ stationDetail.data.position_requirement || '—' }}</span></el-descriptions-item>
         <el-descriptions-item label="志愿服装">{{ stationDetail.data.attire_text || '不需要' }}</el-descriptions-item>
         <el-descriptions-item label="报酬方式">{{ stationDetail.data.pay_text || '志愿时长' }}</el-descriptions-item>
         <el-descriptions-item label="培训内容">
           <template v-if="stationDetail.data.training_visible">
-            {{ stationDetail.data.training_note || '—' }}
+            <span class="pre">{{ stationDetail.data.training_note || '—' }}</span>
           </template>
           <span v-else class="dim">报名本场次后可见</span>
         </el-descriptions-item>
@@ -1028,7 +1030,8 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .req-blocked { color: #e6a23c; }
 .mine-card { margin-top: 10px; border-left: 3px solid var(--el-color-success); }
 .mine-title { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.mine-note { margin: 4px 0; font-size: 13px; line-height: 1.75; color: #606266; }
+.mine-note { margin: 4px 0; font-size: 13px; line-height: 1.75; color: #606266;
+             white-space: pre-wrap; }
 .group-card { margin-bottom: 14px; border-radius: 12px; }
 .g-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 .reassign-box { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #f7f8fa; }

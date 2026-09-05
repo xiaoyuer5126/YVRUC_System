@@ -184,7 +184,7 @@
           <DataCards v-if="narrow && g.positions.length" :rows="g.positions"
                      title-key="name"
                      :fields="[{ key: 'group_name', label: '岗位组', hideEmpty: true },
-                               { key: 'location', label: '地点' },
+                               { key: 'location', label: '地点', format: v => v || act.location },
                                { key: 'requirement_desc', label: '要求' },
                                { key: 'attire_text', label: '服装', hideEmpty: true },
                                { key: 'training_note', label: '培训' }]">
@@ -223,7 +223,9 @@
                         style="margin-left:6px">占位</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="location" label="服务地点" min-width="120" />
+            <el-table-column label="服务地点" min-width="120">
+              <template #default="{row}">{{ row.location || act.location }}</template>
+            </el-table-column>
             <el-table-column label="已报名/名额" width="130">
               <template #default="{row}">{{ row.enrolled }} / {{ row.quota }}</template>
             </el-table-column>
@@ -263,7 +265,7 @@
                 {{ s.kind_label }}
               </el-tag>
               <b>{{ s.name }}</b>
-              <span class="dim">{{ s.time_text }} · {{ s.location || '地点待定' }}</span>
+              <span class="dim">{{ s.time_text }} · {{ s.location || act.location || '地点待定' }}</span>
               <span class="dim">{{ s.hours_label }}</span>
               <el-tag size="small" effect="plain">
                 {{ s.applies_to_positions.length
@@ -1152,8 +1154,8 @@
     <el-dialog v-model="positionDlg.visible" :title="positionDlg.editing ? '编辑岗位' : '新建岗位'" width="560">
       <el-form label-width="100px">
         <el-form-item label="岗位名称" required><el-input v-model="stationForm.name" placeholder="如：东门引导" /></el-form-item>
-        <el-form-item label="服务地点" required><el-input v-model="stationForm.location"
-                    placeholder="如：世纪馆北门检录处" /></el-form-item>
+        <el-form-item label="服务地点"><el-input v-model="stationForm.location"
+                    placeholder="如：世纪馆北门检录处（留空则用活动地点）" /></el-form-item>
         <el-form-item label="名额" required>
           <el-input-number v-model="stationForm.quota" :min="1" />
           <span class="dim" style="margin-left:10px">名额与候补都在岗位上，场次不设总数</span>
@@ -1204,13 +1206,15 @@
           <div class="dim">硬性条件：不满足的人报名时就会被拦下，一键分配也不会排入</div>
         </el-form-item>
         <el-form-item label="服务任务" required><el-input v-model="stationForm.service_task"
-                    placeholder="这个岗位做什么，如：在北门引导来访家长，协助检录" /></el-form-item>
+                    type="textarea" :rows="2"
+                    placeholder="这个岗位做什么，如：在北门引导来访家长，协助检录。可换行分条写" /></el-form-item>
         <!-- 岗位要求是给人看的文字，与上面「条件要求」那种系统拿去拦人的硬条件不同 -->
         <el-form-item label="岗位要求"><el-input v-model="stationForm.position_requirement"
-                    placeholder="选填。对志愿者的要求，如：需全程站立，着深色衣裤" /></el-form-item>
-        <el-form-item label="培训内容" required><el-input v-model="stationForm.training_note"
                     type="textarea" :rows="2"
-                    placeholder="到岗前需要知道的事：流程、话术、应急联系人" /></el-form-item>
+                    placeholder="选填。对志愿者的要求，如：需全程站立，着深色衣裤" /></el-form-item>
+        <el-form-item label="培训内容"><el-input v-model="stationForm.training_note"
+                    type="textarea" :rows="2"
+                    placeholder="选填，可之后再补。到岗前需要知道的事：流程、话术、应急联系人" /></el-form-item>
         <el-form-item label="学习材料">
           <!-- 新建时也能传：先攒在本地，保存建出岗位后再一并上传 -->
           <MaterialManager ref="materialMgr" owner-type="position"
@@ -1269,15 +1273,15 @@
     <el-dialog v-model="sdVisible" :title="(sdData?.name || '') + ' · 岗位详情'" width="460">
       <el-descriptions v-if="sdData" :column="1" border>
         <el-descriptions-item label="所属场次">{{ sdGroupName }}</el-descriptions-item>
-        <el-descriptions-item label="服务地点">{{ sdData.location || '待定' }}</el-descriptions-item>
+        <el-descriptions-item label="服务地点">{{ sdData.location || act.location || '待定' }}</el-descriptions-item>
         <el-descriptions-item label="名额">{{ sdData.enrolled }}/{{ sdData.quota }}
           <span class="dim">（同场次岗位互斥）</span></el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ sdData.requirement_desc }}</el-descriptions-item>
-        <el-descriptions-item label="服务任务">{{ sdData.service_task || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="岗位要求">{{ sdData.position_requirement || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="服务任务"><span class="pre">{{ sdData.service_task || '—' }}</span></el-descriptions-item>
+        <el-descriptions-item label="岗位要求"><span class="pre">{{ sdData.position_requirement || '—' }}</span></el-descriptions-item>
         <el-descriptions-item label="志愿服装">{{ sdData.attire_text || '不需要' }}</el-descriptions-item>
         <el-descriptions-item label="报酬方式">{{ sdData.pay_text || '志愿时长' }}</el-descriptions-item>
-        <el-descriptions-item label="培训内容">{{ sdData.training_note || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="培训内容"><span class="pre">{{ sdData.training_note || '—' }}</span></el-descriptions-item>
       </el-descriptions>
     </el-dialog>
 
@@ -1907,11 +1911,7 @@ function openStation(st, g) {
 async function saveStation() {
   const f = stationForm.value
   if (!f.name?.trim()) return ElMessage.warning('请填写岗位名称')
-  for (const [key, label] of [['location', '服务地点'],
-                              ['service_task', '服务任务'],
-                              ['training_note', '培训内容']]) {
-    if (!f[key]?.trim()) return ElMessage.warning(`请填写${label}`)
-  }
+  if (!f.service_task?.trim()) return ElMessage.warning('请填写服务任务')
   if (f.attire !== 'none' && !f.attire_note?.trim()) {
     return ElMessage.warning('请填写服装备注')
   }
