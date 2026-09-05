@@ -22,8 +22,8 @@
                 :effect="n.acked_at ? 'plain' : 'dark'">
           {{ n.acked_at ? '已签收' : '需签收' }}
         </el-tag>
-        <span class="dim time">{{ fmtDT(n.created_at) }}</span>
         <b class="msg-title">{{ n.title }}</b>
+        <span class="dim time">{{ fmtDT(n.created_at) }}</span>
       </div>
       <p class="content" style="white-space:pre-wrap">{{ n.content }}</p>
       <div v-if="n.need_ack" class="ack-bar" @click.stop>
@@ -105,7 +105,8 @@ async function ack(n) {
   border-top: 1px dashed var(--el-border-color);
 }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.time { margin-left: auto; }
+.msg-title { flex: 1; min-width: 0; }
+.time { margin-left: auto; white-space: nowrap; }
 .msg.clickable { cursor: pointer; }
 .msg.clickable:hover { box-shadow: 0 2px 12px rgba(0, 0, 0, .08); }
 /* 手机上一行放不下「类型 + 标题 + 时间」：标题整条落到第二行，
