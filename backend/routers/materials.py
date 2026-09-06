@@ -18,7 +18,7 @@ from .. import config
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import current_user_download, require_manager
-from ..models import Activity, Attachment, Position, Shift, User, uid
+from ..models import Activity, Attachment, Position, User, uid
 from ..perm import ensure_activity_manager, is_activity_manager
 
 router = APIRouter(prefix="/api", tags=["materials"])
@@ -38,18 +38,14 @@ EXT_TYPES = {
 
 
 def _owner(db: OrmSession, owner_type: str, owner_id: str) -> tuple[str, str]:
-    """校验挂载对象存在，返回 (activity_id, 展示名)。"""
-    if owner_type == "shift":
-        row = db.get(Shift, owner_id)
-        if row is None:
-            raise HTTPException(404, "场次不存在")
-        return row.activity_id, row.name
+    """校验挂载对象存在，返回 (activity_id, 展示名)。材料只挂在岗位上：
+    培训内容是按岗位讲的，场次这一层没有自己的材料。"""
     if owner_type == "position":
         row = db.get(Position, owner_id)
         if row is None:
             raise HTTPException(404, "岗位不存在")
         return row.shift.activity_id, row.name
-    raise HTTPException(400, "挂载对象只能是场次或岗位")
+    raise HTTPException(400, "学习材料只能挂在岗位上")
 
 
 @router.post("/staff/materials")

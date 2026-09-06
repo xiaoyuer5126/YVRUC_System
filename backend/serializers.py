@@ -325,7 +325,6 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
         "unassigned_count": _unassigned_count(db, g),
         # 真实岗位的名额之和，不含占位——拿它跟已报名比才看得出还差多少位子
         "position_quota_sum": sum(p.quota for p in g.real_positions()),
-        "attachments": attachments_out(db, "shift", g.id),
         "waitlist_count": len(waitlist_rows(db, g.id)),
     }
 

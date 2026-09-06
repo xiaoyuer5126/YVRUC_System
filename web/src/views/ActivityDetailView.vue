@@ -246,8 +246,6 @@
               <MaterialList v-if="myPosition(g).attachments?.length"
                             :items="myPosition(g).attachments" label="本岗位学习材料" />
             </el-card>
-            <MaterialList v-if="g.attachments?.length" :items="g.attachments"
-                          label="本场次学习材料" />
 
             <div v-if="g.my_enrollment" class="m-reassign">
               <span class="dim">岗位调剂：</span>
@@ -428,10 +426,6 @@
                       </template>
                     </div>
                   </div>
-
-                  <!-- 场次级学习材料 -->
-                  <MaterialList v-if="g.attachments?.length" :items="g.attachments"
-                                label="本场次学习材料" />
                 </div>
               </template>
             </el-table-column>

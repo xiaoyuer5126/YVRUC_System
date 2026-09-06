@@ -48,7 +48,7 @@ import { api } from '../api'
 import { auth } from '../store'
 
 const props = defineProps({
-  ownerType: { type: String, required: true },   // shift / position
+  ownerType: { type: String, required: true },   // position
   // 没有 ownerId = 对象还没建出来：先把文件攒在本地，保存后再传（见 flush）
   ownerId: { type: String, default: '' },
   items: { type: Array, default: () => [] },

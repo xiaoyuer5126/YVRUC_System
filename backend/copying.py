@@ -121,7 +121,6 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
                           if i in position_map])
         db.add(shift)
         db.flush()
-        _copy_attachments(db, "shift", src_shift.id, shift.id, act.id, operator)
         return shift
 
     for src_shift in sorted(src.main_shifts(), key=lambda s: s.sort):
