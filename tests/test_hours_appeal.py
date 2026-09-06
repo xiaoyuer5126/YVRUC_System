@@ -399,3 +399,43 @@ def test_再次核准只惊动申诉过或数值变过的人(client, admin, db, 
     assert _record(client, o)["confirmed_at"]            # 确认照旧有效
     after = _record(client, stu)
     assert after["hours"] == 3.0 and not after["confirmed_at"] and after["can_confirm"]
+
+
+# ======================= 明细与导出 =======================
+
+def test_时长带明细且导出时长记录(client, admin, db, served, take_student):
+    from io import BytesIO
+    from openpyxl import load_workbook
+
+    act, g, u = served
+    u.id_card = "110101200001011234"
+    other = student_row(db, take_student())
+    db.commit()
+    _confirm(client, admin, act, approve=False)
+    r = client.post(f"/api/staff/activities/{act.id}/hours/manual", headers=admin,
+                    json={"items": [{"student_id": other.student_id, "hours": 2,
+                                     "note": "场外搬运"}]})
+    assert r.status_code == 200, r.text
+
+    stu = login(client, u.student_id)
+    rec = _record(client, stu)
+    assert rec["parts"] == [{"label": "服务场", "time": g.span_text(),
+                             "position": "引导", "hours": 4.0}]
+
+    r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
+    assert r.status_code == 200
+    ws = load_workbook(BytesIO(r.content)).active
+    rows = list(ws.values)
+    assert rows[0] == ("姓名", "身份证号", "岗位", "时长", "备注")
+    by_name = {r_[0]: r_ for r_ in rows[1:]}
+    assert by_name[u.name] == (u.name, "110101200001011234", None, 4.0,
+                               f"{g.span_text()} 引导")
+    assert by_name[other.name][3] == 2 and by_name[other.name][4] == "场外搬运"
+
+    # 选了劳务的不导
+    _served_pay_position(db, act)
+    client.post(f"/api/staff/activities/{act.id}/hours/approve", headers=admin, json={})
+    client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu, json={"reward": "pay"})
+    r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
+    names = [r_[0] for r_ in list(load_workbook(BytesIO(r.content)).active.values)[1:]]
+    assert u.name not in names and other.name in names

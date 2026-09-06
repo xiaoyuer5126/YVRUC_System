@@ -12,7 +12,7 @@
       <div class="section-title" style="margin-top:0">时长解锁申请</div>
       <el-card v-for="u in unlocks" :key="u.id" shadow="never" class="item">
         <div class="head">
-          <b class="title" @click="$router.push('/manage/' + u.activity_id + '?tab=export')">
+          <b class="title" @click="$router.push('/manage/' + u.activity_id + '?tab=hours')">
             {{ u.activity_title }}
           </b>
           <el-tag size="small" type="warning" effect="plain">申请解锁时长</el-tag>

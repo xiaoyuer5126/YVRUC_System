@@ -759,9 +759,19 @@ class HoursRecord(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # 上一次核准时通知本人的数值：再次核准只惊动数值变过、或申诉过的人
     approved_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # 这笔时长由哪几段组成：[{label 场次, time 时段, position 岗位, hours}]。
+    # 签到统计的按场次一段一段记，手动添加的就一段（备注当 label）。
+    # 志愿者看得到自己的明细；导出时长记录的备注也从这里拼。
+    parts: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
     REWARD_LABELS = {"hours": "志愿时长", "pay": "劳务"}
+
+    def parts_text(self) -> str:
+        """明细拼成一行：「09-20 08:00-12:00 东门引导；09-21 …」，不换行。"""
+        return "；".join(" ".join(x for x in (p.get("time", ""), p.get("position", "")
+                                             or p.get("label", "")) if x)
+                        for p in (self.parts or []))
 
     def reward_label(self) -> str:
         return self.REWARD_LABELS.get(self.reward, self.reward)

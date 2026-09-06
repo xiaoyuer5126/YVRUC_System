@@ -264,7 +264,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
     if hours_rows:
         ws = wb.create_sheet(_safe_sheet_name("志愿时长", used_names))
         header = ["姓名", "学号", "学院", "时长(h)", "报酬方式", "本人确认",
-                  "来源", "备注"]
+                  "来源", "明细"]
         ws.append(header)
         _style_header(ws, len(header))
         for rec, u in hours_rows:
@@ -272,11 +272,38 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
                        rec.reward_label(),
                        rec.confirmed_at.strftime("%m-%d %H:%M") if rec.confirmed_at else "未确认",
                        "签到统计" if rec.source == "checkin" else "手动添加",
-                       rec.note])
-        for idx, w in enumerate((12, 14, 16, 10, 10, 14, 10, 24), start=1):
+                       rec.parts_text()])
+        for idx, w in enumerate((12, 14, 16, 10, 10, 14, 10, 40), start=1):
             ws.column_dimensions[get_column_letter(idx)].width = w
 
     return ex
+
+
+def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
+    """时长记录：一人一行，姓名、身份证号、岗位（留空）、时长、备注。
+
+    备注是明细拼成的一行（时段 + 岗位名，分号隔开，不换行）。
+    选了劳务的人不导：平台不给他们记时长。
+    """
+    rows = (db.query(HoursRecord, User)
+            .join(User, HoursRecord.user_id == User.id)
+            .filter(HoursRecord.activity_id == activity.id,
+                    HoursRecord.reward == "hours")
+            .order_by(User.name).all())
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "时长记录"
+    header = ["姓名", "身份证号", "岗位", "时长", "备注"]
+    ws.append(header)
+    _style_header(ws, len(header))
+    for rec, u in rows:
+        ws.append([u.name, u.id_card or "", "", rec.hours, rec.parts_text()])
+    for col, w in zip("ABCDE", (12, 22, 12, 8, 48)):
+        ws.column_dimensions[col].width = w
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
 
 
 def build_application_workbook(db: OrmSession, activity: Activity) -> Export:

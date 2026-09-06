@@ -23,8 +23,8 @@
     </el-row>
     <el-card shadow="never">
       <template #header><b>时长明细</b><span class="dim" style="font-weight:400;margin-left:8px">
-        依据签到记录，由负责老师核准；核准后请在截止前确认无误，数值有出入可以提异议。
-        到点没表态视为确认无误、按志愿时长记
+        依据签到记录，由负责老师核准；展开一行可看这次时长由哪几段组成。
+        核准后请在截止前确认无误，数值有出入可以提异议；到点没表态视为确认无误、按志愿时长记
       </span></template>
       <DataCards v-if="narrow" :rows="data.records" title-key="activity_title"
                  :fields="[{ key: 'created_at', label: '记录时间', format: fmtDT },
@@ -39,6 +39,7 @@
             {{ stateOf(row).text }}
           </el-tag>
           <AppealTag :row="row" />
+          <HoursParts :parts="row.parts" style="margin-top:6px" />
         </template>
         <template #actions="{ row }">
           <el-button v-if="row.can_confirm" size="small" type="primary"
@@ -51,6 +52,9 @@
         </template>
       </DataCards>
       <el-table v-else :data="data.records">
+        <el-table-column type="expand" width="30">
+          <template #default="{ row }"><HoursParts :parts="row.parts" style="margin-left:30px" /></template>
+        </el-table-column>
         <el-table-column prop="activity_title" label="活动" min-width="200" />
         <el-table-column label="时长（小时）" width="110">
           <template #default="{ row }"><b>{{ row.hours }}</b></template>
@@ -133,6 +137,7 @@ import { ElMessage, ElTag, ElTooltip } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
+import HoursParts from '../components/HoursParts.vue'
 
 const narrow = useNarrow()
 const data = ref(null)

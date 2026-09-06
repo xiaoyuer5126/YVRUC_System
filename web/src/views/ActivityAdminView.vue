@@ -315,6 +315,9 @@
             <el-icon><Bell /></el-icon>&nbsp;发送通知
           </el-button>
           <span class="dim">发给本活动已报名的志愿者</span>
+          <el-button plain @click="doExport" style="margin-left:auto">
+            <el-icon><Download /></el-icon>&nbsp;导出排班表
+          </el-button>
         </div>
 
         <!-- 报名后筛选：先录取，录取的人才进下面的名单 -->
@@ -563,21 +566,17 @@
         <AttirePanel :activity-id="act.id" />
       </el-tab-pane>
 
-      <!-- ============ 导出与时长 ============ -->
-      <el-tab-pane v-if="isPublic" name="export" lazy>
-        <template #label>导出与时长
+      <!-- ============ 时长管理 ============ -->
+      <el-tab-pane v-if="isPublic" name="hours" lazy>
+        <template #label>时长管理
           <el-badge v-if="pendingAppeals" :value="pendingAppeals" type="danger" />
         </template>
         <div class="toolbar">
-          <el-button type="primary" @click="doExport">
-            <el-icon><Download /></el-icon>&nbsp;导出排班表 Excel
-          </el-button>
-          <el-button v-if="act.recruit_mode === 'screened'" type="primary" plain
-                     @click="doExportApplications">
-            <el-icon><Download /></el-icon>&nbsp;导出报名表结果 Excel
+          <el-button type="primary" :disabled="!confirmedCount" @click="doExportHours">
+            <el-icon><Download /></el-icon>&nbsp;导出时长记录
           </el-button>
           <!-- 说明文字要能换行：窄屏下 toolbar 的子项不收缩，不给宽度就会被裁掉 -->
-          <span class="dim" style="flex:1 1 260px">按场次分 Sheet，含姓名学号手机号与签到状态，可直接交付现场；报名表有上传文件的话导出为 zip（Excel + 附件）。下载已留痕。</span>
+          <span class="dim" style="flex:1 1 260px">姓名、身份证号、岗位、时长、备注（明细拼成一行）；选了劳务的人不在其中。下载已留痕。</span>
         </div>
 
         <!-- 时长申诉：出了岔子的那一条才走这里，不是全员自报 -->
@@ -683,6 +682,9 @@
         <el-table :data="hours" size="small" style="margin-top:10px;min-width:660px"
                   max-height="360" @selection-change="onHoursSelect">
           <el-table-column type="selection" width="40" />
+          <el-table-column type="expand" width="30">
+            <template #default="{row}"><HoursParts :parts="row.parts" /></template>
+          </el-table-column>
           <el-table-column label="姓名" width="110">
               <template #default="{row}">
                 {{ row.user.name }}
@@ -1135,7 +1137,7 @@
       <div class="recruit">
         <div class="recruit-text">
           <div class="dim" style="margin-bottom:6px">
-            对外用的纯文本，<b>不含志愿者名单</b>；要名单请用「导出与时长」里的排班表。
+            对外用的纯文本，<b>不含志愿者名单</b>；要名单请用「志愿者管理」里的「导出排班表」。
           </div>
           <el-input v-model="posterDlg.text" type="textarea" :rows="16" readonly />
           <el-button type="primary" style="margin-top:10px" @click="copyPoster">
@@ -1361,6 +1363,7 @@ import ScoreAlert from '../components/ScoreAlert.vue'
 import ViolationDialog from '../components/ViolationDialog.vue'
 import FormBuilder from '../components/FormBuilder.vue'
 import AnswerList from '../components/AnswerList.vue'
+import HoursParts from '../components/HoursParts.vue'
 import ApplicationList from '../components/ApplicationList.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'
@@ -1600,9 +1603,9 @@ async function loadAll() {
     logs.value = logsResp.items || []
     await loadManagers()
     loadAppeals()      // 标签上的红点要一进页面就在，不能等切到那一页才知道
-    // ?tab=export 直达：watch(tab) 不会触发，时长这一页要在这里加载，
+    // ?tab=hours 直达：watch(tab) 不会触发，时长这一页要在这里加载，
     // 否则核准按钮拿不到申诉截止时间的默认值
-    if (tab.value === 'export') hoursPreview(true)
+    if (tab.value === 'hours') hoursPreview(true)
     loadApproval()
     if (!currentGroupId.value && shifts.value.length) {
       currentGroupId.value = shifts.value[0].id
@@ -2067,12 +2070,11 @@ async function transition(action) {
   loadAll()
 }
 
-// —— 导出与时长 ——
+// —— 导出 ——
+// 排班表：按场次分 Sheet，含签到状态，交付现场；报名表有文件答案时是 zip
 function doExport() { dl(`/api/staff/activities/${activityId}/export.xlsx`) }
-// 报名表结果：一人一行、一题一列，筛选是在表格里做的事
-function doExportApplications() {
-  dl(`/api/staff/activities/${activityId}/applications.xlsx`)
-}
+// 时长记录：姓名、身份证号、岗位、时长、备注
+function doExportHours() { dl(`/api/staff/activities/${activityId}/hours.xlsx`) }
 
 // —— 提交审批 ——
 const approval = ref(null)
@@ -2371,11 +2373,11 @@ async function removeManager(row) {
     await loadManagers()
   } catch { /* toast by api */ }
 }
-// 切到「导出与时长」页签时自动加载时长预览（静默加载，不弹提示）。
-// ?tab=export 直达时 tab 一开始就是它，这个 watch 不会触发——那一路由
+// 切到「时长管理」页签时自动加载时长预览（静默加载，不弹提示）。
+// ?tab=hours 直达时 tab 一开始就是它，这个 watch 不会触发——那一路由
 // loadAll 负责补上。
 watch(tab, async t => {
-  if (t === 'export') { hoursPreview(true); loadAppeals() }
+  if (t === 'hours') { hoursPreview(true); loadAppeals() }
   if (t === 'acks') {
     await loadBatches()
     await nextTick()                 // lazy 页签这一轮才渲染，ref 要等一帧

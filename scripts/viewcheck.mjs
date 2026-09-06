@@ -29,7 +29,7 @@ const PAGES = [
   ['admin', `/manage/${ACT}?tab=tree`, '场次岗位'],
   ['admin', `/manage/${ACT}?tab=roster`, '志愿者管理'],
   ['admin', `/manage/${ACT}?tab=checkin`, '签到管理'],
-  ['admin', `/manage/${ACT}?tab=export`, '导出时长'],
+  ['admin', `/manage/${ACT}?tab=hours`, '时长管理'],
   ['admin', `/manage/${ACT}?tab=acks`, '签收情况'],
   ['admin', '/users', '志愿者档案'],
   ['admin', '/audit', '审计日志'],

@@ -237,7 +237,7 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
             and (act.appeal_deadline is None or now() < act.appeal_deadline))
         pay_pos = hours_flow.pay_position(db, r.activity_id, user.id)
         out.append({"id": r.id, "activity_title": act.title if act else "",
-                    "hours": r.hours,
+                    "hours": r.hours, "parts": r.parts or [],
                     "reward": r.reward, "reward_label": r.reward_label(),
                     "confirmed_at": iso_of(r.confirmed_at),
                     "approved": bool(act and act.hours_approved_at),
@@ -335,7 +335,7 @@ def appeal_hours(record_id: str, body: AppealBody,
                     f"{r.hours:g}h → 申报 {body.claimed_hours:g}h\n"
                     f"理由：{reason}\n"
                     f"有申诉在处理中，时长不会自动锁定——"
-                    f"请到活动的「导出与时长」页处理。", duty="hours")
+                    f"请到活动的「时长管理」页处理。", duty="hours")
     db.commit()
     return {"ok": True}
 

@@ -15,7 +15,8 @@ from .. import config, hours as hours_flow
 from ..database import db_session
 from ..deps import require_manager, require_manager_download
 from ..enroll_logic import position_enrolled_count
-from ..exporter import build_activity_workbook, build_application_workbook
+from ..exporter import (build_activity_workbook, build_application_workbook,
+                        build_hours_workbook)
 from ..perm import ensure_activity_manager
 from ..integrations import checkin_gateway, wecom
 from ..notify import notify, notify_checkin
@@ -414,6 +415,23 @@ def _download(buf, filename: str) -> StreamingResponse:
                  f"attachment; filename*=UTF-8''{quote(filename)}"})
 
 
+@router.get("/activities/{activity_id}/hours.xlsx")
+def export_hours(activity_id: str, db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_manager_download)):
+    """时长记录导出：姓名、身份证号、岗位（留空）、时长、备注（明细拼一行）。
+    选了劳务的不在其中——平台不给他们记时长。"""
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    buf = build_hours_workbook(db, act)
+    stamp = now().strftime("%Y%m%d_%H%M")
+    filename = f"{act.title}_时长记录_{stamp}.xlsx"
+    audit_log(db, actor=user, action="export", target_type="export",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=f"导出时长记录《{filename}》")
+    db.commit()
+    return _download(buf, filename)
+
+
 @router.get("/activities/{activity_id}/applications.xlsx")
 def export_applications(activity_id: str, db: OrmSession = Depends(db_session),
                         user: User = Depends(require_manager_download)):
@@ -597,9 +615,11 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
     """
     t = now()
     records = (db.query(CheckinRecord)
-               .filter(CheckinRecord.activity_id == act.id).all())
+               .filter(CheckinRecord.activity_id == act.id)
+               .order_by(CheckinRecord.checkin_at).all())
     per_user: dict[str, float] = {}
     flags: dict[str, set] = {}
+    parts: dict[str, list] = {}
     for rec in records:
         g = db.get(Shift, rec.shift_id)
         if g is None:
@@ -608,6 +628,19 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
         if flag:
             flags.setdefault(rec.user_id, set()).add(flag)
         per_user[rec.user_id] = per_user.get(rec.user_id, 0.0) + max(0.0, hours)
+        # 明细一段一段记：哪一场、什么时段、什么岗位、几小时
+        pos = db.get(Position, rec.position_id) if rec.position_id else None
+        if pos is None and not g.is_attached():
+            enr = (db.query(Enrollment)
+                   .filter(Enrollment.shift_id == g.id,
+                           Enrollment.user_id == rec.user_id,
+                           Enrollment.status == "enrolled").first())
+            pos = db.get(Position, enr.position_id) if enr and enr.position_id else None
+        parts.setdefault(rec.user_id, []).append({
+            "label": g.name if not g.is_attached() else f"{g.name}（{g.kind_label()}）",
+            "time": g.span_text(),
+            "position": pos.name if pos and not pos.is_placeholder else "",
+            "hours": round(max(0.0, hours), 2)})
 
     out = []
     for uid_, raw in sorted(per_user.items(), key=lambda kv: -kv[1]):
@@ -625,6 +658,7 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
             "pending": "pending" in fl,      # 未签退（宽限期内）
             "auto_checkout": "auto" in fl,   # 超时自动按场次结束时间
             "confirmed": existing is not None,
+            "parts": parts.get(uid_, []),
             **_volunteer_side(existing),
         })
     return out
@@ -652,7 +686,7 @@ def hours_preview(activity_id: str, db: OrmSession = Depends(db_session),
         u = db.get(User, r.user_id)
         manual.append({"id": r.id, "name": u.name if u else "?",
                        "student_id": u.student_id if u else "",
-                       "hours": r.hours, "note": r.note,
+                       "hours": r.hours, "note": r.note, "parts": r.parts or [],
                        "created_at": iso(r.created_at),
                        **_volunteer_side(r)})
     pending_appeals = (db.query(HoursAppeal)
@@ -702,9 +736,12 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
             raise HTTPException(400, f"{u.name} 的时长不是数字")
         if hours <= 0:
             raise HTTPException(400, f"{u.name} 的时长必须大于 0")
+        note = (it.get("note") or "").strip()
         db.add(HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id,
                            hours=round(hours, 2),
-                           source="manual", note=(it.get("note") or "").strip(),
+                           source="manual", note=note,
+                           parts=[{"label": note or "手动添加", "time": "",
+                                   "position": "", "hours": round(hours, 2)}],
                            confirmed_by=user.id))
         added.append(f"{u.name} {hours}h")
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
@@ -753,8 +790,12 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
     _ensure_hours_open(act)
 
     kept: list[str] = []
+    items = compute_hours(db, act)
+    computed_parts = {it["user"]["id"]: it["parts"] for it in items}
 
     def upsert(user_id: str, hours: float, *, force: bool = False) -> None:
+        # 明细永远按签到算出来的段落记；管理者改的是合计，段落是它的依据
+        parts = computed_parts.get(user_id, [])
         existing = db.query(HoursRecord).filter(
             HoursRecord.activity_id == act.id,
             HoursRecord.user_id == user_id,
@@ -769,10 +810,11 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
                 kept.append(u.name if u else user_id)
                 return
             existing.hours = hours
+            existing.parts = parts
             return
         db.add(HoursRecord(id=uid("hrs"), activity_id=act.id,
                            user_id=user_id, hours=hours, source="checkin",
-                           confirmed_by=user.id))
+                           parts=parts, confirmed_by=user.id))
 
     chosen = (body.items if body else None) or []
     if chosen:
@@ -799,7 +841,6 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
         summary = (f"部分确认 {count} 人志愿时长（以管理端填写为准）：{detail}"
                    + ("…" if count > 8 else ""))
     else:
-        items = compute_hours(db, act)
         if not items:
             raise HTTPException(400, "暂无签到数据，无法确认时长")
         # 未签退（宽限期内）与超时自动兜底的记录不在此列：时长存疑，
