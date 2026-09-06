@@ -158,11 +158,42 @@ def test_会长团除集成设置外与管理员同权(client, db):
     assert client.get("/api/staff/integrations", headers=council).status_code == 403
 
 
-def test_骨干进不了审批档案与角色页(client):
+def test_骨干进不了审批档案与总览(client):
     core = login(client, CORE)
-    for path in ("/api/staff/approvals", "/api/staff/users", "/api/staff/roles",
-                 "/api/staff/overview"):
+    for path in ("/api/staff/approvals", "/api/staff/users", "/api/staff/overview"):
         assert client.get(path, headers=core).status_code == 403, path
+
+
+def test_骨干只能把本部门成员归到自己名下(client, db):
+    """角色页对骨干只开一个口子：认领成员。身份、层级、部门一概动不了。"""
+    core = login(client, CORE)
+    me = _user(db, CORE)
+    rows = client.get("/api/staff/roles", headers=core).json()
+    assert rows and all(r["qingxie_post"] == "member"
+                        and r["department_id"] == me.department_id for r in rows)
+    member = _user(db, MEMBER)
+    base = {"roles": member.roles, "qingxie_post": "member",
+            "department_id": member.department_id}
+    r = client.put(f"/api/staff/roles/{member.id}", headers=core,
+                   json={**base, "supervisor_id": me.id})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(User, member.id).supervisor_id == me.id
+    # 归给别人、升成骨干、加发起方身份：都不行
+    other_core = (db.query(User).filter(User.department_id == me.department_id,
+                                        User.qingxie_post == "core",
+                                        User.id != me.id).first())
+    if other_core is not None:
+        assert client.put(f"/api/staff/roles/{member.id}", headers=core,
+                          json={**base, "supervisor_id": other_core.id}).status_code == 403
+    assert client.put(f"/api/staff/roles/{member.id}", headers=core,
+                      json={**base, "qingxie_post": "core"}).status_code == 403
+    assert client.put(f"/api/staff/roles/{member.id}", headers=core,
+                      json={**base, "roles": member.roles + ["initiator"],
+                            "supervisor_id": me.id}).status_code == 403
+    # 动骨干、部长：不行
+    assert client.put(f"/api/staff/roles/{_user(db, HEAD).id}", headers=core,
+                      json={**base, "supervisor_id": me.id}).status_code == 403
 
 
 # ======================= 部长的角色管理范围 =======================
@@ -218,6 +249,24 @@ def test_部长动不了会长团和别的部长(client, db):
         r = client.put(f"/api/staff/roles/{target.id}", headers=head,
                        json={"roles": ["student"]})
         assert r.status_code == 403, sid
+
+
+def test_部长不能动青协以外的身份(client, db):
+    """学生身份也在「青协以外」之列：部长不能把成员的学生身份勾掉。"""
+    head = login(client, HEAD)
+    member = _user(db, MEMBER)
+    core = _user(db, CORE)
+    body = {"qingxie_post": "member", "department_id": member.department_id,
+            "supervisor_id": core.id}
+    r = client.put(f"/api/staff/roles/{member.id}", headers=head,
+                   json={**body, "roles": ["qingxie"]})
+    assert r.status_code == 403 and "青协身份" in r.json()["detail"]
+    r = client.put(f"/api/staff/roles/{member.id}", headers=head,
+                   json={**body, "roles": ["student", "qingxie", "initiator"]})
+    assert r.status_code == 403
+    # 原样保存（只动归属）可以
+    assert client.put(f"/api/staff/roles/{member.id}", headers=head,
+                      json={**body, "roles": member.roles}).status_code == 200
 
 
 def test_部长的角色列表默认只有本部门(client, db):

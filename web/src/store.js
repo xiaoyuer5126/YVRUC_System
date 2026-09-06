@@ -27,11 +27,13 @@ export function setActiveIdentity(role) {
   localStorage.setItem('rucva_active_identity', role)
 }
 
+// 登录后落在哪个视角：管理员进管理端；青协只有会长团和部长默认进青协视角，
+// 骨干和成员平时就是来报名的学生，要办事再自己切
 function pickDefaultIdentity(user) {
   const roles = user?.roles || []
   if (roles.includes('admin')) return 'admin'
+  if (roles.includes('qingxie') && ['council', 'head'].includes(user.qingxie_post)) return 'qingxie'
   if (roles.includes('initiator')) return 'initiator'
-  if (roles.includes('qingxie')) return 'qingxie'
   return 'student'
 }
 
@@ -68,7 +70,7 @@ export const canSee = {
   manage: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
   audit: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
   users: () => full() || qx('head'),
-  roles: () => full() || qx('head'),
+  roles: () => full() || qx('head', 'core'),   // 骨干进来只为认领本部门成员
   approvals: () => full() || qx('head'),
   integrations: () => auth.activeIdentity === 'admin',
   personal: () => true,

@@ -3,7 +3,9 @@
 谁能改什么：
   · 管理员、会长团：所有人的身份与青协层级。
   · 部长：只能把人设为**本部门**的骨干或成员、或把本部门的骨干/成员撤下；
-    动不了部长、会长团、管理员、活动发起方这些身份。
+    动不了部长、会长团、管理员、活动发起方、学生这些身份——青协之外的
+    身份一律不碰。
+  · 骨干：只能把本部门的成员归到自己名下，别的一概不动。
   · 用户类型（老师/学生）由数智人大下发，平台不改。
   · 管理员不能移除自己的管理员身份（见 _guard_self_demotion）；会长团改自己
     的层级不设护栏。
@@ -32,9 +34,9 @@ LIVE_STATUSES = ("draft", "pending", "approved", "published", "closed")
 
 
 def require_role_manager(user: User = Depends(current_user)) -> User:
-    """进得了角色管理页的人：管理员、会长团、部长。"""
-    if not (user.has_full_access() or user.is_head()):
-        raise HTTPException(403, "需要 管理员/会长团/部长 身份")
+    """进得了角色管理页的人：管理员、会长团、部长，以及只管认领成员的骨干。"""
+    if not (user.has_full_access() or user.post() in ("head", "core")):
+        raise HTTPException(403, "需要 管理员/会长团/部长/部门骨干 身份")
     return user
 
 
@@ -55,8 +57,8 @@ def _guard_head_scope(actor: User, target: User, roles: list[str],
     """部长的权限只覆盖本部门的骨干与成员。
 
     能做的只有两件事：把一个人设成本部门的骨干/成员，或把本部门的骨干/成员
-    撤下青协身份。目标已经是部长、会长团、管理员的，动不了；管理员/发起方
-    这些身份也不能跟着加减。
+    撤下青协身份。目标已经是部长、会长团、管理员的，动不了；青协之外的
+    身份（管理员、发起方、学生）一个都不能跟着加减。
     """
     if actor.has_full_access():
         return
@@ -64,15 +66,26 @@ def _guard_head_scope(actor: User, target: User, roles: list[str],
         raise HTTPException(403, "部长只能调整本部门的骨干与成员")
     if target.department_id not in (None, actor.department_id):
         raise HTTPException(403, "这位同学属于别的部门")
-    keep = set(roles) - {"qingxie", "student"}
-    had = set(target.roles or []) - {"qingxie", "student"}
-    if keep != had:
-        raise HTTPException(403, "部长只能调整青协身份，管理员/活动发起方身份请找会长团")
+    if (set(roles) ^ set(target.roles or [])) - {"qingxie"}:
+        raise HTTPException(403, "部长只能调整青协身份，其他身份请找会长团")
     if "qingxie" in roles:
         if post not in HEAD_GRANTABLE:
             raise HTTPException(403, "部长只能设骨干或成员")
         if dept_id != actor.department_id:
             raise HTTPException(403, "只能设到自己所在的部门")
+
+
+def _guard_core_scope(actor: User, target: User, body: "RoleBody") -> None:
+    """骨干只做一件事：把本部门的成员归到自己名下。身份、层级、部门都不能动。"""
+    if actor.post() != "core":
+        return
+    if (target.post() != "member" or target.department_id != actor.department_id):
+        raise HTTPException(403, "骨干只能认领本部门的成员")
+    if (set(body.roles) != set(target.roles or []) or body.qingxie_post != "member"
+            or (body.department_id.strip() or None) != actor.department_id):
+        raise HTTPException(403, "骨干只能设置成员归属谁，不能改身份或层级")
+    if body.supervisor_id.strip() != actor.id:
+        raise HTTPException(403, "骨干只能把成员归到自己名下")
 
 
 def _orphaned_activities(db: OrmSession, target: User,
@@ -123,6 +136,7 @@ def _row(u: User, me: User, depts: dict[str, str]) -> dict:
         "department_id": u.department_id or "",
         "department": depts.get(u.department_id, ""),
         "supervisor_id": u.supervisor_id or "",
+        "supervisor": depts.get(u.supervisor_id, ""),
         "is_me": u.id == me.id,
     }
 
@@ -148,14 +162,17 @@ def list_role_users(q: str = "", role: str = "",
 
     默认只列**已经有非学生身份的人**：全校几万人平铺出来没法用，要给某个
     学生加身份就搜他的学号。部长默认只看本部门的人，搜索不受限——他要从
-    全校学生里挑人进部门。
+    全校学生里挑人进部门。骨干只看本部门的成员，搜也只在这里面搜。
     """
     query = db.query(User)
+    if user.post() == "core":
+        query = query.filter(User.department_id == user.department_id,
+                             User.qingxie_post == "member")
     if q:
         like = f"%{q.strip()}%"
         query = query.filter((User.name.ilike(like)) |
                              (User.student_id.ilike(like)))
-    elif not user.has_full_access():
+    elif not user.has_full_access() and user.post() != "core":
         query = query.filter(User.department_id == user.department_id)
     else:
         # roles 是 JSON 而不是 JSONB，没有包含运算符可用；按序列化后的文本
@@ -165,8 +182,13 @@ def list_role_users(q: str = "", role: str = "",
         wanted = [role] if role in ROLES else ["admin", "qingxie", "initiator"]
         query = query.filter(or_(*[holds(r) for r in wanted]))
     rows = query.order_by(User.student_id).limit(200).all()
-    depts = {d.id: d.name for d in db.query(Department).all()}
-    return [_row(u, user, depts) for u in rows]
+    names = {d.id: d.name for d in db.query(Department).all()}
+    # 归属骨干的名字也从同一张表查：成员行上要写「归属：林骁」
+    boss_ids = {u.supervisor_id for u in rows if u.supervisor_id}
+    if boss_ids:
+        names.update({b.id: b.name for b in db.query(User)
+                      .filter(User.id.in_(boss_ids)).all()})
+    return [_row(u, user, names) for u in rows]
 
 
 class RoleBody(BaseModel):
@@ -198,6 +220,7 @@ def set_roles(user_id: str, body: RoleBody,
 
     _guard_self_demotion(user, target, roles)
     _guard_head_scope(user, target, roles, body.qingxie_post, dept_id)
+    _guard_core_scope(user, target, body)
 
     orphans = _orphaned_activities(db, target, roles, body.qingxie_post)
     if orphans:

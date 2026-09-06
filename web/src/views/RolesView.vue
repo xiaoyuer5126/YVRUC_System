@@ -1,11 +1,15 @@
-<!-- 角色管理。管理员与会长团管全部；部长只管本部门的骨干与成员。 -->
+<!-- 角色管理。管理员与会长团管全部；部长只管本部门的骨干与成员；骨干只认领本部门成员。 -->
 <template>
   <div class="page">
     <h2>角色管理</h2>
     <el-alert type="warning" :closable="false" style="margin-bottom:12px">
-      <template v-if="headOnly">
+      <template v-if="coreOnly">
+        你是<b>{{ myDeptName }}</b>骨干：这里列的是本部门的成员，点「归我管理」把人归到自己名下，
+        他看到的活动就和你一样。别的身份与层级请找部长。
+      </template>
+      <template v-else-if="headOnly">
         你是<b>{{ myDeptName }}</b>部长：可以把同学设为本部门的骨干或成员，或把本部门的骨干/成员撤下。
-        部长、会长团、管理员这些身份请找会长团调整。
+        只能动青协身份；管理员、活动发起方、学生身份请找会长团调整。
       </template>
       <template v-else>
         这一页改的是<b>权限</b>：谁能进工作台、谁能审批、谁是部长。
@@ -19,7 +23,7 @@
                 style="width:280px" clearable @keyup.enter="load" @clear="load" />
       <el-button type="primary" @click="load">查询</el-button>
       <RefreshBar ref="refresher" :load="load" />
-      <span class="dim">{{ headOnly ? '不搜索时只列本部门的人；要拉新人进部门就搜他的学号' : '不搜索时只列已有管理类身份的人' }}</span>
+      <span class="dim">{{ coreOnly ? '只列本部门的成员' : headOnly ? '不搜索时只列本部门的人；要拉新人进部门就搜他的学号' : '不搜索时只列已有管理类身份的人' }}</span>
     </div>
 
     <DataCards v-if="narrow" :rows="rows" title-key="name" v-loading="loading"
@@ -28,13 +32,19 @@
                          { key: 'college', label: '单位' },
                          { key: 'role_label', label: '身份' },
                          { key: 'post_label', label: '青协层级', hideEmpty: true },
-                         { key: 'department', label: '部门', hideEmpty: true }]"
+                         { key: 'department', label: '部门', hideEmpty: true },
+                         { key: 'supervisor', label: '归属骨干', hideEmpty: true }]"
                empty="没有匹配的人">
       <template #extra="{ row }">
         <el-tag v-if="row.is_me" size="small" type="warning" effect="plain">这是你</el-tag>
+        <el-tag v-if="coreOnly && row.supervisor_id === auth.user.id" size="small"
+                type="success" effect="plain">归我管理</el-tag>
       </template>
       <template #actions="{ row }">
-        <el-button size="small" type="primary" plain @click="open(row)">调整身份</el-button>
+        <el-button v-if="coreOnly" size="small" type="primary" plain
+                   :disabled="row.supervisor_id === auth.user.id"
+                   @click="claim(row)">归我管理</el-button>
+        <el-button v-else size="small" type="primary" plain @click="open(row)">调整身份</el-button>
       </template>
     </DataCards>
 
@@ -63,13 +73,18 @@
           <template v-if="row.roles.includes('qingxie')">
             {{ row.post_label }}
             <span v-if="row.department" class="dim">· {{ row.department }}</span>
+            <span v-if="row.supervisor" class="dim">· 归属 {{ row.supervisor }}</span>
           </template>
           <span v-else class="dim">—</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="100" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" link type="primary" @click="open(row)">调整身份</el-button>
+          <el-button v-if="coreOnly" size="small" link type="primary"
+                     :disabled="row.supervisor_id === auth.user.id" @click="claim(row)">
+            {{ row.supervisor_id === auth.user.id ? '已归我管理' : '归我管理' }}
+          </el-button>
+          <el-button v-else size="small" link type="primary" @click="open(row)">调整身份</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -82,10 +97,10 @@
       <el-form label-width="88px">
         <el-form-item label="身份" required>
           <el-checkbox-group v-model="dlg.roles">
-            <!-- 部长只能动青协身份：别的身份显示但锁住 -->
+            <!-- 部长只能动青协身份：别的身份（含学生）显示但锁住 -->
             <el-checkbox v-for="r in ROLE_ORDER" :key="r" :value="r"
                          :disabled="(r === 'admin' && dlg.row?.is_me)
-                                    || (headOnly && !['qingxie', 'student'].includes(r))">
+                                    || (headOnly && r !== 'qingxie')">
               {{ ROLE_LABELS[r] }}
             </el-checkbox>
           </el-checkbox-group>
@@ -156,9 +171,20 @@ const q = ref('')
 const loading = ref(false)
 const refresher = ref(null)
 const dlg = ref({ visible: false, row: null, roles: [], post: 'member', deptId: '', busy: false })
-// 部长视角：只能在本部门里设骨干/成员
+// 部长视角：只能在本部门里设骨干/成员；骨干视角：只认领本部门成员
 const headOnly = computed(() =>
   auth.activeIdentity === 'qingxie' && auth.user?.qingxie_post === 'head')
+const coreOnly = computed(() =>
+  auth.activeIdentity === 'qingxie' && auth.user?.qingxie_post === 'core')
+
+// 骨干认领成员：身份、层级、部门原样送回，只改归属
+async function claim(row) {
+  await api.put(`/api/staff/roles/${row.id}`,
+                { roles: row.roles, qingxie_post: row.qingxie_post,
+                  department_id: row.department_id, supervisor_id: auth.user.id })
+  ElMessage.success(`${row.name} 已归你管理`)
+  load()
+}
 const myDeptName = computed(() =>
   depts.value.find(d => d.id === auth.user?.department_id)?.name || '')
 
