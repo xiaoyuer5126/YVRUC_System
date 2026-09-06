@@ -47,8 +47,6 @@
           </el-result>
         </template>
 
-        <p class="dim foot">扫码数据实时回流青协后台签到大屏；<br />
-          对接学校现有签到系统后由对方接口核销。</p>
       </template>
     </el-card>
   </div>

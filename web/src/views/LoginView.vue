@@ -4,10 +4,6 @@
       <div class="head">
         <div class="logo">志</div>
         <h2>志愿服务管理平台</h2>
-        <p class="dim">
-          {{ mode === 'demo' ? '统一身份认证尚未接通，当前为开发组内测登录'
-                             : '通过微人大统一身份认证登录' }}
-        </p>
       </div>
 
       <!-- 真实 SSO：一个跳转按钮，账号口令都在学校那边 -->
@@ -44,11 +40,6 @@
           </el-button>
         </div>
       </template>
-
-      <p class="foot dim">
-        正式上线后由微人大 OAuth2.0/CAS 单点登录接管，内测口令入口将一并移除；<br />
-        身份信息由「数智人大」只读接口提供，平台不留存多余数据。
-      </p>
     </el-card>
   </div>
 </template>

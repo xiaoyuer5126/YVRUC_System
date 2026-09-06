@@ -64,9 +64,6 @@
     <el-container class="app-body">
       <el-aside v-if="!narrow" width="200px" class="side">
         <SideMenu :active="$route.path" />
-        <div class="side-foot dim">
-          演示环境 · 对接数智人大/企业微信<br />接口已预留，见「集成设置」
-        </div>
       </el-aside>
       <el-main class="app-main">
         <!-- 部门成员：按钮都在、都能点，只是最后一步不会保存。提示条常驻，

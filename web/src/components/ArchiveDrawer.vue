@@ -16,7 +16,7 @@
         <div class="stat"><b>{{ served }}</b><span class="dim">次到岗</span></div>
         <div class="stat"><b>{{ d.history.length }}</b><span class="dim">次报名</span></div>
         <div class="stat" :class="{ warn: d.late_cancel_count }">
-          <b>{{ d.late_cancel_count }}</b><span class="dim">次临近退选</span>
+          <b>{{ d.late_cancel_count }}</b><span class="dim">次临期退选</span>
         </div>
         <div class="stat" :class="{ warn: d.violations.length }">
           <b>{{ d.violations.length }}</b><span class="dim">条违规记录</span>
@@ -89,7 +89,7 @@ defineExpose({ open })
 function tagText(h) {
   if (h.status === 'enrolled') return h.checked_in ? '已到岗' : '已报名'
   if (h.status === 'waitlisted' || h.status === 'pending_confirm') return '候补中'
-  return { late: '临近退选', normal: '已退选', expired: '确认超时',
+  return { late: '临期退选', normal: '已退选', expired: '确认超时',
            abandoned: '放弃候补', shift_deleted: '场次取消' }[h.cancel_type] || '已退选'
 }
 function tagType(h) {

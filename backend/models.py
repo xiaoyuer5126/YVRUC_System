@@ -213,7 +213,7 @@ class Activity(Base):
     recruit_mode: Mapped[str] = mapped_column(String(12), default="instant")
     intro: Mapped[str] = mapped_column(Text, default="")
     location: Mapped[str] = mapped_column(String(128), default="")
-    contact_info: Mapped[str] = mapped_column(String(256), default="")   # 公示联系方式
+    contact_info: Mapped[str] = mapped_column(String(256), default="")   # 联系方式
     # 结构化联系人（多人）：[{"name": 姓名, "phone": 电话}]；导出/展示优先用它
     contacts: Mapped[list] = mapped_column(JSON, default=list)
     # 志愿者联络群二维码（dataURL）。必填；不在活动详情公开，报名成功/候补转正/
@@ -633,13 +633,13 @@ class Enrollment(Base):
                                      shift_deleted 场次被删除 / rejected 未录取 /
                                      not_chosen 录取到了别的场次）
 
-    seat_held：临近退选（开始前 24 小时内、报名已截止）**名额不再释放**，
+    seat_held：临期退选（开始前 24 小时内、报名已截止）**名额不再释放**，
     该记录虽已 cancelled 但仍占着一个名额，防止有人临期退了、别人补进来、
     再退一次，把现场人数搅乱。
     """
     __tablename__ = "enrollments"
     __table_args__ = (
-        # 一人在一个场次只能有一条有效记录（含占位不释放的临近退选记录）。
+        # 一人在一个场次只能有一条有效记录（含占位不释放的临期退选记录）。
         # 这是并发抢报的兜底：Redis 锁没拿住也插不进第二条。
         Index("uq_enrollment_live", "shift_id", "user_id", unique=True,
               postgresql_where=text(
@@ -880,7 +880,7 @@ class ViolationRecord(Base):
     """违规记录：活动结束后由管理者在名单里登记的一行。
 
     只是记录，不产生任何后果——平台不对志愿者做任何限制。青协工作人员在
-    志愿者档案里能看到这些记录、他参与过的活动和临近退选的次数，仅此而已。
+    志愿者档案里能看到这些记录、他参与过的活动和临期退选的次数，仅此而已。
     """
     __tablename__ = "violation_records"
 

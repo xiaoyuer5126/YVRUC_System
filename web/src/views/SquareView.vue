@@ -10,7 +10,7 @@
           <el-radio-button value="all">全部</el-radio-button>
         </el-radio-group>
       </div>
-      <p>选择感兴趣的活动，报名即锁定时段；名额满员自动进入候补队列。</p>
+      <p>即选即得——报名即生效；报名后筛选——由负责老师筛选录取</p>
     </div>
 
     <div v-if="list.length" class="card-grid">
@@ -43,11 +43,6 @@
       </div>
     </div>
     <el-empty v-else description="暂无活动" />
-
-    <p class="dim" style="margin-top:26px">
-      活动类型：<b>即选即得</b>——报名即生效，名额满了进候补；
-      <b>报名后筛选</b>——填一份报名表并勾意向场次，截止后由主办方筛选录取。
-    </p>
   </div>
 </template>
 

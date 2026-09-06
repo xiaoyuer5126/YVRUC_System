@@ -2,13 +2,13 @@
 <template>
   <el-dialog v-model="visible" title="志愿者联络群" width="380" align-center>
     <div class="qr-box">
-      <img :src="qr" alt="联络群二维码" />
+      <img :src="qr" alt="志愿者联络群二维码" />
       <p class="title">{{ title }}</p>
       <p class="dim">
-        请扫码加入本活动的联络群，入群后把群昵称改为<b>「姓名+电话」</b>，
-        方便负责老师联系你。
+        请扫码加入志愿者联络群，入群后把昵称改为<b>「姓名+电话」</b>，
+        方便负责人统计联系。
       </p>
-      <p class="dim">之后可在「我的报名」里随时查看。</p>
+      <p class="dim">二维码可在「我的报名」中随时查看。</p>
     </div>
     <template #footer>
       <el-button type="primary" @click="visible = false">知道了</el-button>

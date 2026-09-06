@@ -483,10 +483,10 @@
 
             <!-- 右栏（窄）：扣留的名额、候补队列、退选记录 -->
             <el-col :xs="24" :md="8">
-            <!-- 临近退选扣留的名额：不列出来老师根本找不到它 -->
+            <!-- 临期退选扣留的名额：不列出来老师根本找不到它 -->
             <template v-if="roster.held?.length">
               <div class="section-title">
-                临近退选扣留的名额（{{ roster.held.length }}）
+                临期退选扣留的名额（{{ roster.held.length }}）
                 <span class="dim" style="font-weight:400">
                   岗位名额没有变，是这些记录占着位子；释放后候补可以补上
                 </span>
@@ -1273,7 +1273,7 @@
         <el-descriptions-item label="时间">{{ gdData.time_text }}</el-descriptions-item>
         <el-descriptions-item label="人数">已报名 {{ gdData.enrolled }} / {{ gdData.capacity }}
           <span v-if="gdData.held_seats" style="color:#e6a23c">
-            · {{ gdData.held_seats }} 个名额因临近退选被扣留（不再释放）</span>
+            · {{ gdData.held_seats }} 个名额因临期退选被扣留（不再释放）</span>
           <span class="dim">（候补 {{ gdData.waitlist_count }} 人）</span></el-descriptions-item>
         <el-descriptions-item label="说明">{{ gdData.note || '—' }}</el-descriptions-item>
       </el-descriptions>
@@ -1316,7 +1316,7 @@
         </el-form-item>
         <el-form-item label="通知内容" required>
           <el-input v-model="notifyForm.content" type="textarea" :rows="4"
-                    placeholder="请输入通知正文，将通过企业微信推送给志愿者" />
+                    placeholder="请输入通知正文" />
         </el-form-item>
         <el-form-item label="">
           <el-checkbox v-model="notifyForm.need_ack">要求志愿者签收</el-checkbox>

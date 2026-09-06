@@ -23,8 +23,7 @@
     </el-row>
     <el-card shadow="never">
       <template #header><b>时长明细</b><span class="dim" style="font-weight:400;margin-left:8px">
-        依据签到记录，由负责老师核准；展开一行可看这次时长由哪几段组成。
-        核准后请在截止前确认无误，数值有出入可以提异议；到点没表态视为确认无误、按志愿时长记
+        由负责老师核准，展开一行可看这次时长由哪几段组成。
       </span></template>
       <DataCards v-if="narrow" :rows="data.records" title-key="activity_title"
                  :fields="[{ key: 'created_at', label: '记录时间', format: fmtDT },
@@ -84,7 +83,7 @@
           </template>
         </el-table-column>
       </el-table>
-      <el-empty v-if="!data.records.length" description="参加活动并完成签到后，时长会出现在这里" :image-size="80" />
+      <el-empty v-if="!data.records.length" description="参加活动并完成服务后，将会显示时长" :image-size="80" />
     </el-card>
 
     <el-dialog v-model="cf.visible" title="确认时长" width="440">
@@ -94,7 +93,7 @@
       <el-form label-width="88px">
         <el-form-item label="报酬方式">
           <el-radio-group v-model="cf.reward">
-            <el-radio value="hours">记志愿时长</el-radio>
+            <el-radio value="hours">志愿时长</el-radio>
             <el-radio value="pay" :disabled="!cf.row?.pay_allowed">劳务（不记时长）</el-radio>
           </el-radio-group>
           <div v-if="cf.row?.pay_allowed" class="dim">{{ cf.row.pay_note }}</div>

@@ -995,10 +995,13 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
         if u is None:
             continue
         notified += 1
+        # 只有岗位可选劳务的人才需要选报酬方式，别人不必看到这一句
+        pay_line = ("\n请选择报酬方式志愿时长或劳务，超时未确认默认选择志愿时长。"
+                    if hours_flow.pay_position(db, act.id, r.user_id) else "")
         wecom.send_user(
             db, u, "hours_approved", data={"activity_id": act.id},
             activity=act.title, hours=f"{r.hours:g}",
-            deadline=f"{deadline:%Y-%m-%d %H:%M}")
+            deadline=f"{deadline:%Y-%m-%d %H:%M}", pay_line=pay_line)
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=(f"{'再次' if since else ''}核准志愿时长，通知 {notified} 人，"

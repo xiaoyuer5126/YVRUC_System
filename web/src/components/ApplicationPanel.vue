@@ -8,7 +8,7 @@
         <span class="dim">提交于 {{ fmtDT(mine.created_at) }}</span>
       </div>
       <div v-if="mine.leader_willing" class="dim" style="margin-top:4px">
-        已表态愿意担任组长
+        愿意担任组长
       </div>
       <div class="dim" style="margin:6px 0 10px">
         意向场次：
@@ -60,12 +60,10 @@
         <el-form-item>
           <div>
             <el-checkbox v-model="form.leader_willing">愿意担任组长（如岗位需要）</el-checkbox>
-            <div class="dim">组长由负责老师从有意愿的人里指定，不勾也不影响录取</div>
           </div>
         </el-form-item>
       </el-form>
       <el-button type="primary" :loading="submitting" @click="submit">提交申请</el-button>
-      <span class="dim" style="margin-left:10px">一个活动只填一次；录取前可撤回</span>
     </template>
 
     <!-- 不在报名期：审批人和路过的人也该看得到这份表长什么样 -->

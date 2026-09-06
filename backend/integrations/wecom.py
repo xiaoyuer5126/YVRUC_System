@@ -25,17 +25,16 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "signup_success": (
         "报名成功｜{activity}",
         "您已成功报名「{activity}」· {shift}。\n时间：{time}\n{detail}"
-        "\n\n如无法参加，请提前24小时在平台退选，让名额及时给到候补的同学。"),
+        "\n\n如无法参加，请于活动开始前24小时退选，临期退选将被记录。"),
     "waitlist_queued": (
         "已加入候补｜{activity}",
-        "「{activity}」· {shift} 名额已满，您已加入候补队列，当前第 {pos} 位。"
-        "\n有名额释放时将按顺序通知您确认。"),
+        "「{activity}」· {shift} 名额已满，您已报名候补，当前队列第 {pos} 位。"
+        "\n有名额时将通知您确认。"),
     "hours_approved": (
         "志愿时长已核准｜{activity}",
         "「{activity}」的志愿时长已核准：您本次记 {hours} 小时。"
-        "\n请于 {deadline} 前到平台「志愿时长」页确认无误，或提出申诉；"
-        "岗位可选劳务的，确认时可以选择按劳务计。"
-        "\n到时未表态视为确认无误、按志愿时长记，之后修改需要报审批。"),
+        "\n请于 {deadline} 前到「志愿时长」页确认或提出申诉，超时未确认则视为无误，"
+        "之后修改需报审批。{pay_line}"),
     "hours_locked": (
         "志愿时长已锁定｜{activity}",
         "「{activity}」的志愿时长已锁定，{result}，活动已完成。"
@@ -43,7 +42,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "application_accepted": (
         "录取通知｜{activity}",
         "恭喜！您已被「{activity}」录取，安排在 {shift}（{time}）。"
-        "\n具体岗位以负责老师后续分配为准。请到「我的报名」查看联络群二维码，"
+        "\n具体岗位以负责老师后续分配为准。请到「我的报名」查看志愿者联络群二维码，"
         "入群后请把群昵称改为「姓名+电话」。"),
     # 措辞留余地：这一次没排上不代表什么，也不留任何记录
     "application_rejected": (
@@ -53,29 +52,30 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "waitlist_promoted": (
         "候补转正待确认｜{activity}",
         "「{activity}」· {shift} 有名额释放，您已按候补顺序转正！\n"
-        "请在 {deadline} 前点击确认，超时未确认名额将顺延下一位。"),
+        "请在 {deadline} 前点击确认，超时未确认则名额将顺延下一位。"),
     "assignment": (
         "岗位分配通知｜{activity}",
         "您在「{activity}」· {shift} 的岗位已确定：\n"
-        "岗位：{position}\n时间：{position_time}\n地点：{position_loc}\n请按时到岗签到。"),
+        "岗位：{position}\n时间：{position_time}\n地点：{position_loc}\n"
+        "请查看培训、小组长等信息，活动时按要求到岗签到。"),
     "activity_changed": (
         "活动变更提醒｜{activity}",
         "「{activity}」信息变更：\n{change_summary}\n\n请留意最新安排。"),
     "leader_appointed": (
         "您已成为岗位组长｜{activity}",
-        "您在「{activity}」的岗位「{position}」已被推举为组长。\n"
+        "您在「{activity}」已被老师选为岗位「{position}」组长。\n"
         "时间：{position_time}\n地点：{position_loc}\n"
-        "请提前与负责老师对接，现场协助点名与协调。"),
+        "请提前与负责老师对接现场安排。"),
     "checkin_reminder": (
         "签到提醒｜{activity}",
         "您报名的「{activity}」· {shift} 即将开始。\n"
         "岗位：{position}\n地点：{loc}\n"
-        "请提前到岗并扫码签到；服务结束后记得再扫一次签退。"),
+        "请按要求到岗并扫码签到；服务结束后记得签退。"),
     # 催签收：本身不要签收，否则催一次就多一条待办，5 个人的批次会变成 10 条
     "ack_reminder": (
         "待签收提醒｜{title}",
-        "您有一条通知还没签收：\n「{title}」\n"
-        "请到消息中心打开它，点一下「我已知悉」。"),
+        "您有一条通知未签收：\n「{title}」\n"
+        "请到消息中心点击「我已知悉」，方便统计签收情况。"),
     "custom": (
         "{title}",
         "{content}"),

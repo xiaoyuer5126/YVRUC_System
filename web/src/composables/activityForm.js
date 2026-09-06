@@ -29,13 +29,13 @@ export function activityToForm(act) {
   }
 }
 
-/** 返回第一条错误提示；无错返回 ''。报名窗口按 range 一起校验。 */
+/** 返回第一条错误提示；无错返回 ''。报名时间按 range 一起校验。 */
 export function validateActivity(f, range) {
   if (!f.title?.trim()) return '请填写活动名称'
   if (!f.organizer?.trim()) return '请填写组织单位'
   if (!f.recruit_mode) return '请选择活动类型'
   if (!f.location?.trim()) return '请填写活动地点'
-  if (!f.contacts?.length) return '请至少添加一位公示联系人'
+  if (!f.contacts?.length) return '请至少添加一位联系人'
   for (const c of f.contacts) {
     if (!c.name?.trim()) return '请填写每位联系人的姓名'
     if (!c.phone?.trim()) return '请填写每位联系人的电话/微信'

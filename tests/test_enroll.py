@@ -1,4 +1,4 @@
-"""报名闸门：名额、候补、时段冲突、临近退选占位、并发抢报。"""
+"""报名闸门：名额、候补、时段冲突、临期退选占位、并发抢报。"""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -65,7 +65,7 @@ def test_waitlisted_group_also_locks_the_slot(client, open_group, take_student):
 def test_late_cancel_holds_the_seat(client, admin, db, open_group, take_student):
     """开始前 24 小时内 + 报名已截止：名额被扣留占位。
 
-    报名还开着时只记临近退选、不扣留（见 test_seat_hold.py）：平台仍在招人，
+    报名还开着时只记临期退选、不扣留（见 test_seat_hold.py）：平台仍在招人，
     这时把位子废掉，等于新人能报、候补能转正，唯独这个位子谁都不能用。
     """
     act, g = open_group(1, day_offset=0, start_in_hours=5)

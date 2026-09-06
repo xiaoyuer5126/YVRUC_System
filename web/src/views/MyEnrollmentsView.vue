@@ -100,7 +100,7 @@
               {{ row.allow_reassign ? '接受' : '不接受' }}
             </el-tag>
             <el-tooltip placement="top"
-                        content="仅供负责老师排班时参考，不代表岗位不会被调整">
+                        content="仅在名额不足时可能进行调剂，负责人可看到你的意愿">
               <el-button size="small" link type="primary"
                          @click="toggleReassign(row)">修改</el-button>
             </el-tooltip>
@@ -138,9 +138,7 @@
 
     <el-alert type="info" :closable="false" style="margin-top:16px">
       <p style="margin:0;font-size:12.5px;line-height:1.9">
-        退选规则：开始前 <b>24 小时以上</b>退选，名额自动递补给候补；
-        <b>24 小时内</b>且报名已截止时退选，该名额被扣留、不再释放（本人也无法再报该场次），
-        并记一次临近退选。请尽早决定，把位子留给等着的同学。
+        退选规则：开始前 <b>24 小时内</b>且报名已截止时退选，名额将被扣留不再释放，且记录一次临期退选。
       </p>
     </el-alert>
 
@@ -246,10 +244,8 @@ async function cancel(row) {
   const start = new Date(g.start_time.replace(' ', 'T'))
   const late = Date.now() > start.getTime() - 24 * 3600e3
   await ElMessageBox.confirm(
-    late ? '距开始不足24小时：报名已截止的话，该名额会被扣留、不再释放给任何人，'
-           + '你本人之后也无法再报名这个场次，并记一次临近退选。确定吗？'
-         : '名额将自动递补候补队列。确定退选吗？',
-    '退选确认', { type: 'warning' })
+    late ? '距开始不足24小时，将记录一次临期退选。确定退选吗？' : '确定退选吗？',
+    '退选确认', { type: 'warning', confirmButtonText: '确定' })
   const d = await api.del(`/api/activities/enrollments/${row.id}`)
   ElMessage[d.effect === 'held' ? 'warning' : 'success'](d.message)
   load()

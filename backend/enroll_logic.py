@@ -3,7 +3,7 @@
 《设计方案》阶段二/阶段三的关键机制：
   · 时段冲突：只比场次的时间区间，重叠即拦截（跨活动，含候补中的场次——
     排了队就等于预留了这段时间）；
-  · 名额账本：已报名 + 临近退选占位（seat_held），后者不释放给任何人；
+  · 名额账本：已报名 + 临期退选占位（seat_held），后者不释放给任何人；
   · 候补按 joined_at 排队，正常退选释放名额 → 队首转正，2 小时确认窗口。
 
 调用容量相关函数前必须持有 locks.shift_lock(shift_id)，见 locks.py。
@@ -122,7 +122,7 @@ def shift_enrolled_count(db: OrmSession, shift_id: str) -> int:
 
 
 def shift_occupied_count(db: OrmSession, shift_id: str) -> int:
-    """场次已消耗的名额 = 正式报名 + 临近退选占位。"""
+    """场次已消耗的名额 = 正式报名 + 临期退选占位。"""
     return db.query(Enrollment).filter(
         Enrollment.shift_id == shift_id,
         or_(Enrollment.status == "enrolled",
@@ -327,7 +327,7 @@ def auto_promote_deadline(db: OrmSession, shift: Shift) -> datetime:
     """自动候补转正的截止点：报名截止时间与「活动开始前 24 小时」取更晚的那个。
 
     过了这个点还自动转正是坑人：转正的人只剩不到一天准备，而他此时再退选
-    就要按临近退选扣分。之后要不要补人由负责老师看着办，手动转。
+    就要按临期退选扣分。之后要不要补人由负责老师看着办，手动转。
     """
     act = db.get(Activity, shift.activity_id)
     cutoff = shift.start_time - timedelta(hours=config.LATE_CANCEL_HOURS)
@@ -341,7 +341,7 @@ def promote_head(db: OrmSession, shift: Shift,
                  position: Position | None = None) -> Enrollment | None:
     """有名额释放时，把候补队首转为「待确认」，开 2 小时确认窗并通知。
 
-    只在确实空出名额时才提升：临近退选是占位不释放的，队列原地不动。
+    只在确实空出名额时才提升：临期退选是占位不释放的，队列原地不动。
     pick 模式下队列是按岗位分的，只提升该岗位的队首。
     过了自动转正截止点就不再自动提升，改由管理者手动转。
     """

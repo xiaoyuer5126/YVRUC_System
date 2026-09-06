@@ -108,7 +108,7 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
         "display_status": ds_code, "display_label": ds_label,
         "shifts_count": len(shifts),
         "total_capacity": total_cap, "total_enrolled": total_conf,
-        # 剩余名额扣掉临近退选扣留的占位，不然广场上显示有位、点进去报不了
+        # 剩余名额扣掉临期退选扣留的占位，不然广场上显示有位、点进去报不了
         "remaining": max(0, total_cap - total_used),
         "time_text": (f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}"
                       if span else "待定"),
@@ -158,7 +158,7 @@ def position_out(db: OrmSession, p: Position, user=None, *,
         "time_text": p.time_text(),
         "location": p.location, "quota": p.quota, "enrolled": n_enrolled,
         "remaining": max(0, p.quota - occupied),
-        # 临近退选扣留的名额：不发出去的话，「已报名 8/10、剩余 0」没人看得懂
+        # 临期退选扣留的名额：不发出去的话，「已报名 8/10、剩余 0」没人看得懂
         "held_seats": occupied - n_enrolled,
         "waitlist_quota": p.waitlist_quota, "waitlist_count": queued,
         "needs_leader": p.needs_leader,

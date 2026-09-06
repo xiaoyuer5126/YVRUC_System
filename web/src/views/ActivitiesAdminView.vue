@@ -109,7 +109,7 @@
         <el-form-item label="延期天数" required>
           <el-input-number v-model="copyDlg.shiftDays" :min="-365" :max="365" />
           <span class="dim" style="margin-left:10px">
-            报名窗口与所有场次时间整体后移这么多天
+            报名时间与所有场次时间整体后移这么多天
           </span>
           <div v-if="copyPreview" class="dim" style="margin-top:6px">
             场次时间：{{ copyPreview.from }} → <b>{{ copyPreview.to }}</b>
@@ -120,12 +120,12 @@
                     :placeholder="`${copyDlg.source?.title}（副本）`" />
         </el-form-item>
         <!-- 新活动新群：二维码不随复制带过来，在这里就要传新图 -->
-        <el-form-item label="联络群二维码" required>
+        <el-form-item label="志愿者联络群二维码" required>
           <div>
             <el-upload :show-file-list="false" :http-request="uploadCopyQr"
                        accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
               <el-button type="primary" plain :loading="copyDlg.uploading">
-                上传新活动的联络群二维码
+                上传新活动的志愿者联络群二维码
               </el-button>
             </el-upload>
             <div class="dim">每场活动一个新群，原活动的二维码不会带过来</div>
@@ -199,7 +199,7 @@ const copyPreview = computed(() => {
 
 async function doCopy() {
   const d = copyDlg.value
-  if (!d.qr) return ElMessage.warning('请先上传新活动的联络群二维码')
+  if (!d.qr) return ElMessage.warning('请先上传新活动的志愿者联络群二维码')
   d.busy = true
   try {
     const r = await api.post(`/api/staff/activities/${d.source.id}/copy`,

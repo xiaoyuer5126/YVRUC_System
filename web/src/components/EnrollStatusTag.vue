@@ -10,7 +10,7 @@
     <template #prefix><el-tag type="danger">转正确认剩</el-tag>&nbsp;</template>
   </el-countdown>
   <template v-else-if="row.cancel_type === 'late'">
-    <el-tag type="danger">临近退选</el-tag>
+    <el-tag type="danger">临期退选</el-tag>
     <div v-if="row.seat_held" class="dim">名额已扣留，不可再报</div>
   </template>
   <el-tag v-else type="info">{{ cancelLabel }}</el-tag>

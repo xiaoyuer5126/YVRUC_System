@@ -1,4 +1,4 @@
-"""临近退选的名额：只在报名已截止时扣留，扣留可由管理者释放。"""
+"""临期退选的名额：只在报名已截止时扣留，扣留可由管理者释放。"""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -27,7 +27,7 @@ def _one_seat(client, db, open_group, take_student, *, reg_end_in_hours):
     return act, g, taker, enr
 
 
-def test_报名未截止时临近退选不扣留(client, db, open_group, take_student):
+def test_报名未截止时临期退选不扣留(client, db, open_group, take_student):
     """平台还在招人，把位子废掉自相矛盾。"""
     act, g, taker, enr = _one_seat(client, db, open_group, take_student,
                                    reg_end_in_hours=5)
@@ -45,7 +45,7 @@ def test_报名未截止时临近退选不扣留(client, db, open_group, take_st
         Enrollment.status == "pending_confirm").count() == 1
 
 
-def test_报名已截止时临近退选扣留名额(client, db, open_group, take_student):
+def test_报名已截止时临期退选扣留名额(client, db, open_group, take_student):
     act, g, taker, enr = _one_seat(client, db, open_group, take_student,
                                    reg_end_in_hours=-1)
     r = client.delete(f"/api/activities/enrollments/{enr.id}",

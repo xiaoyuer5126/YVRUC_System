@@ -24,7 +24,7 @@
     <el-form-item label="活动地点" required>
       <el-input v-model="f.location" placeholder="如：世纪馆北门" />
     </el-form-item>
-    <el-form-item label="公示联系方式" required>
+    <el-form-item label="联系人" required>
       <div class="contacts-box">
         <div v-for="(c, i) in f.contacts" :key="i" class="contact-row">
           <el-input v-model="c.name" maxlength="32" placeholder="姓名" style="width:150px" />
@@ -51,7 +51,7 @@
       </div>
       <div class="dim">留空即不限。不在范围内的同学报名时会被拦下</div>
     </el-form-item>
-    <el-form-item label="报名窗口" required>
+    <el-form-item label="报名时间" required>
       <div class="two-col">
         <DateTimeField v-model="regStart" placeholder="报名开始时间"
                        :default-time="DAY_START" />
@@ -77,7 +77,7 @@
       <el-input v-model="f.volunteer_benefit" type="textarea" :rows="2"
                 placeholder="选填。提供什么，如：午餐与饮水、志愿时长、纪念徽章、意外险" />
     </el-form-item>
-    <el-form-item label="联络群二维码" required>
+    <el-form-item label="志愿者联络群二维码" required>
       <div class="contacts-box">
         <el-upload :show-file-list="false" :http-request="uploadQr"
                    accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
@@ -90,7 +90,7 @@
           弹给本人一次，之后在「我的报名」里查看
         </div>
         <div v-if="f.contact_group_qr" class="qr-preview">
-          <img :src="f.contact_group_qr" alt="联络群二维码" />
+          <img :src="f.contact_group_qr" alt="志愿者联络群二维码" />
           <el-button link type="danger" size="small" @click="f.contact_group_qr = ''">移除图片</el-button>
         </div>
       </div>
@@ -115,7 +115,7 @@ import DateTimeField from './DateTimeField.vue'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },   // 表单数据
-  range: { type: Array, default: () => [] },      // 报名窗口 [开始, 结束]
+  range: { type: Array, default: () => [] },      // 报名时间 [开始, 结束]
   modes: { type: Object, default: () => ({}) },
 })
 const emit = defineEmits(['update:modelValue', 'update:range'])

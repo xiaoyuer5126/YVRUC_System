@@ -147,17 +147,17 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
     overview.append(["志愿服务管理平台 · 排班表导出"])
     overview.append(["活动名称", activity.title])
     overview.append(["活动类型", f"{activity.recruit_label()} · {activity.label_status()}"])
-    # 公示联系方式优先用结构化 contacts（"姓名 电话"，多人分号连接），
+    # 联系人优先用结构化 contacts（"姓名 电话"，多人分号连接），
     # 为空则回退旧字段 contact_info
     contact_text = "；".join(
         f"{(c or {}).get('name', '')} {(c or {}).get('phone', '')}".strip()
         for c in (activity.contacts or []) if isinstance(c, dict)
     ).strip("；")
-    overview.append(["公示联系方式",
+    overview.append(["联系人",
                      contact_text or activity.contact_info or "—"])
     span = activity.time_span()
     if span:
-        overview.append(["整体时间",
+        overview.append(["活动时间",
                          f"{span[0]:%Y-%m-%d %H:%M} ~ {span[1]:%Y-%m-%d %H:%M}"])
     overview.append([])
     overview.append(["场次", "类型", "时间段", "模式", "已报名/名额", "已到岗"])

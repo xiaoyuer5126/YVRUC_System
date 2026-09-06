@@ -29,8 +29,7 @@
           </template>
         </el-result>
 
-        <p class="dim foot">领取与归还是两个码，请对应扫描；<br />
-          台账实时回流活动后台。</p>
+        <p class="dim foot">领取与归还是两个码，请对应扫描。</p>
       </template>
       <el-result v-else-if="!loading" icon="warning" title="服装码无效"
                  sub-title="请确认扫的是本次活动的服装码" />

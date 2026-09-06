@@ -5,7 +5,7 @@
 每次按当下的记录现算：改了权重、销了一条违规记录，分数立刻跟着变，
 不会留下一堆对不上的历史值。
 
-从满分起算：违规按类型扣分，临近退选也扣；顺利参与一次活动加分，
+从满分起算：违规按类型扣分，临期退选也扣；顺利参与一次活动加分，
 分数自己能长回来——不能让人因为一次失误就永远挂着感叹号。
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from .models import Enrollment, Shift, User, ViolationRecord, now
 
 
 def _counts(db: OrmSession, user_id: str) -> tuple[dict[str, int], int, int]:
-    """(各类违规次数, 临近退选次数, 顺利参与次数)。"""
+    """(各类违规次数, 临期退选次数, 顺利参与次数)。"""
     violations: dict[str, int] = {}
     for v in (db.query(ViolationRecord)
               .filter(ViolationRecord.user_id == user_id).all()):
@@ -58,7 +58,7 @@ def detail(db: OrmSession, user: User) -> dict:
         items.append({"label": ViolationRecord.KINDS.get(kind, kind), "count": n,
                       "delta": -config.VIOLATION_WEIGHTS.get(kind, 0) * n})
     if late:
-        items.append({"label": "临近退选", "count": late,
+        items.append({"label": "临期退选", "count": late,
                       "delta": -config.LATE_CANCEL_WEIGHT * late})
     if done:
         items.append({"label": "顺利参与活动", "count": done,

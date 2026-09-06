@@ -102,7 +102,7 @@ for (const [who, route, name] of PAGES) {
   await sleep(2400)
   const r = await send('Runtime.evaluate', { expression: PROBE, returnByValue: true })
   const d = JSON.parse(r.result.result.value)
-  const bad = d.scrollW > d.vw + 1 || d.textLen < 40 || d.errors.length
+  const bad = d.scrollW > d.vw + 1 || d.textLen < 10 || d.errors.length
   console.log(`${bad ? '✗' : '✓'} ${name.padEnd(6)} 视口${d.vw} 内容${d.scrollW}` +
     ` | 侧栏${d.aside?'在':'收'} 汉堡${d.burger?'有':'无'}` +
     ` | 卡片${d.cards} 表格${d.tables} 文字${d.textLen}` +

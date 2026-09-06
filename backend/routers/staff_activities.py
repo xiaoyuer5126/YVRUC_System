@@ -43,7 +43,7 @@ router = APIRouter(prefix="/api/staff", tags=["staff"])
 ACTIVITY_FIELDS = {
     "title": "名称", "recruit_mode": "活动类型", "intro": "简介",
     "location": "地点", "organizer": "组织单位",
-    "contact_info": "公示联系方式", "contacts": "公示联系人",
+    "contact_info": "联系方式", "contacts": "联系人",
     "contact_group_qr": "志愿者联络群二维码",
     "volunteer_requirement": "志愿者要求", "volunteer_benefit": "志愿者保障",
     "recruit_campuses": "招募校区", "recruit_stages": "招募学段",
@@ -170,7 +170,7 @@ def _clean_requirement_tags(raw: dict) -> dict:
 
 
 def _clean_contacts(raw: list[dict]) -> list[dict]:
-    """清洗公示联系人名单：至少一位，且每位的姓名与电话均非空。"""
+    """清洗联系人名单：至少一位，且每位的姓名与电话均非空。"""
     contacts = []
     for c in raw or []:
         name = str(c.get("name") or "").strip() if isinstance(c, dict) else ""
@@ -181,7 +181,7 @@ def _clean_contacts(raw: list[dict]) -> list[dict]:
             raise HTTPException(400, f"请填写联系人「{name}」的电话/微信")
         contacts.append({"name": name, "phone": phone})
     if not contacts:
-        raise HTTPException(400, "请至少添加一位公示联系人（姓名+电话）")
+        raise HTTPException(400, "请至少添加一位联系人（姓名+电话）")
     return contacts
 
 
@@ -1560,7 +1560,7 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
 @router.post("/enrollments/{enrollment_id}/release-seat")
 def release_held_seat(enrollment_id: str, db: OrmSession = Depends(db_session),
                       user: User = Depends(require_manager)):
-    """把临近退选扣留的名额放回去。
+    """把临期退选扣留的名额放回去。
 
     扣留是对退选者的约束（他自己也不能再报），但位子空着与否是现场需求——
     补不补人由负责老师判断。放回后候补队列按顺序递补。
@@ -1580,7 +1580,7 @@ def release_held_seat(enrollment_id: str, db: OrmSession = Depends(db_session),
         audit_log(db, actor=user, action="update", target_type="enrollment",
                   target_id=enr.id, target_label=target.name,
                   activity_id=enr.activity_id,
-                  summary=f"释放 {target.name} 临近退选扣留的名额"
+                  summary=f"释放 {target.name} 临期退选扣留的名额"
                           f"（{db.get(Position, enr.position_id).name if enr.position_id else g.name}）")
         db.commit()
         promoted = logic.promote_all(db, g)
@@ -1763,7 +1763,7 @@ def add_walkin(shift_id: str, body: dict,
         if live is not None:
             raise HTTPException(
                 409, f"{u.name} 在该场次已有记录"
-                     f"（{'临近退选占位' if live.seat_held else live.status}）")
+                     f"（{'临期退选占位' if live.seat_held else live.status}）")
 
         # 名额要按落点算：pick 模式下名额在岗位上，不传岗位一律判「满」，
         # 补录任何按岗位报名的场次都会被要求勾强制。

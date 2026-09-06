@@ -236,7 +236,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         if live is not None:
             if live.seat_held:
                 raise HTTPException(
-                    409, "您此前在该场次临近退选，名额已按规则扣留，无法再次报名；"
+                    409, "您此前在该场次临期退选，名额已按规则扣留，无法再次报名；"
                          "如确有需要请联系负责老师")
             label = {"enrolled": "已报名为正式成员", "waitlisted": "已在候补队列中",
                      "pending_confirm": "有候补转正待确认"}[live.status]
@@ -423,7 +423,7 @@ def cancel_enroll(enrollment_id: str,
 
         hours_left = (g.start_time - t).total_seconds() / 3600
         late = hours_left < config.LATE_CANCEL_HOURS
-        # 临近退选记一笔（青协在档案里能看到次数），但名额只在「报名已截止」
+        # 临期退选记一笔（青协在档案里能看到次数），但名额只在「报名已截止」
         # 时才扣留：报名还开着说明平台仍在招人，把位子废掉自相矛盾——
         # 新人能报、候补能转正，唯独这个位子空着谁都不能用。
         reg_closed = bool(act.reg_end and t > act.reg_end)
@@ -439,7 +439,7 @@ def cancel_enroll(enrollment_id: str,
         logic.record_change(
             db, user, enr, "cancel",
             f"距开始 {hours_left:.1f} 小时"
-            + ("，临近退选并扣留名额" if hold_seat else "，临近退选" if late else ""))
+            + ("，临期退选并扣留名额" if hold_seat else "，临期退选" if late else ""))
         db.commit()
 
         notify.notify_late_dropout(db, enr, user)

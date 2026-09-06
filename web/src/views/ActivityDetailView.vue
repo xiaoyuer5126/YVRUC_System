@@ -20,9 +20,9 @@
           <p style="white-space:pre-wrap;color:#606266;line-height:1.8">{{ act.intro }}</p>
           <el-descriptions :column="narrow ? 1 : 2" border size="small">
             <el-descriptions-item label="组织单位">{{ act.organizer || '—' }}</el-descriptions-item>
-            <el-descriptions-item label="整体时间">{{ act.time_text }}</el-descriptions-item>
+            <el-descriptions-item label="活动时间">{{ act.time_text }}</el-descriptions-item>
             <el-descriptions-item label="活动地点">{{ act.location || '待定' }}</el-descriptions-item>
-            <el-descriptions-item label="公示联系方式">
+            <el-descriptions-item label="联系人">
               <template v-if="act.contacts?.length">
                 <span v-for="(c, i) in act.contacts" :key="i" style="margin-right:14px">
                   {{ c.name }} <span class="mono">{{ c.phone }}</span>
@@ -30,7 +30,7 @@
               </template>
               <span v-else>{{ act.contact_info || '—' }}</span>
             </el-descriptions-item>
-            <el-descriptions-item label="报名窗口">
+            <el-descriptions-item label="报名时间">
               {{ fmtDT(act.reg_start) }} ~ {{ fmtDT(act.reg_end) }}
             </el-descriptions-item>
             <!-- 招募范围写在明处：不在范围内的人不该报到一半才被拦下 -->
@@ -55,12 +55,12 @@
         <el-alert v-if="act.review_preview" type="info" show-icon :closable="false"
                   style="margin:12px 0"
                   :title="`审批预览 · 当前状态「${act.status_label}」`"
-                  description="这条活动还没有公开，你是作为审批人在看它的完整安排。通过或驳回请回「活动审批」页操作。" />
+                  description="当前作为审批人查看活动的完整安排。通过或驳回请回「活动审批」页操作。" />
 
         <el-alert v-if="act.editing" type="warning" show-icon :closable="false"
                   style="margin:12px 0"
                   title="负责老师正在调整本活动的安排，报名暂时关闭"
-                  description="调整期间无法报名或退选；改好后会通过企业微信通知已报名的志愿者。" />
+                  description="调整期间无法报名或退选，保存后会将变更通知已报名志愿者。" />
 
         <!-- 还没到报名开始：倒计时归零时自己重拉一次，不必让人手动刷新页面。
              按钮在这之前是灰的（enroll_open 由后端算，含 reg_start）。 -->
@@ -75,7 +75,7 @@
           勾选意向场次并填写报名表，截止后由负责老师筛选录取；
           场次与岗位见下方安排</span></div>
         <div v-else class="section-title">岗位安排<span class="dim" style="font-weight:400;margin-left:8px">
-          点击岗位名称可查看详情；点击行首箭头展开岗位</span></div>
+          点击场次、岗位名称可查看详细安排</span></div>
 
         <!-- 报名后筛选：先是申请入口，下面照旧列场次与岗位——
              审批人要在同一页看完整安排，学生也要先知道自己在报什么 -->
@@ -141,14 +141,14 @@
                   <span class="dim">{{ s.enrolled }}/{{ s.quota }}</span>
                 </div>
                 <div v-if="s.is_placeholder" class="m-pos-meta dim">
-                  {{ g.note || '报名只锁定时段；岗位在报名截止后统一分配，结果经企业微信通知。' }}
+                  {{ g.note || '报名只锁定时段；岗位在报名截止后统一分配。' }}
                 </div>
                 <div v-else class="m-pos-meta dim">
                   {{ s.location || act.location || '地点待定' }}
                   <template v-if="s.requirement_desc !== '不限'"> · {{ s.requirement_desc }}</template>
                   <template v-if="s.needs_leader"> · 设组长</template>
                   <template v-if="s.attire !== 'none'"> · 服装{{ s.attire_label }}</template>
-                  <template v-if="s.pay_optional"> · 可选劳务</template>
+                  <template v-if="s.pay_optional"> · 报酬可选劳务</template>
                   <template v-if="s.material_count"> · 材料 {{ s.material_count }}</template>
                 </div>
                 <div class="m-pos-act">
@@ -256,7 +256,6 @@
                       @click="toggleReassign(g)">
                 {{ g.my_enrollment.allow_reassign ? '接受' : '不接受' }}
               </el-tag>
-              <span class="dim">点击切换，仅供负责老师参考</span>
             </div>
           </el-card>
         </div>
@@ -333,7 +332,7 @@
                           </template>
                           <!-- 已选其他岗位：置灰 -->
                           <el-tooltip v-else-if="g.my_enrollment"
-                                      content="同场次只能选择一个岗位；如需更换请先退选" placement="top">
+                                      content="同场次只能选择一个岗位，如需更换请先退选" placement="top">
                             <el-button size="small" disabled>
                               {{ s.remaining > 0 ? '选中' : '候补' }}
                             </el-button>
@@ -355,7 +354,7 @@
                       </el-table-column>
                     </el-table>
                     <div class="dim" style="margin-top:6px">
-                      同场次只能选一个岗位；满员可点「候补」，按顺序递补（转正需 2 小时内确认）。
+                      同场次只能选一个岗位，候补将在名额释放后转正，转正需 2 小时内确认。
                     </div>
                   </template>
                   <p v-else class="dim" style="margin:4px 0">本场次尚未设置岗位，请联系负责老师。</p>
@@ -428,9 +427,6 @@
                         </el-button>
                       </template>
                     </div>
-                    <div class="dim" style="font-size:12px">
-                      报名本场次时自动带上，退选时一并退出；到场同样要扫码签到。
-                    </div>
                   </div>
 
                   <!-- 场次级学习材料 -->
@@ -467,7 +463,7 @@
                 <template v-if="row.my_enrollment">
                   <!-- 调剂意愿：点一下即可改，只作为负责老师排班时的参考 -->
                   <div style="margin-bottom:4px">
-                    <el-tooltip content="点击切换。仅供负责老师参考，不代表岗位不会被调整"
+                    <el-tooltip content="仅在名额不足时可能进行调剂，负责人可看到你的意愿"
                                 placement="top">
                       <el-tag size="small" effect="plain" style="cursor:pointer"
                               :type="row.my_enrollment.allow_reassign ? 'success' : 'info'"
@@ -552,10 +548,7 @@
                   </template>
                 </template>
                 <template v-else-if="openFor(row)">
-                  <el-tooltip v-if="row.mode === 'pick'"
-                              content="点击行首箭头展开，选择一个岗位" placement="top">
-                    <el-button size="small" disabled>展开选择岗位</el-button>
-                  </el-tooltip>
+                  <el-button v-if="row.mode === 'pick'" size="small" disabled>展开选择岗位</el-button>
                   <el-button v-else type="primary" size="small" @click="doEnroll(row, null)">
                     {{ enrollText(row) }}
                   </el-button>
@@ -571,13 +564,13 @@
       <el-col :span="7">
         <el-alert v-if="act.my_time_conflicts?.length" type="error" :closable="false"
                   style="margin-bottom:14px">
-          <p style="margin:0 0 4px"><b>您存在时段重叠的既有报名：</b></p>
+          <p style="margin:0 0 4px"><b>您有时间冲突的活动：</b></p>
           <p v-for="c in act.my_time_conflicts" :key="c.enrollment_id" style="margin:2px 0;font-size:12px">
             「{{ c.activity_title }}」{{ c.shift_name }}（{{ c.time }}）
           </p>
         </el-alert>
         <el-card shadow="never">
-          <template #header><b>变更记录</b><span class="dim" style="font-weight:400;margin-left:6px">公开透明 · 全程留痕</span></template>
+          <template #header><b>变更记录</b></template>
           <el-timeline v-if="act.change_logs?.length" style="padding-left:2px">
             <el-timeline-item v-for="l in act.change_logs" :key="l.id"
                               :timestamp="fmtDT(l.created_at)" placement="top"
@@ -603,7 +596,7 @@
           已报名 {{ groupDetail.data.enrolled }} / {{ groupDetail.data.capacity }}
           <span v-if="groupDetail.data.waitlist_count" class="dim">（候补 {{ groupDetail.data.waitlist_count }} 人）</span>
           <span v-if="groupDetail.data.held_seats" class="dim">
-            · 另有 {{ groupDetail.data.held_seats }} 个名额因临近退选被扣留，不再释放</span>
+            · 另有 {{ groupDetail.data.held_seats }} 个名额因临期退选被扣留，不再释放</span>
         </el-descriptions-item>
         <el-descriptions-item label="剩余名额">{{ groupDetail.data.remaining }}</el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ groupDetail.data.requirement_desc }}</el-descriptions-item>
@@ -618,7 +611,6 @@
         <el-descriptions-item label="服务地点">{{ stationDetail.data.location || act.location || '待定' }}</el-descriptions-item>
         <el-descriptions-item label="名额">
           {{ stationDetail.data.enrolled }}/{{ stationDetail.data.quota }}
-          <span class="dim">（岗位之间互斥，一场次一人一个岗位）</span>
         </el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ stationDetail.data.requirement_desc }}</el-descriptions-item>
         <el-descriptions-item label="服务任务"><span class="pre">{{ stationDetail.data.service_task || '—' }}</span></el-descriptions-item>
@@ -642,7 +634,7 @@
             <span class="dim">本岗位设组长，报名后可见组长信息</span>
           </template>
           <template v-else>
-            {{ stationDetail.data.leader_name || '尚未产生（报名时可表态愿意担任）' }}
+            {{ stationDetail.data.leader_name || '尚未任命' }}
             <div v-if="stationDetail.data.leader_contact" class="dim" style="line-height:1.8">
               手机 {{ stationDetail.data.leader_contact.phone || '—' }} ·
               微信 {{ stationDetail.data.leader_contact.wechat || '—' }}
@@ -667,7 +659,7 @@
           </el-descriptions-item>
           <el-descriptions-item label="岗位">
             {{ enrollDlg.position ? enrollDlg.position.name
-               : (enrollDlg.shift.mode === 'assign' ? '报名截止后由青协统一分配' : '无需选择') }}
+               : (enrollDlg.shift.mode === 'assign' ? '将由负责人统一筛选分配' : '无需选择') }}
           </el-descriptions-item>
           <el-descriptions-item v-if="enrollExtra.length" label="还需参加">
             <div v-for="s in enrollExtra" :key="s.id" style="line-height:1.7">
@@ -678,15 +670,14 @@
           </el-descriptions-item>
           <el-descriptions-item label="结果">
             <el-tag :type="willWaitlist ? 'warning' : 'success'" size="small">
-              {{ willWaitlist ? '名额已满，将加入候补队列' : '名额充足，报名即生效' }}
+              {{ willWaitlist ? '名额已满，将进入候补队列' : '名额充足，即选即得' }}
             </el-tag>
           </el-descriptions-item>
         </el-descriptions>
 
         <el-alert v-if="enrollExtra.length && !willWaitlist" type="info" show-icon
                   :closable="false" style="margin-top:10px"
-                  title="以上培训/彩排会随本次报名一并报上"
-                  description="它们各自需要到场签到；退选本场次时会一并退出。请确认这些时间你都能到。" />
+                  title="请确认这些时间你可到场，如时间冲突需向负责人请假。" />
 
         <!-- 活动设了报名表：报名时一并答，答案跟着报名记录走 -->
         <el-form v-if="act.questions?.length" label-position="top" style="margin-top:12px">
@@ -699,22 +690,15 @@
             接受岗位调剂
           </el-checkbox>
           <div v-if="willWaitlist" class="dim" style="margin-top:2px">
-            候补必须接受调剂：有空位的岗位才好把排队的人调过去
+            候补须接受调剂，负责人可调至空缺岗位
+          </div>
+          <div v-else class="dim" style="margin-top:2px">
+            仅在名额不足时可能进行调剂，负责人可看到你的意愿。
           </div>
           <el-checkbox v-model="enrollDlg.leaderWilling" style="display:block;margin-top:6px">
             愿意担任组长（如本岗位需要）
           </el-checkbox>
-          <div class="dim" style="margin-top:2px">
-            组长由负责老师从有意愿的人里指定。现在没设组长的岗位，之后也可能要设。
-          </div>
-          <p class="dim">
-            仅供负责老师排班参考：不勾选也可能被调整，但名单上会标注你的意愿。
-          </p>
         </div>
-
-        <el-alert v-if="needLateWarn(enrollDlg.shift)" type="warning" :closable="false"
-                  style="margin-top:10px"
-                  title="距该场次开始已不足 24 小时：报名后再退选，名额将被扣留不再释放" />
       </template>
       <template #footer>
         <el-button @click="enrollDlg.visible = false">再想想</el-button>
@@ -783,10 +767,6 @@ const statusType = computed(() => STATUS_TYPES[act.value?.display_status] || 'in
 
 function pct(g) {
   return Math.min(100, Math.round((g.enrolled / Math.max(1, g.capacity)) * 100))
-}
-function needLateWarn(g) {
-  const st = new Date(g.start_time.replace(' ', 'T'))
-  return Date.now() > st.getTime() - 24 * 3600 * 1000
 }
 function deadlineTs(g) {
   return new Date(g.my_enrollment.confirm_deadline.replace(' ', 'T').slice(0, 19)).getTime()
@@ -934,7 +914,7 @@ async function submitEnroll() {
       enrollDlg.value.visible = false
       try {
         await ElMessageBox.alert(
-          '报名前需先完善个人信息（手机号/微信号/身份证号），请在接下来的弹窗中填写并保存。',
+          '报名前需先完善个人信息，便于后期联络与志愿时长录入。',
           '需先完善个人信息',
           { type: 'warning', confirmButtonText: '去完善' })
       } catch { /* 关闭提示也照样打开表单 */ }
@@ -946,7 +926,7 @@ async function submitEnroll() {
       const list = e.data.conflicts
         .map(c => `「${c.activity_title}」${c.shift_name}（${c.time}）`
                   + (c.waiting ? '　<i>候补中</i>' : '')).join('<br>')
-      ElMessageBox.alert(list, '与已有报名时间冲突',
+      ElMessageBox.alert(list, '与其他活动时间冲突',
                          { dangerouslyUseHTMLString: true, type: 'error' })
     }
   } finally {
@@ -969,10 +949,8 @@ async function cancelEnroll(g) {
   const late = !canCancel(g)
   try {
     await ElMessageBox.confirm(
-      late ? '距开始不足24小时：报名已截止的话，该名额会被扣留、不再释放给任何人，'
-             + '你本人之后也无法再报名这个场次，并记一次临近退选。确定退选吗？'
-           : '名额将按候补顺序自动递补。',
-      '确认退选', { type: 'warning', confirmButtonText: '确定退选', cancelButtonText: '取消' })
+      late ? '距开始不足24小时，将记录一次临期退选。确定退选吗？' : '确定退选吗？',
+      '确认退选', { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' })
   } catch { return }
   const d = await api.del(`/api/activities/enrollments/${enrId}`)
   ElMessage[d.effect === 'held' ? 'warning' : 'success'](d.message)

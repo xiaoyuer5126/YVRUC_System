@@ -7,7 +7,7 @@
              :close-on-press-escape="!forced"
              :show-close="!forced">
     <el-alert v-if="forced" type="warning" :closable="false" style="margin-bottom:14px"
-              title="数智人大无法同步您的联系方式，请先补全以下信息，否则不能报名志愿活动" />
+              title="数智人大无法同步您的联系方式，请先补全以下信息" />
     <el-form label-width="82px">
       <el-form-item label="手机号" required>
         <el-input v-model="form.phone" placeholder="11 位手机号" maxlength="11" />
@@ -29,7 +29,7 @@
         </div>
         <div v-else style="width:100%">
           <el-input v-model="form.id_card" maxlength="18"
-                    :placeholder="hasIdOnFile ? '输入新的 18 位身份证号' : '18 位居民身份证号'" />
+                    :placeholder="hasIdOnFile ? '输入新的 18 位身份证号' : '18 位身份证号'" />
           <el-button v-if="hasIdOnFile" link size="small"
                      @click="editingId = false; form.id_card = ''">取消修改</el-button>
         </div>
@@ -42,8 +42,7 @@
       </el-form-item>
     </el-form>
     <p class="dim" style="margin:0;font-size:12px;line-height:1.7">
-      信息仅用于志愿服务组织联络与保险登记；身份证号仅存储、不对外展示，
-      导出的排班表也不包含。</p>
+      信息仅用于志愿服务组织联络，身份证号仅用于时长录入，不对外展示</p>
     <template #footer>
       <el-button v-if="!forced" @click="visible = false">取消</el-button>
       <el-button type="primary" :loading="saving" @click="save">保存</el-button>
@@ -94,8 +93,7 @@ async function save() {
     // 已填过且没点「修改」→ 留空提交表示这一项不动
     const mustFill = !hasIdOnFile.value || editingId.value
     if (mustFill && !/^\d{17}[\dX]$/.test(idCard)) {
-      return ElMessage.warning('身份证号应为 18 位（末位可为 X）；'
-        + '港澳台学生与留学生请勾选下方的免填选项')
+      return ElMessage.warning('身份证号应为 18 位（末位可为 X）')
     }
   }
 

@@ -256,7 +256,7 @@ def main() -> None:
             raise RuntimeError("演示人数不够了")
 
         # 上午场：东门满8 / 检录 6+1扣留=满7 / 礼仪3（女）/ 医疗2
-        # 检录只放 6 个人：下面那位临近退选的占掉第 7 个位子。
+        # 检录只放 6 个人：下面那位临期退选的占掉第 7 个位子。
         # 放满 7 再加一条扣留，就成了「已占用 8 > 名额 7」——真实流程走不出
         # 这种状态（要先报上名才谈得上扣留），演示数据不该自己造一个。
         for _ in range(8):
@@ -277,7 +277,7 @@ def main() -> None:
         e_pc.promoted_at = dt(hours=-1)
         e_pc.confirm_deadline = dt(hours=1)   # 演示：还有1小时确认窗口
 
-        # 一名临近退选：扣分且名额被扣留不释放（roster 里显示为占位）
+        # 一名临期退选：扣分且名额被扣留不释放（roster 里显示为占位）
         late_user = take()
         late_enr = enr(late_user, sport, m1, 1, status="cancelled",
                        position=s_check, assigned=False)

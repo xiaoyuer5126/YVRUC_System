@@ -1,6 +1,6 @@
 """志愿者档案：只记不罚。
 
-青协能看到一个人参与过的活动、违规记录、临近退选次数；平台不据此拦任何人。
+青协能看到一个人参与过的活动、违规记录、临期退选次数；平台不据此拦任何人。
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ HEAD, CORE, MEMBER = "2025004", "2025005", "2025006"
 
 
 def _late_cancel(client, db, open_group, take_student):
-    """造一次「临近退选」：报名已截止、距开场不足 24 小时。"""
+    """造一次「临期退选」：报名已截止、距开场不足 24 小时。"""
     act, g = open_group(2, day_offset=0, start_in_hours=5)
     sid = take_student()
     t = login(client, sid)
@@ -30,7 +30,7 @@ def _late_cancel(client, db, open_group, take_student):
     return act, sid, r.json()
 
 
-def test_临近退选只扣留名额不扣任何分(client, db, open_group, take_student):
+def test_临期退选只扣留名额不扣任何分(client, db, open_group, take_student):
     act, sid, body = _late_cancel(client, db, open_group, take_student)
     assert body["effect"] == "held"
     assert "分" not in body["message"]
@@ -43,7 +43,7 @@ def test_临近退选只扣留名额不扣任何分(client, db, open_group, take
                        json={"position_id": g2.test_position_id}).status_code == 200
 
 
-def test_档案里数得出临近退选次数(client, admin, db, open_group, take_student):
+def test_档案里数得出临期退选次数(client, admin, db, open_group, take_student):
     act, sid, _ = _late_cancel(client, db, open_group, take_student)
     u = student_row(db, sid)
     d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()

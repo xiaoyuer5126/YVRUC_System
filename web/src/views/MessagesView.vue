@@ -4,9 +4,6 @@
       <h2 style="margin:0">消息通知</h2>
       <el-button size="small" @click="readAll" :disabled="!unread">全部已读</el-button>
     </div>
-    <p class="dim" style="margin-top:-8px">
-      以下为「企业微信模板消息」的送达记录（演示环境在平台内展示；生产环境同步推送到企业微信）。
-    </p>
     <el-alert v-if="pendingAck" type="warning" :closable="false" show-icon
               style="margin-bottom:12px"
               :title="`有 ${pendingAck} 条通知需要您签收`"
