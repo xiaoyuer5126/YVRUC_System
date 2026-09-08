@@ -5,26 +5,32 @@
       驳回与转交均须写明理由，相关各方都会收到通知。
     </el-alert>
 
-    <!-- 时长锁定之后要改，走这条。批的是「能不能改」，改成多少仍由管理者填 -->
-    <template v-if="unlocks.length">
-      <div class="section-title" style="margin-top:0">时长解锁申请</div>
-      <el-card v-for="u in unlocks" :key="u.id" shadow="never" class="item">
+    <!-- 时长的两道审批：锁定（批的是这场活动的账能不能结）与解锁（结完还要改）。
+         批的都是「能不能」，改成多少仍由管理者填 -->
+    <template v-if="hoursReqs.length">
+      <div class="section-title" style="margin-top:0">时长审批</div>
+      <el-card v-for="u in hoursReqs" :key="u.id" shadow="never" class="item">
         <div class="head">
           <b class="title" @click="$router.push('/manage/' + u.activity_id + '?tab=hours')">
             {{ u.activity_title }}
           </b>
-          <el-tag size="small" type="warning" effect="plain">申请解锁时长</el-tag>
+          <el-tag size="small" :type="u.kind === 'lock' ? 'primary' : 'warning'"
+                  effect="plain">
+            {{ u.kind === 'lock' ? '时长待审核' : '申请解锁时长' }}
+          </el-tag>
           <span style="margin-left:auto">
-            <el-button size="small" type="success" @click="decideUnlock(u, true)">同意</el-button>
+            <el-button size="small" type="success" @click="decideHours(u, true)">同意</el-button>
             <el-button size="small" type="danger" plain
-                       @click="decideUnlock(u, false)">驳回</el-button>
+                       @click="decideHours(u, false)">驳回</el-button>
           </span>
         </div>
         <div class="submit-note">
-          <b>理由</b><span>{{ u.reason }}</span>
+          <b>说明</b><span>{{ u.reason }}</span>
         </div>
         <div class="dim" style="margin-top:6px">
-          {{ u.requested_by }} 提交于 {{ fmtDT(u.created_at) }}
+          {{ u.requested_by }} 提交于 {{ fmtDT(u.created_at) }} ·
+          {{ u.kind === 'lock' ? '通过后锁定时长、活动标记已完成；驳回退回管理者修改'
+                               : '通过后解锁，管理者改完须重新核准' }}
         </div>
       </el-card>
       <div class="section-title">待审批活动</div>
@@ -153,7 +159,7 @@ import { auth } from '../store'
 
 const narrow = useNarrow()
 const rows = ref([])
-const unlocks = ref([])
+const hoursReqs = ref([])
 const depts = ref([])
 const loading = ref(false)
 const dlg = ref({ visible: false, row: null, approve: true, comment: '', busy: false })
@@ -183,23 +189,27 @@ async function load() {
   loading.value = true
   try {
     rows.value = await api.get('/api/staff/approvals')
-    unlocks.value = await api.get('/api/staff/hours-unlocks')
+    hoursReqs.value = await api.get('/api/staff/hours-requests')
     depts.value = await api.get('/api/staff/departments')
   } finally { loading.value = false }
 }
 onMounted(load)
 
-// 同意解锁 = 允许管理者改这场活动已经锁定的时长；改完他要重新核准
-async function decideUnlock(row, approve) {
+/** 锁定：同意即封账、活动标记已完成；驳回退回管理者改。
+ *  解锁：同意即允许改已经封了的账，改完他要重新核准。 */
+async function decideHours(row, approve) {
   let reply = ''
+  const what = row.kind === 'lock' ? '时长审核' : '解锁申请'
   if (!approve) {
-    const r = await ElMessageBox.prompt('请写明驳回理由，会发给申请人。', '驳回解锁申请',
+    const r = await ElMessageBox.prompt('请写明驳回理由，会发给申请人。', `驳回${what}`,
                                         { inputValidator: v => (v || '').trim().length >= 2
                                                                || '至少 2 个字' })
     reply = r.value.trim()
   }
-  await api.post(`/api/staff/hours-unlocks/${row.id}/decide`, { approve, reply })
-  ElMessage.success(approve ? '已同意解锁' : '已驳回')
+  await api.post(`/api/staff/hours-requests/${row.id}/decide`, { approve, reply })
+  ElMessage.success(approve
+    ? (row.kind === 'lock' ? '已通过，时长已锁定' : '已同意解锁')
+    : '已驳回')
   load()
 }
 

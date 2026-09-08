@@ -44,5 +44,5 @@ defineEmits(['navigate'])
 
 <style scoped>
 .side-menu { border-right: none; }
-.menu-cap { font-size: 12px; color: #a8abb2; padding: 14px 20px 4px; }
+.menu-cap { font-size: 13px; color: #a8abb2; padding: 14px 20px 4px; }
 </style>

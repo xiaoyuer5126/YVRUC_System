@@ -522,7 +522,7 @@
         <el-alert v-if="act.my_time_conflicts?.length" type="error" :closable="false"
                   style="margin-bottom:14px">
           <p style="margin:0 0 4px"><b>您有时间冲突的活动：</b></p>
-          <p v-for="c in act.my_time_conflicts" :key="c.enrollment_id" style="margin:2px 0;font-size:12px">
+          <p v-for="c in act.my_time_conflicts" :key="c.enrollment_id" style="margin:2px 0;font-size:13px">
             「{{ c.activity_title }}」{{ c.shift_name }}（{{ c.time }}）
           </p>
         </el-alert>
@@ -980,7 +980,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .group-card { margin-bottom: 14px; border-radius: 12px; }
 .g-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 .reassign-box { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #f7f8fa; }
-.reassign-box .dim { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
+.reassign-box .dim { margin: 6px 0 0; font-size: 13px; line-height: 1.7; }
 
 /* 活动级的要求与保障 */
 .side-note {

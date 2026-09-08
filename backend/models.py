@@ -791,18 +791,24 @@ class HoursRecord(Base):
         return self.reward == "hours"
 
 
-class HoursUnlockRequest(Base):
-    """锁定之后还要改时长，得先报审批。
+class HoursRequest(Base):
+    """时长的两道审批：锁定与解锁，都由归口部长拍板。
 
-    锁定的意思就是这场活动的账结了。之后再改，得让归口部长知道改什么、为什么
-    改——所以走一条明面上的申请，而不是给管理者留一个「再解锁一次」的按钮。
+    志愿时长要由校青协过目才算数，所以「锁定」不是管理者点一下就完事：
+    申诉期满系统自动提交、或管理者手动提交，等部长通过才真的封账。
+    审批期间时长冻结不许改，驳回就解冻、改完重新核准再提交。
+
+    解锁是封账之后还要改的那条路：让部长知道改什么、为什么改，
+    而不是给管理者留一个「再解锁一次」的按钮。
     """
-    __tablename__ = "hours_unlock_requests"
+    __tablename__ = "hours_requests"
 
     STATUS_LABELS = {"pending": "待审批", "approved": "已同意", "rejected": "已驳回"}
+    KIND_LABELS = {"lock": "锁定", "unlock": "解锁"}
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
+    kind: Mapped[str] = mapped_column(String(8), default="lock", index=True)
     reason: Mapped[str] = mapped_column(String(512))
     requested_by: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
@@ -813,6 +819,9 @@ class HoursUnlockRequest(Base):
 
     def status_label(self) -> str:
         return self.STATUS_LABELS.get(self.status, self.status)
+
+    def kind_label(self) -> str:
+        return self.KIND_LABELS.get(self.kind, self.kind)
 
 
 class AttireTask(Base):

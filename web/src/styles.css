@@ -9,6 +9,9 @@
   --el-color-primary-light-8: #eec7cd;
   --el-color-primary-light-9: #f7e3e7;
   --el-color-primary-dark-2: #7e1b2a;
+  /* 宽屏上最小的一档字号往上提一号：12px 的辅助文字（标签、小号表格、
+     dim 说明）在桌面浏览器里偏小。窄屏保持 12px，那边寸土寸金。 */
+  --el-font-size-extra-small: 13px;
 }
 
 * { box-sizing: border-box; }
@@ -58,7 +61,7 @@ body {
 .station-chip.disabled { opacity: .55; cursor: not-allowed; }
 
 .mono { font-family: Consolas, Monaco, monospace; }
-.dim { color: #909399; font-size: 12px; }
+.dim { color: #909399; font-size: 13px; }
 .pre { white-space: pre-wrap; }   /* 多行文字（服务任务、培训内容）按换行显示 */
 .section-title { font-size: 15px; font-weight: 600; margin: 18px 0 10px; display:flex; align-items:center; gap:8px; }
 .section-title::before { content:""; width: 4px; height: 16px; background: var(--el-color-primary);
@@ -70,6 +73,10 @@ body {
 /* 手机上不做「缩小的桌面版」：留白收紧、栅格拉直、表格交给卡片。 */
 @media (max-width: 860px) {
   html { -webkit-text-size-adjust: 100%; }
+
+  /* 窄屏维持 12px：手机上每一行都要省地方 */
+  :root { --el-font-size-extra-small: 12px; }
+  .dim { font-size: 12px; }
 
   .page, .page-wide, .page-narrow { max-width: 100%; padding: 12px 12px 32px; }
 

@@ -1,4 +1,4 @@
-"""志愿时长的结账：核准 → 本人确认或申诉 → 锁定。
+"""志愿时长的结账：核准 → 本人确认或申诉 → 报校青协审批 → 锁定。
 
 一场活动的账一起结，状态记在活动上（hours_approved_at / appeal_deadline /
 hours_locked_at）；每个人的表态记在自己那条 HoursRecord 上（confirmed_at /
@@ -12,7 +12,35 @@ from sqlalchemy.orm import Session as OrmSession
 
 from .audit import log as audit_log
 from .integrations import wecom
-from .models import (Activity, Enrollment, HoursRecord, Position, User, now)
+from .models import (Activity, Enrollment, HoursRecord, HoursRequest, Position,
+                     User, now, uid)
+
+
+def pending_lock(db: OrmSession, activity_id: str) -> HoursRequest | None:
+    """这场活动是不是有一条锁定申请正等着部长处理。"""
+    return (db.query(HoursRequest)
+            .filter(HoursRequest.activity_id == activity_id,
+                    HoursRequest.kind == "lock",
+                    HoursRequest.status == "pending").first())
+
+
+def submit_lock(db: OrmSession, act: Activity, actor: User | None,
+                reason: str) -> HoursRequest | None:
+    """提交锁定审批。已经挂着一条就不再提，返回 None。不提交事务。
+
+    时长要由校青协过目才算数：申诉期满系统自动提交，管理者也可以手动提前提交。
+    等的这段时间里时长冻结，改不了——否则部长看的和最终封的不是同一份账。
+    """
+    if pending_lock(db, act.id) is not None:
+        return None
+    req = HoursRequest(id=uid("hrq"), activity_id=act.id, kind="lock",
+                       reason=reason,
+                       requested_by=actor.id if actor else "system")
+    db.add(req)
+    audit_log(db, actor=actor, action="hours_confirm", target_type="hours",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=f"提交时长锁定审批（{reason}）")
+    return req
 
 
 def default_appeal_deadline() -> datetime:

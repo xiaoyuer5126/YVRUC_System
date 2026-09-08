@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from ..audit import log as audit_log
 from .. import config, hours as hours_flow
+from ..stage import ensure_hours_editable, ensure_not_finished
 from ..database import db_session
 from ..deps import require_manager, require_manager_download
 from ..enroll_logic import position_enrolled_count
@@ -21,7 +22,7 @@ from ..perm import ensure_activity_manager
 from ..integrations import checkin_gateway, wecom
 from ..notify import notify, notify_checkin
 from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
-                      HoursAppeal, HoursRecord, HoursUnlockRequest, Shift,
+                      HoursAppeal, HoursRecord, HoursRequest, Shift,
                       Position, User, iso, now, uid)
 from ..serializers import iso_of, recruit_scope_text
 
@@ -53,6 +54,7 @@ def create_task(shift_id: str, body: TaskBody,
         raise HTTPException(404, "场次不存在")
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
+    ensure_not_finished(act)
     position = None
     if body.mode == "position":
         position = db.get(Position, body.position_id or "")
@@ -113,6 +115,7 @@ def toggle_task(task_id: str, body: dict,
     if task is None:
         raise HTTPException(404, "任务不存在")
     ensure_activity_manager(db, user, task.activity_id)
+    ensure_not_finished(_act(db, task.activity_id))
     if "active" in body:
         task.active = bool(body["active"])
     db.commit()
@@ -141,6 +144,7 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
     if g is None:
         raise HTTPException(404, "场次不存在")
     ensure_activity_manager(db, user, g.activity_id)
+    ensure_not_finished(_act(db, g.activity_id))
 
     body = body or ReminderBody()
     ids, scope = None, "全场次"
@@ -309,6 +313,9 @@ def batch_op(task_id: str, body: dict,
     if task is None:
         raise HTTPException(404, "任务不存在")
     ensure_activity_manager(db, user, task.activity_id)
+    # 补签卡在「时长封账」而不是「活动结束」：签到记录是算时长的依据，
+    # 账没结完就还得能补
+    ensure_hours_editable(db, _act(db, task.activity_id))
     g = db.get(Shift, task.shift_id)
     action = body.get("action")
     sids = [s.strip() for s in (body.get("student_ids") or []) if s.strip()]
@@ -538,17 +545,8 @@ def _parse_deadline(raw: str) -> datetime:
     return deadline
 
 
-def _ensure_hours_open(act: Activity) -> None:
-    """时长锁定之后不许再动。要改就先报审批解锁。"""
-    if act.hours_locked():
-        raise HTTPException(
-            409, f"「{act.title}」的时长已于 "
-                 f"{act.hours_locked_at:%Y-%m-%d %H:%M} 锁定，"
-                 f"如需修改请先申请解锁并由校青协审批")
-
-
 def _hours_approvers(db: OrmSession, act: Activity) -> list[User]:
-    """谁能拍解锁：归口部门的部长，加上会长团与平台管理员。"""
+    """谁能拍锁定与解锁：归口部门的部长，加上会长团与平台管理员。"""
     out = []
     if act.approval_dept_id:
         out += (db.query(User)
@@ -691,9 +689,9 @@ def hours_preview(activity_id: str, db: OrmSession = Depends(db_session),
     pending_appeals = (db.query(HoursAppeal)
                        .filter(HoursAppeal.activity_id == act.id,
                                HoursAppeal.status == "pending").count())
-    unlock = (db.query(HoursUnlockRequest)
-              .filter(HoursUnlockRequest.activity_id == act.id)
-              .order_by(HoursUnlockRequest.created_at.desc()).first())
+    req = (db.query(HoursRequest)
+           .filter(HoursRequest.activity_id == act.id)
+           .order_by(HoursRequest.created_at.desc()).first())
     return {"items": compute_hours(db, act), "manual": manual,
             "status_label": act.label_status(),
             # 核准状态：这一页所有按钮都按它来
@@ -702,11 +700,14 @@ def hours_preview(activity_id: str, db: OrmSession = Depends(db_session),
             "locked_at": iso_of(act.hours_locked_at),
             "pending_appeals": pending_appeals,
             "default_deadline": iso(hours_flow.default_appeal_deadline()),
-            "unlock_request": ({"id": unlock.id, "status": unlock.status,
-                                "status_label": unlock.status_label(),
-                                "reason": unlock.reason, "reply": unlock.reply,
-                                "created_at": iso(unlock.created_at)}
-                               if unlock else None)}
+            # 锁定审批挂着的时候整页冻结：部长看的和最终封的得是同一份账
+            "lock_pending": hours_flow.pending_lock(db, act.id) is not None,
+            "request": ({"id": req.id, "kind": req.kind,
+                         "kind_label": req.kind_label(), "status": req.status,
+                         "status_label": req.status_label(),
+                         "reason": req.reason, "reply": req.reply,
+                         "created_at": iso(req.created_at)}
+                        if req else None)}
 
 
 class ManualHoursBody(BaseModel):
@@ -720,7 +721,7 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
     """管理者为志愿者手动添加时长（不依赖签到），可批量。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    _ensure_hours_open(act)
+    ensure_hours_editable(db, act)
     if not body.items:
         raise HTTPException(400, "空列表")
     added = []
@@ -759,7 +760,7 @@ def hours_manual_delete(activity_id: str, record_id: str,
     r = db.get(HoursRecord, record_id)
     if r is None or r.activity_id != act.id or r.source != "manual":
         raise HTTPException(404, "手动时长记录不存在")
-    _ensure_hours_open(act)
+    ensure_hours_editable(db, act)
     u = db.get(User, r.user_id)
     db.delete(r)
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
@@ -786,7 +787,7 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    _ensure_hours_open(act)
+    ensure_hours_editable(db, act)
 
     kept: list[str] = []
     items = compute_hours(db, act)
@@ -908,7 +909,7 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
     if a is None:
         raise HTTPException(404, "申诉不存在")
     ensure_activity_manager(db, user, a.activity_id)
-    _ensure_hours_open(_act(db, a.activity_id))
+    ensure_hours_editable(db, _act(db, a.activity_id))
     if a.status != "pending":
         raise HTTPException(409, f"该申诉已{a.status_label()}")
     rec = db.get(HoursRecord, a.record_id)
@@ -964,7 +965,7 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    _ensure_hours_open(act)
+    ensure_hours_editable(db, act)
     deadline = _parse_deadline(body.appeal_deadline)
     rows = (db.query(HoursRecord)
             .filter(HoursRecord.activity_id == act.id).all())
@@ -1015,26 +1016,37 @@ class LockHoursBody(BaseModel):
     note: str = ""
 
 
-@router.post("/activities/{activity_id}/hours/lock")
-def hours_lock(activity_id: str, body: LockHoursBody | None = None,
-               db: OrmSession = Depends(db_session),
-               user: User = Depends(require_manager)):
-    """手动锁定。有人还在申诉也能锁——是否理会申诉由管理者判断。"""
+@router.post("/activities/{activity_id}/hours/lock-request")
+def hours_lock_request(activity_id: str, body: LockHoursBody | None = None,
+                       db: OrmSession = Depends(db_session),
+                       user: User = Depends(require_manager)):
+    """提前提交锁定审批。不等申诉期满、有申诉没处理，都由管理者判断。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    _ensure_hours_open(act)
+    ensure_hours_editable(db, act)
     if act.hours_approved_at is None:
         raise HTTPException(409, "请先核准时长")
     pending = (db.query(HoursAppeal)
                .filter(HoursAppeal.activity_id == act.id,
                        HoursAppeal.status == "pending").count())
     note = (body.note.strip() if body and body.note else "")
-    reason = "管理者手动锁定" + (f"（{note}）" if note else "")
+    reason = "管理者提交" + (f"（{note}）" if note else "")
     if pending:
-        reason += f"；{pending} 条申诉未处理，已按现有时长记录"
-    hours_flow.lock_hours(db, act, user, reason)
+        reason += f"；{pending} 条申诉未处理"
+    req = hours_flow.submit_lock(db, act, user, reason)
+    _notify_lock_approvers(db, act, user.name, reason)
     db.commit()
-    return {"ok": True, "pending_appeals": pending}
+    return {"ok": True, "id": req.id if req else "", "pending_appeals": pending}
+
+
+def _notify_lock_approvers(db: OrmSession, act: Activity, who: str,
+                           reason: str) -> None:
+    for approver in _hours_approvers(db, act):
+        notify(db, approver, f"时长锁定审批｜{act.title}",
+               f"{who}提交了「{act.title}」的志愿时长，等待校青协审核。\n"
+               f"说明：{reason}\n通过后时长锁定、活动标记为已完成；"
+               f"驳回则退回管理者修改。\n请到「活动审批」处理。",
+               data={"activity_id": act.id}, need_ack=True)
 
 
 class UnlockRequestBody(BaseModel):
@@ -1053,12 +1065,13 @@ def request_unlock(activity_id: str, body: UnlockRequestBody,
     reason = body.reason.strip()
     if len(reason) < 5:
         raise HTTPException(400, "请写明修改内容与原因（至少 5 个字）")
-    if (db.query(HoursUnlockRequest)
-            .filter(HoursUnlockRequest.activity_id == act.id,
-                    HoursUnlockRequest.status == "pending").first()):
+    if (db.query(HoursRequest)
+            .filter(HoursRequest.activity_id == act.id,
+                    HoursRequest.kind == "unlock",
+                    HoursRequest.status == "pending").first()):
         raise HTTPException(409, "已有一条解锁申请在审批中")
-    req = HoursUnlockRequest(id=uid("ulk"), activity_id=act.id, reason=reason,
-                             requested_by=user.id)
+    req = HoursRequest(id=uid("hrq"), activity_id=act.id, kind="unlock",
+                       reason=reason, requested_by=user.id)
     db.add(req)
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
@@ -1072,63 +1085,80 @@ def request_unlock(activity_id: str, body: UnlockRequestBody,
     return {"ok": True, "id": req.id}
 
 
-class UnlockDecideBody(BaseModel):
+class HoursDecideBody(BaseModel):
     approve: bool
     reply: str = ""
 
 
-@router.post("/hours-unlocks/{request_id}/decide")
-def decide_unlock(request_id: str, body: UnlockDecideBody,
-                  db: OrmSession = Depends(db_session),
-                  user: User = Depends(require_manager)):
-    """归口部长（或会长团/管理员）拍板解不解锁。"""
-    req = db.get(HoursUnlockRequest, request_id)
+@router.post("/hours-requests/{request_id}/decide")
+def decide_hours_request(request_id: str, body: HoursDecideBody,
+                         db: OrmSession = Depends(db_session),
+                         user: User = Depends(require_manager)):
+    """归口部长（或会长团/管理员）拍板锁不锁、解不解。
+
+    锁定通过 = 这场活动的时长经校青协审核，就此封账、活动标记已完成；
+    驳回则解冻，管理者改完重新核准，再提交一次。
+    """
+    req = db.get(HoursRequest, request_id)
     if req is None:
         raise HTTPException(404, "申请不存在")
     if req.status != "pending":
         raise HTTPException(409, f"该申请{req.status_label()}")
     act = _act(db, req.activity_id)
     if user.id not in {u.id for u in _hours_approvers(db, act)}:
-        raise HTTPException(403, "只有归口部门的部长可以处理时长解锁申请")
+        raise HTTPException(403, f"只有归口部门的部长可以处理时长{req.kind_label()}申请")
     reply = body.reply.strip()
     if not body.approve and len(reply) < 2:
         raise HTTPException(400, "驳回必须写明理由")
     req.status = "approved" if body.approve else "rejected"
     req.reply, req.handled_by, req.handled_at = reply, user.id, now()
-    if body.approve:
+    if body.approve and req.kind == "lock":
+        hours_flow.lock_hours(db, act, user, f"校青协审核通过（{req.reason}）")
+    elif body.approve:
         act.hours_locked_at = None
         act.status = "finished"
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=(f"同意解锁时长（{req.reason}）" if body.approve
-                       else f"驳回时长解锁申请：{reply}"))
+              summary=(f"同意{req.kind_label()}时长（{req.reason}）" if body.approve
+                       else f"驳回时长{req.kind_label()}申请：{reply}"))
     requester = db.get(User, req.requested_by)
     if requester is not None:
         notify(db, requester,
-               f"时长解锁{'已通过' if body.approve else '未通过'}｜{act.title}",
-               (f"「{act.title}」的时长已解锁，修改后请重新核准。"
-                if body.approve else f"解锁申请未通过。意见：{reply}")
-               + (f"\n审批意见：{reply}" if body.approve and reply else ""),
+               f"时长{req.kind_label()}{'已通过' if body.approve else '未通过'}"
+               f"｜{act.title}",
+               _decide_text(act, req, body.approve, reply),
                data={"activity_id": act.id})
     db.commit()
     return {"ok": True, "status": req.status}
 
 
-@router.get("/hours-unlocks")
-def my_unlock_requests(db: OrmSession = Depends(db_session),
-                       user: User = Depends(require_manager)):
-    """待我处理的时长解锁申请，挂在「活动审批」页上。"""
-    rows = (db.query(HoursUnlockRequest, Activity)
-            .join(Activity, HoursUnlockRequest.activity_id == Activity.id)
-            .filter(HoursUnlockRequest.status == "pending")
-            .order_by(HoursUnlockRequest.created_at).all())
+def _decide_text(act: Activity, req, approve: bool, reply: str) -> str:
+    if not approve:
+        return (f"时长{req.kind_label()}申请未通过。意见：{reply}\n"
+                + ("请修改后重新核准，再提交一次审批。" if req.kind == "lock"
+                   else "如仍需修改，请补充说明后重新申请。"))
+    tail = f"\n审批意见：{reply}" if reply else ""
+    if req.kind == "lock":
+        return f"「{act.title}」的志愿时长已通过校青协审核并锁定，活动已完成。{tail}"
+    return f"「{act.title}」的时长已解锁，修改后请重新核准。{tail}"
+
+
+@router.get("/hours-requests")
+def my_hours_requests(db: OrmSession = Depends(db_session),
+                      user: User = Depends(require_manager)):
+    """待我处理的时长审批（锁定与解锁），挂在「活动审批」页上。"""
+    rows = (db.query(HoursRequest, Activity)
+            .join(Activity, HoursRequest.activity_id == Activity.id)
+            .filter(HoursRequest.status == "pending")
+            .order_by(HoursRequest.created_at).all())
     out = []
     for req, act in rows:
         if user.id not in {u.id for u in _hours_approvers(db, act)}:
             continue
         who = db.get(User, req.requested_by)
-        out.append({"id": req.id, "activity_id": act.id,
+        out.append({"id": req.id, "kind": req.kind,
+                    "kind_label": req.kind_label(), "activity_id": act.id,
                     "activity_title": act.title, "reason": req.reason,
-                    "requested_by": who.name if who else "",
+                    "requested_by": who.name if who else "系统",
                     "created_at": iso(req.created_at)})
     return out

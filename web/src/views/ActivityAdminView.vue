@@ -337,11 +337,11 @@
             <span>已报名名单（{{ roster.enrolled.length }} 人）</span>
             <span class="roster-actions">
               <el-button type="primary" size="small" :loading="assignPanel?.solving"
-                         @click="assignPanel.runPreview()">
+                         :disabled="isOver" @click="assignPanel.runPreview()">
                 <el-icon><MagicStick /></el-icon>&nbsp;一键分配岗位
               </el-button>
               <RefreshBar ref="rosterRefresh" :load="refreshRoster" />
-              <el-button size="small" type="success" plain
+              <el-button size="small" type="success" plain :disabled="hoursFrozen"
                          @click="assignPanel.openWalkin()">补招志愿者</el-button>
             </span>
           </div>
@@ -366,17 +366,17 @@
             </template>
             <template #actions="{ row }">
               <el-select v-model="moveSel[row.enrollment_id]" size="small" clearable
-                         placeholder="调至岗位…" style="width:150px">
+                         :disabled="isOver" placeholder="调至岗位…" style="width:150px">
                 <el-option v-for="s in roster.positions" :key="s.id" :value="s.id"
                            :label="`${s.name}（余${Math.max(0, s.quota - s.enrolled)}）`" />
               </el-select>
               <el-button size="small" type="primary" plain
-                         :disabled="moveSel[row.enrollment_id] === undefined"
+                         :disabled="isOver || moveSel[row.enrollment_id] === undefined"
                          @click="applyMove(row)">调岗</el-button>
               <el-button v-if="row.is_leader" size="small" link type="warning"
-                         @click="setLeader(row, false)">取消组长</el-button>
+                         :disabled="isOver" @click="setLeader(row, false)">取消组长</el-button>
               <el-button v-else-if="canBeLeader(row)" size="small" link
-                         @click="setLeader(row, true)">设为组长</el-button>
+                         :disabled="isOver" @click="setLeader(row, true)">设为组长</el-button>
               <ScoreAlert :user="row.user" />
               <el-button size="small" link @click="openArchive(row.user)">档案</el-button>
               <el-button size="small" link type="danger"
@@ -430,10 +430,11 @@
             <el-table-column label="组长" width="96">
               <template #default="{row}">
                 <el-button v-if="row.is_leader" size="small" link type="warning"
-                           @click="setLeader(row, false)">取消</el-button>
+                           :disabled="isOver" @click="setLeader(row, false)">取消</el-button>
                 <el-tooltip v-else-if="canBeLeader(row)" placement="top"
                             content="设为本岗位组组长">
-                  <el-button size="small" link @click="setLeader(row, true)">
+                  <el-button size="small" link :disabled="isOver"
+                             @click="setLeader(row, true)">
                     指定
                   </el-button>
                 </el-tooltip>
@@ -449,12 +450,13 @@
             <el-table-column v-if="roster.positions.length" label="调岗" width="210">
               <template #default="{row}">
                 <el-select v-model="moveSel[row.enrollment_id]" size="small"
-                           clearable placeholder="调至岗位…" style="width:140px">
+                           clearable :disabled="isOver" placeholder="调至岗位…"
+                           style="width:140px">
                   <el-option v-for="s in roster.positions" :key="s.id" :value="s.id"
                              :label="`${s.name}（余${Math.max(0, s.quota - s.enrolled)}）`" />
                 </el-select>
                 <el-button size="small" link type="primary"
-                           :disabled="moveSel[row.enrollment_id] === undefined"
+                           :disabled="isOver || moveSel[row.enrollment_id] === undefined"
                            @click="applyMove(row)">应用</el-button>
               </template>
             </el-table-column>
@@ -501,10 +503,11 @@
                                    { key: 'position_name', label: '岗位',
                                      format: v => v || '未分配' }]">
                 <template #actions="{ row }">
-                  <el-popconfirm title="确认释放该名额？"
+                  <el-popconfirm title="确认释放该名额？" :disabled="isOver"
                                  @confirm="releaseSeat(row)">
                     <template #reference>
-                      <el-button size="small" type="primary" plain>释放名额</el-button>
+                      <el-button size="small" type="primary" plain
+                                 :disabled="isOver">释放名额</el-button>
                     </template>
                   </el-popconfirm>
                 </template>
@@ -535,7 +538,7 @@
                     :title="`通知 ${w.user.name} 确认转正？超时未确认名额将顺延`"
                     @confirm="promoteManually(w)">
                   <template #reference>
-                    <el-button size="small" link type="primary"
+                    <el-button size="small" link type="primary" :disabled="isOver"
                                style="margin-left:auto">转正</el-button>
                   </template>
                 </el-popconfirm>
@@ -559,7 +562,8 @@
       <el-tab-pane v-if="isPublic" label="签到管理" name="checkin" lazy>
         <!-- 场次由面板自己选：这一页在盯现场，跟「报名与调配」那边排人是两件事 -->
         <CheckinPanel v-if="allShifts.length" :activity-id="act.id"
-                      :all-shifts="allShifts" />
+                      :all-shifts="allShifts" :over="isOver"
+                      :hours-frozen="hoursFrozen" />
         <el-empty v-else description="请先创建场次" />
       </el-tab-pane>
 
@@ -611,9 +615,9 @@
             <el-table-column label="操作" width="160">
               <template #default="{ row }">
                 <template v-if="row.status === 'pending'">
-                  <el-button size="small" type="primary" plain
+                  <el-button size="small" type="primary" plain :disabled="hoursFrozen"
                              @click="openResolve(row, true)">采纳</el-button>
-                  <el-button size="small" plain
+                  <el-button size="small" plain :disabled="hoursFrozen"
                              @click="openResolve(row, false)">不采纳</el-button>
                 </template>
                 <span v-else class="dim">{{ row.reply || '—' }}</span>
@@ -623,26 +627,29 @@
         </template>
         <el-divider />
         <div class="toolbar">
-          <el-button @click="hoursPreview()" :loading="hoursLoading">基于签到记录计算时长</el-button>
-          <el-button type="primary" plain :disabled="!hoursSel.length" @click="confirmSelectedHours">
+          <el-button @click="hoursPreview()" :loading="hoursLoading"
+                     :disabled="hoursFrozen">基于签到记录计算时长</el-button>
+          <el-button type="primary" plain :disabled="hoursFrozen || !hoursSel.length"
+                     @click="confirmSelectedHours">
             {{ hoursSel.length ? `确认选中时长（${hoursSel.length} 人）` : '确认选中时长' }}
           </el-button>
           <el-tooltip content="确认正常签退的记录；未签退/自动兜底请逐条核对后手动确认" placement="top">
-            <el-button type="primary" :disabled="!hours.length" @click="confirmAllHours">
+            <el-button type="primary" :disabled="hoursFrozen || !hours.length"
+                       @click="confirmAllHours">
               确认正常签退的
             </el-button>
           </el-tooltip>
           <el-tooltip :disabled="!!confirmedCount" placement="top"
                       content="请先确认时长">
             <span>
-              <el-button v-if="!hoursState.locked_at" type="success"
+              <el-button v-if="!hoursFrozen" type="success"
                          :disabled="!confirmedCount" @click="openApprove">
                 确认核准时长
               </el-button>
             </span>
           </el-tooltip>
-          <el-button v-if="hoursState.approved_at && !hoursState.locked_at"
-                     type="warning" plain @click="lockHoursNow">立即锁定</el-button>
+          <el-button v-if="hoursState.approved_at && !hoursFrozen"
+                     type="warning" plain @click="submitLockNow">提交时长审核</el-button>
           <el-button v-if="hoursState.locked_at" type="warning" plain
                      @click="openUnlock">申请解锁</el-button>
         </div>
@@ -652,13 +659,23 @@
                   style="margin:10px 0"
                   :title="`时长已于 ${fmtDT(hoursState.locked_at)} 锁定，活动已完成`">
           <div style="line-height:1.8">
-            锁定后时长不再改动。确需更正请点「申请解锁」，由校青协审批
-            <template v-if="hoursState.unlock_request">
-              <br />最近一条解锁申请：{{ hoursState.unlock_request.status_label }}
-              · {{ hoursState.unlock_request.reason }}
-              <template v-if="hoursState.unlock_request.reply">
-                （意见：{{ hoursState.unlock_request.reply }}）
+            已通过校青协审核，时长不再改动。确需更正请点「申请解锁」，同样由校青协审批
+            <template v-if="hoursState.request">
+              <br />最近一条{{ hoursState.request.kind_label }}申请：
+              {{ hoursState.request.status_label }} · {{ hoursState.request.reason }}
+              <template v-if="hoursState.request.reply">
+                （意见：{{ hoursState.request.reply }}）
               </template>
+            </template>
+          </div>
+        </el-alert>
+        <el-alert v-else-if="hoursState.lock_pending" type="warning" show-icon
+                  :closable="false" style="margin:10px 0"
+                  title="时长已提交校青协审核，审核期间本页只读">
+          <div style="line-height:1.8">
+            通过即锁定并把活动标记为「已完成」；驳回会退回给你，改完重新核准再提交一次。
+            <template v-if="hoursState.request">
+              <br />提交说明：{{ hoursState.request.reason }}
             </template>
           </div>
         </el-alert>
@@ -666,9 +683,15 @@
                   :closable="false" style="margin:10px 0"
                   :title="`已核准，申诉截止 ${fmtDT(hoursState.appeal_deadline)}`">
           <div style="line-height:1.8">
-            志愿者已收到时长通知，将于截止前确认或提出申诉，超时未确认自动按「无误 + 志愿时长」处理。截止时没有申诉将自动锁定活动并标记为「已完成」<b>有申诉就不会自动锁定</b>——改完再核准一次（只会再通知 申诉过或数值变过的人），或直接「立即锁定」。
+            志愿者已收到时长通知，将于截止前确认或提出申诉，超时未确认自动按「无误 + 志愿时长」处理。
+            截止时没有申诉将自动提交校青协审核，<b>有申诉就不会自动提交</b>——改完再核准一次
+            （只会再通知 申诉过或数值变过的人），或直接「提交时长审核」。
             <template v-if="hoursState.pending_appeals">
               <br />当前有 <b>{{ hoursState.pending_appeals }}</b> 条申诉待处理
+            </template>
+            <template v-if="hoursState.request?.kind === 'lock'
+                            && hoursState.request.status === 'rejected'">
+              <br />上次审核未通过：{{ hoursState.request.reply }}——改完重新核准再提交一次。
             </template>
           </div>
         </el-alert>
@@ -678,7 +701,7 @@
         <div v-if="hours.length" class="scroll-x">
         <el-table :data="hoursSorted" size="small" style="margin-top:10px;min-width:660px"
                   max-height="360" @selection-change="onHoursSelect">
-          <el-table-column type="selection" width="40" />
+          <el-table-column type="selection" width="40" :selectable="() => !hoursFrozen" />
           <el-table-column type="expand" width="30">
             <template #default="{row}"><HoursParts :parts="row.parts" /></template>
           </el-table-column>
@@ -697,7 +720,7 @@
           <el-table-column prop="user.college" label="学院" width="130" />
           <el-table-column label="时长(h)" width="170">
             <template #default="{row}">
-              <el-input-number v-model="row.editHours" size="small"
+              <el-input-number v-model="row.editHours" size="small" :disabled="hoursFrozen"
                                :min="0" :step="0.5" style="width:130px" />
             </template>
           </el-table-column>
@@ -731,14 +754,16 @@
           <div class="toolbar" style="margin-bottom:8px;align-items:flex-start">
             <el-select v-model="mh.userIds" multiple filterable collapse-tags
                        collapse-tags-tooltip placeholder="选择志愿者（可多选）"
-                       style="width:320px">
+                       :disabled="hoursFrozen" style="width:320px">
               <el-option v-for="v in rosterOptions" :key="v.student_id"
                          :value="v.student_id"
                          :label="`${v.name}（${v.student_id}）· ${v.where}`" />
             </el-select>
-            <el-input-number v-model="mh.hours" :min="0.5" :step="0.5" style="width:120px" />
-            <el-input v-model="mh.note" placeholder="备注（如：场外支援）" style="width:220px" />
-            <el-button type="primary" :disabled="!mh.userIds.length"
+            <el-input-number v-model="mh.hours" :min="0.5" :step="0.5"
+                             :disabled="hoursFrozen" style="width:120px" />
+            <el-input v-model="mh.note" placeholder="备注（如：场外支援）"
+                      :disabled="hoursFrozen" style="width:220px" />
+            <el-button type="primary" :disabled="hoursFrozen || !mh.userIds.length"
                        @click="addManualHours">
               批量添加{{ mh.userIds.length ? `（${mh.userIds.length} 人）` : '' }}
             </el-button>
@@ -753,9 +778,9 @@
             </el-table-column>
             <el-table-column label="操作" width="80">
               <template #default="{row}">
-                <el-button v-if="!hoursState.locked_at" size="small" link type="danger"
+                <el-button v-if="!hoursFrozen" size="small" link type="danger"
                            @click="delManualHours(row)">删除</el-button>
-                <span v-else class="dim">已锁定</span>
+                <span v-else class="dim">{{ hoursState.locked_at ? '已锁定' : '审核中' }}</span>
               </template>
             </el-table-column>
           </el-table>
@@ -2244,14 +2269,16 @@ async function doApprove() {
   } finally { d.busy = false }
 }
 
-async function lockHoursNow() {
+// 时长要由校青协审核过才算数：提交给归口部长，通过之后才锁定
+async function submitLockNow() {
   const pending = hoursState.value.pending_appeals
   await ElMessageBox.confirm(
-    pending ? `还有 ${pending} 条申诉没处理，锁定后按现有时长记录、且不能再改。确定吗？`
-            : '锁定后这场活动的时长不再改动，活动标记为「已完成」。确定吗？',
-    '锁定志愿时长', { type: 'warning' })
-  await api.post(`/api/staff/activities/${activityId}/hours/lock`, {})
-  ElMessage.success('已锁定，活动标记为已完成')
+    (pending ? `还有 ${pending} 条申诉没处理。` : '')
+    + '提交后时长冻结、不能再改，等校青协审核；通过即锁定并把活动标记为「已完成」，'
+    + '驳回则退回你修改。确定提交吗？',
+    '提交时长审核', { type: 'warning' })
+  await api.post(`/api/staff/activities/${activityId}/hours/lock-request`, {})
+  ElMessage.success('已提交，等校青协审核')
   hoursPreview(true)
   loadAll()
 }
@@ -2267,6 +2294,10 @@ async function openUnlock() {
   ElMessage.success('已提交，等部长审批')
   hoursPreview(true)
 }
+
+// 时长是不是被冻着：锁定后不能改，报了审核等结果的时候也不能改
+const hoursFrozen = computed(
+  () => !!hoursState.value.locked_at || !!hoursState.value.lock_pending)
 
 function loadRoster() {
   const g = currentShift.value

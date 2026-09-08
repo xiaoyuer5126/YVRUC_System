@@ -66,6 +66,17 @@ def _record(client, h):
     return client.get("/api/me/hours", headers=h).json()["records"][0]
 
 
+def _approve_lock(client, admin, act, *, approve=True, reply="核对无误"):
+    """校青协那一步：找到挂着的锁定申请，拍板。"""
+    rows = [x for x in client.get("/api/staff/hours-requests", headers=admin).json()
+            if x["activity_id"] == act.id and x["kind"] == "lock"]
+    assert len(rows) == 1, rows
+    r = client.post(f"/api/staff/hours-requests/{rows[0]['id']}/decide",
+                    headers=admin, json={"approve": approve, "reply": reply})
+    assert r.status_code == 200, r.text
+    return rows[0]
+
+
 def test_申诉全流程_采纳(client, admin, db, served):
     act, _g, u = served
     _confirm(client, admin, act)
@@ -185,7 +196,7 @@ def test_核准前看不到也申诉不了(client, admin, db, served):
                     Notification.title.like("志愿时长已核准%")).count() == 1)
 
 
-def test_到点无人申诉自动锁定并标记已完成(client, admin, db, served):
+def test_到点无人申诉自动提交审批_通过后才锁定(client, admin, db, served):
     from backend import scheduled
 
     act, _g, u = served
@@ -195,7 +206,16 @@ def test_到点无人申诉自动锁定并标记已完成(client, admin, db, ser
     row.appeal_deadline = now() - timedelta(minutes=1)
     db.commit()
 
-    assert scheduled.lock_hours_when_due(db) >= 1
+    assert scheduled.submit_lock_when_due(db) >= 1
+    db.expire_all()
+    assert db.get(Activity, act.id).hours_locked_at is None, "等校青协点头才算数"
+    # 审批期间冻结：账送上去了就不能再动
+    assert client.post(f"/api/staff/activities/{act.id}/hours/confirm",
+                       headers=admin, json={}).status_code == 409
+    # 挂着一条就不重复提交
+    assert scheduled.submit_lock_when_due(db) == 0
+
+    _approve_lock(client, admin, act)
     db.expire_all()
     row = db.get(Activity, act.id)
     assert row.hours_locked_at is not None and row.status == "completed"
@@ -215,7 +235,7 @@ def test_到点无人申诉自动锁定并标记已完成(client, admin, db, ser
     assert r.status_code == 409 and "已于" in r.json()["detail"]
 
 
-def test_有人申诉就不自动锁定(client, admin, db, served):
+def test_有人申诉就不自动提交审批(client, admin, db, served):
     from backend import scheduled
 
     act, _g, u = served
@@ -228,18 +248,41 @@ def test_有人申诉就不自动锁定(client, admin, db, served):
     db.get(Activity, act.id).appeal_deadline = now() - timedelta(minutes=1)
     db.commit()
 
-    scheduled.lock_hours_when_due(db)
-    db.expire_all()
-    assert db.get(Activity, act.id).hours_locked_at is None
+    assert scheduled.submit_lock_when_due(db) == 0
+    assert not client.get("/api/staff/hours-requests", headers=admin).json()
 
-    # 处理完申诉，管理者也可以直接锁定，不必再等一轮
+    # 处理完申诉，管理者可以自己提交审批，不必再等一轮
     a = client.get(f"/api/staff/activities/{act.id}/hours-appeals",
                    headers=admin).json()[0]
     client.post(f"/api/staff/hours-appeals/{a['id']}/resolve", headers=admin,
                 json={"accept": True})
-    r = client.post(f"/api/staff/activities/{act.id}/hours/lock", headers=admin,
-                    json={"note": "已按申诉改判"})
+    r = client.post(f"/api/staff/activities/{act.id}/hours/lock-request",
+                    headers=admin, json={"note": "已按申诉改判"})
     assert r.status_code == 200, r.text
+    _approve_lock(client, admin, act)
+    db.expire_all()
+    assert db.get(Activity, act.id).status == "completed"
+
+
+def test_锁定审批被驳回后解冻重改(client, admin, db, served):
+    """驳回 = 退回管理者：时长又能改了，改完重新核准再提交一次。"""
+    act, _g, _u = served
+    _confirm(client, admin, act)
+    client.post(f"/api/staff/activities/{act.id}/hours/lock-request",
+                headers=admin, json={"note": "先送一次"})
+    assert client.post(f"/api/staff/activities/{act.id}/hours/confirm",
+                       headers=admin, json={}).status_code == 409
+
+    _approve_lock(client, admin, act, approve=False, reply="有两人的时长对不上，请核对")
+    db.expire_all()
+    row = db.get(Activity, act.id)
+    assert row.hours_locked_at is None and row.status == "finished"
+    # 解冻了：改得动，也能再提交一次
+    assert client.post(f"/api/staff/activities/{act.id}/hours/confirm",
+                       headers=admin, json={}).status_code == 200
+    assert client.post(f"/api/staff/activities/{act.id}/hours/lock-request",
+                       headers=admin, json={}).status_code == 200
+    _approve_lock(client, admin, act)
     db.expire_all()
     assert db.get(Activity, act.id).status == "completed"
 
@@ -247,8 +290,9 @@ def test_有人申诉就不自动锁定(client, admin, db, served):
 def test_锁定后改时长要报审批(client, admin, db, served):
     act, _g, _u = served
     _confirm(client, admin, act)
-    client.post(f"/api/staff/activities/{act.id}/hours/lock", headers=admin,
-                json={})
+    client.post(f"/api/staff/activities/{act.id}/hours/lock-request",
+                headers=admin, json={})
+    _approve_lock(client, admin, act)
     # 理由太短拦下
     assert client.post(f"/api/staff/activities/{act.id}/hours/unlock-request",
                        headers=admin, json={"reason": "改"}).status_code == 400
@@ -261,9 +305,10 @@ def test_锁定后改时长要报审批(client, admin, db, served):
                        headers=admin,
                        json={"reason": "再来一条应当被拦下"}).status_code == 409
 
-    rows = client.get("/api/staff/hours-unlocks", headers=admin).json()
-    assert [x["id"] for x in rows] == [req_id]
-    r = client.post(f"/api/staff/hours-unlocks/{req_id}/decide", headers=admin,
+    rows = [x for x in client.get("/api/staff/hours-requests", headers=admin).json()
+            if x["activity_id"] == act.id]
+    assert [(x["id"], x["kind"]) for x in rows] == [(req_id, "unlock")]
+    r = client.post(f"/api/staff/hours-requests/{req_id}/decide", headers=admin,
                     json={"approve": True, "reply": "同意，改完重新核准"})
     assert r.status_code == 200, r.text
     db.expire_all()
@@ -350,7 +395,8 @@ def test_到点未表态视同确认并按志愿时长记(client, admin, db, ser
     db.expire_all()
     db.get(Activity, act.id).appeal_deadline = now() - timedelta(minutes=1)
     db.commit()
-    assert scheduled.lock_hours_when_due(db) >= 1
+    assert scheduled.submit_lock_when_due(db) >= 1
+    _approve_lock(client, admin, act)
     db.expire_all()
     rec = db.query(HoursRecord).filter(HoursRecord.activity_id == act.id).one()
     assert rec.confirmed_at is not None and rec.reward == "hours"

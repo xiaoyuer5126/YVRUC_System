@@ -19,13 +19,17 @@
     </div>
 
     <div class="toolbar">
-      <el-button type="primary" size="small" @click="openCreate">
+      <el-button type="primary" size="small" :disabled="over" @click="openCreate">
         <el-icon><Plus /></el-icon>&nbsp;生成签到码
       </el-button>
-      <el-button size="small" @click="openReminder">
+      <el-button size="small" :disabled="over" @click="openReminder">
         <el-icon><Bell /></el-icon>&nbsp;补发签到提醒
       </el-button>
-      <span class="dim">同一个码：首次扫码签到，再次扫码签退</span>
+      <span class="dim">
+        {{ hoursFrozen ? '时长已封账，签到记录不再改动'
+           : over ? '活动已结束，不再发码；漏签的人仍可在下方手动补签'
+           : '同一个码：首次扫码签到，再次扫码签退' }}
+      </span>
     </div>
 
     <!-- 场次与岗位放到 #body 里一起讲（要带培训/彩排标记），不再单列字段 -->
@@ -86,9 +90,10 @@
         <template #default="{row}">
           <el-button size="small" @click="openQR(row)">二维码 / 大屏</el-button>
           <el-popconfirm :title="row.active ? '关闭后无法继续扫码' : '重新开启？'"
-                         @confirm="toggle(row)">
+                         :disabled="over" @confirm="toggle(row)">
             <template #reference>
-              <el-button size="small" :type="row.active ? 'danger' : 'success'" link>
+              <el-button size="small" :type="row.active ? 'danger' : 'success'" link
+                         :disabled="over">
                 {{ row.active ? '关闭' : '开启' }}
               </el-button>
             </template>
@@ -134,19 +139,19 @@
       <el-card shadow="never">
         <div class="manual-bar">
           <el-input v-model="manualSid" size="small" placeholder="输入学号单个操作" style="width:180px"
-                    :disabled="!batchTaskId" />
-          <el-button size="small" :disabled="!batchTaskId" @click="quick('checkin')">签到</el-button>
-          <el-button size="small" :disabled="!batchTaskId" @click="quick('checkout')">签退</el-button>
+                    :disabled="!batchTaskId || hoursFrozen" />
+          <el-button size="small" :disabled="!batchTaskId || hoursFrozen" @click="quick('checkin')">签到</el-button>
+          <el-button size="small" :disabled="!batchTaskId || hoursFrozen" @click="quick('checkout')">签退</el-button>
           <el-divider direction="vertical" />
           <template v-if="selected.length">
             <span class="dim">已选 {{ selected.length }} 人：</span>
-            <el-button size="small" type="primary" :disabled="!batchTaskId"
+            <el-button size="small" type="primary" :disabled="!batchTaskId || hoursFrozen"
                        @click="batch('checkin')">批量签到</el-button>
-            <el-button size="small" type="warning" :disabled="!batchTaskId"
+            <el-button size="small" type="warning" :disabled="!batchTaskId || hoursFrozen"
                        @click="batch('checkout')">批量签退</el-button>
-            <el-button size="small" :disabled="!batchTaskId"
+            <el-button size="small" :disabled="!batchTaskId || hoursFrozen"
                        @click="batch('cancel_checkout')">取消签退</el-button>
-            <el-button size="small" type="danger" plain :disabled="!batchTaskId"
+            <el-button size="small" type="danger" plain :disabled="!batchTaskId || hoursFrozen"
                        @click="batch('cancel_checkin')">取消签到</el-button>
             <el-tag v-if="!batchTaskId" size="small" type="warning" effect="plain">请先生成并开启签到码</el-tag>
           </template>
@@ -342,6 +347,10 @@ import RefreshBar from './RefreshBar.vue'
 const props = defineProps({
   activityId: { type: String, required: true },
   allShifts: { type: Array, required: true },  // 主场次 + 培训/彩排
+  // 活动已结束：不再发新的签到码，也不催人签到——没人再扫了
+  over: { type: Boolean, default: false },
+  // 时长已封账（锁定或正在审核）：连手动补签也停，签到记录是算时长的依据
+  hoursFrozen: { type: Boolean, default: false },
 })
 
 // 与后端 config.CHECKIN_WINDOW_PAD_MINUTES 保持一致

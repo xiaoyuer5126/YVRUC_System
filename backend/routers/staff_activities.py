@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
 from .. import assign, config, copying, scoring
+from ..stage import ensure_hours_editable, ensure_not_finished
 from ..audit import diff_changes, log as audit_log
 from ..database import db_session
 from ..deps import require_council, require_manager
@@ -249,7 +250,7 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
                     user: User = Depends(require_manager)):
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    _ensure_not_finished(act)
+    ensure_not_finished(act)
     before = {k: getattr(act, k) for k in ACTIVITY_FIELDS}
     for key in ACTIVITY_FIELDS:
         if key not in body:
@@ -372,7 +373,7 @@ def start_editing(activity_id: str, db: OrmSession = Depends(db_session),
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    _ensure_not_finished(act)
+    ensure_not_finished(act)
     if act.status == "draft":
         raise HTTPException(409, "筹备中的活动可直接编辑，无需暂停报名")
     if act.editing_since is not None:
@@ -1046,17 +1047,6 @@ POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
                    "training_note": "培训内容"}
 
 
-def _ensure_not_finished(act: Activity) -> None:
-    """已结束或已完成的活动一律不再改。
-
-    时长是按结束那一刻的岗位与名单算出来的；事后再改岗位、改名额、
-    改基本信息，改的是一份已经生效的记录，跟结出来的账对不上。
-    """
-    if act.status in ("finished", "completed"):
-        raise HTTPException(
-            409, f"活动{act.label_status()}，不能再修改；如确需更正请联系管理员")
-
-
 def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:
     """改场次/岗位之前，活动必须处于编辑态。
 
@@ -1066,7 +1056,7 @@ def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:
     保存时把这批改动一次性通知到人。
     """
     act = _act(db, activity_id)
-    _ensure_not_finished(act)
+    ensure_not_finished(act)
     if act.status != "draft" and act.editing_since is None:
         raise HTTPException(
             409, "请先点击右上角「调整岗位（暂停报名）」，再修改场次与岗位")
@@ -1615,6 +1605,7 @@ def release_held_seat(enrollment_id: str, db: OrmSession = Depends(db_session),
     if enr is None:
         raise HTTPException(404, "报名记录不存在")
     ensure_activity_manager(db, user, enr.activity_id)
+    ensure_not_finished(_act(db, enr.activity_id))
     if not enr.seat_held:
         raise HTTPException(409, "该记录没有扣留名额")
     g = _shift(db, enr.shift_id)
@@ -1652,6 +1643,7 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
     if enr is None:
         raise HTTPException(404, "报名记录不存在")
     ensure_activity_manager(db, user, enr.activity_id)
+    ensure_not_finished(_act(db, enr.activity_id))
     if enr.status != "waitlisted":
         raise HTTPException(409, "该记录不在候补队列中")
     g = _shift(db, enr.shift_id)
@@ -1691,6 +1683,7 @@ def set_leader(enrollment_id: str, body: LeaderBody,
     if enr is None:
         raise HTTPException(404, "报名记录不存在")
     ensure_activity_manager(db, user, enr.activity_id)
+    ensure_not_finished(_act(db, enr.activity_id))
     if enr.status != "enrolled":
         raise HTTPException(409, "只有正式报名的志愿者才能担任组长")
     if not enr.position_id:
@@ -1765,6 +1758,7 @@ def assign_apply(shift_id: str, body: ApplyPlanBody, bg: BackgroundTasks,
                  user: User = Depends(require_manager)):
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
+    ensure_not_finished(_act(db, g.activity_id))
     if not body.plan:
         raise HTTPException(400, "空方案")
     notify_items: list[dict] = []
@@ -1791,6 +1785,9 @@ def add_walkin(shift_id: str, body: dict,
     """
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
+    # 补招卡在「时长封账」而不是「活动结束」：现场漏登记的人事后才补进来，
+    # 补进来才好给他记时长
+    ensure_hours_editable(db, _act(db, g.activity_id))
     sid = (body.get("student_id") or "").strip()
     u = db.query(User).filter(User.student_id == sid).first()
     if u is None:

@@ -20,6 +20,7 @@ from ..database import db_session
 from ..deps import current_user_download, require_manager
 from ..models import Activity, Attachment, Position, User, uid
 from ..perm import ensure_activity_manager, is_activity_manager
+from ..stage import ensure_not_finished
 
 router = APIRouter(prefix="/api", tags=["materials"])
 
@@ -55,6 +56,7 @@ async def upload_material(owner_type: str = Form(...), owner_id: str = Form(...)
                           user: User = Depends(require_manager)):
     activity_id, owner_name = _owner(db, owner_type, owner_id)
     ensure_activity_manager(db, user, activity_id)
+    ensure_not_finished(db.get(Activity, activity_id))
 
     ext = Path(file.filename or "").suffix.lower().lstrip(".")
     if ext not in EXT_TYPES:
@@ -96,6 +98,7 @@ def add_link(body: LinkBody, db: OrmSession = Depends(db_session),
              user: User = Depends(require_manager)):
     activity_id, owner_name = _owner(db, body.owner_type, body.owner_id)
     ensure_activity_manager(db, user, activity_id)
+    ensure_not_finished(db.get(Activity, activity_id))
     url = body.url.strip()
     if not re.match(r"^https?://", url):
         raise HTTPException(400, "链接必须以 http:// 或 https:// 开头")
@@ -122,6 +125,7 @@ def delete_material(material_id: str, db: OrmSession = Depends(db_session),
     if row is None:
         raise HTTPException(404, "材料不存在")
     ensure_activity_manager(db, user, row.activity_id)
+    ensure_not_finished(db.get(Activity, row.activity_id))
     # 复制活动时文件是各存一份的，删记录就可以把文件一起删掉
     if row.kind == "file":
         (MATERIAL_DIR / row.stored_name).unlink(missing_ok=True)

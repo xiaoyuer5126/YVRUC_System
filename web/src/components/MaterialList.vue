@@ -48,5 +48,5 @@ function sizeText(bytes) {
 }
 .material:hover { border-color: var(--el-color-primary); color: var(--el-color-primary); }
 .name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.size { color: #a8abb2; font-size: 12px; }
+.size { color: #a8abb2; font-size: 13px; }
 </style>

@@ -31,7 +31,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("reminders", send_checkin_reminders),
                       ("digests", send_roster_digests),
                       ("approvals", remind_stale_approvals),
-                      ("hours_locked", lock_hours_when_due),
+                      ("hours_lock_requests", submit_lock_when_due),
                       ("unlocked", release_stale_edit_locks)):
         try:
             result[name] = job(db)
@@ -84,33 +84,45 @@ def auto_advance_activities(db: OrmSession) -> int:
     return changed
 
 
-def lock_hours_when_due(db: OrmSession) -> int:
-    """申诉截止时间到了、又没人申诉的活动，自动锁定时长并落「已完成」。
+def submit_lock_when_due(db: OrmSession) -> int:
+    """申诉截止时间到了、又没人申诉的活动，自动提交时长锁定审批。
 
-    有人正在申诉就先放着——管理者收到过通知了，处理完再核准一次或者手动锁定。
+    锁不锁由校青协拍板，系统只负责把账送上去。有人正在申诉就先放着——
+    管理者收到过通知了，处理完再核准一次。
+    被驳回的不会再自动送一次：重新核准（hours_approved_at 往后走）之后才算
+    新一轮，否则驳回的下一分钟又提交，等于没驳。
     """
-    from .hours import lock_hours
-    from .models import HoursAppeal
+    from .hours import submit_lock
+    from .models import HoursAppeal, HoursRequest
+    from .routers.staff_ops import _notify_lock_approvers
 
     t = now()
     rows = (db.query(Activity)
             .filter(Activity.hours_locked_at.is_(None),
                     Activity.appeal_deadline.isnot(None),
                     Activity.appeal_deadline < t).all())
-    locked = 0
+    sent = 0
     for act in rows:
         pending = (db.query(HoursAppeal)
                    .filter(HoursAppeal.activity_id == act.id,
                            HoursAppeal.status == "pending").count())
         if pending:
             continue
-        lock_hours(db, act, None,
-                   f"确认/申诉截止（{act.appeal_deadline:%m-%d %H:%M}）无人申诉，"
-                   f"系统自动锁定；未确认的按志愿时长记")
-        locked += 1
-    if locked:
+        since = act.hours_approved_at or act.appeal_deadline
+        if (db.query(HoursRequest)
+                .filter(HoursRequest.activity_id == act.id,
+                        HoursRequest.kind == "lock",
+                        HoursRequest.created_at >= since).first()):
+            continue
+        reason = (f"确认/申诉截止（{act.appeal_deadline:%m-%d %H:%M}）无人申诉，"
+                  f"系统自动提交；未确认的按志愿时长记")
+        if submit_lock(db, act, None, reason) is None:
+            continue
+        _notify_lock_approvers(db, act, "系统", reason)
+        sent += 1
+    if sent:
         db.commit()
-    return locked
+    return sent
 
 
 def staffing_gaps(db: OrmSession, act: Activity) -> list[str]:

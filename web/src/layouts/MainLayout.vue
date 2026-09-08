@@ -189,7 +189,7 @@ async function onCommand(cmd) {
 .side-foot { padding: 14px; line-height: 1.7; border-top: 1px dashed #eceef1;
              flex-shrink: 0; margin-top: auto; }
 .msg-badge :deep(.el-button) { color: #fff; }
-.switch-cap { font-size: 12px; color: #a8abb2; padding: 4px 16px 6px;
+.switch-cap { font-size: 13px; color: #a8abb2; padding: 4px 16px 6px;
               border-bottom: 1px dashed #eceef1; margin-bottom: 4px; }
 
 .drawer-head {

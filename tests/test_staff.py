@@ -582,3 +582,42 @@ def test_管理者分工只筛通知不限操作(client, admin, db, enrolled_act
     them = login(client, other.student_id)
     assert client.get(f"/api/staff/shifts/{shift.id}/roster",
                       headers=them).status_code == 200
+
+
+def test_活动结束后名单与签到码只读(client, admin, db, assigned_group, take_student):
+    """时长按结束那一刻的岗位与名单结账，事后再动就跟账对不上。"""
+    act, g, s1, s2 = assigned_group
+    u = db.query(User).filter(User.student_id == take_student()).one()
+    enr = Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                     user_id=u.id, status="enrolled", position_id=s1.id,
+                     joined_at=now())
+    db.add(enr)
+    db.get(Activity, act.id).status = "finished"
+    db.commit()
+
+    r = client.post(f"/api/staff/shifts/{g.id}/assign/apply", headers=admin,
+                    json={"plan": [{"enrollment_id": enr.id, "position_id": s2.id}],
+                          "source": "manual"})
+    assert r.status_code == 409 and "已结束" in r.json()["detail"]
+    assert client.post(f"/api/staff/enrollments/{enr.id}/leader", headers=admin,
+                       json={"is_leader": True}).status_code == 409
+    assert client.post(f"/api/staff/shifts/{g.id}/checkin-tasks", headers=admin,
+                       json={"mode": "shift"}).status_code == 409
+    # 账还没结完：补招仍然要能用（现场漏登记的人事后才补进来）
+    r = client.post(f"/api/staff/shifts/{g.id}/add-walkin", headers=admin,
+                    json={"student_id": take_student(), "position_id": s2.id})
+    assert r.status_code == 200, r.text
+
+
+def test_时长封账后补招与补签也停(client, admin, db, assigned_group, take_student):
+    from backend.models import HoursRequest
+
+    act, g, _s1, _s2 = assigned_group
+    row = db.get(Activity, act.id)
+    row.status = "finished"
+    db.add(HoursRequest(id=uid("hrq"), activity_id=act.id, kind="lock",
+                        reason="送审", requested_by=""))
+    db.commit()
+    r = client.post(f"/api/staff/shifts/{g.id}/add-walkin", headers=admin,
+                    json={"student_id": take_student(), "position_id": g.positions[0].id})
+    assert r.status_code == 409 and "审批" in r.json()["detail"]

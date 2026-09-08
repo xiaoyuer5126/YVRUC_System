@@ -26,7 +26,7 @@
       <el-col :span="24">
         <el-card shadow="never">
           <template #header><b>最近操作留痕</b>
-            <router-link to="/audit" style="float:right;font-size:12px">全部 →</router-link>
+            <router-link to="/audit" style="float:right;font-size:13px">全部 →</router-link>
           </template>
           <DataCards v-if="narrow" :rows="d.recent_logs" title-key="summary"
                  :fields="[{ key: 'actor_name', label: '操作人' },
