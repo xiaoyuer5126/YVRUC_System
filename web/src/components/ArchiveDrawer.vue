@@ -35,9 +35,8 @@
         </span>
       </div>
       <p class="dim" style="margin:4px 0 0">
-        低于 {{ d.score.alert_below }} 分时名单上会挂感叹号，提醒排班的人看一眼这一页。
-        顺利参与一次活动加 {{ d.score.per_activity }} 分，分数会自己长回来。
-        不对志愿者公开，也不影响报名。
+        低于 {{ d.score.alert_below }} 分时名单上会标出提示，每顺利参与一次活动加
+        {{ d.score.per_activity }} 分。不对志愿者公开，也不影响报名。
       </p>
 
       <div class="section-title">违规记录</div>

@@ -81,7 +81,7 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
     # 把它当成候选岗位的话，匹配会心安理得地把人留在原地，等于什么也没分。
     positions = sorted(shift.real_positions(), key=lambda p: p.sort)
     if not positions:
-        raise ValueError("请先在该场次下创建岗位，再运行一键分配")
+        raise ValueError("请先在该场次下创建岗位")
 
     rows = (db.query(Enrollment)
             .filter(Enrollment.shift_id == shift.id,
@@ -195,7 +195,7 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
         if n > positions[pid].quota:
             raise ValueError(f"岗位「{positions[pid].name}」超出名额"
                              f"（{n}>{positions[pid].quota}），"
-                             f"如确需超额请对相应人员勾选强制分配")
+                             f"如确需超额请对相应人员勾选「强制」")
 
     # 硬性条件：非强制行必须满足
     for enr, position, force in rows:
@@ -205,7 +205,7 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
         if unmet:
             u = db.get(User, enr.user_id)
             raise ValueError(f"{u.name} 不满足「{position.name}」的条件："
-                             f"{'；'.join(unmet)}；如确需分配请勾选强制")
+                             f"{'；'.join(unmet)}，如确需分配请勾选「强制」")
 
     changed, forced, against_will, vacated = [], [], [], set()
     for enr, position, force in rows:
@@ -243,7 +243,7 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
                                "shift_id": shift.id})
 
     if not changed:
-        summary = "所有人员岗位未发生变化（方案与现状一致）"
+        summary = "所有人员岗位未发生变化"
     else:
         summary = f"{len(changed)} 人完成岗位分配"
         if forced:

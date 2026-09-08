@@ -6,8 +6,7 @@
     </div>
     <el-alert v-if="pendingAck" type="warning" :closable="false" show-icon
               style="margin-bottom:12px"
-              :title="`有 ${pendingAck} 条通知需要您签收`"
-              description="签收是向负责老师确认「我已看到」；只是打开消息不算签收。" />
+              :title="`有 ${pendingAck} 条通知需要您签收`" />
     <el-card v-for="n in items" :key="n.id" shadow="never" class="msg"
              :class="{ unread: !n.read, ack: n.need_ack && !n.acked_at,
                        clickable: n.data?.activity_id }"
@@ -30,7 +29,6 @@
         <template v-else>
           <el-button type="primary" size="small" :loading="acking === n.id"
                      @click="ack(n)">我已知悉</el-button>
-          <span class="dim">负责老师会看到谁还没签收</span>
         </template>
       </div>
     </el-card>
@@ -85,7 +83,7 @@ async function ack(n) {
   acking.value = n.id
   try {
     await api.post(`/api/me/notifications/${n.id}/ack`)
-    ElMessage.success('已签收，负责老师可以看到了')
+    ElMessage.success('签收成功')
     load()
   } finally { acking.value = '' }
 }

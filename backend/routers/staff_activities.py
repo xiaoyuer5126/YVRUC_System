@@ -530,9 +530,8 @@ def ensure_ready_to_publish(act: Activity) -> None:
              if not g.needs_assign() and not g.positions]
     if empty:
         raise HTTPException(
-            400, f"场次「{'、'.join(empty)}」还没有岗位——名额与候补都记在岗位上，"
-                 f"没有岗位学生就报不了名。请先添加岗位，或把这些场次改为"
-                 f"「截止后统一分配」")
+            400, f"场次「{'、'.join(empty)}」还没有岗位，学生无法报名。"
+                 f"请先添加岗位，或把这些场次改为「截止后统一分配」")
     ensure_reg_end_in_range(act)
 
 
@@ -546,9 +545,8 @@ def ensure_reg_end_in_range(act: Activity) -> None:
     if act.reg_end and last and act.reg_end > last:
         raise HTTPException(
             400, f"报名截止时间（{act.reg_end:%m-%d %H:%M}）晚于最后一个场次的"
-                 f"开始时间（{last:%m-%d %H:%M}）。每个场次在自己开场时就不再收人，"
-                 f"这中间的一段谁也报不进来。请把报名截止时间提前，"
-                 f"或把场次时间往后调")
+                 f"开始时间（{last:%m-%d %H:%M}），请将报名截止时间提前，"
+                 f"或将场次时间后移")
 
 
 def _transition(activity_id: str, target: str, action: str, summary: str,
@@ -567,7 +565,7 @@ def _transition(activity_id: str, target: str, action: str, summary: str,
     if action == "finish":
         bg.add_task(_notify_activity_bg, act.id, "activity_changed",
                     activity=act.title,
-                    change_summary="活动已结束，感谢您的参与！时长将陆续录入。")
+                    change_summary="活动已结束，感谢您的参与。时长将陆续录入。")
     return {"ok": True}
 
 
@@ -627,7 +625,7 @@ def reopen(activity_id: str, body: ReopenBody,
     last = act.last_shift_start()
     t = now()
     if last and t >= last:
-        raise HTTPException(409, "所有场次都已开始，恢复报名也收不到人了")
+        raise HTTPException(409, "所有场次都已开始，无法恢复报名")
     new_end = _parse_dt(body.reg_end)
     if new_end is None:
         raise HTTPException(400, "请选择新的报名截止时间")
@@ -807,8 +805,8 @@ def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> int:
                         Enrollment.status.in_(logic.ACTIVE)).count())
         if live:
             raise HTTPException(
-                409, f"「{g.name}」已有 {live} 人报名，不能改回「截止后统一分配」——"
-                     f"那会作废他们已经选定的岗位。如确需改，请新建场次。")
+                409, f"「{g.name}」已有 {live} 人报名，不能改回"
+                     f"「截止后统一分配」，如确需调整请新建场次。")
     g.mode = mode
     return 0
 
@@ -1032,8 +1030,7 @@ def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:
     _ensure_not_finished(act)
     if act.status != "draft" and act.editing_since is None:
         raise HTTPException(
-            409, "请先点右上角「调整岗位（暂停报名）」再修改场次与岗位——"
-                 "改动期间报名会暂停，保存后统一通知已报名的志愿者")
+            409, "请先点击右上角「调整岗位（暂停报名）」，再修改场次与岗位")
     return act
 
 
@@ -1047,8 +1044,8 @@ def _ensure_pick_mode_for_positions(g: Shift) -> None:
     """
     if g.needs_assign():
         raise HTTPException(
-            409, f"场次「{g.name}」当前是「截止后统一分配」，请先在场次设置里"
-                 f"改为「报名即选岗位」，再添加岗位并运行一键分配")
+            409, f"场次「{g.name}」当前是「截止后统一分配」，请先在场次设置中"
+                 f"改为「报名即选岗位」，再添加岗位")
 
 
 def _require_position_text(s: Position) -> None:
@@ -1060,7 +1057,7 @@ def _require_position_text(s: Position) -> None:
         raise HTTPException(400, "志愿服装只能是 不需要 / 统一发放 / 志愿者自备")
     if s.attire != "none" and not (s.attire_note or "").strip():
         raise HTTPException(400, f"请填写岗位「{s.name}」的服装备注"
-                                 "（发放地点时间，或自备的样式要求）")
+                                 "（领取与归还方式，或自备的样式要求）")
     if s.pay_optional and not (s.pay_note or "").strip():
         raise HTTPException(400, f"请填写岗位「{s.name}」的劳务备注"
                                  "（标准与发放方式）")
@@ -1272,7 +1269,7 @@ def set_manager_duties(activity_id: str, user_id: str, body: DutiesBody,
            .filter(ActivityManager.activity_id == activity_id,
                    ActivityManager.user_id == user_id).first())
     if row is None:
-        raise HTTPException(404, "他不在本活动的管理者名单里")
+        raise HTTPException(404, "该用户不在本活动的管理者名单中")
     unknown = [d for d in body.duties if d not in ActivityManager.DUTIES]
     if unknown:
         raise HTTPException(400, f"未知的分工：{'、'.join(unknown)}")
@@ -1591,7 +1588,7 @@ def release_held_seat(enrollment_id: str, db: OrmSession = Depends(db_session),
     return {"ok": True, "promoted": promoted, "auto_promote_over": over,
             "message": ("名额已释放，候补队首已转为待确认。" if promoted
                         else ("名额已释放；已过自动转正时间，"
-                              "请在候补名单中手动为某人转正。" if over
+                              "请在候补名单中手动转正。" if over
                               else "名额已释放，但当前没有候补在排队。"))}
 
 
@@ -1615,8 +1612,8 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
     with shift_lock(g.id):
         if not logic.has_room(db, g, position):
             where = f"岗位「{position.name}」" if position else f"场次「{g.name}」"
-            raise HTTPException(409, f"{where}没有空余名额；"
-                                     f"如确需增加，请先在编辑态调高名额")
+            raise HTTPException(409, f"{where}没有空余名额，"
+                                     f"如确需增加请先调整名额")
         target = db.get(User, enr.user_id)
         logic.promote_directly(db, enr, target)
         audit_log(db, actor=user, action="update", target_type="enrollment",
@@ -1654,7 +1651,7 @@ def set_leader(enrollment_id: str, body: LeaderBody,
     siblings = logic.group_positions(db, position)
     if not logic.group_needs_leader(siblings):
         raise HTTPException(409, f"岗位「{position.name}」所在的组未设置组长，"
-                                 f"请先在岗位设置里勾选「需要组长」")
+                                 f"请先在岗位设置中勾选「需要组长」")
     target = db.get(User, enr.user_id)
 
     if body.is_leader:
@@ -1739,9 +1736,9 @@ def assign_apply(shift_id: str, body: ApplyPlanBody, bg: BackgroundTasks,
 def add_walkin(shift_id: str, body: dict,
                db: OrmSession = Depends(db_session),
                user: User = Depends(require_manager)):
-    """管理员直接添加志愿者（现场补录）。
+    """管理员直接添加志愿者（现场补招）。
 
-    时段冲突、名额超出都拦一道，勾选强制才放行——补录是常规操作，
+    时段冲突、名额超出都拦一道，勾选强制才放行——补招是常规操作，
     不该顺手把场次搞超员；真要超也得是明确按下去的，且留痕。
     """
     g = _shift(db, shift_id)
@@ -1751,7 +1748,7 @@ def add_walkin(shift_id: str, body: dict,
     if u is None:
         raise HTTPException(404, f"学号 {sid} 不存在")
     if u.user_type == "teacher":
-        raise HTTPException(400, "老师类型用户不参与志愿报名，无法补录")
+        raise HTTPException(400, "老师类型用户不参与志愿报名，无法补招")
 
     force = bool(body.get("force"))
     reasons: list[str] = []
@@ -1766,7 +1763,7 @@ def add_walkin(shift_id: str, body: dict,
                      f"（{'临期退选占位' if live.seat_held else live.status}）")
 
         # 名额要按落点算：pick 模式下名额在岗位上，不传岗位一律判「满」，
-        # 补录任何按岗位报名的场次都会被要求勾强制。
+        # 补招任何按岗位报名的场次都会被要求勾强制。
         position = None
         if body.get("position_id"):
             position = db.get(Position, body["position_id"])
@@ -1796,7 +1793,7 @@ def add_walkin(shift_id: str, body: dict,
         audit_log(db, actor=user, action="force_assign" if reasons else "create",
                   target_type="enrollment", target_id=enr.id,
                   target_label=f"{u.name}", activity_id=g.activity_id,
-                  summary=f"管理员补录 {u.name}（{sid}）至场次「{g.name}」"
+                  summary=f"补招 {u.name}（{sid}）至场次「{g.name}」"
                           + (f"（强制：{'；'.join(reasons)}）" if reasons else ""))
         db.commit()
     return {"ok": True, "enrollment_id": enr.id, "forced_reasons": reasons}

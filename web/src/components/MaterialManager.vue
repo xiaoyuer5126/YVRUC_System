@@ -20,7 +20,7 @@
         <el-button size="small" :loading="uploading">上传文档</el-button>
       </el-upload>
       <el-button size="small" @click="linkDlg = true">添加链接</el-button>
-      <span class="dim">文档 ≤{{ limitMB }}MB；可填共享文档链接，大文件请添加网盘链接</span>
+      <span class="dim">文档 ≤{{ limitMB }}MB，大文件请添加网盘或共享文档链接</span>
     </div>
 
     <el-dialog v-model="linkDlg" title="添加材料链接" width="440" append-to-body>

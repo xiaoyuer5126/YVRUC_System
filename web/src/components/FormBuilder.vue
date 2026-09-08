@@ -6,15 +6,15 @@
       <div class="fb-head">
         <b>报名表</b>
         <span class="dim">
-          {{ screened ? '志愿者申请时填写；意向场次由系统自动列出，不用出题'
-                      : '选填。设了题目，志愿者报名时就要答；答案在「志愿者管理」名单里看' }}
+          {{ screened ? '志愿者申请时填写，意向场次无需出题'
+                      : '选填。志愿者报名时填写，答案在「志愿者管理」中查看' }}
         </span>
         <el-button v-if="editable" type="primary" size="small" :loading="saving"
                    style="margin-left:auto" @click="save">保存报名表</el-button>
       </div>
     </template>
     <el-alert v-if="!editable" type="info" :closable="false" style="margin-bottom:10px"
-              title="活动已公开，报名表不能再改——已经有人按这份表填了" />
+              title="活动已公开，报名表不能再改" />
     <ol v-if="!editable && questions.length" class="fb-readonly">
       <li v-for="q in questions" :key="q.id">
         <b>{{ q.title }}</b>
@@ -57,7 +57,7 @@
     </div>
     <el-button v-if="editable" plain size="small" @click="add">添加题目</el-button>
     <div v-if="editable" class="dim" style="margin-top:6px">
-      显示条件挂在前面某道选择题上；新加的题保存之后才能被后面的题挑成条件。
+      显示条件只能挂在前面的选择题上，新增的题目保存后才能作为条件。
     </div>
     <el-empty v-else-if="!questions.length" description="没有设置题目" :image-size="40" />
   </el-card>

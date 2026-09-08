@@ -29,9 +29,8 @@
           </template>
         </el-result>
 
-        <p class="dim foot">领取与归还是两个码，请对应扫描。</p>
       </template>
-      <el-result v-else-if="!loading" icon="warning" title="服装码无效"
+      <el-result v-else-if="!loading" icon="warning" title="此码无效"
                  sub-title="请确认扫的是本次活动的服装码" />
     </el-card>
   </div>
@@ -61,9 +60,9 @@ const state = computed(() => {   // vuecheck: script-only
   return t.returned_at ? 'returned' : 'ready'
 })
 const TEXT = {
-  ready: '可以操作', taken: '您已领取，散场后请归还',
+  ready: '可以操作', taken: '您已领取，请按照要求归还',
   returned: '您已归还', closed: '该服装码已关闭',
-  not_required: '您在本活动的岗位服装不由平台统一发放',
+  not_required: '您在本活动的服装不由平台统一发放',
   no_record: '没有您的领取记录',
 }
 const stateText = computed(() => TEXT[state.value] || '')

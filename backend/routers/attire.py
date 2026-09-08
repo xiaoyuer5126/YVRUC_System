@@ -74,7 +74,7 @@ def scan(token: str, db: OrmSession = Depends(db_session),
     if not task.active:
         raise HTTPException(409, "该服装码已关闭")
     if user.id not in _need_attire_user_ids(db, task.activity_id):
-        raise HTTPException(403, "您在本活动的岗位服装不由平台统一发放")
+        raise HTTPException(403, "您在本活动的服装不由平台统一发放")
 
     rec = (db.query(AttireRecord)
            .filter(AttireRecord.activity_id == task.activity_id,
@@ -92,7 +92,7 @@ def scan(token: str, db: OrmSession = Depends(db_session),
                              user_id=user.id, taken_method="scan")
             db.add(rec)
         db.commit()
-        return {"ok": True, "action": "take", "message": "服装已领取，散场后记得归还"}
+        return {"ok": True, "action": "take", "message": "服装已领取，请按要求归还"}
 
     if rec is None:
         raise HTTPException(409, "没有您的领取记录，无法归还")
@@ -289,7 +289,7 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
                            AttireRecord.returned_at.is_(None)).all()]
         empty_msg = "没有未归还的服装"
         title = f"请归还志愿服装｜{act.title}"
-        text = (f"您在「{act.title}」领取的志愿服装还没有归还，"
+        text = (f"您在「{act.title}」领取的志愿服装尚未归还，"
                 f"请尽快到指定地点扫「归还码」交还。")
     else:
         taken = {r.user_id for r in db.query(AttireRecord)
@@ -300,8 +300,8 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
                    if uid_ not in taken]
         empty_msg = "统一发放服装的人都已经领了"
         title = f"请领取志愿服装｜{act.title}"
-        text = (f"您在「{act.title}」的岗位由平台统一发放志愿服装，目前还没有领取记录。\n"
-                f"请到指定地点扫「领取码」领取；散场后记得归还。")
+        text = (f"您在「{act.title}」的岗位由平台统一发放志愿服装，尚无领取记录。\n"
+                f"请到指定地点扫「领取码」领取，并按要求归还。")
 
     targets = [u for u in targets if u is not None]
     if not targets:

@@ -2,9 +2,7 @@
   <div class="page">
     <h2>活动审批</h2>
     <el-alert type="info" :closable="false" style="margin-bottom:12px">
-      所有活动发布前都要过校青协。默认<b>通过即发布</b>（发起方提交时可以改成
-      自己点发布）；驳回必须写理由。不该由你批的可以<b>转交</b>，转交要写理由，
-      三方都会收到通知。
+      驳回与转交均须写明理由，相关各方都会收到通知。
     </el-alert>
 
     <!-- 时长锁定之后要改，走这条。批的是「能不能改」，改成多少仍由管理者填 -->
@@ -73,8 +71,8 @@
     <template v-if="isAdmin">
       <div class="section-title" style="margin-top:20px">部门与部长</div>
       <el-alert type="info" :closable="false" style="margin-bottom:10px">
-        活动归口到哪个部门，就由那个部门的部长审。<b>没有部长的部门无法被选为归口部门</b>，
-        换届后记得来这里改。会长团可以接管任何一条审批。
+        活动由归口部门的部长审批，<b>没有部长的部门无法被选为归口部门</b>，
+        换届后请及时调整。会长团可以接管任何一条审批。
       </el-alert>
       <el-table :data="depts" size="small">
         <el-table-column prop="name" label="部门" min-width="140" />
@@ -96,7 +94,7 @@
 
     <el-dialog v-model="hd.visible" title="指定部长" width="420">
       <p class="dim" style="margin-top:0">{{ hd.row?.name }}</p>
-      <el-input v-model="hd.studentId" placeholder="青协成员的学号；留空 = 清空部长" />
+      <el-input v-model="hd.studentId" placeholder="青协成员的学号，留空 = 清空部长" />
       <template #footer>
         <el-button @click="hd.visible = false">取消</el-button>
         <el-button type="primary" :loading="hd.busy" @click="saveHead">保存</el-button>
@@ -109,7 +107,7 @@
       <el-input v-model="dlg.comment" type="textarea" :rows="3" maxlength="500"
                 show-word-limit
                 :placeholder="dlg.approve ? '审批意见（选填），会发给发起方'
-                                          : '请写明驳回理由，发起方才知道改什么'" />
+                                          : '请写明驳回理由，会发给发起方'" />
       <template #footer>
         <el-button @click="dlg.visible = false">取消</el-button>
         <el-button :type="dlg.approve ? 'success' : 'danger'" :loading="dlg.busy"
@@ -123,7 +121,7 @@
       <p class="dim" style="margin-top:0">{{ tr.row?.title }}</p>
       <el-form label-width="88px">
         <el-form-item label="转交给">
-          <el-select v-model="tr.deptId" placeholder="选择部门（转给该部门部长，活动归口随之改为该部门）"
+          <el-select v-model="tr.deptId" placeholder="选择部门（活动归口随之改为该部门）"
                      style="width:100%" clearable>
             <el-option v-for="d in depts" :key="d.id" :value="d.id"
                        :label="d.name + (d.head_name ? `（${d.head_name}）` : '（未设部长）')"
@@ -131,7 +129,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="或指定人">
-          <el-input v-model="tr.studentId" placeholder="输入青协成员的学号（优先于部门）" />
+          <el-input v-model="tr.studentId" placeholder="青协成员的学号（优先于部门）" />
         </el-form-item>
         <el-form-item label="理由" required>
           <el-input v-model="tr.reason" type="textarea" :rows="2"
@@ -195,7 +193,7 @@ onMounted(load)
 async function decideUnlock(row, approve) {
   let reply = ''
   if (!approve) {
-    const r = await ElMessageBox.prompt('驳回要写明理由，申请人看得到。', '驳回解锁申请',
+    const r = await ElMessageBox.prompt('请写明驳回理由，会发给申请人。', '驳回解锁申请',
                                         { inputValidator: v => (v || '').trim().length >= 2
                                                                || '至少 2 个字' })
     reply = r.value.trim()

@@ -24,11 +24,11 @@
           <el-button size="small" type="primary"
                      @click="$router.push('/manage/' + row.id)">管理</el-button>
           <el-button size="small" @click="openCopy(row)">复制</el-button>
-          <el-popconfirm v-if="row.status === 'approved'" title="发布后学生即可报名，确认？"
+          <el-popconfirm v-if="row.status === 'approved'" title="发布后学生即可看到活动，确认发布？"
                          @confirm="transition(row, 'publish')">
             <template #reference><el-button size="small" type="success" plain>发布</el-button></template>
           </el-popconfirm>
-          <el-popconfirm v-if="row.status === 'published'" title="截止后不再接受新报名？"
+          <el-popconfirm v-if="row.status === 'published'" title="将截止报名，确认截止？"
                          @confirm="transition(row, 'close')">
             <template #reference><el-button size="small" type="warning" plain>截止</el-button></template>
           </el-popconfirm>
@@ -73,15 +73,15 @@
               <template #reference><el-button size="small" type="success" link>发布</el-button></template>
             </el-popconfirm>
             <el-popconfirm v-if="row.status === 'draft'"
-                           title="删除该草稿？不可恢复" @confirm="delActivity(row)">
+                           title="删除草稿不可恢复，确认删除？" @confirm="delActivity(row)">
               <template #reference><el-button size="small" type="danger" link>删除</el-button></template>
             </el-popconfirm>
-            <el-popconfirm v-if="row.status === 'published'" title="截止后不再接受新报名，确认？"
+            <el-popconfirm v-if="row.status === 'published'" title="将截止报名，确认截止？"
                            @confirm="transition(row, 'close')">
               <template #reference><el-button size="small" type="warning" link>截止</el-button></template>
             </el-popconfirm>
             <el-popconfirm v-if="['published','closed'].includes(row.status)"
-                           title="结束活动后可进行时长录入与回传，确认？"
+                           title="结束活动后可进行时长录入，确认结束？"
                            @confirm="transition(row, 'finish')">
               <template #reference><el-button size="small" type="danger" link>结束</el-button></template>
             </el-popconfirm>
@@ -91,7 +91,7 @@
     </el-card>
 
     <!-- 新建活动 -->
-    <el-dialog v-model="creating" title="新建活动（筹备期）" width="620">
+    <el-dialog v-model="creating" title="新建活动（草稿）" width="620">
       <ActivityForm v-model="form" v-model:range="createRange" :modes="modes" />
       <template #footer>
         <el-button @click="creating = false">取消</el-button>
@@ -102,14 +102,13 @@
     <!-- 复制活动：只带结构，落草稿并直接进编辑页 -->
     <el-dialog v-model="copyDlg.visible" title="复制活动" width="500">
       <p class="dim" style="margin-top:0;line-height:1.8">
-        复制「{{ copyDlg.source?.title }}」的<b>结构</b>：活动信息、场次、岗位、学习材料、报名表。<br />
-        报名、签到、时长与留痕都不会带过来；副本落「筹备中」，共管名单只有您自己。
+        复制「{{ copyDlg.source?.title }}」的<b>结构</b>：活动信息、场次、岗位、学习材料、报名表。
       </p>
       <el-form label-width="96px">
         <el-form-item label="延期天数" required>
           <el-input-number v-model="copyDlg.shiftDays" :min="-365" :max="365" />
           <span class="dim" style="margin-left:10px">
-            报名时间与所有场次时间整体后移这么多天
+            报名时间与场次时间整体后移
           </span>
           <div v-if="copyPreview" class="dim" style="margin-top:6px">
             场次时间：{{ copyPreview.from }} → <b>{{ copyPreview.to }}</b>
@@ -125,10 +124,9 @@
             <el-upload :show-file-list="false" :http-request="uploadCopyQr"
                        accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
               <el-button type="primary" plain :loading="copyDlg.uploading">
-                上传新活动的志愿者联络群二维码
+                上传图片
               </el-button>
             </el-upload>
-            <div class="dim">每场活动一个新群，原活动的二维码不会带过来</div>
             <img v-if="copyDlg.qr" :src="copyDlg.qr" class="copy-qr" />
           </div>
         </el-form-item>

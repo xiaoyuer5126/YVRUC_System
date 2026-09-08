@@ -81,8 +81,8 @@ def activity_manager_ids(db: OrmSession, activity_id: str) -> list[str]:
 def add_manager(db: OrmSession, activity_id: str, user: User,
                 added_by: User) -> ActivityManager:
     if not user.is_manager_identity():
-        raise HTTPException(400, "活动管理者仅限 活动发起方/青协 身份"
-                                 f"（{user.name} 当前身份不含活动发起方/青协）")
+        raise HTTPException(400, f"活动管理者仅限 活动发起方/青协 身份，"
+                                 f"{user.name} 当前身份不符")
     exists = db.query(ActivityManager).filter_by(
         activity_id=activity_id, user_id=user.id).first()
     if exists:
@@ -96,7 +96,7 @@ def add_manager(db: OrmSession, activity_id: str, user: User,
 def remove_manager(db: OrmSession, activity_id: str, user_id: str,
                    creator_id: str) -> None:
     if user_id == creator_id:
-        raise HTTPException(409, "活动创建者不可被移除（可移除其他管理者）")
+        raise HTTPException(409, "活动创建者不可被移除")
     row = db.query(ActivityManager).filter_by(
         activity_id=activity_id, user_id=user_id).first()
     if row is None:

@@ -272,7 +272,7 @@ def confirm_hours(record_id: str, body: ConfirmHoursBody,
         raise HTTPException(404, "时长记录不存在")
     act = db.get(Activity, r.activity_id)
     if act is None or act.hours_approved_at is None:
-        raise HTTPException(409, "这条时长还没核准，等负责老师核准后再看")
+        raise HTTPException(409, "该时长尚未核准")
     if act.hours_locked():
         raise HTTPException(409, "该活动的时长已锁定")
     if act.appeal_deadline and now() > act.appeal_deadline:
@@ -281,7 +281,7 @@ def confirm_hours(record_id: str, body: ConfirmHoursBody,
     if (db.query(HoursAppeal)
             .filter(HoursAppeal.record_id == r.id,
                     HoursAppeal.status == "pending").first()):
-        raise HTTPException(409, "您的申诉还在处理中，处理完负责老师会再核准一次")
+        raise HTTPException(409, "您的申诉正在处理中，处理完成后会重新核准")
     if body.reward not in HoursRecord.REWARD_LABELS:
         raise HTTPException(400, "报酬方式只能是 志愿时长 / 劳务")
     if body.reward == "pay" and hours_flow.pay_position(db, act.id, user.id) is None:
@@ -306,7 +306,7 @@ def appeal_hours(record_id: str, body: AppealBody,
         raise HTTPException(404, "时长记录不存在")
     act = db.get(Activity, r.activity_id)
     if act is None or act.hours_approved_at is None:
-        raise HTTPException(409, "这条时长还没核准，等负责老师核准后再看")
+        raise HTTPException(409, "该时长尚未核准")
     if act.hours_locked():
         raise HTTPException(409, "该活动的时长已锁定，不可再申诉；请联系负责老师")
     if act.appeal_deadline and now() > act.appeal_deadline:
@@ -315,7 +315,7 @@ def appeal_hours(record_id: str, body: AppealBody,
                  f"如确有问题请联系负责老师")
     reason = body.reason.strip()
     if len(reason) < 5:
-        raise HTTPException(400, "请把情况写清楚（至少 5 个字），管理者才好判断")
+        raise HTTPException(400, "请写明具体情况（至少 5 个字）")
     if body.claimed_hours <= 0:
         raise HTTPException(400, "申报时长必须大于 0")
     if body.claimed_hours > 24:

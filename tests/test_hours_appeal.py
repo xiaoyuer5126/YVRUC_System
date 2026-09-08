@@ -172,7 +172,7 @@ def test_核准前看不到也申诉不了(client, admin, db, served):
     assert rec["approved"] is False and rec["can_appeal"] is False
     r = client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu,
                     json={"claimed_hours": 3, "reason": "忘记签退，实际提前走了"})
-    assert r.status_code == 409 and "还没核准" in r.json()["detail"]
+    assert r.status_code == 409 and "尚未核准" in r.json()["detail"]
 
     # 核准会通知每个人，并给出申诉截止时间
     r = client.post(f"/api/staff/activities/{act.id}/hours/approve",

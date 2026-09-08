@@ -27,8 +27,7 @@
       </div>
     </template>
     <p class="dim" style="margin:0 0 8px">
-      录取的人先落在所选场次的「待分配」里，再用一键分配或手动指派进具体岗位；
-      不录取只发一条通知，不留任何记录。
+      录取的人先落在所选场次的「待分配」，再分配岗位；不录取只发送通知，不留记录。
     </p>
     <el-table :data="apps" size="small" row-key="id" @selection-change="onSelect">
       <el-table-column type="selection" width="36" :selectable="selectable" />
@@ -117,8 +116,8 @@ async function decide(accept) {
   const names = selected.value.map(a => a.user.name).join('、')
   const target = shifts.value.find(g => g.id === targetShift.value)
   await ElMessageBox.confirm(
-    accept ? `录取 ${names} 到「${target ? target.name : '各自的第一意向场次'}」？录取通知会立即发出。`
-           : `不录取 ${names}？会发一条措辞留余地的通知，不留任何记录。`,
+    accept ? `录取 ${names} 到「${target ? target.name : '各自的第一意向场次'}」？通知将立即发送。`
+           : `不录取 ${names}？将发送通知，不留记录。`,
     accept ? '确认录取' : '确认不录取', { type: accept ? 'success' : 'warning' })
   busy.value = true
   try {

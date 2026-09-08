@@ -16,7 +16,7 @@
         提醒归还（{{ data?.outstanding || 0 }} 人）
       </el-button>
       <RefreshBar ref="refresher" :load="load" />
-      <span class="dim">领取与归还各一个码，贴在两张桌子上；现场也可手动勾选</span>
+      <span class="dim">领取与归还各一个码，现场也可手动登记</span>
     </div>
 
     <el-row :gutter="14" style="margin-bottom:12px">
@@ -34,7 +34,6 @@
         <el-button size="small" plain @click="batch('cancel_return')">撤销归还</el-button>
         <el-button size="small" type="danger" plain @click="batch('cancel_take')">撤销领取</el-button>
       </template>
-      <span v-else class="dim">勾选后可批量登记领取／归还</span>
     </div>
 
     <DataCards v-if="narrow" :rows="data?.items || []" title-key="name"
@@ -75,11 +74,11 @@
                width="440">
       <p class="dim" style="margin-top:0;line-height:1.8">
         {{ rm.action === 'take'
-           ? `发给岗位统一发放服装、但还没领的 ${data?.not_taken || 0} 位志愿者。`
-           : `发给领了还没还的 ${data?.outstanding || 0} 位志愿者。` }}
+           ? `发给尚未领取服装的 ${data?.not_taken || 0} 位志愿者。`
+           : `发给尚未归还服装的 ${data?.outstanding || 0} 位志愿者。` }}
       </p>
       <el-checkbox v-model="rm.needAck">要求志愿者点「我已知悉」</el-checkbox>
-      <div class="dim">勾选后可在本活动的「签收情况」里看到谁还没回</div>
+      <div class="dim">勾选后可在「签收情况」查看并一键提醒。</div>
       <template #footer>
         <el-button @click="rm.visible = false">取消</el-button>
         <el-button type="primary" :loading="rm.busy" @click="remind">发送</el-button>

@@ -30,12 +30,12 @@
                      style="width:100%;margin-top:18px"
                      :disabled="task.state !== 'active' || !task.enrolled"
                      :loading="submitting" @click="doCheckin">
-            <template v-if="!task.enrolled">您不是本场次确认志愿者</template>
+            <template v-if="!task.enrolled">您不是本场次志愿者，请联系负责人</template>
             <template v-else-if="task.checked_in && !task.checked_out">签退离岗</template>
             <template v-else>签到到岗</template>
           </el-button>
           <p v-if="task.checked_in && !task.checked_out" class="dim" style="margin:10px 0 0">
-            场次结束 2 小时内请完成签退；超时未签退将按场次结束时间计算时长。
+            场次结束 2 小时内请完成签退，超时未签退将按场次结束时间计算时长
           </p>
         </template>
         <template v-else>

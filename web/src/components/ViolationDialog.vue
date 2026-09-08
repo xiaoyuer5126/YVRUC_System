@@ -14,10 +14,10 @@
       </el-form-item>
       <el-form-item label="情况简述" required>
         <el-input v-model="form.detail" type="textarea" :rows="3" maxlength="500"
-                  show-word-limit placeholder="发生了什么、什么时候。类型为「其他」时请尽量具体" />
+                  show-word-limit placeholder="简述时间与经过，类型为「其他」时请尽量具体" />
       </el-form-item>
     </el-form>
-    <div class="dim">只记入该志愿者的档案供青协查看，不影响他之后的报名。</div>
+    <div class="dim">仅记入该志愿者的档案供青协查看，不影响其报名。</div>
     <template #footer>
       <el-button @click="visible = false">取消</el-button>
       <el-button type="primary" :loading="busy" @click="save">登记</el-button>

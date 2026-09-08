@@ -77,7 +77,7 @@ def auto_advance_activities(db: OrmSession) -> int:
             _advance(db, act, "finished", "finish",
                      f"全部场次已于 {span[1]:%m-%d %H:%M} 结束，系统自动结束活动")
             notify_enrolled(db, act, "activity_changed", activity=act.title,
-                            change_summary="活动已结束，感谢您的参与！时长将陆续录入。")
+                            change_summary="活动已结束，感谢您的参与。时长将陆续录入。")
             changed += 1
     if changed:
         db.commit()
@@ -106,7 +106,7 @@ def lock_hours_when_due(db: OrmSession) -> int:
             continue
         lock_hours(db, act, None,
                    f"确认/申诉截止（{act.appeal_deadline:%m-%d %H:%M}）无人申诉，"
-                   f"系统自动锁定；未表态的按志愿时长记")
+                   f"系统自动锁定；未确认的按志愿时长记")
         locked += 1
     if locked:
         db.commit()
@@ -125,9 +125,9 @@ def staffing_gaps(db: OrmSession, act: Activity) -> list[str]:
     for s in act.main_shifts():          # 培训/彩排不排岗位
         if not s.positions:
             out.append(f"「{s.name}」还没有岗位"
-                       + ("（截止后统一分配，现在正是建岗位的时候：先改回"
-                          "「报名即选岗位」）" if s.needs_assign()
-                          else "（学生此前无法报名）"))
+                       + ("（截止后统一分配，请先改回「报名即选岗位」"
+                          "再建岗位）" if s.needs_assign()
+                          else "（报名期间学生无法报名该场次）"))
             continue
         n = (db.query(Enrollment)
              .filter(Enrollment.shift_id == s.id,
@@ -152,7 +152,7 @@ def notify_managers_to_assign(db: OrmSession, act: Activity) -> None:
                     f"「{act.title}」报名已截止，还有场次没排完：\n"
                     f"{lines}\n"
                     f"请进入活动管理的「岗位设置」补齐岗位，"
-                    f"再到「志愿者管理」运行一键分配。", duty="roster")
+                    f"再到「志愿者管理」运行一键分配岗位。", duty="roster")
     logger.info("活动「%s」已截止，提醒管理者排岗：%s", act.title, "；".join(gaps))
 
 
@@ -177,9 +177,8 @@ def remind_stale_approvals(db: OrmSession) -> int:
         who = (db.get(User, act.approval_assignee_id)
                if act.approval_assignee_id else None)
         waited = int((now() - act.submitted_at).total_seconds() // 3600)
-        text = (f"「{act.title}」（{act.organizer}）已提交 {waited} 小时"
-                f"还没有处理。\n请到「活动审批」通过或驳回；"
-                f"确实不该由您批，可以转交。")
+        text = (f"「{act.title}」（{act.organizer}）已提交 {waited} 小时未处理。\n"
+                f"请到「活动审批」通过或驳回，如不该由您审批可以转交。")
         targets = [who] + [p for p in db.query(User)
                            .filter(User.qingxie_post == "council").all()
                            if p is not None and p.id != (who.id if who else "")]

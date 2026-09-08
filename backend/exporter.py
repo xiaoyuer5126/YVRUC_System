@@ -250,7 +250,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
             if unassigned:
                 start = ws.max_row + 2
                 ws.cell(row=start, column=1,
-                        value="以下人员尚未分配岗位（调配期处理）").font = \
+                        value="以下人员尚未分配岗位").font = \
                     Font(bold=True, color="C00000")
                 for i, (_e, u) in enumerate(unassigned, start=start + 1):
                     ws.cell(row=i, column=1, value=u.name)

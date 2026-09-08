@@ -298,7 +298,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         "waitlist_position": (logic.waitlist_position(db, enr)
                               if enr.status == "waitlisted" else 0),
         "is_leader": enr.is_leader,
-        "message": ("报名成功！名额已锁定。" if enr.status == "enrolled"
+        "message": ("报名成功，名额已锁定。" if enr.status == "enrolled"
                     else "名额已满，已为您加入候补队列（候补默认接受岗位调剂）。"),
         # 报上了就把联络群给到本人；候补的等转正再给
         "contact_group_qr": (act.contact_group_qr
@@ -368,8 +368,7 @@ def set_reassign_pref(enrollment_id: str, body: ReassignPrefBody,
     if enr.status not in logic.ACTIVE:
         raise HTTPException(409, "该报名记录已失效")
     if enr.status == "waitlisted":
-        raise HTTPException(409, "候补期间必须接受调剂——"
-                                 "有空位的岗位才好把排队的人调过去")
+        raise HTTPException(409, "候补期间必须接受岗位调剂")
     enr.allow_reassign = body.allow_reassign
     db.commit()
     return {"ok": True, "allow_reassign": enr.allow_reassign}

@@ -99,7 +99,7 @@ def do_checkin(token: str, db: OrmSession = Depends(db_session),
            .filter(Enrollment.shift_id == g.id, Enrollment.user_id == user.id,
                    Enrollment.status == "enrolled").first())
     if enr is None:
-        raise HTTPException(403, f"您不是「{act.title}·{g.name}」的确认志愿者")
+        raise HTTPException(403, f"您不是「{act.title}·{g.name}」的志愿者")
 
     rec = (db.query(CheckinRecord)
            .filter(CheckinRecord.user_id == user.id,
@@ -115,7 +115,7 @@ def do_checkin(token: str, db: OrmSession = Depends(db_session),
         db.add(rec)
         db.commit()
         return {"ok": True, "action": "checkin",
-                "message": f"签到成功，{user.name} 已到岗！",
+                "message": f"签到成功，{user.name} 已到岗。",
                 "time": t.isoformat(timespec="minutes"),
                 "location": (position.location if position and position.location
                              else act.location)}

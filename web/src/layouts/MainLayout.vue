@@ -11,7 +11,7 @@
           <div class="brand-text">
             <div class="name">{{ narrow ? '志愿服务平台' : '志愿服务管理平台' }}</div>
             <div v-if="!narrow" class="sub">
-              Volunteer Service Management · 中国人民大学
+              Volunteer Service Management
             </div>
           </div>
         </div>
@@ -41,7 +41,7 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <div class="switch-cap">切换身份（视角决定可见页面）</div>
+                <div class="switch-cap">切换身份</div>
                 <el-dropdown-item v-for="r in auth.user.roles" :key="r" :command="'identity:' + r">
                   <el-icon v-if="auth.activeIdentity === r" style="color:var(--el-color-primary)"><Check /></el-icon>
                   {{ ROLE_LABELS[r] || r }}

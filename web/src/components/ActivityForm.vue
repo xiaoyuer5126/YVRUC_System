@@ -5,8 +5,7 @@
     </el-form-item>
     <el-form-item label="组织单位" required>
       <el-input v-model="f.organizer" maxlength="64"
-                placeholder="如：校青协 / 文学院青年志愿者协会 / 校医院" />
-      <div class="dim">谁办的这场活动，会展示给志愿者，也是审批时判断归口的依据</div>
+                placeholder="如：中国人民大学青年志愿者协会 / 图书馆" />
     </el-form-item>
     <el-form-item label="活动类型" required>
       <el-radio-group v-model="f.recruit_mode">
@@ -17,12 +16,12 @@
       <div class="dim" style="line-height:1.8">
         {{ modes[f.recruit_mode]?.desc }}
         <template v-if="f.recruit_mode === 'screened'">
-          ；报名表在「岗位设置」里设计，场次一律截止后统一分配
+          ；报名表在「岗位设置」中设计，由管理者统一分配
         </template>
       </div>
     </el-form-item>
     <el-form-item label="活动地点" required>
-      <el-input v-model="f.location" placeholder="如：世纪馆北门" />
+      <el-input v-model="f.location" placeholder="如：中关村校区世纪馆北门" />
     </el-form-item>
     <el-form-item label="联系人" required>
       <div class="contacts-box">
@@ -49,7 +48,7 @@
           <el-option v-for="s in stages" :key="s" :value="s" :label="s" />
         </el-select>
       </div>
-      <div class="dim">留空即不限。不在范围内的同学报名时会被拦下</div>
+      <div class="dim">留空即不限</div>
     </el-form-item>
     <el-form-item label="报名时间" required>
       <div class="two-col">
@@ -58,24 +57,20 @@
         <DateTimeField v-model="regEnd" placeholder="报名截止时间"
                        :default-time="DAY_END" />
       </div>
-      <div class="dim" style="line-height:1.7">
-        活动时间不用填：会根据场次时间自动计算并显示。<br />
-        截止时间不能晚于最后一个场次的开始时间；每个场次还会在<b>自己开场时</b>
-        各自停止收人。
-      </div>
+      <div class="dim">活动时间不用填，会根据场次时间自动计算。</div>
     </el-form-item>
     <el-form-item label="活动简介" required>
       <el-input v-model="f.intro" type="textarea" :rows="3"
-                placeholder="介绍活动内容、岗位与注意事项" />
+                placeholder="介绍活动背景、服务对象等" />
     </el-form-item>
     <!-- 活动级的整体要求与保障；岗位上的「要求原文」讲的是那个岗位特有的事 -->
     <el-form-item label="志愿者要求">
       <el-input v-model="f.volunteer_requirement" type="textarea" :rows="2"
-                placeholder="选填。整个活动共通的要求，如：着深色衣裤、提前 20 分钟到集合点" />
+                placeholder="选填。整个活动共通的要求，如：着深色衣裤、提前 20 分钟集合" />
     </el-form-item>
     <el-form-item label="志愿者保障">
       <el-input v-model="f.volunteer_benefit" type="textarea" :rows="2"
-                placeholder="选填。提供什么，如：午餐与饮水、志愿时长、纪念徽章、意外险" />
+                placeholder="选填。提供什么，如：午餐与饮水、志愿时长、纪念证书、意外险" />
     </el-form-item>
     <el-form-item label="志愿者联络群二维码" required>
       <div class="contacts-box">
@@ -86,8 +81,7 @@
           </el-button>
         </el-upload>
         <div class="dim">
-          志愿者联络群，png/jpg/webp 不超过 2MB。不在活动详情公开，报名成功/候补转正/录取后
-          弹给本人一次，之后在「我的报名」里查看
+          志愿者联络群，png/jpg/webp 不超过 2MB。志愿者报名成功后加入联络群
         </div>
         <div v-if="f.contact_group_qr" class="qr-preview">
           <img :src="f.contact_group_qr" alt="志愿者联络群二维码" />

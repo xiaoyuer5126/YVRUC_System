@@ -351,7 +351,7 @@ def _accept_position(db: OrmSession, g: Shift, target: Enrollment,
     if position is None:
         position = g.placeholder()
     if position is None:
-        raise HTTPException(409, f"场次「{g.name}」还没有岗位，请先建好岗位再录取")
+        raise HTTPException(409, f"场次「{g.name}」还没有岗位，请先创建岗位")
     return position
 
 
@@ -449,8 +449,7 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                 if not logic.has_room(db, g, position):
                     raise HTTPException(
                         409, f"「{g.name}·{position.name}」名额已满"
-                             f"（{position.quota} 人），请先调大人数上限"
-                             f"或换一个岗位")
+                             f"（{position.quota} 人），请先调整名额或更换岗位")
                 target.status = "enrolled"
                 target.leader_willing = app.leader_willing
                 target.position_id = position.id

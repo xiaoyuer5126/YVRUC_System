@@ -11,7 +11,7 @@
           <el-option v-for="c in colleges" :key="c" :value="c" :label="c" />
         </el-select>
         <el-button type="primary" @click="load">查询</el-button>
-        <span class="dim">档案只记录：参与过的活动、违规记录、临期退选次数。平台不据此限制任何人</span>
+        <span class="dim">档案记录参与过的活动、违规记录与临期退选次数，不作为报名限制</span>
       </div>
 
       <DataCards v-if="narrow" :rows="users" title-key="name" v-loading="loading"

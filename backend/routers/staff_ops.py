@@ -161,7 +161,7 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
     n = notify_checkin(db, g, position_ids=ids, need_ack=body.need_ack,
                        batch_id=batch_id)
     if not n:
-        raise HTTPException(400, f"{scope}没有需要提醒的人（未签到的正式志愿者为 0）")
+        raise HTTPException(400, f"{scope}没有需要提醒的志愿者")
     g.reminder_sent_at = now()
     audit_log(db, actor=user, action="update", target_type="notify",
               target_id=g.id, target_label=g.name, activity_id=g.activity_id,
@@ -398,8 +398,7 @@ def export(activity_id: str, db: OrmSession = Depends(db_session),
     # 下载留痕（《设计方案》：后台记录每一次下载操作）
     audit_log(db, actor=user, action="export", target_type="export",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"导出排班表《{base}.{ext}》"
-                      "（生产版将强制加密，密码经企业微信单独发送）")
+              summary=f"导出排班表《{base}.{ext}》")
     db.commit()
     return _download(buf, f"{base}.{ext}")
 
@@ -545,7 +544,7 @@ def _ensure_hours_open(act: Activity) -> None:
         raise HTTPException(
             409, f"「{act.title}」的时长已于 "
                  f"{act.hours_locked_at:%Y-%m-%d %H:%M} 锁定，"
-                 f"如需修改请先申请解锁并由归口部长审批")
+                 f"如需修改请先申请解锁并由校青协审批")
 
 
 def _hours_approvers(db: OrmSession, act: Activity) -> list[User]:
@@ -974,7 +973,7 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
         hours_flow.lock_hours(db, act, user, "没有任何时长记录，核准时直接锁定")
         db.commit()
         return {"ok": True, "locked": True, "count": 0,
-                "message": "这场活动没有时长记录，已直接锁定并标记为已完成"}
+                "message": "本活动没有时长记录，已直接锁定并标记为已完成"}
 
     since = act.hours_approved_at
     appealed = set()
@@ -1025,14 +1024,14 @@ def hours_lock(activity_id: str, body: LockHoursBody | None = None,
     act = _act(db, activity_id)
     _ensure_hours_open(act)
     if act.hours_approved_at is None:
-        raise HTTPException(409, "请先核准时长，让志愿者有机会看到并提出异议")
+        raise HTTPException(409, "请先核准时长")
     pending = (db.query(HoursAppeal)
                .filter(HoursAppeal.activity_id == act.id,
                        HoursAppeal.status == "pending").count())
     note = (body.note.strip() if body and body.note else "")
     reason = "管理者手动锁定" + (f"（{note}）" if note else "")
     if pending:
-        reason += f"；{pending} 条申诉未处理，已按现有时长结账"
+        reason += f"；{pending} 条申诉未处理，已按现有时长记录"
     hours_flow.lock_hours(db, act, user, reason)
     db.commit()
     return {"ok": True, "pending_appeals": pending}
@@ -1050,14 +1049,14 @@ def request_unlock(activity_id: str, body: UnlockRequestBody,
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     if not act.hours_locked():
-        raise HTTPException(409, "时长还没锁定，现在就能改")
+        raise HTTPException(409, "时长尚未锁定，可直接修改")
     reason = body.reason.strip()
     if len(reason) < 5:
-        raise HTTPException(400, "请把要改什么、为什么改写清楚（至少 5 个字）")
+        raise HTTPException(400, "请写明修改内容与原因（至少 5 个字）")
     if (db.query(HoursUnlockRequest)
             .filter(HoursUnlockRequest.activity_id == act.id,
                     HoursUnlockRequest.status == "pending").first()):
-        raise HTTPException(409, "已经有一条解锁申请在等审批")
+        raise HTTPException(409, "已有一条解锁申请在审批中")
     req = HoursUnlockRequest(id=uid("ulk"), activity_id=act.id, reason=reason,
                              requested_by=user.id)
     db.add(req)
@@ -1093,7 +1092,7 @@ def decide_unlock(request_id: str, body: UnlockDecideBody,
         raise HTTPException(403, "只有归口部门的部长可以处理时长解锁申请")
     reply = body.reply.strip()
     if not body.approve and len(reply) < 2:
-        raise HTTPException(400, "驳回要写明理由")
+        raise HTTPException(400, "驳回必须写明理由")
     req.status = "approved" if body.approve else "rejected"
     req.reply, req.handled_by, req.handled_at = reply, user.id, now()
     if body.approve:
@@ -1107,7 +1106,7 @@ def decide_unlock(request_id: str, body: UnlockDecideBody,
     if requester is not None:
         notify(db, requester,
                f"时长解锁{'已通过' if body.approve else '未通过'}｜{act.title}",
-               (f"「{act.title}」的时长已解锁，改完记得重新核准。"
+               (f"「{act.title}」的时长已解锁，修改后请重新核准。"
                 if body.approve else f"解锁申请未通过。意见：{reply}")
                + (f"\n审批意见：{reply}" if body.approve and reply else ""),
                data={"activity_id": act.id})

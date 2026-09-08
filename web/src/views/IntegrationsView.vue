@@ -2,8 +2,8 @@
   <div class="page page-wide">
     <h2 style="margin-top:0">集成设置（外部系统对接）</h2>
     <el-alert type="info" :closable="false" style="margin-bottom:14px">
-      平台与四个外部系统的对接均已完成<b>接口层</b>：关闭开关时使用内置演示实现（数据不出校园网），
-      学校信息化部门提供正式参数后，打开开关并填入地址/密钥即可切换到真实接口，业务代码无需改动。
+      四个外部系统均已完成<b>接口层</b>对接：关闭开关时使用内置演示实现，
+      填入学校信息化部门提供的地址与密钥并打开开关，即可切换到真实接口。
     </el-alert>
 
     <el-row :gutter="16" v-if="configs.length">
@@ -104,7 +104,7 @@ const REQUIRED_FIELD = {
 async function toggleEnabled(c) {
   const reqKey = REQUIRED_FIELD[c.key]
   if (c.enabled && reqKey && !String(c[reqKey] || '').trim()) {
-    ElMessage.warning(`尚未填写「${FIELD_LABELS[reqKey]}」，将保持演示模式运行；填好参数后才会真正调用外部接口`)
+    ElMessage.warning(`尚未填写「${FIELD_LABELS[reqKey]}」，将保持演示模式运行`)
   }
   await api.put(`/api/staff/integrations/${c.key}`, { enabled: c.enabled })
   ElMessage.success(`${c.label} 已${c.enabled ? '切换到真实接口' : '切回演示模式'}`)

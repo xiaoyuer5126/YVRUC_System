@@ -3,13 +3,13 @@
     <!-- 模式说明 -->
     <el-alert v-if="pickModeAllAssigned" type="info" :closable="false" style="margin-bottom:10px"
               title="本场次报名时已各自选定岗位"
-              description="主要服务于「截止后统一分配」的场次；已有岗位的人试算时会保持现状，可直接改下方的建议岗位。" />
+              description="试算会保持现有岗位，可直接修改下方的建议岗位。" />
 
     <!-- 一键分配、补招这些动作放在父级「已报名名单」那一行；这里只留试算选项 -->
     <div class="toolbar">
       <el-checkbox v-model="continuity" size="small">尽量同一人同一岗位</el-checkbox>
       <el-tooltip placement="top"
-                  content="本活动其它场次已排过同名岗位的人，优先还待在那个岗位——多天活动里换来换去，交接成本全落在现场">
+                  content="本活动其它场次排过同名岗位的人，优先留在该岗位">
         <el-icon class="dim"><QuestionFilled /></el-icon>
       </el-tooltip>
       <span style="margin-left:auto" class="dim" v-if="preview">
@@ -18,7 +18,7 @@
     </div>
 
     <div class="dim" style="margin-bottom:12px">
-      按报名先后匹配还有名额且满足条件的岗位；不满足的不排入，可勾「强制」。
+      按报名先后匹配尚有名额且满足条件的岗位，不满足条件的不排入，可勾选「强制」。
     </div>
 
 
@@ -49,7 +49,6 @@
       </el-table>
 
       <div class="section-title">分配明细（可直接修改"建议岗位"列再应用）</div>
-      <div class="dim scroll-hint">明细列较多，窄屏可左右滑动查看</div>
       <div class="scroll-x">
       <el-table :data="rows" size="small" border max-height="420" style="min-width:720px">
         <el-table-column label="姓名" width="110">
@@ -72,8 +71,8 @@
         <el-table-column label="本人意愿" width="100">
           <template #default="{row}">
             <el-tooltip placement="top"
-                        :content="row.allow_reassign ? '本人报名时表示接受岗位调剂'
-                                                     : '本人报名时表示不接受调剂；仍可调整，会计入留痕'">
+                        :content="row.allow_reassign ? '本人接受岗位调剂'
+                                                     : '本人不接受调剂，调整将计入留痕'">
               <el-tag size="small" effect="plain"
                       :type="row.allow_reassign ? 'success' : 'info'">
                 {{ row.allow_reassign ? '接受调剂' : '不接受' }}
@@ -103,7 +102,7 @@
         </el-table-column>
         <el-table-column label="超额强制" width="90">
           <template #default="{row}">
-            <el-tooltip content="该岗位名额已满仍要排入时勾选（计入留痕）" placement="top">
+            <el-tooltip content="名额已满仍要排入时勾选，计入留痕" placement="top">
               <el-checkbox v-model="row.force" :disabled="!overQuota(row)" />
             </el-tooltip>
           </template>
@@ -121,20 +120,16 @@
 
       <el-alert v-if="unwillingMoved" type="warning" :closable="false"
                 style="margin-top:12px"
-                :title="`有 ${unwillingMoved} 人报名时选择了不接受调剂，本方案仍会调换其岗位`"
-                description="可以继续发布——这只是提醒，操作会连同姓名一起记入留痕日志。" />
+                :title="`有 ${unwillingMoved} 人报名时选择了不接受调剂，本方案仍会调换其岗位`" />
 
       <div style="margin-top:14px;text-align:right">
         <el-button @click="resetEdit">还原为系统建议</el-button>
         <el-button type="primary" :loading="applying" @click="apply">确认并发布分配</el-button>
-        <div class="dim" style="margin-top:6px">
-          发布后每人会收到岗位通知（时间+地点），操作留痕
-        </div>
+        <div class="dim" style="margin-top:6px">发布后将向每人发送岗位通知</div>
       </div>
     </template>
 
-    <el-empty v-else description="点击名单上方的「一键分配」开始试算——同一套算法驱动：先到先得、摊平、保底、条件过滤、冲突规避，规则可在上方自定义"
-              :image-size="80" />
+    <el-empty v-else description="点击名单上方的「一键分配岗位」开始试算" :image-size="80" />
 
     <!-- 补招：现场临时加人 -->
     <el-dialog v-model="walkinVisible" title="补招志愿者（现场添加）" width="430">
@@ -150,7 +145,7 @@
         </el-form-item>
         <el-form-item label="">
           <el-checkbox v-model="walkin.force">
-            时段冲突或名额已满时强制加入（计入留痕）
+            时段冲突或名额已满时强制加入，计入留痕
           </el-checkbox>
         </el-form-item>
       </el-form>
@@ -221,7 +216,7 @@ function overQuota(row) {
 
 async function runPreview() {
   if (!props.shift.positions.length) {
-    ElMessage.warning('请先在「岗位设置」页签下创建岗位，再运行一键分配')
+    ElMessage.warning('请先在「岗位设置」中创建岗位')
     return
   }
   solving.value = true
@@ -244,7 +239,7 @@ async function apply() {
     preview.value = null
     emit('reload')
   } catch (e) {
-    ElMessage.error(e.message + '——可在对应行勾选「强制」后重试')
+    ElMessage.error(e.message + '，可勾选「强制」后重试')
   } finally { applying.value = false }
 }
 

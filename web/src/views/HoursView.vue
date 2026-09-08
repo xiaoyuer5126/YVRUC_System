@@ -184,7 +184,7 @@ async function submitAppeal() {
   try {
     await api.post(`/api/me/hours/${d.row.id}/appeal`,
                    { claimed_hours: d.hours, reason: d.reason })
-    ElMessage.success('已提交，负责老师处理后会通知你')
+    ElMessage.success('已提交，负责人处理后会通知你')
     d.visible = false
     load()
   } finally { d.busy = false }
@@ -195,7 +195,7 @@ function stateOf(row) {
   const how = row.reward === 'pay' ? '劳务' : '志愿时长'
   if (row.locked) return { type: 'success', text: `已锁定 · ${how}` }
   if (row.approved && row.confirmed_at) return { type: 'success', text: `已确认 · ${how}` }
-  if (row.approved) return { type: 'warning', text: '已核准，请确认或申诉' }
+  if (row.approved) return { type: 'warning', text: '已核准请确认，如有异议请申诉' }
   return { type: 'info', text: '待核准' }
 }
 </script>

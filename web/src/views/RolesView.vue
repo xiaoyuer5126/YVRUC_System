@@ -4,26 +4,26 @@
     <h2>角色管理</h2>
     <el-alert type="warning" :closable="false" style="margin-bottom:12px">
       <template v-if="coreOnly">
-        你是<b>{{ myDeptName }}</b>骨干：这里列的是本部门的成员，点「归我管理」把人归到自己名下，
-        他看到的活动就和你一样。别的身份与层级请找部长。
+        你是<b>{{ myDeptName }}</b>骨干：此处列出本部门成员，点「归我管理」将成员归到自己名下，
+        其可见范围与你一致。其他身份与层级请联系部长。
       </template>
       <template v-else-if="headOnly">
-        你是<b>{{ myDeptName }}</b>部长：可以把同学设为本部门的骨干或成员，或把本部门的骨干/成员撤下。
-        只能动青协身份；管理员、活动发起方、学生身份请找会长团调整。
+        你是<b>{{ myDeptName }}</b>部长：可设置或撤销本部门的骨干与成员。
+        仅能调整青协身份，管理员、活动发起方、学生身份请联系会长团。
       </template>
       <template v-else>
-        这一页改的是<b>权限</b>：谁能进工作台、谁能审批、谁是部长。
-        用户类型（老师/学生）由数智人大下发，平台不改；<b>不能移除自己的管理员身份</b>，
+        本页调整的是<b>权限</b>：谁能进入工作台、谁能审批、谁是部长。
+        用户类型（老师/学生）由数智人大下发，平台不作修改；<b>不能移除自己的管理员身份</b>，
         如需交接请由另一位管理员操作。
       </template>
     </el-alert>
 
     <div class="toolbar">
-      <el-input v-model="q" placeholder="按姓名或学号搜索（给学生加身份时用）"
+      <el-input v-model="q" placeholder="按姓名或学号搜索"
                 style="width:280px" clearable @keyup.enter="load" @clear="load" />
       <el-button type="primary" @click="load">查询</el-button>
       <RefreshBar ref="refresher" :load="load" />
-      <span class="dim">{{ coreOnly ? '只列本部门的成员' : headOnly ? '不搜索时只列本部门的人；要拉新人进部门就搜他的学号' : '不搜索时只列已有管理类身份的人' }}</span>
+      <span class="dim">{{ coreOnly ? '只列本部门的成员' : headOnly ? '不搜索时只列本部门的人，添加新成员请搜索学号' : '不搜索时只列已有管理类身份的人' }}</span>
     </div>
 
     <DataCards v-if="narrow" :rows="rows" title-key="name" v-loading="loading"
@@ -115,9 +115,8 @@
               <el-radio value="council" :disabled="headOnly">会长团</el-radio>
             </el-radio-group>
             <div class="dim" style="line-height:1.7">
-              会长团：除集成设置外与管理员同权 · 部长：审本部门活动，管本部门骨干/成员 ·
-              骨干：只管自己被加进的活动 · 成员：跟着归属的骨干看同样的活动，
-              能看能点，提交不保存
+              会长团：除集成设置外与管理员同权 · 部长：审批本部门活动，管理本部门骨干与成员 ·
+              骨干：只管理自己参与的活动 · 成员：可见范围与归属骨干一致，可查看但不能保存
             </div>
           </el-form-item>
           <el-form-item v-if="dlg.post !== 'council'" label="所属部门" required>
@@ -125,7 +124,7 @@
                        :disabled="headOnly">
               <el-option v-for="d in depts" :key="d.id" :value="d.id" :label="d.name" />
             </el-select>
-            <div class="dim">部长审的是本部门的活动；骨干与成员也要归属部门，部长才看得到他们</div>
+            <div class="dim">骨干与成员须归属部门，部长才能管理</div>
           </el-form-item>
           <!-- 成员是跟着某个人学做事的，可见范围就是那位骨干的可见范围 -->
           <el-form-item v-if="dlg.post === 'member'" label="归属骨干" required>
@@ -135,10 +134,8 @@
                          :label="`${c.name}（${c.student_id}）`" />
             </el-select>
             <div class="dim">
-              成员看到的活动与他归属的骨干完全一致。
-              <template v-if="dlg.deptId && !cores.length">
-                这个部门还没有骨干，请先设一位。
-              </template>
+              成员的可见范围与归属骨干一致。
+              <template v-if="dlg.deptId && !cores.length">该部门还没有骨干，请先设置一位。</template>
             </div>
           </el-form-item>
         </template>

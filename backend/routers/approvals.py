@@ -234,7 +234,7 @@ def decide(activity_id: str, body: DecideBody,
         raise HTTPException(403, "这条审批不在您名下")
     comment = body.comment.strip()
     if not body.approve and len(comment) < 2:
-        raise HTTPException(400, "驳回必须写明理由，发起方才知道改什么")
+        raise HTTPException(400, "驳回必须写明理由，会发给发起方")
 
     # 部长自己发起的活动归口自己部门、由自己审——允许，但流水里标明是本人
     submit = (db.query(ApprovalEvent)
@@ -262,7 +262,7 @@ def decide(activity_id: str, body: DecideBody,
             f"审批通过｜{act.title}",
             f"「{act.title}」已通过校青协审批"
             + (f"并发布，报名于 {iso(act.reg_start)} 开始。" if published
-               else "，现在可以在活动管理页点「发布」开始报名。")
+               else "，请在活动管理页点「发布」开始报名。")
             + (f"\n审批意见：{comment}" if comment else ""))
     else:
         act.status = "draft"

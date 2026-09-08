@@ -25,7 +25,7 @@
       <el-button size="small" @click="openReminder">
         <el-icon><Bell /></el-icon>&nbsp;补发签到提醒
       </el-button>
-      <span class="dim">同一个码：第一次扫签到，第二次扫签退</span>
+      <span class="dim">同一个码：首次扫码签到，再次扫码签退</span>
     </div>
 
     <!-- 场次与岗位放到 #body 里一起讲（要带培训/彩排标记），不再单列字段 -->
@@ -130,7 +130,7 @@
         </el-col>
       </el-row>
 
-      <div class="section-title">到场名单（含未签到者，勾选后可直接批量签到）</div>
+      <div class="section-title">到场名单（含未签到者，勾选后可批量操作）</div>
       <el-card shadow="never">
         <div class="manual-bar">
           <el-input v-model="manualSid" size="small" placeholder="输入学号单个操作" style="width:180px"
@@ -151,8 +151,7 @@
             <el-tag v-if="!batchTaskId" size="small" type="warning" effect="plain">请先生成并开启签到码</el-tag>
           </template>
           <template v-else>
-            <span v-if="batchTaskId" class="dim">勾选后可批量签到／签退／取消</span>
-            <el-tag v-else size="small" type="warning" effect="plain">请先生成并开启签到码</el-tag>
+            <el-tag v-if="!batchTaskId" size="small" type="warning" effect="plain">请先生成并开启签到码</el-tag>
           </template>
         </div>
         <DataCards v-if="narrow" :rows="board.records" title-key="name"
@@ -252,10 +251,7 @@
             <DateTimeField :model-value="form.range[1]" placeholder="停止签到"
                            @update:model-value="setWindowEnd" />
           </div>
-          <div class="dim">
-            默认比场次起止各放宽 {{ WINDOW_PAD }} 分钟：提前到岗的人能先签，
-            拖堂散场的人也还签得了。可自行调整。
-          </div>
+          <div class="dim">默认比场次起止各放宽 {{ WINDOW_PAD }} 分钟，可自行调整。</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -284,7 +280,7 @@
           <el-tag v-else size="small" effect="plain">统一签到</el-tag>
         </div>
         <div class="dim">可签 {{ fmtDT(qrTask.valid_from) }} ~ {{ fmtDT(qrTask.valid_to) }}</div>
-        <div class="dim">学生扫码进入签到页；第一次扫=签到，第二次扫=签退</div>
+        <div class="dim">首次扫码签到，再次扫码签退</div>
         <div style="margin-top:10px">
           <el-input size="small" readonly :model-value="scanUrl">
             <template #append><el-button @click="copyLink">复制</el-button></template>
@@ -297,8 +293,7 @@
     <!-- 补发签到提醒：先选范围再发，别在下拉里盲点 -->
     <el-dialog v-model="reminderDlg" title="补发签到提醒" width="460">
       <p class="dim" style="margin-top:0;line-height:1.8">
-        只发给<b>还没签到</b>的正式志愿者，已经到岗的不会被打扰。<br />
-        场次开始前 30 分钟系统已自动发过一次。
+        只发给<b>未签到</b>的正式志愿者。场次开始前 30 分钟系统已自动发送过一次。
       </p>
       <el-form label-width="72px">
         <el-form-item label="范围">
@@ -322,9 +317,7 @@
         </el-form-item>
         <el-form-item label="签收">
           <el-checkbox v-model="reminderAck">要求志愿者点「我已知悉」</el-checkbox>
-          <div class="dim" style="line-height:1.7">
-            勾选后可在本活动的「签收情况」里看到谁还没回，并一键催办。
-          </div>
+          <div class="dim">勾选后可在「签收情况」查看并一键提醒。</div>
         </el-form-item>
       </el-form>
       <template #footer>

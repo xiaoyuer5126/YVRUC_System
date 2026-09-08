@@ -295,7 +295,7 @@ def test_培训彩排可以请假(client, admin, db, act_with_positions, take_st
     assert board["expected"] == 0 and board["excused"] == 1
     r = client.post(f"/api/staff/shifts/{sid}/checkin-reminder", headers=admin,
                     json={})
-    assert r.status_code == 400 and "没有需要提醒的人" in r.json()["detail"]
+    assert r.status_code == 400 and "没有需要提醒的志愿者" in r.json()["detail"]
 
     # 销假回到正常
     client.post(f"/api/activities/enrollments/{att['my_enrollment_id']}/excuse",

@@ -102,8 +102,8 @@ def sso_callback(code: str, db: OrmSession = Depends(db_session)):
         raise HTTPException(502, "统一身份认证未返回学号")
     user = db.query(User).filter(User.student_id == sid).first()
     if user is None:
-        raise HTTPException(404, f"统一身份认证通过，但平台未找到学号 {sid} 的档案"
-                                 f"（数智人大同步未覆盖？请联系管理员）")
+        raise HTTPException(404, f"统一身份认证通过，但平台未找到学号 {sid} 的档案，"
+                                 f"请联系管理员")
     return {"token": create_session(db, user), "user": user.full(),
             "mode": sso.mode()}
 

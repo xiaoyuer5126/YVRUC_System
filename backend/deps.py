@@ -90,8 +90,7 @@ def _guard_trainee(request: Request, user: User) -> None:
     if handler in TRAINEE_ALLOWED_WRITES:
         return
     raise HTTPException(403, {"code": TRAINEE_READONLY,
-                              "message": "部门成员为学习权限：可以走完流程，"
-                                         "但这一步不会真正保存"})
+                              "message": "部门成员为学习权限，本次操作不会保存"})
 
 
 def require_manager(request: Request,
