@@ -422,11 +422,14 @@ def cancel_enroll(enrollment_id: str,
 
         hours_left = (g.start_time - t).total_seconds() / 3600
         late = hours_left < config.LATE_CANCEL_HOURS
-        # 临期退选记一笔（青协在档案里能看到次数），但名额只在「报名已截止」
-        # 时才扣留：报名还开着说明平台仍在招人，把位子废掉自相矛盾——
+        # 临期退选记一笔（青协在档案里能看到次数），但名额只在报名已经关掉
+        # 之后才扣留：报名还开着说明平台仍在招人，把位子废掉自相矛盾——
         # 新人能报、候补能转正，唯独这个位子空着谁都不能用。
-        reg_closed = bool(act.reg_end and t > act.reg_end)
-        hold_seat = late and reg_closed
+        # 判「报名是否还开着」而不是「过没过 reg_end」：管理者可以提前点
+        # 「截止报名」，那时 reg_end 还在未来，但招人确实已经停了。
+        reg_open = (act.status == "published"
+                    and act.reg_end is not None and t <= act.reg_end)
+        hold_seat = late and not reg_open
 
         vacated, was_leader = enr.position_id, enr.is_leader
         enr.status = "cancelled"

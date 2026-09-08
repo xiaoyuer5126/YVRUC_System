@@ -35,15 +35,20 @@
             <span v-else class="dim">—</span>
           </template>
         </el-table-column>
-        <el-table-column prop="quota" label="名额" width="70" />
+        <el-table-column label="名额" width="110">
+          <template #default="{row}">
+            {{ row.quota }}
+            <el-tooltip v-if="row.held" content="临期退选扣留的名额，分配不占用">
+              <span class="dim">（扣留 {{ row.held }}）</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column label="建议排入" width="90">
           <template #default="{row}"><b>{{ row.planned }}</b></template>
         </el-table-column>
         <el-table-column label="缺口" width="80">
           <template #default="{row}">
-            <span :style="{color: row.quota - row.planned > 0 ? '#e6a23c' : '#67c23a'}">
-              {{ row.quota - row.planned }}
-            </span>
+            <span :style="{color: gap(row) > 0 ? '#e6a23c' : '#67c23a'}">{{ gap(row) }}</span>
           </template>
         </el-table-column>
       </el-table>
@@ -211,8 +216,11 @@ function buildRows() {
 function resetEdit() { buildRows() }
 function overQuota(row) {
   const s = props.shift.positions.find(x => x.id === row.target)
-  return s ? s.quota - (s.enrolled || 0) <= 0 : false
+  return s ? s.remaining <= 0 : false
 }
+
+// 缺口按「可用名额」算：扣留的位子填不进人，不该算成缺口
+const gap = row => row.quota - row.held - row.planned
 
 async function runPreview() {
   if (!props.shift.positions.length) {

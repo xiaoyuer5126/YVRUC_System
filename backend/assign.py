@@ -15,12 +15,23 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .enroll_logic import unmet_requirements
+from .enroll_logic import (position_enrolled_count, position_occupied_count,
+                           unmet_requirements)
 from .models import Enrollment, Position, Shift, User, now
 
 
 def _eligible_positions(user: User, positions: list[Position]) -> list[str]:
     return [p.id for p in positions if not unmet_requirements(user, p)]
+
+
+def _held_seats(db: OrmSession, positions: list[Position]) -> dict[str, int]:
+    """各岗位被临期退选扣留的名额数。
+
+    扣留的位子不释放给任何人，分配同样不能用：不减掉的话，方案会把它当空位
+    分出去，等于绕开了扣留规则。
+    """
+    return {p.id: (position_occupied_count(db, p.id)
+                   - position_enrolled_count(db, p.id)) for p in positions}
 
 
 def match(candidates: list[tuple[str, list[str]]],
@@ -91,7 +102,8 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
     users = {r.id: db.get(User, r.user_id) for r in rows}
     candidates = [(r.id, _eligible_positions(users[r.id], positions))
                   for r in rows]
-    quota = {p.id: p.quota for p in positions}
+    held = _held_seats(db, positions)
+    quota = {p.id: max(0, p.quota - held[p.id]) for p in positions}
 
     prefer: dict[str, str] = {}
     if continuity:
@@ -138,6 +150,7 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
 
     stats = [{
         "position_id": p.id, "name": p.name, "quota": p.quota,
+        "held": held[p.id],
         "location": p.location,
         "requirement_desc": p.requirement_desc() or "不限",
         "needs_leader": p.needs_leader,
@@ -179,8 +192,10 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
             raise ValueError(f"岗位不属于该场次：{pid}")
         rows.append((enr, positions.get(pid), bool(row.get("force"))))
 
-    # 名额：把本次方案与未列入方案的既有分配合并起来算
+    # 名额：把本次方案与未列入方案的既有分配合并起来算。
+    # 扣留的名额先扣掉——它们不释放给任何人，分配也不能用。
     planned = {enr.id for enr, _p, _f in rows}
+    held = _held_seats(db, list(positions.values()))
     counts: dict[str, int] = {}
     for enr in (db.query(Enrollment)
                 .filter(Enrollment.shift_id == shift.id,
@@ -192,9 +207,10 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
             continue
         counts[position.id] = counts.get(position.id, 0) + 1
     for pid, n in counts.items():
-        if n > positions[pid].quota:
+        room = positions[pid].quota - held[pid]
+        if n > room:
             raise ValueError(f"岗位「{positions[pid].name}」超出名额"
-                             f"（{n}>{positions[pid].quota}），"
+                             f"（{n}>{room}），"
                              f"如确需超额请对相应人员勾选「强制」")
 
     # 硬性条件：非强制行必须满足

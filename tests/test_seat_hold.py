@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from backend.models import Activity, Enrollment, now
+from backend.models import Activity, Enrollment, User, now
 from conftest import login
 
 
@@ -104,3 +104,63 @@ def test_没扣留的记录不能释放(client, admin, db, open_group, take_stud
                                    reg_end_in_hours=5)
     r = client.post(f"/api/staff/enrollments/{enr.id}/release-seat", headers=admin)
     assert r.status_code == 409
+
+
+def test_提前截止报名后临期退选照样扣留(client, db, open_group, take_student):
+    """管理者点了「截止报名」，reg_end 还在未来，但招人确实已经停了。"""
+    act, g, taker, enr = _one_seat(client, db, open_group, take_student,
+                                   reg_end_in_hours=5)
+    db.get(Activity, act.id).status = "closed"
+    db.commit()
+    r = client.delete(f"/api/activities/enrollments/{enr.id}",
+                      headers=login(client, taker))
+    assert r.json()["effect"] == "held"
+    db.expire_all()
+    assert db.get(Enrollment, enr.id).seat_held is True
+
+
+def test_扣留的名额分配时不能占用(client, admin, db, open_group, take_student):
+    """扣留的位子不释放给任何人，一键分配与手动调岗同样不能拿它排人。"""
+    from backend.models import Position, uid
+    act, g = open_group(2, day_offset=0, start_in_hours=10)
+    spare = Position(id=uid("p"), shift_id=g.id, name="备用岗位", quota=1, sort=1)
+    db.add(spare)
+    db.commit()
+    stay, quitter, extra = take_student(), take_student(), take_student()
+    for sid in (stay, quitter):
+        r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                        headers=login(client, sid),
+                        json={"position_id": g.test_position_id})
+        assert r.json()["status"] == "enrolled"
+    # 报满之后才关报名：扣留只发生在招人已经停了的时候
+    db.get(Activity, act.id).reg_end = now() - timedelta(hours=1)
+    db.commit()
+    gone = (db.query(Enrollment)
+            .join(User, Enrollment.user_id == User.id)
+            .filter(Enrollment.shift_id == g.id,
+                    User.student_id == quitter).one())
+    client.delete(f"/api/activities/enrollments/{gone.id}",
+                  headers=login(client, quitter))
+    db.expire_all()
+    assert db.get(Enrollment, gone.id).seat_held is True
+
+    # 试算：名额 2 里有 1 个被扣留，剩下的 1 个已经有人，缺口是 0 不是 1
+    d = client.post(f"/api/staff/shifts/{g.id}/assign/preview",
+                    headers=admin, json={}).json()
+    main = next(s for s in d["position_stats"] if s["position_id"] == g.test_position_id)
+    assert main["held"] == 1 and main["quota"] == 2
+
+    # 手动调岗：把第三个人塞进这个岗位要被拦下，除非勾强制
+    client.post(f"/api/staff/shifts/{g.id}/add-walkin", headers=admin,
+                json={"student_id": extra, "position_id": spare.id})
+    third = (db.query(Enrollment)
+             .join(User, Enrollment.user_id == User.id)
+             .filter(Enrollment.shift_id == g.id,
+                     User.student_id == extra).one())
+    plan = [{"enrollment_id": third.id, "position_id": g.test_position_id}]
+    r = client.post(f"/api/staff/shifts/{g.id}/assign/apply", headers=admin,
+                    json={"plan": plan, "source": "manual"})
+    assert r.status_code == 409 and "超出名额" in r.json()["detail"]
+    plan[0]["force"] = True
+    assert client.post(f"/api/staff/shifts/{g.id}/assign/apply", headers=admin,
+                       json={"plan": plan, "source": "manual"}).status_code == 200
