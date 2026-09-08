@@ -102,7 +102,7 @@
     <!-- 复制活动：只带结构，落草稿并直接进编辑页 -->
     <el-dialog v-model="copyDlg.visible" title="复制活动" width="500">
       <p class="dim" style="margin-top:0;line-height:1.8">
-        复制「{{ copyDlg.source?.title }}」的<b>结构</b>：活动信息、场次、岗位、学习材料、报名表。
+        复制「{{ copyDlg.source?.title }}」的<b>结构</b>：活动信息、场次、岗位、学习材料、报名问卷。
       </p>
       <el-form label-width="96px">
         <el-form-item label="延期天数" required>

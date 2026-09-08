@@ -183,8 +183,8 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
     for col, w in zip("ABCDE", (24, 30, 14, 14, 10)):
         overview.column_dimensions[col].width = w
 
-    # 即选即得的报名表答案挂在报名记录上，一题一列跟在签到后面；
-    # 筛选活动的答案在「报名表结果」那份导出里
+    # 即选即得的报名问卷答案挂在报名记录上，一题一列跟在签到后面；
+    # 筛选活动的答案在「报名问卷结果」那份导出里
     questions = [] if activity.is_screened() else (
         db.query(FormQuestion).filter(FormQuestion.activity_id == activity.id)
         .order_by(FormQuestion.sort).all())
@@ -307,7 +307,7 @@ def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
 
 
 def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
-    """报名表结果：一人一行，一题一列。
+    """报名问卷结果：一人一行，一题一列。
 
     筛选是在表格里做的事——把答案摊平了导出来，部长们习惯在 Excel 里排序、
     筛选、分工看。被显示条件挡掉的题对那个人本来就不存在，留空。
@@ -325,7 +325,7 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
 
     ex = Export(db)
     ws = ex.wb.active
-    ws.title = "报名表结果"
+    ws.title = "报名问卷结果"
     header = ["姓名", "学号", "学院", "校区", "学段", "手机号", "提交时间",
               "意向场次", "录取结果", "组长意愿", "内部提示分"]
     header += [q.title for q in questions]

@@ -80,7 +80,7 @@ def test_assign场次学生端看到的是说明而不是岗位名(client, db, p
     d = client.get(f"/api/activities/{aid}", headers=t).json()
     pos = d["shifts"][0]["positions"]
     assert len(pos) == 1 and pos[0]["is_placeholder"] is True
-    assert pos[0]["display_name"] == "暂不选岗位 · 由负责老师后续统一分配"
+    assert pos[0]["display_name"] == "暂不选岗位 · 由负责人后续统一分配"
     assert pos[0]["name"] == "待分配", "管理端仍按「待分配」记账"
 
 

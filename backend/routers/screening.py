@@ -1,6 +1,6 @@
-"""报名表与报名后筛选。
+"""报名问卷与报名后筛选。
 
-报名表两种活动都能用：即选即得的活动在报名弹窗里答题，答案记在报名记录上；
+报名问卷两种活动都能用：即选即得的活动在报名弹窗里答题，答案记在报名记录上；
 报名后筛选的活动填一次表并勾意向场次，截止后由管理者挑人。
 
 场次照旧分两种：「报名即选岗位」的场次要连意向岗位一起勾，录取时直接落到他选的
@@ -50,7 +50,7 @@ def _questions(db: OrmSession, activity_id: str) -> list[FormQuestion]:
             .order_by(FormQuestion.sort).all())
 
 
-# ======================= 管理者：设计报名表 =======================
+# ======================= 管理者：设计报名问卷 =======================
 
 class QuestionBody(BaseModel):
     id: str = ""                  # 空 = 新题
@@ -82,7 +82,7 @@ def save_form(activity_id: str, body: FormBody,
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id, screened=False)
     if act.status not in EDITABLE_FORM_STATUSES:
-        raise HTTPException(409, "活动已公开，报名表不能再改")
+        raise HTTPException(409, "活动已公开，报名问卷不能再改")
     existing = {q.id: q for q in _questions(db, activity_id)}
     keep: set[str] = set()
     # 显示条件只能挂在前面的选择题上：往后指会绕成环，答一道题跳一道题就说不清了
@@ -112,7 +112,7 @@ def save_form(activity_id: str, body: FormBody,
             db.delete(row)
     audit_log(db, actor=user, action="update", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"保存报名表（{len(body.questions)} 题）")
+              summary=f"保存报名问卷（{len(body.questions)} 题）")
     db.commit()
     return {"ok": True, "questions": [q.out() for q in _questions(db, activity_id)]}
 
@@ -169,7 +169,7 @@ def student_form(activity_id: str, db: OrmSession = Depends(db_session),
 async def upload_answer_file(activity_id: str, file: UploadFile = File(...),
                              db: OrmSession = Depends(db_session),
                              user: User = Depends(current_user)):
-    """报名表里的文件题。先传文件拿 id，提交答案时把 id 填进去。"""
+    """报名问卷里的文件题。先传文件拿 id，提交答案时把 id 填进去。"""
     act = _act(db, activity_id, screened=False)
     ext = Path(file.filename or "").suffix.lower().lstrip(".")
     if ext not in EXT_TYPES:
@@ -241,7 +241,7 @@ def apply(activity_id: str, body: ApplyBody,
                       f"意向 {'、'.join(g.name for g in shifts)}")
     db.commit()
     return {"ok": True, "status": "applied",
-            "message": "申请已提交。报名截止后由负责老师筛选，结果会通知您。"}
+            "message": "申请已提交。报名截止后由负责人筛选，结果会通知您。"}
 
 
 def _wanted_position(db: OrmSession, user: User, g: Shift,

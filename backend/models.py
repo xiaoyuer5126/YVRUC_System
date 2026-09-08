@@ -550,7 +550,7 @@ class Attachment(Base):
     __tablename__ = "attachments"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    # shift / position：学习材料；application：报名表里志愿者上传的文件
+    # shift / position：学习材料；application：报名问卷里志愿者上传的文件
     owner_type: Mapped[str] = mapped_column(String(12))
     owner_id: Mapped[str] = mapped_column(String(32), index=True)
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
@@ -564,10 +564,10 @@ class Attachment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
-# ======================= 报名后筛选：报名表与申请 =======================
+# ======================= 报名后筛选：报名问卷与申请 =======================
 
 class FormQuestion(Base):
-    """报名表里的一道题。一个活动一份表，题目按 sort 排。"""
+    """报名问卷里的一道题。一个活动一份表，题目按 sort 排。"""
     __tablename__ = "form_questions"
 
     KINDS = {"single": "单选", "multi": "多选", "text": "填空", "file": "文件上传"}
@@ -666,7 +666,7 @@ class Enrollment(Base):
     # —— 组长 ——
     # 报名时表态愿意担任。只是给管理者看的参考，不决定谁当选。
     leader_willing: Mapped[bool] = mapped_column(Boolean, default=False)
-    # 即选即得活动的报名表答案（题目 id → 答案）；报名后筛选的答案在 Application 上
+    # 即选即得活动的报名问卷答案（题目 id → 答案）；报名后筛选的答案在 Application 上
     answers: Mapped[dict] = mapped_column(JSON, default=dict)
     is_leader: Mapped[bool] = mapped_column(Boolean, default=False)
 

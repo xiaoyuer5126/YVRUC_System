@@ -101,7 +101,7 @@ def test_截止点之后不再自动转正(client, db, open_group, take_student)
         Enrollment.status == "waitlisted").count() == 1
 
 
-def test_截止后管理者可手动转正(client, admin, db, open_group, take_student):
+def test_截止后管理者手动转正仍要本人确认(client, admin, db, open_group, take_student):
     act, g, first, queued = _fill_and_queue(client, db, open_group, take_student,
                                             day_offset=0, start_in_hours=10,
                                             reg_end_in_hours=-1)
@@ -114,9 +114,15 @@ def test_截止后管理者可手动转正(client, admin, db, open_group, take_s
                     headers=admin)
     assert r.status_code == 200
     db.expire_all()
+    # 补不补人由管理者定，来不来由本人定：和自动递补一样开 2 小时确认窗
+    row = db.get(Enrollment, waiting.id)
+    assert row.status == "pending_confirm"
+    assert row.confirm_deadline is not None
+    r = client.post(f"/api/activities/enrollments/{row.id}/confirm-promotion",
+                    headers=login(client, queued))
+    assert r.status_code == 200, r.text
+    db.expire_all()
     assert db.get(Enrollment, waiting.id).status == "enrolled"
-    # 手动转正不走 2 小时确认窗：活动就在眼前，再等两小时名额只会继续空着
-    assert db.get(Enrollment, waiting.id).confirm_deadline is None
 
 
 def test_没空位时不能手动转正(client, admin, db, open_group, take_student):

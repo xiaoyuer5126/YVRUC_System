@@ -59,7 +59,7 @@
 
         <el-alert v-if="act.editing" type="warning" show-icon :closable="false"
                   style="margin:12px 0"
-                  title="负责老师正在调整本活动的安排，报名暂时关闭"
+                  title="负责人正在调整本活动的安排，报名暂时关闭"
                   description="调整期间无法报名或退选，保存后会将变更通知已报名志愿者。" />
 
         <!-- 还没到报名开始：倒计时归零时自己重拉一次，不必让人手动刷新页面。
@@ -72,7 +72,7 @@
         </div>
 
         <div v-if="screenedApplying" class="section-title">报名申请<span class="dim" style="font-weight:400;margin-left:8px">
-          勾选意向场次并填写报名表，截止后由负责老师筛选录取；
+          勾选意向场次并填写报名问卷，截止后由负责人筛选录取；
           场次与岗位见下方安排</span></div>
         <div v-else class="section-title">岗位安排<span class="dim" style="font-weight:400;margin-left:8px">
           点击场次、岗位名称可查看详细安排</span></div>
@@ -82,7 +82,7 @@
         <ApplicationPanel v-if="screenedApplying" :act="act" @changed="load"
                           style="margin-bottom:14px" />
         <div v-if="screenedApplying" class="section-title">场次与岗位<span class="dim" style="font-weight:400;margin-left:8px">
-          仅供了解；录取后由负责老师安排到具体岗位</span></div>
+          仅供了解；录取后由负责人安排到具体岗位</span></div>
 
         <!-- 窄屏：场次与岗位改成竖排卡片。手机上选岗位是最要紧的动作，
              不能藏在表格的展开箭头后面，所以岗位直接铺开。 -->
@@ -190,7 +190,7 @@
             <!-- 一个岗位都没有：只可能是管理者还没建，报不了 -->
             <template v-else>
               <p class="dim" style="margin:8px 0 0">
-                本场次尚未设置岗位，请联系负责老师。
+                本场次尚未设置岗位，请联系负责人。
               </p>
               <div class="m-pos-act" style="margin-top:8px">
                 <template v-if="g.my_enrollment">
@@ -355,7 +355,7 @@
                       同场次只能选一个岗位，候补将在名额释放后转正，转正需 2 小时内确认。
                     </div>
                   </template>
-                  <p v-else class="dim" style="margin:4px 0">本场次尚未设置岗位，请联系负责老师。</p>
+                  <p v-else class="dim" style="margin:4px 0">本场次尚未设置岗位，请联系负责人。</p>
 
                   <!-- 已报名：把自己岗位的培训内容与材料直接摊开 -->
                   <el-card v-if="myPosition(g)" shadow="never" class="mine-card">
@@ -393,7 +393,7 @@
                     <p v-if="!myPosition(g).training_note
                              && !myPosition(g).attachments?.length"
                        class="dim" style="margin:0">
-                      负责老师还没有上传本岗位的培训内容与材料。
+                      负责人还没有上传本岗位的培训内容与材料。
                     </p>
                   </el-card>
 
@@ -455,7 +455,7 @@
             <el-table-column label="操作" width="230" align="right">
               <template #default="{ row }">
                 <template v-if="row.my_enrollment">
-                  <!-- 调剂意愿：点一下即可改，只作为负责老师排班时的参考 -->
+                  <!-- 调剂意愿：点一下即可改，只作为负责人排班时的参考 -->
                   <div style="margin-bottom:4px">
                     <el-tooltip content="仅在名额不足时可能进行调剂，负责人可看到你的意愿"
                                 placement="top">
@@ -673,7 +673,7 @@
                   :closable="false" style="margin-top:10px"
                   title="请确认这些时间你可到场，如时间冲突需向负责人请假。" />
 
-        <!-- 活动设了报名表：报名时一并答，答案跟着报名记录走 -->
+        <!-- 活动设了报名问卷：报名时一并答，答案跟着报名记录走 -->
         <el-form v-if="act.questions?.length" label-position="top" style="margin-top:12px">
           <QuestionFields ref="enrollFields" v-model="enrollDlg.answers" :questions="act.questions"
                           :upload-url="`/api/activities/${act.id}/apply/upload`" />
@@ -777,7 +777,7 @@ async function toggleExcuse(s) {
   let reason = ''
   try {
     const r = await ElMessageBox.prompt(
-      `「${s.name}」${s.time_text}。请说明无法参加的原因，负责老师会看到。`,
+      `「${s.name}」${s.time_text}。请说明无法参加的原因，负责人会看到。`,
       `${s.kind_label}请假`,
       { inputPlaceholder: '如：与专业课时间冲突', inputPattern: /.{2,}/,
         inputErrorMessage: '请简单写一下原因',
@@ -786,7 +786,7 @@ async function toggleExcuse(s) {
   } catch { return }
   await api.post(`/api/activities/enrollments/${s.my_enrollment_id}/excuse`,
                  { excused: true, reason })
-  ElMessage.success('已请假，负责老师会看到')
+  ElMessage.success('已请假，负责人会看到')
   load()
 }
 
@@ -831,7 +831,7 @@ function openFor(g) {
          && act.value.recruit_mode !== 'screened'
 }
 function closedText(g) {
-  if (act.value?.recruit_mode === 'screened') return '录取后由负责老师安排'
+  if (act.value?.recruit_mode === 'screened') return '录取后由负责人安排'
   if (act.value?.status !== 'published') return '不在报名期'
   if (act.value.opens_in) return '未开始报名'
   return g.started ? '本场已开场' : '本场报名已截止'
@@ -928,7 +928,7 @@ async function submitEnroll() {
   }
 }
 
-// 调剂意愿随时可改：它只是给负责老师的参考
+// 调剂意愿随时可改：它只是给负责人的参考
 async function toggleReassign(g) {
   const enr = g.my_enrollment
   const d = await api.patch(

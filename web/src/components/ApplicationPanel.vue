@@ -1,4 +1,4 @@
-<!-- 报名后筛选：志愿者这边的申请入口。勾意向场次、填报名表，一个活动只填一次。 -->
+<!-- 报名后筛选：志愿者这边的申请入口。勾意向场次、填报名问卷，一个活动只填一次。 -->
 <template>
   <el-card shadow="never" class="apply-card">
     <template v-if="mine">
@@ -23,7 +23,7 @@
         </el-descriptions-item>
       </el-descriptions>
       <p v-if="mine.status === 'applied'" class="dim">
-        报名截止后由负责老师筛选，结果会通过通知告诉你。
+        报名截止后由负责人筛选，结果会通过通知告诉你。
       </p>
       <p v-else-if="mine.status === 'rejected'" class="dim">
         本次名额有限，暂未能安排你参加，期待下次活动再见。
@@ -69,7 +69,7 @@
     <!-- 不在报名期：审批人和路过的人也该看得到这份表长什么样 -->
     <template v-else>
       <el-alert type="info" :closable="false" :title="closedText" style="margin-bottom:12px" />
-      <div class="apply-head"><b>报名表</b>
+      <div class="apply-head"><b>报名问卷</b>
         <span class="dim">报名开放后填写，并勾选意向场次</span>
       </div>
       <ol v-if="questions.length" class="preview">

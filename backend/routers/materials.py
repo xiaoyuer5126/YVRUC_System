@@ -150,13 +150,13 @@ def download_material(material_id: str, db: OrmSession = Depends(db_session),
     if act is not None and act.status == "draft" and not is_activity_manager(
             db, user, act.id):
         raise HTTPException(404, "材料不存在")
-    # 报名表里志愿者交的文件是个人材料：只有本人和这场活动的管理者能看
+    # 报名问卷里志愿者交的文件是个人材料：只有本人和这场活动的管理者能看
     if row.owner_type == "application" and row.uploaded_by != user.id \
             and not is_activity_manager(db, user, row.activity_id):
         raise HTTPException(404, "材料不存在")
     path = MATERIAL_DIR / row.stored_name
     if not path.is_file():
-        raise HTTPException(404, "文件已丢失，请联系负责老师重新上传")
+        raise HTTPException(404, "文件已丢失，请联系负责人重新上传")
     ext = row.stored_name.rsplit(".", 1)[-1]
     return FileResponse(path, media_type=EXT_TYPES.get(ext, "application/octet-stream"),
                         filename=row.title)

@@ -194,7 +194,7 @@ def test_填表申请_必填校验_只能填一次(client, admin, db, take_stude
     # 直接报名的口子关着
     r = client.post(f"/api/activities/{act_id}/shifts/{ids[0]}/enroll", headers=t,
                     json={"position_id": None})
-    assert r.status_code == 409 and "报名表" in r.json()["detail"]
+    assert r.status_code == 409 and "报名问卷" in r.json()["detail"]
 
     r = client.post(f"/api/activities/{act_id}/apply", headers=t,
                     json={"shift_ids": ids, "answers": _answers(q, 参加过吗=None)})
@@ -345,7 +345,7 @@ def test_录取名额不够先拦下(client, admin, db, take_student):
     assert r.status_code == 409 and "名额" in r.json()["detail"]
 
 
-def test_公开后报名表锁定(client, admin, db):
+def test_公开后报名问卷锁定(client, admin, db):
     act_id, _ids, q = _create_screened(client, admin, db)
     r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
                    json={"questions": [{"kind": "text", "title": "新题"}]})
@@ -354,7 +354,7 @@ def test_公开后报名表锁定(client, admin, db):
                       headers=admin).json()["editable"] is False
 
 
-def test_报名表文件只有本人和管理者能下载(client, admin, db, take_student):
+def test_报名问卷文件只有本人和管理者能下载(client, admin, db, take_student):
     act_id, ids, q = _create_screened(client, admin, db)
     t = login(client, take_student())
     r = client.post(f"/api/activities/{act_id}/apply/upload", headers=t,
@@ -373,7 +373,7 @@ def test_报名表文件只有本人和管理者能下载(client, admin, db, tak
     assert client.get(f"/api/materials/{att_id}", headers=other).status_code == 404
 
 
-def test_复制活动带报名表不带联络群(client, admin, db):
+def test_复制活动带报名问卷不带联络群(client, admin, db):
     act_id, _ids, q = _create_screened(client, admin, db, status="draft")
     r = client.post(f"/api/staff/activities/{act_id}/copy", headers=admin,
                     json={"shift_days": 3, "title": "副本", "contact_group_qr": "data:new"})
@@ -398,7 +398,7 @@ def test_报名成功即弹联络群(client, admin, db, enrolled_activity, take_
     assert "contact_group_qr" not in client.get(f"/api/activities/{act.id}", headers=t).json()
 
 
-def test_报名表结果导出excel(client, admin, db, take_student):
+def test_报名问卷结果导出excel(client, admin, db, take_student):
     """一人一行、一题一列；被条件挡掉的题留空。"""
     from io import BytesIO
     from openpyxl import load_workbook
@@ -429,7 +429,7 @@ def test_报名表结果导出excel(client, admin, db, take_student):
     assert first["录取结果"] == "已录取" and "（录取）" in first["意向场次"]
     assert dict(zip(header, rows[2]))["组长意愿"] == "愿意"
 
-    # 即选即得的活动没有报名表
+    # 即选即得的活动没有报名问卷
     other = client.post("/api/staff/activities", headers=admin,
                         json={"title": f"即选即得 {now():%H%M%S%f}", "organizer": "校青协",
                               "intro": "x", "location": "东门", "contact_group_qr": "q",
@@ -440,9 +440,9 @@ def test_报名表结果导出excel(client, admin, db, take_student):
                       headers=admin).status_code == 409
 
 
-# ======================= 即选即得也能设报名表 =======================
+# ======================= 即选即得也能设报名问卷 =======================
 
-def test_即选即得的报名表在报名时答(client, admin, db, open_group, take_student):
+def test_即选即得的报名问卷在报名时答(client, admin, db, open_group, take_student):
     """题目挂在活动上，报名弹窗里答；答案记在报名记录上，名单和导出都看得到。"""
     from backend.models import Activity as Act
 
@@ -477,7 +477,7 @@ def test_即选即得的报名表在报名时答(client, admin, db, open_group, 
     assert [a["value"] for a in row["answers"]] == ["会", "张三 13800000000"]
 
 
-def test_有文件答案的报名表导出成zip(client, admin, db, take_student):
+def test_有文件答案的报名问卷导出成zip(client, admin, db, take_student):
     """Excel 里写相对路径并加超链接，附件按「姓名_学号_题目」放在附件目录里。"""
     import zipfile
     from io import BytesIO

@@ -16,7 +16,7 @@
       <div class="dim" style="line-height:1.8">
         {{ modes[f.recruit_mode]?.desc }}
         <template v-if="f.recruit_mode === 'screened'">
-          ；报名表在「岗位设置」中设计，由管理者统一分配
+          ；报名问卷在「岗位设置」中设计，由管理者统一分配
         </template>
       </div>
     </el-form-item>

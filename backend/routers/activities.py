@@ -32,7 +32,7 @@ def _ensure_not_editing(act: Activity) -> None:
     也不该在管理者调整到一半时退出，让对方看到一份自己动着动着就变了的名单。
     """
     if act.editing_since is not None:
-        raise HTTPException(409, "负责老师正在调整本活动的安排，报名暂停中，"
+        raise HTTPException(409, "负责人正在调整本活动的安排，报名暂停中，"
                                  "请稍后再试")
 
 
@@ -135,7 +135,7 @@ class EnrollBody(BaseModel):
     position_id: str | None = None    # pick 模式必填；assign 模式留空
     allow_reassign: bool = True       # 是否接受管理者调剂岗位（仅作参考）
     leader_willing: bool = False      # 是否愿意担任该岗位组长
-    answers: dict = {}                # 活动设了报名表时的答案（题目 id → 答案）
+    answers: dict = {}                # 活动设了报名问卷时的答案（题目 id → 答案）
 
 
 def _check_eligibility(db: OrmSession, user: User, act: Activity,
@@ -186,10 +186,10 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
     if g.activity_id != act.id:
         raise HTTPException(400, "场次不属于该活动")
     if act.is_screened():
-        raise HTTPException(409, "本活动需填写报名表申请，由负责老师筛选后录取")
+        raise HTTPException(409, "本活动需填写报名问卷申请，由负责人筛选后录取")
 
     _check_eligibility(db, user, act, g)
-    # 报名表答案：题目不存在就是空表，答案照样为空
+    # 报名问卷答案：题目不存在就是空表，答案照样为空
     from .screening import validate_answers
     answers = validate_answers(db, act, user, body.answers or {})
 
@@ -200,7 +200,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
     if g.needs_assign():
         position = g.placeholder()
         if position is None:
-            raise HTTPException(409, f"场次「{g.name}」尚未就绪，请联系负责老师")
+            raise HTTPException(409, f"场次「{g.name}」尚未就绪，请联系负责人")
     elif body.position_id:
         position = db.get(Position, body.position_id)
         if position is None or position.shift_id != g.id:
@@ -237,7 +237,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
             if live.seat_held:
                 raise HTTPException(
                     409, "您此前在该场次临期退选，名额已按规则扣留，无法再次报名；"
-                         "如确有需要请联系负责老师")
+                         "如确有需要请联系负责人")
             label = {"enrolled": "已报名为正式成员", "waitlisted": "已在候补队列中",
                      "pending_confirm": "有候补转正待确认"}[live.status]
             raise HTTPException(409, f"该场次{label}，请勿重复报名")
@@ -391,7 +391,7 @@ def cancel_enroll(enrollment_id: str,
         raise HTTPException(
             409, f"「{g.name}」是「{parent.name}」的{g.kind_label()}，"
                  f"随该场次报名产生，不能单独退出；如确实不能参加，"
-                 f"请退选「{parent.name}」或联系负责老师")
+                 f"请退选「{parent.name}」或联系负责人")
     act = db.get(Activity, enr.activity_id)
     _ensure_not_editing(act)
 
@@ -418,7 +418,7 @@ def cancel_enroll(enrollment_id: str,
         # enrolled：活动开始后不可退
         t = now()
         if t >= g.start_time:
-            raise HTTPException(409, "活动已开始，无法退选；如有特殊情况请联系负责老师。")
+            raise HTTPException(409, "活动已开始，无法退选；如有特殊情况请联系负责人。")
 
         hours_left = (g.start_time - t).total_seconds() / 3600
         late = hours_left < config.LATE_CANCEL_HOURS
@@ -451,7 +451,7 @@ def cancel_enroll(enrollment_id: str,
     if hold_seat:
         return {"ok": True, "effect": "held",
                 "message": f"距开始不足{config.LATE_CANCEL_HOURS}小时且报名已截止，"
-                           f"该名额已按规则扣留，如需补人请联系负责老师。"}
+                           f"该名额已按规则扣留，如需补人请联系负责人。"}
     return {"ok": True, "effect": "released",
             "message": "退选成功，名额已释放给候补队列。"}
 

@@ -308,11 +308,11 @@ def appeal_hours(record_id: str, body: AppealBody,
     if act is None or act.hours_approved_at is None:
         raise HTTPException(409, "该时长尚未核准")
     if act.hours_locked():
-        raise HTTPException(409, "该活动的时长已锁定，不可再申诉；请联系负责老师")
+        raise HTTPException(409, "该活动的时长已锁定，不可再申诉；请联系负责人")
     if act.appeal_deadline and now() > act.appeal_deadline:
         raise HTTPException(
             409, f"申诉已于 {act.appeal_deadline:%m-%d %H:%M} 截止；"
-                 f"如确有问题请联系负责老师")
+                 f"如确有问题请联系负责人")
     reason = body.reason.strip()
     if len(reason) < 5:
         raise HTTPException(400, "请写明具体情况（至少 5 个字）")

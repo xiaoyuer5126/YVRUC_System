@@ -99,7 +99,7 @@
         </template>
         <el-alert v-if="act.recruit_mode === 'screened'" type="info" :closable="false"
                   style="margin-bottom:12px">
-          报名后筛选：志愿者填报名表、勾意向场次，报名截止后你在「志愿者管理」里录取。
+          报名后筛选：志愿者填报名问卷、勾意向场次，报名截止后你在「志愿者管理」里录取。
           场次一律<b>截止后统一分配</b>，录取的人先落在「待分配」，再排进具体岗位。
         </el-alert>
         <el-alert v-else type="info" :closable="false" style="margin-bottom:12px">
@@ -508,7 +508,7 @@
                   自动递补已停止（{{ fmtDT(roster.auto_promote_deadline) }} 起）
                 </template>
                 <div style="line-height:1.7">
-                  离活动开始不足 24 小时，且报名已截止，停止自动递补，确需补人请手动「转正」
+                  离活动开始不足 24 小时，且报名已截止，停止自动递补，确需补人请手动「转正」通知本人确认
                 </div>
               </el-alert>
               <div v-for="w in roster.waitlist" :key="w.enrollment_id" class="wl-row">
@@ -521,8 +521,8 @@
                 <el-tag v-if="w.status === 'pending_confirm'" size="small" type="danger">
                   待确认 {{ w.confirm_deadline?.slice(11,16) }} 前
                 </el-tag>
-                <el-popconfirm
-                    :title="`把 ${w.user.name} 直接转为正式（不再等本人确认）？`"
+                <el-popconfirm v-if="w.status === 'waitlisted'"
+                    :title="`通知 ${w.user.name} 确认转正？超时未确认名额将顺延`"
                     @confirm="promoteManually(w)">
                   <template #reference>
                     <el-button size="small" link type="primary"
@@ -2029,7 +2029,7 @@ async function transition(action) {
 }
 
 // —— 导出 ——
-// 排班表：按场次分 Sheet，含签到状态，交付现场；报名表有文件答案时是 zip
+// 排班表：按场次分 Sheet，含签到状态，交付现场；报名问卷有文件答案时是 zip
 function doExport() { dl(`/api/staff/activities/${activityId}/export.xlsx`) }
 // 时长记录：姓名、身份证号、岗位、时长、备注
 function doExportHours() { dl(`/api/staff/activities/${activityId}/hours.xlsx`) }
@@ -2270,8 +2270,8 @@ async function setLeader(row, on) {
 
 // 自动递补停了之后手动补人；名额不够时后端会拦，提示去调岗位名额
 async function promoteManually(w) {
-  await api.post(`/api/staff/enrollments/${w.enrollment_id}/promote`)
-  ElMessage.success(`${w.user.name} 已转为正式，通知已发送`)
+  const d = await api.post(`/api/staff/enrollments/${w.enrollment_id}/promote`)
+  ElMessage.success(`已通知 ${w.user.name} 确认，${fmtDT(d.confirm_deadline)} 前有效`)
   loadAll()
 }
 

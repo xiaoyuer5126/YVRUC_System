@@ -42,7 +42,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "application_accepted": (
         "录取通知｜{activity}",
         "恭喜！您已被「{activity}」录取，安排在 {shift}（{time}）。"
-        "\n具体岗位以负责老师后续分配为准。请到「我的报名」查看志愿者联络群二维码，"
+        "\n具体岗位以负责人后续分配为准。请到「我的报名」查看志愿者联络群二维码，"
         "入群后请把群昵称改为「姓名+电话」。"),
     # 措辞留余地：这一次没排上不代表什么，也不留任何记录
     "application_rejected": (
@@ -65,7 +65,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "您已成为岗位组长｜{activity}",
         "您在「{activity}」已被老师选为岗位「{position}」组长。\n"
         "时间：{position_time}\n地点：{position_loc}\n"
-        "请提前与负责老师对接现场安排。"),
+        "请提前与负责人对接现场安排。"),
     "checkin_reminder": (
         "签到提醒｜{activity}",
         "您报名的「{activity}」· {shift} 即将开始。\n"

@@ -318,7 +318,7 @@ def main() -> None:
         b1_hold = Position(id=uid("p"), shift_id=b1.id, name="待分配",
                            is_placeholder=True, quota=20, waitlist_quota=3,
                            sort=-1,
-                           service_task="报名截止后由负责老师统一分配岗位",
+                           service_task="报名截止后由负责人统一分配岗位",
                            training_note="岗位确定后另行通知")
         db.add(b1_hold)
         db.flush()
@@ -478,7 +478,7 @@ def main() -> None:
         fresh = Activity(id=uid("act"), title="新生迎新周·志愿者选拔",
                          organizer="校青年志愿者协会",
                          recruit_mode="screened", cover_hue=190,
-                         intro="迎新周需要一批能独立带队的志愿者，请如实填写报名表；"
+                         intro="迎新周需要一批能独立带队的志愿者，请如实填写报名问卷；"
                                "报名截止后由青协统一筛选，录取结果通过企业微信通知。",
                          location="东门迎新广场",
                          contact_info="青协项目部 李慕清",
@@ -500,7 +500,7 @@ def main() -> None:
             db.add(Position(id=uid("p"), shift_id=g.id, name="待分配",
                             is_placeholder=True, quota=12, waitlist_quota=3,
                             sort=-1, location="东门迎新广场",
-                            service_task="录取后由负责老师安排具体岗位",
+                            service_task="录取后由负责人安排具体岗位",
                             training_note="到岗后统一讲解"))
             fresh_shifts.append(g)
         db.flush()

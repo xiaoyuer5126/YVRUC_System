@@ -1,20 +1,20 @@
-<!-- 报名表：题目在这里设计。即选即得的活动在报名弹窗里答，报名后筛选的申请时填。
+<!-- 报名问卷：题目在这里设计。即选即得的活动在报名弹窗里答，报名后筛选的申请时填。
      公开之后锁定。 -->
 <template>
   <el-card shadow="never" v-loading="loading">
     <template #header>
       <div class="fb-head">
-        <b>报名表</b>
+        <b>报名问卷</b>
         <span class="dim">
           {{ screened ? '志愿者申请时填写，意向场次无需出题'
                       : '选填。志愿者报名时填写，答案在「志愿者管理」中查看' }}
         </span>
         <el-button v-if="editable" type="primary" size="small" :loading="saving"
-                   style="margin-left:auto" @click="save">保存报名表</el-button>
+                   style="margin-left:auto" @click="save">保存报名问卷</el-button>
       </div>
     </template>
     <el-alert v-if="!editable" type="info" :closable="false" style="margin-bottom:10px"
-              title="活动已公开，报名表不能再改" />
+              title="活动已公开，报名问卷不能再改" />
     <ol v-if="!editable && questions.length" class="fb-readonly">
       <li v-for="q in questions" :key="q.id">
         <b>{{ q.title }}</b>
@@ -125,7 +125,7 @@ async function save() {
     const d = await api.put(`/api/staff/activities/${props.activityId}/form`,
                             { questions: body })
     questions.value = d.questions.map(toRow)
-    ElMessage.success('报名表已保存')
+    ElMessage.success('报名问卷已保存')
   } finally { saving.value = false }
 }
 </script>

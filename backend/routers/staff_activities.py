@@ -774,7 +774,7 @@ def _sync_placeholder(db: OrmSession, g: Shift, capacity: int,
     if holder is None:
         holder = Position(id=uid("p"), shift_id=g.id, name=PLACEHOLDER_NAME,
                           is_placeholder=True, sort=-1,
-                          service_task="报名截止后由负责老师统一分配岗位",
+                          service_task="报名截止后由负责人统一分配岗位",
                           training_note="岗位确定后另行通知")
         db.add(holder)
         g.positions.append(holder)
@@ -1470,7 +1470,7 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
     positions = sorted(g.positions, key=lambda s: s.sort)
     checked_ids = {r[0] for r in db.query(CheckinRecord.user_id)
                    .filter(CheckinRecord.shift_id == g.id).all()}
-    # 即选即得的报名表答案挂在报名记录上；筛选活动的在「报名申请」那张表里看
+    # 即选即得的报名问卷答案挂在报名记录上；筛选活动的在「报名申请」那张表里看
     questions = [] if act.is_screened() else (
         db.query(FormQuestion).filter(FormQuestion.activity_id == act.id)
         .order_by(FormQuestion.sort).all())
@@ -1560,7 +1560,7 @@ def release_held_seat(enrollment_id: str, db: OrmSession = Depends(db_session),
     """把临期退选扣留的名额放回去。
 
     扣留是对退选者的约束（他自己也不能再报），但位子空着与否是现场需求——
-    补不补人由负责老师判断。放回后候补队列按顺序递补。
+    补不补人由负责人判断。放回后候补队列按顺序递补。
     岗位名额本身不受影响：扣留从来不改老师填的数字，只是让一条已取消的
     记录占着位子。
     """
@@ -1595,17 +1595,17 @@ def release_held_seat(enrollment_id: str, db: OrmSession = Depends(db_session),
 @router.post("/enrollments/{enrollment_id}/promote")
 def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
                      user: User = Depends(require_manager)):
-    """管理者手动把候补转为正式。
+    """管理者手动为候补开确认窗。
 
     自动转正在「报名截止」与「活动开始前 24 小时」的较晚者之后就停了——
     那之后转正的人只剩不到一天准备，且他再退选还要扣分。要不要补人由
-    负责老师判断，所以这里不走 2 小时确认窗，直接落实并通知本人。
+    负责人判断，但来不来仍由本人定：和自动递补一样开 2 小时确认窗。
     """
     enr = db.get(Enrollment, enrollment_id)
     if enr is None:
         raise HTTPException(404, "报名记录不存在")
     ensure_activity_manager(db, user, enr.activity_id)
-    if enr.status not in ("waitlisted", "pending_confirm"):
+    if enr.status != "waitlisted":
         raise HTTPException(409, "该记录不在候补队列中")
     g = _shift(db, enr.shift_id)
     position = db.get(Position, enr.position_id) if enr.position_id else None
@@ -1615,15 +1615,16 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
             raise HTTPException(409, f"{where}没有空余名额，"
                                      f"如确需增加请先调整名额")
         target = db.get(User, enr.user_id)
-        logic.promote_directly(db, enr, target)
+        logic.start_confirm(db, enr, g)
         audit_log(db, actor=user, action="update", target_type="enrollment",
                   target_id=enr.id, target_label=target.name,
                   activity_id=enr.activity_id,
-                  summary=f"手动将 {target.name} 从候补转为正式"
+                  summary=f"手动为 {target.name} 开候补转正确认窗"
                           f"（{position.name if position else g.name}）")
         db.commit()
     return {"ok": True, "status": enr.status,
-            "position_id": enr.position_id}
+            "confirm_deadline": iso(enr.confirm_deadline),
+            "confirm_hours": config.PROMOTE_CONFIRM_HOURS}
 
 
 class LeaderBody(BaseModel):

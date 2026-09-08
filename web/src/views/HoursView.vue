@@ -23,7 +23,7 @@
     </el-row>
     <el-card shadow="never">
       <template #header><b>时长明细</b><span class="dim" style="font-weight:400;margin-left:8px">
-        由负责老师核准，展开一行可看这次时长由哪几段组成。
+        由负责人核准，展开一行可看这次时长由哪几段组成。
       </span></template>
       <DataCards v-if="narrow" :rows="data.records" title-key="activity_title"
                  :fields="[{ key: 'created_at', label: '记录时间', format: fmtDT },
@@ -109,7 +109,7 @@
     <el-dialog v-model="dlg.visible" title="时长有异议" width="480">
       <p class="dim" style="margin-top:0;line-height:1.8">
         「{{ dlg.row?.activity_title }}」当前记 <b>{{ dlg.row?.hours }}</b> 小时。
-        写清楚实际的到离时间，负责老师核对后决定是否改。
+        写清楚实际的到离时间，负责人核对后决定是否改。
       </p>
       <el-form label-width="88px">
         <el-form-item label="申报时长" required>

@@ -1,4 +1,4 @@
-<!-- 报名表答题区：即选即得的报名弹窗与报名后筛选的申请表共用。
+<!-- 报名问卷答题区：即选即得的报名弹窗与报名后筛选的申请表共用。
      题目按显示条件逐题露出；被挡掉的题不填也不提交，后端按同一套规则再算一次。 -->
 <template>
   <el-form-item v-for="q in shown" :key="q.id" :label="q.title" :required="q.required">

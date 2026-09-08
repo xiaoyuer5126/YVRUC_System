@@ -10,7 +10,7 @@
           <el-radio-button value="all">全部</el-radio-button>
         </el-radio-group>
       </div>
-      <p>即选即得——报名即生效；报名后筛选——由负责老师筛选录取</p>
+      <p>即选即得——报名即生效；报名后筛选——由负责人筛选录取</p>
     </div>
 
     <div v-if="list.length" class="card-grid">

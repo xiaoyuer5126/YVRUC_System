@@ -1,4 +1,4 @@
-<!-- 一个人的报名表答案，管理端看：文件题给下载链接，多选顿号连接。 -->
+<!-- 一个人的报名问卷答案，管理端看：文件题给下载链接，多选顿号连接。 -->
 <template>
   <el-descriptions :column="1" size="small" border>
     <el-descriptions-item v-for="a in answers" :key="a.question_id" :label="a.title">

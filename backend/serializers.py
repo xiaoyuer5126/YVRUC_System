@@ -58,7 +58,7 @@ def display_status(act: Activity) -> tuple[str, str]:
 
 
 # 占位岗位给学生看的说法。管理端仍叫「待分配」——那是给老师看的账。
-PLACEHOLDER_LABEL = "暂不选岗位 · 由负责老师后续统一分配"
+PLACEHOLDER_LABEL = "暂不选岗位 · 由负责人后续统一分配"
 
 
 def tags_desc(tags: dict | None) -> str:
@@ -342,7 +342,7 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
 
 
 def application_out(db: OrmSession, act: Activity, user=None) -> dict:
-    """报名后筛选的活动：报名表题目，以及这个人自己的申请（没有则 None）。"""
+    """报名后筛选的活动：报名问卷题目，以及这个人自己的申请（没有则 None）。"""
     questions = (db.query(FormQuestion)
                  .filter(FormQuestion.activity_id == act.id)
                  .order_by(FormQuestion.sort).all())
@@ -403,7 +403,7 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
     if act.is_screened():
         out["application"] = application_out(db, act, user)
     else:
-        # 即选即得的报名表：题目直接给，报名弹窗里答；答案记在报名记录上
+        # 即选即得的报名问卷：题目直接给，报名弹窗里答；答案记在报名记录上
         out["questions"] = [q.out() for q in db.query(FormQuestion)
                             .filter(FormQuestion.activity_id == act.id)
                             .order_by(FormQuestion.sort).all()]

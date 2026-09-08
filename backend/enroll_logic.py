@@ -327,7 +327,7 @@ def auto_promote_deadline(db: OrmSession, shift: Shift) -> datetime:
     """自动候补转正的截止点：报名截止时间与「活动开始前 24 小时」取更晚的那个。
 
     过了这个点还自动转正是坑人：转正的人只剩不到一天准备，而他此时再退选
-    就要按临期退选扣分。之后要不要补人由负责老师看着办，手动转。
+    就要按临期退选扣分。之后要不要补人由负责人看着办，手动转。
     """
     act = db.get(Activity, shift.activity_id)
     cutoff = shift.start_time - timedelta(hours=config.LATE_CANCEL_HOURS)
@@ -355,30 +355,25 @@ def promote_head(db: OrmSession, shift: Shift,
     head = next((r for r in rows if r.status == "waitlisted"), None)
     if head is None:
         return None
-    head.status = "pending_confirm"
-    head.promoted_at = now()
-    head.confirm_deadline = now() + timedelta(hours=config.PROMOTE_CONFIRM_HOURS)
-    user = db.get(User, head.user_id)
-    activity = db.get(Activity, head.activity_id)
+    return start_confirm(db, head, shift)
+
+
+def start_confirm(db: OrmSession, enr: Enrollment, shift: Shift) -> Enrollment:
+    """把一条候补转为「待确认」，开确认窗并通知本人。
+
+    名额从这一刻起就占住了：本人在窗口内确认才成为正式报名，超时按放弃处理、
+    名额顺延下一位。自动递补与管理者手动转正走的是同一条路。
+    """
+    enr.status = "pending_confirm"
+    enr.promoted_at = now()
+    enr.confirm_deadline = now() + timedelta(hours=config.PROMOTE_CONFIRM_HOURS)
+    user = db.get(User, enr.user_id)
+    activity = db.get(Activity, enr.activity_id)
     # 带上 activity_id：这条通知看完就要去活动页确认，消息卡片据此可点击跳转
     wecom.send_user(db, user, "waitlist_promoted",
                     data={"activity_id": activity.id},
                     activity=activity.title, shift=shift.name,
-                    deadline=f"{head.confirm_deadline:%m-%d %H:%M}")
-    return head
-
-
-def promote_directly(db: OrmSession, enr: Enrollment, user: User) -> Enrollment:
-    """管理者手动把候补转为正式（不走 2 小时确认窗）。
-
-    自动转正截止之后才用得上：那时活动近在眼前，再给两小时确认窗
-    只会让名额继续空着。所以直接落实，并把结果通知本人。
-    """
-    enr.status = "enrolled"
-    enr.confirm_deadline = None
-    enr.promoted_at = now()
-    shift = db.get(Shift, enr.shift_id)
-    _settle_position(db, enr, user, shift)
+                    deadline=f"{enr.confirm_deadline:%m-%d %H:%M}")
     return enr
 
 

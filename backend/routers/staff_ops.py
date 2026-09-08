@@ -404,7 +404,7 @@ def export(activity_id: str, db: OrmSession = Depends(db_session),
 
 
 def _download(buf, filename: str) -> StreamingResponse:
-    """带中文文件名的下载响应；.zip 是 Excel 加报名表里上传的文件。"""
+    """带中文文件名的下载响应；.zip 是 Excel 加报名问卷里上传的文件。"""
     from urllib.parse import quote
     media = ("application/zip" if filename.endswith(".zip") else
              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -434,18 +434,18 @@ def export_hours(activity_id: str, db: OrmSession = Depends(db_session),
 @router.get("/activities/{activity_id}/applications.xlsx")
 def export_applications(activity_id: str, db: OrmSession = Depends(db_session),
                         user: User = Depends(require_manager_download)):
-    """报名表结果导出。筛选是在表格里做的事，答案摊平成一人一行。"""
+    """报名问卷结果导出。筛选是在表格里做的事，答案摊平成一人一行。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     if not act.is_screened():
-        raise HTTPException(409, "只有「报名后筛选」的活动有报名表")
+        raise HTTPException(409, "只有「报名后筛选」的活动有报名问卷")
     ex = build_application_workbook(db, act)
     stamp = now().strftime("%Y%m%d_%H%M")
-    base = f"{act.title}_报名表_{stamp}"
+    base = f"{act.title}_报名问卷_{stamp}"
     buf, ext = ex.bundle(f"{base}.xlsx")
     audit_log(db, actor=user, action="export", target_type="export",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"导出报名表结果《{base}.{ext}》"
+              summary=f"导出报名问卷结果《{base}.{ext}》"
                       + ("，含上传的附件" if ext == "zip" else ""))
     db.commit()
     return _download(buf, f"{base}.{ext}")
