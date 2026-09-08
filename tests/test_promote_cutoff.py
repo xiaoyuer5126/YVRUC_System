@@ -143,3 +143,57 @@ def test_名单页给出自动转正截止点(client, admin, db, open_group, tak
     d = client.get(f"/api/staff/shifts/{g.id}/roster", headers=admin).json()
     assert d["auto_promote_deadline"]
     assert d["auto_promote_over"] is True
+
+
+def test_扩容后保存并发布会补齐候补(client, admin, db, open_group, take_student):
+    """加名额是常见改动，名额空出来就该轮到候补，不必等下一个人退选。"""
+    from backend.models import Position
+    act, g = open_group(1, day_offset=0, start_in_hours=10)
+    taker = take_student()
+    client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                headers=login(client, taker),
+                json={"position_id": g.test_position_id})
+    queued = [take_student() for _ in range(2)]
+    for sid in queued:
+        r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                        headers=login(client, sid),
+                        json={"position_id": g.test_position_id})
+        assert r.json()["status"] == "waitlisted"
+
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    db.get(Position, g.test_position_id).quota = 3
+    db.commit()
+    r = client.post(f"/api/staff/activities/{act.id}/publish-changes", headers=admin)
+    assert r.status_code == 200, r.text
+    assert r.json()["promoted"] == 2
+    db.expire_all()
+    assert db.query(Enrollment).filter(
+        Enrollment.shift_id == g.id,
+        Enrollment.status == "pending_confirm").count() == 2
+
+
+def test_待确认期间名额不会被别人抢走(client, db, open_group, take_student):
+    """确认窗内位子是给他留的，这两小时里别人报名只能进候补。"""
+    act, g = open_group(1, day_offset=0, start_in_hours=10)
+    taker, queued = take_student(), take_student()
+    client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                headers=login(client, taker),
+                json={"position_id": g.test_position_id})
+    client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                headers=login(client, queued),
+                json={"position_id": g.test_position_id})
+    enr = (db.query(Enrollment)
+           .filter(Enrollment.shift_id == g.id,
+                   Enrollment.status == "enrolled").one())
+    client.delete(f"/api/activities/enrollments/{enr.id}",
+                  headers=login(client, taker))
+    db.expire_all()
+    assert db.query(Enrollment).filter(
+        Enrollment.shift_id == g.id,
+        Enrollment.status == "pending_confirm").count() == 1
+
+    late = take_student()
+    r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                    headers=login(client, late),
+                    json={"position_id": g.test_position_id})
+    assert r.json()["status"] == "waitlisted"

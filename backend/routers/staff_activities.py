@@ -387,7 +387,11 @@ def start_editing(activity_id: str, db: OrmSession = Depends(db_session),
 def finish_editing(activity_id: str, bg: BackgroundTasks,
                    db: OrmSession = Depends(db_session),
                    user: User = Depends(require_manager)):
-    """保存并发布：解冻，并把这段时间的改动汇总推给已报名的志愿者。"""
+    """保存并发布：解冻，并把这段时间的改动汇总推给已报名的志愿者。
+
+    改动里常有扩容——加名额、加岗位。名额空出来就该轮到候补，否则队伍
+    一直排着、位子一直空着，得等下一个人退选才动。
+    """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     if act.editing_since is None:
@@ -406,11 +410,24 @@ def finish_editing(activity_id: str, bg: BackgroundTasks,
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"结束编辑并发布改动：{summary}")
     db.commit()
+    promoted = _fill_vacancies(db, act)
     if rows and act.status != "draft":
         bg.add_task(_notify_activity_bg, act.id, "activity_changed",
                     activity=act.title, change_summary=summary)
     return {"ok": True, "editing": False, "changes": len(rows),
-            "summary": summary}
+            "promoted": promoted, "summary": summary}
+
+
+def _fill_vacancies(db: OrmSession, act: Activity) -> int:
+    """活动下所有场次各自补齐名额，返回通知了多少位候补去确认。"""
+    total = 0
+    for g in act.shifts:
+        if g.is_attached():
+            continue      # 培训/彩排跟着主场次走，没有自己的队列
+        with shift_lock(g.id):
+            total += logic.fill_vacancies(db, g)
+            db.commit()
+    return total
 
 
 # ======================= 复制 =======================
@@ -644,7 +661,9 @@ def reopen(activity_id: str, body: ReopenBody,
                       if old_end else f"恢复报名，报名截止 {new_end:%m-%d %H:%M}",
               visible=True)
     db.commit()
-    return {"ok": True, "reg_end": iso(act.reg_end)}
+    # 截止期间自动递补是停着的，恢复报名等于名额又能动了，先把队伍消一遍
+    promoted = _fill_vacancies(db, act)
+    return {"ok": True, "reg_end": iso(act.reg_end), "promoted": promoted}
 
 
 @router.post("/activities/{activity_id}/finish")

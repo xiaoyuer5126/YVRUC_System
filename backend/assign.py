@@ -15,8 +15,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .enroll_logic import (position_enrolled_count, position_occupied_count,
-                           unmet_requirements)
+from .enroll_logic import position_held_count, unmet_requirements
 from .models import Enrollment, Position, Shift, User, now
 
 
@@ -30,8 +29,7 @@ def _held_seats(db: OrmSession, positions: list[Position]) -> dict[str, int]:
     扣留的位子不释放给任何人，分配同样不能用：不减掉的话，方案会把它当空位
     分出去，等于绕开了扣留规则。
     """
-    return {p.id: (position_occupied_count(db, p.id)
-                   - position_enrolled_count(db, p.id)) for p in positions}
+    return {p.id: position_held_count(db, p.id) for p in positions}
 
 
 def match(candidates: list[tuple[str, list[str]]],

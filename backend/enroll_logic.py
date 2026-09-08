@@ -3,7 +3,8 @@
 《设计方案》阶段二/阶段三的关键机制：
   · 时段冲突：只比场次的时间区间，重叠即拦截（跨活动，含候补中的场次——
     排了队就等于预留了这段时间）；
-  · 名额账本：已报名 + 临期退选占位（seat_held），后者不释放给任何人；
+  · 名额账本：已报名 + 候补转正待确认（确认窗内位子给他留着）+ 临期退选占位
+    （seat_held，不释放给任何人）；
   · 候补按 joined_at 排队，正常退选释放名额 → 队首转正，2 小时确认窗口。
 
 调用容量相关函数前必须持有 locks.shift_lock(shift_id)，见 locks.py。
@@ -122,10 +123,10 @@ def shift_enrolled_count(db: OrmSession, shift_id: str) -> int:
 
 
 def shift_occupied_count(db: OrmSession, shift_id: str) -> int:
-    """场次已消耗的名额 = 正式报名 + 临期退选占位。"""
+    """场次已消耗的名额 = 正式报名 + 待确认 + 临期退选占位。"""
     return db.query(Enrollment).filter(
         Enrollment.shift_id == shift_id,
-        or_(Enrollment.status == "enrolled",
+        or_(Enrollment.status.in_(("enrolled", "pending_confirm")),
             Enrollment.seat_held.is_(True))).count()
 
 
@@ -136,10 +137,22 @@ def position_enrolled_count(db: OrmSession, position_id: str) -> int:
 
 
 def position_occupied_count(db: OrmSession, position_id: str) -> int:
+    """岗位已消耗的名额。
+
+    待确认（候补转正的确认窗内）也算：位子是给他留的，这两小时里别人不能占，
+    否则他确认回来时名额已经没了。超时未确认会转成 cancelled，位子自然放开。
+    """
     return db.query(Enrollment).filter(
         Enrollment.position_id == position_id,
-        or_(Enrollment.status == "enrolled",
+        or_(Enrollment.status.in_(("enrolled", "pending_confirm")),
             Enrollment.seat_held.is_(True))).count()
+
+
+def position_held_count(db: OrmSession, position_id: str) -> int:
+    """岗位上被临期退选扣留的名额数。"""
+    return db.query(Enrollment).filter(
+        Enrollment.position_id == position_id,
+        Enrollment.seat_held.is_(True)).count()
 
 
 def has_room(db: OrmSession, shift: Shift, position=None) -> bool:
@@ -457,3 +470,17 @@ def promote_all(db: OrmSession, shift: Shift) -> int:
         if promote_head(db, shift, position):
             n += 1
     return n
+
+
+def fill_vacancies(db: OrmSession, shift: Shift) -> int:
+    """把空着的名额一次填满。
+
+    退选一次只空一个位，promote_all 提一位就够；扩容一次可能空出好几个，
+    得一直提到没名额或没人排队。待确认也占名额，所以循环必然收敛。
+    """
+    total = 0
+    while True:
+        n = promote_all(db, shift)
+        if not n:
+            return total
+        total += n

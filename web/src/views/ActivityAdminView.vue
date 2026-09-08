@@ -1409,9 +1409,10 @@ async function saveAndPublish() {
       ElMessage.success('已发布，学生现在可以报名了')
     } else {
       const d = await api.post(`/api/staff/activities/${activityId}/publish-changes`)
-      ElMessage.success(d.changes
+      ElMessage.success((d.changes
         ? `已恢复报名，${d.changes} 项改动已通知志愿者`
         : '已恢复报名（本次没有实质改动）')
+        + (d.promoted ? `；已通知 ${d.promoted} 位候补确认转正` : ''))
     }
     loadAll()
   } finally { lockBusy.value = false }
@@ -2078,9 +2079,10 @@ async function doReopen() {
   if (!d.regEnd) return ElMessage.warning('请选择新的报名截止时间')
   d.busy = true
   try {
-    await api.post(`/api/staff/activities/${activityId}/reopen`,
-                   { reg_end: toISO(d.regEnd) })
-    ElMessage.success('已恢复报名')
+    const r = await api.post(`/api/staff/activities/${activityId}/reopen`,
+                             { reg_end: toISO(d.regEnd) })
+    ElMessage.success('已恢复报名'
+      + (r.promoted ? `；已通知 ${r.promoted} 位候补确认转正` : ''))
     d.visible = false
     loadAll()
   } finally { d.busy = false }
