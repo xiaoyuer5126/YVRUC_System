@@ -171,7 +171,7 @@ def test_allow_reassign_recorded(client, open_group, take_student):
 
 def test_quota_zero_is_rejected(client, admin):
     """0 人的岗位没有意义：以前会被当成「不限人数」。"""
-    target = client.get("/api/staff/activities", headers=admin).json()[0]["id"]
+    target = client.get("/api/staff/activities", headers=admin).json()["items"][0]["id"]
     with editing(client, admin, target):
         r = client.post(f"/api/staff/activities/{target}/shifts", headers=admin,
                         json={"name": "测试场次", "mode": "pick",
@@ -186,7 +186,7 @@ def test_quota_zero_is_rejected(client, admin):
 
 def test_assign_shift_requires_capacity(client, admin):
     """截止后统一分配的场次，名额只能记在场次上，必须填。"""
-    target = client.get("/api/staff/activities", headers=admin).json()[0]["id"]
+    target = client.get("/api/staff/activities", headers=admin).json()["items"][0]["id"]
     with editing(client, admin, target):
         r = client.post(f"/api/staff/activities/{target}/shifts", headers=admin,
                         json={"name": "待分配场次", "mode": "assign", "capacity": 0,

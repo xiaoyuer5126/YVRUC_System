@@ -88,12 +88,12 @@ def test_范围外的人广场上看不到详情也进不去(client, admin, db, 
     db.get(Activity, act.id).recruit_campuses = [CAMPUS_B]
     db.commit()
     assert act.id not in {a["id"] for a in
-                          client.get("/api/activities", headers=h).json()}
+                          client.get("/api/activities", headers=h).json()["items"]}
     r = client.get(f"/api/activities/{act.id}", headers=h)
     assert r.status_code == 403 and CAMPUS_B in r.json()["detail"]
     # 管理者不受范围限制：要从广场进去核对志愿者看到的样子
     assert act.id in {a["id"] for a in
-                      client.get("/api/activities", headers=admin).json()}
+                      client.get("/api/activities", headers=admin).json()["items"]}
     assert client.get(f"/api/activities/{act.id}", headers=admin).status_code == 200
 
 

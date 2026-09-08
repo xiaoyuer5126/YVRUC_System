@@ -67,13 +67,48 @@ def test_急招置顶排最前且只有会长团能点(client, admin, initiator,
     assert r.status_code == 200 and r.json()["pinned"]
 
     h = login(client, take_student())
-    items = client.get("/api/activities", headers=h).json()
+    items = client.get("/api/activities", headers=h).json()["items"]
     assert items[0]["id"] == act.id and items[0]["urgent"]
 
     # 截止后不再显示急招，但字段留着，恢复报名时不必再点
     db.get(Activity, act.id).status = "closed"
     db.commit()
-    items = client.get("/api/activities?scope=all", headers=h).json()
+    items = client.get("/api/activities?status=", headers=h).json()["items"]
     me = next(a for a in items if a["id"] == act.id)
     assert me["pinned"] and not me["urgent"]
     assert client.post(url, headers=admin, json={"pinned": False}).json()["pinned"] is False
+
+
+def test_广场按条件筛选并分页(client, db, open_group, take_student):
+    """全量返回迟早会炸：筛选与排序交给后端，一页十几条。"""
+    from backend.models import Activity, uid
+
+    tag = uid("org")            # 独一无二的组织单位，免得和别的用例互相干扰
+    acts = []
+    for i in range(3):
+        act, _g = open_group(2)
+        row = db.get(Activity, act.id)
+        row.organizer, row.title = tag, f"{tag} 活动{i}"
+        acts.append(row)
+    db.commit()
+    h = login(client, take_student())
+
+    d = client.get(f"/api/activities?organizer={tag}&size=2", headers=h).json()
+    assert d["total"] == 3 and len(d["items"]) == 2
+    d2 = client.get(f"/api/activities?organizer={tag}&size=2&page=2",
+                    headers=h).json()
+    assert len(d2["items"]) == 1
+    assert {a["id"] for a in d["items"] + d2["items"]} == {a.id for a in acts}
+    assert tag in d["organizers"]
+
+    d = client.get(f"/api/activities?organizer={tag}&q=活动1", headers=h).json()
+    assert [a["title"] for a in d["items"]] == [f"{tag} 活动1"]
+
+    db.get(Activity, acts[0].id).status = "closed"
+    db.commit()
+    open_ids = {a["id"] for a in client.get(
+        f"/api/activities?organizer={tag}&status=published", headers=h).json()["items"]}
+    assert acts[0].id not in open_ids and len(open_ids) == 2
+    closed_ids = {a["id"] for a in client.get(
+        f"/api/activities?organizer={tag}&status=closed", headers=h).json()["items"]}
+    assert closed_ids == {acts[0].id}

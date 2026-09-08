@@ -102,12 +102,12 @@ def test_部门成员跟着归属的骨干看同样的活动(client, db, dept_ac
     core_user = _user(db, CORE)
     # 骨干还没被加进这个活动，所以成员也看不到
     assert aid not in [a["id"] for a in
-                       client.get("/api/staff/activities", headers=member).json()]
+                       client.get("/api/staff/activities", headers=member).json()["items"]]
 
     db.add(ActivityManager(id=uid("mgr"), activity_id=aid, user_id=core_user.id,
                            added_by=core_user.id))
     db.commit()
-    ids = [a["id"] for a in client.get("/api/staff/activities", headers=member).json()]
+    ids = [a["id"] for a in client.get("/api/staff/activities", headers=member).json()["items"]]
     assert aid in ids, "归属骨干管的活动要跟着看得到"
     assert client.get(f"/api/activities/{aid}", headers=member).status_code == 200
     r = client.patch(f"/api/staff/activities/{aid}", headers=member,
@@ -140,14 +140,14 @@ def test_试算不被学习权限拦(client, db, dept_activity):
 def test_部长看本部门全部含草稿而骨干只看自己管的(client, db, dept_activity):
     aid, _g = dept_activity
     head, core = login(client, HEAD), login(client, CORE)
-    assert aid in [a["id"] for a in client.get("/api/staff/activities", headers=head).json()]
-    assert aid not in [a["id"] for a in client.get("/api/staff/activities", headers=core).json()]
+    assert aid in [a["id"] for a in client.get("/api/staff/activities", headers=head).json()["items"]]
+    assert aid not in [a["id"] for a in client.get("/api/staff/activities", headers=core).json()["items"]]
     # 把骨干加进共管名单之后就看得到了
     core_user = _user(db, CORE)
     db.add(ActivityManager(id=uid("mgr"), activity_id=aid, user_id=core_user.id,
                            added_by=core_user.id))
     db.commit()
-    assert aid in [a["id"] for a in client.get("/api/staff/activities", headers=core).json()]
+    assert aid in [a["id"] for a in client.get("/api/staff/activities", headers=core).json()["items"]]
 
 
 def test_会长团除集成设置外与管理员同权(client, db):

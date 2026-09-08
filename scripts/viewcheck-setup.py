@@ -34,7 +34,8 @@ def main(out_dir: str) -> None:
     student_id = next(u["student_id"] for u in users if u["profile_complete"])
     student = call("POST", "/api/auth/demo-login",
                    {"student_id": student_id, "password": PASSWORD})
-    activities = call("GET", "/api/activities?scope=open", token=student["token"])
+    activities = call("GET", "/api/activities?status=published",
+                      token=student["token"])["items"]
 
     (out / "atok.txt").write_text(admin["token"])
     (out / "tok.txt").write_text(student["token"])

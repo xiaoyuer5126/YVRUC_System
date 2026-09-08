@@ -230,7 +230,8 @@ def test_附属场次不占活动的名额与时间跨度(client, admin, db, act
     _add_attached(client, admin, act, g, days=5)
 
     brief = next(a for a in client.get("/api/staff/activities",
-                                       headers=admin).json() if a["id"] == act.id)
+                                       headers=admin).json()["items"]
+                 if a["id"] == act.id)
     assert brief["shifts_count"] == 1
     assert brief["total_capacity"] == 6          # 两个岗位各 3
     assert f"{(now() + timedelta(days=10)):%m-%d}" in brief["time_text"]

@@ -24,35 +24,44 @@ def iso_of(dt):
 
 
 def display_status(act: Activity) -> tuple[str, str]:
-    """展示状态：按**时间**算，而不是只看数据库里的 status。
+    """展示状态：按**时间**算，而不是只看数据库里的 status。"""
+    return display_status_of(act.status, act.reg_start, act.reg_end,
+                             act.time_span())
+
+
+def display_status_of(status: str, reg_start, reg_end,
+                      span) -> tuple[str, str]:
+    """按状态与时间算展示状态。
 
     状态流转由定时任务每分钟推进，中间那一分钟里 status 还没跟上；报名开始
     时间更是完全不体现在 status 上——「已发布但还没到报名时间」的活动，
     以前一律显示「报名中」，学生点进去才发现报不了。
 
         筹备中 → 未开始报名 → 报名中 → 已截止 → 进行中 → 已结束
+
+    拆成不吃 Activity 的一版：广场列表筛状态时手上只有几个字段，不能为了
+    算状态把每个活动的场次都加载一遍。
     """
     t = now()
     # 三种「还没公开」的状态在展示层是一回事：学生看不到，管理端各有各的按钮
-    if act.status == "draft":
+    if status == "draft":
         return "draft", "草稿"
-    if act.status == "pending":
+    if status == "pending":
         return "draft", "待审批"
-    if act.status == "approved":
+    if status == "approved":
         return "draft", "待发布"
-    if act.status in ("finished", "completed"):
-        return "finished", act.label_status()
+    if status in ("finished", "completed"):
+        return "finished", Activity.STATUS_LABELS[status]
 
-    span = act.time_span()
     if span and t > span[1]:
         return "finished", "已结束"
     if span and span[0] <= t <= span[1]:
         return "ongoing", "进行中"
 
-    if act.status == "published":
-        if act.reg_start and t < act.reg_start:
+    if status == "published":
+        if reg_start and t < reg_start:
             return "upcoming", "未开始报名"
-        if act.reg_end and t > act.reg_end:
+        if reg_end and t > reg_end:
             return "closed", "已截止"
         return "published", "报名中"
     return "closed", "已截止"

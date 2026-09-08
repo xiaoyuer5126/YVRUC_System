@@ -6,6 +6,15 @@
     </div>
 
     <el-card shadow="never">
+      <div class="toolbar" style="margin-bottom:12px">
+        <el-input v-model="f.q" placeholder="搜索活动名称" clearable
+                  style="width:220px" @input="onSearch" @clear="reload" />
+        <el-select v-model="f.status" placeholder="全部状态" clearable
+                   style="width:150px" @change="reload">
+          <el-option v-for="(label, code) in STATUS_LABELS" :key="code"
+                     :value="code" :label="label" />
+        </el-select>
+      </div>
       <DataCards v-if="narrow" :rows="list" title-key="title" v-loading="loading"
                  :fields="[{ key: 'time_text', label: '时间' },
                            { key: 'location', label: '地点' }]"
@@ -88,6 +97,9 @@
           </template>
         </el-table-column>
       </el-table>
+      <el-pagination v-if="total > f.size" class="pager" layout="prev, pager, next"
+                     background :current-page="f.page" :page-size="f.size"
+                     :total="total" @current-change="goPage" />
     </el-card>
 
     <!-- 新建活动 -->
@@ -142,7 +154,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
@@ -156,6 +168,12 @@ import DataCards from '../components/DataCards.vue'
 const router = useRouter()
 const narrow = useNarrow()
 const list = ref([])
+const total = ref(0)
+const f = reactive({ q: '', status: '', page: 1, size: 20 })
+const STATUS_LABELS = {
+  draft: '草稿', pending: '待审批', approved: '待发布', published: '报名中',
+  closed: '已截止', finished: '已结束', completed: '已完成',
+}
 const loading = ref(false)
 const creating = ref(false)
 const saving = ref(false)
@@ -211,11 +229,30 @@ async function doCopy() {
 async function load() {
   loading.value = true
   try {
-    list.value = await api.get('/api/staff/activities')
+    const query = new URLSearchParams({ q: f.q, status: f.status,
+                                        page: f.page, size: f.size })
+    const d = await api.get(`/api/staff/activities?${query}`)
+    list.value = d.items
+    total.value = d.total
     modes.value = (await api.get('/api/auth/constants')).recruit_modes
   } finally { loading.value = false }
 }
 onMounted(load)
+
+// 换筛选条件就回第一页：留在第 3 页多半是空的
+function reload() {
+  f.page = 1
+  load()
+}
+function goPage(p) {
+  f.page = p
+  load()
+}
+let timer = null
+function onSearch() {
+  clearTimeout(timer)
+  timer = setTimeout(reload, 300)
+}
 
 function openCreate() {
   form.value = emptyActivity()
@@ -262,4 +299,5 @@ async function delActivity(row) {
 .qr-preview img { max-width: 160px; max-height: 160px; border-radius: 8px; border: 1px solid #e4e7ed; }
 .copy-qr { width: 96px; height: 96px; margin-top: 6px; object-fit: contain;
            border: 1px solid #eceef1; border-radius: 8px; }
+.pager { margin-top: 14px; justify-content: flex-end; }
 </style>

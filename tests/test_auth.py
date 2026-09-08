@@ -48,7 +48,7 @@ def test_query_token_only_works_for_download(client, admin):
 
     assert client.get(f"/api/auth/me?token={token}").status_code == 401
 
-    acts = client.get("/api/staff/activities", headers=admin).json()
+    acts = client.get("/api/staff/activities", headers=admin).json()["items"]
     r = client.get(f"/api/staff/activities/{acts[0]['id']}/export.xlsx"
                    f"?token={token}")
     assert r.status_code == 200

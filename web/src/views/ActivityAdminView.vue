@@ -1553,14 +1553,16 @@ let activityId = ''
 async function loadAll() {
   loading.value = true
   try {
-    const list = await api.get('/api/staff/activities')
-    const brief = list.find(a => a.id === activityId)
-    if (!brief) {
+    // 活动不存在、或者这个人不共管它：两种情况给同一张「找不到」页，
+    // 别让后面每个接口各弹一次 403
+    let d = null
+    try {
+      d = await api.get(`/api/activities/${activityId}`, { silent: true })
+    } catch { /* 下面统一处理 */ }
+    if (!d?.manager) {
       notFound.value = true
       return
     }
-    activityId = brief.id
-    const d = await api.get(`/api/activities/${activityId}`)
     act.value = d
     const rosters = await Promise.all(d.shifts.map(g => api.get(`/api/staff/shifts/${g.id}/roster`)))
     d.shifts.forEach((g, i) => {

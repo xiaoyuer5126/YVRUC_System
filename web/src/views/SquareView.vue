@@ -1,16 +1,26 @@
 <template>
   <div class="page">
-    <!-- 手机上「标题+注释」和筛选挤一行会把注释压成两三行；
-         改成第一行标题与筛选各占一头，注释整条落到第二行 -->
     <div class="hero">
-      <div class="hero-top">
-        <h2>活动广场</h2>
-        <el-radio-group v-model="scope" @change="load">
-          <el-radio-button value="open">报名中</el-radio-button>
-          <el-radio-button value="all">全部</el-radio-button>
-        </el-radio-group>
-      </div>
+      <h2>活动广场</h2>
       <p>即选即得——报名即生效；报名后筛选——由负责人筛选录取</p>
+    </div>
+
+    <div class="filters">
+      <el-input v-model="f.q" placeholder="搜索活动名称" clearable
+                style="width:220px" @input="onSearch" @clear="reload" />
+      <el-select v-model="f.status" style="width:140px" @change="reload">
+        <el-option v-for="s in STATUS_OPTIONS" :key="s.value"
+                   :value="s.value" :label="s.label" />
+      </el-select>
+      <el-select v-model="f.mode" placeholder="活动类型" clearable
+                 style="width:150px" @change="reload">
+        <el-option value="instant" label="即选即得" />
+        <el-option value="screened" label="报名后筛选" />
+      </el-select>
+      <el-select v-model="f.organizer" placeholder="组织单位" clearable filterable
+                 style="width:220px" @change="reload">
+        <el-option v-for="o in organizers" :key="o" :value="o" :label="o" />
+      </el-select>
     </div>
 
     <div v-if="list.length" class="card-grid">
@@ -43,16 +53,41 @@
       </div>
     </div>
     <el-empty v-else description="暂无活动" />
+
+    <el-pagination v-if="total > f.size" class="pager" layout="prev, pager, next"
+                   background :current-page="f.page" :page-size="f.size"
+                   :total="total" @current-change="goPage" />
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import { MODE_COLORS } from '../store'
 
-const scope = ref('open')
+const route = useRoute()
+const router = useRouter()
+const STATUS_OPTIONS = [
+  { value: 'published', label: '报名中' },
+  { value: 'upcoming', label: '未开始报名' },
+  { value: 'closed', label: '已截止' },
+  { value: 'ongoing', label: '进行中' },
+  { value: 'finished', label: '已结束' },
+  { value: '', label: '全部状态' },
+]
+// 筛选条件同步到地址栏：点进活动再返回，筛到第几页还在
+const f = reactive({
+  q: route.query.q || '',
+  status: route.query.status ?? 'published',
+  mode: route.query.mode || '',
+  organizer: route.query.organizer || '',
+  page: Number(route.query.page) || 1,
+  size: 12,
+})
 const list = ref([])
+const organizers = ref([])
+const total = ref(0)
 const modeColor = m => MODE_COLORS[m]?.color
 
 // 展示状态 → el-tag type 颜色
@@ -75,15 +110,44 @@ const opensAt = a => Date.now() + a.opens_in * 1000
 const fmt = a => (a.opens_in > 86400 ? 'DD 天 HH:mm:ss' : 'HH:mm:ss')
 
 async function load() {
-  list.value = await api.get(`/api/activities?scope=${scope.value}`)
+  const query = new URLSearchParams({
+    q: f.q, status: f.status, mode: f.mode, organizer: f.organizer,
+    page: f.page, size: f.size,
+  })
+  const d = await api.get(`/api/activities?${query}`)
+  list.value = d.items
+  total.value = d.total
+  organizers.value = d.organizers
+  router.replace({ query: {
+    ...(f.q ? { q: f.q } : {}), ...(f.mode ? { mode: f.mode } : {}),
+    ...(f.organizer ? { organizer: f.organizer } : {}),
+    ...(f.status === 'published' ? {} : { status: f.status }),
+    ...(f.page > 1 ? { page: f.page } : {}),
+  } })
+}
+
+// 换筛选条件就回第一页：留在第 5 页多半是空的
+function reload() {
+  f.page = 1
+  load()
+}
+function goPage(p) {
+  f.page = p
+  load()
+}
+let timer = null
+function onSearch() {
+  clearTimeout(timer)
+  timer = setTimeout(reload, 300)
 }
 onMounted(load)
 </script>
 
 <style scoped>
-.hero { margin-bottom:18px; }
-.hero-top { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.hero { margin-bottom:14px; }
 .hero h2 { margin:0; }
+.filters { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
+.pager { margin-top:18px; justify-content:center; }
 .hero p { margin:6px 0 0; color:#909399; font-size:13px; line-height:1.7; }
 .square-card { padding:16px 18px; }
 .card-top { display:flex; justify-content:space-between; align-items:center; gap:8px; }

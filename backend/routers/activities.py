@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
+from sqlalchemy import case, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 
@@ -16,7 +17,8 @@ from ..models import (Activity, Application, Enrollment, Shift, Position,
                       User, now, uid)
 from ..perm import is_activity_manager, managed_activity_ids
 from ..qrcodes import page_qr
-from ..serializers import activity_brief, activity_detail, recruit_scope_text
+from ..serializers import (activity_brief, activity_detail, display_status_of,
+                           recruit_scope_text)
 from .approvals import can_review
 
 router = APIRouter(prefix="/api/activities", tags=["activities"])
@@ -34,6 +36,25 @@ def _ensure_not_editing(act: Activity) -> None:
     if act.editing_since is not None:
         raise HTTPException(409, "负责人正在调整本活动的安排，报名暂停中，"
                                  "请稍后再试")
+
+
+def _scope_tags(campuses, stages) -> dict:
+    """招募范围 → 条件标签。空 = 不限。"""
+    tags = {}
+    if campuses:
+        tags["校区"] = campuses
+    if stages:
+        tags["学段"] = stages
+    return tags
+
+
+def _involved_activity_ids(db: OrmSession, user: User) -> set[str]:
+    """这个人报过名或投过申请的活动。列表里用它一次性豁免，不逐条查。"""
+    ids = {a for (a,) in db.query(Enrollment.activity_id)
+           .filter(Enrollment.user_id == user.id).distinct()}
+    ids |= {a for (a,) in db.query(Application.activity_id)
+            .filter(Application.user_id == user.id).distinct()}
+    return ids
 
 
 def _outside_scope(db: OrmSession, user: User, act: Activity) -> bool:
@@ -80,23 +101,66 @@ def _get_group(db: OrmSession, shift_id: str) -> Shift:
 
 
 @router.get("")
-def list_activities(scope: str = "open",
+def list_activities(q: str = "", mode: str = "", organizer: str = "",
+                    status: str = "", page: int = 1, size: int = 12,
                     db: OrmSession = Depends(db_session),
                     user: User = Depends(current_user)):
-    """scope: open 报名中 / all 全部已公开的（含已截止、已结束，供回看）。"""
-    q = db.query(Activity).filter(Activity.status.in_(PUBLIC_STATUSES))
-    if scope == "open":
-        q = q.filter(Activity.status == "published")
-    acts = q.order_by(Activity.created_at.desc()).all()
-    # 招募范围外的活动不上广场：看得见报不了，只会多一次被拦的失望。
-    # 自己管的活动照常显示，管理者要从这里进详情核对志愿者看到的样子。
-    managed = managed_activity_ids(db, user)
-    acts = [a for a in acts
-            if managed is None or a.id in managed or not _outside_scope(db, user, a)]
+    """广场列表：按标题/类型/组织单位/展示状态筛，分页返回。
+
+    重活（数场次、数报名）只对当页的十几条做。筛选与排序尽量交给 SQL，
+    只有两件事留在 Python 里：展示状态要按时间算（场次跨度用一条分组查询
+    取回来，不逐个加载场次），招募范围要按人算。
+    """
+    rows = db.query(Activity.id, Activity.status, Activity.reg_start,
+                    Activity.reg_end, Activity.recruit_campuses,
+                    Activity.recruit_stages)
+    rows = rows.filter(Activity.status.in_(PUBLIC_STATUSES))
+    if q.strip():
+        rows = rows.filter(Activity.title.ilike(f"%{q.strip()}%"))
+    if mode:
+        rows = rows.filter(Activity.recruit_mode == mode)
+    if organizer:
+        rows = rows.filter(Activity.organizer == organizer)
     # 急招的排最前（后置顶的更靠前），其余按创建时间
-    acts.sort(key=lambda a: (a.status != "published" or a.pinned_at is None,
-                             -(a.pinned_at or a.created_at).timestamp()))
-    return [activity_brief(db, a) for a in acts]
+    urgent = case((Activity.pinned_at.isnot(None)
+                   & (Activity.status == "published"), 0), else_=1)
+    rows = rows.order_by(urgent,
+                         func.coalesce(Activity.pinned_at,
+                                       Activity.created_at).desc()).all()
+
+    spans = dict(
+        (aid, (lo, hi)) for aid, lo, hi in
+        db.query(Shift.activity_id, func.min(Shift.start_time),
+                 func.max(Shift.end_time))
+        .filter(Shift.parent_id.is_(None)).group_by(Shift.activity_id).all())
+    # 招募范围外的活动不上广场：看得见报不了，只会多一次被拦的失望。
+    # 报过名的人不受此限（范围是后来缩的），自己管的活动同样照常显示——
+    # 管理者要从这里进详情核对志愿者看到的样子。
+    managed = managed_activity_ids(db, user)
+    involved = _involved_activity_ids(db, user)
+
+    ids = []
+    for aid, st, reg_start, reg_end, campuses, stages in rows:
+        code, _label = display_status_of(st, reg_start, reg_end, spans.get(aid))
+        if status and code != status:
+            continue
+        if (managed is None or aid in managed or aid in involved
+                or not logic.unmet_for_tags(user, _scope_tags(campuses, stages))):
+            ids.append(aid)
+
+    size = max(1, min(size, 50))
+    page = max(1, page)
+    picked = ids[(page - 1) * size: page * size]
+    found = {a.id: a for a in db.query(Activity).filter(Activity.id.in_(picked))}
+    return {
+        "items": [activity_brief(db, found[i]) for i in picked if i in found],
+        "total": len(ids), "page": page, "size": size,
+        "organizers": [o for (o,) in
+                       db.query(Activity.organizer)
+                       .filter(Activity.status.in_(PUBLIC_STATUSES),
+                               Activity.organizer != "")
+                       .distinct().order_by(Activity.organizer).all()],
+    }
 
 
 @router.get("/{activity_id}")
@@ -112,6 +176,7 @@ def get_activity(activity_id: str,
               and can_review(db, user, act))
     # 管理者要能在同一个页面核对培训内容与组长，不必先去后台
     out = activity_detail(db, act, user, manager=manager or review)
+    out["manager"] = manager
     out["review_preview"] = review
     return out
 

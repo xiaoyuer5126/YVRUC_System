@@ -98,22 +98,28 @@ def _notify_assignment_bg(items: list[dict]):
 # ======================= 活动列表与基本信息 =======================
 
 @router.get("/activities")
-def list_all(db: OrmSession = Depends(db_session),
+def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
+             db: OrmSession = Depends(db_session),
              user: User = Depends(require_manager)):
+    """管理端活动列表。分页返回：每条都要数场次、报名与候补，全量拉会越来越慢。"""
+    rows = db.query(Activity).order_by(Activity.created_at.desc())
     managed = managed_activity_ids(db, user)
-    q = db.query(Activity).order_by(Activity.created_at.desc())
     if managed is not None:
-        q = q.filter(Activity.id.in_(managed or ['__none__']))
-    acts = q.all()
+        rows = rows.filter(Activity.id.in_(managed or ['__none__']))
+    if q.strip():
+        rows = rows.filter(Activity.title.ilike(f"%{q.strip()}%"))
+    if status:
+        rows = rows.filter(Activity.status == status)
+    total = rows.count()
+    size = max(1, min(size, 100))
+    page = max(1, page)
     out = []
-    for a in acts:
+    for a in rows.offset((page - 1) * size).limit(size).all():
         item = activity_brief(db, a)
-        wl = 0
-        for g in a.shifts:
-            wl += logic.waitlist_rows(db, g.id).__len__()
-        item["waitlist_count"] = wl
+        item["waitlist_count"] = sum(len(logic.waitlist_rows(db, g.id))
+                                     for g in a.shifts)
         out.append(item)
-    return out
+    return {"items": out, "total": total, "page": page, "size": size}
 
 
 class ActivityBody(BaseModel):

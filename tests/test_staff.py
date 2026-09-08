@@ -36,9 +36,10 @@ def test_draft_hidden_from_students(client, draft_activity, take_student):
     """筹备中的活动没定稿，学生不该在广场上看到、也不该能直接翻到详情。"""
     h = login(client, take_student())
 
-    for scope in ("open", "all"):
+    for status in ("published", ""):
         titles = [a["title"] for a in
-                  client.get(f"/api/activities?scope={scope}", headers=h).json()]
+                  client.get(f"/api/activities?status={status}",
+                             headers=h).json()["items"]]
         assert draft_activity.title not in titles
 
     assert client.get(f"/api/activities/{draft_activity.id}",

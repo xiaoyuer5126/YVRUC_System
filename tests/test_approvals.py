@@ -209,7 +209,7 @@ def test_青协建的活动自动归口自己部门(client, db, draft):
     assert db.get(Activity, aid).approval_dept_id == _liaison(db).id
     # 部长在活动列表里直接看得到本部门的草稿
     assert aid in [a["id"] for a in
-                   client.get("/api/staff/activities", headers=head).json()]
+                   client.get("/api/staff/activities", headers=head).json()["items"]]
 
 
 def test_审批超时只催人不放行(client, admin, db, draft):
@@ -310,7 +310,7 @@ def test_转交审批就是改归口(client, admin, db, draft, take_student):
     db.expire_all()
     assert db.get(Activity, draft).approval_dept_id == other.id
     assert draft not in [a["id"] for a in
-                         client.get("/api/staff/activities", headers=head).json()]
+                         client.get("/api/staff/activities", headers=head).json()["items"]]
     # 复原：撤掉这位临时部长，别影响别的用例
     client.put(f"/api/staff/roles/{new_head.id}", headers=admin,
                json={"roles": ["student"]})
