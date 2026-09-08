@@ -177,13 +177,34 @@
                   </el-button>
                   <el-button v-else-if="openFor(g)" size="small"
                              type="primary" plain @click="doEnroll(g, s)">
-                    {{ s.remaining > 0 ? '选中' : '候补' }}
+                    {{ s.is_placeholder ? enrollText(g)
+                       : s.remaining > 0 ? '选中' : '候补' }}
                   </el-button>
                   <el-button v-else size="small" disabled>{{ closedText(g) }}</el-button>
                 </div>
                 <div v-if="s.eligible === false" class="m-pos-why">
                   {{ s.ineligible_reason }}
                 </div>
+              </div>
+              <!-- 报了名却没有对应的岗位卡（补招时没指定岗位，或岗位被删） -->
+              <div v-if="g.my_enrollment && !myStationId(g)" class="m-pos-act"
+                   style="margin-top:8px">
+                <el-tag v-if="g.my_enrollment.status === 'enrolled'" type="success" size="small">
+                  已报名（岗位待分配）
+                </el-tag>
+                <el-tag v-else-if="g.my_enrollment.status === 'waitlisted'" type="warning" size="small">
+                  候补第 {{ g.my_enrollment.waitlist_position }} 位
+                </el-tag>
+                <template v-else>
+                  <el-countdown format="HH:mm:ss" :value="deadlineTs(g)" />
+                  <el-button type="primary" size="small" @click="confirmPromo(g)">确认转正</el-button>
+                </template>
+                <el-button v-if="g.my_enrollment.status !== 'pending_confirm'"
+                           size="small" type="danger" plain
+                           :disabled="g.my_enrollment.status === 'enrolled' && !canCancel(g)"
+                           @click="cancelEnroll(g)">
+                  {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
+                </el-button>
               </div>
             </template>
 
@@ -343,7 +364,8 @@
                           <!-- 未报名 -->
                           <el-button v-else-if="openFor(g)" size="small"
                                      type="primary" plain @click="doEnroll(g, s)">
-                            {{ s.remaining > 0 ? '选中' : '候补' }}
+                            {{ s.is_placeholder ? enrollText(g)
+                               : s.remaining > 0 ? '选中' : '候补' }}
                           </el-button>
                           <el-button v-else size="small" disabled>
                             {{ closedText(g) }}
@@ -356,6 +378,45 @@
                     </div>
                   </template>
                   <p v-else class="dim" style="margin:4px 0">本场次尚未设置岗位，请联系负责人。</p>
+
+                  <!-- 报了名却没有对应的岗位行（补招时没指定岗位，或岗位被删）：
+                       退选与确认转正没有别的落脚点，放在这里 -->
+                  <div v-if="g.my_enrollment && !myStationId(g)" class="shift-bar">
+                    <el-tag v-if="g.my_enrollment.status === 'enrolled'" type="success">
+                      已报名（岗位待分配）
+                    </el-tag>
+                    <el-tag v-else-if="g.my_enrollment.status === 'waitlisted'" type="warning">
+                      候补中 · 第 {{ g.my_enrollment.waitlist_position }} 位
+                    </el-tag>
+                    <template v-else>
+                      <el-countdown format="HH:mm:ss" :value="deadlineTs(g)">
+                        <template #prefix>
+                          <el-tag type="danger" size="small">转正确认剩</el-tag>&nbsp;
+                        </template>
+                      </el-countdown>
+                      <el-button type="primary" size="small"
+                                 @click="confirmPromo(g)">确认转正</el-button>
+                    </template>
+                    <el-button v-if="g.my_enrollment.status !== 'pending_confirm'"
+                               size="small" type="danger" plain
+                               :disabled="g.my_enrollment.status === 'enrolled' && !canCancel(g)"
+                               @click="cancelEnroll(g)">
+                      {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
+                    </el-button>
+                  </div>
+
+                  <!-- 调剂意愿：点一下即可改，只作为负责人排班时的参考 -->
+                  <div v-if="g.my_enrollment" class="shift-bar">
+                    <span class="dim">岗位调剂：</span>
+                    <el-tooltip content="仅在名额不足时可能进行调剂，负责人可看到你的意愿"
+                                placement="top">
+                      <el-tag size="small" effect="plain" style="cursor:pointer"
+                              :type="g.my_enrollment.allow_reassign ? 'success' : 'info'"
+                              @click="toggleReassign(g)">
+                        {{ g.my_enrollment.allow_reassign ? '接受调剂' : '不接受调剂' }}
+                      </el-tag>
+                    </el-tooltip>
+                  </div>
 
                   <!-- 已报名：把自己岗位的培训内容与材料直接摊开 -->
                   <el-card v-if="myPosition(g)" shadow="never" class="mine-card">
@@ -450,104 +511,6 @@
                   <span v-if="row.waitlist_count" class="dim">· 候补 {{ row.waitlist_count }}</span>
                 </div>
                 <el-progress :percentage="pct(row)" :stroke-width="5" :show-text="false" />
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="230" align="right">
-              <template #default="{ row }">
-                <template v-if="row.my_enrollment">
-                  <!-- 调剂意愿：点一下即可改，只作为负责人排班时的参考 -->
-                  <div style="margin-bottom:4px">
-                    <el-tooltip content="仅在名额不足时可能进行调剂，负责人可看到你的意愿"
-                                placement="top">
-                      <el-tag size="small" effect="plain" style="cursor:pointer"
-                              :type="row.my_enrollment.allow_reassign ? 'success' : 'info'"
-                              @click="toggleReassign(row)">
-                        {{ row.my_enrollment.allow_reassign ? '接受调剂' : '不接受调剂' }}
-                      </el-tag>
-                    </el-tooltip>
-                  </div>
-                  <!-- 直接定二级 -->
-                  <template v-if="row.mode === 'pick'">
-                    <!-- 有岗位：状态标签（退选/确认在对应岗位行原地操作） -->
-                    <template v-if="myStationId(row)">
-                      <el-tag v-if="row.my_enrollment.status === 'enrolled'" type="success">
-                        已选中{{ myStationName(row) ? '·' + myStationName(row) : '' }}
-                      </el-tag>
-                      <el-tag v-else-if="row.my_enrollment.status === 'waitlisted'" type="warning">
-                        候补中 · 第 {{ row.my_enrollment.waitlist_position }} 位
-                      </el-tag>
-                      <template v-else>
-                        <el-tag type="danger">转正确认剩</el-tag>&nbsp;
-                        <el-countdown format="HH:mm:ss" :value="deadlineTs(row)"
-                                      style="vertical-align:middle" />
-                        <span class="dim" style="margin-left:6px">在对应岗位行确认</span>
-                      </template>
-                    </template>
-                    <!-- 无岗位（管理员补录/历史数据）：操作留在场次行 -->
-                    <template v-else>
-                      <el-tag v-if="row.my_enrollment.status === 'enrolled'" type="success">
-                        已选中（岗位待分配）
-                      </el-tag>
-                      <el-tag v-else-if="row.my_enrollment.status === 'waitlisted'" type="warning">
-                        候补中 · 第 {{ row.my_enrollment.waitlist_position }} 位
-                      </el-tag>
-                      <template v-else>
-                        <el-countdown format="HH:mm:ss" :value="deadlineTs(row)"
-                                      style="vertical-align:middle;margin-right:8px">
-                          <template #prefix>
-                            <el-tag type="danger" size="small">转正确认剩</el-tag>&nbsp;
-                          </template>
-                        </el-countdown>
-                        <el-button type="primary" size="small"
-                                   @click="confirmPromo(row)">确认转正</el-button>
-                      </template>
-                      <el-button v-if="row.my_enrollment.status === 'enrolled'"
-                                 size="small" type="danger" plain
-                                 :disabled="!canCancel(row)" @click="cancelEnroll(row)">
-                        退选
-                      </el-button>
-                      <el-button v-else-if="row.my_enrollment.status === 'waitlisted'"
-                                 size="small" type="danger" plain @click="cancelEnroll(row)">
-                        退出候补
-                      </el-button>
-                    </template>
-                  </template>
-                  <!-- 截止后统一分配：按钮留在场次行 -->
-                  <template v-else>
-                    <el-tag v-if="row.my_enrollment.status === 'enrolled'" type="success">
-                      已选中
-                    </el-tag>
-                    <el-tag v-else-if="row.my_enrollment.status === 'waitlisted'" type="warning">
-                      候补中 · 第 {{ row.my_enrollment.waitlist_position }} 位
-                    </el-tag>
-                    <template v-else>
-                      <el-countdown format="HH:mm:ss" :value="deadlineTs(row)"
-                                    style="vertical-align:middle;margin-right:8px">
-                        <template #prefix>
-                          <el-tag type="danger" size="small">转正确认剩</el-tag>&nbsp;
-                        </template>
-                      </el-countdown>
-                      <el-button type="primary" size="small"
-                                 @click="confirmPromo(row)">确认转正</el-button>
-                    </template>
-                    <el-button v-if="row.my_enrollment.status === 'enrolled'"
-                               size="small" type="danger" plain
-                               :disabled="!canCancel(row)" @click="cancelEnroll(row)">
-                      退选
-                    </el-button>
-                    <el-button v-else-if="row.my_enrollment.status === 'waitlisted'"
-                               size="small" type="danger" plain @click="cancelEnroll(row)">
-                      退出候补
-                    </el-button>
-                  </template>
-                </template>
-                <template v-else-if="openFor(row)">
-                  <el-button v-if="row.mode === 'pick'" size="small" disabled>展开选择岗位</el-button>
-                  <el-button v-else type="primary" size="small" @click="doEnroll(row, null)">
-                    {{ enrollText(row) }}
-                  </el-button>
-                </template>
-                <el-tag v-else type="info" size="small">{{ closedText(row) }}</el-tag>
               </template>
             </el-table-column>
           </el-table>
@@ -1002,6 +965,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .m-pos-act { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .m-pos-why { margin-top: 6px; font-size: 12px; color: #e6a23c; }
 .m-reassign { margin-top: 10px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.shift-bar { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .req-blocked { color: #e6a23c; }
 .mine-card { margin-top: 10px; border-left: 3px solid var(--el-color-success); }
 .mine-title { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
