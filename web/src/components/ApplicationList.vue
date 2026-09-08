@@ -61,6 +61,26 @@
           </el-tag>
         </template>
       </el-table-column>
+      <!-- 录取到哪：默认他的第一意向，逐人可改；上面那对下拉只是批量默认值 -->
+      <el-table-column label="录取到" width="330">
+        <template #default="{ row }">
+          <template v-if="row.status === 'applied'">
+            <el-select :model-value="pickOf(row).shift_id" size="small"
+                       style="width:150px" placeholder="场次"
+                       @update:model-value="v => setShift(row, v)">
+              <el-option v-for="w in row.wanted" :key="w.shift_id" :value="w.shift_id"
+                         :label="shiftName(w.shift_id)" />
+            </el-select>
+            <el-select :model-value="pickOf(row).position_id" size="small" clearable
+                       style="width:160px;margin-left:6px" placeholder="岗位（按意向）"
+                       @update:model-value="v => setPosition(row, v)">
+              <el-option v-for="p in positionsFor(row)" :key="p.id" :value="p.id"
+                         :label="`${p.name}（${p.quota} 人）`" />
+            </el-select>
+          </template>
+          <span v-else class="dim">—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag size="small" :type="STATUS_TYPE[row.status]">{{ row.status_label }}</el-tag>
@@ -92,6 +112,30 @@ const targetShift = ref('')
 const targetPosition = ref('')
 const targetPositions = computed(
   () => shifts.value.find(g => g.id === targetShift.value)?.positions || [])
+// 逐人指定的录取去向：只存改过的人，其余跟批量下拉走
+const picks = ref({})   // vuecheck: script-only，模板只通过 pickOf 读它
+const shiftName = id => shifts.value.find(g => g.id === id)?.name || id
+function pickOf(row) {
+  const hit = picks.value[row.id]
+  if (hit) return hit
+  const wanted = row.wanted.find(w => w.status === 'applied') || row.wanted[0] || {}
+  const shift_id = targetShift.value || wanted.shift_id || ''
+  const wantedPos = row.wanted.find(w => w.shift_id === shift_id)
+  return { shift_id,
+           position_id: targetPosition.value
+             || positionIdByName(shift_id, wantedPos?.position_name) }
+}
+const positionIdByName = (shiftId, name) => (name
+  ? shifts.value.find(g => g.id === shiftId)?.positions
+      .find(p => p.name === name)?.id || '' : '')
+const positionsFor = row =>
+  shifts.value.find(g => g.id === pickOf(row).shift_id)?.positions || []
+function setShift(row, v) {
+  picks.value[row.id] = { shift_id: v, position_id: '' }
+}
+function setPosition(row, v) {
+  picks.value[row.id] = { ...pickOf(row), position_id: v || '' }
+}
 const loading = ref(false)
 const busy = ref(false)
 const pendingCount = computed(() => apps.value.filter(a => a.status === 'applied').length)
@@ -108,6 +152,7 @@ async function load() {
     const d = await api.get(`/api/staff/activities/${props.activityId}/applications`)
     apps.value = d.applications
     shifts.value = d.shifts
+    picks.value = {}
   } finally { loading.value = false }
 }
 onMounted(load)
@@ -123,7 +168,10 @@ async function decide(accept) {
   try {
     const d = await api.post(`/api/staff/activities/${props.activityId}/applications/decide`,
       { application_ids: selected.value.map(a => a.id), accept,
-        shift_id: targetShift.value || '', position_id: targetPosition.value || '' })
+        shift_id: targetShift.value || '', position_id: targetPosition.value || '',
+        picks: Object.fromEntries(selected.value
+          .filter(a => picks.value[a.id])
+          .map(a => [a.id, picks.value[a.id]])) })
     ElMessage.success(`${accept ? '已录取' : '已处理'} ${d.count} 人`)
     await load()
     emit('changed')

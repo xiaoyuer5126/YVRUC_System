@@ -136,6 +136,63 @@ def test_录取时可以把人放到别的岗位(client, admin, db, take_student
     assert row.position_id == pids[1]
 
 
+def test_录取时逐人指定岗位(client, admin, db, take_student):
+    """一批人一起录，去向各不相同：批量下拉只是默认值，行内选的说了算。"""
+    act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
+    gid, pids = _pick_shift(client, admin, act_id)
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+    for _ in range(2):
+        t = login(client, take_student())
+        client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"shift_ids": [gid], "positions": {gid: pids[0]},
+                          "answers": _answers(q)})
+    apps = client.get(f"/api/staff/activities/{act_id}/applications",
+                      headers=admin).json()["applications"]
+    first, second = apps[0]["id"], apps[1]["id"]
+    r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
+                    json={"application_ids": [first, second], "accept": True,
+                          "shift_id": gid, "position_id": pids[0],
+                          "picks": {second: {"shift_id": gid,
+                                             "position_id": pids[1]}}})
+    assert r.status_code == 200, r.text
+    got = {e.user_id: e.position_id
+           for e in db.query(Enrollment)
+           .filter(Enrollment.activity_id == act_id,
+                   Enrollment.status == "enrolled").all()}
+    assert sorted(got.values()) == sorted([pids[0], pids[1]])
+
+
+def test_录取到不满足条件的岗位会留痕(client, admin, db, take_student):
+    """筛选是人的判断，不拦；但名单和留痕上要看得出来。"""
+    from backend.models import AuditLog, Position
+
+    act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
+    gid, pids = _pick_shift(client, admin, act_id)
+    db.get(Position, pids[1]).requirement_tags = {"学院": ["不存在的学院"]}
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+    t = login(client, take_student())
+    client.post(f"/api/activities/{act_id}/apply", headers=t,
+                json={"shift_ids": [gid], "positions": {gid: pids[0]},
+                      "answers": _answers(q)})
+    app_id = client.get(f"/api/staff/activities/{act_id}/applications",
+                        headers=admin).json()["applications"][0]["id"]
+    r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
+                    json={"application_ids": [app_id], "accept": True,
+                          "picks": {app_id: {"shift_id": gid,
+                                             "position_id": pids[1]}}})
+    assert r.status_code == 200, r.text
+    row = (db.query(Enrollment)
+           .filter(Enrollment.activity_id == act_id,
+                   Enrollment.status == "enrolled").one())
+    assert row.position_id == pids[1] and row.assign_forced is True
+    log = (db.query(AuditLog)
+           .filter(AuditLog.activity_id == act_id, AuditLog.action == "assign")
+           .order_by(AuditLog.created_at.desc()).first())
+    assert "不满足" in log.summary
+
+
 def test_题目按显示条件出现(client, admin, db, take_student):
     """挂条件的题只在选了指定选项时出现：不出现就不填、也不存答案。"""
     act_id, ids, _q = _create_screened(client, admin, db, status="draft")

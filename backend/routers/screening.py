@@ -341,7 +341,7 @@ def _position_name(db: OrmSession, enr: Enrollment) -> str:
 
 def _accept_position(db: OrmSession, g: Shift, target: Enrollment,
                      override: str) -> Position:
-    """录取到哪个岗位：管理者指定的 > 他自己勾的意向岗位 > 场次的占位岗位。"""
+    """录取到哪个岗位：逐人指定 > 整批指定 > 他自己勾的意向岗位 > 占位岗位。"""
     if override:
         position = db.get(Position, override)
         if position is None or position.shift_id != g.id:
@@ -397,11 +397,18 @@ def list_applications(activity_id: str, db: OrmSession = Depends(db_session),
                        for g in sorted(shifts.values(), key=lambda x: x.sort)]}
 
 
+class Pick(BaseModel):
+    shift_id: str = ""
+    position_id: str = ""
+
+
 class DecideBody(BaseModel):
     application_ids: list[str]
     accept: bool
-    shift_id: str = ""        # 录取到哪一场；空 = 各自的第一意向
-    position_id: str = ""     # 一并定岗位；空 = 用他自己勾的意向岗位
+    shift_id: str = ""        # 整批录取到哪一场；空 = 各自的第一意向
+    position_id: str = ""     # 整批定岗位；空 = 用他自己勾的意向岗位
+    # 逐人指定，优先于上面两项：申请 id → {场次, 岗位}
+    picks: dict[str, Pick] = {}
 
 
 @router.post("/staff/activities/{activity_id}/applications/decide")
@@ -434,9 +441,11 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                         Enrollment.user_id == app.user_id,
                         Enrollment.status == "applied").all())
         if body.accept:
+            pick = body.picks.get(app.id) or Pick()
+            want_shift = pick.shift_id or body.shift_id
             target = None
-            if body.shift_id:
-                target = next((e for e in rows if e.shift_id == body.shift_id), None)
+            if want_shift:
+                target = next((e for e in rows if e.shift_id == want_shift), None)
                 if target is None:
                     raise HTTPException(400, f"{u.name} 没有申请这个场次")
             else:
@@ -444,7 +453,11 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
             if target is None:
                 raise HTTPException(409, f"{u.name} 的申请没有可用的场次")
             g = db.get(Shift, target.shift_id)
-            position = _accept_position(db, g, target, body.position_id)
+            position = _accept_position(db, g, target,
+                                        pick.position_id or body.position_id)
+            # 条件不满足照样录得进去：筛选本来就是人的判断。但要留痕，
+            # 名单上也跟着标出来，别让「怎么排了个不符合条件的人」成为悬案
+            unmet = logic.unmet_requirements(u, position)
             with shift_lock(g.id):
                 if not logic.has_room(db, g, position):
                     raise HTTPException(
@@ -455,6 +468,7 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                 target.position_id = position.id
                 target.assigned_at = now()
                 target.assigned_by = user.id
+                target.assign_forced = bool(unmet)
                 for e in rows:
                     if e.id != target.id:
                         e.status, e.cancel_type = "cancelled", "not_chosen"
@@ -468,7 +482,8 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                             detail=("岗位：" + position.name
                                     if not position.is_placeholder
                                     else "具体岗位将于稍后公布"))
-            done.append(f"{u.name}→{g.name}·{position.name}")
+            done.append(f"{u.name}→{g.name}·{position.name}"
+                        + (f"（不满足：{'；'.join(unmet)}）" if unmet else ""))
         else:
             for e in rows:
                 e.status, e.cancel_type = "cancelled", "rejected"
