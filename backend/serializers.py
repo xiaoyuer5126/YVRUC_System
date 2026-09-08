@@ -368,17 +368,26 @@ def application_out(db: OrmSession, act: Activity, user=None) -> dict:
                         Enrollment.user_id == user.id,
                         Shift.parent_id.is_(None))
                 .order_by(Shift.sort).all())
+        # 同一场次可以勾好几个意向岗位，完整的一份记在申请上
+        picked = {p.id: p for p in
+                  db.query(Position).filter(
+                      Position.id.in_(app.wanted_positions or [""])).all()}
         wanted = []
         for e, g in rows:
-            p = db.get(Position, e.position_id) if e.position_id else None
+            names = [picked[i].name for i in (app.wanted_positions or [])
+                     if i in picked and picked[i].shift_id == g.id]
+            if not names and e.position_id:
+                p = db.get(Position, e.position_id)
+                names = [p.name] if p else []
             wanted.append({"shift_id": g.id, "shift_name": g.name,
-                           "position_name": p.name if p else "",
+                           "position_name": "、".join(names),
                            "status": e.status, "cancel_type": e.cancel_type})
     return {
         "questions": [q.out() for q in questions],
         "mine": ({"id": app.id, "status": app.status,
                   "status_label": app.status_label(),
                   "answers": app.answers or {}, "wanted": wanted,
+                  "wanted_positions": app.wanted_positions or [],
                   "leader_willing": app.leader_willing,
                   "created_at": iso_of(app.created_at)}
                  if app else None),

@@ -99,8 +99,9 @@
         </template>
         <el-alert v-if="act.recruit_mode === 'screened'" type="info" :closable="false"
                   style="margin-bottom:12px">
-          报名后筛选：志愿者填报名问卷、勾意向场次，报名截止后你在「志愿者管理」里录取。
-          场次一律<b>截止后统一分配</b>，录取的人先落在「待分配」，再排进具体岗位。
+          报名后筛选：志愿者先勾意向岗位、再按岗位填报名问卷，报名截止后你在
+          「志愿者管理」里录取并定岗位。没建岗位的场次，志愿者勾的是「待分配」，
+          录取之后再排。
         </el-alert>
         <el-alert v-else type="info" :closable="false" style="margin-bottom:12px">
           先按照时间设置场次，再分配每场的具体岗位。
@@ -897,16 +898,14 @@
       <el-form label-width="100px">
         <el-form-item label="名称" required><el-input v-model="groupForm.name" placeholder="如：上午场" /></el-form-item>
         <el-form-item label="场次模式" required>
-          <!-- 报名后筛选：新场次一律统一分配，录取的人先落「待分配」；
-               录取完再像别的场次一样改回「报名即选岗位」建真实岗位 -->
-          <el-radio-group v-if="!screenedNew" v-model="groupForm.mode">
+          <el-radio-group v-model="groupForm.mode">
             <el-radio-button value="pick">报名即选岗位</el-radio-button>
             <el-radio-button value="assign">截止后统一分配</el-radio-button>
           </el-radio-group>
           <div class="dim" style="margin-top:4px;line-height:1.7">
-            <template v-if="screenedNew">
-              报名后筛选的活动：志愿者只勾意向场次，录取的人先落在<b>「待分配」</b>上，
-              名额记在它头上；录取完把本场次改回「报名即选岗位」，建好真实岗位再一键分配。
+            <template v-if="screened">
+              报名后筛选：建好岗位的场次，志愿者按岗位勾意向；没建岗位的场次
+              勾的是「待分配」，录取之后再排岗位。
             </template>
             <template v-else-if="groupForm.mode === 'pick'">
               提前设置岗位分工，学生报名时自己挑岗位。
@@ -1663,13 +1662,11 @@ function openShift(g) {
     campusReq: g.requirement_tags?.校区 || [],
     stageReq: g.requirement_tags?.学段 || [],
   } : { name: '', start_time: '', end_time: '', capacity: 10, note: '',
-        mode: act.value.recruit_mode === 'screened' ? 'assign' : 'pick',
+        mode: act.value.recruit_mode === 'screened' ? 'assign' : 'pick',   // 筛选活动多半先不定岗
         waitlist_quota: 3, campusReq: [], stageReq: [] }
   shiftDlg.value.visible = true
 }
-// 报名后筛选的活动新建场次：模式没得选，一律统一分配
-const screenedNew = computed(
-  () => act.value?.recruit_mode === 'screened' && !shiftDlg.value.editing)
+const screened = computed(() => act.value?.recruit_mode === 'screened')
 /** 切模式的后果说明。反向切（pick → assign）只在没人报名时允许，
  *  有人之后后端直接 409——那会作废他们已经选定的岗位。 */
 const modeSwitchCost = computed(() => {

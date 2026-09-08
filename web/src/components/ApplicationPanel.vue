@@ -33,37 +33,54 @@
     </template>
 
     <template v-else-if="open">
-      <el-form label-position="top">
-        <el-form-item label="意向场次（可多选）" required>
-          <div style="width:100%">
-            <el-checkbox-group v-model="form.shift_ids">
-              <el-checkbox v-for="g in act.shifts" :key="g.id" :value="g.id"
-                           :disabled="!g.enroll_open" class="shift-opt">
-                {{ g.name }} · {{ g.time_text }}
-                <span class="dim">（名额 {{ g.capacity }}{{ g.location ? ' · ' + g.location : '' }}）</span>
+      <!-- 两步：先勾意向岗位，再按勾中的岗位出题。题目可能只问某几个岗位的人，
+           所以第二步的题要等第一步定下来才知道 -->
+      <el-steps :active="step" simple style="margin-bottom:14px">
+        <el-step title="选择意向岗位" />
+        <el-step title="填写报名问卷" />
+      </el-steps>
+
+      <template v-if="step === 1">
+        <p class="dim" style="margin:0 0 8px">
+          可以跨场次勾多个，同一场次也可以勾几个岗位；录取时由负责人定其中一个。
+        </p>
+        <el-checkbox-group v-model="form.position_ids">
+          <div v-for="g in openShifts" :key="g.id" class="shift-block">
+            <div class="shift-name">
+              {{ g.name }} · {{ g.time_text }}
+              <span class="dim">（{{ g.location || act.location || '地点待定' }}）</span>
+            </div>
+            <div v-for="p in g.positions" :key="p.id" class="pos-line">
+              <el-checkbox :value="p.id" :disabled="p.eligible === false">
+                {{ p.display_name }}
+                <span class="dim">{{ p.is_placeholder ? '' : `（${p.enrolled}/${p.quota}）` }}</span>
               </el-checkbox>
-            </el-checkbox-group>
-            <!-- 「报名即选岗位」的场次要连岗位一起勾；统一分配的录取后再排 -->
-            <div v-for="g in pickShifts" :key="g.id" class="pos-pick">
-              <span>{{ g.name }} 的意向岗位</span>
-              <el-select v-model="form.positions[g.id]" placeholder="选择岗位"
-                         style="width:260px">
-                <el-option v-for="p in realPositions(g)" :key="p.id" :value="p.id"
-                           :disabled="p.eligible === false"
-                           :label="`${p.name}（${p.enrolled}/${p.quota}）`" />
-              </el-select>
+              <span v-if="p.eligible === false" class="dim">
+                不符合条件：{{ p.ineligible_reason }}
+              </span>
             </div>
           </div>
-        </el-form-item>
-        <QuestionFields ref="fields" v-model="form.answers" :questions="questions"
-                        :upload-url="`/api/activities/${act.id}/apply/upload`" />
-        <el-form-item>
-          <div>
+        </el-checkbox-group>
+        <el-button type="primary" style="margin-top:12px" :loading="loadingStep"
+                   @click="goStep2">下一步</el-button>
+      </template>
+
+      <template v-else>
+        <div class="dim" style="margin-bottom:10px">
+          意向岗位：
+          <el-tag v-for="p in chosen" :key="p.id" size="small" effect="plain"
+                  style="margin-right:6px">{{ p.shift_name }} · {{ p.display_name }}</el-tag>
+        </div>
+        <el-form label-position="top">
+          <QuestionFields ref="fields" v-model="form.answers" :questions="stepQuestions"
+                          :upload-url="`/api/activities/${act.id}/apply/upload`" />
+          <el-form-item>
             <el-checkbox v-model="form.leader_willing">愿意担任组长（如岗位需要）</el-checkbox>
-          </div>
-        </el-form-item>
-      </el-form>
-      <el-button type="primary" :loading="submitting" @click="submit">提交申请</el-button>
+          </el-form-item>
+        </el-form>
+        <el-button @click="step = 1">上一步</el-button>
+        <el-button type="primary" :loading="submitting" @click="submit">提交申请</el-button>
+      </template>
     </template>
 
     <!-- 不在报名期：审批人和路过的人也该看得到这份表长什么样 -->
@@ -104,14 +121,18 @@ const closedText = computed(() => {
   return props.act.opens_in ? '未开始报名' : '报名已截止'
 })
 
-const form = reactive({ shift_ids: [], positions: {}, answers: {},
-                        leader_willing: false })
+const form = reactive({ position_ids: [], answers: {}, leader_willing: false })
 const fields = ref(null)
+const step = ref(1)
+const stepQuestions = ref([])
+const loadingStep = ref(false)
 
-// 需要勾岗位的场次：勾中了、且是「报名即选岗位」
-const pickShifts = computed(() => props.act.shifts.filter(
-  g => form.shift_ids.includes(g.id) && g.mode !== 'assign'))
-const realPositions = g => g.positions.filter(p => !p.is_placeholder)
+// 还收人的场次才列出来；每个场次列它的岗位，没建岗位的场次只有一个「待分配」
+const openShifts = computed(
+  () => props.act.shifts.filter(g => g.enroll_open && g.positions.length))
+const chosen = computed(() => openShifts.value.flatMap(
+  g => g.positions.filter(p => form.position_ids.includes(p.id))
+    .map(p => ({ ...p, shift_name: g.name }))))
 const answeredQuestions = computed(
   () => questions.value.filter(q => q.id in (mine.value?.answers || {})))
 const submitting = ref(false)
@@ -123,18 +144,25 @@ function answerText(q) {
   return q.kind === 'file' ? '已上传' : v
 }
 
+/** 第一步交完岗位，问后端这几个岗位该答哪些题。 */
+async function goStep2() {
+  if (!form.position_ids.length) return ElMessage.warning('请至少勾选一个意向岗位')
+  loadingStep.value = true
+  try {
+    const d = await api.get(`/api/activities/${props.act.id}/form`
+                            + `?positions=${form.position_ids.join(',')}`)
+    stepQuestions.value = d.questions
+    step.value = 2
+  } finally { loadingStep.value = false }
+}
+
 async function submit() {
-  if (!form.shift_ids.length) return ElMessage.warning('请至少勾选一个意向场次')
-  for (const g of pickShifts.value) {
-    if (!form.positions[g.id]) return ElMessage.warning(`请为「${g.name}」选择意向岗位`)
-  }
-  const { error, answers } = fields.value.collect()
+  const { error, answers } = fields.value?.collect() || { answers: {} }
   if (error) return ElMessage.warning(error)
   submitting.value = true
   try {
     const d = await api.post(`/api/activities/${props.act.id}/apply`,
-                             { shift_ids: form.shift_ids, answers,
-                               positions: form.positions,
+                             { position_ids: form.position_ids, answers,
                                leader_willing: form.leader_willing })
     ElMessage.success(d.message)
     emit('changed')
@@ -150,7 +178,8 @@ async function withdraw() {
 
 <style scoped>
 .apply-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.shift-opt { display: flex; align-items: center; height: auto; margin: 4px 0; }
-.pos-pick { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.shift-block { margin-bottom: 10px; }
+.shift-name { font-weight: 600; margin-bottom: 2px; }
+.pos-line { display: flex; align-items: center; gap: 8px; padding-left: 10px; }
 .preview { margin: 6px 0 0; padding-left: 20px; line-height: 2; }
 </style>

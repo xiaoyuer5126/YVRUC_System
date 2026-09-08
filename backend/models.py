@@ -581,12 +581,16 @@ class FormQuestion(Base):
     # 显示条件 {"question_id": 前面某道单选/多选题, "values": [选中其一才显示这道]}。
     # 空 = 一直显示。条件不成立时这道题不显示、不校验、也不存答案。
     show_if: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 适用岗位：只有选了其中某个岗位的人才要答这道题。空 = 人人都答。
+    # 和场次的 applies_to_positions 一个意思，只是那边管培训、这边管题目。
+    applies_to_positions: Mapped[list] = mapped_column(JSON, default=list)
     sort: Mapped[int] = mapped_column(Integer, default=0)
 
     def out(self) -> dict:
         return {"id": self.id, "kind": self.kind, "kind_label": self.KINDS.get(self.kind, self.kind),
                 "title": self.title, "options": self.options or [],
                 "required": self.required, "show_if": self.show_if or {},
+                "applies_to_positions": self.applies_to_positions or [],
                 "sort": self.sort}
 
 
@@ -595,6 +599,7 @@ class Application(Base):
 
     意向场次不放在这里：申请时按每个意向场次各写一条 status=applied 的
     Enrollment——时段冲突、名单、录取都沿用报名那一套，不必另起一套账。
+    意向**岗位**放在这里：一个场次可以勾好几个岗位，Enrollment 上只放得下一个。
     """
     __tablename__ = "applications"
     __table_args__ = (Index("uq_application", "activity_id", "user_id", unique=True),)
@@ -606,6 +611,10 @@ class Application(Base):
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     answers: Mapped[dict] = mapped_column(JSON, default=dict)   # 题目 id → 答案
+    # 勾中的意向岗位（跨场次，可多个）。每个意向场次的 Enrollment 上只放得下
+    # 一个 position_id，同场次勾了好几个岗位时，完整的意向记在这里，
+    # 录取时管理者从中挑一个。
+    wanted_positions: Mapped[list] = mapped_column(JSON, default=list)
     # 表态愿意当组长，录取时带到报名记录上；只是给管理者的参考
     leader_willing: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(12), default="applied", index=True)

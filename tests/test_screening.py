@@ -53,6 +53,12 @@ def _answers(questions, **override):
     return base
 
 
+def _holders(db, shift_ids):
+    """「截止后统一分配」的场次只有一个「待分配」占位岗位，勾它等于勾这一场。"""
+    from backend.models import Shift
+    return [db.get(Shift, g).placeholder().id for g in shift_ids]
+
+
 def _pick_shift(client, admin, act_id, name="选岗场", *, days=6, positions=("引导", "登记")):
     """给筛选活动加一个「报名即选岗位」的场次，返回 (场次 id, 岗位 id 列表)。"""
     start = now() + timedelta(days=days)
@@ -92,15 +98,17 @@ def test_报名即选岗位的场次要连岗位一起勾(client, admin, db, tak
     t = login(client, take_student())
 
     r = client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"shift_ids": [gid], "answers": _answers(q)})
+                    json={"position_ids": [], "answers": _answers(q)})
     assert r.status_code == 400 and "意向岗位" in r.json()["detail"]
 
+    # 同一场次可以勾好几个岗位：意向不占名额，录取时管理者挑一个
     r = client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"shift_ids": [gid], "positions": {gid: pids[1]},
+                    json={"position_ids": [pids[1], pids[0]],
                           "answers": _answers(q)})
     assert r.status_code == 200, r.text
     mine = client.get(f"/api/activities/{act_id}", headers=t).json()["application"]["mine"]
-    assert mine["wanted"][0]["position_name"] == "登记"
+    assert mine["wanted"][0]["position_name"] == "登记、引导"
+    assert mine["wanted_positions"] == [pids[1], pids[0]]
 
     # 录取后就在他勾的那个岗位上，不用再分配
     lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
@@ -123,7 +131,7 @@ def test_录取时可以把人放到别的岗位(client, admin, db, take_student
     db.commit()
     t = login(client, take_student())
     client.post(f"/api/activities/{act_id}/apply", headers=t,
-                json={"shift_ids": [gid], "positions": {gid: pids[0]},
+                json={"position_ids": [pids[0]],
                       "answers": _answers(q)})
     lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
     r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
@@ -145,7 +153,7 @@ def test_录取时逐人指定岗位(client, admin, db, take_student):
     for _ in range(2):
         t = login(client, take_student())
         client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"shift_ids": [gid], "positions": {gid: pids[0]},
+                    json={"position_ids": [pids[0]],
                           "answers": _answers(q)})
     apps = client.get(f"/api/staff/activities/{act_id}/applications",
                       headers=admin).json()["applications"]
@@ -174,7 +182,7 @@ def test_录取到不满足条件的岗位会留痕(client, admin, db, take_stud
     db.commit()
     t = login(client, take_student())
     client.post(f"/api/activities/{act_id}/apply", headers=t,
-                json={"shift_ids": [gid], "positions": {gid: pids[0]},
+                json={"position_ids": [pids[0]],
                       "answers": _answers(q)})
     app_id = client.get(f"/api/staff/activities/{act_id}/applications",
                         headers=admin).json()["applications"][0]["id"]
@@ -224,7 +232,7 @@ def test_题目按显示条件出现(client, admin, db, take_student):
     # 选「否」：跟进题不出现，不填也能交，答案里不留它
     t = login(client, take_student())
     r = client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"shift_ids": ids[:1],
+                    json={"position_ids": _holders(db, ids[:1]),
                           "answers": {yes_no["id"]: "否", follow: "不该存下来"}})
     assert r.status_code == 200, r.text
     mine = client.get(f"/api/activities/{act_id}", headers=t).json()["application"]["mine"]
@@ -233,12 +241,57 @@ def test_题目按显示条件出现(client, admin, db, take_student):
     # 选「是」：跟进题是必填，不填就交不了
     t2 = login(client, take_student())
     r = client.post(f"/api/activities/{act_id}/apply", headers=t2,
-                    json={"shift_ids": ids[:1], "answers": {yes_no["id"]: "是"}})
+                    json={"position_ids": _holders(db, ids[:1]), "answers": {yes_no["id"]: "是"}})
     assert r.status_code == 400 and "上次做了什么" in r.json()["detail"]
     r = client.post(f"/api/activities/{act_id}/apply", headers=t2,
-                    json={"shift_ids": ids[:1],
+                    json={"position_ids": _holders(db, ids[:1]),
                           "answers": {yes_no["id"]: "是", follow: "带过路"}})
     assert r.status_code == 200, r.text
+
+
+def test_题目按适用岗位出现(client, admin, db, take_student):
+    """挂了适用岗位的题，只问选了那个岗位的人：没选就不出现、不校验、不存。"""
+    act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
+    gid, pids = _pick_shift(client, admin, act_id)
+    only_for_first = {"kind": "text", "title": "有无扩音器使用经验",
+                      "required": True, "options": [],
+                      "applies_to_positions": [pids[0]]}
+    r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
+                   json={"questions": [{"id": x["id"], "kind": x["kind"],
+                                        "title": x["title"], "options": x["options"],
+                                        "required": x["required"],
+                                        "show_if": x["show_if"]} for x in q]
+                                      + [only_for_first]})
+    assert r.status_code == 200, r.text
+    q2 = r.json()["questions"]
+    extra = next(x for x in q2 if x["title"] == "有无扩音器使用经验")
+    assert extra["applies_to_positions"] == [pids[0]]
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+
+    # 只勾第二个岗位：第二步的题目里没有它，不填也交得了
+    t = login(client, take_student())
+    d = client.get(f"/api/activities/{act_id}/form?positions={pids[1]}", headers=t).json()
+    assert extra["id"] not in [x["id"] for x in d["questions"]]
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"position_ids": [pids[1]], "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+
+    # 勾了第一个岗位：这道题是必填，不填交不了
+    t2 = login(client, take_student())
+    d = client.get(f"/api/activities/{act_id}/form?positions={pids[0]}", headers=t2).json()
+    assert extra["id"] in [x["id"] for x in d["questions"]]
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t2,
+                    json={"position_ids": [pids[0]], "answers": _answers(q)})
+    assert r.status_code == 400 and "扩音器" in r.json()["detail"]
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t2,
+                    json={"position_ids": [pids[0]],
+                          "answers": {**_answers(q), extra["id"]: "用过"}})
+    assert r.status_code == 200, r.text
+    app = (db.query(Application)
+           .filter(Application.activity_id == act_id).order_by(
+               Application.created_at.desc()).first())
+    assert app.answers[extra["id"]] == "用过"
 
 
 def test_填表申请_必填校验_只能填一次(client, admin, db, take_student):
@@ -254,16 +307,16 @@ def test_填表申请_必填校验_只能填一次(client, admin, db, take_stude
     assert r.status_code == 409 and "报名问卷" in r.json()["detail"]
 
     r = client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"shift_ids": ids, "answers": _answers(q, 参加过吗=None)})
+                    json={"position_ids": _holders(db, ids), "answers": _answers(q, 参加过吗=None)})
     assert r.status_code == 400 and "参加过吗" in r.json()["detail"]
     r = client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"shift_ids": [], "answers": _answers(q)})
+                    json={"position_ids": [], "answers": _answers(q)})
     assert r.status_code == 400
     r = client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"shift_ids": ids, "answers": _answers(q)})
+                    json={"position_ids": _holders(db, ids), "answers": _answers(q)})
     assert r.status_code == 200, r.text
     r = client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"shift_ids": ids, "answers": _answers(q)})
+                    json={"position_ids": _holders(db, ids), "answers": _answers(q)})
     assert r.status_code == 409
 
     d = client.get(f"/api/activities/{act_id}", headers=t).json()
@@ -287,7 +340,7 @@ def test_申请时就拦时段冲突(client, admin, db, enrolled_activity, take_
     g.start_time, g.end_time = shift.start_time, shift.end_time
     db.commit()
     r = client.post(f"/api/activities/{act_id}/apply", headers=mine,
-                    json={"shift_ids": ids, "answers": _answers(q)})
+                    json={"position_ids": _holders(db, ids), "answers": _answers(q)})
     assert r.status_code == 409 and r.json()["detail"]["conflicts"]
 
 
@@ -296,7 +349,7 @@ def test_撤回申请后可以重新填(client, admin, db, take_student):
     act_id, ids, q = _create_screened(client, admin, db)
     t = login(client, take_student())
     client.post(f"/api/activities/{act_id}/apply", headers=t,
-                json={"shift_ids": ids, "answers": _answers(q)})
+                json={"position_ids": _holders(db, ids), "answers": _answers(q)})
     rows = client.get("/api/me/enrollments", headers=t).json()
     enr_id = next(r["id"] for r in rows if r["activity"]["id"] == act_id)
     # 意向记录不能走退选，只能撤回申请
@@ -311,7 +364,7 @@ def test_撤回申请后可以重新填(client, admin, db, take_student):
                 if r["activity"]["id"] == act_id]
     # 重新填一份，只报一个场次
     r = client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"shift_ids": ids[:1], "answers": _answers(q, 参加过吗="否")})
+                    json={"position_ids": _holders(db, ids[:1]), "answers": _answers(q, 参加过吗="否")})
     assert r.status_code == 200, r.text
     mine = client.get(f"/api/activities/{act_id}", headers=t).json()["application"]["mine"]
     assert len(mine["wanted"]) == 1
@@ -325,7 +378,7 @@ def test_录取与未录取(client, admin, db, take_student):
     sids = [take_student() for _ in range(3)]
     for sid in sids:
         r = client.post(f"/api/activities/{act_id}/apply", headers=login(client, sid),
-                        json={"shift_ids": ids, "answers": _answers(q)})
+                        json={"position_ids": _holders(db, ids), "answers": _answers(q)})
         assert r.status_code == 200, r.text
 
     lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
@@ -389,7 +442,7 @@ def test_录取名额不够先拦下(client, admin, db, take_student):
     for _ in range(2):
         t = login(client, take_student())
         client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"shift_ids": ids, "answers": _answers(q)})
+                    json={"position_ids": _holders(db, ids), "answers": _answers(q)})
     lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
     app_ids = [a["id"] for a in lst["applications"]]
     r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
@@ -414,7 +467,7 @@ def test_报名问卷文件只有本人和管理者能下载(client, admin, db, 
     assert r.status_code == 200, r.text
     att_id = r.json()["id"]
     r = client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"shift_ids": ids, "answers": _answers(q, 证明材料=att_id)})
+                    json={"position_ids": _holders(db, ids), "answers": _answers(q, 证明材料=att_id)})
     assert r.status_code == 200, r.text
     lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
     file_answer = lst["applications"][0]["answers"][3]["value"]
@@ -426,14 +479,40 @@ def test_报名问卷文件只有本人和管理者能下载(client, admin, db, 
 
 
 def test_复制活动带报名问卷不带联络群(client, admin, db):
-    act_id, _ids, q = _create_screened(client, admin, db, status="draft")
+    """题目里指着岗位和前一道题的地方，复制后要指向新活动自己的那份。"""
+    act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
+    gid, pids = _pick_shift(client, admin, act_id)
+    r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
+                   json={"questions": [
+                       {"kind": "single", "title": "参加过吗", "options": ["是", "否"]},
+                   ]})
+    assert r.status_code == 200, r.text
+    first = r.json()["questions"][0]["id"]
+    r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
+                   json={"questions": [
+                       {"id": first, "kind": "single", "title": "参加过吗",
+                        "options": ["是", "否"]},
+                       {"kind": "text", "title": "只问引导岗",
+                        "applies_to_positions": [pids[0]]},
+                       {"kind": "text", "title": "上次做了什么",
+                        "show_if": {"question_id": first, "values": ["是"]}},
+                   ]})
+    assert r.status_code == 200, r.text
+
     r = client.post(f"/api/staff/activities/{act_id}/copy", headers=admin,
                     json={"shift_days": 3, "title": "副本", "contact_group_qr": "data:new"})
     assert r.status_code == 200, r.text
     new_id = r.json()["id"]
     d = client.get(f"/api/activities/{new_id}", headers=admin).json()
     assert d["recruit_mode"] == "screened" and d["contact_group_qr"] == "data:new"
-    assert [x["title"] for x in d["application"]["questions"]] == [x["title"] for x in q]
+    qs = d["application"]["questions"]
+    assert [x["title"] for x in qs] == ["参加过吗", "只问引导岗", "上次做了什么"]
+    new_positions = {p["id"] for g in d["shifts"] for p in g["positions"]}
+    # 适用岗位换成了副本自己的岗位
+    assert qs[1]["applies_to_positions"] and pids[0] not in qs[1]["applies_to_positions"]
+    assert all(p in new_positions for p in qs[1]["applies_to_positions"])
+    # 显示条件指向副本自己的那道题，不是原活动的
+    assert qs[2]["show_if"]["question_id"] == qs[0]["id"] != first
 
 
 def test_报名成功即弹联络群(client, admin, db, enrolled_activity, take_student):
@@ -459,7 +538,7 @@ def test_报名问卷结果导出excel(client, admin, db, take_student):
     sids = [take_student() for _ in range(2)]
     for i, sid in enumerate(sids):
         r = client.post(f"/api/activities/{act_id}/apply", headers=login(client, sid),
-                        json={"shift_ids": ids[:1] if i else ids,
+                        json={"position_ids": _holders(db, ids[:1] if i else ids),
                               "answers": _answers(q), "leader_willing": bool(i)})
         assert r.status_code == 200, r.text
     lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
@@ -542,7 +621,7 @@ def test_有文件答案的报名问卷导出成zip(client, admin, db, take_stud
                     files={"file": ("证明.pdf", b"%PDF-1.4 fake", "application/pdf")})
     assert r.status_code == 200, r.text
     r = client.post(f"/api/activities/{act_id}/apply", headers=h,
-                    json={"shift_ids": ids[:1],
+                    json={"position_ids": _holders(db, ids[:1]),
                           "answers": _answers(q, 证明材料=r.json()["id"])})
     assert r.status_code == 200, r.text
 

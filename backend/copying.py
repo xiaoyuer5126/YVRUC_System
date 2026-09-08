@@ -123,6 +123,7 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
         db.flush()
         return shift
 
+    all_positions: dict[str, str] = {}
     for src_shift in sorted(src.main_shifts(), key=lambda s: s.sort):
         shift = clone(src_shift, None, {})
         position_map = {}
@@ -130,15 +131,31 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
                                            key=lambda p: p.sort)):
             position_map[src_pos.id] = copy_position(
                 db, src_pos, shift, operator, sort=i).id
+        all_positions.update(position_map)
         for child in sorted((s for s in src.shifts
                              if s.parent_id == src_shift.id),
                             key=lambda s: s.start_time):
             clone(child, shift.id, position_map)
+    # 题目里指着别的东西的两处都要换成新 id：适用岗位、显示条件依赖的前一道题。
+    # 题目按 sort 复制，显示条件只指向前面的题，所以边复制边建映射就够了
+    question_map: dict[str, str] = {}
     for q in (db.query(FormQuestion).filter(FormQuestion.activity_id == src.id)
               .order_by(FormQuestion.sort).all()):
-        db.add(FormQuestion(id=uid("q"), activity_id=act.id, kind=q.kind,
-                            title=q.title, options=list(q.options or []),
-                            required=q.required, sort=q.sort))
+        cond = q.show_if or {}
+        src_q = cond.get("question_id")
+        show_if = ({"question_id": question_map[src_q],
+                    "values": list(cond.get("values") or [])}
+                   if src_q in question_map else {})
+        row = FormQuestion(id=uid("q"), activity_id=act.id, kind=q.kind,
+                           title=q.title, options=list(q.options or []),
+                           required=q.required, show_if=show_if,
+                           applies_to_positions=[
+                               all_positions[i]
+                               for i in (q.applies_to_positions or [])
+                               if i in all_positions],
+                           sort=q.sort)
+        db.add(row)
+        question_map[q.id] = row.id
     return act
 
 

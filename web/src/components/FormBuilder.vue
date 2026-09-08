@@ -18,6 +18,9 @@
         <el-tag size="small" effect="plain" style="margin:0 6px">{{ KINDS[q.kind] }}</el-tag>
         <el-tag v-if="q.required" size="small" type="warning" effect="plain">必填</el-tag>
         <div v-if="q.options?.length" class="dim">选项：{{ q.options.join(' / ') }}</div>
+        <div v-if="q.applies_to_positions?.length" class="dim">
+          只问：{{ q.applies_to_positions.map(positionName).join('、') }}
+        </div>
         <div v-if="q.condQ" class="dim">{{ condText(q) }}</div>
       </li>
     </ol>
@@ -37,6 +40,18 @@
       <el-input v-if="q.kind === 'single' || q.kind === 'multi'" v-model="q.optionsText"
                 type="textarea" :rows="2" placeholder="选项，一行一个（至少两个）"
                 :disabled="!editable" class="fb-opts" />
+      <!-- 适用岗位：只问选了这些岗位的人。留空 = 人人都答 -->
+      <div v-if="positionGroups.length" class="fb-cond">
+        <span class="dim">适用岗位</span>
+        <el-select v-model="q.applies_to_positions" multiple collapse-tags
+                   collapse-tags-tooltip clearable placeholder="人人都答"
+                   style="width:320px" :disabled="!editable">
+          <el-option-group v-for="g in positionGroups" :key="g.id" :label="g.name">
+            <el-option v-for="p in g.positions" :key="p.id" :value="p.id"
+                       :label="p.name" />
+          </el-option-group>
+        </el-select>
+      </div>
       <!-- 显示条件：只能挂在前面某道选择题的某几个选项上 -->
       <div class="fb-cond">
         <span class="dim">显示条件</span>
@@ -54,7 +69,7 @@
     </div>
     <el-button v-if="editable" plain size="small" @click="add">添加题目</el-button>
     <div v-if="editable" class="dim" style="margin-top:6px">
-      显示条件只能挂在前面的选择题上，新增的题目保存后才能作为条件。
+      适用岗位留空 = 人人都答；显示条件只能挂在前面的选择题上，新增的题目保存后才能作为条件。
     </div>
     <el-empty v-else-if="!questions.length" description="没有设置题目" :image-size="40" />
   </div>
@@ -75,6 +90,9 @@ const emit = defineEmits(['count'])
 
 const KINDS = { single: '单选', multi: '多选', text: '填空', file: '文件上传' }
 const questions = ref([])
+const positionGroups = ref([])            // 出题时挑「这道题问谁」用
+const positionName = id => positionGroups.value
+  .flatMap(g => g.positions).find(p => p.id === id)?.name || id
 const loading = ref(false)
 const saving = ref(false)
 
@@ -83,6 +101,7 @@ async function load() {
   try {
     const d = await api.get(`/api/staff/activities/${props.activityId}/form`)
     questions.value = d.questions.map(toRow)
+    positionGroups.value = (d.shifts || []).filter(g => g.positions.length)
     emit('count', questions.value.length)
   } finally { loading.value = false }
 }
@@ -91,11 +110,13 @@ onMounted(load)
 const toRow = q => ({
   ...q, optionsText: (q.options || []).join('\n'),
   condQ: q.show_if?.question_id || '', condValues: q.show_if?.values || [],
+  applies_to_positions: q.applies_to_positions || [],
 })
 
 function add() {
   questions.value.push({ id: '', kind: 'single', title: '', optionsText: '',
-                         required: true, condQ: '', condValues: [] })
+                         required: true, condQ: '', condValues: [],
+                         applies_to_positions: [] })
 }
 
 // 能当条件的：排在这道题前面的单选/多选题。往后指会绕成环
@@ -121,6 +142,7 @@ async function save() {
       id: q.id || '', kind: q.kind, title: q.title, required: q.required,
       options: q.optionsText.split('\n').map(s => s.trim()).filter(Boolean),
       show_if: q.condQ ? { question_id: q.condQ, values: q.condValues } : {},
+      applies_to_positions: q.applies_to_positions || [],
     }))
     const d = await api.put(`/api/staff/activities/${props.activityId}/form`,
                             { questions: body })

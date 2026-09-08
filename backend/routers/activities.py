@@ -254,9 +254,6 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         raise HTTPException(409, "本活动需填写报名问卷申请，由负责人筛选后录取")
 
     _check_eligibility(db, user, act, g)
-    # 报名问卷答案：题目不存在就是空表，答案照样为空
-    from .screening import validate_answers
-    answers = validate_answers(db, act, user, body.answers or {})
 
     # 岗位有效性与硬性条件（与名额无关，锁外先判）。
     # 「截止后统一分配」的场次不让学生挑岗位，一律落到占位岗位上——
@@ -276,6 +273,11 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                 403, f"您不满足「{position.name}」的报名条件：{'；'.join(unmet)}")
     else:
         raise HTTPException(400, "请选择具体岗位")
+
+    # 报名问卷答案：题目不存在就是空表，答案照样为空。挂了适用岗位的题只问
+    # 报这个岗位的人，所以要等岗位定下来再校验
+    from .screening import validate_answers
+    answers = validate_answers(db, act, user, body.answers or {}, [position.id])
 
     # ★ 时段冲突（粗粒度）：与所有有效报名的场次比区间，重叠即拦截。
     # 候补中的场次同样算已占用——排了队就等于预留了这段时间。

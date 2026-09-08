@@ -489,7 +489,7 @@ def main() -> None:
                          created_by=limu.id, created_at=dt(days=-3))
         db.add(fresh)
         db.flush()
-        fresh_shifts = []
+        fresh_shifts, holders = [], []
         for i, (name, h0, h1) in enumerate([("报到日上午", 8, 12), ("报到日下午", 13, 17)]):
             g = Shift(id=uid("g"), activity_id=fresh.id, name=name,
                       start_time=dt(days=8, base=t0.replace(hour=h0, minute=0)),
@@ -497,11 +497,13 @@ def main() -> None:
                       mode="assign", sort=i, location="东门迎新广场")
             db.add(g)
             db.flush()
-            db.add(Position(id=uid("p"), shift_id=g.id, name="待分配",
-                            is_placeholder=True, quota=12, waitlist_quota=3,
-                            sort=-1, location="东门迎新广场",
-                            service_task="录取后由负责人安排具体岗位",
-                            training_note="到岗后统一讲解"))
+            holder = Position(id=uid("p"), shift_id=g.id, name="待分配",
+                              is_placeholder=True, quota=12, waitlist_quota=3,
+                              sort=-1, location="东门迎新广场",
+                              service_task="录取后由负责人安排具体岗位",
+                              training_note="到岗后统一讲解")
+            db.add(holder)
+            holders.append(holder)
             fresh_shifts.append(g)
         db.flush()
         q_exp = FormQuestion(id=uid("q"), activity_id=fresh.id, kind="single",
@@ -517,17 +519,20 @@ def main() -> None:
         db.add_all([q_exp, q_job, q_intro, q_file])
         db.flush()
         for i, u in enumerate(students[28:34]):
-            wanted = fresh_shifts if i % 3 == 0 else [fresh_shifts[i % 2]]
+            picked = (list(range(len(fresh_shifts))) if i % 3 == 0
+                      else [i % 2])          # 意向岗位：这里每场只有「待分配」
             db.add(Application(id=uid("app"), activity_id=fresh.id, user_id=u.id,
                                answers={q_exp.id: "参加过" if i % 2 else "没有参加过",
                                         q_job.id: ["引导带路", "报到登记"][: 1 + i % 2],
                                         q_intro.id: f"我是{u.college}的{u.name}，"
                                                     f"熟悉校园，愿意全程参与。"},
+                               wanted_positions=[holders[k].id for k in picked],
                                created_at=dt(days=-1, minutes=i * 40)))
-            for g in wanted:
+            for k in picked:
                 db.add(Enrollment(id=uid("enr"), activity_id=fresh.id,
-                                  shift_id=g.id, user_id=u.id, status="applied",
-                                  source="self",
+                                  shift_id=fresh_shifts[k].id, user_id=u.id,
+                                  status="applied", source="self",
+                                  position_id=holders[k].id,
                                   joined_at=dt(days=-1, minutes=i * 40)))
         db.commit()
 

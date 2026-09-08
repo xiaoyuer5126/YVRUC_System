@@ -637,8 +637,9 @@
                   title="请确认这些时间你可到场，如时间冲突需向负责人请假。" />
 
         <!-- 活动设了报名问卷：报名时一并答，答案跟着报名记录走 -->
-        <el-form v-if="act.questions?.length" label-position="top" style="margin-top:12px">
-          <QuestionFields ref="enrollFields" v-model="enrollDlg.answers" :questions="act.questions"
+        <el-form v-if="enrollQuestions.length" label-position="top" style="margin-top:12px">
+          <QuestionFields ref="enrollFields" v-model="enrollDlg.answers"
+                          :questions="enrollQuestions"
                           :upload-url="`/api/activities/${act.id}/apply/upload`" />
         </el-form>
 
@@ -700,6 +701,11 @@ const groupDetail = ref({ visible: false, data: null })
 const enrollDlg = ref({ visible: false, shift: null, position: null,
                         leaderWilling: false,
                         allowReassign: true, submitting: false })
+// 挂了适用岗位的题只问报这个岗位的人
+const enrollQuestions = computed(() => (act.value?.questions || []).filter(q => {
+  const scope = q.applies_to_positions || []
+  return !scope.length || scope.includes(enrollDlg.value.position?.id)
+}))
 const willWaitlist = computed(() => {
   const { shift: g, position } = enrollDlg.value
   if (!g) return false
