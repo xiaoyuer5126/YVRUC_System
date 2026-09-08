@@ -107,8 +107,13 @@
           <b>报名即选岗位</b>：发布前分配好各岗位名额。
           <b>截止后统一分配</b>：适用于未确定岗位的场次，志愿者先选择时间，后续分配岗位。
         </el-alert>
-        <FormBuilder :key="act.status" :activity-id="act.id" :editable="!isPublic"
-                     :screened="act.recruit_mode === 'screened'" style="margin-bottom:12px" />
+        <div class="toolbar" style="margin-bottom:12px">
+          <el-button plain @click="formDlg = true">{{ formLabel }}</el-button>
+          <span class="dim">
+            {{ act.recruit_mode === 'screened'
+               ? '志愿者申请时填写' : '选填，志愿者报名时填写' }}
+          </span>
+        </div>
         <!-- 结束之后是终态：时长按当时的岗位与名单结的账，再改就对不上，
              连「调整岗位」的入口都不给 -->
         <el-alert v-if="isOver" type="info" show-icon :closable="false"
@@ -1023,6 +1028,13 @@
       </template>
     </el-dialog>
 
+    <!-- 报名问卷：题目不常改，收进弹窗，页签上只留一个按钮 -->
+    <el-dialog v-model="formDlg" title="报名问卷" width="760">
+      <FormBuilder :key="act.status" :activity-id="act.id" :editable="!isPublic"
+                   :screened="act.recruit_mode === 'screened'"
+                   @count="n => formCount = n" />
+    </el-dialog>
+
     <!-- 提交审批 -->
     <el-dialog v-model="submitDlg.visible" title="提交校青协审批" width="500">
       <el-form label-width="88px">
@@ -1335,6 +1347,10 @@ const tab = ref(String(route.query.tab || 'tree'))   // 支持 ?tab=roster 直�
 // 都没有，名单、签到、服装、导出、签收全是空页
 const isPublic = computed(() =>
   ['published', 'closed', 'finished', 'completed'].includes(act.value?.status))
+const formDlg = ref(false)
+const formCount = ref(0)
+const formLabel = computed(() => (isPublic.value ? '查看报名问卷'
+  : formCount.value ? `报名问卷（${formCount.value} 题）` : '设置报名问卷'))
 const modes = ref({})
 const colleges = ref([])
 const campuses = ref([])
@@ -1570,6 +1586,9 @@ async function loadAll() {
     })
     const logsResp = await api.get(`/api/staff/audit-logs?activity_id=${activityId}&size=50`)
     logs.value = logsResp.items || []
+    // 弹窗里的表要等打开才加载，题数得自己先问一句，按钮上要写
+    formCount.value = (await api.get(
+      `/api/staff/activities/${activityId}/form`)).questions.length
     await loadManagers()
     loadAppeals()      // 标签上的红点要一进页面就在，不能等切到那一页才知道
     // ?tab=hours 直达：watch(tab) 不会触发，时长这一页要在这里加载，

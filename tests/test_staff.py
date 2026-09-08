@@ -6,8 +6,8 @@ from datetime import timedelta
 import pytest
 
 from backend.models import (Activity, ActivityManager, CheckinRecord,
-                            CheckinTask, Enrollment, Shift, Position,
-                            User, now, uid)
+                            CheckinTask, Enrollment, FormQuestion, Shift,
+                            Position, User, now, uid)
 from conftest import (ADMIN, POSITION_TEXT, QINGXIE, approve, editing,
                       login, student_row)
 
@@ -516,6 +516,10 @@ def test_删除草稿要连带清干净引用(client, admin, db):
                     ).json()["id"]
     client.post(f"/api/staff/shifts/{g}/positions", headers=admin,
                 json={"name": "引导", "quota": 2, **POSITION_TEXT})
+    client.put(f"/api/staff/activities/{aid}/form", headers=admin,
+               json={"questions": [{"id": "", "kind": "text", "title": "为什么报名",
+                                    "options": [], "required": True,
+                                    "show_if": {}}]})
     dept = next(d for d in client.get("/api/staff/departments",
                                       headers=admin).json() if d["has_head"])
     client.post(f"/api/staff/activities/{aid}/submit", headers=admin,
@@ -533,6 +537,8 @@ def test_删除草稿要连带清干净引用(client, admin, db):
         ActivityManager.activity_id == aid).count() == 0
     assert db.query(ApprovalEvent).filter(
         ApprovalEvent.activity_id == aid).count() == 0
+    assert db.query(FormQuestion).filter(
+        FormQuestion.activity_id == aid).count() == 0
 
 
 def test_管理者分工只筛通知不限操作(client, admin, db, enrolled_activity,

@@ -1,18 +1,15 @@
-<!-- 报名问卷：题目在这里设计。即选即得的活动在报名弹窗里答，报名后筛选的申请时填。
-     公开之后锁定。 -->
+<!-- 报名问卷：题目在这里设计（管理页「岗位设置」里的弹窗）。即选即得的活动
+     在报名弹窗里答，报名后筛选的申请时填。公开之后锁定。 -->
 <template>
-  <el-card shadow="never" v-loading="loading">
-    <template #header>
-      <div class="fb-head">
-        <b>报名问卷</b>
-        <span class="dim">
-          {{ screened ? '志愿者申请时填写，意向场次无需出题'
-                      : '选填。志愿者报名时填写，答案在「志愿者管理」中查看' }}
-        </span>
-        <el-button v-if="editable" type="primary" size="small" :loading="saving"
-                   style="margin-left:auto" @click="save">保存报名问卷</el-button>
-      </div>
-    </template>
+  <div v-loading="loading">
+    <div class="fb-head">
+      <span class="dim">
+        {{ screened ? '志愿者申请时填写，意向场次无需出题'
+                    : '选填。志愿者报名时填写，答案在「志愿者管理」中查看' }}
+      </span>
+      <el-button v-if="editable" type="primary" size="small" :loading="saving"
+                 style="margin-left:auto" @click="save">保存报名问卷</el-button>
+    </div>
     <el-alert v-if="!editable" type="info" :closable="false" style="margin-bottom:10px"
               title="活动已公开，报名问卷不能再改" />
     <ol v-if="!editable && questions.length" class="fb-readonly">
@@ -60,7 +57,7 @@
       显示条件只能挂在前面的选择题上，新增的题目保存后才能作为条件。
     </div>
     <el-empty v-else-if="!questions.length" description="没有设置题目" :image-size="40" />
-  </el-card>
+  </div>
 </template>
 
 <script setup>
@@ -73,6 +70,8 @@ const props = defineProps({
   editable: { type: Boolean, default: false },
   screened: { type: Boolean, default: false },   // 报名后筛选：表是申请的一部分
 })
+// 题数报给外面：弹窗按钮上要写「报名问卷（3 题）」
+const emit = defineEmits(['count'])
 
 const KINDS = { single: '单选', multi: '多选', text: '填空', file: '文件上传' }
 const questions = ref([])
@@ -84,6 +83,7 @@ async function load() {
   try {
     const d = await api.get(`/api/staff/activities/${props.activityId}/form`)
     questions.value = d.questions.map(toRow)
+    emit('count', questions.value.length)
   } finally { loading.value = false }
 }
 onMounted(load)
@@ -125,13 +125,14 @@ async function save() {
     const d = await api.put(`/api/staff/activities/${props.activityId}/form`,
                             { questions: body })
     questions.value = d.questions.map(toRow)
+    emit('count', questions.value.length)
     ElMessage.success('报名问卷已保存')
   } finally { saving.value = false }
 }
 </script>
 
 <style scoped>
-.fb-head { display: flex; align-items: center; gap: 10px; }
+.fb-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .fb-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
           padding: 8px 0; border-bottom: 1px dashed #eceef1; }
 .fb-no { width: 22px; color: #909399; }

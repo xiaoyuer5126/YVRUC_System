@@ -37,6 +37,9 @@ def used(tpl: str) -> set:
         local |= set(re.findall(r'\w+', m))
     for m in re.findall(r'v-slot:?\w*="\{([^}]*)\}"', tpl):
         local |= set(re.findall(r'\w+', m))
+    # 内联箭头函数的形参：@count="n => formCount = n"、format: v => v || '—'
+    for a, b in re.findall(r'(?:\(([^)]*)\)|([A-Za-z_$][\w$]*))\s*=>', tpl):
+        local |= set(re.findall(r'\w+', a or b))
 
     out = set()
     for e in exprs:
