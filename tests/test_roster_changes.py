@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from backend import scheduled
+from backend import config, scheduled
 from backend.models import Activity, Enrollment, Notification, Position, now, uid
 from conftest import POSITION_TEXT, login
 
@@ -77,14 +77,24 @@ def test_报名期的退选不打扰管理者(client, db, open_group, take_stude
     assert after == before
 
 
-def test_人员变动日报每天一条(client, db, open_group, take_student):
+def test_人员变动日报每天一条(client, db, open_group, take_student, monkeypatch):
     act, g = open_group(3, day_offset=0, start_in_hours=40)
     _enroll(client, act, g, take_student())
+    monkeypatch.setattr(config, "ROSTER_DIGEST_HOUR", 0)
 
     n1 = scheduled.send_roster_digests(db)
     assert n1 >= 1
     n2 = scheduled.send_roster_digests(db)      # 同一天再跑不重复推
     assert n2 == 0
+
+
+def test_日报不到点不发(client, db, open_group, take_student, monkeypatch):
+    """扫描每分钟一跑，不定点的话零点整就发出去了。"""
+    act, g = open_group(3, day_offset=0, start_in_hours=40)
+    _enroll(client, act, g, take_student())
+    fake = now().replace(hour=config.ROSTER_DIGEST_HOUR) - timedelta(hours=1)
+    monkeypatch.setattr(scheduled, "now", lambda: fake)
+    assert scheduled.send_roster_digests(db) == 0
 
 
 def test_组长联系方式只给同组正式志愿者(client, admin, db, enrolled_activity,

@@ -77,8 +77,9 @@ CHECKIN_REMINDER_MINUTES = 30
 # 现场只能改时段或补签。管理者仍可在生成时自行调整。
 CHECKIN_WINDOW_PAD_MINUTES = 30
 
-# 活动开始前多少天起，每天给管理者推一条人员变动摘要
+# 活动开始前多少天起，每天给管理者推一条人员变动摘要；几点推
 ROSTER_DIGEST_DAYS = 3
+ROSTER_DIGEST_HOUR = 6
 
 # 学习材料单文件上限。文档自己存，视频走链接——自托管大视频要分片上传、
 # 断点续传和对象存储，代价远超收益。

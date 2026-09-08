@@ -270,7 +270,6 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                             "enroll" if enr.status == "enrolled" else "waitlist")
 
         if enr.status == "enrolled":
-            enr.group_qr_seen = True          # 接口返回时就弹给本人看
             logic.sync_attached(db, enr)      # 培训/彩排连带报上
             extra = "".join(
                 f"\n{s.kind_label()}：{s.span_text()}"
@@ -474,7 +473,6 @@ def confirm_promotion(enrollment_id: str,
             raise HTTPException(409, "确认窗口已超时，名额已顺延")
         logic.confirm_promotion(db, enr, user)
         logic.record_change(db, user, enr, "promote")
-        enr.group_qr_seen = True          # 接口返回时就弹给本人看
         db.commit()
     st_name = ""
     if enr.position_id:

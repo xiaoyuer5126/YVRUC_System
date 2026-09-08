@@ -268,7 +268,11 @@ def send_roster_digests(db: OrmSession) -> int:
     from .notify import notify_managers
 
     t = now()
-    today = t.replace(hour=0, minute=0, second=0, microsecond=0)
+    # 每天固定时间推一条：扫描是每分钟一跑的，不定点的话零点整就发出去了
+    cutoff = t.replace(hour=config.ROSTER_DIGEST_HOUR, minute=0,
+                       second=0, microsecond=0)
+    if t < cutoff:
+        return 0
     lead = timedelta(days=config.ROSTER_DIGEST_DAYS)
     shifts = (db.query(Shift)
               .join(Activity, Shift.activity_id == Activity.id)
@@ -279,7 +283,7 @@ def send_roster_digests(db: OrmSession) -> int:
               .all())
     sent = 0
     for g in shifts:
-        if g.digest_sent_on and g.digest_sent_on >= today:
+        if g.digest_sent_on and g.digest_sent_on >= cutoff:
             continue
         since = t - timedelta(days=1)
         rows = (db.query(AuditLog)

@@ -657,7 +657,6 @@ class Enrollment(Base):
     seat_held: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     # 联络群二维码只弹一次：报名成功/转正/录取后弹过就记下来，之后在
     # 「我的报名」里自己点开看
-    group_qr_seen: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # 是否接受管理者把自己调到别的岗位。**只是参考**——管理者依然可以调，
     # 界面上会提示「本人不接受调剂」。候补必须接受调剂（报名时强制为真）。

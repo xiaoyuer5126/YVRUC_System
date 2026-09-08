@@ -210,12 +210,6 @@ function isActive(r) {
 async function load() {
   loading.value = true
   try { rows.value = await api.get('/api/me/enrollments') } finally { loading.value = false }
-  // 候补转正/录取之后第一次进来：联络群二维码弹一次，弹过就记下
-  const pending = rows.value.find(r => r.group_qr_pending)
-  if (pending) {
-    groupQr.value.open({ qr: pending.contact_group_qr, title: pending.activity.title,
-                         enrollmentId: pending.id })
-  }
 }
 onMounted(load)
 

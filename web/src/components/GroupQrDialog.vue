@@ -1,4 +1,4 @@
-<!-- 志愿者联络群二维码。报名成功/候补转正/录取后弹一次，之后在「我的报名」里点开看。 -->
+<!-- 志愿者联络群二维码。报名成功/候补转正/录取时弹一次，之后在「我的报名」里点开看。 -->
 <template>
   <el-dialog v-model="visible" title="志愿者联络群" width="380" align-center>
     <div class="qr-box">
@@ -18,22 +18,16 @@
 
 <script setup>
 import { ref } from 'vue'
-import { api } from '../api'
 
 const visible = ref(false)
 const qr = ref('')
 const title = ref('')
 
-/** 传 enrollmentId 时顺手标记「弹过了」，下次进「我的报名」不再自动弹。 */
-function open({ qr: image, title: name, enrollmentId }) {
+function open({ qr: image, title: name }) {
   if (!image) return
   qr.value = image
   title.value = name || ''
   visible.value = true
-  if (enrollmentId) {
-    api.post(`/api/me/enrollments/${enrollmentId}/group-qr-seen`, {}, { silent: true })
-      .catch(() => {})
-  }
 }
 defineExpose({ open })
 </script>

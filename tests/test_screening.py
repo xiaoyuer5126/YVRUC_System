@@ -216,7 +216,7 @@ def test_填表申请_必填校验_只能填一次(client, admin, db, take_stude
     # 我的报名里每个意向场次一条「待筛选」
     rows = client.get("/api/me/enrollments", headers=t).json()
     assert sorted(r["status"] for r in rows if r["activity"]["id"] == act_id) == ["applied", "applied"]
-    assert all(not r["group_qr_pending"] and not r["contact_group_qr"]
+    assert all(not r["contact_group_qr"]
                for r in rows if r["activity"]["id"] == act_id)
 
 
@@ -303,16 +303,11 @@ def test_录取与未录取(client, admin, db, take_student):
             .filter(Notification.user_id == u0.id,
                     Notification.title.like("录取通知｜%")).count() == 1)
 
-    # 录取的人：我的报名里只剩录到的那一场，联络群二维码待弹
+    # 录取的人：我的报名里只剩录到的那一场，联络群二维码随时点得开
     mine = client.get("/api/me/enrollments", headers=login(client, sids[0])).json()
     mine = [r for r in mine if r["activity"]["id"] == act_id]
     assert len(mine) == 1 and mine[0]["status"] == "enrolled"
-    assert mine[0]["contact_group_qr"] == "data:qr" and mine[0]["group_qr_pending"]
-    t0 = login(client, sids[0])
-    assert client.post(f"/api/me/enrollments/{mine[0]['id']}/group-qr-seen",
-                       headers=t0).status_code == 200
-    mine = client.get("/api/me/enrollments", headers=t0).json()
-    assert not next(r for r in mine if r["activity"]["id"] == act_id)["group_qr_pending"]
+    assert mine[0]["contact_group_qr"] == "data:qr"
 
     # 未录取：通知留余地，档案里不留痕
     u2 = db.query(User).filter(User.student_id == sids[2]).one()
@@ -393,7 +388,7 @@ def test_报名成功即弹联络群(client, admin, db, enrolled_activity, take_
     assert r.json()["contact_group_qr"] == "x"
     rows = client.get("/api/me/enrollments", headers=t).json()
     row = next(x for x in rows if x["activity"]["id"] == act.id)
-    assert row["contact_group_qr"] == "x" and not row["group_qr_pending"]
+    assert row["contact_group_qr"] == "x"
     # 志愿者看的活动详情里没有二维码
     assert "contact_group_qr" not in client.get(f"/api/activities/{act.id}", headers=t).json()
 

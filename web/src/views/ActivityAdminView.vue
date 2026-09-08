@@ -666,7 +666,7 @@
                   title="时长未核准，志愿者无法查看确认"
                   description="先算好、核对完，再点「确认核准时长」，志愿者将收到时长通知" />
         <div v-if="hours.length" class="scroll-x">
-        <el-table :data="hours" size="small" style="margin-top:10px;min-width:660px"
+        <el-table :data="hoursSorted" size="small" style="margin-top:10px;min-width:660px"
                   max-height="360" @selection-change="onHoursSelect">
           <el-table-column type="selection" width="40" />
           <el-table-column type="expand" width="30">
@@ -724,7 +724,7 @@
                        style="width:320px">
               <el-option v-for="v in rosterOptions" :key="v.student_id"
                          :value="v.student_id"
-                         :label="`${v.name}（${v.student_id}）${v.shift_name}`" />
+                         :label="`${v.name}（${v.student_id}）· ${v.where}`" />
             </el-select>
             <el-input-number v-model="mh.hours" :min="0.5" :step="0.5" style="width:120px" />
             <el-input v-model="mh.note" placeholder="备注（如：场外支援）" style="width:220px" />
@@ -1459,6 +1459,11 @@ function showStationDetail(g, s) {
 const roster = ref({ enrolled: [], waitlist: [], cancelled: [] })
 const currentGroupId = ref('')
 const hours = ref([])
+// 要人过目的排前面：待核（未签退/自动兜底）→ 未确认 → 已确认。
+// 组内保持后端顺序，行对象引用不变，编辑框与勾选都不受影响。
+const hoursRank = r => (r.pending || r.auto_checkout ? 0 : r.confirmed ? 2 : 1)
+const hoursSorted = computed(
+  () => [...hours.value].sort((a, b) => hoursRank(a) - hoursRank(b)))
 const hoursLoading = ref(false)
 const hoursSel = ref([])                       // 时长表勾选行
 const manualHours = ref([])                    // 手动添加的时长记录
@@ -1516,18 +1521,21 @@ const treeAlerts = computed(() => shifts.value.flatMap(g => {
   return []
 }))
 
+// 手动补时长时要认得出人：同名同姓靠学号，排在哪儿靠场次与岗位。
+// 一个人报了多个场次也只出现一次，把几段拼在同一行。
 const rosterOptions = computed(() => {
-  const seen = new Set()
-  const out = []
+  const byStudent = new Map()
   for (const g of shifts.value) {
     for (const row of g._roster?.enrolled || []) {
-      if (seen.has(row.user.student_id)) continue
-      seen.add(row.user.student_id)
-      out.push({ name: row.user.name, student_id: row.user.student_id,
-                 shift_name: `· ${g.name}` })
+      const where = `${g.name}·${row.position_name || '待分配'}`
+              + (row.is_leader ? '·组长' : '')
+      const hit = byStudent.get(row.user.student_id)
+      if (hit) hit.places.push(where)
+      else byStudent.set(row.user.student_id, {
+        name: row.user.name, student_id: row.user.student_id, places: [where] })
     }
   }
-  return out
+  return [...byStudent.values()].map(v => ({ ...v, where: v.places.join('、') }))
 })
 const logs = ref([])
 const ACTION_LABELS = {

@@ -791,12 +791,19 @@ def _sync_placeholder(db: OrmSession, g: Shift, capacity: int,
         raise HTTPException(400, "「截止后统一分配」的场次必须填写人数上限")
     holder = g.placeholder()
     if holder is None:
+        # 这个场次可能切到过 pick——那时占位岗位转成了普通岗位。没人报的话
+        # 直接把它收回来，否则会多出一个同名岗位。
+        holder = next((p for p in g.positions
+                       if p.name == PLACEHOLDER_NAME
+                       and not logic.position_occupied_count(db, p.id)), None)
+    if holder is None:
         holder = Position(id=uid("p"), shift_id=g.id, name=PLACEHOLDER_NAME,
-                          is_placeholder=True, sort=-1,
+                          sort=-1,
                           service_task="报名截止后由负责人统一分配岗位",
                           training_note="岗位确定后另行通知")
         db.add(holder)
         g.positions.append(holder)
+    holder.is_placeholder = True
     enrolled = logic.position_enrolled_count(db, holder.id) if holder.id else 0
     if capacity < enrolled:
         raise HTTPException(400, f"人数上限不能小于已报名的 {enrolled} 人")
@@ -808,9 +815,9 @@ def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> int:
     """切换场次模式。返回 0，签名保留是因为调用方还在报「影响人数」。
 
     assign → pick 是正常流程：报名截止后改模式、建岗位、跑一键分配。
-    占位岗位跟着留下来，仍然带着 is_placeholder 标记——它现在是个普通岗位
-    （能改能删），但一键分配不会往里排人，所以人只出不进，排不下的自然
-    留在里面。空了之后管理者自己删掉。
+    占位岗位就地转成普通岗位：名字还叫「待分配」，管理者一眼认得出这是谁，
+    一个场次只有一个岗位时不必再新建一个，一键分配也照常往里排人。
+    预置的服务任务与培训内容清空——那两句话是说给「还没分岗位」的人听的。
 
     pick → assign 只在**一个人都没报**时允许。反向切要作废所有人已经选定的
     岗位，那是一次实打实的减损；与其做一个带二次确认的破坏性操作，不如
@@ -826,6 +833,12 @@ def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> int:
             raise HTTPException(
                 409, f"「{g.name}」已有 {live} 人报名，不能改回"
                      f"「截止后统一分配」，如确需调整请新建场次。")
+    if mode == "pick" and g.mode == "assign":
+        holder = g.placeholder()
+        if holder is not None:
+            holder.is_placeholder = False
+            holder.service_task = ""
+            holder.training_note = ""
     g.mode = mode
     return 0
 
