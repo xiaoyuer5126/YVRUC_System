@@ -4,7 +4,7 @@ from __future__ import annotations
 import io
 
 from backend.models import Activity, Attachment
-from conftest import login
+from conftest import POSITION_TEXT, editing, login
 
 
 def _position_of(shift):
@@ -98,3 +98,23 @@ def test_材料挂不到场次上(client, admin, enrolled_activity):
                     data={"owner_type": "shift", "owner_id": shift.id, "title": "x"},
                     files={"file": ("a.pdf", io.BytesIO(b"x"), "application/pdf")})
     assert r.status_code == 400 and "岗位" in r.json()["detail"]
+
+
+def test_场次内复制岗位带上学习材料(client, admin, db, enrolled_activity):
+    """复制一份再改：材料跟着走，名字自己填，同场次不会撞重名。"""
+    act, shift, _u = enrolled_activity
+    src = shift.positions[0]
+    r = client.post("/api/staff/materials/link", headers=admin,
+                    json={"owner_type": "position", "owner_id": src.id,
+                          "title": "岗前须知", "url": "https://example.com/x"})
+    assert r.status_code == 200, r.text
+    with editing(client, admin, act.id):
+        r = client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
+                        json={"name": f"{src.name} 副本", "quota": 2,
+                              "copy_from": src.id, **POSITION_TEXT})
+        assert r.status_code == 200, r.text
+        new_id = r.json()["id"]
+
+    copied = db.query(Attachment).filter(Attachment.owner_type == "position",
+                                         Attachment.owner_id == new_id).all()
+    assert [a.title for a in copied] == ["岗前须知"]

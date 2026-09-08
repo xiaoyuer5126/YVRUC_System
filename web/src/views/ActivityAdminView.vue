@@ -199,6 +199,8 @@
             <template #actions="{ row }">
               <el-button size="small" type="primary" plain :disabled="structureLocked"
                          @click="openStation(row, g)">编辑</el-button>
+              <el-button size="small" plain :disabled="structureLocked"
+                         @click="copyStation(row, g)">复制</el-button>
               <el-popconfirm title="删除该岗位？" @confirm="delStation(row)"
                              :disabled="structureLocked">
                 <template #reference>
@@ -239,10 +241,12 @@
               </template>
             </el-table-column>
             <el-table-column prop="training_note" label="培训内容" min-width="160" show-overflow-tooltip />
-            <el-table-column label="操作" width="130">
+            <el-table-column label="操作" width="170">
               <template #default="{row}">
                 <el-button size="small" link type="primary" :disabled="structureLocked"
                            @click="openStation(row, g)">编辑</el-button>
+                <el-button size="small" link :disabled="structureLocked"
+                           @click="copyStation(row, g)">复制</el-button>
                 <el-popconfirm title="删除该岗位？" @confirm="delStation(row)"
                                :disabled="structureLocked">
                   <template #reference>
@@ -1885,7 +1889,7 @@ async function addPosition(g) {
 const materialMgr = ref(null)
 
 function openStation(st, g) {
-  positionDlg.value = { visible: true, editing: st, groupId: g.id }
+  positionDlg.value = { visible: true, editing: st, groupId: g.id, copyFrom: '' }
   stationForm.value = st ? {
     name: st.name, location: st.location, quota: st.quota,
     waitlist_quota: st.waitlist_quota, needs_leader: st.needs_leader,
@@ -1905,6 +1909,18 @@ function openStation(st, g) {
     service_task: '', position_requirement: '', training_note: '',
   }
 }
+/** 复制一个岗位：把字段预填进「新建岗位」弹窗，改完再保存。
+ *
+ * 不直接落库生成副本：同场次不允许重名，而且刚复制出来的那份多半要改，
+ * 先落库等于在名单上先摆一个半成品。
+ */
+function copyStation(st, g) {
+  openStation(st, g)
+  positionDlg.value.editing = null
+  positionDlg.value.copyFrom = st.id      // 学习材料由后端跟着带过来
+  stationForm.value.name = `${st.name} 副本`
+}
+
 async function saveStation() {
   const f = stationForm.value
   if (!f.name?.trim()) return ElMessage.warning('请填写岗位名称')
@@ -1935,7 +1951,8 @@ async function saveStation() {
       await loadAll()
     } else {
       const d = await api.post(
-        `/api/staff/shifts/${positionDlg.value.groupId}/positions`, body)
+        `/api/staff/shifts/${positionDlg.value.groupId}/positions`,
+        { ...body, copy_from: positionDlg.value.copyFrom || '' })
       // 建出岗位后才有 id 可挂，这时把弹窗里攒的材料一并传上去
       const failed = await materialMgr.value?.flush(d.id)
       if (failed) {

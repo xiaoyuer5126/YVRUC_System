@@ -1033,6 +1033,7 @@ class PositionBody(BaseModel):
     attire_note: str = ""                # 统一发放或自备时必填
     pay_optional: bool = False           # 可选劳务
     pay_note: str = ""                   # 可选劳务时必填：标准与发放方式
+    copy_from: str = ""                  # 复制自哪个岗位：学习材料跟着带过来
 
 
 POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
@@ -1128,6 +1129,9 @@ def create_position(shift_id: str, body: PositionBody,
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
     _ensure_pick_mode_for_positions(g)
+    source = db.get(Position, body.copy_from) if body.copy_from else None
+    if source is not None and source.shift.activity_id != g.activity_id:
+        raise HTTPException(400, "只能复制本活动的岗位")
     s = Position(id=uid("s"), shift_id=g.id, name=body.name.strip(),
                 location=body.location.strip(), quota=body.quota,
                 waitlist_quota=body.waitlist_quota,
@@ -1144,11 +1148,16 @@ def create_position(shift_id: str, body: PositionBody,
     _require_position_text(s)
     db.add(s)
     db.flush()   # 让 group 关系可用，供 time_text() 使用
+    copied = (copying.copy_attachments(db, "position", source.id, s.id,
+                                       act.id, user) if source else 0)
     audit_log(db, actor=user, action="create", target_type="position",
               target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
               activity_id=act.id,
               summary=f"新建岗位「{s.name}」（{s.time_text()}，"
-                      f"{s.location or act.location or '地点待定'}，{s.quota}人）",
+                      f"{s.location or act.location or '地点待定'}，{s.quota}人）"
+                      + (f"，复制自「{source.name}」"
+                         + (f"（含 {copied} 份学习材料）" if copied else "")
+                         if source else ""),
               visible=True)
     db.commit()
     return {"id": s.id}

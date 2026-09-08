@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session as OrmSession
 from .models import (Activity, ActivityManager, Attachment, FormQuestion, Position, Shift, User, uid)
 
 
-def _copy_attachments(db: OrmSession, src_type: str, src_id: str,
+def copy_attachments(db: OrmSession, src_type: str, src_id: str,
                       dst_id: str, activity_id: str, operator: User) -> int:
     from .routers.materials import MATERIAL_DIR
 
@@ -56,8 +56,8 @@ def copy_position(db: OrmSession, src: Position, target: Shift,
                  is_placeholder=src.is_placeholder, sort=sort)
     db.add(p)
     db.flush()
-    _copy_attachments(db, "position", src.id, p.id,
-                      target.activity_id, operator)
+    copy_attachments(db, "position", src.id, p.id,
+                     target.activity_id, operator)
     return p
 
 
