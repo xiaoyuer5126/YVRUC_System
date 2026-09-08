@@ -18,6 +18,10 @@
         <div class="stat" :class="{ warn: d.late_cancel_count }">
           <b>{{ d.late_cancel_count }}</b><span class="dim">次临期退选</span>
         </div>
+        <div class="stat" :class="{ warn: d.cancels.recent_count >= 3 }">
+          <b>{{ d.cancels.recent_count }}</b>
+          <span class="dim">近 {{ d.cancels.window_days }} 天退选</span>
+        </div>
         <div class="stat" :class="{ warn: d.violations.length }">
           <b>{{ d.violations.length }}</b><span class="dim">条违规记录</span>
         </div>
@@ -38,6 +42,35 @@
         低于 {{ d.score.alert_below }} 分时名单上会标出提示，每顺利参与一次活动加
         {{ d.score.per_activity }} 分。不对志愿者公开，也不影响报名。
       </p>
+
+      <!-- 退选画像：次数与「报了多久才退」，判断是临时有事还是占了就退 -->
+      <div class="section-title">
+        退选记录
+        <span v-if="d.cancels.median_gap_hours !== null" class="dim">
+          （共 {{ d.cancels.total_count }} 次，报名到退选间隔中位数
+          {{ gapText(d.cancels.median_gap_hours) }}）
+        </span>
+      </div>
+      <el-empty v-if="!d.cancels.items.length" :image-size="50" description="没有退选记录" />
+      <el-table v-else :data="d.cancels.items" size="small">
+        <el-table-column label="活动" min-width="150">
+          <template #default="{ row }">{{ row.activity_title }} · {{ row.shift_name }}</template>
+        </el-table-column>
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain"
+                    :type="row.cancel_type === 'late' ? 'danger' : 'info'">
+              {{ CANCEL_LABELS[row.cancel_type] || row.cancel_type }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="退选时间" width="130">
+          <template #default="{ row }">{{ row.cancelled_at ? fmtDT(row.cancelled_at) : '—' }}</template>
+        </el-table-column>
+        <el-table-column label="报名后多久" width="110">
+          <template #default="{ row }">{{ gapText(row.gap_hours) }}</template>
+        </el-table-column>
+      </el-table>
 
       <div class="section-title">违规记录</div>
       <el-empty v-if="!d.violations.length" :image-size="50" description="没有违规记录" />
@@ -76,6 +109,15 @@ const loading = ref(false)
 const d = ref(null)
 
 const served = computed(() => d.value ? d.value.history.filter(h => h.checked_in).length : 0)
+
+const CANCEL_LABELS = { normal: '退选', late: '临期退选', expired: '确认超时',
+                        abandoned: '放弃候补' }
+// 报名到退选的间隔：几小时的看小时，长了看天，太长了没必要精确
+function gapText(h) {
+  if (h === null || h === undefined) return '—'
+  if (h < 48) return `${h} 小时`
+  return `${Math.round(h / 24)} 天`
+}
 
 async function open(url) {
   visible.value = true

@@ -282,6 +282,7 @@ def main() -> None:
         late_enr = enr(late_user, sport, m1, 1, status="cancelled",
                        position=s_check, assigned=False)
         late_enr.cancel_type = "late"
+        late_enr.cancelled_at = dt(hours=-3)
         late_enr.seat_held = True
 
         # 下午场 13人

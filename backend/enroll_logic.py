@@ -447,6 +447,7 @@ def expire_stale_promotions(db: OrmSession) -> int:
                 continue      # 用户在这一瞬间点了确认
             fresh.status = "cancelled"
             fresh.cancel_type = "expired"
+            fresh.cancelled_at = now()
             db.commit()
             touched.add(fresh.shift_id)
             n += 1

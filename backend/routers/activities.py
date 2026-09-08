@@ -466,6 +466,7 @@ def cancel_enroll(enrollment_id: str,
             # 放弃候补转正：名额顺延下一位
             enr.status = "cancelled"
             enr.cancel_type = "abandoned"
+            enr.cancelled_at = now()
             enr.confirm_deadline = None
             logic.record_change(db, user, enr, "abandon")
             db.commit()
@@ -477,6 +478,7 @@ def cancel_enroll(enrollment_id: str,
         if enr.status == "waitlisted":
             enr.status = "cancelled"
             enr.cancel_type = "normal"
+            enr.cancelled_at = now()
             logic.record_change(db, user, enr, "quit_queue")
             db.commit()
             return {"ok": True, "effect": "quit_queue", "message": "已退出候补队列。"}
@@ -500,6 +502,7 @@ def cancel_enroll(enrollment_id: str,
         vacated, was_leader = enr.position_id, enr.is_leader
         enr.status = "cancelled"
         enr.cancel_type = "late" if late else "normal"
+        enr.cancelled_at = t
         enr.seat_held = hold_seat
         enr.is_leader = False
         logic.sync_attached(db, enr)     # 培训/彩排跟着退掉

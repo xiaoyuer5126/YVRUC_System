@@ -144,3 +144,35 @@ def test_提示分按违规与参与现算(client, admin, db, enrolled_activity)
     client.delete(f"/api/staff/violations/{ids[0]}", headers=admin)
     d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
     assert d["score"]["score"] == 65 and d["score"]["score_alert"] is False
+
+
+def test_退选画像统计次数与间隔(client, admin, db, open_group, take_student):
+    """近 90 天退了几次、每次是报名多久之后退的——判断是临时有事还是占了就退。"""
+    act, g = open_group(3, day_offset=0, start_in_hours=100)
+    sid = take_student()
+    t = login(client, sid)
+    r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll", headers=t,
+                    json={"position_id": g.test_position_id})
+    assert r.status_code == 200, r.text
+    enr = (db.query(Enrollment)
+           .filter(Enrollment.shift_id == g.id,
+                   Enrollment.status == "enrolled").one())
+    enr.joined_at = now() - timedelta(hours=5)
+    db.commit()
+    assert client.delete(f"/api/activities/enrollments/{enr.id}",
+                         headers=t).status_code == 200
+
+    u = db.query(User).filter(User.student_id == sid).one()
+    d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
+    assert d["cancels"]["window_days"] == 90
+    assert d["cancels"]["recent_count"] == 1 and d["cancels"]["total_count"] == 1
+    item = d["cancels"]["items"][0]
+    assert item["cancel_type"] == "normal"
+    assert 4.5 <= item["gap_hours"] <= 5.5
+    assert d["cancels"]["median_gap_hours"] == item["gap_hours"]
+
+    # 90 天前的那次不算进「近 90 天」，但仍列在明细里
+    db.get(Enrollment, enr.id).cancelled_at = now() - timedelta(days=120)
+    db.commit()
+    d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
+    assert d["cancels"]["recent_count"] == 0 and d["cancels"]["total_count"] == 1

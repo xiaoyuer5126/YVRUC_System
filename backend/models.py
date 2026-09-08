@@ -693,6 +693,9 @@ class Enrollment(Base):
 
     source: Mapped[str] = mapped_column(String(16), default="self")  # self/promoted/admin
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=now)  # 排队/报名时间
+    # 退选时间。和 joined_at 一起就是「报了多久之后退的」——退选画像要这个，
+    # 从留痕里按文本翻是翻得出来，但那不是能拿来统计的东西
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     promoted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     confirm_deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

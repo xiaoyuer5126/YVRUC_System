@@ -143,8 +143,13 @@ def list_users(q: str = "", college: str = "",
 
 # ======================= 志愿者档案 =======================
 
+# 本人主动退出的几种。未录取、录到别的场次、场次被删都不是他的行为，不算
+SELF_CANCELS = ("normal", "late", "abandoned", "expired")
+CANCEL_WINDOW_DAYS = 90
+
+
 def _archive(db: OrmSession, u: User) -> dict:
-    """一个人的志愿档案：参与过的活动、违规记录、临期退选次数。
+    """一个人的志愿档案：参与过的活动、违规记录、退选画像。
 
     只是给青协看的记录，不产生任何后果——平台不对志愿者做限制。
     """
@@ -163,6 +168,7 @@ def _archive(db: OrmSession, u: User) -> dict:
         "status": e.status, "cancel_type": e.cancel_type,
         "checked_in": g.id in checked,
     } for e, a, g in rows]
+    cancels = _cancel_profile(db, u, rows)
     violations = (db.query(ViolationRecord)
                   .filter(ViolationRecord.user_id == u.id)
                   .order_by(ViolationRecord.created_at.desc()).all())
@@ -173,12 +179,44 @@ def _archive(db: OrmSession, u: User) -> dict:
         "history": history,
         "score": scoring.detail(db, u),
         "late_cancel_count": sum(1 for h in history if h["cancel_type"] == "late"),
+        "cancels": cancels,
         "violations": [{
             "id": v.id, "activity_id": v.activity_id,
             "activity_title": v.activity_title,
             "kind": v.kind, "kind_label": v.kind_label(), "detail": v.detail,
             "created_at": iso(v.created_at),
         } for v in violations],
+    }
+
+
+def _cancel_profile(db: OrmSession, u: User, rows) -> dict:
+    """退选画像：近 90 天退了几次，每次是报名多久之后退的。
+
+    间隔短说明报了就退（占位、试手），间隔长而且卡在临期，是另一种问题。
+    早于 cancelled_at 这一列存在的旧记录没有时间，间隔给 None，不参与统计。
+    """
+    since = now() - timedelta(days=CANCEL_WINDOW_DAYS)
+    items = []
+    for e, a, g in rows:
+        if e.cancel_type not in SELF_CANCELS:
+            continue
+        gap = (None if e.cancelled_at is None
+               else round((e.cancelled_at - e.joined_at).total_seconds() / 3600, 1))
+        items.append({
+            "activity_title": a.title, "shift_name": g.name,
+            "cancel_type": e.cancel_type,
+            "joined_at": iso(e.joined_at), "cancelled_at": iso(e.cancelled_at),
+            "gap_hours": gap,
+            "recent": e.cancelled_at is not None and e.cancelled_at >= since,
+        })
+    gaps = [x["gap_hours"] for x in items if x["gap_hours"] is not None]
+    items.sort(key=lambda x: x["cancelled_at"] or "", reverse=True)
+    return {
+        "window_days": CANCEL_WINDOW_DAYS,
+        "recent_count": sum(1 for x in items if x["recent"]),
+        "total_count": len(items),
+        "median_gap_hours": (sorted(gaps)[len(gaps) // 2] if gaps else None),
+        "items": items,
     }
 
 
