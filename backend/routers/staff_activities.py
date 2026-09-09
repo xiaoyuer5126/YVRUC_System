@@ -1302,6 +1302,45 @@ def list_managers(activity_id: str, db: OrmSession = Depends(db_session),
     } for u in users if u]}
 
 
+@router.get("/activities/{activity_id}/manager-candidates")
+def manager_candidates(activity_id: str, db: OrmSession = Depends(db_session),
+                       user: User = Depends(require_manager)):
+    """能被加进共管名单的人，按层级分组。
+
+    共管名单十有八九加的是同一批人：会长团、归口部长、自己手下的骨干与成员。
+    每次都去问学工号再手输一遍太笨。名单只列**已经有 活动发起方/青协 身份**
+    的人——列出来点了才被后端拒，等于白列。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    _act(db, activity_id)
+    already = set(activity_manager_ids(db, activity_id))
+    groups: list[dict] = []
+
+    def add(label: str, rows: list[User]) -> None:
+        picked = [u for u in rows
+                  if u.id not in already and u.is_manager_identity()]
+        if picked:
+            groups.append({"label": label, "users": [{
+                "id": u.id, "name": u.name, "student_id": u.student_id,
+                "college": u.college,
+                "post_label": u.post_label() if u.post() else "",
+            } for u in sorted(picked, key=lambda x: x.student_id)]})
+
+    qingxie = [u for u in db.query(User).all() if u.has_role("qingxie")]
+    add("会长团", [u for u in qingxie if u.qingxie_post == "council"])
+    add("各部门部长", [u for u in qingxie if u.qingxie_post == "head"])
+    if user.post() in ("head", "core") and user.department_id:
+        same = [u for u in qingxie if u.department_id == user.department_id]
+        if user.post() == "head":
+            add("本部门骨干", [u for u in same if u.qingxie_post == "core"])
+            add("本部门成员", [u for u in same if u.qingxie_post == "member"])
+        else:
+            add("我管理的成员", [u for u in same
+                                if u.qingxie_post == "member"
+                                and u.supervisor_id == user.id])
+    return {"groups": groups}
+
+
 class ManagerBody(BaseModel):
     student_id: str
 

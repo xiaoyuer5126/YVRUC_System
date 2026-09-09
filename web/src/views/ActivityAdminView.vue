@@ -863,7 +863,15 @@
         </el-alert>
         <el-card shadow="never">
           <div class="toolbar" style="margin-bottom:10px">
-            <el-input v-model="newMgrSid" placeholder="输入学工号/教工号添加管理者" style="width:220px" />
+            <!-- 常加的就那几个人：会长团、部长、自己手下的骨干与成员。
+                 名单里没有的直接敲学工号，同一个框都能用 -->
+            <el-select v-model="newMgrSid" filterable allow-create default-first-option
+                       placeholder="选择或输入学工号/教工号" style="width:300px">
+              <el-option-group v-for="g in mgrCandidates" :key="g.label" :label="g.label">
+                <el-option v-for="u in g.users" :key="u.id" :value="u.student_id"
+                           :label="`${u.name}（${u.student_id}）${u.post_label}`" />
+              </el-option-group>
+            </el-select>
             <el-button type="primary" @click="addManager">添加管理者</el-button>
           </div>
           <DataCards v-if="narrow" :rows="managers" title-key="name"
@@ -1429,6 +1437,7 @@ const savingStation = ref(false)
 const savingBase = ref(false)
 const managers = ref([])
 const newMgrSid = ref('')
+const mgrCandidates = ref([])
 const moveSel = ref({})
 
 // —— 发送通知 ——
@@ -2404,6 +2413,8 @@ async function loadManagers() {
   const d = await api.get(`/api/staff/activities/${activityId}/managers`)
   managers.value = d.items
   dutyOptions.value = d.duties
+  mgrCandidates.value = (await api.get(
+    `/api/staff/activities/${activityId}/manager-candidates`)).groups
 }
 
 // 分工只影响通知发给谁，改了立刻生效，不用另点保存

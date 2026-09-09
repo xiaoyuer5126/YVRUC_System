@@ -297,3 +297,32 @@ def test_部门成员不算能操作的管理者(client, admin, db, take_student
     r = client.put(f"/api/staff/roles/{writer.id}", headers=admin,
                    json={"roles": ["student"]})
     assert r.status_code == 409 and "唯一能操作" in r.json()["detail"]
+
+
+def test_共管名单的快捷候选按层级给(client, admin, db, dept_activity):
+    """常加的就那几个人：会长团、部长、自己手下的骨干与成员。"""
+    aid, _g = dept_activity
+    head = login(client, HEAD)
+    groups = client.get(f"/api/staff/activities/{aid}/manager-candidates",
+                        headers=head).json()["groups"]
+    labels = [g["label"] for g in groups]
+    assert labels[0] == "会长团"
+    assert "本部门骨干" in labels and "本部门成员" in labels
+    # 建活动的人自己已经在名单里，不该再作为候选出现
+    ids = {u["student_id"] for g in groups for u in g["users"]}
+    assert HEAD not in ids and CORE in ids
+
+    # 管理员没有部门，只看到会长团与各部门部长
+    labels = [g["label"] for g in
+              client.get(f"/api/staff/activities/{aid}/manager-candidates",
+                         headers=admin).json()["groups"]]
+    assert set(labels) <= {"会长团", "各部门部长"} and "会长团" in labels
+
+    # 骨干看得到自己名下的成员
+    core = login(client, CORE)
+    client.post(f"/api/staff/activities/{aid}/managers", headers=head,
+                json={"student_id": CORE})
+    labels = [g["label"] for g in
+              client.get(f"/api/staff/activities/{aid}/manager-candidates",
+                         headers=core).json()["groups"]]
+    assert "我管理的成员" in labels
