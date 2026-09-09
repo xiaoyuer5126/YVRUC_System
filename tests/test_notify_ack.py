@@ -1,8 +1,8 @@
 """通知签收：发送时要求签收、志愿者签收、管理端查看与催办。"""
 from __future__ import annotations
 
-from backend.models import Notification
-from conftest import login
+from backend.models import Notification, User
+from conftest import ADMIN, login
 
 
 def _send(client, admin, act_id, *, need_ack, title="集合地点变更"):
@@ -206,3 +206,35 @@ def test_签收批次不串活动(client, admin, db, enrolled_activity, take_stu
     assert batch_b in [x["batch_id"] for x in client.get(
         f"/api/staff/activities/{act_b.id}/notify-batches",
         headers=admin).json()]
+
+
+def test_点开一条就算已读_签收仍要本人点(client, admin, db, enrolled_activity,
+                                        take_student):
+    """已读是浏览，签收是确认：点开消息只消掉红点，签收还得自己按。"""
+    act, _shift, u = enrolled_activity
+    _send(client, admin, act.id, need_ack=True)
+    student = login(client, u.student_id)
+    mine = (db.query(Notification)
+            .filter(Notification.user_id == u.id).first())
+    assert client.post(f"/api/me/notifications/{mine.id}/read",
+                       headers=student).status_code == 200
+    inbox = client.get("/api/me/notifications", headers=student).json()
+    assert inbox["unread"] == 0 and inbox["pending_ack"] == 1
+    # 别人的点不动
+    other = login(client, take_student())
+    assert client.post(f"/api/me/notifications/{mine.id}/read",
+                       headers=other).status_code == 404
+
+
+def test_管理者收到的通知也点得进活动(client, admin, db, enrolled_activity):
+    """人员变动、排岗提醒这些原来没带活动 id，点了没反应。"""
+    from backend.notify import notify_managers
+
+    act, _shift, _u = enrolled_activity
+    notify_managers(db, act.id, "[人员变动] 测试", "过去 24 小时：新增 1 人")
+    db.commit()
+    admin_user = db.query(User).filter(User.student_id == ADMIN).one()
+    row = (db.query(Notification)
+           .filter(Notification.user_id == admin_user.id,
+                   Notification.title == "[人员变动] 测试").one())
+    assert row.data.get("activity_id") == act.id

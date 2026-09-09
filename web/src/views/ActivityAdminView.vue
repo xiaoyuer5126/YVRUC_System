@@ -907,7 +907,7 @@
                             :timestamp="fmtDT(l.created_at)"
                             :type="l.action === 'delete' ? 'danger' : 'primary'">
             <b>{{ l.actor_name }}</b>
-            <el-tag size="small" effect="plain" style="margin:0 6px">{{ actionLabel(l.action) }}</el-tag>
+            <el-tag size="small" effect="plain" style="margin:0 6px">{{ l.action_label }}</el-tag>
             <span>{{ l.summary }}</span>
             <div v-for="(ch, i) in l.changes" :key="i" class="dim" style="margin-top:2px">
               {{ ch.label }}：{{ ch.old || '空' }} → <b style="color:var(--el-color-primary)">{{ ch.new || '空' }}</b>
@@ -1582,13 +1582,6 @@ const rosterOptions = computed(() => {
   return [...byStudent.values()].map(v => ({ ...v, where: v.places.join('、') }))
 })
 const logs = ref([])
-const ACTION_LABELS = {
-  create: '创建', update: '修改', delete: '删除', publish: '发布', close: '截止',
-  finish: '结束', assign: '分配', assign_manual: '手动调岗', force_assign: '强制分配',
-  export: '导出', hours_confirm: '时长核准',
-  view_team: '查看组员',
-}
-const actionLabel = a => ACTION_LABELS[a] || a
 const cancelType = x => ({ normal: '退选', late: '临近扣分', expired: '确认超时',
                            abandoned: '放弃候补', shift_deleted: '场次取消' }[x.cancel_type] || '取消')
 

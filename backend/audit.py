@@ -55,7 +55,9 @@ ACTION_LABELS = {
     # 志愿者自己的动作（人员变动流水）
     "enroll": "报名", "waitlist": "加入候补", "cancel": "退选",
     "quit_queue": "退出候补", "abandon": "放弃候补", "promote": "候补转正",
+    "excuse": "请假", "unexcuse": "销假",
     "material": "学习材料",
+    "submit": "提交审批", "approve": "审批", "view_team": "查看组员",
 }
 
 

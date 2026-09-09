@@ -112,7 +112,9 @@ def notify_managers(db: OrmSession, activity_id: str, title: str,
             continue
         u = db.get(User, row.user_id)
         if u is not None:
-            wecom.send_user(db, u, "custom", title=title, content=content)
+            # 带上活动 id：这些消息说的都是某一场活动的事，点开就该进得去
+            wecom.send_user(db, u, "custom", data={"activity_id": activity_id},
+                            title=title, content=content)
             n += 1
     return n
 

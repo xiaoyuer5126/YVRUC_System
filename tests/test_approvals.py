@@ -359,3 +359,19 @@ def test_没写说明就给空串而不是缺字段(client, admin, db, draft):
     row = next(x for x in client.get("/api/staff/approvals",
                                      headers=admin).json() if x["id"] == draft)
     assert row["submit_note"] == ""
+
+
+def test_待审批的通知指向审批页(client, admin, db, draft):
+    """审批人在活动详情页看不到通过/驳回，消息点开要进审批页。"""
+    from backend.models import Notification
+
+    dept = _liaison(db)
+    r = client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                    json={"department_id": dept.id})
+    assert r.status_code == 200, r.text
+    head = db.query(User).filter(User.student_id == QINGXIE_HEAD).one()
+    row = (db.query(Notification)
+           .filter(Notification.user_id == head.id,
+                   Notification.title.like("待审批%"))
+           .order_by(Notification.created_at.desc()).first())
+    assert row is not None and row.data.get("route") == "approvals"

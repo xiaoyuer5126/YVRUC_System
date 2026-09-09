@@ -9,8 +9,8 @@
               :title="`有 ${pendingAck} 条通知需要您签收`" />
     <el-card v-for="n in items" :key="n.id" shadow="never" class="msg"
              :class="{ unread: !n.read, ack: n.need_ack && !n.acked_at,
-                       clickable: n.data?.activity_id }"
-             @click="openActivity(n)">
+                       clickable: n.data?.activity_id || n.data?.route }"
+             @click="openMessage(n)">
       <div class="row">
         <el-tag size="small" effect="plain" :type="tagType(n.template_key)">{{ tagLabel(n.template_key) }}</el-tag>
         <el-tag v-if="n.need_ack" size="small"
@@ -44,10 +44,20 @@ import { api, fmtDT } from '../api'
 
 const router = useRouter()
 
-/** 通知里带了活动就点进去。候补转正、签到提醒这类看完总要去活动页操作。 */
-function openActivity(n) {
-  const id = n.data?.activity_id
-  if (id) router.push('/activity/' + id)
+/** 点开一条：先标已读，再去它该去的地方。
+ *
+ * 待办的审批要进审批页——审批人在活动详情页看不到通过/驳回的按钮；
+ * 其余带了活动的就进活动页，候补转正、签到提醒这类看完总要去那儿操作。
+ */
+async function openMessage(n) {
+  if (!n.read) {
+    n.read = true
+    unread.value = Math.max(0, unread.value - 1)
+    api.post(`/api/me/notifications/${n.id}/read`, {}, { silent: true })
+      .catch(() => { n.read = false })
+  }
+  if (n.data?.route === 'approvals') return router.push('/approvals')
+  if (n.data?.activity_id) router.push('/activity/' + n.data.activity_id)
 }
 
 const items = ref([])

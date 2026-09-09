@@ -941,8 +941,12 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
     def out(self) -> dict:
+        # 动作的中文名跟着记录一起发：前端各写一份映射，早晚漏掉某个动作，
+        # 那一条就在页面上露出英文
+        from .audit import ACTION_LABELS
         return {
             "id": self.id, "actor_name": self.actor_name, "action": self.action,
+            "action_label": ACTION_LABELS.get(self.action, self.action),
             "target_type": self.target_type, "target_label": self.target_label,
             "summary": self.summary, "changes": self.changes or [],
             "created_at": iso(self.created_at), "visible": self.visible,

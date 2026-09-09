@@ -197,7 +197,8 @@ def remind_stale_approvals(db: OrmSession) -> int:
         for t in targets:
             if t is None:
                 continue
-            _wecom.send_user(db, t, "custom", data={"activity_id": act.id},
+            _wecom.send_user(db, t, "custom",
+                             data={"activity_id": act.id, "route": "approvals"},
                              title=f"审批已等待 {waited} 小时｜{act.title}",
                              content=text)
         act.approval_reminded_at = now()

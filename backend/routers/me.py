@@ -174,6 +174,20 @@ def read_all(db: OrmSession = Depends(db_session), user=Depends(current_user)):
     return {"ok": True}
 
 
+@router.post("/notifications/{notification_id}/read")
+def read_notification(notification_id: str,
+                      db: OrmSession = Depends(db_session),
+                      user=Depends(current_user)):
+    """标记一条已读。点开哪条算哪条，不用非得「全部已读」。"""
+    n = db.get(Notification, notification_id)
+    if n is None or n.user_id != user.id:
+        raise HTTPException(404, "通知不存在")
+    if not n.read:
+        n.read = True
+        db.commit()
+    return {"ok": True}
+
+
 @router.post("/notifications/{notification_id}/ack")
 def ack_notification(notification_id: str,
                      db: OrmSession = Depends(db_session),

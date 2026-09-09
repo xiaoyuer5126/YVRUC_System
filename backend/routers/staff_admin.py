@@ -16,7 +16,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import scoring
-from ..audit import ACTION_LABELS, log as audit_log
+from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import (require_admin, require_archive_page, require_council, require_manager)
 from ..integrations import all_configs, save_config
@@ -112,12 +112,7 @@ def audit_logs(activity_id: str = "", target_type: str = "",
     total = q.count()
     rows = (q.order_by(AuditLog.created_at.desc())
             .offset((page - 1) * size).limit(size).all())
-    items = []
-    for l in rows:
-        d = l.out()
-        d["action_label"] = ACTION_LABELS.get(l.action, l.action)
-        items.append(d)
-    return {"total": total, "page": page, "items": items}
+    return {"total": total, "page": page, "items": [l.out() for l in rows]}
 
 
 # ======================= 用户与信用（管理员/青协） =======================
