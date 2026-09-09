@@ -1,10 +1,22 @@
 <!-- 窄屏下替代表格的卡片列表。
      表格在手机上要么横向滚动、要么把字挤成一列，两种都难用；
-     卡片把「一行」竖起来，标题行放最要紧的两三项，其余按标签铺开。 -->
+     卡片把「一行」竖起来，标题行放最要紧的两三项，其余按标签铺开。
+
+     selectable 打开后卡片左上角出复选框，抛的事件与 el-table 同名同形
+     （selection-change + 行数组），调用方两边共用一个处理函数：
+     手机上没有多选，批量签到、批量确认时长这些功能就只剩桌面能用。 -->
 <template>
   <div v-if="rows.length" class="cards">
-    <div v-for="(row, i) in rows" :key="row[rowKey] || i" class="card">
+    <div v-if="selectable" class="pick-bar">
+      <el-checkbox :model-value="allPicked" :indeterminate="somePicked"
+                   @change="toggleAll">全选</el-checkbox>
+      <span class="dim">已选 {{ picked.length }} / {{ rows.length }}</span>
+    </div>
+    <div v-for="(row, i) in rows" :key="row[rowKey] || i" class="card"
+         :class="{ picked: isPicked(row) }">
       <div class="card-head">
+        <el-checkbox v-if="selectable" :model-value="isPicked(row)"
+                     @change="toggle(row)" />
         <div class="card-title">
           <slot name="title" :row="row">{{ valueOf(row, titleKey) }}</slot>
         </div>
@@ -30,6 +42,8 @@
 </template>
 
 <script setup>
+import { computed, ref, watch } from 'vue'
+
 const props = defineProps({
   rows: { type: Array, default: () => [] },
   /** [{ key, label, format?, hideEmpty? }]；key 支持 'user.name' 这种路径 */
@@ -37,7 +51,34 @@ const props = defineProps({
   titleKey: { type: String, default: 'name' },
   rowKey: { type: String, default: 'id' },
   empty: { type: String, default: '暂无数据' },
+  selectable: { type: Boolean, default: false },
 })
+const emit = defineEmits(['selection-change'])
+
+// 只存 key，不存行对象：刷新之后行是新对象，存对象会把勾选全弄丢
+const keys = ref([])   // vuecheck: script-only，模板只通过 isPicked/picked 读它
+const keyOf = row => row[props.rowKey]
+const picked = computed(() => props.rows.filter(r => keys.value.includes(keyOf(r))))
+const isPicked = row => keys.value.includes(keyOf(row))
+const allPicked = computed(
+  () => props.rows.length > 0 && picked.value.length === props.rows.length)
+const somePicked = computed(
+  () => picked.value.length > 0 && !allPicked.value)
+
+function toggle(row) {
+  const k = keyOf(row)
+  keys.value = isPicked(row) ? keys.value.filter(x => x !== k) : [...keys.value, k]
+}
+function toggleAll(on) {
+  keys.value = on ? props.rows.map(keyOf) : []
+}
+// 行没了就把它的勾选一并丢掉，免得批量操作带上一个已经不在列表里的人
+watch(() => props.rows, rows => {
+  const live = new Set(rows.map(keyOf))
+  const kept = keys.value.filter(k => live.has(k))
+  if (kept.length !== keys.value.length) keys.value = kept
+})
+watch(picked, rows => emit('selection-change', rows))
 
 function valueOf(row, key) {
   return key.split('.').reduce((o, k) => (o == null ? o : o[k]), row)
@@ -63,6 +104,8 @@ function visibleFields(row) {
   background: #fff; border: 1px solid #eceef1; border-radius: 10px;
   padding: 12px 14px;
 }
+.card.picked { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
+.pick-bar { display: flex; align-items: center; gap: 10px; padding: 0 2px; }
 .card-head {
   display: flex; align-items: flex-start; gap: 8px; justify-content: space-between;
 }

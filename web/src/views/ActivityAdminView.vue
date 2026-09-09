@@ -698,7 +698,37 @@
         <el-alert v-else type="info" show-icon :closable="false" style="margin:10px 0"
                   title="时长未核准，志愿者无法查看确认"
                   description="先算好、核对完，再点「确认核准时长」，志愿者将收到时长通知" />
-        <div v-if="hours.length" class="scroll-x">
+        <!-- 手机上这张表有八列，横滑着改时长没法用：改成卡片，
+             时长输入框和明细放在卡片正文里，勾选走卡片自己的多选 -->
+        <DataCards v-if="narrow && hours.length" :rows="hoursSorted"
+                   title-key="user.name" row-key="id" style="margin-top:10px"
+                   :selectable="!hoursFrozen" @selection-change="onHoursSelect"
+                   :fields="[{ key: 'user.student_id', label: '学号' },
+                             { key: 'user.college', label: '学院' }]">
+          <template #extra="{ row }">
+            <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+            <el-tag v-if="row.pending" size="small" type="warning" effect="plain">待签退</el-tag>
+            <el-tag v-else-if="row.auto_checkout" size="small" type="danger" effect="plain">
+              待核·自动兜底
+            </el-tag>
+            <el-tag :type="row.confirmed ? 'success' : 'info'"
+                    :effect="row.confirmed ? 'light' : 'plain'" size="small">
+              {{ row.confirmed ? '已确认' : '待确认' }}
+            </el-tag>
+          </template>
+          <template #body="{ row }">
+            <div class="mh-row">
+              <span class="dim">时长(h)</span>
+              <el-input-number v-model="row.editHours" size="small" :disabled="hoursFrozen"
+                               :min="0" :step="0.5" style="width:130px" />
+            </div>
+            <div v-if="hoursState.approved_at" class="mh-row">
+              <span class="dim">本人表态</span><VolunteerSide :row="row" />
+            </div>
+            <HoursParts :parts="row.parts" />
+          </template>
+        </DataCards>
+        <div v-else-if="hours.length" class="scroll-x">
         <el-table :data="hoursSorted" size="small" style="margin-top:10px;min-width:660px"
                   max-height="360" @selection-change="onHoursSelect">
           <el-table-column type="selection" width="40" :selectable="() => !hoursFrozen" />
@@ -2426,6 +2456,8 @@ function toISO(v) {
 </script>
 
 <style scoped>
+/* 手机版时长卡片里的一行：标签 + 控件 */
+.mh-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 /* 名单标题行：左边标题，右边一排动作；窄屏各占一行 */
 .roster-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .roster-actions { display: inline-flex; gap: 10px; align-items: center; flex-wrap: wrap; }

@@ -160,7 +160,8 @@
           </template>
         </div>
         <DataCards v-if="narrow" :rows="board.records" title-key="name"
-               row-key="student_id"
+               row-key="student_id" :selectable="!!batchTaskId && !hoursFrozen"
+               @selection-change="onSelect"
                :fields="[{ key: 'student_id', label: '学号' },
                          { key: 'position', label: '岗位' },
                          { key: 'time', label: '签到', hideEmpty: true },
