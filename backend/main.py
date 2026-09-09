@@ -52,10 +52,21 @@ async def _sweeper():
         await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
 
 
+class _NoHealthAccess(logging.Filter):
+    """健康探针不进访问日志。
+
+    容器编排每隔几十秒探一次 /api/health，日志里全是它，真正要看的请求被冲走。
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/api/health" not in record.getMessage()
+
+
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
     logging.basicConfig(level=logging.INFO,
                         format="%(levelname)s [%(name)s] %(message)s")
+    logging.getLogger("uvicorn.access").addFilter(_NoHealthAccess())
     locks.ping()          # Redis 是硬依赖：连不上就别假装能扛住抢报
     logger.info("数据库：%s", config.DATABASE_URL.split("@")[-1])
     if config.DEMO_LOGIN_PASSWORD:

@@ -73,12 +73,16 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
+      # web 的 depends_on 等的就是这个 healthy——没有它 nginx 会在后端还没起来时
+      # 就开始转发，页面直接 502。所以探针留着，但起来之后没必要十秒一次地刷日志：
+      # 启动期 2 秒一探（起得一样快），转成健康之后 30 秒一探。
       test: ["CMD", "python", "-c",
              "import urllib.request as u;u.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
-      interval: 10s
+      interval: 30s
       timeout: 5s
       retries: 12
-      start_period: 15s
+      start_period: 20s
+      start_interval: 2s
 
   web:
     build:
