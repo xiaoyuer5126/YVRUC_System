@@ -572,6 +572,8 @@
           <el-badge v-if="pendingAppeals" :value="pendingAppeals" type="danger" />
         </template>
         <div class="toolbar">
+          <!-- 核准之后志愿者陆续确认、提申诉，这一页不刷新看到的就是旧的 -->
+          <RefreshBar ref="hoursRefresh" :load="refreshHours" />
           <el-button type="primary" :disabled="!confirmedCount" @click="doExportHours">
             <el-icon><Download /></el-icon>&nbsp;导出时长记录
           </el-button>
@@ -621,8 +623,9 @@
         </template>
         <el-divider />
         <div class="toolbar">
-          <el-button @click="hoursPreview()" :loading="hoursLoading"
-                     :disabled="hoursFrozen">基于签到记录计算时长</el-button>
+          <span class="dim" style="flex:1 1 260px">
+            时长按签到与签退记录算出，点上方「刷新」重算一次；未确认的改动会被重算覆盖
+          </span>
           <el-button type="primary" plain :disabled="hoursFrozen || !hoursSel.length"
                      @click="confirmSelectedHours">
             {{ hoursSel.length ? `确认选中时长（${hoursSel.length} 人）` : '确认选中时长' }}
@@ -693,7 +696,7 @@
                   description="先算好、核对完，再点「确认核准时长」，志愿者将收到时长通知" />
         <!-- 手机上这张表有八列，横滑着改时长没法用：改成卡片，
              时长输入框和明细放在卡片正文里，勾选走卡片自己的多选 -->
-        <DataCards v-if="narrow && hours.length" :rows="hoursSorted"
+        <DataCards v-if="narrow && hours.length" :rows="hoursSorted" v-loading="hoursLoading"
                    title-key="user.name" row-key="user.id" style="margin-top:12px"
                    :selectable="!hoursFrozen" @selection-change="onHoursSelect"
                    :fields="[{ key: 'user.student_id', label: '学号' },
@@ -723,7 +726,7 @@
         </DataCards>
         <div v-else-if="hours.length" class="scroll-x">
         <el-table :data="hoursSorted" size="small" style="margin-top:12px;min-width:660px"
-                  max-height="360" @selection-change="onHoursSelect">
+                  v-loading="hoursLoading" max-height="360" @selection-change="onHoursSelect">
           <el-table-column type="selection" width="40" :selectable="() => !hoursFrozen" />
           <el-table-column type="expand" width="30">
             <template #default="{row}"><HoursParts :parts="row.parts" /></template>
@@ -1439,6 +1442,7 @@ const notifyForm = ref({ scope: 'all', shift_id: '', title: '', content: '',
 const ackBatches = ref([])
 const ackRefresh = ref(null)
 const rosterRefresh = ref(null)
+const hoursRefresh = ref(null)
 
 // —— 签收情况 ——
 async function loadBatches() {
@@ -1659,6 +1663,7 @@ async function loadAll() {
     // 刷新条的 ref 还是 null，写在 try 里等于没写。
     await nextTick()
     rosterRefresh.value?.markLoaded()
+    hoursRefresh.value?.markLoaded()   // ?tab=hours 直达时这一路负责加载
   }
 }
 
@@ -2210,6 +2215,11 @@ async function doResolve() {
   } finally { d.busy = false }
 }
 
+/** 刷新这一页：时长本身与申诉列表一起拉，两边都会随志愿者的动作变。 */
+async function refreshHours() {
+  await Promise.all([hoursPreview(true), loadAppeals()])
+}
+
 // 加载时长预览（含手动添加的记录）；silent=true 时不弹「暂无签到数据」提示
 async function hoursPreview(silent = false) {
   hoursLoading.value = true
@@ -2295,12 +2305,19 @@ async function doApprove() {
 
 // 时长要由校青协审核过才算数：提交给归口部长，通过之后才锁定
 async function submitLockNow() {
-  const pending = hoursState.value.pending_appeals
+  const s = hoursState.value
+  const early = s.appeal_deadline && new Date(s.appeal_deadline) > new Date()
+  // 申诉期没过就提交，等于把还没表态的人的申诉机会一起交掉了：说清楚再让他点
   await ElMessageBox.confirm(
-    (pending ? `还有 ${pending} 条申诉没处理。` : '')
+    (early ? `申诉期还没结束（截止 ${fmtDT(s.appeal_deadline)}）。`
+             + '现在提交，还没确认时长的志愿者就没机会提申诉了；'
+             + '到点没有申诉的话系统会自动提交，不必手动来这一下。\n\n' : '')
+    + (s.pending_appeals ? `还有 ${s.pending_appeals} 条申诉没处理。` : '')
     + '提交后时长冻结、不能再改，等校青协审核；通过即锁定并把活动标记为「已完成」，'
     + '驳回则退回你修改。确定提交吗？',
-    '提交时长审核', { type: 'warning' })
+    '提交时长审核',
+    { type: 'warning', confirmButtonText: early ? '仍然提交' : '确定',
+      dangerouslyUseHTMLString: false })
   await api.post(`/api/staff/activities/${activityId}/hours/lock-request`, {})
   ElMessage.success('已提交，等校青协审核')
   hoursPreview(true)
@@ -2437,7 +2454,11 @@ async function removeManager(row) {
 // ?tab=hours 直达时 tab 一开始就是它，这个 watch 不会触发——那一路由
 // loadAll 负责补上。
 watch(tab, async t => {
-  if (t === 'hours') { hoursPreview(true); loadAppeals() }
+  if (t === 'hours') {
+    await refreshHours()
+    await nextTick()                 // lazy 页签这一轮才渲染，ref 要等一帧
+    hoursRefresh.value?.markLoaded()
+  }
   if (t === 'acks') {
     await loadBatches()
     await nextTick()                 // lazy 页签这一轮才渲染，ref 要等一帧

@@ -98,6 +98,8 @@ h3 { margin: 12px 0 8px; }
 .mono { font-family: Consolas, Monaco, monospace; }
 .dim { color: #909399; font-size: 13px; }
 .pre { white-space: pre-wrap; }   /* 多行文字（服务任务、培训内容）按换行显示 */
+/* 确认框里写的是「先说清楚风险，再说做了会怎样」，分段全靠换行 */
+.el-message-box__message { white-space: pre-line; }
 .section-title { font-size: 15px; font-weight: 600; margin: 12px 0 8px; display:flex; align-items:center; gap:8px; }
 .section-title::before { content:""; width: 4px; height: 16px; background: var(--el-color-primary);
   border-radius: 2px; display:inline-block; }
