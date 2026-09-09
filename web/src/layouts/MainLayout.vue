@@ -166,7 +166,7 @@ async function onCommand(cmd) {
   padding: 0 22px; position: sticky; top: 0; z-index: 100;
   flex-shrink: 0; gap: 8px;
 }
-.left { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.left { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .hamburger { color: #fff; padding: 6px; }
 .brand { display: flex; gap: 12px; align-items: center; cursor: pointer; min-width: 0; }
 .brand-text { min-width: 0; }
@@ -179,7 +179,7 @@ async function onCommand(cmd) {
 .name { font-size: 16px; font-weight: 600; letter-spacing: .5px;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub { font-size: 11px; opacity: .75; }
-.right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .who { display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer; outline: none; }
 .side {
   background: #fff; border-right: 1px solid #eceef1;
@@ -196,7 +196,7 @@ async function onCommand(cmd) {
   display: flex; gap: 12px; align-items: center; padding: 16px;
   background: linear-gradient(90deg, #7e1b2a, var(--ruc-red)); color: #fff;
 }
-.drawer-sub { font-size: 12px; opacity: .8; margin-top: 2px; }
+.drawer-sub { font-size: 12px; opacity: .8; margin-top: 4px; }
 
 @media (max-width: 860px) {
   .topbar { padding: 0 10px; }

@@ -1,7 +1,7 @@
 <template>
   <div class="page page-wide">
-    <h2 style="margin-top:0">审计日志中心</h2>
-    <p class="dim" style="margin-top:-6px">
+    <h2>审计日志中心</h2>
+    <p class="dim" style="margin-top:-8px">
       发起方与青协的所有增删改均留痕，对志愿者可见的记录同步展示在活动详情页。
     </p>
     <el-card shadow="never">
@@ -88,5 +88,4 @@ onMounted(load)
 </script>
 
 <style scoped>
-.toolbar { display:flex; gap:12px; align-items:center; margin-bottom:10px; }
 </style>

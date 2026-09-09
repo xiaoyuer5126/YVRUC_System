@@ -105,13 +105,13 @@ function visibleFields(row) {
 </script>
 
 <style scoped>
-.cards { display: flex; flex-direction: column; gap: 10px; }
+.cards { display: flex; flex-direction: column; gap: 12px; }
 .card {
   background: #fff; border: 1px solid #eceef1; border-radius: 10px;
   padding: 12px 14px;
 }
 .card.picked { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
-.pick-bar { display: flex; align-items: center; gap: 10px; padding: 0 2px; }
+.pick-bar { display: flex; align-items: center; gap: 12px; padding: 0 2px; }
 .card-head {
   display: flex; align-items: flex-start; gap: 8px; justify-content: space-between;
 }
@@ -121,14 +121,14 @@ function visibleFields(row) {
 .card-extra { flex-shrink: 0; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 .card-fields {
   margin-top: 8px; display: grid; grid-template-columns: auto 1fr;
-  gap: 4px 10px; font-size: 13px;
+  gap: 4px 12px; font-size: 13px;
 }
 .field { display: contents; }
 .field-label { color: #909399; white-space: nowrap; }
 .field-value { color: #303133; word-break: break-word; }
 .card-body { margin-top: 8px; }
 .card-actions {
-  margin-top: 10px; padding-top: 10px; border-top: 1px dashed #eceef1;
+  margin-top: 12px; padding-top: 10px; border-top: 1px dashed #eceef1;
   display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
 }
 </style>

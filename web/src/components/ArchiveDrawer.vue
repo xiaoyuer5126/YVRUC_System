@@ -142,10 +142,10 @@ function tagType(h) {
 </script>
 
 <style scoped>
-.score-items { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; }
+.score-items { display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 13px; }
 .score-item b { margin-left: 4px; color: var(--el-color-success); }
 .score-item b.minus { color: var(--el-color-danger); }
-.stats { display: flex; gap: 10px; margin: 14px 0; }
+.stats { display: flex; gap: 12px; margin: 12px 0; }
 .stat { flex: 1; text-align: center; padding: 10px 6px; border-radius: 10px;
         background: var(--el-fill-color-light); }
 /* 六个格子横排在手机上每个只剩五十来像素，数字和说明都挤成两行 */

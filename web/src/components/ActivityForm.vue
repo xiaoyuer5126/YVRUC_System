@@ -148,8 +148,8 @@ async function uploadQr({ file }) {
 
 <style scoped>
 .contacts-box { width: 100%; }
-.contact-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
-.qr-preview { margin-top: 8px; display: flex; align-items: center; gap: 10px; }
+.contact-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.qr-preview { margin-top: 8px; display: flex; align-items: center; gap: 12px; }
 .qr-preview img { width: 96px; height: 96px; object-fit: contain;
                   border: 1px solid #eceef1; border-radius: 8px; }
 .dim { margin-top: 4px; }

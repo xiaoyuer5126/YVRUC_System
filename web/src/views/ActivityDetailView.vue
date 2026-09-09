@@ -13,10 +13,10 @@
       </template>
     </el-page-header>
 
-    <el-row :gutter="18" style="margin-top:16px">
+    <el-row :gutter="16" style="margin-top:16px">
       <el-col :span="17">
         <el-card shadow="never">
-          <h3 style="margin-top:0">{{ act.title }}</h3>
+          <h3>{{ act.title }}</h3>
           <p style="white-space:pre-wrap;color:#606266;line-height:1.8">{{ act.intro }}</p>
           <el-descriptions :column="narrow ? 1 : 2" border size="small">
             <el-descriptions-item label="组织单位">{{ act.organizer || '—' }}</el-descriptions-item>
@@ -24,7 +24,7 @@
             <el-descriptions-item label="活动地点">{{ act.location || '待定' }}</el-descriptions-item>
             <el-descriptions-item label="联系人">
               <template v-if="act.contacts?.length">
-                <span v-for="(c, i) in act.contacts" :key="i" style="margin-right:14px">
+                <span v-for="(c, i) in act.contacts" :key="i" style="margin-right:12px">
                   {{ c.name }} <span class="mono">{{ c.phone }}</span>
                 </span>
               </template>
@@ -53,12 +53,10 @@
 
         <!-- 审批人看的是同一个页面，只是活动还没公开；不另做一套只读页 -->
         <el-alert v-if="act.review_preview" type="info" show-icon :closable="false"
-                  style="margin:12px 0"
                   :title="`审批预览 · 当前状态「${act.status_label}」`"
                   description="当前作为审批人查看活动的完整安排。通过或驳回请回「活动审批」页操作。" />
 
         <el-alert v-if="act.editing" type="warning" show-icon :closable="false"
-                  style="margin:12px 0"
                   title="负责人正在调整本活动的安排，报名暂时关闭"
                   description="调整期间无法报名或退选，保存后会将变更通知已报名志愿者。" />
 
@@ -71,19 +69,19 @@
           <span class="dim">时间到自动开放，不用刷新页面</span>
         </div>
 
-        <div v-if="screenedApplying" class="section-title">报名申请<span class="dim" style="font-weight:400;margin-left:8px">
+        <div v-if="screenedApplying" class="section-title">报名申请<span class="dim">
           勾选意向场次并填写报名问卷，截止后由负责人筛选录取；
           场次与岗位见下方安排</span></div>
         <!-- 名额是抢的：刷新按钮就放在名额上方，别让人翻回页头去找 -->
-        <div v-else class="section-title">岗位安排<span class="dim" style="font-weight:400;margin-left:8px">
+        <div v-else class="section-title">岗位安排<span class="dim">
           点击场次、岗位名称可查看详细安排</span>
           <RefreshBar :load="load" style="margin-left:auto" /></div>
 
         <!-- 报名后筛选：先是申请入口，下面照旧列场次与岗位——
              审批人要在同一页看完整安排，学生也要先知道自己在报什么 -->
         <ApplicationPanel v-if="screenedApplying" :act="act" @changed="load"
-                          style="margin-bottom:14px" />
-        <div v-if="screenedApplying" class="section-title">场次与岗位<span class="dim" style="font-weight:400;margin-left:8px">
+                          style="margin-bottom:12px" />
+        <div v-if="screenedApplying" class="section-title">场次与岗位<span class="dim">
           仅供了解；录取后由负责人安排到具体岗位</span>
           <RefreshBar :load="load" style="margin-left:auto" /></div>
 
@@ -294,7 +292,7 @@
                     :expand-row-keys="act.shifts.map(g => g.id)">
             <el-table-column type="expand" width="34">
               <template #default="{ row: g }">
-                <div style="padding:6px 12px 6px 40px">
+                <div style="padding:8px 12px 8px 40px">
                   <!-- 直接定二级：岗位表格 -->
                   <!-- 报名一律选岗位。「截止后统一分配」的场次只有一条，
                        就是那个写明「暂不选岗位」的占位。 -->
@@ -305,17 +303,17 @@
                           <el-link type="primary" underline="never" style="font-weight:600"
                                    @click="showStationDetail(g, s)">{{ s.display_name }}</el-link>
                           <el-tag v-if="myStationId(g) === s.id" size="small" type="success"
-                                  effect="light" style="margin-left:6px">已选</el-tag>
+                                  effect="light" style="margin-left:8px">已选</el-tag>
                           <el-tag v-if="s.needs_leader" size="small" type="warning"
-                                  effect="plain" style="margin-left:6px">
+                                  effect="plain" style="margin-left:8px">
                             设组长{{ s.leader_name ? `·${s.leader_name}` : '' }}
                           </el-tag>
                           <el-tag v-if="s.attire !== 'none'" size="small" type="primary"
-                                  effect="plain" style="margin-left:6px">服装{{ s.attire_label }}</el-tag>
+                                  effect="plain" style="margin-left:8px">服装{{ s.attire_label }}</el-tag>
                           <el-tag v-if="s.pay_optional" size="small" type="warning"
-                                  effect="plain" style="margin-left:6px">可选劳务</el-tag>
+                                  effect="plain" style="margin-left:8px">可选劳务</el-tag>
                           <el-tag v-if="s.material_count" size="small" effect="plain"
-                                  style="margin-left:6px"
+                                  style="margin-left:8px"
                                   :type="s.training_visible ? 'success' : 'info'">
                             材料 {{ s.material_count }}{{ s.training_visible ? '' : '·报名后可看' }}
                           </el-tag>
@@ -350,7 +348,7 @@
                           <template v-if="g.my_enrollment && myStationId(g) === s.id">
                             <template v-if="g.my_enrollment.status === 'pending_confirm'">
                               <el-countdown format="HH:mm:ss" :value="deadlineTs(g)"
-                                            style="vertical-align:middle;margin-right:6px" />
+                                            style="vertical-align:middle;margin-right:8px" />
                               <el-button type="primary" size="small" :disabled="paused"
                                          @click="confirmPromo(g)">确认</el-button>
                               <el-button size="small" plain :disabled="paused"
@@ -390,7 +388,7 @@
                         </template>
                       </el-table-column>
                     </el-table>
-                    <div class="dim" style="margin-top:6px">
+                    <div class="dim" style="margin-top:8px">
                       同场次只能选一个岗位，候补将在名额释放后转正，转正需 2 小时内确认。
                     </div>
                   </template>
@@ -513,7 +511,7 @@
               <template #default="{ row }">
                 <el-link type="primary" underline="never" style="font-weight:600"
                          @click="showGroupDetail(row)">{{ row.name }}</el-link>
-                <el-tag size="small" effect="plain" style="margin-left:6px"
+                <el-tag size="small" effect="plain" style="margin-left:8px"
                         :type="row.mode === 'pick' ? 'info' : row.mode === 'assign' ? 'warning' : 'primary'">
                   {{ row.mode_label }}
                 </el-tag>
@@ -538,22 +536,21 @@
 
       <!-- 右：冲突提示 / 变更记录 -->
       <el-col :span="7">
-        <el-alert v-if="act.my_time_conflicts?.length" type="error" :closable="false"
-                  style="margin-bottom:14px">
+        <el-alert v-if="act.my_time_conflicts?.length" type="error" :closable="false">
           <p style="margin:0 0 4px"><b>您有时间冲突的活动：</b></p>
-          <p v-for="c in act.my_time_conflicts" :key="c.enrollment_id" style="margin:2px 0;font-size:13px">
+          <p v-for="c in act.my_time_conflicts" :key="c.enrollment_id" style="margin:4px 0;font-size:13px">
             「{{ c.activity_title }}」{{ c.shift_name }}（{{ c.time }}）
           </p>
         </el-alert>
         <el-card shadow="never">
           <template #header><b>变更记录</b></template>
-          <el-timeline v-if="act.change_logs?.length" style="padding-left:2px">
+          <el-timeline v-if="act.change_logs?.length" style="padding-left:4px">
             <el-timeline-item v-for="l in act.change_logs" :key="l.id"
                               :timestamp="fmtDT(l.created_at)" placement="top"
                               :type="l.action === 'delete' ? 'danger' : 'primary'">
               <b style="font-size:13px">{{ l.actor_name }}</b>
               <span class="dim"> {{ l.summary }}</span>
-              <div v-for="(ch, i) in l.changes" :key="i" class="dim" style="margin-top:2px">
+              <div v-for="(ch, i) in l.changes" :key="i" class="dim" style="margin-top:4px">
                 {{ ch.label }}：{{ ch.old || '空' }} → <b style="color:var(--el-color-primary)">{{ ch.new || '空' }}</b>
               </div>
             </el-timeline-item>
@@ -652,7 +649,7 @@
         </el-descriptions>
 
         <el-alert v-if="enrollExtra.length && !willWaitlist" type="info" show-icon
-                  :closable="false" style="margin-top:10px"
+                  :closable="false"
                   title="请确认这些时间你可到场，如时间冲突需向负责人请假。" />
 
         <!-- 活动设了报名问卷：报名时一并答，答案跟着报名记录走 -->
@@ -666,13 +663,13 @@
           <el-checkbox v-model="enrollDlg.allowReassign" :disabled="willWaitlist">
             接受岗位调剂
           </el-checkbox>
-          <div v-if="willWaitlist" class="dim" style="margin-top:2px">
+          <div v-if="willWaitlist" class="dim" style="margin-top:4px">
             候补须接受调剂，负责人可调至空缺岗位
           </div>
-          <div v-else class="dim" style="margin-top:2px">
+          <div v-else class="dim" style="margin-top:4px">
             仅在名额不足时可能进行调剂，负责人可看到你的意愿。
           </div>
-          <el-checkbox v-model="enrollDlg.leaderWilling" style="display:block;margin-top:6px">
+          <el-checkbox v-model="enrollDlg.leaderWilling" style="display:block;margin-top:8px">
             愿意担任组长（如本岗位需要）
           </el-checkbox>
         </div>
@@ -958,7 +955,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 <style scoped>
 /* 页头：宽屏标题与标签同一行，窄屏标签落到下一行 */
 .hd-title { font-weight: 600; }
-.hd-tags { display: inline-flex; gap: 6px; margin-left: 10px; vertical-align: middle; }
+.hd-tags { display: inline-flex; gap: 8px; margin-left: 12px; vertical-align: middle; }
 @media (max-width: 860px) {
   .hd-title { display: block; font-size: 16px; line-height: 1.5; }
   .hd-tags { display: flex; flex-wrap: wrap; margin: 4px 0 0; }
@@ -966,7 +963,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 
 /* 报名开始倒计时：一行放得下就一行，窄屏自然换行 */
 .reg-countdown {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin: 12px 0 0; padding: 8px 12px; font-size: 13px;
   border-radius: 8px; background: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
@@ -989,20 +986,20 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .m-pos-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .m-pos-name { font-weight: 600; font-size: 14px; }
 .m-pos-name :deep(.el-link__inner) { font-weight: 600; }
-.m-pos-meta { margin-top: 3px; line-height: 1.6; }
+.m-pos-meta { margin-top: 4px; line-height: 1.6; }
 .m-pos-act { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.m-pos-why { margin-top: 6px; font-size: 12px; color: #e6a23c; }
-.m-reassign { margin-top: 10px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.m-pos-why { margin-top: 8px; font-size: 12px; color: #e6a23c; }
+.m-reassign { margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .shift-bar { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .req-blocked { color: #e6a23c; }
-.mine-card { margin-top: 10px; border-left: 3px solid var(--el-color-success); }
-.mine-title { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.mine-card { margin-top: 12px; border-left: 3px solid var(--el-color-success); }
+.mine-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .mine-note { margin: 4px 0; font-size: 13px; line-height: 1.75; color: #606266;
              white-space: pre-wrap; }
-.group-card { margin-bottom: 14px; border-radius: 12px; }
-.g-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-.reassign-box { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #f7f8fa; }
-.reassign-box .dim { margin: 6px 0 0; font-size: 13px; line-height: 1.7; }
+.group-card { margin-bottom: 12px; border-radius: 12px; }
+.g-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.reassign-box { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: #f7f8fa; }
+.reassign-box .dim { margin: 8px 0 0; font-size: 13px; line-height: 1.7; }
 
 /* 活动级的要求与保障 */
 .side-note {
@@ -1011,11 +1008,11 @@ const openProfileDialog = () => profileDialog.value.open(true)
 }
 .side-note.benefit { border-left-color: var(--el-color-success); background: #f0f9eb; }
 .side-note b { font-size: 13px; }
-.side-note p { margin: 2px 0 0; font-size: 13px; line-height: 1.75;
+.side-note p { margin: 4px 0 0; font-size: 13px; line-height: 1.75;
                white-space: pre-wrap; color: #606266; }
 
 /* 培训 / 彩排：跟在场次后面的附加时段 */
-.att-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.att-list { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
 .att-item {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   font-size: 13px; padding: 6px 10px; border-radius: 8px; background: #f7f8fa;

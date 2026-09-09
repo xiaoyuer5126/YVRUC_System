@@ -27,6 +27,34 @@ body {
 
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
 
+/* ===== 间距 =====
+   只有三档：区块之间 16px，块内的元素之间 12px，一行里并排的东西 8px。
+   下面几条是这些间距的唯一出处，模板里不再一个一个写 margin——同一种
+   东西在不同页面差着两三个像素，看的人说不清哪里不对，但就是觉得乱。 */
+
+/* 工具条：搜索框、筛选、按钮并排的那一行 */
+.toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+
+/* 卡片、对话框、页面的第一个元素不带上外边距：标题的默认 margin 会
+   在容器已有的内边距之外再顶出一截 */
+.el-card__body > :first-child,
+.el-dialog__body > :first-child,
+.page > :first-child { margin-top: 0; }
+
+/* 提示条自带上下间距，摆在哪里都一样 */
+.el-alert { margin: 12px 0; }
+
+/* 区块标题后面跟的那句说明：标题行本身是 flex gap:8，不用再补外边距 */
+.section-title .dim { font-weight: 400; }
+
+/* 标题的默认外边距按字号算（0.83em/1em），几个页面的字号又不一样，
+   看起来就是这一页顶得高、那一页顶得低 */
+h2 { margin: 16px 0 12px; }
+h3 { margin: 16px 0 8px; }
+
+/* 页签栏与内容之间：Element 默认 15px */
+.el-tabs__header { margin-bottom: 16px; }
+
 .act-card {
   border-radius: 12px; overflow: hidden; cursor: pointer; background: #fff;
   border: 1px solid #eceef1; transition: box-shadow .2s, transform .2s;
@@ -40,8 +68,8 @@ body {
   text-shadow: 0 1px 2px rgba(0,0,0,.15);
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;}
 .act-body { padding: 12px 18px 14px; }
-.meta-row { display: flex; align-items: center; gap: 6px; color: #606266;
-  font-size: 13px; margin-top: 6px; }
+.meta-row { display: flex; align-items: center; gap: 8px; color: #606266;
+  font-size: 13px; margin-top: 8px; }
 .quota-bar { margin-top: 4px; }
 
 .hue-0 { --h1:#9e2235; --h2:#c04a5c; }
@@ -63,7 +91,7 @@ body {
 .mono { font-family: Consolas, Monaco, monospace; }
 .dim { color: #909399; font-size: 13px; }
 .pre { white-space: pre-wrap; }   /* 多行文字（服务任务、培训内容）按换行显示 */
-.section-title { font-size: 15px; font-weight: 600; margin: 18px 0 10px; display:flex; align-items:center; gap:8px; }
+.section-title { font-size: 15px; font-weight: 600; margin: 16px 0 12px; display:flex; align-items:center; gap:8px; }
 .section-title::before { content:""; width: 4px; height: 16px; background: var(--el-color-primary);
   border-radius: 2px; display:inline-block; }
 
@@ -111,10 +139,10 @@ body {
   .el-page-header__left { display: block !important; margin-right: 0 !important; }
   .el-page-header__left .el-divider--vertical { display: none; }
   .el-page-header__back { margin-right: 0; }
-  .el-page-header__content { margin-top: 6px; font-size: 16px; line-height: 1.5; }
+  .el-page-header__content { margin-top: 8px; font-size: 16px; line-height: 1.5; }
   .el-page-header__extra {
     display: flex; flex-wrap: wrap; gap: 8px;
-    margin-top: 10px; text-align: left;
+    margin-top: 12px; text-align: left;
   }
   /* 页头里的按钮自身带的左外边距会破坏 gap 对齐 */
   .el-page-header__extra .el-button + .el-button { margin-left: 0; }
@@ -127,15 +155,14 @@ body {
     font-size: 12px; color: #a8abb2; padding: 2px 0 6px;
   }
 
-  /* 工具条换行，别把按钮挤出屏幕 */
-  .toolbar { flex-wrap: wrap; gap: 8px; }
+  /* 工具条里的东西不许被压扁，宁可换行 */
   .toolbar > * { flex-shrink: 0; }
 
   /* 实在留着的表格（分配面板等）允许横滑，但不让整页横滑 */
   .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
   /* 标题行里还挂着说明文字和刷新按钮，窄屏放不下就换行 */
-  .section-title { margin: 14px 0 8px; flex-wrap: wrap; }
+  .section-title { margin: 12px 0 8px; flex-wrap: wrap; }
   h2 { font-size: 19px; }
   h3 { font-size: 16px; }
 }

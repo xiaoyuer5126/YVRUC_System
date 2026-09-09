@@ -1,7 +1,7 @@
 <template>
   <div class="page page-wide">
-    <h2 style="margin-top:0">集成设置（外部系统对接）</h2>
-    <el-alert type="info" :closable="false" style="margin-bottom:14px">
+    <h2>集成设置（外部系统对接）</h2>
+    <el-alert type="info" :closable="false">
       四个外部系统均已完成<b>接口层</b>对接：关闭开关时使用内置演示实现，
       填入学校信息化部门提供的地址与密钥并打开开关，即可切换到真实接口。
     </el-alert>
@@ -10,14 +10,14 @@
       <el-col :span="12" v-for="c in configs" :key="c.key" style="margin-bottom:16px">
         <el-card shadow="never" class="int-card">
           <template #header>
-            <div style="display:flex;align-items:center;gap:10px">
+            <div style="display:flex;align-items:center;gap:8px">
               <b>{{ c.label }}</b>
               <el-tag v-if="!c.enabled" size="small" type="info" effect="plain">演示模式（Mock）</el-tag>
               <el-tag v-else size="small" type="success" effect="plain">已对接真实接口</el-tag>
             </div>
           </template>
 
-          <p class="dim" style="margin-top:0">{{ c.mode_hint }}</p>
+          <p class="dim">{{ c.mode_hint }}</p>
           <ul class="caps dim">
             <li v-for="cap in c.capabilities" :key="cap">{{ cap }}</li>
           </ul>
@@ -38,7 +38,7 @@
               <span>{{ f.label }}：</span>
               <span class="mono">{{ mask(f.key, c[f.key]) }}</span>
             </div>
-            <div style="margin-top:10px;display:flex;gap:8px">
+            <div style="margin-top:12px;display:flex;gap:8px">
               <el-button size="small" @click="startEdit(c)">编辑参数</el-button>
               <el-switch v-model="c.enabled" active-text="启用真实接口"
                          @change="toggleEnabled(c)" />
@@ -134,6 +134,6 @@ const notes = [
 <style scoped>
 .int-card { border-radius: 12px; }
 .caps { margin: 4px 0; padding-left: 18px; line-height: 1.9; }
-.kv { display:flex; gap:6px; line-height:2; }
+.kv { display:flex; gap:8px; line-height:2; }
 .kv span:first-child { width:110px; }
 </style>

@@ -22,7 +22,7 @@
       </el-col>
     </el-row>
     <el-card shadow="never">
-      <template #header><b>时长明细</b><span class="dim" style="font-weight:400;margin-left:8px">
+      <template #header><b>时长明细</b><span class="dim" style="margin-left:8px">
         由负责人核准，展开一行可看这次时长由哪几段组成。
       </span></template>
       <DataCards v-if="narrow" :rows="data.records" title-key="activity_title"
@@ -38,7 +38,7 @@
             {{ stateOf(row).text }}
           </el-tag>
           <AppealTag :row="row" />
-          <HoursParts :parts="row.parts" style="margin-top:6px" />
+          <HoursParts :parts="row.parts" style="margin-top:8px" />
         </template>
         <template #actions="{ row }">
           <el-button v-if="row.can_confirm" size="small" type="primary"
@@ -61,7 +61,7 @@
         <el-table-column label="状态" width="290">
           <template #default="{ row }">
             <el-tag :type="stateOf(row).type" effect="light">{{ stateOf(row).text }}</el-tag>
-            <span v-if="row.can_confirm || row.can_appeal" class="dim" style="margin-left:6px">
+            <span v-if="row.can_confirm || row.can_appeal" class="dim" style="margin-left:8px">
               截止 {{ fmtDT(row.appeal_deadline) }}
             </span>
             <AppealTag :row="row" />
@@ -87,7 +87,7 @@
     </el-card>
 
     <el-dialog v-model="cf.visible" title="确认时长" width="440">
-      <p class="dim" style="margin-top:0;line-height:1.8">
+      <p class="dim" style="line-height:1.8">
         「{{ cf.row?.activity_title }}」记 <b>{{ cf.row?.hours }}</b> 小时。确认后到截止前仍可改。
       </p>
       <el-form label-width="88px">
@@ -107,14 +107,14 @@
     </el-dialog>
 
     <el-dialog v-model="dlg.visible" title="时长有异议" width="480">
-      <p class="dim" style="margin-top:0;line-height:1.8">
+      <p class="dim" style="line-height:1.8">
         「{{ dlg.row?.activity_title }}」当前记 <b>{{ dlg.row?.hours }}</b> 小时。
         写清楚实际的到离时间，负责人核对后决定是否改。
       </p>
       <el-form label-width="88px">
         <el-form-item label="申报时长" required>
           <el-input-number v-model="dlg.hours" :min="0.5" :max="24" :step="0.5" />
-          <span class="dim" style="margin-left:10px">小时</span>
+          <span class="dim" style="margin-left:12px">小时</span>
         </el-form-item>
         <el-form-item label="说明" required>
           <el-input v-model="dlg.reason" type="textarea" :rows="3" maxlength="500"

@@ -1,12 +1,12 @@
 <template>
   <div class="page page-wide">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h2 style="margin:0">活动管理</h2>
       <el-button type="primary" @click="openCreate"><el-icon><Plus /></el-icon>&nbsp;新建活动</el-button>
     </div>
 
     <el-card shadow="never">
-      <div class="toolbar" style="margin-bottom:12px">
+      <div class="toolbar">
         <el-input v-model="f.q" placeholder="搜索活动名称" clearable
                   style="width:220px" @input="onSearch" @clear="reload" />
         <el-select v-model="f.status" placeholder="全部状态" clearable
@@ -47,7 +47,7 @@
         <el-table-column label="活动" min-width="240">
           <template #default="{row}">
             <el-tag v-if="row.urgent" size="small" type="danger" effect="dark"
-                    style="margin-right:6px">急招</el-tag>
+                    style="margin-right:8px">急招</el-tag>
             <b>{{ row.title }}</b>
             <div class="dim">{{ row.location || '待定' }}</div>
           </template>
@@ -113,16 +113,16 @@
 
     <!-- 复制活动：只带结构，落草稿并直接进编辑页 -->
     <el-dialog v-model="copyDlg.visible" title="复制活动" width="500">
-      <p class="dim" style="margin-top:0;line-height:1.8">
+      <p class="dim" style="line-height:1.8">
         复制「{{ copyDlg.source?.title }}」的<b>结构</b>：活动信息、场次、岗位、学习材料、报名问卷。
       </p>
       <el-form label-width="96px">
         <el-form-item label="延期天数" required>
           <el-input-number v-model="copyDlg.shiftDays" :min="-365" :max="365" />
-          <span class="dim" style="margin-left:10px">
+          <span class="dim" style="margin-left:12px">
             报名时间与场次时间整体后移
           </span>
-          <div v-if="copyPreview" class="dim" style="margin-top:6px">
+          <div v-if="copyPreview" class="dim" style="margin-top:8px">
             场次时间：{{ copyPreview.from }} → <b>{{ copyPreview.to }}</b>
           </div>
         </el-form-item>
@@ -294,10 +294,10 @@ async function delActivity(row) {
 
 <style scoped>
 .contacts-box { width: 100%; }
-.contact-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
+.contact-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
 .qr-preview { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .qr-preview img { max-width: 160px; max-height: 160px; border-radius: 8px; border: 1px solid #e4e7ed; }
-.copy-qr { width: 96px; height: 96px; margin-top: 6px; object-fit: contain;
+.copy-qr { width: 96px; height: 96px; margin-top: 8px; object-fit: contain;
            border: 1px solid #eceef1; border-radius: 8px; }
-.pager { margin-top: 14px; justify-content: flex-end; }
+.pager { margin-top: 12px; justify-content: flex-end; }
 </style>

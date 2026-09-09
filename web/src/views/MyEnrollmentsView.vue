@@ -40,7 +40,7 @@
           </template>
           <span v-else class="dim">—</span>
           <template v-if="row.status === 'enrolled'">
-            <span class="dim" style="margin-left:10px">签到：</span>
+            <span class="dim" style="margin-left:12px">签到：</span>
             <CheckinStatusTag :row="row" />
           </template>
         </div>
@@ -136,7 +136,7 @@
       </el-table-column>
     </el-table>
 
-    <el-alert type="info" :closable="false" style="margin-top:16px">
+    <el-alert type="info" :closable="false">
       <p style="margin:0;font-size:12.5px;line-height:1.9">
         退选规则：开始前 <b>24 小时内</b>且报名已截止时退选，名额将被扣留不再释放，且记录一次临期退选。
       </p>
@@ -146,7 +146,7 @@
 
     <el-dialog v-model="teamDlg.visible" :title="'组员名单 · ' + (teamDlg.data?.scope || '')"
                width="560">
-      <p class="dim" style="margin-top:0;line-height:1.8">
+      <p class="dim" style="line-height:1.8">
         {{ teamDlg.data?.activity_title }} · {{ teamDlg.data?.shift_name }}。
         联系方式仅用于本次活动的联络，请勿他用；<b>每次查看都会记入审计</b>。
       </p>
@@ -247,18 +247,18 @@ async function cancel(row) {
 </script>
 
 <style scoped>
-.mob-list { display: flex; flex-direction: column; gap: 10px; }
+.mob-list { display: flex; flex-direction: column; gap: 12px; }
 .mob-card { background:#fff; border:1px solid #eceef1; border-radius:10px; padding:12px 14px; }
 .mob-head { display:flex; justify-content:space-between; gap:8px; align-items:flex-start;
-            margin-bottom:2px; }
+            margin-bottom:4px; }
 .mob-head b { font-size:14.5px; line-height:1.45; }
-.mob-line { margin-top:6px; font-size:13px; display:flex; align-items:center;
+.mob-line { margin-top:8px; font-size:13px; display:flex; align-items:center;
             gap:4px; flex-wrap:wrap; }
-.mob-actions { margin-top:10px; padding-top:10px; border-top:1px dashed #eceef1;
+.mob-actions { margin-top:12px; padding-top:10px; border-top:1px dashed #eceef1;
                display:flex; gap:8px; flex-wrap:wrap; }
 .checkout-time {
   font-size: 11px;
   line-height: 1.4;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 </style>

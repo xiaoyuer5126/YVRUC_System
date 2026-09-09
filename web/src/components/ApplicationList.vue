@@ -55,7 +55,7 @@
       <el-table-column label="意向场次" min-width="180">
         <template #default="{ row }">
           <el-tag v-for="w in row.wanted" :key="w.shift_id" size="small" effect="plain"
-                  style="margin:0 6px 2px 0"
+                  style="margin:0 8px 4px 0"
                   :type="w.status === 'enrolled' ? 'success' : (w.status === 'applied' ? 'primary' : 'info')">
             {{ w.shift_name }}{{ w.position_name ? ' · ' + w.position_name : '' }}
           </el-tag>
@@ -72,7 +72,7 @@
                          :label="shiftName(w.shift_id)" />
             </el-select>
             <el-select :model-value="pickOf(row).position_id" size="small" clearable
-                       style="width:160px;margin-left:6px" placeholder="岗位（按意向）"
+                       style="width:160px;margin-left:8px" placeholder="岗位（按意向）"
                        @update:model-value="v => setPosition(row, v)">
               <el-option v-for="p in positionsFor(row)" :key="p.id" :value="p.id"
                          :label="`${p.name}（${p.quota} 人）`" />
@@ -180,6 +180,6 @@ async function decide(accept) {
 </script>
 
 <style scoped>
-.al-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.al-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .al-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 </style>

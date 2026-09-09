@@ -1,7 +1,7 @@
 <template>
   <div v-loading="loading || solving">
     <!-- 模式说明 -->
-    <el-alert v-if="pickModeAllAssigned" type="info" :closable="false" style="margin-bottom:10px"
+    <el-alert v-if="pickModeAllAssigned" type="info" :closable="false"
               title="本场次报名时已各自选定岗位"
               description="试算会保持现有岗位，可直接修改下方的建议岗位。" />
 
@@ -25,7 +25,7 @@
     <template v-if="preview">
       <!-- 岗位统计 -->
       <div class="section-title">各岗位建议人数</div>
-      <el-table :data="preview.position_stats" size="small" border style="margin-bottom:14px">
+      <el-table :data="preview.position_stats" size="small" border style="margin-bottom:12px">
         <el-table-column prop="name" label="岗位" min-width="120" />
         <el-table-column prop="location" label="地点" min-width="110" />
         <el-table-column prop="requirement_desc" label="条件" min-width="120" />
@@ -124,13 +124,12 @@
       </el-tag>
 
       <el-alert v-if="unwillingMoved" type="warning" :closable="false"
-                style="margin-top:12px"
                 :title="`有 ${unwillingMoved} 人报名时选择了不接受调剂，本方案仍会调换其岗位`" />
 
-      <div style="margin-top:14px;text-align:right">
+      <div style="margin-top:12px;text-align:right">
         <el-button @click="resetEdit">还原为系统建议</el-button>
         <el-button type="primary" :loading="applying" @click="apply">确认并发布分配</el-button>
-        <div class="dim" style="margin-top:6px">发布后将向每人发送岗位通知</div>
+        <div class="dim" style="margin-top:8px">发布后将向每人发送岗位通知</div>
       </div>
     </template>
 
@@ -271,7 +270,6 @@ async function addWalkin() {
 </script>
 
 <style scoped>
-.scroll-hint { margin: -6px 0 6px; }
+.scroll-hint { margin: -8px 0 8px; }
 @media (min-width: 861px) { .scroll-hint { display: none; } }
-.toolbar { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
 </style>

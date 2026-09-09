@@ -10,10 +10,10 @@
       <div v-if="mine.leader_willing" class="dim" style="margin-top:4px">
         愿意担任组长
       </div>
-      <div class="dim" style="margin:6px 0 10px">
+      <div class="dim" style="margin:8px 0 12px">
         意向场次：
         <el-tag v-for="w in mine.wanted" :key="w.shift_id" size="small" effect="plain"
-                style="margin-right:6px">
+                style="margin-right:8px">
           {{ w.shift_name }}{{ w.position_name ? ' · ' + w.position_name : '' }}
         </el-tag>
       </div>
@@ -35,7 +35,7 @@
     <template v-else-if="open">
       <!-- 两步：先勾意向岗位，再按勾中的岗位出题。题目可能只问某几个岗位的人，
            所以第二步的题要等第一步定下来才知道 -->
-      <el-steps :active="step" simple style="margin-bottom:14px">
+      <el-steps :active="step" simple style="margin-bottom:12px">
         <el-step title="选择意向岗位" />
         <el-step title="填写报名问卷" />
       </el-steps>
@@ -66,10 +66,10 @@
       </template>
 
       <template v-else>
-        <div class="dim" style="margin-bottom:10px">
+        <div class="dim" style="margin-bottom:12px">
           意向岗位：
           <el-tag v-for="p in chosen" :key="p.id" size="small" effect="plain"
-                  style="margin-right:6px">{{ p.shift_name }} · {{ p.display_name }}</el-tag>
+                  style="margin-right:8px">{{ p.shift_name }} · {{ p.display_name }}</el-tag>
         </div>
         <el-form label-position="top">
           <QuestionFields ref="fields" v-model="form.answers" :questions="stepQuestions"
@@ -85,14 +85,14 @@
 
     <!-- 不在报名期：审批人和路过的人也该看得到这份表长什么样 -->
     <template v-else>
-      <el-alert type="info" :closable="false" :title="closedText" style="margin-bottom:12px" />
+      <el-alert type="info" :closable="false" :title="closedText" />
       <div class="apply-head"><b>报名问卷</b>
         <span class="dim">报名开放后填写，并勾选意向场次</span>
       </div>
       <ol v-if="questions.length" class="preview">
         <li v-for="q in questions" :key="q.id">
           {{ q.title }}
-          <el-tag size="small" effect="plain" style="margin:0 6px">{{ q.kind_label }}</el-tag>
+          <el-tag size="small" effect="plain" style="margin:0 8px">{{ q.kind_label }}</el-tag>
           <el-tag v-if="q.required" size="small" type="warning" effect="plain">必填</el-tag>
           <div v-if="q.options?.length" class="dim">选项：{{ q.options.join(' / ') }}</div>
         </li>
@@ -180,8 +180,8 @@ async function withdraw() {
 
 <style scoped>
 .apply-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.shift-block { margin-bottom: 10px; }
-.shift-name { font-weight: 600; margin-bottom: 2px; }
+.shift-block { margin-bottom: 12px; }
+.shift-name { font-weight: 600; margin-bottom: 4px; }
 .pos-line { display: flex; align-items: center; gap: 8px; padding-left: 10px; }
-.preview { margin: 6px 0 0; padding-left: 20px; line-height: 2; }
+.preview { margin: 8px 0 0; padding-left: 20px; line-height: 2; }
 </style>

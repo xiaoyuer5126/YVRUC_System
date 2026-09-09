@@ -74,20 +74,17 @@
 
     <!-- 审批状态：待审批看到审批人，被驳回看到意见 -->
     <el-alert v-if="act.status === 'pending'" type="warning" show-icon :closable="false"
-              style="margin:12px 0"
               :title="`已提交${approval?.department || ''}审批，等待 ${approval?.assignee || ''} 处理`"
               :description="act.auto_publish
                 ? '审批期间可以继续调整安排，审批通过后活动立即公开发布，到点准时开始报名。'
                 : '审批期间可以继续调整安排，审批通过后由你点「发布」。'" />
-    <el-alert v-else-if="act.status === 'approved'" type="success" show-icon :closable="false"
-              style="margin:12px 0" title="审批已通过，可以发布了"
+    <el-alert v-else-if="act.status === 'approved'" type="success" show-icon :closable="false" title="审批已通过，可以发布了"
               :description="approval?.comment ? ('审批意见：' + approval.comment) : ''" />
     <el-alert v-else-if="act.status === 'draft' && approval?.comment" type="error" show-icon
-              :closable="false" style="margin:12px 0" title="审批未通过"
+              :closable="false" title="审批未通过"
               :description="'意见：' + approval.comment + '；修改后可重新提交。'" />
 
     <el-alert v-if="act.editing" type="warning" :closable="false" show-icon
-              style="margin:12px 0"
               title="正在调整岗位，学生已暂停报名与退选"
               :description="`改完点右上角「保存并发布」恢复报名并通知志愿者；${lockHours} 小时未保存会自动退出编辑。`" />
 
@@ -97,18 +94,17 @@
         <template #label>岗位设置
           <el-badge v-if="treeAlerts.length" value="!" type="danger" />
         </template>
-        <el-alert v-if="act.recruit_mode === 'screened'" type="info" :closable="false"
-                  style="margin-bottom:12px">
+        <el-alert v-if="act.recruit_mode === 'screened'" type="info" :closable="false">
           报名后筛选：志愿者先勾意向岗位、再按岗位填报名问卷，报名截止后你在
           「志愿者管理」里录取并定岗位。没建岗位的场次，志愿者勾的是「待分配」，
           录取之后再排。
         </el-alert>
-        <el-alert v-else type="info" :closable="false" style="margin-bottom:12px">
+        <el-alert v-else type="info" :closable="false">
           先按照时间设置场次，再分配每场的具体岗位。
           <b>报名即选岗位</b>：发布前分配好各岗位名额。
           <b>截止后统一分配</b>：适用于未确定岗位的场次，志愿者先选择时间，后续分配岗位。
         </el-alert>
-        <div class="toolbar" style="margin-bottom:12px">
+        <div class="toolbar">
           <el-button plain @click="formDlg = true">{{ formLabel }}</el-button>
           <span class="dim">
             {{ act.recruit_mode === 'screened'
@@ -118,23 +114,21 @@
         <!-- 结束之后是终态：时长按当时的岗位与名单结的账，再改就对不上，
              连「调整岗位」的入口都不给 -->
         <el-alert v-if="isOver" type="info" show-icon :closable="false"
-                  style="margin-bottom:12px"
                   :title="`活动${act.status_label}，安排与信息均为只读`">
           <div style="line-height:1.8">
             时长已由活动管理者核准，不再接受修改，如确需更正请联系会长团。
           </div>
         </el-alert>
-        <el-alert v-else-if="structureLocked" type="info" show-icon :closable="false"
-                  style="margin-bottom:12px">
+        <el-alert v-else-if="structureLocked" type="info" show-icon :closable="false">
           <template #title>
             当前只读——改场次与岗位要先点击右侧按钮进入调整状态，期间将暂停报名
-            <el-button type="warning" size="small" style="margin-left:10px"
+            <el-button type="warning" size="small" style="margin-left:12px"
                        @click="startEditing">{{ editLabel }}</el-button>
           </template>
         </el-alert>
 
         <el-alert v-if="treeAlerts.length" type="error" show-icon
-                  :closable="false" style="margin-bottom:12px"
+                  :closable="false"
                   :title="`有 ${treeAlerts.length} 个场次还没排好`">
           <div v-for="a in treeAlerts" :key="a.id" style="line-height:1.9">
             <b>{{ a.name }}</b>：{{ a.text }}
@@ -225,7 +219,7 @@
                 <el-link type="primary" underline="never"
                          @click="showStationDetail(g, row)">{{ row.name }}</el-link>
                 <el-tag v-if="row.is_placeholder" size="small" type="warning" effect="plain"
-                        style="margin-left:6px">默认</el-tag>
+                        style="margin-left:8px">默认</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="服务地点" min-width="120">
@@ -258,7 +252,7 @@
               </template>
             </el-table-column>
           </el-table>
-          <p v-else class="dim" style="margin:6px 0 0">
+          <p v-else class="dim" style="margin:8px 0 0">
             {{ g.mode === 'assign'
                ? '截止后统一分配：学生报名只选时间，确定分工后将本场次改为「报名即选岗位」，建好岗位再一键分配。'
                : '还没有岗位，请先设置岗位及名额。' }}
@@ -312,7 +306,7 @@
         </template>
 
         <!-- 场次选择栏 -->
-        <div class="toolbar" style="margin-bottom:12px">
+        <div class="toolbar">
           <span>场次</span>
           <el-select v-model="currentGroupId" style="width:260px">
             <el-option v-for="g in shifts" :key="g.id"
@@ -328,7 +322,7 @@
 
         <!-- 报名后筛选：先录取，录取的人才进下面的名单 -->
         <ApplicationList v-if="act.recruit_mode === 'screened'" :activity-id="act.id"
-                         style="margin-bottom:14px"
+                         style="margin-bottom:12px"
                          @archive="openArchive" @changed="loadAll" />
 
         <template v-if="currentShift">
@@ -346,7 +340,7 @@
             </span>
           </div>
           <DataCards v-if="narrow" :rows="roster.enrolled" title-key="user.name"
-                     row-key="enrollment_id" style="margin-bottom:14px"
+                     row-key="enrollment_id" style="margin-bottom:12px"
                      :fields="[{ key: 'user.student_id', label: '学号' },
                                { key: 'user.college', label: '学院' },
                                { key: 'user.phone', label: '手机号' },
@@ -383,7 +377,7 @@
                          @click="violationDlg.open(row.user)">登记违规</el-button>
             </template>
           </DataCards>
-          <el-table v-else :data="roster.enrolled" size="small" max-height="300" style="margin-bottom:14px">
+          <el-table v-else :data="roster.enrolled" size="small" max-height="300" style="margin-bottom:12px">
             <el-table-column v-if="roster.questions?.length" type="expand" width="30">
               <template #default="{ row }"><AnswerList :answers="row.answers" /></template>
             </el-table-column>
@@ -462,7 +456,7 @@
             </el-table-column>
           </el-table>
 
-          <el-row :gutter="14" style="margin-top:14px">
+          <el-row :gutter="16" style="margin-top:12px">
             <!-- 左栏（宽）：分配程序计算结果、人员变动 -->
             <el-col :xs="24" :md="16">
               <div class="section-title" style="margin-top:0">一键分配结果</div>
@@ -481,7 +475,7 @@
                                  ? 'danger' : 'success'">
                     {{ c.action_label }}
                   </el-tag>
-                  <span style="margin-left:6px">{{ c.summary }}</span>
+                  <span style="margin-left:8px">{{ c.summary }}</span>
                 </el-timeline-item>
               </el-timeline>
             </template>
@@ -516,7 +510,7 @@
             <el-card shadow="never" class="wl-card">
               <template #header><b>候补队列</b></template>
               <el-alert v-if="roster.auto_promote_over" type="warning" show-icon
-                        :closable="false" style="margin-bottom:10px">
+                        :closable="false">
                 <template #title>
                   自动递补已停止（{{ fmtDT(roster.auto_promote_deadline) }} 起）
                 </template>
@@ -591,7 +585,7 @@
           <div class="toolbar">
             <b>时长申诉</b>
           </div>
-          <el-table :data="appeals" size="small" style="margin-top:6px">
+          <el-table :data="appeals" size="small" style="margin-top:8px">
             <el-table-column label="志愿者" width="150">
               <template #default="{ row }">
                 {{ row.name }}<span class="dim mono"> {{ row.student_id }}</span>
@@ -656,7 +650,6 @@
 
         <!-- 核准之后这一段就是这场活动的账本状态 -->
         <el-alert v-if="hoursState.locked_at" type="success" show-icon :closable="false"
-                  style="margin:10px 0"
                   :title="`时长已于 ${fmtDT(hoursState.locked_at)} 锁定，活动已完成`">
           <div style="line-height:1.8">
             已通过校青协审核，时长不再改动。确需更正请点「申请解锁」，同样由校青协审批
@@ -670,7 +663,7 @@
           </div>
         </el-alert>
         <el-alert v-else-if="hoursState.lock_pending" type="warning" show-icon
-                  :closable="false" style="margin:10px 0"
+                  :closable="false"
                   title="时长已提交校青协审核，审核期间本页只读">
           <div style="line-height:1.8">
             通过即锁定并把活动标记为「已完成」；驳回会退回给你，改完重新核准再提交一次。
@@ -680,7 +673,7 @@
           </div>
         </el-alert>
         <el-alert v-else-if="hoursState.approved_at" type="warning" show-icon
-                  :closable="false" style="margin:10px 0"
+                  :closable="false"
                   :title="`已核准，申诉截止 ${fmtDT(hoursState.appeal_deadline)}`">
           <div style="line-height:1.8">
             志愿者已收到时长通知，将于截止前确认或提出申诉，超时未确认自动按「无误 + 志愿时长」处理。
@@ -695,13 +688,13 @@
             </template>
           </div>
         </el-alert>
-        <el-alert v-else type="info" show-icon :closable="false" style="margin:10px 0"
+        <el-alert v-else type="info" show-icon :closable="false"
                   title="时长未核准，志愿者无法查看确认"
                   description="先算好、核对完，再点「确认核准时长」，志愿者将收到时长通知" />
         <!-- 手机上这张表有八列，横滑着改时长没法用：改成卡片，
              时长输入框和明细放在卡片正文里，勾选走卡片自己的多选 -->
         <DataCards v-if="narrow && hours.length" :rows="hoursSorted"
-                   title-key="user.name" row-key="user.id" style="margin-top:10px"
+                   title-key="user.name" row-key="user.id" style="margin-top:12px"
                    :selectable="!hoursFrozen" @selection-change="onHoursSelect"
                    :fields="[{ key: 'user.student_id', label: '学号' },
                              { key: 'user.college', label: '学院' }]">
@@ -729,7 +722,7 @@
           </template>
         </DataCards>
         <div v-else-if="hours.length" class="scroll-x">
-        <el-table :data="hoursSorted" size="small" style="margin-top:10px;min-width:660px"
+        <el-table :data="hoursSorted" size="small" style="margin-top:12px;min-width:660px"
                   max-height="360" @selection-change="onHoursSelect">
           <el-table-column type="selection" width="40" :selectable="() => !hoursFrozen" />
           <el-table-column type="expand" width="30">
@@ -779,9 +772,9 @@
         </div>
 
         <!-- 手动添加时长 -->
-        <div class="section-title" style="margin-top:18px">手动添加时长（场外支援/补录/通勤等情况）</div>
+        <div class="section-title" style="margin-top:16px">手动添加时长（场外支援/补录/通勤等情况）</div>
         <el-card shadow="never">
-          <div class="toolbar" style="margin-bottom:8px;align-items:flex-start">
+          <div class="toolbar" style="align-items:flex-start">
             <el-select v-model="mh.userIds" multiple filterable collapse-tags
                        collapse-tags-tooltip placeholder="选择志愿者（可多选）"
                        :disabled="hoursFrozen" style="width:320px">
@@ -819,10 +812,10 @@
 
       <!-- ============ 管理者 ============ -->
       <el-tab-pane v-if="isPublic" label="签收情况" name="acks" lazy>
-        <div class="toolbar" style="margin-bottom:10px">
+        <div class="toolbar">
           <RefreshBar ref="ackRefresh" :load="loadBatches" />
         </div>
-        <div class="dim" style="margin-bottom:10px">
+        <div class="dim" style="margin-bottom:12px">
           只列要求签收的通知。签收 = 本人点过「我已知悉」。
         </div>
         <el-empty v-if="!ackBatches.length"
@@ -845,11 +838,11 @@
           </div>
           <el-progress :percentage="Math.round(b.acked / b.total * 100)"
                        :status="b.acked === b.total ? 'success' : undefined"
-                       style="margin-top:10px" />
-          <div v-if="b.pending.length" style="margin-top:10px">
+                       style="margin-top:12px" />
+          <div v-if="b.pending.length" style="margin-top:12px">
             <span class="dim">未签收：</span>
             <el-tag v-for="p in b.pending" :key="p.student_id" size="small"
-                    type="info" effect="plain" style="margin:2px 4px 2px 0">
+                    type="info" effect="plain" style="margin:4px 4px 4px 0">
               {{ p.name }}（{{ p.student_id }}）
             </el-tag>
           </div>
@@ -857,12 +850,12 @@
       </el-tab-pane>
 
       <el-tab-pane label="管理者" name="managers" lazy>
-        <el-alert type="info" :closable="false" style="margin-bottom:12px">
+        <el-alert type="info" :closable="false">
           一个活动可由多人共同管理：创建者自动成为管理者，管理者之间权限相同，
           管理者须为<b>活动发起方/青协</b>。
         </el-alert>
         <el-card shadow="never">
-          <div class="toolbar" style="margin-bottom:10px">
+          <div class="toolbar">
             <!-- 常加的就那几个人：会长团、部长、自己手下的骨干与成员。
                  名单里没有的直接敲学工号，同一个框都能用 -->
             <el-select v-model="newMgrSid" filterable allow-create default-first-option
@@ -945,9 +938,9 @@
                             :timestamp="fmtDT(l.created_at)"
                             :type="l.action === 'delete' ? 'danger' : 'primary'">
             <b>{{ l.actor_name }}</b>
-            <el-tag size="small" effect="plain" style="margin:0 6px">{{ l.action_label }}</el-tag>
+            <el-tag size="small" effect="plain" style="margin:0 8px">{{ l.action_label }}</el-tag>
             <span>{{ l.summary }}</span>
-            <div v-for="(ch, i) in l.changes" :key="i" class="dim" style="margin-top:2px">
+            <div v-for="(ch, i) in l.changes" :key="i" class="dim" style="margin-top:4px">
               {{ ch.label }}：{{ ch.old || '空' }} → <b style="color:var(--el-color-primary)">{{ ch.new || '空' }}</b>
             </div>
           </el-timeline-item>
@@ -979,10 +972,9 @@
             </template>
           </div>
           <!-- 改成 assign 会作废学生已经选好的岗位，先把代价摆出来 -->
-          <el-alert v-if="modeSwitchCost" type="warning" show-icon :closable="false"
-                    style="margin-top:8px" :title="modeSwitchCost" />
+          <el-alert v-if="modeSwitchCost" type="warning" show-icon :closable="false" :title="modeSwitchCost" />
         </el-form-item>
-        <el-alert type="info" :closable="false" style="margin-bottom:14px">
+        <el-alert type="info" :closable="false">
           这里只填本场次的<b>服务时间</b>。培训、彩排等在场次建好后用「添加培训/彩排」单独添加。
         </el-alert>
         <el-form-item label="开始时间" required>
@@ -999,7 +991,7 @@
           </el-form-item>
           <el-form-item label="候补名额">
             <el-input-number v-model="groupForm.waitlist_quota" :min="0" />
-            <span class="dim" style="margin-left:10px">0 = 不设候补</span>
+            <span class="dim" style="margin-left:12px">0 = 不设候补</span>
           </el-form-item>
         </template>
         <el-form-item label="条件要求">
@@ -1025,7 +1017,7 @@
     <!-- 培训 / 彩排（附属场次） -->
     <el-dialog v-model="attDlg.visible"
                :title="(attDlg.editing ? '编辑' : '添加') + '培训 / 彩排'" width="560">
-      <p class="dim" style="margin-top:0">
+      <p class="dim">
         挂在「{{ attDlg.parent?.name }}」下面：学生报该场次时连带报上、退选时连带退。
         自己不设名额，但有独立的签到码与时长。
       </p>
@@ -1077,7 +1069,7 @@
 
     <!-- 核准时长：定下账、通知本人，并给一段申诉时间 -->
     <el-dialog v-model="approveDlg.visible" title="确认核准时长" width="480">
-      <p class="dim" style="margin-top:0;line-height:1.8">
+      <p class="dim" style="line-height:1.8">
         核准之后，志愿者将会收到确认通知，截止前确认无误或提出申诉。截止后若无申诉，系统自动锁定并把活动标记为「已完成」。
       </p>
       <el-form label-width="100px">
@@ -1135,7 +1127,7 @@
 
     <!-- 恢复报名：必须重设截止时间，否则定时任务下一分钟又给截了 -->
     <el-dialog v-model="reopenDlg.visible" title="恢复报名" width="460">
-      <p class="dim" style="margin-top:0;line-height:1.8">
+      <p class="dim" style="line-height:1.8">
         重新开放报名，并延后报名截止时间。<b>必须填新的截止时间</b>。
       </p>
       <el-form label-width="110px">
@@ -1153,7 +1145,7 @@
     <!-- 处理时长申诉 -->
     <el-dialog v-model="resolveDlg.visible"
                :title="resolveDlg.accept ? '采纳申诉' : '不采纳申诉'" width="480">
-      <p class="dim" style="margin-top:0;line-height:1.8">
+      <p class="dim" style="line-height:1.8">
         {{ resolveDlg.row?.name }}：{{ resolveDlg.row?.old_hours }}h →
         申报 {{ resolveDlg.row?.claimed_hours }}h<br />
         理由：{{ resolveDlg.row?.reason }}
@@ -1161,7 +1153,7 @@
       <el-form label-width="88px">
         <el-form-item v-if="resolveDlg.accept" label="改为">
           <el-input-number v-model="resolveDlg.hours" :min="0.5" :max="24" :step="0.5" />
-          <span class="dim" style="margin-left:10px">小时</span>
+          <span class="dim" style="margin-left:12px">小时</span>
         </el-form-item>
         <el-form-item label="答复">
           <el-input v-model="resolveDlg.reply" type="textarea" :rows="2" maxlength="500"
@@ -1182,7 +1174,7 @@
       <div class="recruit">
         <div class="recruit-text">
           <el-input v-model="posterDlg.text" type="textarea" :rows="16" readonly />
-          <el-button type="primary" style="margin-top:10px" @click="copyPoster">
+          <el-button type="primary" style="margin-top:12px" @click="copyPoster">
             复制文案
           </el-button>
         </div>
@@ -1211,7 +1203,7 @@
         </el-form-item>
         <el-form-item label="候补名额">
           <el-input-number v-model="stationForm.waitlist_quota" :min="0" />
-          <span class="dim" style="margin-left:10px">满员后可排队的人数，0 = 不设候补</span>
+          <span class="dim" style="margin-left:12px">满员后可排队的人数，0 = 不设候补</span>
         </el-form-item>
         <el-form-item label="岗位组">
           <el-input v-model="stationForm.group_name" style="width:220px"
@@ -1225,7 +1217,7 @@
             <el-radio value="own">志愿者自备</el-radio>
           </el-radio-group>
           <el-input v-if="stationForm.attire !== 'none'" v-model="stationForm.attire_note"
-                    style="margin-top:6px"
+                    style="margin-top:8px"
                     :placeholder="stationForm.attire === 'issued'
                       ? '领取/归还方式（必填）：如 活动前一天 8:00 在 学活124 领取'
                       : '服装备注（必填）：如 白色上衣、深色长裤、运动鞋'" />
@@ -1234,7 +1226,7 @@
         <el-form-item label="报酬方式">
           <el-checkbox v-model="stationForm.pay_optional">本岗位可选劳务</el-checkbox>
           <el-input v-if="stationForm.pay_optional" v-model="stationForm.pay_note"
-                    style="margin-top:6px"
+                    style="margin-top:8px"
                     placeholder="劳务备注（必填）：如 60元/小时，活动后一周内发放" />
           <div class="dim">按需勾选。若勾选，志愿者确认时长时选择报酬方式，劳务与时长二选一</div>
         </el-form-item>
@@ -1279,7 +1271,7 @@
 
     <!-- 岗位批量复制到其它场次 -->
     <el-dialog v-model="copyPosDlg.visible" title="复制岗位到其它场次" width="520">
-      <p class="dim" style="margin-top:0">
+      <p class="dim">
         从「{{ copyPosDlg.source?.name }}」复制岗位，含名额、条件、组长与材料；同名的跳过。
       </p>
       <el-form label-width="88px">
@@ -2468,15 +2460,15 @@ function toISO(v) {
 
 <style scoped>
 /* 手机版时长卡片里的一行：标签 + 控件 */
-.mh-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.mh-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 /* 名单标题行：左边标题，右边一排动作；窄屏各占一行 */
-.roster-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.roster-actions { display: inline-flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.roster-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.roster-actions { display: inline-flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 /* 两个条件选择框并排占满一行；窄屏自动叠成两行 */
 .two-col { display: flex; gap: 8px; width: 100%; flex-wrap: wrap; }
 .two-col > * { flex: 1 1 180px; min-width: 0; }
 /* 招募弹窗：宽屏文案与二维码并排，窄屏竖排 */
-.recruit { display: flex; gap: 18px; align-items: flex-start; }
+.recruit { display: flex; gap: 16px; align-items: flex-start; }
 .recruit-text { flex: 1; min-width: 0; }
 .recruit-qr { width: 210px; flex-shrink: 0; text-align: center; }
 .recruit-qr img { border: 1px solid #eceef1; border-radius: 8px; }
@@ -2487,7 +2479,7 @@ function toISO(v) {
 
 /* 页头：宽屏一行排开，窄屏由 styles.css 的媒体查询拆成多行 */
 .hd-title { display: inline-flex; align-items: center; gap: 8px; vertical-align: middle; }
-.hd-meta { display: inline; margin-left: 10px; }
+.hd-meta { display: inline; margin-left: 12px; }
 @media (max-width: 860px) {
   .hd-title { display: flex; flex-wrap: wrap; font-size: 16px; }
   .hd-meta { display: block; margin: 4px 0 0; }
@@ -2495,13 +2487,12 @@ function toISO(v) {
 
 .needs-positions { border-color: var(--el-color-danger) !important; }
 .group-card { border:1px solid #eceef1; border-radius:12px; padding:12px 14px; margin-bottom:12px; background:#fff; }
-.g-head { display:flex; gap:12px; align-items:center; margin-bottom:6px; font-size:13.5px; flex-wrap:wrap;}
-.toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.g-head { display:flex; gap:12px; align-items:center; margin-bottom:8px; font-size:13.5px; flex-wrap:wrap;}
 .wl-card { margin-bottom:12px; border-radius:12px; }
-.wl-row { display:flex; gap:6px; align-items:center; padding:3px 0; font-size:13px; }
+.wl-row { display:flex; gap:8px; align-items:center; padding:3px 0; font-size:13px; }
 button.dashed { border-style:dashed; }
 .contacts-box { width: 100%; }
-.contact-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
+.contact-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
 .qr-preview { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .qr-preview img { max-width: 160px; max-height: 160px; border-radius: 8px; border: 1px solid #e4e7ed; }
 </style>

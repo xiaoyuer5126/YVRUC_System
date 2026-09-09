@@ -144,20 +144,20 @@ onMounted(load)
 </script>
 
 <style scoped>
-.hero { margin-bottom:14px; }
+.hero { margin-bottom:12px; }
 .hero h2 { margin:0; }
-.filters { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
-.pager { margin-top:18px; justify-content:center; }
-.hero p { margin:6px 0 0; color:#909399; font-size:13px; line-height:1.7; }
+.filters { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
+.pager { margin-top:16px; justify-content:center; }
+.hero p { margin:8px 0 0; color:#909399; font-size:13px; line-height:1.7; }
 .square-card { padding:16px 18px; }
 .card-top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .card-title {
   font-size:16px; font-weight:600; color:#1f2328; line-height:1.4;
-  margin:10px 0 4px;
+  margin:12px 0 4px;
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
 }
-.urgent { margin-right:6px; vertical-align:2px; font-weight:600; }
-.countdown-row { display:inline-flex; align-items:center; gap:6px; }
+.urgent { margin-right:8px; vertical-align:2px; font-weight:600; }
+.countdown-row { display:inline-flex; align-items:center; gap:8px; }
 .countdown-row :deep(.el-statistic__content) {
   font-size:14px; font-weight:600; color:var(--el-color-primary);
 }

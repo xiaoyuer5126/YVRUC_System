@@ -3,8 +3,8 @@
     <el-card class="scan-card" v-loading="loading">
       <template v-if="task">
         <div class="ok-icon" v-if="done">✓</div>
-        <h2 style="margin:6px 0 2px">{{ task.activity_title }}</h2>
-        <p class="dim" style="margin:0 0 14px">{{ task.shift_name }} · {{ task.group_time }}</p>
+        <h2 style="margin:8px 0 4px">{{ task.activity_title }}</h2>
+        <p class="dim" style="margin:0 0 12px">{{ task.shift_name }} · {{ task.group_time }}</p>
 
         <template v-if="!done">
           <el-descriptions :column="1" border size="small">
@@ -27,14 +27,14 @@
           </el-descriptions>
 
           <el-button :type="task.checked_in ? 'warning' : 'primary'" size="large"
-                     style="width:100%;margin-top:18px"
+                     style="width:100%;margin-top:16px"
                      :disabled="task.state !== 'active' || !task.enrolled"
                      :loading="submitting" @click="doCheckin">
             <template v-if="!task.enrolled">您不是本场次志愿者，请联系负责人</template>
             <template v-else-if="task.checked_in && !task.checked_out">签退离岗</template>
             <template v-else>签到到岗</template>
           </el-button>
-          <p v-if="task.checked_in && !task.checked_out" class="dim" style="margin:10px 0 0">
+          <p v-if="task.checked_in && !task.checked_out" class="dim" style="margin:12px 0 0">
             场次结束 2 小时内请完成签退，超时未签退将按场次结束时间计算时长
           </p>
         </template>

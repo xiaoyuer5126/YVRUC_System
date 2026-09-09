@@ -1,7 +1,7 @@
 <!-- 在活动名单里给某位志愿者登记一条违规。只记录，不产生任何后果。 -->
 <template>
   <el-dialog v-model="visible" title="登记违规" width="480">
-    <p style="margin-top:0">
+    <p>
       对象：<b>{{ row?.name }}</b><span class="dim">（{{ row?.student_id }}）</span>
     </p>
     <el-form label-width="88px">

@@ -22,10 +22,10 @@
         </el-input>
         <el-input ref="passwordInput" v-model="password" size="large" type="password"
                   placeholder="内测口令" show-password clearable
-                  style="margin-top:10px" @keyup.enter="doLogin">
+                  style="margin-top:12px" @keyup.enter="doLogin">
           <template #prefix><el-icon><Lock /></el-icon></template>
         </el-input>
-        <el-button type="primary" size="large" style="width:100%;margin-top:14px"
+        <el-button type="primary" size="large" style="width:100%;margin-top:12px"
                    :loading="loading" @click="doLogin">
           登录
         </el-button>
@@ -103,14 +103,14 @@ async function doLogin() {
     #f5f6f8;
 }
 .login-card { width: 430px; border-radius: 16px; padding: 8px 10px 4px; }
-.head { text-align: center; margin-bottom: 22px; }
-.head h2 { margin: 10px 0 4px; font-size: 19px; }
+.head { text-align: center; margin-bottom: 24px; }
+.head h2 { margin: 12px 0 4px; font-size: 19px; }
 .logo {
   width: 54px; height: 54px; margin: 0 auto; border-radius: 14px;
   background: var(--ruc-red); color: #fff; font-size: 30px; font-family: serif;
   display: flex; align-items: center; justify-content: center;
 }
-.quick { display: flex; flex-wrap: wrap; gap: 6px; }
+.quick { display: flex; flex-wrap: wrap; gap: 8px; }
 .quick .el-button { margin-left: 0 !important; }
 .foot { text-align: center; line-height: 1.8; margin-top: 16px; }
 </style>

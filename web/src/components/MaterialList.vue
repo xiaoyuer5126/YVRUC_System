@@ -38,10 +38,10 @@ function sizeText(bytes) {
 </script>
 
 <style scoped>
-.materials { margin-top: 10px; }
-.materials-title { font-size: 12.5px; color: #909399; margin-bottom: 6px; }
+.materials { margin-top: 12px; }
+.materials-title { font-size: 12.5px; color: #909399; margin-bottom: 8px; }
 .material {
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; gap: 8px;
   padding: 5px 10px; margin: 0 8px 8px 0;
   border: 1px solid var(--el-border-color); border-radius: 6px;
   font-size: 13px; color: var(--el-text-color-primary); text-decoration: none;

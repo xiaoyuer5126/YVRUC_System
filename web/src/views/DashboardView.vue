@@ -1,7 +1,7 @@
 <template>
   <div class="page page-wide">
-    <h2 style="margin-top:0">数据总览</h2>
-    <el-row :gutter="14" v-if="d">
+    <h2>数据总览</h2>
+    <el-row :gutter="16" v-if="d">
       <el-col :span="3" v-for="c in cards" :key="c.label">
         <el-card shadow="never" class="kpi">
           <div class="v" :style="{ color: c.color }">{{ c.value }}</div>
@@ -10,7 +10,7 @@
       </el-col>
     </el-row>
 
-    <el-row :gutter="14" style="margin-top:16px" v-if="d">
+    <el-row :gutter="16" style="margin-top:16px" v-if="d">
       <el-col :span="15">
         <el-card shadow="never"><template #header><b>近14天报名趋势</b></template>
           <div ref="trendEl" style="height:260px"></div>
@@ -22,7 +22,7 @@
         </el-card>
       </el-col>
     </el-row>
-    <el-row :gutter="14" style="margin-top:16px" v-if="d">
+    <el-row :gutter="16" style="margin-top:16px" v-if="d">
       <el-col :span="24">
         <el-card shadow="never">
           <template #header><b>最近操作留痕</b>

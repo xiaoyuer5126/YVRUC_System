@@ -9,7 +9,7 @@
                    :label="`${g.name}（${g.time_text}）`">
           <span>{{ g.name }}</span>
           <el-tag v-if="g.kind !== 'service'" size="small" effect="plain"
-                  style="margin-left:6px">{{ g.kind_label }}</el-tag>
+                  style="margin-left:8px">{{ g.kind_label }}</el-tag>
           <span class="dim" style="margin-left:8px">{{ g.time_text }}</span>
         </el-option>
       </el-select>
@@ -109,7 +109,7 @@
           {{ board.kind_label }}
         </el-tag>
       </div>
-      <el-row :gutter="14">
+      <el-row :gutter="16">
         <el-col :span="6">
           <el-card shadow="never" class="big-card">
             <div class="ratio"><b>{{ board.checked }}</b> / {{ board.expected }}</div>
@@ -226,7 +226,7 @@
                        :label="`${g.name}（${g.time_text}）`">
               <span>{{ g.name }}</span>
               <el-tag v-if="g.kind !== 'service'" size="small" effect="plain"
-                      style="margin-left:6px">{{ g.kind_label }}</el-tag>
+                      style="margin-left:8px">{{ g.kind_label }}</el-tag>
               <span class="dim" style="margin-left:8px">{{ g.time_text }}</span>
             </el-option>
           </el-select>
@@ -272,7 +272,7 @@
         <!-- 必须带 base：不传的话码里编的是相对路径，相机只会当一行字显示 -->
         <img :src="`/api/checkin/qr.svg?token=${qrTask.token}&base=${qrBase()}&t=${Date.now()}`"
              width="280" height="280" alt="签到二维码" />
-        <div class="mono" style="font-size:22px;letter-spacing:4px;margin-top:6px">{{ qrTask.token }}</div>
+        <div class="mono" style="font-size:22px;letter-spacing:4px;margin-top:8px">{{ qrTask.token }}</div>
         <!-- 这张码是哪一场、哪个岗位的：打印出来贴到现场，光看六位码分不出 -->
         <div class="qr-who">
           <b>{{ qrTask.shift_name }}</b>
@@ -287,7 +287,7 @@
         </div>
         <div class="dim">可签 {{ fmtDT(qrTask.valid_from) }} ~ {{ fmtDT(qrTask.valid_to) }}</div>
         <div class="dim">首次扫码签到，再次扫码签退</div>
-        <div style="margin-top:10px">
+        <div style="margin-top:12px">
           <el-input size="small" readonly :model-value="scanUrl">
             <template #append><el-button @click="copyLink">复制</el-button></template>
           </el-input>
@@ -298,7 +298,7 @@
 
     <!-- 补发签到提醒：先选范围再发，别在下拉里盲点 -->
     <el-dialog v-model="reminderDlg" title="补发签到提醒" width="460">
-      <p class="dim" style="margin-top:0;line-height:1.8">
+      <p class="dim" style="line-height:1.8">
         只发给<b>未签到</b>的正式志愿者。场次开始前 30 分钟系统已自动发送过一次。
       </p>
       <el-form label-width="72px">
@@ -566,14 +566,13 @@ function setWindowEnd(v) { form.value.range = [form.value.range[0] || '', v || '
 /* 起止两个选择器并排；窄屏自动叠成两行 */
 .two-col { display: flex; gap: 8px; width: 100%; flex-wrap: wrap; }
 .two-col > * { flex: 1 1 180px; min-width: 0; }
-.toolbar { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
 .big-card { text-align:center; border-radius:12px; }
 .ratio b { font-size:30px; color: var(--ruc-red); }
 .st-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap:12px; }
 .manual-bar { display:flex; gap:8px; margin-bottom:8px; align-items:center; flex-wrap:wrap; }
 /* 二维码下面那行「这是哪一场、哪个岗位」 */
-.qr-who { display:flex; justify-content:center; align-items:center; gap:6px;
-          flex-wrap:wrap; margin:6px 0 4px; font-size:14px; }
+.qr-who { display:flex; justify-content:center; align-items:center; gap:8px;
+          flex-wrap:wrap; margin:8px 0 4px; font-size:14px; }
 .qr-who .sep { color:#c0c4cc; }
 :deep(tr.row-wait td.el-table__cell) { color:#9c9c9c; }
 </style>

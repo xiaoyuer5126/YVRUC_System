@@ -10,12 +10,12 @@
       <el-button v-if="editable" type="primary" size="small" :loading="saving"
                  style="margin-left:auto" @click="save">保存报名问卷</el-button>
     </div>
-    <el-alert v-if="!editable" type="info" :closable="false" style="margin-bottom:10px"
+    <el-alert v-if="!editable" type="info" :closable="false"
               title="活动已公开，报名问卷不能再改" />
     <ol v-if="!editable && questions.length" class="fb-readonly">
       <li v-for="q in questions" :key="q.id">
         <b>{{ q.title }}</b>
-        <el-tag size="small" effect="plain" style="margin:0 6px">{{ KINDS[q.kind] }}</el-tag>
+        <el-tag size="small" effect="plain" style="margin:0 8px">{{ KINDS[q.kind] }}</el-tag>
         <el-tag v-if="q.required" size="small" type="warning" effect="plain">必填</el-tag>
         <div v-if="q.options?.length" class="dim">选项：{{ q.options.join(' / ') }}</div>
         <div v-if="q.applies_to_positions?.length" class="dim">
@@ -68,7 +68,7 @@
       </div>
     </div>
     <el-button v-if="editable" plain size="small" @click="add">添加题目</el-button>
-    <div v-if="editable" class="dim" style="margin-top:6px">
+    <div v-if="editable" class="dim" style="margin-top:8px">
       适用岗位留空 = 人人都答；显示条件只能挂在前面的选择题上，新增的题目保存后才能作为条件。
     </div>
     <el-empty v-else-if="!questions.length" description="没有设置题目" :image-size="40" />
@@ -154,7 +154,7 @@ async function save() {
 </script>
 
 <style scoped>
-.fb-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.fb-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .fb-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
           padding: 8px 0; border-bottom: 1px dashed #eceef1; }
 .fb-no { width: 22px; color: #909399; }

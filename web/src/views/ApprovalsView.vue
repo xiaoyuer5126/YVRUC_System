@@ -1,14 +1,14 @@
 <template>
   <div class="page">
     <h2>活动审批</h2>
-    <el-alert type="info" :closable="false" style="margin-bottom:12px">
+    <el-alert type="info" :closable="false">
       驳回与转交均须写明理由，相关各方都会收到通知。
     </el-alert>
 
     <!-- 时长的两道审批：锁定（批的是这场活动的账能不能结）与解锁（结完还要改）。
          批的都是「能不能」，改成多少仍由管理者填 -->
     <template v-if="hoursReqs.length">
-      <div class="section-title" style="margin-top:0">时长审批</div>
+      <div class="section-title">时长审批</div>
       <el-card v-for="u in hoursReqs" :key="u.id" shadow="never" class="item">
         <div class="head">
           <b class="title" @click="$router.push('/manage/' + u.activity_id + '?tab=hours')">
@@ -27,7 +27,7 @@
         <div class="submit-note">
           <b>说明</b><span>{{ u.reason }}</span>
         </div>
-        <div class="dim" style="margin-top:6px">
+        <div class="dim" style="margin-top:8px">
           {{ u.requested_by }} 提交于 {{ fmtDT(u.created_at) }} ·
           {{ u.kind === 'lock' ? '通过后锁定时长、活动标记已完成；驳回退回管理者修改'
                                : '通过后解锁，管理者改完须重新核准' }}
@@ -66,7 +66,7 @@
         <b>提交说明</b>
         <span :class="{ dim: !a.submit_note }">{{ a.submit_note || '提交时未填写' }}</span>
       </div>
-      <div class="dim" style="margin-top:6px">
+      <div class="dim" style="margin-top:8px">
         提交于 {{ fmtDT(a.submitted_at) }} ·
         <el-link type="primary" underline="never"
                  @click="$router.push('/activity/' + a.id)">查看完整安排</el-link>
@@ -75,11 +75,11 @@
 
     <!-- 部门与部长：换届、增设或撤销部门时管理员在这里改 -->
     <template v-if="isAdmin">
-      <div class="section-title" style="margin-top:20px">
+      <div class="section-title" style="margin-top:16px">
         部门与部长
         <el-button size="small" type="primary" plain @click="openDept(null)">新增部门</el-button>
       </div>
-      <el-alert type="info" :closable="false" style="margin-bottom:10px">
+      <el-alert type="info" :closable="false">
         活动由归口部门的部长审批，<b>没有部长的部门无法被选为归口部门</b>，
         换届后请及时调整。会长团可以接管任何一条审批。
       </el-alert>
@@ -129,7 +129,7 @@
 
     <el-dialog v-model="dlg.visible" :title="dlg.approve ? '通过审批' : '驳回'"
                width="480">
-      <p class="dim" style="margin-top:0">{{ dlg.row?.title }}</p>
+      <p class="dim">{{ dlg.row?.title }}</p>
       <el-input v-model="dlg.comment" type="textarea" :rows="3" maxlength="500"
                 show-word-limit
                 :placeholder="dlg.approve ? '审批意见（选填），会发给发起方'
@@ -144,7 +144,7 @@
     </el-dialog>
 
     <el-dialog v-model="tr.visible" title="转交审批" width="480">
-      <p class="dim" style="margin-top:0">{{ tr.row?.title }}</p>
+      <p class="dim">{{ tr.row?.title }}</p>
       <el-form label-width="88px">
         <el-form-item label="转交给">
           <el-select v-model="tr.deptId" placeholder="选择部门（活动归口随之改为该部门）"

@@ -2,7 +2,7 @@
 <template>
   <div class="page">
     <h2>角色管理</h2>
-    <el-alert type="warning" :closable="false" style="margin-bottom:12px">
+    <el-alert type="warning" :closable="false">
       <template v-if="coreOnly">
         你是<b>{{ myDeptName }}</b>骨干：此处列出本部门成员，点「归我管理」将成员归到自己名下，
         其可见范围与你一致。其他身份与层级请联系部长。
@@ -90,7 +90,7 @@
     </el-table>
 
     <el-dialog v-model="dlg.visible" title="调整身份" width="480">
-      <p style="margin-top:0">
+      <p>
         <b>{{ dlg.row?.name }}</b>
         <span class="dim">（{{ dlg.row?.student_id }}·{{ dlg.row?.college }}）</span>
       </p>
@@ -237,5 +237,4 @@ async function save() {
 </script>
 
 <style scoped>
-.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 </style>

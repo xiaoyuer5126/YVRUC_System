@@ -1,6 +1,6 @@
 <template>
   <div class="page page-wide">
-    <h2 style="margin-top:0">志愿者档案</h2>
+    <h2>志愿者档案</h2>
     <el-card shadow="never">
       <div class="toolbar">
         <el-input v-model="q" placeholder="姓名 / 学号" clearable style="width:220px"
@@ -91,6 +91,5 @@ function openArchive(row) {
 </script>
 
 <style scoped>
-.toolbar { display:flex; gap:12px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
 .toolbar .dim { flex: 1 1 100%; }   /* 说明文字独占一行，别把工具条撑宽 */
 </style>

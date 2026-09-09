@@ -121,7 +121,10 @@ rucva_system/
 ├── .env.example                环境变量模板（口令、演示登录、隧道令牌）
 ├── pytest.ini / requirements-dev.txt
 ├── tests/                      回归测试：登录会话、报名闸门与并发、管理端权限与留痕、签到闭环
-├── scripts/shot.mjs            CDP 直连 Edge 的截图/点击工具（Node≥22，无第三方依赖）
+├── scripts/                    前端自检：vuecheck.py（模板里用到却没定义的标识符）、
+│                               viewcheck.mjs（各视口渲染与横向溢出）、
+│                               spacecheck.py（间距是否还在同一套尺度上）、
+│                               shot.mjs（CDP 直连 Edge 的截图/点击，Node≥22）
 ├── backend/
 │   ├── Dockerfile              base → test（跑 pytest）/ runtime（跑 uvicorn）两个 target
 │   ├── main.py                 FastAPI 入口：API + SPA 托管 + 定时任务协程

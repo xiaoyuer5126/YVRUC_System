@@ -1,11 +1,10 @@
 <template>
   <div class="page page-narrow">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h2 style="margin:0">消息通知</h2>
       <el-button size="small" @click="readAll" :disabled="!unread">全部已读</el-button>
     </div>
     <el-alert v-if="pendingAck" type="warning" :closable="false" show-icon
-              style="margin-bottom:12px"
               :title="`有 ${pendingAck} 条通知需要您签收`" />
     <el-card v-for="n in items" :key="n.id" shadow="never" class="msg"
              :class="{ unread: !n.read, ack: n.need_ack && !n.acked_at,
@@ -101,12 +100,12 @@ async function ack(n) {
 
 <style scoped>
 .page-narrow { max-width: 760px; }
-.msg { margin-bottom: 10px; border-radius: 12px; }
+.msg { margin-bottom: 12px; border-radius: 12px; }
 .msg.unread { border-left: 3px solid var(--el-color-primary); }
 .msg.ack { border-left: 3px solid var(--el-color-danger); }
 .ack-bar {
-  display: flex; align-items: center; gap: 10px;
-  margin-top: 10px; padding-top: 10px;
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 12px; padding-top: 10px;
   border-top: 1px dashed var(--el-border-color);
 }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

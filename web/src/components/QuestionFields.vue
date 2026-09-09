@@ -86,5 +86,5 @@ defineExpose({ collect })
 </script>
 
 <style scoped>
-.file-row { display: flex; align-items: center; gap: 10px; }
+.file-row { display: flex; align-items: center; gap: 12px; }
 </style>

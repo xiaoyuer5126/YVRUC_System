@@ -158,5 +158,5 @@ function sizeText(bytes) {
 .row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; }
 .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .size { color: #a8abb2; font-size: 13px; }
-.actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 </style>

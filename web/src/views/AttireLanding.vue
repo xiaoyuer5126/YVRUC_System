@@ -3,8 +3,8 @@
     <el-card class="scan-card" v-loading="loading">
       <template v-if="task">
         <div class="ok-icon" v-if="done">✓</div>
-        <h2 style="margin:6px 0 2px">{{ task.activity_title }}</h2>
-        <p class="dim" style="margin:0 0 14px">志愿服装 · {{ task.action_label }}码</p>
+        <h2 style="margin:8px 0 4px">{{ task.activity_title }}</h2>
+        <p class="dim" style="margin:0 0 12px">志愿服装 · {{ task.action_label }}码</p>
 
         <template v-if="!done">
           <el-descriptions :column="1" border size="small">
@@ -17,7 +17,7 @@
           </el-descriptions>
 
           <el-button :type="task.action === 'take' ? 'primary' : 'warning'" size="large"
-                     style="width:100%;margin-top:18px"
+                     style="width:100%;margin-top:16px"
                      :disabled="!canAct" :loading="submitting" @click="doScan">
             {{ actionText }}
           </el-button>

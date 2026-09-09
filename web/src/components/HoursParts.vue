@@ -16,7 +16,7 @@ defineProps({ parts: { type: Array, default: () => [] } })
 </script>
 
 <style scoped>
-.parts { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
-.part { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; line-height: 1.7; }
+.parts { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.part { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; line-height: 1.7; }
 .part b { color: var(--el-color-primary); }
 </style>

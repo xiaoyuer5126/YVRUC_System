@@ -19,14 +19,14 @@
       <span class="dim">领取与归还各一个码，现场也可手动登记</span>
     </div>
 
-    <el-row :gutter="14" style="margin-bottom:12px">
+    <el-row :gutter="16" style="margin-bottom:12px">
       <el-col :span="6"><el-card shadow="never" class="num"><b>{{ data?.expected || 0 }}</b><div class="dim">应领</div></el-card></el-col>
       <el-col :span="6"><el-card shadow="never" class="num"><b>{{ (data?.taken || 0) + (data?.returned || 0) }}</b><div class="dim">已领</div></el-card></el-col>
       <el-col :span="6"><el-card shadow="never" class="num"><b>{{ data?.returned || 0 }}</b><div class="dim">已归还</div></el-card></el-col>
       <el-col :span="6"><el-card shadow="never" class="num warn"><b>{{ data?.outstanding || 0 }}</b><div class="dim">未归还</div></el-card></el-col>
     </el-row>
 
-    <div class="toolbar" style="margin-bottom:8px">
+    <div class="toolbar">
       <template v-if="selected.length">
         <span class="dim">已选 {{ selected.length }} 人：</span>
         <el-button size="small" type="primary" @click="batch('take')">登记领取</el-button>
@@ -72,7 +72,7 @@
 
     <el-dialog v-model="rm.visible" :title="rm.action === 'take' ? '提醒领取服装' : '提醒归还服装'"
                width="440">
-      <p class="dim" style="margin-top:0;line-height:1.8">
+      <p class="dim" style="line-height:1.8">
         {{ rm.action === 'take'
            ? `发给尚未领取服装的 ${data?.not_taken || 0} 位志愿者。`
            : `发给尚未归还服装的 ${data?.outstanding || 0} 位志愿者。` }}
@@ -92,7 +92,7 @@
              width="260" height="260" alt="服装二维码" />
         <div class="mono" style="font-size:22px;letter-spacing:4px">{{ qr.token }}</div>
         <div class="dim">请把这张码贴在{{ qr.label }}处，别和另一张弄混</div>
-        <div style="margin-top:10px">
+        <div style="margin-top:12px">
           <el-input size="small" readonly :model-value="scanUrl">
             <template #append><el-button @click="copyLink">复制</el-button></template>
           </el-input>
@@ -185,7 +185,6 @@ async function remind() {
 </script>
 
 <style scoped>
-.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .num { text-align: center; border-radius: 12px; }
 .num b { font-size: 26px; color: var(--ruc-red); }
 .num.warn b { color: var(--el-color-warning); }

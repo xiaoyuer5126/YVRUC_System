@@ -6,7 +6,7 @@
              :close-on-click-modal="false"
              :close-on-press-escape="!forced"
              :show-close="!forced">
-    <el-alert v-if="forced" type="warning" :closable="false" style="margin-bottom:14px"
+    <el-alert v-if="forced" type="warning" :closable="false"
               title="数智人大无法同步您的联系方式，请先补全以下信息" />
     <el-form label-width="82px">
       <el-form-item label="手机号" required>
@@ -116,7 +116,7 @@ async function save() {
 </script>
 
 <style scoped>
-.id-row { display: flex; align-items: center; gap: 10px; }
+.id-row { display: flex; align-items: center; gap: 12px; }
 .mono { font-family: ui-monospace, monospace; letter-spacing: .5px; }
-.filled { display: flex; align-items: center; gap: 10px; }
+.filled { display: flex; align-items: center; gap: 12px; }
 </style>
