@@ -375,3 +375,43 @@ def test_待审批的通知指向审批页(client, admin, db, draft):
                    Notification.title.like("待审批%"))
            .order_by(Notification.created_at.desc()).first())
     assert row is not None and row.data.get("route") == "approvals"
+
+
+def test_部门可以新增和删除(client, admin, db):
+    """换届之外还有增设与撤销：新部门建出来能选，空部门删掉就没了。"""
+    r = client.post("/api/staff/departments", headers=admin,
+                    json={"name": "测试新部门", "note": "临时"})
+    assert r.status_code == 200, r.text
+    dept_id = r.json()["id"]
+    rows = client.get("/api/staff/departments", headers=admin).json()
+    assert rows[-1]["name"] == "测试新部门"       # 排在最后
+    assert rows[-1]["has_head"] is False
+
+    assert client.post("/api/staff/departments", headers=admin,
+                       json={"name": "测试新部门"}).status_code == 409
+
+    assert client.delete(f"/api/staff/departments/{dept_id}",
+                         headers=admin).status_code == 200
+    names = [d["name"] for d in
+             client.get("/api/staff/departments", headers=admin).json()]
+    assert "测试新部门" not in names
+    # 删空之后不会被默认部门表重新灌回来
+    assert len(names) == 12
+
+
+def test_名下还有人或活动的部门不能删(client, admin, db, draft):
+    dept = _liaison(db)
+    r = client.delete(f"/api/staff/departments/{dept.id}", headers=admin)
+    assert r.status_code == 409 and "还有" in r.json()["detail"]
+
+    empty = client.post("/api/staff/departments", headers=admin,
+                        json={"name": "测试挂活动部门"}).json()["id"]
+    client.patch(f"/api/staff/departments/{empty}", headers=admin,
+                 json={"head_student_id": QINGXIE_HEAD})
+    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                json={"department_id": empty})
+    # 部长撤走，剩下的只有那场活动的归口
+    client.patch(f"/api/staff/departments/{_liaison(db).id}", headers=admin,
+                 json={"head_student_id": QINGXIE_HEAD})
+    r = client.delete(f"/api/staff/departments/{empty}", headers=admin)
+    assert r.status_code == 409 and "归口着 1 场活动" in r.json()["detail"]

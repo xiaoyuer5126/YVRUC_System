@@ -36,7 +36,11 @@ DEFAULT_DEPARTMENTS = [
 
 
 def ensure_departments(db: OrmSession) -> None:
-    """首次启动把 12 个部门建出来。已存在的不动，改过的名字也不覆盖。"""
+    """建库时把 12 个部门铺进去，由 seed 调用一次。
+
+    之后部门的增删改都在页面上做（会长团 / 管理员），所以这里不能在每次
+    读列表时兜底——真把某个部门删了，下次打开页面它又长回来。
+    """
     if db.query(Department).count():
         return
     for i, (name, note) in enumerate(DEFAULT_DEPARTMENTS):
@@ -94,7 +98,6 @@ def _notify(db: OrmSession, who: User | None, title: str, content: str,
 def list_departments(db: OrmSession = Depends(db_session),
                      user: User = Depends(require_manager)):
     """部门下拉。带上部长姓名，提交时看得见这条会交到谁手上。"""
-    ensure_departments(db)
     out = []
     for d in db.query(Department).order_by(Department.sort).all():
         head = _dept_head(db, d.id)
@@ -102,6 +105,53 @@ def list_departments(db: OrmSession = Depends(db_session),
                     "head_name": head.name if head else "",
                     "has_head": head is not None})
     return out
+
+
+class DeptCreateBody(BaseModel):
+    name: str
+    note: str = ""
+
+
+@router.post("/departments")
+def create_department(body: DeptCreateBody, db: OrmSession = Depends(db_session),
+                      user: User = Depends(require_council)):
+    """新增部门。部长另行指定——没有部长的部门不能被选为归口。"""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "请填写部门名称")
+    if db.query(Department).filter(Department.name == name).first():
+        raise HTTPException(409, f"已经有一个部门叫「{name}」")
+    last = db.query(Department).order_by(Department.sort.desc()).first()
+    d = Department(id=uid("dep"), name=name, note=body.note.strip(),
+                   sort=(last.sort + 1) if last else 0)
+    db.add(d)
+    audit_log(db, actor=user, action="create", target_type="department",
+              target_id=d.id, target_label=d.name, activity_id=None,
+              summary=f"新增部门「{d.name}」")
+    db.commit()
+    return {"id": d.id}
+
+
+@router.delete("/departments/{dept_id}")
+def delete_department(dept_id: str, db: OrmSession = Depends(db_session),
+                      user: User = Depends(require_council)):
+    """删除部门。名下还有人或还挂着活动的不给删——历史活动的归口不能指空。"""
+    d = db.get(Department, dept_id)
+    if d is None:
+        raise HTTPException(404, "部门不存在")
+    people = db.query(User).filter(User.department_id == d.id).count()
+    if people:
+        raise HTTPException(409, f"「{d.name}」名下还有 {people} 人，"
+                                 "请先在角色管理里把他们转到别的部门")
+    acts = db.query(Activity).filter(Activity.approval_dept_id == d.id).count()
+    if acts:
+        raise HTTPException(409, f"「{d.name}」归口着 {acts} 场活动，不能删除")
+    audit_log(db, actor=user, action="delete", target_type="department",
+              target_id=d.id, target_label=d.name, activity_id=None,
+              summary=f"删除部门「{d.name}」")
+    db.delete(d)
+    db.commit()
+    return {"ok": True}
 
 
 class DeptBody(BaseModel):

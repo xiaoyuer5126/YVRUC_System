@@ -73,9 +73,12 @@
       </div>
     </el-card>
 
-    <!-- 部门与部长：换届时管理员在这里改 -->
+    <!-- 部门与部长：换届、增设或撤销部门时管理员在这里改 -->
     <template v-if="isAdmin">
-      <div class="section-title" style="margin-top:20px">部门与部长</div>
+      <div class="section-title" style="margin-top:20px">
+        部门与部长
+        <el-button size="small" type="primary" plain @click="openDept(null)">新增部门</el-button>
+      </div>
       <el-alert type="info" :closable="false" style="margin-bottom:10px">
         活动由归口部门的部长审批，<b>没有部长的部门无法被选为归口部门</b>，
         换届后请及时调整。会长团可以接管任何一条审批。
@@ -89,21 +92,38 @@
             <el-tag v-else size="small" type="warning" effect="plain">未指定</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="110">
+        <el-table-column label="操作" width="140">
           <template #default="{ row }">
             <el-button size="small" link type="primary"
-                       @click="openHead(row)">指定部长</el-button>
+                       @click="openDept(row)">编辑</el-button>
+            <el-button size="small" link type="danger"
+                       @click="removeDept(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
     </template>
 
-    <el-dialog v-model="hd.visible" title="指定部长" width="420">
-      <p class="dim" style="margin-top:0">{{ hd.row?.name }}</p>
-      <el-input v-model="hd.studentId" placeholder="青协成员的学号，留空 = 清空部长" />
+    <el-dialog v-model="dd.visible" :title="dd.row ? '编辑部门' : '新增部门'" width="420">
+      <el-form label-position="top">
+        <el-form-item label="部门名称">
+          <el-input v-model="dd.name" placeholder="如：社区服务部" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="dd.note" placeholder="选填，显示在归口部门下拉里" />
+        </el-form-item>
+        <el-form-item v-if="dd.row" label="部长">
+          <el-input v-model="dd.studentId"
+                    :placeholder="dd.row.head_name
+                                  ? `现任 ${dd.row.head_name}，填新学号即换人，留空不动`
+                                  : '青协成员的学号，暂不指定可留空'" />
+        </el-form-item>
+      </el-form>
+      <p v-if="!dd.row" class="dim" style="margin:0">
+        新部门要先指定部长才能作为归口部门，建好后在这一行「编辑」里填。
+      </p>
       <template #footer>
-        <el-button @click="hd.visible = false">取消</el-button>
-        <el-button type="primary" :loading="hd.busy" @click="saveHead">保存</el-button>
+        <el-button @click="dd.visible = false">取消</el-button>
+        <el-button type="primary" :loading="dd.busy" @click="saveDept">保存</el-button>
       </template>
     </el-dialog>
 
@@ -163,25 +183,45 @@ const hoursReqs = ref([])
 const depts = ref([])
 const loading = ref(false)
 const dlg = ref({ visible: false, row: null, approve: true, comment: '', busy: false })
-const hd = ref({ visible: false, row: null, studentId: '', busy: false })
-// 部门与部长的维护：管理员或会长团
+// 部门的维护：管理员或会长团
+const dd = ref({ visible: false, row: null, name: '', note: '', studentId: '', busy: false })
 const isAdmin = computed(() =>
   auth.activeIdentity === 'admin'
   || (auth.activeIdentity === 'qingxie' && auth.user?.qingxie_post === 'council'))
 
-function openHead(row) {
-  hd.value = { visible: true, row, studentId: '', busy: false }
+function openDept(row) {
+  dd.value = { visible: true, row, name: row?.name || '', note: row?.note || '',
+               studentId: '', busy: false }
 }
 
-async function saveHead() {
-  hd.value.busy = true
+async function saveDept() {
+  const d = dd.value
+  if (!d.name.trim()) return ElMessage.warning('请填写部门名称')
+  d.busy = true
   try {
-    await api.patch(`/api/staff/departments/${hd.value.row.id}`,
-                    { head_student_id: hd.value.studentId.trim() })
+    if (d.row) {
+      // 部长这一格留空表示「不动」，清空部长请在角色管理里改这个人的层级
+      const body = { name: d.name.trim(), note: d.note.trim() }
+      if (d.studentId.trim()) body.head_student_id = d.studentId.trim()
+      await api.patch(`/api/staff/departments/${d.row.id}`, body)
+    } else {
+      await api.post('/api/staff/departments',
+                     { name: d.name.trim(), note: d.note.trim() })
+    }
     ElMessage.success('已保存')
-    hd.value.visible = false
+    d.visible = false
     load()
-  } finally { hd.value.busy = false }
+  } finally { d.busy = false }
+}
+
+async function removeDept(row) {
+  try {
+    await ElMessageBox.confirm(`确定删除「${row.name}」？名下还有人或还挂着活动时不能删。`,
+                               '删除部门', { type: 'warning' })
+  } catch { return }
+  await api.del(`/api/staff/departments/${row.id}`)
+  ElMessage.success('已删除')
+  load()
 }
 const tr = ref({ visible: false, row: null, deptId: '', studentId: '', reason: '', busy: false })
 

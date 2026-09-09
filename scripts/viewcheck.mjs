@@ -36,6 +36,7 @@ const PAGES = [
   ['admin', `/manage/${ACT}?tab=hours`, '时长管理', 150],
   ['admin', `/manage/${ACT}?tab=acks`, '签收情况', 100],
   ['admin', '/users', '志愿者档案', 200],
+  ['admin', '/approvals', '活动审批', 200],
   ['admin', '/audit', '审计日志', 200],
   ['admin', '/dashboard', '数据总览', 200],
   ['admin', '/roles', '角色管理', 200],
