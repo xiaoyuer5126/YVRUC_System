@@ -11,8 +11,6 @@
           <el-tag :type="statusType">{{ act.display_label }}</el-tag>
         </span>
       </template>
-      <!-- 名额是抢的：不刷新看到的剩余数可能已经不是现在的 -->
-      <template #extra><RefreshBar :load="load" /></template>
     </el-page-header>
 
     <el-row :gutter="18" style="margin-top:16px">
@@ -76,15 +74,18 @@
         <div v-if="screenedApplying" class="section-title">报名申请<span class="dim" style="font-weight:400;margin-left:8px">
           勾选意向场次并填写报名问卷，截止后由负责人筛选录取；
           场次与岗位见下方安排</span></div>
+        <!-- 名额是抢的：刷新按钮就放在名额上方，别让人翻回页头去找 -->
         <div v-else class="section-title">岗位安排<span class="dim" style="font-weight:400;margin-left:8px">
-          点击场次、岗位名称可查看详细安排</span></div>
+          点击场次、岗位名称可查看详细安排</span>
+          <RefreshBar :load="load" style="margin-left:auto" /></div>
 
         <!-- 报名后筛选：先是申请入口，下面照旧列场次与岗位——
              审批人要在同一页看完整安排，学生也要先知道自己在报什么 -->
         <ApplicationPanel v-if="screenedApplying" :act="act" @changed="load"
                           style="margin-bottom:14px" />
         <div v-if="screenedApplying" class="section-title">场次与岗位<span class="dim" style="font-weight:400;margin-left:8px">
-          仅供了解；录取后由负责人安排到具体岗位</span></div>
+          仅供了解；录取后由负责人安排到具体岗位</span>
+          <RefreshBar :load="load" style="margin-left:auto" /></div>
 
         <!-- 窄屏：场次与岗位改成竖排卡片。手机上选岗位是最要紧的动作，
              不能藏在表格的展开箭头后面，所以岗位直接铺开。 -->

@@ -12,7 +12,7 @@
                    @change="toggleAll">全选</el-checkbox>
       <span class="dim">已选 {{ picked.length }} / {{ rows.length }}</span>
     </div>
-    <div v-for="(row, i) in rows" :key="row[rowKey] || i" class="card"
+    <div v-for="(row, i) in rows" :key="keyOf(row) ?? i" class="card"
          :class="{ picked: isPicked(row) }">
       <div class="card-head">
         <el-checkbox v-if="selectable" :model-value="isPicked(row)"
@@ -49,6 +49,7 @@ const props = defineProps({
   /** [{ key, label, format?, hideEmpty? }]；key 支持 'user.name' 这种路径 */
   fields: { type: Array, default: () => [] },
   titleKey: { type: String, default: 'name' },
+  /** 行标识，多选靠它认人；与 fields 一样支持 'user.id' 这种路径 */
   rowKey: { type: String, default: 'id' },
   empty: { type: String, default: '暂无数据' },
   selectable: { type: Boolean, default: false },
@@ -57,7 +58,7 @@ const emit = defineEmits(['selection-change'])
 
 // 只存 key，不存行对象：刷新之后行是新对象，存对象会把勾选全弄丢
 const keys = ref([])   // vuecheck: script-only，模板只通过 isPicked/picked 读它
-const keyOf = row => row[props.rowKey]
+const keyOf = row => valueOf(row, props.rowKey)
 const picked = computed(() => props.rows.filter(r => keys.value.includes(keyOf(r))))
 const isPicked = row => keys.value.includes(keyOf(row))
 const allPicked = computed(
@@ -74,10 +75,15 @@ function toggleAll(on) {
 }
 // 行没了就把它的勾选一并丢掉，免得批量操作带上一个已经不在列表里的人
 watch(() => props.rows, rows => {
+  // row-key 取不到值时每一行都是 undefined，勾一个等于勾全部，而且看不出异样
+  // （「已选 8 / 8」像是正常的全选）。这种接错必须当场喊出来。
+  if (props.selectable && rows.some(r => keyOf(r) === undefined || keyOf(r) === null)) {
+    console.error(`DataCards：row-key「${props.rowKey}」在这批数据上取不到值，多选会失灵`)
+  }
   const live = new Set(rows.map(keyOf))
   const kept = keys.value.filter(k => live.has(k))
   if (kept.length !== keys.value.length) keys.value = kept
-})
+}, { immediate: true })
 watch(picked, rows => emit('selection-change', rows))
 
 function valueOf(row, key) {
@@ -109,7 +115,9 @@ function visibleFields(row) {
 .card-head {
   display: flex; align-items: flex-start; gap: 8px; justify-content: space-between;
 }
-.card-title { font-weight: 600; font-size: 14.5px; line-height: 1.45; }
+/* flex:1 是给多选那一版留的：加了复选框之后卡片头有三样东西，
+   标题不占满剩余宽度就会被 space-between 推到中间去 */
+.card-title { flex: 1; min-width: 0; font-weight: 600; font-size: 14.5px; line-height: 1.45; }
 .card-extra { flex-shrink: 0; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 .card-fields {
   margin-top: 8px; display: grid; grid-template-columns: auto 1fr;

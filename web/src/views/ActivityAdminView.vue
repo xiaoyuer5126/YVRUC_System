@@ -701,7 +701,7 @@
         <!-- 手机上这张表有八列，横滑着改时长没法用：改成卡片，
              时长输入框和明细放在卡片正文里，勾选走卡片自己的多选 -->
         <DataCards v-if="narrow && hours.length" :rows="hoursSorted"
-                   title-key="user.name" row-key="id" style="margin-top:10px"
+                   title-key="user.name" row-key="user.id" style="margin-top:10px"
                    :selectable="!hoursFrozen" @selection-change="onHoursSelect"
                    :fields="[{ key: 'user.student_id', label: '学号' },
                              { key: 'user.college', label: '学院' }]">

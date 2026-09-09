@@ -1,6 +1,7 @@
 <!-- 志愿者档案抽屉。全校名册页与活动名单页都用它，只是拿数据的接口不同。 -->
 <template>
-  <el-drawer v-model="visible" :size="narrow ? '100%' : '560px'"
+  <!-- 窄屏留出左边一条：铺满整屏就看不出这是浮层，也没地方点空白关掉 -->
+  <el-drawer v-model="visible" :size="narrow ? '88%' : '560px'"
              :title="d ? `${d.user.name} 的志愿档案` : '志愿档案'">
     <div v-if="d" v-loading="loading">
       <el-descriptions :column="narrow ? 1 : 2" size="small" border>
@@ -147,6 +148,10 @@ function tagType(h) {
 .stats { display: flex; gap: 10px; margin: 14px 0; }
 .stat { flex: 1; text-align: center; padding: 10px 6px; border-radius: 10px;
         background: var(--el-fill-color-light); }
+/* 六个格子横排在手机上每个只剩五十来像素，数字和说明都挤成两行 */
+@media (max-width: 860px) {
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); }
+}
 .stat b { display: block; font-size: 20px; }
 .stat.warn b { color: var(--el-color-warning); }
 .vio { padding: 8px 0; border-bottom: 1px dashed var(--el-border-color); }

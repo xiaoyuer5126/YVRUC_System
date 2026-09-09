@@ -134,7 +134,8 @@ body {
   /* 实在留着的表格（分配面板等）允许横滑，但不让整页横滑 */
   .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
-  .section-title { margin: 14px 0 8px; }
+  /* 标题行里还挂着说明文字和刷新按钮，窄屏放不下就换行 */
+  .section-title { margin: 14px 0 8px; flex-wrap: wrap; }
   h2 { font-size: 19px; }
   h3 { font-size: 16px; }
 }
