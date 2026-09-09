@@ -11,6 +11,8 @@
           <el-tag :type="statusType">{{ act.display_label }}</el-tag>
         </span>
       </template>
+      <!-- 名额是抢的：不刷新看到的剩余数可能已经不是现在的 -->
+      <template #extra><RefreshBar :load="load" /></template>
     </el-page-header>
 
     <el-row :gutter="18" style="margin-top:16px">
@@ -156,8 +158,10 @@
                   <template v-if="g.my_enrollment && myStationId(g) === s.id">
                     <template v-if="g.my_enrollment.status === 'pending_confirm'">
                       <el-countdown format="HH:mm:ss" :value="deadlineTs(g)" />
-                      <el-button type="primary" size="small" @click="confirmPromo(g)">确认</el-button>
-                      <el-button size="small" plain @click="cancelEnroll(g)">放弃</el-button>
+                      <el-button type="primary" size="small" :disabled="paused"
+                                 @click="confirmPromo(g)">确认</el-button>
+                      <el-button size="small" plain :disabled="paused"
+                                 @click="cancelEnroll(g)">放弃</el-button>
                     </template>
                     <template v-else>
                       <el-tag :type="g.my_enrollment.status === 'waitlisted' ? 'warning' : 'success'"
@@ -166,7 +170,8 @@
                            ? `候补第 ${g.my_enrollment.waitlist_position} 位` : '已选中' }}
                       </el-tag>
                       <el-button size="small" type="danger" plain
-                                 :disabled="!canCancel(g)" @click="cancelEnroll(g)">
+                                 :disabled="paused || !canCancel(g)"
+                                 @click="cancelEnroll(g)">
                         {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
                       </el-button>
                     </template>
@@ -175,6 +180,7 @@
                   <el-button v-else-if="s.eligible === false" size="small" disabled>
                     不符合条件
                   </el-button>
+                  <el-button v-else-if="paused" size="small" disabled>报名暂停</el-button>
                   <el-button v-else-if="openFor(g)" size="small"
                              type="primary" plain @click="doEnroll(g, s)">
                     {{ s.is_placeholder ? enrollText(g)
@@ -197,11 +203,14 @@
                 </el-tag>
                 <template v-else>
                   <el-countdown format="HH:mm:ss" :value="deadlineTs(g)" />
-                  <el-button type="primary" size="small" @click="confirmPromo(g)">确认转正</el-button>
+                  <el-button type="primary" size="small" :disabled="paused"
+                             @click="confirmPromo(g)">确认转正</el-button>
                 </template>
                 <el-button v-if="g.my_enrollment.status !== 'pending_confirm'"
                            size="small" type="danger" plain
-                           :disabled="g.my_enrollment.status === 'enrolled' && !canCancel(g)"
+                           :disabled="paused
+                                      || (g.my_enrollment.status === 'enrolled'
+                                          && !canCancel(g))"
                            @click="cancelEnroll(g)">
                   {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
                 </el-button>
@@ -341,11 +350,14 @@
                             <template v-if="g.my_enrollment.status === 'pending_confirm'">
                               <el-countdown format="HH:mm:ss" :value="deadlineTs(g)"
                                             style="vertical-align:middle;margin-right:6px" />
-                              <el-button type="primary" size="small" @click="confirmPromo(g)">确认</el-button>
-                              <el-button size="small" plain @click="cancelEnroll(g)">放弃</el-button>
+                              <el-button type="primary" size="small" :disabled="paused"
+                                         @click="confirmPromo(g)">确认</el-button>
+                              <el-button size="small" plain :disabled="paused"
+                                         @click="cancelEnroll(g)">放弃</el-button>
                             </template>
                             <el-button v-else size="small" type="danger" plain
-                                       :disabled="!canCancel(g)" @click="cancelEnroll(g)">
+                                       :disabled="paused || !canCancel(g)"
+                                       @click="cancelEnroll(g)">
                               {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
                             </el-button>
                           </template>
@@ -362,6 +374,10 @@
                             <el-button size="small" disabled>不符合条件</el-button>
                           </el-tooltip>
                           <!-- 未报名 -->
+                          <el-tooltip v-else-if="paused" placement="top"
+                                      content="负责人正在调整安排，报名暂停中">
+                            <el-button size="small" disabled>报名暂停</el-button>
+                          </el-tooltip>
                           <el-button v-else-if="openFor(g)" size="small"
                                      type="primary" plain @click="doEnroll(g, s)">
                             {{ s.is_placeholder ? enrollText(g)
@@ -394,12 +410,14 @@
                           <el-tag type="danger" size="small">转正确认剩</el-tag>&nbsp;
                         </template>
                       </el-countdown>
-                      <el-button type="primary" size="small"
+                      <el-button type="primary" size="small" :disabled="paused"
                                  @click="confirmPromo(g)">确认转正</el-button>
                     </template>
                     <el-button v-if="g.my_enrollment.status !== 'pending_confirm'"
                                size="small" type="danger" plain
-                               :disabled="g.my_enrollment.status === 'enrolled' && !canCancel(g)"
+                               :disabled="paused
+                                          || (g.my_enrollment.status === 'enrolled'
+                                              && !canCancel(g))"
                                @click="cancelEnroll(g)">
                       {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
                     </el-button>
@@ -690,6 +708,7 @@ import GroupQrDialog from '../components/GroupQrDialog.vue'
 import ApplicationPanel from '../components/ApplicationPanel.vue'
 import MaterialList from '../components/MaterialList.vue'
 import QuestionFields from '../components/QuestionFields.vue'
+import RefreshBar from '../components/RefreshBar.vue'
 import { useNarrow } from '../composables/useNarrow'
 import { Clock, Warning } from '@element-plus/icons-vue'
 
@@ -727,6 +746,8 @@ const STATUS_TYPES = {
   closed: 'warning', ongoing: 'danger', finished: 'info',
 }
 const statusType = computed(() => STATUS_TYPES[act.value?.display_status] || 'info')
+// 负责人正在改安排：报名、退选、确认转正后端一律拦，按钮跟着灰掉
+const paused = computed(() => !!act.value?.editing)
 
 function pct(g) {
   return Math.min(100, Math.round((g.enrolled / Math.max(1, g.capacity)) * 100))

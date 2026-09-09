@@ -192,12 +192,41 @@ def _clean_contacts(raw: list[dict]) -> list[dict]:
     return contacts
 
 
+def ensure_unique_title(db: OrmSession, title: str, *,
+                        exclude_id: str = "") -> str:
+    """活动名全平台唯一（草稿也算）。
+
+    重名的活动在广场、名单、导出文件名、留痕摘要里全都分不清是哪一场，
+    志愿者更是没法判断自己报的是哪个。
+    """
+    name = title.strip()
+    q = db.query(Activity.id).filter(Activity.title == name)
+    if exclude_id:
+        q = q.filter(Activity.id != exclude_id)
+    if q.first():
+        raise HTTPException(409, f"已有同名活动「{name}」，请换一个名字")
+    return name
+
+
+def unique_copy_title(db: OrmSession, title: str) -> str:
+    """复制用：撞名就往后加序号，不打断操作。"""
+    name = title.strip()
+    if not db.query(Activity.id).filter(Activity.title == name).first():
+        return name
+    for i in range(2, 100):
+        candidate = f"{name} {i}"
+        if not db.query(Activity.id).filter(Activity.title == candidate).first():
+            return candidate
+    raise HTTPException(409, f"已有太多同名活动「{name}」，请自己起个名字")
+
+
 @router.post("/activities")
 def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                     user: User = Depends(require_manager)):
     # 创建活动信息完整性校验：全部必填
     if not body.title.strip():
         raise HTTPException(400, "请填写活动名称")
+    ensure_unique_title(db, body.title)
     if not body.organizer.strip():
         raise HTTPException(400, "请填写组织单位")
     if body.recruit_mode not in config.RECRUIT_MODES:
@@ -256,6 +285,8 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
         if key not in body:
             continue
         value = body[key]
+        if key == "title" and str(value).strip() != act.title:
+            ensure_unique_title(db, str(value), exclude_id=act.id)
         if key in ("reg_start", "reg_end"):
             setattr(act, key, _parse_dt(value))
         elif key == "contacts":
@@ -452,7 +483,10 @@ def copy_activity_route(activity_id: str, body: CopyActivityBody,
     """复制一个活动的结构。报名、签到、时长、留痕都不带过来。"""
     ensure_activity_manager(db, user, activity_id)
     src = _act(db, activity_id)
-    title = body.title.strip() or f"{src.title}（副本）"
+    if body.title.strip():
+        title = ensure_unique_title(db, body.title)     # 自己起的名字就得是新的
+    else:
+        title = unique_copy_title(db, f"{src.title}（副本）")
     if len(title) > 128:
         raise HTTPException(400, "活动名称过长")
     if not body.contact_group_qr.strip():

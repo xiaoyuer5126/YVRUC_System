@@ -621,3 +621,32 @@ def test_时长封账后补招与补签也停(client, admin, db, assigned_group,
     r = client.post(f"/api/staff/shifts/{g.id}/add-walkin", headers=admin,
                     json={"student_id": take_student(), "position_id": g.positions[0].id})
     assert r.status_code == 409 and "审批" in r.json()["detail"]
+
+
+def test_活动不许重名(client, admin, db, draft_activity):
+    """重名的活动在广场、名单、导出文件名里全都分不清是哪一场。"""
+    body = {"contact_group_qr": "x", "title": draft_activity.title,
+            "organizer": "校青协", "intro": "x", "location": "世纪馆",
+            "contacts": [{"name": "王", "phone": "13900000000"}],
+            "reg_start": now().isoformat(),
+            "reg_end": (now() + timedelta(days=2)).isoformat()}
+    r = client.post("/api/staff/activities", headers=admin, json=body)
+    assert r.status_code == 409 and "同名" in r.json()["detail"]
+
+    body["title"] = f"另起一个 {uid('t')}"
+    other = client.post("/api/staff/activities", headers=admin, json=body).json()["id"]
+    # 改名撞上也拦；改成自己原来的名字不算撞
+    r = client.patch(f"/api/staff/activities/{other}", headers=admin,
+                     json={"title": draft_activity.title})
+    assert r.status_code == 409
+    assert client.patch(f"/api/staff/activities/{other}", headers=admin,
+                        json={"title": body["title"]}).status_code == 200
+
+    # 复制不打断操作：默认名撞了就往后加序号
+    r = client.post(f"/api/staff/activities/{other}/copy", headers=admin,
+                    json={"shift_days": 1, "contact_group_qr": "x"})
+    assert r.status_code == 200, r.text
+    first_copy = r.json()["title"]
+    r = client.post(f"/api/staff/activities/{other}/copy", headers=admin,
+                    json={"shift_days": 1, "contact_group_qr": "x"})
+    assert r.json()["title"] == f"{first_copy} 2"

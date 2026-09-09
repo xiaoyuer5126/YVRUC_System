@@ -29,7 +29,7 @@
         本次名额有限，暂未能安排你参加，期待下次活动再见。
       </p>
       <el-button v-if="mine.status === 'applied'" size="small" type="danger" plain
-                 @click="withdraw">撤回申请</el-button>
+                 :disabled="act.editing" @click="withdraw">撤回申请</el-button>
     </template>
 
     <template v-else-if="open">
@@ -115,8 +115,10 @@ const STATUS_TYPE = { applied: 'primary', accepted: 'success', rejected: 'info',
 const questions = computed(() => props.act.application?.questions || [])
 const mine = computed(() => props.act.application?.mine || null)
 const open = computed(() => props.act.status === 'published' && !props.act.opens_in
+                            && !props.act.editing
                             && props.act.shifts.some(g => g.enroll_open))
 const closedText = computed(() => {
+  if (props.act.editing) return '负责人正在调整安排，报名暂停中'
   if (props.act.status !== 'published') return '不在报名期'
   return props.act.opens_in ? '未开始报名' : '报名已截止'
 })
