@@ -76,7 +76,8 @@
     </el-container>
 
     <!-- 窄屏导航：同一份菜单收进抽屉，选完自动关 -->
-    <el-drawer v-model="drawer" direction="ltr" size="264px" :with-header="false">
+    <el-drawer v-model="drawer" direction="ltr" size="264px" :with-header="false"
+               class="menu-drawer">
       <div class="drawer-head">
         <div class="logo">志</div>
         <div>

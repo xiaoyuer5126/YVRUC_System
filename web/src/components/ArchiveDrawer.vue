@@ -1,7 +1,6 @@
 <!-- 志愿者档案抽屉。全校名册页与活动名单页都用它，只是拿数据的接口不同。 -->
 <template>
-  <!-- 窄屏留出左边一条：铺满整屏就看不出这是浮层，也没地方点空白关掉 -->
-  <el-drawer v-model="visible" :size="narrow ? '88%' : '560px'"
+  <el-drawer v-model="visible" :size="narrow ? '100%' : '560px'"
              :title="d ? `${d.user.name} 的志愿档案` : '志愿档案'">
     <div v-if="d" v-loading="loading">
       <el-descriptions :column="narrow ? 1 : 2" size="small" border>
@@ -53,6 +52,17 @@
         </span>
       </div>
       <el-empty v-if="!d.cancels.items.length" :image-size="50" description="没有退选记录" />
+      <DataCards v-else-if="narrow" :rows="d.cancels.items" title-key="activity_title"
+                 :fields="[{ key: 'cancelled_at', label: '退选时间', format: fmtDT },
+                           { key: 'gap_hours', label: '报名后多久', format: gapText }]">
+        <template #title="{ row }">{{ row.activity_title }} · {{ row.shift_name }}</template>
+        <template #extra="{ row }">
+          <el-tag size="small" effect="plain"
+                  :type="row.cancel_type === 'late' ? 'danger' : 'info'">
+            {{ CANCEL_LABELS[row.cancel_type] || row.cancel_type }}
+          </el-tag>
+        </template>
+      </DataCards>
       <el-table v-else :data="d.cancels.items" size="small">
         <el-table-column label="活动" min-width="150">
           <template #default="{ row }">{{ row.activity_title }} · {{ row.shift_name }}</template>
@@ -84,6 +94,13 @@
 
       <div class="section-title">参与过的活动</div>
       <el-empty v-if="!d.history.length" :image-size="50" description="还没有报过名" />
+      <DataCards v-else-if="narrow" :rows="d.history" row-key="enrollment_id"
+                 :fields="[{ key: 'time_text', label: '时间' }]">
+        <template #title="{ row }">{{ row.activity_title }} · {{ row.shift_name }}</template>
+        <template #extra="{ row }">
+          <el-tag size="small" :type="tagType(row)" effect="plain">{{ tagText(row) }}</el-tag>
+        </template>
+      </DataCards>
       <el-table v-else :data="d.history" size="small">
         <el-table-column label="活动" min-width="160">
           <template #default="{ row }">{{ row.activity_title }} · {{ row.shift_name }}</template>
@@ -103,6 +120,7 @@
 import { computed, ref } from 'vue'
 import { api, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
+import DataCards from './DataCards.vue'
 
 const narrow = useNarrow()
 const visible = ref(false)

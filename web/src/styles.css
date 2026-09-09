@@ -22,7 +22,7 @@ body {
   color: #303133;
 }
 
-.page { max-width: 1200px; margin: 0 auto; padding: 20px 24px 48px; }
+.page { max-width: 1200px; margin: 0 auto; padding: 16px 24px 32px; }
 .page-wide { max-width: 1440px; }
 
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
@@ -42,18 +42,25 @@ body {
 .page > :first-child { margin-top: 0; }
 
 /* 提示条自带上下间距，摆在哪里都一样 */
-.el-alert { margin: 12px 0; }
+.el-alert { margin: 8px 0; }
 
 /* 区块标题后面跟的那句说明：标题行本身是 flex gap:8，不用再补外边距 */
 .section-title .dim { font-weight: 400; }
 
 /* 标题的默认外边距按字号算（0.83em/1em），几个页面的字号又不一样，
    看起来就是这一页顶得高、那一页顶得低 */
-h2 { margin: 16px 0 12px; }
-h3 { margin: 16px 0 8px; }
+h2 { margin: 12px 0 8px; }
+h3 { margin: 12px 0 8px; }
 
 /* 页签栏与内容之间：Element 默认 15px */
-.el-tabs__header { margin-bottom: 16px; }
+.el-tabs__header { margin-bottom: 12px; }
+
+/* 卡片内边距 20px、表格行高固定 23px 都是 Element 的默认值，一屏放不下
+   几行东西。这两处是页面「空」的主要来源，按自己的尺度收一档。 */
+.el-card__body { padding: 16px; }
+.el-table .cell { line-height: 1.5; }
+/* 三段选择器是为了压过 Element 自己的同名规则 */
+.el-descriptions__body .el-descriptions__table .el-descriptions__cell { line-height: 1.5; }
 
 .act-card {
   border-radius: 12px; overflow: hidden; cursor: pointer; background: #fff;
@@ -91,7 +98,7 @@ h3 { margin: 16px 0 8px; }
 .mono { font-family: Consolas, Monaco, monospace; }
 .dim { color: #909399; font-size: 13px; }
 .pre { white-space: pre-wrap; }   /* 多行文字（服务任务、培训内容）按换行显示 */
-.section-title { font-size: 15px; font-weight: 600; margin: 16px 0 12px; display:flex; align-items:center; gap:8px; }
+.section-title { font-size: 15px; font-weight: 600; margin: 12px 0 8px; display:flex; align-items:center; gap:8px; }
 .section-title::before { content:""; width: 4px; height: 16px; background: var(--el-color-primary);
   border-radius: 2px; display:inline-block; }
 
@@ -129,8 +136,9 @@ h3 { margin: 16px 0 8px; }
                                     padding: 0 0 4px; line-height: 1.6; }
   .el-dialog .el-form-item__content { margin-left: 0 !important; }
 
-  /* 抽屉里的菜单铺满 */
-  .el-drawer__body { padding: 0; }
+  /* 导航抽屉里的菜单铺满；别的抽屉照常留内边距，字贴着屏幕边不能看 */
+  .menu-drawer .el-drawer__body { padding: 0; }
+  .el-drawer__body { padding: 16px; }
 
   /* 页头竖排：返回 / 标题 / 副信息 / 按钮各占一行。
      一行挤四样东西，标题会被压成 100 多像素高的一竖条。
@@ -162,7 +170,7 @@ h3 { margin: 16px 0 8px; }
   .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
   /* 标题行里还挂着说明文字和刷新按钮，窄屏放不下就换行 */
-  .section-title { margin: 12px 0 8px; flex-wrap: wrap; }
+  .section-title { flex-wrap: wrap; }
   h2 { font-size: 19px; }
   h3 { font-size: 16px; }
 }
