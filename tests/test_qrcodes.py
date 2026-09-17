@@ -85,3 +85,16 @@ def test_base_末尾多个斜杠也不会拼出双斜杠(client, qr_activity):
     act, _g = qr_activity
     r = client.get(f"/api/activities/{act.id}/qr.svg?base={PUBLIC}/")
     assert r.text == qr_svg(f"{PUBLIC}/#/activity/{act.id}")
+
+
+def test_二维码不接受别人家的域名(client, admin, qr_activity):
+    """这个接口不需要登录。收下任意 base，就等于让任何人拿平台的地址
+    生成一张指向自家站点的码，贴出去扫的人无从分辨。"""
+    act, _g = qr_activity
+    r = client.get(f"/api/activities/{act.id}/qr.svg?base=https://evil.example")
+    assert r.status_code == 400
+    # 配置里的对外域名与本次请求自己的域名都照常放行
+    assert client.get(
+        f"/api/activities/{act.id}/qr.svg?base={PUBLIC}").status_code == 200
+    assert client.get(
+        f"/api/activities/{act.id}/qr.svg?base={FALLBACK}").status_code == 200

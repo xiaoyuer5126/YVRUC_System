@@ -11,7 +11,7 @@ import pytest
 
 from backend.routers import all_routers
 from backend.models import Activity, ActivityManager, Department, User, now, uid
-from conftest import ADMIN, POSITION_TEXT, login, student_row
+from conftest import ADMIN, POSITION_TEXT, dl_url, login, student_row
 
 COUNCIL, HEAD, CORE, MEMBER = "2025003", "2025004", "2025005", "2025006"
 
@@ -121,8 +121,8 @@ def test_部门成员不能导出也不能查档案(client, db, dept_activity):
     aid, _g = dept_activity
     _add_core_manager(db, aid)
     member = login(client, MEMBER)
-    tok = member["Authorization"].split()[1]
-    r = client.get(f"/api/staff/activities/{aid}/export.xlsx?token={tok}")
+    r = client.get(dl_url(client, member,
+                          f"/api/staff/activities/{aid}/export.xlsx"))
     assert r.status_code == 403
     assert client.get("/api/staff/users", headers=member).status_code == 403
 

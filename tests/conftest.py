@@ -40,6 +40,8 @@ os.environ["RUCVA_DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["RUCVA_REDIS_URL"] = os.environ.get(
     "RUCVA_TEST_REDIS_URL", "redis://127.0.0.1:6380/1")
 os.environ.setdefault("RUCVA_DEMO_PASSWORD", "test-pass")
+# 二维码只认自家域名。用例里的「对外域名」就是这一个，别的一律被拒。
+os.environ.setdefault("RUCVA_PUBLIC_BASE_URL", "https://v.ruc.edu.cn")
 # 关掉后台定时任务：每建一个 TestClient 都会触发一次立即扫描，它在另一个
 # 线程里跟用例抢同一批数据（解冻、递补、状态流转），断言会随机多算一份。
 # 定时任务本身在 test_scheduled.py 里直接调函数来验，不靠这个循环。
@@ -84,6 +86,18 @@ def db():
         yield s
     finally:
         s.close()
+
+
+def dl_url(client: TestClient, headers: dict, path: str) -> str:
+    """下载直链：先换一张一次性票据，再拼进地址。
+
+    浏览器里 <a> 发不出 Authorization 头，用例也照这条路走，
+    才验得到真实的下载流程。
+    """
+    r = client.post("/api/auth/download-ticket", headers=headers,
+                    json={"path": path})
+    assert r.status_code == 200, r.text
+    return f"{path}?ticket={r.json()['ticket']}"
 
 
 def login(client: TestClient, student_id: str) -> dict:

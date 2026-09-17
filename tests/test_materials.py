@@ -4,7 +4,7 @@ from __future__ import annotations
 import io
 
 from backend.models import Activity, Attachment
-from conftest import POSITION_TEXT, editing, login
+from conftest import POSITION_TEXT, dl_url, editing, login
 
 
 def _position_of(shift):
@@ -29,10 +29,9 @@ def test_上传下载全流程(client, admin, db, enrolled_activity, take_studen
     detail = client.get(f"/api/activities/{act.id}", headers=admin).json()
     assert detail["shifts"][0]["positions"][0]["attachments"][0]["id"] == mid
 
-    # 志愿者用直链下载（<a href> 带不了 Authorization 头，只能挂 ?token=）
+    # 志愿者用直链下载（<a href> 带不了请求头，先换一张一次性票据）
     stu_headers = login(client, take_student())
-    token = stu_headers["Authorization"].split()[1]
-    r = client.get(f"/api/materials/{mid}?token={token}")
+    r = client.get(dl_url(client, stu_headers, f"/api/materials/{mid}"))
     assert r.status_code == 200
     assert r.content == b"x" * 1024
 
@@ -49,11 +48,12 @@ def test_筹备中活动的材料不外泄(client, admin, db, enrolled_activity,
     db.get(Activity, act.id).status = "draft"
     db.commit()
 
-    token = login(client, take_student())["Authorization"].split()[1]
-    assert client.get(f"/api/materials/{mid}?token={token}").status_code == 404
+    stu = login(client, take_student())
+    assert client.get(
+        dl_url(client, stu, f"/api/materials/{mid}")).status_code == 404
     # 管理者自己仍然下得到
-    admin_token = admin["Authorization"].split()[1]
-    assert client.get(f"/api/materials/{mid}?token={admin_token}").status_code == 200
+    assert client.get(
+        dl_url(client, admin, f"/api/materials/{mid}")).status_code == 200
 
 
 def test_超大文件与不支持的类型被拒(client, admin, enrolled_activity):

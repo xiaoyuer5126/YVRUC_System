@@ -31,6 +31,17 @@ DEMO_LOGIN_PASSWORD = os.environ.get("RUCVA_DEMO_PASSWORD", "").strip()
 # 接口文档（/docs、/openapi.json）仅在显式打开时暴露
 EXPOSE_API_DOCS = os.environ.get("RUCVA_EXPOSE_DOCS", "").strip() == "1"
 
+# 平台对外网址（多个用逗号分隔），二维码里写的就是它。列在这里的域名才允许
+# 出现在二维码中——否则任何人都能拿平台的接口生成一张指向自家站点的码，
+# 扫的人只看到「志愿平台发出来的二维码」。留空则只认本次请求自己的域名。
+PUBLIC_BASE_URLS = [s.strip().rstrip("/") for s in
+                    os.environ.get("RUCVA_PUBLIC_BASE_URL", "").split(",")
+                    if s.strip()]
+
+# 下载票据：导出与材料下载走 <a> 直链，带不了请求头，改用一次性票据。
+# 短到只够浏览器立刻发起这一次下载，进了日志也用不了第二次。
+DOWNLOAD_TICKET_SECONDS = 60
+
 # 后台定时任务循环（见 main._sweeper）。测试里要关掉：每建一个 TestClient
 # 都会触发一次立即扫描，它在另一个线程里跟用例抢同一批数据——用例刚把编辑态
 # 改成超时，扫描线程也看见了，于是解冻通知发了两条，断言随机失败。

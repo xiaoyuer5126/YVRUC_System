@@ -62,8 +62,21 @@ export function qrBase() {
   return encodeURIComponent(`${window.location.origin}${window.location.pathname}`)
 }
 
-export function download(url) {
+/** 直链下载（导出、学习材料）。
+ *
+ * <a> 发不出 Authorization 头，所以先用带头的请求换一张一次性票据，
+ * 再把票据挂在地址上。票只对这一个网址有效、一分钟、用一次即作废——
+ * 会话令牌不会再出现在地址栏、浏览器历史和服务器访问日志里。
+ */
+export async function download(url) {
+  const path = url.split('?')[0]
+  let ticket
+  try {
+    ({ ticket } = await api.post('/api/auth/download-ticket', { path }))
+  } catch {
+    return          // 换票失败，api 层已经提示过，不必再抛
+  }
   const a = document.createElement('a')
-  a.href = url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(auth.token)
+  a.href = url + (url.includes('?') ? '&' : '?') + 'ticket=' + encodeURIComponent(ticket)
   a.click()
 }

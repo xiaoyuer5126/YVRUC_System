@@ -65,6 +65,30 @@ def note_failure(key: str, window_seconds: int) -> None:
         pass
 
 
+# —— 一次性下载票据 ——
+#
+# 导出与材料下载是 <a> 直链，发不出 Authorization 头。把会话令牌挂在地址上
+# 最省事，但它会原样落进 nginx 访问日志、浏览器历史和外链 Referer，而那是
+# 一个 24 小时有效的会话。改发票据：绑定这一个网址、一分钟有效、用一次就
+# 作废，进了日志也换不出任何东西。
+
+def issue_ticket(user_id: str, path: str, ttl: int) -> str:
+    token = secrets.token_urlsafe(24)
+    _client.setex(f"rucva:dl:{token}", ttl, f"{user_id}|{path}")
+    return token
+
+
+def redeem_ticket(token: str, path: str) -> str | None:
+    """核销票据，返回用户 id；票据不存在、已用过或对不上这个网址都返回 None。"""
+    if not token:
+        return None
+    raw = _client.getdel(f"rucva:dl:{token}")
+    if not raw or "|" not in raw:
+        return None
+    user_id, want = raw.split("|", 1)
+    return user_id if want == path else None
+
+
 def clear_failures(key: str) -> None:
     with contextlib.suppress(redis.RedisError):
         _client.delete(_fail_key(key))

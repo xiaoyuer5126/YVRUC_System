@@ -1,10 +1,11 @@
 <template>
   <div v-if="items.length" class="materials">
     <div class="materials-title">{{ label }}</div>
-    <a v-for="m in items" :key="m.id" class="material" :href="href(m)"
+    <a v-for="m in items" :key="m.id" class="material"
+       :href="m.kind === 'link' ? m.url : '#'"
        :target="m.kind === 'link' ? '_blank' : '_self'"
-       :download="m.kind === 'file' ? m.title : undefined"
-       rel="noopener">
+       rel="noopener"
+       @click="m.kind === 'file' && open($event, m)">
       <el-icon><Link v-if="m.kind === 'link'" /><Document v-else /></el-icon>
       <span class="name">{{ m.title }}</span>
       <span v-if="m.kind === 'file'" class="size">{{ sizeText(m.size) }}</span>
@@ -15,18 +16,17 @@
 
 <script setup>
 import { Document, Link } from '@element-plus/icons-vue'
-import { auth } from '../store'
+import { download } from '../api'
 
 defineProps({
   items: { type: Array, default: () => [] },
   label: { type: String, default: '学习材料' },
 })
 
-// 文件下载走接口鉴权：<a> 发不出 Authorization 头，只能把令牌挂在地址上
-function href(m) {
-  return m.kind === 'link'
-    ? m.url
-    : `${m.url}?token=${encodeURIComponent(auth.token)}`
+// 文件下载要鉴权，而 <a> 发不出 Authorization 头：临时换一张一次性票据
+function open(e, m) {
+  e.preventDefault()
+  download(m.url)
 }
 
 function sizeText(bytes) {

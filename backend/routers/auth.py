@@ -19,7 +19,8 @@ from .. import config
 from ..database import db_session
 from ..deps import create_session, current_token, current_user
 from ..integrations import sso
-from ..locks import clear_failures, failure_count, note_failure
+from ..locks import (clear_failures, failure_count, issue_ticket,
+                     note_failure)
 from ..models import Session, User, ViolationRecord
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -123,6 +124,25 @@ def logout(token: str = Depends(current_token),
 @router.get("/me")
 def me(user: User = Depends(current_user)):
     return {"user": user.full()}
+
+
+class TicketBody(BaseModel):
+    path: str
+
+
+@router.post("/download-ticket")
+def download_ticket(body: TicketBody, user: User = Depends(current_user)):
+    """换一张一次性下载票。
+
+    导出与学习材料是 <a> 直链，发不出 Authorization 头。票绑定这一个网址、
+    一分钟有效、用一次即作废，所以就算随地址落进日志也换不出任何东西。
+    权限仍由目标接口自己把关，这张票只证明「是谁」。
+    """
+    path = body.path.strip()
+    if not path.startswith("/api/"):
+        raise HTTPException(400, "下载地址不合法")
+    return {"ticket": issue_ticket(user.id, path.split("?")[0],
+                                   config.DOWNLOAD_TICKET_SECONDS)}
 
 
 # —— 前端需要的常量 ——

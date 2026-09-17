@@ -6,7 +6,7 @@ from io import BytesIO
 from openpyxl import load_workbook
 
 from backend.models import CheckinRecord, CheckinTask, Enrollment, now, uid
-from conftest import editing, login
+from conftest import dl_url, editing, login
 
 
 def _setup(client, db, admin, enrolled_activity, take_student, n=3):
@@ -41,8 +41,8 @@ def test_导出表带组长与调剂意愿(client, admin, db, enrolled_activity,
     act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
                                      take_student)
 
-    token = admin["Authorization"].split()[1]
-    r = client.get(f"/api/staff/activities/{act.id}/export.xlsx?token={token}")
+    r = client.get(dl_url(client, admin,
+                          f"/api/staff/activities/{act.id}/export.xlsx"))
     assert r.status_code == 200
 
     wb = load_workbook(BytesIO(r.content))
@@ -105,8 +105,8 @@ def test_未分配名单只在有岗位时出现(client, admin, db, enrolled_act
                     headers=t, json={})
     assert r.status_code == 200, r.text
 
-    token = admin["Authorization"].split()[1]
-    r = client.get(f"/api/staff/activities/{act.id}/export.xlsx?token={token}")
+    r = client.get(dl_url(client, admin,
+                          f"/api/staff/activities/{act.id}/export.xlsx"))
     wb = load_workbook(BytesIO(r.content))
     ws = wb[[s for s in wb.sheetnames if s != "活动概览"][0]]
     text = "\n".join(str(c.value) for row in ws.iter_rows() for c in row
@@ -231,8 +231,8 @@ def test_导出表按岗位分块组长置顶其余按报名时间(client, admin
     b_name = student_row(db, sid).name
     db.commit()
 
-    token = admin["Authorization"].split()[1]
-    r = client.get(f"/api/staff/activities/{act.id}/export.xlsx?token={token}")
+    r = client.get(dl_url(client, admin,
+                          f"/api/staff/activities/{act.id}/export.xlsx"))
     wb = load_workbook(BytesIO(r.content))
     ws = wb[[s for s in wb.sheetnames if s != "活动概览"][0]]
     header = [c.value for c in ws[1]]
@@ -271,8 +271,8 @@ def test_导出表不把志愿者填的内容当公式(client, admin, db, enroll
     enr.answers = {q.id: '=HYPERLINK("http://evil.example","点我")'}
     db.commit()
 
-    token = admin["Authorization"].split()[1]
-    r = client.get(f"/api/staff/activities/{act.id}/export.xlsx?token={token}")
+    r = client.get(dl_url(client, admin,
+                          f"/api/staff/activities/{act.id}/export.xlsx"))
     assert r.status_code == 200
     wb = load_workbook(BytesIO(r.content))
     formulas = [c.value for ws in wb for row in ws.iter_rows() for c in row

@@ -42,8 +42,8 @@ def test_expired_session_rejected(client, db):
     assert db.get(Session, token) is None             # 过期会话顺手清掉
 
 
-def test_query_token_only_works_for_download(client, admin):
-    """令牌走 URL 会漏进日志与 Referer，只有直链下载那一个路由认。"""
+def test_会话令牌不能走地址栏(client, admin):
+    """令牌走 URL 就会漏进访问日志、浏览器历史与 Referer，一处都不认。"""
     token = admin["Authorization"].removeprefix("Bearer ")
 
     assert client.get(f"/api/auth/me?token={token}").status_code == 401
@@ -51,7 +51,7 @@ def test_query_token_only_works_for_download(client, admin):
     acts = client.get("/api/staff/activities", headers=admin).json()["items"]
     r = client.get(f"/api/staff/activities/{acts[0]['id']}/export.xlsx"
                    f"?token={token}")
-    assert r.status_code == 200
+    assert r.status_code == 401
 
 
 def test_logout_only_kills_current_session(client):
@@ -108,3 +108,25 @@ def test_修改资料时留空不会清掉已填的身份证号(client, db, take
     assert r.json()["user"]["id_card_masked"].endswith(before[-3:])
     db.expire_all()
     assert db.query(User).filter(User.student_id == sid).one().id_card == before
+
+
+def test_下载票据只能用一次且认准那个网址(client, admin, db, enrolled_activity):
+    """导出是 <a> 直链，带不了请求头。票据代替会话令牌：
+    绑定这一个网址、用一次即作废，捡到也换不出别的东西。"""
+    act, _shift, _u = enrolled_activity
+    path = f"/api/staff/activities/{act.id}/export.xlsx"
+
+    r = client.post("/api/auth/download-ticket", headers=admin, json={"path": path})
+    assert r.status_code == 200, r.text
+    ticket = r.json()["ticket"]
+
+    assert client.get(f"{path}?ticket={ticket}").status_code == 200
+    # 第二次就作废了
+    assert client.get(f"{path}?ticket={ticket}").status_code == 401
+    # 换一张票去别的网址，对不上
+    other = client.post("/api/auth/download-ticket", headers=admin,
+                        json={"path": path}).json()["ticket"]
+    assert client.get(
+        f"/api/staff/activities/{act.id}/hours.xlsx?ticket={other}").status_code == 401
+
+

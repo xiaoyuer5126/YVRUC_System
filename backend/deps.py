@@ -1,8 +1,9 @@
 """FastAPI 依赖：会话鉴权与权限。
 
-令牌只从 Authorization 头读。浏览器直链下载（导出 Excel）没法带头，
-单独用 current_user_download 依赖，只有那一个路由接受 ?token=——
-放开全站会让令牌进 nginx 访问日志、浏览器历史和外链 Referer。
+令牌只从 Authorization 头读，一处例外都没有。浏览器直链下载（导出 Excel、
+学习材料）发不出请求头，走一次性票据：前端先用带头的请求换一张票，票绑定
+这一个网址、一分钟有效、用一次即作废（见 locks.issue_ticket）。地址栏里
+再也没有会话令牌，日志、浏览器历史、Referer 里捡到的票也早已作废。
 
 权限模型：
   · 身份（User.roles，可多个）：管理员 / 青协 / 活动发起方 / 学生
@@ -21,7 +22,7 @@ from datetime import timedelta
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session as OrmSession
 
-from . import config
+from . import config, locks
 from .database import db_session
 from .models import Session, User, now
 
@@ -59,9 +60,18 @@ def current_user(request: Request,
 
 def current_user_download(request: Request,
                           db: OrmSession = Depends(db_session)) -> User:
-    """仅供浏览器直链下载的路由使用：额外接受 ?token=。"""
-    return _authorize(db, _bearer(request)
-                      or request.query_params.get("token", "").strip())
+    """浏览器直链下载：认 Authorization 头，或一次性票据 ?ticket=。"""
+    token = _bearer(request)
+    if token:
+        return _authorize(db, token)
+    ticket = request.query_params.get("ticket", "").strip()
+    user_id = locks.redeem_ticket(ticket, request.url.path)
+    if user_id is None:
+        raise HTTPException(401, "下载链接已失效，请回到页面重新点一次")
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(401, "用户不存在")
+    return user
 
 
 # 部门成员的学习权限：非 GET 一律拦，下面两张表是例外。
