@@ -250,3 +250,44 @@ def test_导出表按岗位分块组长置顶其余按报名时间(client, admin
     rest = [db.get(User, e.user_id).name for e in rows_a[:-1]]
     assert a_block[1:] == rest, f"组长之后应按报名时间，实际 {a_block[1:]}"
     assert [n for n, p in table if p == pos_b.name] == [b_name]
+
+
+def test_导出表不把志愿者填的内容当公式(client, admin, db, enrolled_activity,
+                                    take_student):
+    """志愿者能自由填写的字段会进导出表；= 开头的文本必须按文本存。
+
+    Excel 见到公式就执行，=HYPERLINK("http://…") 之类一打开就中招。
+    """
+    from backend.models import FormQuestion
+
+    act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
+                                     take_student, n=1)
+    q = FormQuestion(id=uid("fq"), activity_id=act.id, kind="text",
+                     title="有什么想说的", required=False, sort=0)
+    db.add(q)
+    enr = (db.query(Enrollment)
+           .filter(Enrollment.shift_id == shift.id,
+                   Enrollment.user_id == people[0].id).one())
+    enr.answers = {q.id: '=HYPERLINK("http://evil.example","点我")'}
+    db.commit()
+
+    token = admin["Authorization"].split()[1]
+    r = client.get(f"/api/staff/activities/{act.id}/export.xlsx?token={token}")
+    assert r.status_code == 200
+    wb = load_workbook(BytesIO(r.content))
+    formulas = [c.value for ws in wb for row in ws.iter_rows() for c in row
+                if c.data_type == "f"]
+    assert not formulas, f"导出表里仍有公式单元格：{formulas}"
+
+
+def test_微信号不能以公式符号开头(client, take_student):
+    sid = take_student()
+    t = login(client, sid)
+    bad = client.put("/api/me/profile", headers=t,
+                     json={"phone": "13900000000", "wechat": "=1+1",
+                           "no_mainland_id": True})
+    assert bad.status_code == 400
+    ok = client.put("/api/me/profile", headers=t,
+                    json={"phone": "13900000000", "wechat": "zhang_san-01",
+                          "no_mainland_id": True})
+    assert ok.status_code == 200, ok.text

@@ -357,6 +357,10 @@ def update_profile(body: ProfileBody,
         raise HTTPException(400, "手机号与微信号均为必填项")
     if not re.fullmatch(r"1[3-9]\d{9}", phone):
         raise HTTPException(400, "手机号格式不正确")
+    # 微信号不卡格式——有人填昵称，有人填「同手机号」，卡死只会误伤。
+    # 只挡住会被 Excel 当公式的开头：导出表那边也转义，这里是第二道。
+    if len(wechat) > 64 or wechat[0] in "=+-@\t\r":
+        raise HTTPException(400, "微信号格式不正确")
 
     if body.no_mainland_id:
         id_card = ""

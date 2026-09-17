@@ -31,6 +31,21 @@ MATERIAL_DIR = config.DATA_DIR / "materials"
 ATTACH_DIR = "附件"
 
 
+def disarm_formulas(wb) -> None:
+    """存盘前把「看着像公式」的单元格按文本存。
+
+    openpyxl 见到 = 开头的字符串就当公式收下（data_type 'f'），Excel 打开
+    即执行。这些表里有志愿者自己填的问卷答案和微信号，谁都可以写一句
+    =HYPERLINK("http://…","点我")，拿到表的人一打开就中招。
+    平台从不导出真公式，所以在唯一的出口统一扫一遍，比逐处转义可靠。
+    """
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.data_type == "f":
+                    cell.data_type = "s"
+
+
 class Export:
     """一次导出的产物：工作簿，加上答案里引用到的上传文件。
 
@@ -70,6 +85,7 @@ class Export:
 
     def bundle(self, xlsx_name: str) -> tuple[BytesIO, str]:
         """(内容, 扩展名)：没有文件就是 .xlsx，有就是 .zip。"""
+        disarm_formulas(self.wb)
         buf = BytesIO()
         self.wb.save(buf)
         buf.seek(0)
@@ -300,6 +316,7 @@ def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         ws.append([u.name, u.id_card or "", "", rec.hours, rec.parts_text()])
     for col, w in zip("ABCDE", (12, 22, 12, 8, 48)):
         ws.column_dimensions[col].width = w
+    disarm_formulas(wb)
     buf = BytesIO()
     wb.save(buf)
     buf.seek(0)
