@@ -19,6 +19,7 @@ from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Index,
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from . import config
+from .crypto import EncryptedString
 from .database import Base
 
 
@@ -75,7 +76,8 @@ class User(Base):
     # 数智人大拿不到微信号/身份证号，需志愿者自行完善后才能报名
     wechat: Mapped[str] = mapped_column(String(64), default="")
     # 身份证号仅存储不外显（导出表也不含，见 exporter.py）
-    id_card: Mapped[str] = mapped_column(String(64), default="")
+    # 密文比原文长得多（Fernet 约 140 字符），列宽按密文留
+    id_card: Mapped[str] = mapped_column(EncryptedString(255), default="")
     # 港澳台学生与留学生没有内地居民身份证号，勾选后免填
     no_mainland_id: Mapped[bool] = mapped_column(Boolean, default=False)
     # —— 类型与身份 ——

@@ -184,3 +184,29 @@ def test_搜索里的通配符只当普通字符(client, admin):
     assert len(all_rows) > 1
     hit = client.get("/api/staff/users?q=%25", headers=admin).json()
     assert hit == [], "搜 % 应当一个人都不匹配"
+
+
+def test_身份证号在库里是密文(client, db, take_student):
+    """数据库备份被复制走、整库被拖，拿到的不能是原文。"""
+    from sqlalchemy import text
+
+    from backend.models import User
+
+    sid = take_student()
+    t = login(client, sid)
+    card = "110101200512250016"
+    r = client.put("/api/me/profile", headers=t,
+                   json={"phone": "13900000000", "wechat": "kaoshi",
+                         "id_card": card})
+    assert r.status_code == 200, r.text
+
+    u = db.query(User).filter(User.student_id == sid).one()
+    db.refresh(u)
+    assert u.id_card == card          # 业务代码照常拿到明文
+
+    raw = db.execute(text("SELECT id_card FROM users WHERE student_id = :s"),
+                     {"s": sid}).scalar()
+    assert raw and card not in raw, "库里存的仍是原文"
+    assert len(raw) > len(card)
+    # 出参永远只给脱敏值
+    assert card not in r.text and r.json()["user"]["id_card_masked"].count("*") > 0

@@ -40,6 +40,9 @@ os.environ["RUCVA_DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["RUCVA_REDIS_URL"] = os.environ.get(
     "RUCVA_TEST_REDIS_URL", "redis://127.0.0.1:6380/1")
 os.environ.setdefault("RUCVA_DEMO_PASSWORD", "test-pass")
+# 身份证号是加密存的，用例里用一把固定密钥（生产的那把在 .env 里）
+os.environ.setdefault("RUCVA_ID_CARD_KEY",
+                      "OaIvZ3wSxT9mQ1rKcB7hLdN5fGyU2pVe4XjA6snMtE0=")
 # 二维码只认自家域名。用例里的「对外域名」就是这一个，别的一律被拒。
 os.environ.setdefault("RUCVA_PUBLIC_BASE_URL", "https://v.ruc.edu.cn")
 # 关掉后台定时任务：每建一个 TestClient 都会触发一次立即扫描，它在另一个

@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, locks, scheduled
+from . import config, crypto, locks, scheduled
 from .database import SessionLocal, init_db
 from .routers import all_routers
 
@@ -68,6 +68,7 @@ async def lifespan(_app: FastAPI):
                         format="%(levelname)s [%(name)s] %(message)s")
     logging.getLogger("uvicorn.access").addFilter(_NoHealthAccess())
     locks.ping()          # Redis 是硬依赖：连不上就别假装能扛住抢报
+    crypto.check()        # 身份证号的密钥：不对就别起来，别等到有人填资料
     logger.info("数据库：%s", config.DATABASE_URL.split("@")[-1])
     if config.DEMO_LOGIN_PASSWORD:
         logger.warning("演示登录已启用（口令登录）。接入统一身份认证后请清空 "

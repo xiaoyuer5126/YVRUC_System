@@ -21,6 +21,8 @@ x-backend-env: &backend_env
   RUCVA_REDIS_URL: redis://redis:6379/0
   RUCVA_DEMO_PASSWORD: ${RUCVA_DEMO_PASSWORD:-}
   RUCVA_EXPOSE_DOCS: ${RUCVA_EXPOSE_DOCS:-}
+  RUCVA_PUBLIC_BASE_URL: ${RUCVA_PUBLIC_BASE_URL:-}
+  RUCVA_ID_CARD_KEY: ${RUCVA_ID_CARD_KEY:?请在 .env 设置 RUCVA_ID_CARD_KEY（见 .env.example）}
   TZ: Asia/Shanghai
 
 services:

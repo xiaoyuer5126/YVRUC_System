@@ -6,4 +6,5 @@ psycopg[binary]>=3.2,<4
 redis>=5.2,<6
 openpyxl>=3.1,<4
 segno>=1.4,<2
+cryptography>=43,<47
 python-multipart>=0.0.12
