@@ -21,7 +21,8 @@ from ..database import db_session
 from ..deps import (require_admin, require_archive_page, require_council, require_manager)
 from ..integrations import all_configs, save_config
 from ..models import (Activity, AuditLog, CheckinRecord, Enrollment,
-                      HoursRecord, Shift, User, ViolationRecord, iso, now, uid)
+                      HoursRecord, Shift, User, ViolationRecord, iso,
+                      like_pattern, now, uid)
 from ..perm import ensure_activity_manager, managed_activity_ids
 
 router = APIRouter(prefix="/api/staff", tags=["staff-admin"])
@@ -123,9 +124,9 @@ def list_users(q: str = "", college: str = "",
                user: User = Depends(require_archive_page)):
     query = db.query(User).filter(User.user_type == "student")
     if q:
-        like = f"%{q.strip()}%"
-        query = query.filter((User.name.ilike(like)) |
-                             (User.student_id.ilike(like)))
+        like = like_pattern(q.strip())
+        query = query.filter((User.name.ilike(like, escape="\\")) |
+                             (User.student_id.ilike(like, escape="\\")))
     if college:
         query = query.filter(User.college == college)
     rows = query.order_by(User.student_id).limit(200).all()

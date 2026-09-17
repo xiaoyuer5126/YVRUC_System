@@ -30,6 +30,16 @@ def now() -> datetime:
     return datetime.now()
 
 
+def like_pattern(text: str) -> str:
+    """把搜索框里的一串字变成 LIKE 的匹配串。
+
+    % 与 _ 在 LIKE 里是通配符：直接拼进去，搜一个 % 就会命中全部记录。
+    转义掉，让搜索只按字面匹配（调用处要配 escape="\\"）。
+    """
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def iso(dt: datetime | None) -> str | None:
     return dt.isoformat(timespec="minutes") if dt else None
 

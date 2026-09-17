@@ -32,7 +32,9 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("digests", send_roster_digests),
                       ("approvals", remind_stale_approvals),
                       ("hours_lock_requests", submit_lock_when_due),
-                      ("unlocked", release_stale_edit_locks)):
+                      ("unlocked", release_stale_edit_locks),
+                      ("sessions", purge_expired_sessions),
+                      ("orphan_files", purge_orphan_attachments)):
         try:
             result[name] = job(db)
         except Exception:  # noqa: BLE001
@@ -322,3 +324,55 @@ def send_roster_digests(db: OrmSession) -> int:
     if shifts:
         db.commit()
     return sent
+
+
+# ======================= 清理 =======================
+
+def purge_expired_sessions(db: OrmSession) -> int:
+    """删掉过期会话。
+
+    到期的令牌本来就用不了（deps._authorize 会拒），但记录留在库里只增不减，
+    一年下来就是一张没人看、越查越慢的表。
+    """
+    from .models import Session
+
+    n = (db.query(Session).filter(Session.expires_at <= now())
+         .delete(synchronize_session=False))
+    if n:
+        db.commit()
+    return n
+
+
+def purge_orphan_attachments(db: OrmSession) -> int:
+    """清掉没人引用的问卷附件：文件与记录一起删。
+
+    报名问卷的文件题是先传文件、再提交答案。填到一半关掉页面，文件就留在
+    磁盘上，没有任何申请指向它。提交与撤回时会当场清一遍，这里管的是
+    「传了就再也没回来」的那些，留够重来的时间再删。
+    """
+    from .models import Application, Attachment
+    from .routers.materials import MATERIAL_DIR
+
+    cutoff = now() - timedelta(days=config.ORPHAN_ATTACHMENT_DAYS)
+    rows = (db.query(Attachment)
+            .filter(Attachment.owner_type == "application",
+                    Attachment.created_at <= cutoff).all())
+    if not rows:
+        return 0
+    # 还被某份申请的答案引用着的，一律不动
+    used: set[str] = set()
+    for app in db.query(Application).filter(
+            Application.activity_id.in_({r.activity_id for r in rows})).all():
+        used |= {str(v) for v in (app.answers or {}).values()
+                 if isinstance(v, str)}
+    n = 0
+    for att in rows:
+        if att.id in used:
+            continue
+        (MATERIAL_DIR / att.stored_name).unlink(missing_ok=True)
+        db.delete(att)
+        n += 1
+    if n:
+        db.commit()
+        logger.info("清理无人引用的问卷附件 %d 个", n)
+    return n

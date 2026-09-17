@@ -35,7 +35,7 @@ from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
                       AttireRecord, AttireTask, AuditLog,
                       CheckinRecord, CheckinTask, Enrollment, FormQuestion,
                       Notification, Position, Shift, User,
-                      iso, now, uid)
+                      iso, like_pattern, now, uid)
 from ..serializers import activity_brief
 from .screening import answers_out
 
@@ -108,7 +108,8 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
     if managed is not None:
         rows = rows.filter(Activity.id.in_(managed or ['__none__']))
     if q.strip():
-        rows = rows.filter(Activity.title.ilike(f"%{q.strip()}%"))
+        rows = rows.filter(Activity.title.ilike(like_pattern(q.strip()),
+                                                escape="\\"))
     if status:
         rows = rows.filter(Activity.status == status)
     total = rows.count()

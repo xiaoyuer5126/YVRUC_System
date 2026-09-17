@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import io
 
-from backend.models import Activity, Attachment
+from datetime import timedelta
+
+from backend.models import Activity, Attachment, now
 from conftest import POSITION_TEXT, dl_url, editing, login
 
 
@@ -118,3 +120,47 @@ def test_场次内复制岗位带上学习材料(client, admin, db, enrolled_act
     copied = db.query(Attachment).filter(Attachment.owner_type == "position",
                                          Attachment.owner_id == new_id).all()
     assert [a.title for a in copied] == ["岗前须知"]
+
+
+def test_附件配额与无人引用的清理(client, db, take_student, enrolled_activity):
+    """传了不提交的文件不会自己消失：有上限，提交与撤回时当场清，
+    再久不回来由定时任务清掉。"""
+    from backend import config
+    from backend.models import Attachment
+    from backend.scheduled import purge_orphan_attachments
+
+    act, _shift, _u = enrolled_activity
+    stu = login(client, take_student())
+    url = f"/api/activities/{act.id}/apply/upload"
+    ids = []
+    for i in range(config.MAX_PENDING_ATTACHMENTS):
+        r = client.post(url, headers=stu,
+                        files={"file": (f"{i}.txt", b"x" * 10, "text/plain")})
+        assert r.status_code == 200, r.text
+        ids.append(r.json()["id"])
+    # 第 6 个被拦
+    over = client.post(url, headers=stu,
+                       files={"file": ("over.txt", b"x", "text/plain")})
+    assert over.status_code == 400 and "最多" in over.json()["detail"]
+
+    # 撤回时没人引用的当场清掉（这里连申请都没提交，直接跑定时任务）
+    for att in db.query(Attachment).filter(Attachment.id.in_(ids)).all():
+        att.created_at = now() - timedelta(days=config.ORPHAN_ATTACHMENT_DAYS + 1)
+    db.commit()
+    assert purge_orphan_attachments(db) >= len(ids)
+    assert db.query(Attachment).filter(Attachment.id.in_(ids)).count() == 0
+
+
+def test_审批中的活动材料同样不外泄(client, admin, db, enrolled_activity,
+                                  take_student):
+    """交上去等审批那段时间活动还没公开，材料也不该能下到。"""
+    act, shift, _u = enrolled_activity
+    mid = _upload(client, admin, shift).json()["id"]
+    db.get(Activity, act.id).status = "pending"
+    db.commit()
+
+    stu = login(client, take_student())
+    assert client.get(
+        dl_url(client, stu, f"/api/materials/{mid}")).status_code == 404
+    assert client.get(
+        dl_url(client, admin, f"/api/materials/{mid}")).status_code == 200

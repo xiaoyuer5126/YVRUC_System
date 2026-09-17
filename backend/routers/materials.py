@@ -20,6 +20,7 @@ from ..database import db_session
 from ..deps import current_user_download, require_manager
 from ..models import Activity, Attachment, Position, User, uid
 from ..perm import ensure_activity_manager, is_activity_manager
+from .activities import PUBLIC_STATUSES
 from ..stage import ensure_not_finished
 
 router = APIRouter(prefix="/api", tags=["materials"])
@@ -150,9 +151,11 @@ def download_material(material_id: str, db: OrmSession = Depends(db_session),
     row = db.get(Attachment, material_id)
     if row is None or row.kind != "file":
         raise HTTPException(404, "材料不存在")
+    # 活动公开之前（草稿、审批中、待发布）它的材料也不对外：
+    # 只按 draft 判断的话，交上去等审批的那一段时间材料就漏出去了
     act = db.get(Activity, row.activity_id) if row.activity_id else None
-    if act is not None and act.status == "draft" and not is_activity_manager(
-            db, user, act.id):
+    if act is not None and act.status not in PUBLIC_STATUSES \
+            and not is_activity_manager(db, user, act.id):
         raise HTTPException(404, "材料不存在")
     # 报名问卷里志愿者交的文件是个人材料：只有本人和这场活动的管理者能看
     if row.owner_type == "application" and row.uploaded_by != user.id \

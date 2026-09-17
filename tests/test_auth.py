@@ -130,3 +130,16 @@ def test_下载票据只能用一次且认准那个网址(client, admin, db, enr
         f"/api/staff/activities/{act.id}/hours.xlsx?ticket={other}").status_code == 401
 
 
+
+
+def test_过期会话会被定时任务清掉(client, db):
+    from backend.scheduled import purge_expired_sessions
+
+    tok = login(client, ADMIN)["Authorization"].split()[1]
+    row = db.get(Session, tok)
+    row.expires_at = now() - timedelta(minutes=1)
+    db.commit()
+
+    assert purge_expired_sessions(db) >= 1
+    db.expire_all()          # 删除走的是批量语句，本会话的缓存不会自己知道
+    assert db.get(Session, tok) is None

@@ -14,7 +14,7 @@ from .. import notify
 from ..integrations import wecom
 from ..locks import shift_lock
 from ..models import (Activity, Application, Enrollment, Shift, Position,
-                      User, now, uid)
+                      User, like_pattern, now, uid)
 from ..perm import is_activity_manager, managed_activity_ids
 from ..qrcodes import page_qr
 from ..serializers import (activity_brief, activity_detail, display_status_of,
@@ -116,7 +116,8 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
                     Activity.recruit_stages)
     rows = rows.filter(Activity.status.in_(PUBLIC_STATUSES))
     if q.strip():
-        rows = rows.filter(Activity.title.ilike(f"%{q.strip()}%"))
+        rows = rows.filter(Activity.title.ilike(like_pattern(q.strip()),
+                                                escape="\\"))
     if mode:
         rows = rows.filter(Activity.recruit_mode == mode)
     if organizer:

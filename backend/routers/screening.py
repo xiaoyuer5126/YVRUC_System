@@ -194,6 +194,45 @@ def student_form(activity_id: str, positions: str = "",
     return out
 
 
+def _pending_attachments(db: OrmSession, activity_id: str,
+                         user_id: str) -> list[Attachment]:
+    """这个人在这个活动里传过的问卷附件。"""
+    return (db.query(Attachment)
+            .filter(Attachment.owner_type == "application",
+                    Attachment.activity_id == activity_id,
+                    Attachment.uploaded_by == user_id).all())
+
+
+def _ensure_upload_quota(db: OrmSession, act: Activity, user: User,
+                         size: int) -> None:
+    """传了不提交的文件不会自己消失。没有上限，一个人就能把磁盘写满。"""
+    rows = _pending_attachments(db, act.id, user.id)
+    if len(rows) >= config.MAX_PENDING_ATTACHMENTS:
+        raise HTTPException(400, f"本活动最多只能上传 "
+                                 f"{config.MAX_PENDING_ATTACHMENTS} 个文件，"
+                                 f"请提交申请后再传，或联系负责人")
+    if sum(r.size for r in rows) + size > config.MAX_PENDING_ATTACHMENT_BYTES:
+        raise HTTPException(
+            400, f"本活动的上传总量不能超过 "
+                 f"{config.MAX_PENDING_ATTACHMENT_BYTES // (1024 * 1024)}MB")
+
+
+def drop_unused_attachments(db: OrmSession, activity_id: str, user_id: str,
+                            keep: set[str]) -> int:
+    """清掉这个人在这个活动里没被答案引用的附件：文件与记录一起删。
+
+    传了又重选、填到一半改主意，都会留下没人用的文件。
+    """
+    dropped = 0
+    for att in _pending_attachments(db, activity_id, user_id):
+        if att.id in keep:
+            continue
+        (MATERIAL_DIR / att.stored_name).unlink(missing_ok=True)
+        db.delete(att)
+        dropped += 1
+    return dropped
+
+
 @router.post("/activities/{activity_id}/apply/upload")
 async def upload_answer_file(activity_id: str, file: UploadFile = File(...),
                              db: OrmSession = Depends(db_session),
@@ -206,6 +245,7 @@ async def upload_answer_file(activity_id: str, file: UploadFile = File(...),
     data = await file.read()
     if len(data) > config.MAX_MATERIAL_BYTES:
         raise HTTPException(400, f"文件不能超过 {config.MAX_MATERIAL_BYTES // (1024 * 1024)}MB")
+    _ensure_upload_quota(db, act, user, len(data))
     MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
     stored = f"{uuid4().hex}.{ext}"
     (MATERIAL_DIR / stored).write_bytes(data)
@@ -260,6 +300,9 @@ def apply(activity_id: str, body: ApplyBody,
                       answers=answers, wanted_positions=wanted_ids,
                       leader_willing=body.leader_willing)
     db.add(app)
+    # 传了又重选的文件到此为止：答案定了，没被引用的那些谁也用不上
+    drop_unused_attachments(db, act.id, user.id,
+                            {str(v) for v in answers.values() if isinstance(v, str)})
     # 一个场次一条意向记录（唯一索引限制），position_id 放他在这一场的首选，
     # 同场次勾的其余岗位记在申请上，录取时管理者从中挑
     for g, plist in picked.items():
@@ -348,6 +391,7 @@ def withdraw(activity_id: str, db: OrmSession = Depends(db_session),
     audit_log(db, actor=user, action="cancel", target_type="enrollment",
               target_id=app.id, target_label=user.name, activity_id=act.id,
               summary=f"{user.name}（{user.student_id}）撤回了报名申请")
+    drop_unused_attachments(db, act.id, user.id, set())
     db.delete(app)
     db.commit()
     return {"ok": True}

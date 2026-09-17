@@ -21,7 +21,7 @@ from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import current_user
 from ..models import (Activity, ActivityManager, Department, ROLES,
-                      ROLE_LABELS, User)
+                      ROLE_LABELS, User, like_pattern)
 from ..perm import writing_manager_ids
 
 router = APIRouter(prefix="/api/staff", tags=["roles"])
@@ -169,9 +169,9 @@ def list_role_users(q: str = "", role: str = "",
         query = query.filter(User.department_id == user.department_id,
                              User.qingxie_post == "member")
     if q:
-        like = f"%{q.strip()}%"
-        query = query.filter((User.name.ilike(like)) |
-                             (User.student_id.ilike(like)))
+        like = like_pattern(q.strip())
+        query = query.filter((User.name.ilike(like, escape="\\")) |
+                             (User.student_id.ilike(like, escape="\\")))
     elif not user.has_full_access() and user.post() != "core":
         query = query.filter(User.department_id == user.department_id)
     else:
