@@ -90,7 +90,9 @@ services:
       dockerfile: web/Dockerfile
     container_name: rucva-web
     ports:
-      - "${WEB_HOST_PORT:-8080}:80"
+      # 只绑本机：公网走 cloudflared 隧道，它在 compose 内网里直连 web:80。
+      # 绑 0.0.0.0 等于把源站也摆到公网上，绕过隧道前面的防护。
+      - "127.0.0.1:${WEB_HOST_PORT:-8080}:80"
     depends_on:
       backend:
         condition: service_healthy
