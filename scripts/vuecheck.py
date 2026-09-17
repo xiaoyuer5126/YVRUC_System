@@ -1,7 +1,11 @@
-"""检查 .vue 里用到但从未定义的标识符。
+"""检查 .vue 里两类不会报错、只会悄悄出事的写法。
 
-Vue 模板对未定义变量既不报错也不告警，只是静默渲染成空——
-「岗位树全空」就是这么来的，构建、类型、测试全都发现不了。
+1. 用到但从未定义的标识符。Vue 模板对未定义变量既不报错也不告警，只是
+   静默渲染成空——「岗位树全空」就是这么来的，构建、类型、测试都发现不了。
+2. 把数据当 HTML 渲染（v-html / dangerouslyUseHTMLString: true）。平台里
+   几乎每段文字都是别人填的：活动名由发起方填，问卷答案由志愿者填。
+   当 HTML 渲染，就等于让填的人在看的人的浏览器里执行脚本，而令牌就存在
+   浏览器里。确有必要时在同一行写 `vuecheck: html-ok` 并说明为什么安全。
 """
 import pathlib, re, sys
 
@@ -69,6 +73,21 @@ def orphan_state(scr: str, tpl: str) -> list:
     return out
 
 
+def html_sinks(src: str) -> list:
+    """把数据当 HTML 渲染的地方。dangerouslyUseHTMLString: false 是明示关掉的，
+    不算；写成别的值（变量、true）都得说明理由。"""
+    out = []
+    for i, line in enumerate(src.splitlines(), 1):
+        if 'vuecheck: html-ok' in line:
+            continue
+        if re.search(r'\bv-html\b', line):
+            out.append(f'{i}: v-html')
+        m = re.search(r'dangerouslyUseHTMLString\s*:\s*(\w+)', line)
+        if m and m.group(1) != 'false':
+            out.append(f'{i}: dangerouslyUseHTMLString: {m.group(1)}')
+    return out
+
+
 bad = 0
 files = sorted(pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else '.').rglob('*.vue'))
 if not files:
@@ -88,9 +107,12 @@ for f in files:
     # 脚本里用了却没定义的，同样是漏改（rosterOptions 引用 groups 就是这样）
     scr_undef = sorted({n for n in re.findall(r'(?<![.\w$])([A-Za-z_$][\w$]*)\.value\b', scr)
                         if n not in names})
-    if missing or scr_undef or orphans:
+    sinks = html_sinks(src)
+    if missing or scr_undef or orphans or sinks:
         bad += 1
         print(f'✗ {f}')
+        if sinks:
+            print(f'    把数据当 HTML 渲染: {sinks}')
         if missing:
             print(f'    模板用到但未定义: {missing}')
         if scr_undef:

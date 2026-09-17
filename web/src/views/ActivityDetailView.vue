@@ -905,11 +905,12 @@ async function submitEnroll() {
     }
     if (e.data && e.data.conflicts) {
       enrollDlg.value.visible = false
+      // 纯文本，不拼 HTML：活动名是别人填的，当 HTML 渲染就等于把一段
+      // 脚本塞进每个撞时间的志愿者的浏览器里
       const list = e.data.conflicts
         .map(c => `「${c.activity_title}」${c.shift_name}（${c.time}）`
-                  + (c.waiting ? '　<i>候补中</i>' : '')).join('<br>')
-      ElMessageBox.alert(list, '与其他活动时间冲突',
-                         { dangerouslyUseHTMLString: true, type: 'error' })
+                  + (c.waiting ? '（候补中）' : '')).join('\n')
+      ElMessageBox.alert(list, '与其他活动时间冲突', { type: 'error' })
     }
   } finally {
     enrollDlg.value.submitting = false
