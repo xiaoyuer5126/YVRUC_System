@@ -26,9 +26,6 @@ SESSION_HOURS = 24          # 令牌有效期；接 SSO 后由统一身份认证
 # 身份证号在库里是加密存的（见 crypto.py），密钥必须与数据库分开保管。
 ID_CARD_KEY = os.environ.get("RUCVA_ID_CARD_KEY", "").strip()
 
-# 身份证号在库里是加密存的（见 crypto.py），密钥必须与数据库分开保管。
-ID_CARD_KEY = os.environ.get("RUCVA_ID_CARD_KEY", "").strip()
-
 # —— 演示登录 ——
 # 仅在 SSO 未接通时开放，且必须配置共享口令；未配置则整个演示登录接口不存在。
 # 学校 SSO 接通后删除 routers/auth.py 里的 demo 分支与这一项。
