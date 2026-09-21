@@ -140,25 +140,58 @@ def sso_callback(body: SsoCallbackBody,
 
     user = db.query(User).filter(User.student_id == sid).first()
     if user is None:
-        user = _provision(db, sid, info.get("name") or sid)
+        user = _provision(db, info)
+    else:
+        _sync_from_school(db, user, info)
     return {"token": create_session(db, user), "user": user.full(),
             "mode": sso.mode(), "next": info.get("next") or ""}
 
 
-def _provision(db: OrmSession, sid: str, name: str) -> User:
+# 学校是这几项的权威来源：升学年、转专业、改名都会在下次登录时同步过来。
+# 手机号、微信、身份证号、校区**不在此列**——学校侧没有这些数据，是本人
+# 自己填的，这里覆盖一下就等于把人填好的东西清空了。
+_SCHOOL_FIELDS = ("name", "user_type", "grade", "stage", "college", "gender")
+
+
+def _sync_from_school(db: OrmSession, user: User, ident: dict) -> None:
+    """每次登录都用学校的说法刷新档案。
+
+    只覆盖学校**确实给了值**的字段：返回空值意味着学校那边也没有这项数据，
+    不该拿它去清掉本地已有的值。
+    """
+    changed = [f for f in _SCHOOL_FIELDS
+               if ident.get(f) and getattr(user, f) != ident[f]]
+    if not changed:
+        return
+    for f in changed:
+        setattr(user, f, ident[f])
+    db.commit()
+
+
+def _provision(db: OrmSession, ident: dict) -> User:
     """给第一次登录的师生建本地档案。
 
     平台不对志愿者设准入名单，师生第一次登录就该能用；要是要求先由管理员
-    录入，SSO 接通了也没人进得来。年级与学段从学号推导（见 school_id.py），
-    手机号、微信、学院由本人到「个人资料」补全——缺手机号/微信本来就会拦住
-    报名并弹完善表单，这条路径早就有了。
+    录入，SSO 接通了也没人进得来。年级、学段、学院、性别学校在登录时一并
+    给出（见 integrations/sso.py 的 `_identity`），手机号、微信、身份证号
+    学校没有，由本人到「个人资料」补全——缺手机号/微信本来就会拦住报名并
+    弹完善表单，这条路径早就有了。
 
     **不预置任何身份**：学生给 student，教师留空。权限必须由管理员在「角色」
     页显式授予，不能因为「他是老师」就自动拿到管理入口。
     """
-    user_type, grade, stage = school_id.parse(sid)
-    user = User(id=uid("u"), student_id=sid, name=name,
-                user_type=user_type, grade=grade, stage=stage,
+    sid = ident["student_id"]
+    # _identity 通常已经把学校没给的部分按学号补好了（见 integrations/sso.py）。
+    # 这里再兜一次，是为了让残缺的 ident 不至于静默建出一个没有年级学段、
+    # 连身份类型都错了的档案——那种错要等到筛选人时才看得出来。
+    fallback_type, fallback_grade, fallback_stage = school_id.parse(sid)
+    user_type = ident.get("user_type") or fallback_type
+    user = User(id=uid("u"), student_id=sid,
+                name=ident.get("name") or sid, user_type=user_type,
+                grade=ident.get("grade") or fallback_grade,
+                stage=ident.get("stage") or fallback_stage,
+                college=ident.get("college") or "",
+                gender=ident.get("gender") or "",
                 roles=["student"] if user_type == "student" else [])
     db.add(user)
     try:

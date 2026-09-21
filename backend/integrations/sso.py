@@ -16,7 +16,7 @@ import logging
 import urllib.parse
 import urllib.request
 
-from .. import config
+from .. import config, school_id
 from ..locks import issue_sso_state, redeem_sso_state
 from . import get_config, is_mock
 
@@ -31,12 +31,26 @@ OAUTH_PATHS = {
     "user_info_url": "oauth2.0/user/profiles",
 }
 
-# profiles 的响应字段名文档没给样例，先按常见命名兜底。
-# 第一次真实登录会把**字段名列表**（不含值）打进日志，之后据此收紧——
-# 这张表本身就意味着「我们还不确定学校返回什么」，不该长期留着。
-_ACCOUNT_KEYS = ("loginName", "account", "username", "userId", "userName",
-                 "studentId", "accountName")
-_NAME_KEYS = ("name", "userName", "realName", "cn", "nickName", "displayName")
+# profiles 的响应字段名文档没给样例，靠真机登录量出来。2026-09-21 实测
+# （学号 2025201717）的响应长这样：
+#
+#   {"loginName": "2025201717", "name": "…", "gender": "男", "email": null,
+#    "phone": "", "categoryName": "学生", "depts": [],
+#    "accounts": [{"loginName": "2025201717", "categoryName": "学生",
+#                  "childCategoryName": "本科生", "orgCode": "101700",
+#                  "orgName": "信息学院", "orgCategoryName": "教学单位",
+#                  "enterGrade": "2025", "isMainOrg": true}]}
+#
+# 手机号与邮箱学校侧是空的，微信、身份证号、校区则根本没有——这几项只能由
+# 本人到「个人资料」填，别再指望从响应里找。**不留猜测性候选字段名**：
+# 多列一串学校里并不存在的名字，只会让「字段变了」退化成「悄悄挑中另一个
+# 值」；真变了，_identity 里的报错会直接说出来。
+_ACCOUNT_KEY = "loginName"
+_NAME_KEY = "name"
+
+# 人员类别 → 平台的身份类型。文档与实测只出现过这两个取值；认不出就退回
+# 按学号位数推（见 school_id.py）。
+_TYPE_BY_CATEGORY = {"学生": "student", "教职工": "teacher"}
 
 
 def mode() -> str:
@@ -107,8 +121,59 @@ def login_url(next_url: str = "") -> str:
     return f"{authorize}?{q}"
 
 
+def _account(info: dict, sid: str) -> dict:
+    """挑出登录所用账号对应的那一条 accounts 记录。
+
+    一个人可能有多重身份（既是学生又是教职工），accounts 就是为这种情况
+    准备的。**盲取第 0 条会把学院填成另一个单位的**，所以先按登录名精确
+    匹配，退而求其次才用 isMainOrg 标记。
+    """
+    rows = [a for a in (info.get("accounts") or []) if isinstance(a, dict)]
+    for row in rows:
+        if _pick(row, _ACCOUNT_KEY) == sid:
+            return row
+    for row in rows:
+        if row.get("isMainOrg"):
+            return row
+    return rows[0] if rows else {}
+
+
+def _identity(info: dict) -> dict:
+    """把 profiles 的响应翻译成建/更新档案要的字段。
+
+    学校给了就以学校为准——`enterGrade`、`childCategoryName` 比按学号推导
+    准得多，留学生那种中间两位对不上对照表的情况也随之消失。学校没给、
+    或给了个平台不认识的取值，才退回推导（见 school_id.py）。
+
+    **认不出时绝不硬填**：`stage` 是招募范围的筛选依据，写一个 config.STAGES
+    里没有的值进去，人会静默匹配不上任何活动，且事后查不出原因。
+    """
+    sid = _pick(info, _ACCOUNT_KEY)
+    if not sid:
+        raise ValueError("统一身份认证未返回可识别的学号/工号")
+    acct = _account(info, sid)
+    fallback_type, fallback_grade, fallback_stage = school_id.parse(sid)
+
+    stage = _pick(acct, "childCategoryName")
+    if stage and stage not in config.STAGES:
+        log.warning("统一身份认证返回了未收录的学段：%r（学号 %s），"
+                    "已退回按学号推导", stage, sid)
+        stage = ""
+    category = _pick(acct, "categoryName") or _pick(info, "categoryName")
+    return {
+        "student_id": sid,
+        "name": _pick(info, _NAME_KEY) or sid,
+        "user_type": _TYPE_BY_CATEGORY.get(category, fallback_type),
+        "grade": _pick(acct, "enterGrade") or fallback_grade,
+        "stage": stage or fallback_stage,
+        "college": _pick(acct, "orgName"),
+        "gender": _pick(info, "gender"),
+    }
+
+
 def handle_callback(code: str, state: str) -> dict:
-    """用授权码换身份 → {"student_id", "name", "next"}。
+    """用授权码换身份 → {"student_id", "name", "user_type", "grade",
+    "stage", "college", "gender", "next"}。
 
     state 先核销再换令牌：核销不掉说明这条回调不是从我们这儿发起的
     （伪造、已用过或过期），此时**不该**拿 code 去换令牌。
@@ -124,15 +189,12 @@ def handle_callback(code: str, state: str) -> dict:
 
     token = _fetch_token(cfg, code)
     info = _fetch_profile(cfg, token)
-    # 只记字段名不记值：这行是为了让我们知道学校到底返回哪些字段，
-    # 而 profiles 里装的是姓名、手机号这类个人信息，不该进日志。
+    # 只记字段名不记值：profiles 里装的是姓名、手机号这类个人信息。
     log.info("统一身份认证返回字段：%s", sorted(info))
 
-    sid = _pick(info, *_ACCOUNT_KEYS)
-    if not sid:
-        raise ValueError("统一身份认证未返回可识别的学号/工号")
-    return {"student_id": sid, "name": _pick(info, *_NAME_KEYS) or sid,
-            "next": next_url}
+    ident = _identity(info)
+    ident["next"] = next_url
+    return ident
 
 
 def _fetch_token(cfg: dict, code: str) -> str:
