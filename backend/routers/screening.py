@@ -23,7 +23,7 @@ from .. import config, enroll_logic as logic, scoring
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import current_user, require_manager
-from ..integrations import wecom
+from ..integrations import msgcenter
 from ..locks import shift_lock
 from ..models import (Activity, Application, Attachment, Enrollment, FormQuestion, Position, Shift, User, now, uid)
 from ..perm import ensure_activity_manager, is_activity_manager
@@ -555,7 +555,7 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                 app.decided_by, app.decided_at = user.id, now()
                 db.flush()
                 logic.sync_attached(db, target)
-            wecom.send_user(db, u, "application_accepted",
+            msgcenter.send_user(db, u, "application_accepted",
                             data={"activity_id": act.id},
                             activity=act.title, shift=g.name, time=g.span_text(),
                             detail=("岗位：" + position.name
@@ -568,7 +568,7 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                 e.status, e.cancel_type = "cancelled", "rejected"
             app.status = "rejected"
             app.decided_by, app.decided_at = user.id, now()
-            wecom.send_user(db, u, "application_rejected",
+            msgcenter.send_user(db, u, "application_rejected",
                             data={"activity_id": act.id}, activity=act.title)
             done.append(u.name)
     audit_log(db, actor=user, action="assign", target_type="activity",

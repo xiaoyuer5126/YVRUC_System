@@ -30,7 +30,7 @@ from ..notify import notify_enrolled
 from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, managed_activity_ids,
                      remove_manager)
-from ..integrations import wecom
+from ..integrations import msgcenter
 from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
                       AttireRecord, AttireTask, AuditLog,
                       CheckinRecord, CheckinTask, Enrollment, FormQuestion,
@@ -86,7 +86,7 @@ def _notify_assignment_bg(items: list[dict]):
             g = db.get(Shift, it["shift_id"])
             if not (u and st and g):
                 continue
-            wecom.send_user(db, u, "assignment",
+            msgcenter.send_user(db, u, "assignment",
                             activity=db.get(Activity, g.activity_id).title,
                             shift=g.name, position=st.name,
                             position_time=st.time_text(),
@@ -1466,7 +1466,7 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
         users = [u for u in users if u.id not in checked]
     batch_id = uid("bat") if body.need_ack else None
     for u in users:
-        wecom.send_user(db, u, "custom", title=title, content=content,
+        msgcenter.send_user(db, u, "custom", title=title, content=content,
                         data={"activity_id": act.id},
                         need_ack=body.need_ack, batch_id=batch_id)
     n = len(users)
@@ -1557,7 +1557,7 @@ def remind_batch(batch_id: str, db: OrmSession = Depends(db_session),
         u = db.get(User, n.user_id)
         if u is None:
             continue
-        wecom.send_user(db, u, "ack_reminder", title=n.title,
+        msgcenter.send_user(db, u, "ack_reminder", title=n.title,
                         data={"activity_id": activity_id,
                               "remind_round": round_id,
                               "ack_of": n.id},
@@ -1782,7 +1782,7 @@ def set_leader(enrollment_id: str, body: LeaderBody,
         scope = logic.leader_scope_label(siblings, position)
         summary = (f"指定 {target.name} 为「{scope}」组长"
                    + (f"（原组长 {was} 已卸任）" if was else ""))
-        wecom.send_user(db, target, "leader_appointed",
+        msgcenter.send_user(db, target, "leader_appointed",
                         activity=db.get(Activity, enr.activity_id).title,
                         position=scope,
                         position_time=position.time_text(),

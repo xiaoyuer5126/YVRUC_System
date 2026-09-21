@@ -10,6 +10,7 @@ from datetime import timedelta
 
 import pytest
 
+from backend import config
 from backend.models import (Activity, ActivityManager, Position, Shift, User,
                             now, uid)
 from backend.qrcodes import qr_svg
@@ -98,3 +99,32 @@ def test_二维码不接受别人家的域名(client, admin, qr_activity):
         f"/api/activities/{act.id}/qr.svg?base={PUBLIC}").status_code == 200
     assert client.get(
         f"/api/activities/{act.id}/qr.svg?base={FALLBACK}").status_code == 200
+
+
+# —— 域名清单的解析 ——
+#
+# 两种写法都真实出现过：.env 里写成了 JSON 数组，而解析只按逗号切。切出来的
+# 碎片 urlparse 后 netloc 是空串，白名单**静默变成空的**——二维码照发不误，
+# 只是配置里的域名再也不被放行。这种错不报任何异常，只能靠测试钉住。
+
+def test_域名清单两种写法都认():
+    from urllib.parse import urlparse
+    for raw in ('["https://a.cn","https://b.cn"]', "https://a.cn,https://b.cn"):
+        netlocs = {urlparse(u).netloc for u in config._url_list(raw)}
+        assert netlocs == {"a.cn", "b.cn"}, f"{raw} 解析成了 {netlocs}"
+
+
+def test_域名清单去掉末尾斜杠与空白():
+    assert config._url_list(" https://a.cn/ , https://b.cn ") == \
+        ["https://a.cn", "https://b.cn"]
+
+
+def test_空清单不报错():
+    assert config._url_list("") == []
+    assert config._url_list("   ") == []
+    assert config._url_list("[]") == []
+
+
+def test_半截_JSON_不会把整条配置吃掉():
+    """写法坏掉时退回按逗号切，至少还留下点东西可查——总好过静默清空。"""
+    assert config._url_list('["https://a.cn"')

@@ -13,15 +13,16 @@ import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config
+from .. import config, school_id
 from ..database import db_session
 from ..deps import create_session, current_token, current_user
 from ..integrations import sso
 from ..locks import (clear_failures, failure_count, issue_ticket,
                      note_failure)
-from ..models import Session, User, ViolationRecord
+from ..models import Session, User, ViolationRecord, uid
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -36,13 +37,33 @@ def demo_login_enabled() -> bool:
 
 @router.get("/sso-mode")
 def sso_mode():
-    """当前登录方式：真实 SSO 时前端跳转授权页，演示模式时显示口令表单。"""
+    """当前登录方式：真实 SSO 时前端显示跳转按钮，演示模式时显示口令表单。
+
+    只回**方式**与**是否配好**，不回跳转地址——那个要点击时才取，见下。
+    """
     if demo_login_enabled():
-        return {"mode": "demo", "login_url": ""}
+        return {"mode": "demo", "ready": False}
     if sso.mode() == "mock":
         # SSO 未配置且未开演示登录：谁也进不来，如实告诉前端
-        return {"mode": "unavailable", "login_url": ""}
-    return {"mode": sso.mode(), "login_url": sso.login_url()}
+        return {"mode": "unavailable", "ready": False}
+    return {"mode": sso.mode(), "ready": sso.configured()}
+
+
+@router.get("/sso-login-url")
+def sso_login_url(next: str = ""):
+    """取授权跳转地址。
+
+    在**点击时**才生成：state 一次一用且有有效期，页面一打开就生成的话，
+    用户看一会儿再点就已经过期了。顺带把「登录后回哪去」放进 state——
+    从二维码落地页被弹到登录页的人（CheckinLanding.vue），登录完该回到
+    原来那个页面，而不是活动广场。
+    """
+    if sso.mode() == "mock":
+        raise HTTPException(409, "统一身份认证尚未接通")
+    url = sso.login_url(next)
+    if not url:
+        raise HTTPException(503, "统一身份认证未配置，请联系管理员")
+    return {"login_url": url}
 
 
 class DemoLoginBody(BaseModel):
@@ -92,21 +113,65 @@ def demo_accounts(db: OrmSession = Depends(db_session)):
             for u in [*staff, *students]]
 
 
+class SsoCallbackBody(BaseModel):
+    # code 与 state 走请求体而不是查询串：查询串会原样进 nginx 访问日志和
+    # Referer，而授权码就是一张能换身份的凭证。
+    code: str
+    state: str
+
+
 @router.post("/sso-callback")
-def sso_callback(code: str, db: OrmSession = Depends(db_session)):
+def sso_callback(body: SsoCallbackBody,
+                 db: OrmSession = Depends(db_session)):
     """统一身份认证回调：用授权码换身份，换到谁就给谁开会话。"""
     if sso.mode() == "mock":
         raise HTTPException(409, "统一身份认证尚未接通")
-    info = sso.handle_callback(code)
+    try:
+        info = sso.handle_callback(body.code, body.state)
+    except PermissionError as exc:
+        # state 核销不掉：伪造、已用过或过期，这条回调不该被信任
+        raise HTTPException(400, str(exc)) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(502, f"统一身份认证校验失败：{exc}") from exc
+
     sid = (info.get("student_id") or "").strip()
     if not sid:
         raise HTTPException(502, "统一身份认证未返回学号")
+
     user = db.query(User).filter(User.student_id == sid).first()
     if user is None:
-        raise HTTPException(404, f"统一身份认证通过，但平台未找到学号 {sid} 的档案，"
-                                 f"请联系管理员")
+        user = _provision(db, sid, info.get("name") or sid)
     return {"token": create_session(db, user), "user": user.full(),
-            "mode": sso.mode()}
+            "mode": sso.mode(), "next": info.get("next") or ""}
+
+
+def _provision(db: OrmSession, sid: str, name: str) -> User:
+    """给第一次登录的师生建本地档案。
+
+    平台不对志愿者设准入名单，师生第一次登录就该能用；要是要求先由管理员
+    录入，SSO 接通了也没人进得来。年级与学段从学号推导（见 school_id.py），
+    手机号、微信、学院由本人到「个人资料」补全——缺手机号/微信本来就会拦住
+    报名并弹完善表单，这条路径早就有了。
+
+    **不预置任何身份**：学生给 student，教师留空。权限必须由管理员在「角色」
+    页显式授予，不能因为「他是老师」就自动拿到管理入口。
+    """
+    user_type, grade, stage = school_id.parse(sid)
+    user = User(id=uid("u"), student_id=sid, name=name,
+                user_type=user_type, grade=grade, stage=stage,
+                roles=["student"] if user_type == "student" else [])
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError:
+        # 同一个人同时点了两下登录：student_id 的唯一索引挡下第二条，
+        # 改用已经建好的那条，别把第二次登录变成 500
+        db.rollback()
+        existing = db.query(User).filter(User.student_id == sid).first()
+        if existing is None:
+            raise
+        return existing
+    return user
 
 
 @router.post("/logout")

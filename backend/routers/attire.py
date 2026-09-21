@@ -274,7 +274,7 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
     催领取：岗位统一发放服装、但还没领的人——活动当天没穿统一服装，现场认不出是志愿者。
     催归还：领了还没还的人。
     """
-    from ..integrations import wecom
+    from ..integrations import msgcenter
 
     ensure_activity_manager(db, user, activity_id)
     act = db.get(Activity, activity_id)
@@ -308,7 +308,7 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
         raise HTTPException(400, empty_msg)
     batch_id = uid("bat") if body.need_ack else None
     for u in targets:
-        wecom.send_user(db, u, "custom", data={"activity_id": activity_id},
+        msgcenter.send_user(db, u, "custom", data={"activity_id": activity_id},
                         title=title, content=text,
                         need_ack=body.need_ack, batch_id=batch_id)
     label = "领取" if body.action == "take" else "归还"

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .integrations import wecom
+from .integrations import msgcenter
 from .models import Activity, CheckinRecord, Enrollment, Shift, Position, User
 
 ENROLLED = ("enrolled", "waitlisted", "pending_confirm")
@@ -35,7 +35,7 @@ def notify_enrolled(db: OrmSession, act: Activity, template: str, **kw) -> int:
            .distinct().all())
     users = _users_of(db, ids)
     for u in users:
-        wecom.send_user(db, u, template, **kw)
+        msgcenter.send_user(db, u, template, **kw)
     return len(users)
 
 
@@ -77,7 +77,7 @@ def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
             label = g.kind_label()          # 「培训」「彩排」，不是「待分配」
         else:
             label = position.name if position else "待分配"
-        wecom.send_user(db, u, "checkin_reminder", activity=act.title,
+        msgcenter.send_user(db, u, "checkin_reminder", activity=act.title,
                         shift=g.name, position=label,
                         loc=loc,
                         # activity_id 是「提醒未签收」判权限的依据，不能省
@@ -90,7 +90,7 @@ def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
 def notify(db: OrmSession, user: User, title: str, content: str, *,
            data: dict | None = None, need_ack: bool = False) -> None:
     """给一个人发一条通知。用在没必要做成模板的一次性事务上。"""
-    wecom.send_user(db, user, "custom", data=data, need_ack=need_ack,
+    msgcenter.send_user(db, user, "custom", data=data, need_ack=need_ack,
                     title=title, content=content)
 
 
@@ -113,7 +113,7 @@ def notify_managers(db: OrmSession, activity_id: str, title: str,
         u = db.get(User, row.user_id)
         if u is not None:
             # 带上活动 id：这些消息说的都是某一场活动的事，点开就该进得去
-            wecom.send_user(db, u, "custom", data={"activity_id": activity_id},
+            msgcenter.send_user(db, u, "custom", data={"activity_id": activity_id},
                             title=title, content=content)
             n += 1
     return n

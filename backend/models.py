@@ -966,17 +966,21 @@ class AuditLog(Base):
 
 
 class Notification(Base):
-    """消息通知。演示模式下代表「企业微信模板消息」的送达记录。"""
+    """消息通知。真实模式下代表「企业微信模板消息」的送达记录，
+    演示模式（Mock）下就是前端「消息中心」的收件箱本身。"""
     __tablename__ = "notifications"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
-    template_key: Mapped[str] = mapped_column(String(32), default="")   # 见 integrations/wecom.py 模板库
+    template_key: Mapped[str] = mapped_column(String(32), default="")   # 见 integrations/msgcenter.py 模板库
+    # 通道名，固定 "wecom"。它记的是「走的哪个通道」（企业微信＝开放平台的通道 4），
+    # 不是「哪个模块发的」——发送模块改叫 msgcenter 了，这里不跟着改：改了会跟
+    # 老数据对不上，而语义本来就没变。
     channel: Mapped[str] = mapped_column(String(16), default="wecom")
     title: Mapped[str] = mapped_column(String(128))
     content: Mapped[str] = mapped_column(Text, default="")
     data: Mapped[dict] = mapped_column(JSON, default=dict)
-    delivered: Mapped[bool] = mapped_column(Boolean, default=True)      # wecom mock 恒 True
+    delivered: Mapped[bool] = mapped_column(Boolean, default=True)      # Mock 模式下恒 True
     read: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
@@ -1001,7 +1005,7 @@ class IntegrationConfig(Base):
     """外部系统对接参数。key → JSON。
 
     固定四个 key：
-      shuzhi_renda / wecom_work / checkin_gateway / sso
+      shuzhi_renda / msgcenter / checkin_gateway / sso
     enabled=false 时走内置 Mock 实现（演示模式），true 时走真实 HTTP 实现。
     """
     __tablename__ = "integration_configs"

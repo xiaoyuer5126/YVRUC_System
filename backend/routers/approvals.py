@@ -19,7 +19,7 @@ from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import (current_user, require_approver, require_council,
                     require_manager)
-from ..integrations import wecom
+from ..integrations import msgcenter
 from ..models import (Activity, ApprovalEvent, Department, User, iso, now, uid)
 from ..perm import ensure_activity_manager
 
@@ -87,7 +87,7 @@ def _notify(db: OrmSession, who: User | None, title: str, content: str,
     data = {"activity_id": act.id}
     if route:
         data["route"] = route
-    wecom.send_user(db, who, "custom", data=data,
+    msgcenter.send_user(db, who, "custom", data=data,
                     title=title, content=content, need_ack=need_ack,
                     batch_id=uid("bat") if need_ack else None)
 

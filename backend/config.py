@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import contextlib
+import json
 import os
 from pathlib import Path
 
@@ -23,6 +25,11 @@ REDIS_URL = os.environ["RUCVA_REDIS_URL"]
 # —— 会话 ——
 SESSION_HOURS = 24          # 令牌有效期；接 SSO 后由统一身份认证接管
 
+# OAuth state 有效期：一次一用，够走完「跳去 CAS → 输密码（可能还有二次验证）
+# → 跳回来」即可。给太短会在动作慢的人身上莫名其妙失败，给太长只是白白拉长
+# 重放窗口。
+SSO_STATE_SECONDS = 600
+
 # 身份证号在库里是加密存的（见 crypto.py），密钥必须与数据库分开保管。
 ID_CARD_KEY = os.environ.get("RUCVA_ID_CARD_KEY", "").strip()
 
@@ -34,12 +41,43 @@ DEMO_LOGIN_PASSWORD = os.environ.get("RUCVA_DEMO_PASSWORD", "").strip()
 # 接口文档（/docs、/openapi.json）仅在显式打开时暴露
 EXPOSE_API_DOCS = os.environ.get("RUCVA_EXPOSE_DOCS", "").strip() == "1"
 
+# —— 学校开放平台（能力开放平台 / 统一认证）——
+# 在应用中心注册应用后获得，调用任何接口都要拿它俩签名。放环境变量而不是
+# integration_configs 表：密钥不该出现在「集成设置」页的接口响应里。
+# 留空 = 相关能力一律回落 Mock，测试环境天然拿不到这些变量。
+OPENPLATFORM_APPID = os.environ.get("RUCVA_OPENPLATFORM_APPID", "").strip()
+OPENPLATFORM_SECRET = os.environ.get("RUCVA_OPENPLATFORM_SECRET", "").strip()
+OPENPLATFORM_GATEWAY = os.environ.get("RUCVA_OPENPLATFORM_GATEWAY", "").strip()
+# 统一身份认证（CAS 与 OAuth 两套接口都挂在它下面）
+CAS_BASE_URL = os.environ.get("RUCVA_CAS_BASE_URL", "").strip()
+# OAuth 回调地址，必须与应用中心登记的**一字不差**，否则换令牌时报 invalid_grant。
+# 单独一项而不是从 PUBLIC_BASE_URLS 里取：登记的是哪个地址只有学校后台说了算，
+# 而且随时可能改，改这个不该顺带把二维码域名白名单也改了。
+SSO_REDIRECT_URI = os.environ.get("RUCVA_SSO_REDIRECT_URI", "").strip()
+
 # 平台对外网址（多个用逗号分隔），二维码里写的就是它。列在这里的域名才允许
 # 出现在二维码中——否则任何人都能拿平台的接口生成一张指向自家站点的码，
 # 扫的人只看到「志愿平台发出来的二维码」。留空则只认本次请求自己的域名。
-PUBLIC_BASE_URLS = [s.strip().rstrip("/") for s in
-                    os.environ.get("RUCVA_PUBLIC_BASE_URL", "").split(",")
-                    if s.strip()]
+def _url_list(raw: str) -> list[str]:
+    """解析域名清单，JSON 数组与逗号分隔两种写法都认。
+
+    两种都认是因为 .env 里真的出现过 JSON 写法，而按逗号切分会把方括号和
+    引号留在值里——urlparse 解析出的 netloc 是空串，整个白名单静默失效，
+    二维码照发不误、谁都没发现（见 qrcodes.py）。宁可爱吃两种格式，
+    也不要一个不报错的错值。
+    """
+    raw = raw.strip()
+    if not raw:
+        return []
+    if raw.startswith("["):
+        with contextlib.suppress(json.JSONDecodeError):
+            loaded = json.loads(raw)
+            if isinstance(loaded, list):
+                return [s for s in (str(x).strip().rstrip("/") for x in loaded) if s]
+    return [s.strip().rstrip("/") for s in raw.split(",") if s.strip()]
+
+
+PUBLIC_BASE_URLS = _url_list(os.environ.get("RUCVA_PUBLIC_BASE_URL", ""))
 
 # 下载票据：导出与材料下载走 <a> 直链，带不了请求头，改用一次性票据。
 # 短到只够浏览器立刻发起这一次下载，进了日志也用不了第二次。
@@ -134,3 +172,13 @@ COLLEGES = [
 # 志愿者档案里也填这两项——两边取值必须同源，否则条件永远匹配不上。
 CAMPUSES = ["中关村校区", "通州校区", "苏州校区"]
 STAGES = ["本科生", "硕士研究生", "博士研究生"]
+
+# 学号中间两位 → 学段。取值与 STAGES 同源，否则筛选条件永远匹配不上。
+# 只列已确认的三种；留学生的中间两位可能与下表不同（尚未确认），
+# 认不出的取值一律留空，不硬猜成某个学段——猜错的学段会让人被错误的
+# 招募范围筛掉，而且没人看得出是哪里错了。
+STAGE_BY_CODE = {
+    "00": "博士研究生",
+    "10": "硕士研究生",
+    "20": "本科生",
+}

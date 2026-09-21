@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+from .. import config
 from ..database import SessionLocal
 from ..models import IntegrationConfig
 
@@ -22,13 +23,17 @@ DEFAULTS: dict[str, dict] = {
         "mode_hint": "只读API实时查询 / 每日同步宽表，二选一，由学校确定",
         "capabilities": ["按学号取身份信息"],
     },
-    "wecom_work": {
-        "label": "企业微信",
+    "msgcenter": {
+        "label": "消息中心",
         "enabled": False,
-        "corp_id": "",
-        "agent_id": "",
-        "corp_secret": "",
-        "mode_hint": "向学号对应的成员推送应用消息模板",
+        # appid / gateway 默认取环境变量，这里只是兜底、可在「集成设置」页覆盖。
+        # secret 不进这张表：它会在 all_configs() 的响应里被原样吐给前端。
+        "appid": config.OPENPLATFORM_APPID,
+        "gateway": config.OPENPLATFORM_GATEWAY,
+        # 通道：1=短信，2=邮件，4=企业微信。**默认只发 4**——短信是按条计费的
+        # 真金白银，且学校未同意本平台发短信，代码里任何路径都不得出现 1。
+        "channels": "4",
+        "mode_hint": "经学校开放平台向学号对应的师生推送消息",
         "capabilities": ["报名成功通知", "候补转正通知", "岗位分配通知",
                           "活动变更警告", "时长核准通知"],
     },
@@ -45,12 +50,17 @@ DEFAULTS: dict[str, dict] = {
         "label": "微人大统一身份认证",
         "enabled": False,
         "protocol": "oauth2",      # oauth2 / cas
+        # 留空则按 base_url 拼成 {base}/oauth2.0/{authorize,accessToken,user/profiles}
+        "base_url": config.CAS_BASE_URL,
         "authorize_url": "",
         "token_url": "",
         "user_info_url": "",
-        "client_id": "",
+        # client_id/secret 默认借开放平台的 appid/secret（同一套应用注册）。
+        # 文档说 OAuth 的 client_id 由「后台 OAuth 配置维护」单独分配，未必是
+        # 同一个值——所以留了覆盖口子，对不上时在这里改成学校另给的那套。
+        "client_id": config.OPENPLATFORM_APPID,
         "client_secret": "",
-        "redirect_uri": "",
+        "redirect_uri": config.SSO_REDIRECT_URI,
         "mode_hint": "OAuth2.0 或 CAS，师生登录平台唯一入口；演示期用内置模拟登录",
         "capabilities": ["师生 SSO 登录"],
     },
@@ -113,7 +123,9 @@ def is_mock(key: str) -> bool:
 # 启用真实接口前必须填好的参数
 REQUIRED_FIELD = {
     "shuzhi_renda": "base_url",
-    "wecom_work": "corp_id",
+    # appid / client_id 默认来自环境变量：测试环境没有这些变量 → 值为空 →
+    # 即便用例把开关打开了也照样回落 Mock，不会误打真实接口。
+    "msgcenter": "appid",
     "checkin_gateway": "base_url",
-    "sso": "authorize_url",
+    "sso": "client_id",
 }

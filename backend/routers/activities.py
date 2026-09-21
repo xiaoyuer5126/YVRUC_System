@@ -11,7 +11,7 @@ from .. import config, enroll_logic as logic
 from ..database import db_session
 from ..deps import current_user
 from .. import notify
-from ..integrations import wecom
+from ..integrations import msgcenter
 from ..locks import shift_lock
 from ..models import (Activity, Application, Enrollment, Shift, Position,
                       User, like_pattern, now, uid)
@@ -344,14 +344,14 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                 f"（{s.location or act.location or '地点待定'}）"
                 for s in logic.attached_shifts(
                     db, g.id, position.id if position else None))
-            wecom.send_user(db, user, "signup_success", activity=act.title,
+            msgcenter.send_user(db, user, "signup_success", activity=act.title,
                             shift=g.name, time=g.span_text(),
                             detail=(f"岗位：{position.name}（{position.location}）"
                                     if position else "具体岗位将于报名截止后公布")
                                    + extra)
         else:
             db.flush()
-            wecom.send_user(db, user, "waitlist_queued", activity=act.title,
+            msgcenter.send_user(db, user, "waitlist_queued", activity=act.title,
                             shift=g.name, pos=logic.waitlist_position(db, enr))
         try:
             db.commit()

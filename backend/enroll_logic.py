@@ -17,7 +17,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session as OrmSession
 
 from . import config
-from .integrations import wecom
+from .integrations import msgcenter
 from .models import (Activity, CheckinRecord, Enrollment, Shift, Position,
                      User, now, uid)
 
@@ -383,7 +383,7 @@ def start_confirm(db: OrmSession, enr: Enrollment, shift: Shift) -> Enrollment:
     user = db.get(User, enr.user_id)
     activity = db.get(Activity, enr.activity_id)
     # 带上 activity_id：这条通知看完就要去活动页确认，消息卡片据此可点击跳转
-    wecom.send_user(db, user, "waitlist_promoted",
+    msgcenter.send_user(db, user, "waitlist_promoted",
                     data={"activity_id": activity.id},
                     activity=activity.title, shift=shift.name,
                     deadline=f"{enr.confirm_deadline:%m-%d %H:%M}")
@@ -403,7 +403,7 @@ def _settle_position(db: OrmSession, enr: Enrollment, user: User,
     if enr.position_id:
         position = db.get(Position, enr.position_id)
         activity = db.get(Activity, enr.activity_id)
-        wecom.send_user(db, user, "assignment", activity=activity.title,
+        msgcenter.send_user(db, user, "assignment", activity=activity.title,
                         shift=shift.name, position=position.name,
                         position_time=position.time_text(),
                         position_loc=position.location or "待定")

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session as OrmSession
 from . import config
 from .audit import log as audit_log
 from .enroll_logic import expire_stale_promotions
-from .integrations import wecom
+from .integrations import msgcenter
 from .models import Activity, Shift, User, now
 from .notify import notify_checkin, notify_enrolled, notify_managers
 from .perm import activity_manager_ids
@@ -179,7 +179,7 @@ def remind_stale_approvals(db: OrmSession) -> int:
     催过一次就记下时间，别每分钟催一遍。
     """
     from .models import ApprovalEvent, Department  # noqa: F401
-    from .integrations import wecom as _wecom
+    from .integrations import msgcenter as _msgcenter
 
     deadline = now() - timedelta(hours=config.APPROVAL_REMIND_HOURS)
     rows = (db.query(Activity)
@@ -199,7 +199,7 @@ def remind_stale_approvals(db: OrmSession) -> int:
         for t in targets:
             if t is None:
                 continue
-            _wecom.send_user(db, t, "custom",
+            _msgcenter.send_user(db, t, "custom",
                              data={"activity_id": act.id, "route": "approvals"},
                              title=f"审批已等待 {waited} 小时｜{act.title}",
                              content=text)
@@ -231,7 +231,7 @@ def release_stale_edit_locks(db: OrmSession) -> int:
                   summary=f"编辑态超过 {config.EDIT_LOCK_HOURS} 小时未保存，"
                           f"系统自动解冻并恢复报名")
         if who is not None:
-            wecom.send_user(db, who, "custom",
+            msgcenter.send_user(db, who, "custom",
                             title=f"报名已自动恢复｜{act.title}",
                             content=f"您对「{act.title}」的编辑态超过 "
                                     f"{config.EDIT_LOCK_HOURS} 小时未保存，"

@@ -9,8 +9,8 @@
       <!-- 真实 SSO：一个跳转按钮，账号口令都在学校那边 -->
       <template v-if="mode !== 'demo'">
         <el-button type="primary" size="large" style="width:100%"
-                   :disabled="!loginUrl" @click="gotoSso">
-          {{ loginUrl ? '前往统一身份认证登录' : '登录方式未配置，请联系管理员' }}
+                   :loading="ssoLoading" :disabled="!ready" @click="gotoSso">
+          {{ ready ? '前往统一身份认证登录' : '登录方式未配置，请联系管理员' }}
         </el-button>
       </template>
 
@@ -59,18 +59,33 @@ const passwordInput = ref(null)
 const loading = ref(false)
 const accounts = ref([])
 const mode = ref('')
-const loginUrl = ref('')
+const ready = ref(false)
+const ssoLoading = ref(false)
 
 onMounted(async () => {
   const m = await api.get('/api/auth/sso-mode', { silent: true })
   mode.value = m.mode
-  loginUrl.value = m.login_url
+  ready.value = !!m.ready
   if (mode.value === 'demo') {
     accounts.value = await api.get('/api/auth/demo-accounts', { silent: true })
   }
 })
 
-function gotoSso() { location.href = loginUrl.value }
+async function gotoSso() {
+  ssoLoading.value = true
+  const next = String(route.query.next || '')
+  try {
+    // 跳转地址在**点击时**才取：state 一次一用且有有效期，页面一打开就
+    // 生成的话，用户看一会儿再点它已经过期了。顺带把「登录后回哪去」带上。
+    const { login_url } = await api.get(
+      '/api/auth/sso-login-url?next=' + encodeURIComponent(next))
+    location.href = login_url
+  } catch {
+    // 换不到地址时 api 层已经弹过提示，这里复位按钮让人能再点一次。
+    // 成功的话页面已经在跳转了，复位没有意义。
+    ssoLoading.value = false
+  }
+}
 
 function pick(studentId) {
   sid.value = studentId

@@ -10,7 +10,7 @@ import ast
 import pathlib
 import re
 
-from backend.integrations.wecom import TEMPLATES, render
+from backend.integrations.msgcenter import TEMPLATES, render
 
 BACKEND = pathlib.Path(__file__).resolve().parents[1] / "backend"
 # render 自己补的，调用方不用传

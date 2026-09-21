@@ -94,6 +94,30 @@ def clear_failures(key: str) -> None:
         _client.delete(_fail_key(key))
 
 
+# —— OAuth state ——
+#
+# 授权回调是「带着 ?code=..&state=.. 从外部跳回来」的入口。不校验 state，
+# 任何人都能构造一条回调链接，把别人登进某个账号——这是登录 CSRF。
+# state 一次一用、过期即废，顺带把跳转前想去的页面捎回来。
+
+def issue_sso_state(next_url: str, ttl: int) -> str:
+    state = secrets.token_urlsafe(24)
+    _client.setex(f"rucva:sso:{state}", ttl, next_url or "")
+    return state
+
+
+def redeem_sso_state(state: str) -> str | None:
+    """核销 state，返回当初想去的页面。
+
+    **None 表示这个 state 无效**（伪造、已用过或过期）；空串是合法结果，
+    表示「没有指定去向」。调用方必须用 `is None` 判断，不能用真假值——
+    两者混为一谈的话，一个空 next 就会被当成伪造的回调拒掉。
+    """
+    if not state:
+        return None
+    return _client.getdel(f"rucva:sso:{state}")
+
+
 @contextlib.contextmanager
 def shift_lock(shift_id: str):
     """锁住一个场次的名额账本。"""

@@ -19,7 +19,7 @@ from ..enroll_logic import position_enrolled_count
 from ..exporter import (build_activity_workbook, build_application_workbook,
                         build_hours_workbook)
 from ..perm import ensure_activity_manager
-from ..integrations import checkin_gateway, wecom
+from ..integrations import checkin_gateway, msgcenter
 from ..notify import notify, notify_checkin
 from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
                       HoursAppeal, HoursRecord, HoursRequest, Shift,
@@ -938,7 +938,7 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
     a.handled_at = now()
 
     if who is not None:
-        wecom.send_user(
+        msgcenter.send_user(
             db, who, "custom", data={"activity_id": act.id},
             title=f"时长申诉{'已采纳' if body.accept else '未采纳'}｜{act.title}",
             content=(f"您对「{act.title}」时长的申诉已处理。\n"
@@ -998,7 +998,7 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
         # 只有岗位可选劳务的人才需要选报酬方式，别人不必看到这一句
         pay_line = ("\n请选择报酬方式志愿时长或劳务，超时未确认默认选择志愿时长。"
                     if hours_flow.pay_position(db, act.id, r.user_id) else "")
-        wecom.send_user(
+        msgcenter.send_user(
             db, u, "hours_approved", data={"activity_id": act.id},
             activity=act.title, hours=f"{r.hours:g}",
             deadline=f"{deadline:%Y-%m-%d %H:%M}", pay_line=pay_line)

@@ -1,52 +1,220 @@
 """统一身份认证（微人大 SSO）适配。
 
 《设计方案》五：师生登录平台，OAuth2.0 或 CAS 协议。
-  · 演示模式：/api/auth/sso-login 模拟"统一身份认证已通过"，按学号在本平台
-    建立会话——学校评审时可直接切换演示账号体验完整流程；
-  · 对接模式：login_url() 返回跳转地址，handle_callback() 用 code 换用户身份。
+学校实际提供的是 **CAS 上的 OAuth2.0 接口**（`cas.ruc.edu.cn/cas/oauth2.0/*`）：
+
+    authorize                       → 用户登录后带着 ?code=..&state=.. 回到 redirect_uri
+    accessToken（POST 表单）         → access_token
+    user/profiles?access_token=..   → 身份信息（scope=all 时可用）
+
+演示模式：`is_mock("sso")` 为真时不走网络，由 routers/auth.py 的口令登录顶替。
 """
 from __future__ import annotations
 
 import json
+import logging
 import urllib.parse
 import urllib.request
 
+from .. import config
+from ..locks import issue_sso_state, redeem_sso_state
 from . import get_config, is_mock
+
+log = logging.getLogger(__name__)
+
+TIMEOUT = 8
+
+# 相对 CAS 根地址的接口路径，base_url 配好后可不必逐项填
+OAUTH_PATHS = {
+    "authorize_url": "oauth2.0/authorize",
+    "token_url": "oauth2.0/accessToken",
+    "user_info_url": "oauth2.0/user/profiles",
+}
+
+# profiles 的响应字段名文档没给样例，先按常见命名兜底。
+# 第一次真实登录会把**字段名列表**（不含值）打进日志，之后据此收紧——
+# 这张表本身就意味着「我们还不确定学校返回什么」，不该长期留着。
+_ACCOUNT_KEYS = ("loginName", "account", "username", "userId", "userName",
+                 "studentId", "accountName")
+_NAME_KEYS = ("name", "userName", "realName", "cn", "nickName", "displayName")
 
 
 def mode() -> str:
     return "mock" if is_mock("sso") else get_config("sso").get("protocol", "oauth2")
 
 
+def _endpoint(cfg: dict, name: str) -> str:
+    """取端点地址：显式配了就用它，否则按 base_url 拼。"""
+    explicit = str(cfg.get(name) or "").strip()
+    if explicit:
+        return explicit
+    base = str(cfg.get("base_url") or config.CAS_BASE_URL).strip().rstrip("/")
+    return f"{base}/{OAUTH_PATHS[name]}" if base else ""
+
+
+def _client_id(cfg: dict) -> str:
+    """默认借开放平台的 appid——同一套应用注册。学校若为 OAuth 另发了
+    client_id，在「集成设置」里覆盖即可。"""
+    return str(cfg.get("client_id") or config.OPENPLATFORM_APPID).strip()
+
+
+def _client_secret(cfg: dict) -> str:
+    return str(cfg.get("client_secret") or config.OPENPLATFORM_SECRET).strip()
+
+
+def _redirect_uri(cfg: dict) -> str:
+    """回调地址，配置里存**明文**。
+
+    文档明确警告：它必须与应用中心登记的一字不差，且不能是预先 URL 编码过的
+    ——下面的 urlencode 自己会编一轮，值若本来就编过就成了二次编码，CAS
+    比对不上，直接 invalid_grant。
+    """
+    return str(cfg.get("redirect_uri") or config.SSO_REDIRECT_URI).strip()
+
+
+def configured() -> bool:
+    """是否具备走真实 SSO 的必要配置。
+
+    只做检查，**不生成 state**——跳转地址是用户点击时才取的，页面一打开就
+    生成的话，用户看一会儿再点，state 已经过期了（见 routers/auth.py）。
+    """
+    cfg = get_config("sso")
+    return bool(_endpoint(cfg, "authorize_url") and _client_id(cfg)
+                and _redirect_uri(cfg))
+
+
 def login_url(next_url: str = "") -> str:
-    """真实 SSO 的授权跳转地址。"""
+    """真实 SSO 的授权跳转地址；没配好时返回空串，由前端显示「登录方式未配置」。
+
+    state 现取现用、一次一用，跳转前想去的页面存在它背后（见 locks.py）。
+    前端是 hash 路由，而 redirect_uri 指向平台根路径，所以 CAS 追加的
+    ?code=..&state=.. 会落在真正的查询串上——前端在 router.js 里接。
+    """
+    cfg = get_config("sso")
+    authorize = _endpoint(cfg, "authorize_url")
+    if not authorize:
+        log.error("统一身份认证已启用，但 base_url / authorize_url 都没配")
+        return ""
+    if cfg.get("protocol") == "cas":
+        return f"{authorize}?{urllib.parse.urlencode({'service': _redirect_uri(cfg)})}"
+    q = urllib.parse.urlencode({
+        "response_type": "code",
+        "client_id": _client_id(cfg),
+        "redirect_uri": _redirect_uri(cfg),
+        "scope": "all",
+        "state": issue_sso_state(next_url, config.SSO_STATE_SECONDS),
+    })
+    return f"{authorize}?{q}"
+
+
+def handle_callback(code: str, state: str) -> dict:
+    """用授权码换身份 → {"student_id", "name", "next"}。
+
+    state 先核销再换令牌：核销不掉说明这条回调不是从我们这儿发起的
+    （伪造、已用过或过期），此时**不该**拿 code 去换令牌。
+    """
     cfg = get_config("sso")
     if cfg.get("protocol") == "cas":
-        q = urllib.parse.urlencode({"service": cfg.get("redirect_uri", "")})
-        return f"{cfg['authorize_url']}?{q}"
-    q = urllib.parse.urlencode({
-        "response_type": "code", "client_id": cfg.get("client_id", ""),
-        "redirect_uri": cfg.get("redirect_uri", ""), "state": next_url,
+        raise RuntimeError("CAS 票据校验尚未实现，请把协议改为 oauth2")
+
+    next_url = redeem_sso_state(state)
+    if next_url is None:
+        # None 才代表无效；空串是合法的「没指定去向」，不能一起拒掉
+        raise PermissionError("登录已过期或来源不可信，请回到首页重新登录")
+
+    token = _fetch_token(cfg, code)
+    info = _fetch_profile(cfg, token)
+    # 只记字段名不记值：这行是为了让我们知道学校到底返回哪些字段，
+    # 而 profiles 里装的是姓名、手机号这类个人信息，不该进日志。
+    log.info("统一身份认证返回字段：%s", sorted(info))
+
+    sid = _pick(info, *_ACCOUNT_KEYS)
+    if not sid:
+        raise ValueError("统一身份认证未返回可识别的学号/工号")
+    return {"student_id": sid, "name": _pick(info, *_NAME_KEYS) or sid,
+            "next": next_url}
+
+
+def _fetch_token(cfg: dict, code: str) -> str:
+    raw = _post_form(_endpoint(cfg, "token_url"), {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": _client_id(cfg),
+        "client_secret": _client_secret(cfg),
+        "redirect_uri": _redirect_uri(cfg),
     })
-    return f"{cfg['authorize_url']}?{q}"
+    token = _pick(_parse_token(raw), "access_token", "accessToken")
+    if not token:
+        raise RuntimeError(f"未换到 access_token：{raw[:200]}")
+    return token
 
 
-def handle_callback(code: str) -> dict:
-    """用授权码换用户信息 → {"student_id": ..., "name": ...}。"""
-    cfg = get_config("sso")
-    data = urllib.parse.urlencode({
-        "grant_type": "authorization_code", "code": code,
-        "client_id": cfg.get("client_id", ""),
-        "client_secret": cfg.get("client_secret", ""),
-        "redirect_uri": cfg.get("redirect_uri", ""),
-    }).encode()
-    req = urllib.request.Request(cfg["token_url"], data=data)  # noqa: S310
-    with urllib.request.urlopen(req, timeout=6) as resp:  # noqa: S310
-        token = json.loads(resp.read().decode())
-    req2 = urllib.request.Request(  # noqa: S310
-        cfg["user_info_url"],
-        headers={"Authorization": f"Bearer {token.get('access_token', '')}"})
-    with urllib.request.urlopen(req2, timeout=6) as resp:  # noqa: S310
-        info = json.loads(resp.read().decode())
-    return {"student_id": str(info.get("student_id", "")),
-            "name": str(info.get("name", ""))}
+def _fetch_profile(cfg: dict, token: str) -> dict:
+    """取用户信息。
+
+    `access_token` 走**查询参数**，不是 `Authorization: Bearer` 头——文档给的
+    调用示例就是查询参数。这里原先按 OAuth 惯例写成了 Bearer 头，真机上
+    必然取不到用户，而且报错看起来会像是「没登录」。
+    """
+    url = _endpoint(cfg, "user_info_url")
+    if not url:
+        raise RuntimeError("统一身份认证未配置用户信息地址")
+    sep = "&" if "?" in url else "?"
+    req = urllib.request.Request(  # noqa: S310
+        f"{url}{sep}access_token={urllib.parse.quote(token)}")
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # noqa: S310
+        raw = resp.read().decode("utf-8", "replace")
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"统一身份认证返回的不是 JSON：{raw[:200]}") from exc
+    if not isinstance(body, dict):
+        raise RuntimeError(f"统一身份认证返回结构异常：{raw[:200]}")
+    return _flatten(body)
+
+
+def _post_form(url: str, payload: dict) -> str:
+    if not url:
+        raise RuntimeError("统一身份认证未配置接口地址")
+    req = urllib.request.Request(  # noqa: S310
+        url, data=urllib.parse.urlencode(payload).encode())
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # noqa: S310
+        return resp.read().decode("utf-8", "replace")
+
+
+def _parse_token(raw: str) -> dict:
+    """换令牌的响应可能是 JSON，也可能是 `key=value&key=value` 的老式串。
+
+    文档没给响应样例，两种都认一下，省得真机上卡在解析这一步干瞪眼。
+    """
+    try:
+        body = json.loads(raw)
+        if isinstance(body, dict):
+            return body
+    except json.JSONDecodeError:
+        pass
+    return {k: v[0] for k, v in urllib.parse.parse_qs(raw).items()}
+
+
+def _flatten(info: dict) -> dict:
+    """把 profiles 的响应压平。
+
+    可能的外层有 data / attributes / user / result，内层还可能是账号数组
+    （scope=all 取的是「多账号信息」）。压平后外层字段仍然保留，内层同名字段
+    覆盖外层。
+    """
+    for key in ("data", "attributes", "user", "result"):
+        inner = info.get(key)
+        if isinstance(inner, dict):
+            return {**info, **inner}
+        if isinstance(inner, list) and inner and isinstance(inner[0], dict):
+            return {**info, **inner[0]}
+    return info
+
+
+def _pick(info: dict, *names: str) -> str:
+    for n in names:
+        v = info.get(n)
+        if v not in (None, ""):
+            return str(v).strip()
+    return ""

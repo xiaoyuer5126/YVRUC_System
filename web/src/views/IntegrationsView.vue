@@ -68,15 +68,19 @@ const draft = ref({})
 
 const FIELD_LABELS = {
   base_url: '服务地址', app_key: 'AppKey', app_secret: 'AppSecret',
-  corp_id: '企业ID', agent_id: '应用AgentId', corp_secret: '应用Secret',
+  appid: '应用标识 AppId', gateway: '开放网关', channels: '发送通道',
   protocol: '协议', authorize_url: '授权端点', token_url: 'Token端点',
   user_info_url: '用户信息端点', client_id: 'ClientId', client_secret: 'ClientSecret',
   redirect_uri: '回调地址',
 }
-const SECRET_KEYS = new Set(['app_secret', 'corp_secret', 'client_secret'])
+// 只在页面上打码显示用；这两项的密钥都存在 .env 里，不下发到前端
+const SECRET_KEYS = new Set(['app_secret', 'client_secret'])
 const PLACEHOLDERS = {
   shuzhi_renda_base_url: 'https://shuzhi.ruc.edu.cn/openapi',
-  wecom_work_corp_id: 'ww 开头的企业ID',
+  msgcenter_gateway: 'https://opengw.ruc.edu.cn',
+  msgcenter_appid: '开放平台应用标识。密钥在 .env 的 RUCVA_OPENPLATFORM_SECRET，不在此填写',
+  msgcenter_channels: '4（企业微信）。1=短信、2=邮件——本平台不使用短信',
+  sso_redirect_uri: '必须与应用中心登记的地址一字不差，差一个字符就换不到令牌',
 }
 
 function fieldsOf(c) {
@@ -96,9 +100,11 @@ function startEdit(c) {
   for (const f of fieldsOf(c)) d[f.key] = c[f.key] || ''
   draft.value = d
 }
+// 与后端 integrations/__init__.py 的 REQUIRED_FIELD 一一对应。
+// appid / client_id 默认来自 .env，测试环境为空 → 即便开关打开也回落 Mock。
 const REQUIRED_FIELD = {
-  shuzhi_renda: 'base_url', wecom_work: 'corp_id',
-  checkin_gateway: 'base_url', sso: 'authorize_url',
+  shuzhi_renda: 'base_url', msgcenter: 'appid',
+  checkin_gateway: 'base_url', sso: 'client_id',
 }
 
 async function toggleEnabled(c) {
@@ -122,12 +128,12 @@ onMounted(load)
 const notes = [
   { sys: '数智人大', use: '获取姓名、学号、手机、身份证号；活动结束回传时长',
     how: '只读API实时查询，或每日同步宽表（离线同步），二选一' },
-  { sys: '企业微信', use: '向特定学号的学生发送模板消息（报名成功/候补转正/岗位分配/变更警告/信用提醒）',
-    how: '调用企业微信应用消息API，模板库已在平台内建好' },
+  { sys: '消息中心（企业微信）', use: '向特定学号的学生发送模板消息（报名成功/候补转正/岗位分配/变更警告/信用提醒）',
+    how: '经学校开放平台的统一消息接口下发，收件人用学号指定；模板库已在平台内建好，只走企业微信通道（不发短信）' },
   { sys: '现有签到码系统', use: '生成签到任务、核验签到码、回调签到状态',
     how: 'API 对接（由对方提供 SDK 或 RESTful 接口）；平台侧任务模型已就绪' },
-  { sys: '微人大统一身份认证', use: '师生登录平台（SSO）',
-    how: 'OAuth2.0 或 CAS 协议；登录页与路由守卫已按回调流程预留' },
+  { sys: '微人大统一身份认证', use: '师生登录平台（SSO），首次登录自动建档',
+    how: 'CAS 的 OAuth2.0 三端点（authorize / accessToken / user·profiles）；登录页、回调页与路由守卫已接通' },
 ]
 </script>
 

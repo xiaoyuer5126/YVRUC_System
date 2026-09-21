@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session as OrmSession
 
 from .audit import log as audit_log
-from .integrations import wecom
+from .integrations import msgcenter
 from .models import (Activity, Enrollment, HoursRecord, HoursRequest, Position,
                      User, now, uid)
 
@@ -90,6 +90,6 @@ def lock_hours(db: OrmSession, act: Activity, actor: User | None,
     for r in rows:
         u = db.get(User, r.user_id)
         if u is not None:
-            wecom.send_user(db, u, "hours_locked", data={"activity_id": act.id},
+            msgcenter.send_user(db, u, "hours_locked", data={"activity_id": act.id},
                             activity=act.title, result=result_text(r))
     return len(rows)

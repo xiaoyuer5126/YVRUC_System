@@ -1,24 +1,30 @@
-"""企业微信适配：模板消息推送。
+"""消息中心适配：模板消息推送。
 
 模板库对应《设计方案》四.3「消息模板库」五个场景：
   报名成功 / 候补转正 / 岗位分配 / 活动变更警告
 
-MockWecom：演示模式，把消息落库（notifications 表），前端「消息中心」即收件箱。
-HttpWecom：生产实现占位——学校提供 corp_id/agent_id/secret 后，
-           在 _post() 补全 access_token 获取与 message/send 调用即可。
+Mock 模式：把消息落库（notifications 表），前端「消息中心」即收件箱。
+真实模式：经学校开放平台的消息中心（opengw）下发。
+
+**本平台只发企业微信通道（channels=4）**。学校未同意本平台发短信，而短信是按条
+计费的真金白银——所以 `_channels()` 里对通道 1 做了硬拦截，管理员在「集成设置」
+页填了也不发。
 """
 from __future__ import annotations
 
 import json
 import logging
-import urllib.request
 
 from sqlalchemy.orm import Session as OrmSession
 
+from .. import config, sudy_sign
 from ..models import Notification, User, uid
 from . import get_config, is_mock
 
 log = logging.getLogger(__name__)
+
+# 开放网关下的接口路径（域名为 config.OPENPLATFORM_GATEWAY）
+SEND_PATH = "com.sudytech.msgcenter/ucp/_web/_apps/ucpmsg/api/v3/sendMessage.rst"
 
 # 模板库：key → (标题模板, 正文模板)。{xx} 为占位符。
 TEMPLATES: dict[str, tuple[str, str]] = {
@@ -104,6 +110,16 @@ def render(template_key: str, extra: str = "", **kw) -> tuple[str, str]:
     return title, body
 
 
+def real_mode() -> bool:
+    """是否走真实推送。
+
+    比 `is_mock()` 多要一个 secret：开关打开但密钥没配时，请求会带着一份空签名
+    打到学校网关上，换回一句看不懂的「签名校验失败」——不如老实在本地落库，
+    前端「消息中心」照样能看到内容。
+    """
+    return not is_mock("msgcenter") and bool(config.OPENPLATFORM_SECRET)
+
+
 def send_user(db: OrmSession, user: User, template_key: str,
               data: dict | None = None, *, need_ack: bool = False,
               batch_id: str | None = None, **fields) -> None:
@@ -115,11 +131,11 @@ def send_user(db: OrmSession, user: User, template_key: str,
     """
     title, content = render(template_key, **fields)
     delivered = True
-    if not is_mock("wecom_work"):
+    if real_mode():
         try:
-            delivered = _http_send(user.student_id, title, content)
+            delivered = _send(user.student_id, title, content)
         except Exception:  # noqa: BLE001  外部接口不可用不能拖垮业务
-            log.warning("企业微信推送失败：%s → %s", user.student_id, title,
+            log.warning("消息中心推送失败：%s → %s", user.student_id, title,
                         exc_info=True)
             delivered = False
     db.add(Notification(id=uid("ntf"), user_id=user.id,
@@ -128,21 +144,55 @@ def send_user(db: OrmSession, user: User, template_key: str,
                         need_ack=need_ack, batch_id=batch_id))
 
 
-def _http_send(student_id: str, title: str, content: str) -> bool:
-    """真实企业微信应用消息推送（占位实现）。
+def _channels(cfg: dict) -> str:
+    """通道清单，**永远不含 1（短信）**。
 
-    生产步骤：
-      1) GET /gettoken?corpid=&corpsecret= → access_token（需缓存 ~7200s）
-      2) POST /message/send  touser 用学号映射的企业微信账号
-    学校开通后把两步补全即可，调用方无需改动。
+    管理员在「集成设置」里填了 1 也只是记一条日志、不发：本平台没有发短信的
+    许可，而短信一发就是真实计费、真实打扰。宁可少发一条，也不能悄悄发出去。
     """
-    cfg = get_config("wecom_work")
-    body = json.dumps({
-        "touser": student_id, "msgtype": "text",
-        "agentid": cfg.get("agent_id"), "text": {"content": f"{title}\n{content}"},
-    }).encode()
-    req = urllib.request.Request(  # noqa: S310
-        f"{cfg.get('base_url', 'https://qyapi.weixin.qq.com/cgi-bin')}/message/send",
-        data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
-        return resp.status == 200
+    keep: list[str] = []
+    for code in str(cfg.get("channels") or "4").split(","):
+        code = code.strip()
+        if not code:
+            continue
+        if code == "1":
+            log.warning("集成设置里配了短信通道(1)，已忽略：本平台不使用短信")
+            continue
+        keep.append(code)
+    return ",".join(keep) or "4"
+
+
+def _send(student_id: str, title: str, content: str) -> bool:
+    """经开放平台消息中心下发一条消息，返回是否真的送达。
+
+    收件人用 `uc_ux` + `(学号)`：由消息中心按学号去查这个人的企业微信地址。
+    我们不需要、也不该知道他的手机号。
+    """
+    cfg = get_config("msgcenter")
+    payload = {
+        "title": title,
+        "content": content,
+        # 文档参数表把 receivers 标成 string，但请求示例给的是 json 数组——
+        # 以示例为准。真机第一次调用时留意这里，若报参数格式错就改回字符串。
+        "receivers": json.dumps([{"type": "uc_ux", "address": f"({student_id})"}]),
+        "channels": _channels(cfg),
+        "plannedTime": "",     # 空串 = 立即发送（文档示例即如此）
+    }
+    return _delivered(sudy_sign.post_json(SEND_PATH, payload), student_id, title)
+
+
+def _delivered(data: dict, student_id: str, title: str) -> bool:
+    """从返回里判断「这个人到底收到没有」。
+
+    `successed=true` 只说明请求被受理了：收件人写错时它在 wrongAddress 里，
+    某个通道失败时在 channelErrorInfos 里，这两种都不算送达。我们每次只发
+    一个人，所以这两个列表非空就等于没送到——不能因为 successed=true
+    就记 delivered，那会让「推送失败」在库里看起来是成功的。
+    """
+    wrong = data.get("wrongAddress") or []
+    failed = data.get("channelErrorInfos") or []
+    if wrong or failed:
+        log.warning("消息未送达 %s（%s）：wrongAddress=%s channelErrorInfos=%s",
+                    student_id, title, wrong, failed)
+        return False
+    return True
