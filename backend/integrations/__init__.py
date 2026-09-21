@@ -49,7 +49,8 @@ DEFAULTS: dict[str, dict] = {
     "sso": {
         "label": "微人大统一身份认证",
         "enabled": False,
-        "protocol": "oauth2",      # oauth2 / cas
+        # 只有 OAuth2.0 一条路径：学校给的就是 CAS 上的 OAuth 接口，
+        # CAS 原生那条不接（理由见 integrations/sso.py 文件头）。
         # 留空则按 base_url 拼成 {base}/oauth2.0/{authorize,accessToken,user/profiles}
         "base_url": config.CAS_BASE_URL,
         "authorize_url": "",
@@ -61,7 +62,7 @@ DEFAULTS: dict[str, dict] = {
         "client_id": config.OPENPLATFORM_APPID,
         "client_secret": "",
         "redirect_uri": config.SSO_REDIRECT_URI,
-        "mode_hint": "OAuth2.0 或 CAS，师生登录平台唯一入口；演示期用内置模拟登录",
+        "mode_hint": "OAuth2.0，师生登录平台唯一入口；演示期用内置模拟登录",
         "capabilities": ["师生 SSO 登录"],
     },
 }

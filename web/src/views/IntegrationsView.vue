@@ -69,7 +69,7 @@ const draft = ref({})
 const FIELD_LABELS = {
   base_url: '服务地址', app_key: 'AppKey', app_secret: 'AppSecret',
   appid: '应用标识 AppId', gateway: '开放网关', channels: '发送通道',
-  protocol: '协议', authorize_url: '授权端点', token_url: 'Token端点',
+  authorize_url: '授权端点', token_url: 'Token端点',
   user_info_url: '用户信息端点', client_id: 'ClientId', client_secret: 'ClientSecret',
   redirect_uri: '回调地址',
 }

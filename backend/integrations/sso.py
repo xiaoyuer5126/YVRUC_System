@@ -1,7 +1,10 @@
 """统一身份认证（微人大 SSO）适配。
 
-《设计方案》五：师生登录平台，OAuth2.0 或 CAS 协议。
-学校实际提供的是 **CAS 上的 OAuth2.0 接口**（`cas.ruc.edu.cn/cas/oauth2.0/*`）：
+《设计方案》五写的是「OAuth2.0 或 CAS」。学校实际提供的是 **CAS 服务器上的
+OAuth2.0 接口**（`cas.ruc.edu.cn/cas/oauth2.0/*`），2026-09-21 实测跑通；
+CAS 原生的 `serviceValidate` 那条路**不接**——两者能拿到的身份字段是同一套，
+CAS 只多一个全局登出，代价却是属性要管理员在应用接入里单独开、service 还得
+与登记地址一字不差（错一个字符就 INVALID_SERVICE）。留着半条路只会让人以为能选。
 
     authorize                       → 用户登录后带着 ?code=..&state=.. 回到 redirect_uri
     accessToken（POST 表单）         → access_token
@@ -54,7 +57,8 @@ _TYPE_BY_CATEGORY = {"学生": "student", "教职工": "teacher"}
 
 
 def mode() -> str:
-    return "mock" if is_mock("sso") else get_config("sso").get("protocol", "oauth2")
+    """当前登录方式：mock 或 oauth2。只有这一条真实路径，见文件头。"""
+    return "mock" if is_mock("sso") else "oauth2"
 
 
 def _endpoint(cfg: dict, name: str) -> str:
@@ -109,8 +113,6 @@ def login_url(next_url: str = "") -> str:
     if not authorize:
         log.error("统一身份认证已启用，但 base_url / authorize_url 都没配")
         return ""
-    if cfg.get("protocol") == "cas":
-        return f"{authorize}?{urllib.parse.urlencode({'service': _redirect_uri(cfg)})}"
     q = urllib.parse.urlencode({
         "response_type": "code",
         "client_id": _client_id(cfg),
@@ -179,9 +181,6 @@ def handle_callback(code: str, state: str) -> dict:
     （伪造、已用过或过期），此时**不该**拿 code 去换令牌。
     """
     cfg = get_config("sso")
-    if cfg.get("protocol") == "cas":
-        raise RuntimeError("CAS 票据校验尚未实现，请把协议改为 oauth2")
-
     next_url = redeem_sso_state(state)
     if next_url is None:
         # None 才代表无效；空串是合法的「没指定去向」，不能一起拒掉

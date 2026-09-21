@@ -315,4 +315,6 @@ def test_sso_mode_不回跳转地址(client):
     """跳转地址要点击时才取（state 有有效期），这里只回方式与是否配好。"""
     body = client.get("/api/auth/sso-mode").json()
     assert "login_url" not in body
-    assert body["mode"] in {"demo", "unavailable", "oauth2", "cas"}
+    # 只有 oauth2 一条真实路径：集成设置里能改协议的话，就会有人改成 cas
+    # 然后卡在「票据校验尚未实现」上——那个选项已经拿掉了。
+    assert body["mode"] in {"demo", "unavailable", "oauth2"}
