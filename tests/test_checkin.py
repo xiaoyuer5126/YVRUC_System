@@ -1,6 +1,7 @@
 """签到闭环：建码、扫码签到、再扫签退、非本场次拒绝。"""
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 import pytest
@@ -294,3 +295,65 @@ def test_不是管理者取不到动态码(client, admin, live_group, take_stude
     url = f"/api/staff/checkin-tasks/{task_id_of(client, admin, act)}/code"
     assert client.get(url, headers=login(client, take_student())).status_code == 403
     assert client.get(url, headers=initiator).status_code == 403
+
+
+# ======================= 「我的报名」上的签到按钮 =======================
+
+def row_of(client, h, g):
+    rows = client.get("/api/me/enrollments", headers=h).json()
+    return next(r for r in rows if r["shift"]["id"] == g.id)
+
+
+def test_我的报名只给签到状态不给签到码(client, admin, db, live_group):
+    """按钮亮不亮要看这个字段，但它绝不能把码带出去。
+
+    码是本人到现场扫出来的凭据。接口把码发给每个报名的人，「我的报名」里点
+    一下就能签，动态码防代签那套就白做了——所以这里只回状态，真正的凭据
+    仍留在扫码那一步。
+    """
+    act, g, h, token = live_group
+    tid = task_id_of(client, admin, act)
+    code = client.get(f"/api/staff/checkin-tasks/{tid}/code",
+                      headers=admin).json()["code"]
+
+    c = row_of(client, h, g)["checkin"]
+    assert c["state"] == "active" and c["open"] is True
+    assert c["method"] == "scan"
+
+    # 固定码、动态码都不许出现在这一行任何地方——不光是没写进 checkin
+    body = json.dumps(row_of(client, h, g))
+    assert token not in body and code not in body
+
+
+def test_过了时段按钮就不亮(client, admin, db, live_group):
+    """早到、散场之后都还能点，人只会以为签到坏了。前端靠 open 决定亮不亮。"""
+    act, g, h, _token = live_group
+    task = db.get(CheckinTask, task_id_of(client, admin, act))
+
+    task.valid_to = now() - timedelta(minutes=5)
+    db.commit()
+    assert row_of(client, h, g)["checkin"]["open"] is False
+
+    task.valid_to = now() + timedelta(hours=1)
+    task.valid_from = now() + timedelta(minutes=5)
+    db.commit()
+    assert row_of(client, h, g)["checkin"]["open"] is False
+
+
+def test_签完到按钮就该翻成签退(client, db, live_group):
+    """学生点签到 → 扫到码 → 按钮变「签退」，这一跳靠的就是这两个字段。"""
+    _act, g, h, token = live_group
+    assert row_of(client, h, g)["checked_in"] is False
+
+    client.post(f"/api/checkin/task/{token}", headers=h)
+
+    row = row_of(client, h, g)
+    assert row["checked_in"] is True and row["checkout_at"] is None
+
+    rec = db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id).one()
+    rec.checkin_at = now() - timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES + 1)
+    db.commit()
+    client.post(f"/api/checkin/task/{token}", headers=h)
+
+    row = row_of(client, h, g)
+    assert row["checkout_at"] is not None        # 签退完按钮就该消失

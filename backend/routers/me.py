@@ -12,7 +12,7 @@ from .. import config
 from .. import hours as hours_flow
 from ..database import db_session
 from ..deps import current_user
-from ..models import (Activity, CheckinRecord, Enrollment,
+from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
                       HoursAppeal, HoursRecord, Notification, Shift, Position,
                       User, iso, now, uid)
 from ..notify import notify_managers
@@ -34,6 +34,34 @@ def valid_id_card(value: str) -> bool:
         return False
     total = sum(int(c) * w for c, w in zip(value[:17], ID_CARD_WEIGHTS))
     return value[17] == ID_CARD_CHECK[total % 11]
+
+
+def _checkin_state(db: OrmSession, enr: Enrollment, g: Shift) -> dict:
+    """这一行现在能不能签，只回状态、**不回码**。
+
+    码要本人到现场扫出来——接口把码发给每个报名的人，「我的报名」里点一下
+    就能签，动态码防代签那套就白做了。这里只回答「按钮要不要亮、亮的是签到
+    还是签退」，真正的凭据仍在扫码那一步。
+
+    method 现在恒为 scan；定位签到接进来时只改这一个字段。
+    """
+    tasks = (db.query(CheckinTask)
+             .filter(CheckinTask.shift_id == g.id, CheckinTask.active.is_(True))
+             .order_by(CheckinTask.created_at.desc()).all())
+    if not tasks:
+        return {"state": "none", "method": "scan", "open": False}
+    # 分岗位签到：优先本岗位那张码，没有就退回统一的那张
+    task = (next((t for t in tasks if t.position_id == enr.position_id), None)
+            or next((t for t in tasks if not t.position_id), None) or tasks[0])
+    t = now()
+    if task.valid_from and t < task.valid_from:
+        state = "early"
+    elif task.valid_to and t > task.valid_to:
+        state = "expired"
+    else:
+        state = "active"
+    return {"state": state, "method": "scan", "open": state == "active",
+            "from": iso_of(task.valid_from), "to": iso_of(task.valid_to)}
 
 
 def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
@@ -69,6 +97,8 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "confirm_deadline": iso_of(enr.confirm_deadline),
         "checked_in": rec is not None,
         "checkout_at": iso(rec.checkout_at) if rec else None,
+        "checkin": (_checkin_state(db, enr, g)
+                    if enr.status == "enrolled" else None),
         # 联络群二维码只给已报上的人，「我的报名」里按需点开
         "contact_group_qr": (act.contact_group_qr
                              if enr.status == "enrolled" else ""),

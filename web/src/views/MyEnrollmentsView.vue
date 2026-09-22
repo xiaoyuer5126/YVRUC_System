@@ -45,6 +45,10 @@
           </template>
         </div>
         <div class="mob-actions">
+          <!-- 手机上签到是这一页最主要的动作，所以排在第一个 -->
+          <el-button v-if="signAction(row)" size="small"
+                     :type="signAction(row) === '签退' ? 'warning' : 'primary'"
+                     @click="openCheckin(row)">{{ signAction(row) }}</el-button>
           <el-button size="small" @click="$router.push('/activity/' + row.activity.id)">
             查看活动
           </el-button>
@@ -117,8 +121,11 @@
           <span v-else class="dim">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="230" fixed="right">
+      <el-table-column label="操作" width="300" fixed="right">
         <template #default="{ row }">
+          <el-button v-if="signAction(row)" size="small"
+                     :type="signAction(row) === '签退' ? 'warning' : 'primary'"
+                     @click="openCheckin(row)">{{ signAction(row) }}</el-button>
           <el-button size="small" @click="$router.push('/activity/' + row.activity.id)">查看</el-button>
           <el-button v-if="row.contact_group_qr" size="small" plain
                      @click="showQr(row)">联络群</el-button>
@@ -143,6 +150,8 @@
     </el-alert>
 
     <GroupQrDialog ref="groupQr" />
+
+    <ScanCheckinDialog v-model="scanVisible" @done="onChecked" />
 
     <el-dialog v-model="teamDlg.visible" :title="'组员名单 · ' + (teamDlg.data?.scope || '')"
                width="560">
@@ -184,6 +193,7 @@ import { useNarrow } from '../composables/useNarrow'
 import EnrollStatusTag from '../components/EnrollStatusTag.vue'
 import CheckinStatusTag from '../components/CheckinStatusTag.vue'
 import GroupQrDialog from '../components/GroupQrDialog.vue'
+import ScanCheckinDialog from '../components/ScanCheckinDialog.vue'
 import DataCards from '../components/DataCards.vue'
 
 const narrow = useNarrow()
@@ -191,6 +201,30 @@ const rows = ref([])
 const loading = ref(false)
 const teamDlg = ref({ visible: false, data: null })
 const groupQr = ref(null)
+const scanVisible = ref(false)
+
+/** 这一行现在能不能签 / 该显示什么按钮。
+ *
+ *  码不在这里：接口只回状态（见后端 me._checkin_state），真正的凭据是现场
+ *  扫出来的。所以扫码模式下按钮只负责调起扫一扫，点它本身签不了到——否则
+ *  躺在床上也能点，动态码那道防线就白设了。 */
+function signAction(row) {
+  const c = row.checkin
+  if (!c?.open || row.status !== 'enrolled') return ''
+  if (!row.checked_in) return '签到'
+  return row.checkout_at ? '' : '签退'
+}
+
+// method 目前恒为 scan（后端 _checkin_state）。定位签到接进来时在这分流：
+// geo 走取坐标，其余一律调起扫码。
+function openCheckin() {
+  scanVisible.value = true
+}
+
+// 成功提示由扫码弹窗自己发（带服务端的原话），这里只管把状态刷成已到岗
+async function onChecked() {
+  await load()
+}
 
 function showQr(row) {
   groupQr.value.open({ qr: row.contact_group_qr, title: row.activity.title })
