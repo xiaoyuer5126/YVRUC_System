@@ -27,6 +27,10 @@ from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRe
 
 random.seed(42)
 
+# 真人联调专用的学号（学校系统是生产环境，只能用这一个号试），
+# 演示数据里绝不能出现——见 main() 末尾那道检查
+RESERVED_STUDENT_IDS = {"2025201717"}
+
 NAMES = [
     "陈雨桐", "林子昂", "王思远", "赵一诺", "刘畅", "张若谷", "李昊然",
     "周芷若", "吴一凡", "郑晓岚", "冯启航", "褚天翼", "卫来", "蒋星河",
@@ -630,6 +634,14 @@ def main() -> None:
                    "如无法参加请提前24小时退选。", dt(days=-2, hours=-3),
                    read=bool(random.random() < 0.5))
         db.commit()
+        # 演示数据里不许出现真人联调用的那个号：学号是认人的唯一凭据，
+        # 种子里的「他」和本人登录后自动建出来的档案撞在一起，签到、时长、
+        # 申诉就都分不清是谁的了。现在生成规则是 2022/2023/2024 开头，
+        # 撞不上；哪天改了年级池，这里会当场拦下来。
+        reserved = [u.student_id for u in db.query(User).all()
+                    if u.student_id in RESERVED_STUDENT_IDS]
+        if reserved:
+            raise SystemExit(f"演示数据里出现了保留学号 {reserved}，请先改掉生成规则")
         print("SEED OK:")
         print("  用户:", db.query(User).count())
         print("  活动:", db.query(Activity).count(),

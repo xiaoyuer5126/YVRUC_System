@@ -721,7 +721,8 @@
             <div v-if="hoursState.approved_at" class="mh-row">
               <span class="dim">本人表态</span><VolunteerSide :row="row" />
             </div>
-            <HoursParts :parts="row.parts" />
+            <HoursParts :parts="row.parts" removable
+                        @remove="i => delManualPart(row, i)" />
           </template>
         </DataCards>
         <div v-else-if="hours.length" class="scroll-x">
@@ -729,7 +730,10 @@
                   v-loading="hoursLoading" max-height="360" @selection-change="onHoursSelect">
           <el-table-column type="selection" width="40" :selectable="() => !hoursFrozen" />
           <el-table-column type="expand" width="30">
-            <template #default="{row}"><HoursParts :parts="row.parts" /></template>
+            <template #default="{row}">
+              <HoursParts :parts="row.parts" removable
+                          @remove="i => delManualPart(row, i)" />
+            </template>
           </el-table-column>
           <el-table-column label="姓名" width="110">
               <template #default="{row}">
@@ -775,7 +779,9 @@
         </div>
 
         <!-- 手动添加时长 -->
-        <div class="section-title" style="margin-top:16px">手动添加时长（场外支援/补录/通勤等情况）</div>
+        <div class="section-title" style="margin-top:16px">
+          手动添加时长（场外支援/补录/通勤等情况）
+        </div>
         <el-card shadow="never">
           <div class="toolbar" style="align-items:flex-start">
             <el-select v-model="mh.userIds" multiple filterable collapse-tags
@@ -794,22 +800,10 @@
               批量添加{{ mh.userIds.length ? `（${mh.userIds.length} 人）` : '' }}
             </el-button>
           </div>
-          <el-table v-if="manualHours.length" :data="manualHours" size="small">
-            <el-table-column prop="name" label="姓名" width="100" />
-            <el-table-column prop="student_id" label="学号" width="120" />
-            <el-table-column prop="hours" label="时长(h)" width="90" />
-            <el-table-column prop="note" label="备注" min-width="160" />
-            <el-table-column v-if="hoursState.approved_at" label="本人表态" width="170">
-              <template #default="{row}"><VolunteerSide :row="row" /></template>
-            </el-table-column>
-            <el-table-column label="操作" width="80">
-              <template #default="{row}">
-                <el-button v-if="!hoursFrozen" size="small" link type="danger"
-                           @click="delManualHours(row)">删除</el-button>
-                <span v-else class="dim">{{ hoursState.locked_at ? '已锁定' : '审核中' }}</span>
-              </template>
-            </el-table-column>
-          </el-table>
+          <div class="dim" style="line-height:1.8">
+            加进这个人这场活动的总时长里，在表格中展开他的明细可以看到那一段，
+            要删也在那里删。本人只会收到一条核准通知、只见得到一笔账。
+          </div>
         </el-card>
       </el-tab-pane>
 
@@ -1558,7 +1552,6 @@ const hoursSorted = computed(
   () => [...hours.value].sort((a, b) => hoursRank(a) - hoursRank(b)))
 const hoursLoading = ref(false)
 const hoursSel = ref([])                       // 时长表勾选行
-const manualHours = ref([])                    // 手动添加的时长记录
 const hoursState = ref({})                     // 核准/锁定状态，这一页按它决定给哪些按钮
 const approveDlg = ref({ visible: false, deadline: '', busy: false })
 const mh = ref({ userIds: [], hours: 0.5, note: '' })
@@ -1701,9 +1694,8 @@ const allShifts = computed(() => shifts.value.flatMap(g => [
 const unassignedCount = computed(() =>
   (roster.value.enrolled || []).filter(x => !x.position_id).length)
 const pendingPromo = computed(() => roster.value.waitlist.some(w => w.status === 'pending_confirm'))
-// 已经确认下来的时长条数（含手动补录）：有账才谈得上核准
-const confirmedCount = computed(
-  () => hours.value.filter(h => h.confirmed).length + manualHours.value.length)
+// 已经确认下来的时长条数（手动补录的也在各自那一笔里）：有账才谈得上核准
+const confirmedCount = computed(() => hours.value.filter(h => h.confirmed).length)
 
 function sumQuota(g) {
   return g.positions.reduce((s, x) => s + x.quota, 0)
@@ -2240,12 +2232,6 @@ async function hoursPreview(silent = false) {
     const d = await api.get(`/api/staff/activities/${activityId}/hours`)
     // editHours：可编辑时长，加载时初始化为后端计算值，勾选确认时按此值提交
     hours.value = (d.items || []).map(it => ({ ...it, editHours: Number(it.hours) || 0 }))
-    manualHours.value = (d.manual || []).map(m => ({
-      ...m,
-      record_id: m.record_id || m.id,
-      name: m.name || m.user?.name || '',
-      student_id: m.student_id || m.user?.student_id || '',
-    }))
     hoursState.value = d
     hoursSel.value = []
     if (!hours.value.length && !silent) ElMessage.info('暂无签到数据')
@@ -2289,9 +2275,12 @@ async function addManualHours() {
   } catch { /* toast by api */ }
 }
 
-async function delManualHours(row) {
-  await api.del(`/api/staff/activities/${activityId}/hours/manual/${row.record_id}`)
-  ElMessage.success('已删除')
+/** 删掉手动加的那一段（不是整笔账）。i 是它在明细里的位置。 */
+async function delManualPart(row, i) {
+  if (!row.record_id) return ElMessage.warning('这一行还没有时长记录，无法删除')
+  await api.del(
+    `/api/staff/activities/${activityId}/hours/manual/${row.record_id}/${i}`)
+  ElMessage.success('已删除该段时长')
   hoursPreview(true)
 }
 

@@ -278,8 +278,10 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
                     # 有申诉在处理中就先别确认；处理完再核准一次会重新问
                     "can_confirm": open_window and (
                         a is None or a.status != "pending"),
-                    "can_appeal": open_window and (
-                        a is None or a.status == "rejected"),
+                    # 本人说了「确认无误」就不再给申诉入口：那句话是对着这个
+                    # 数字说的，说过之后又反悔，该找负责人核对，而不是自己再点
+                    "can_appeal": (open_window and r.confirmed_at is None
+                                   and (a is None or a.status == "rejected")),
                     "pay_allowed": pay_pos is not None,
                     "pay_note": pay_pos.pay_note if pay_pos else "",
                     "appeal": ({"status": a.status, "label": a.status_label(),
@@ -344,6 +346,10 @@ def appeal_hours(record_id: str, body: AppealBody,
         raise HTTPException(
             409, f"申诉已于 {act.appeal_deadline:%m-%d %H:%M} 截止；"
                  f"如确有问题请联系负责人")
+    if r.confirmed_at is not None:
+        # 前端已经不给入口了，这里再挡一道：确认过的时长不能再申诉，
+        # 否则「确认无误」就成了可以反悔的一句话
+        raise HTTPException(409, "您已确认过这条时长，如确有问题请联系负责人")
     reason = body.reason.strip()
     if len(reason) < 5:
         raise HTTPException(400, "请写明具体情况（至少 5 个字）")

@@ -466,7 +466,7 @@ def test_时长带明细且导出时长记录(client, admin, db, served, take_st
     stu = login(client, u.student_id)
     rec = _record(client, stu)
     assert rec["parts"] == [{"label": "服务场", "time": g.span_text(),
-                             "position": "引导", "hours": 4.0}]
+                             "position": "引导", "hours": 4.0, "kind": "shift"}]
 
     r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
     assert r.status_code == 200
@@ -485,3 +485,137 @@ def test_时长带明细且导出时长记录(client, admin, db, served, take_st
     r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
     names = [r_[0] for r_ in list(load_workbook(BytesIO(r.content)).active.values)[1:]]
     assert u.name not in names and other.name in names
+
+
+# ======================= 手动补录：并进本人那一笔 =======================
+#
+# 从前手动加的时长另起一条记录：合计分成两处、核准发两条通知、本人得确认两回，
+# 管理者那张总表里还看不见这笔账。现在并进这个人这场活动的那一笔，
+# 手动的部分作为明细里的一段存在（kind="manual"）。
+
+def _add_manual(client, admin, act, sid, hours, note=""):
+    return client.post(f"/api/staff/activities/{act.id}/hours/manual",
+                       headers=admin,
+                       json={"items": [{"student_id": sid, "hours": hours,
+                                        "note": note}]})
+
+
+def test_手动时长并进本人那一笔(client, admin, db, served):
+    act, g, u = served
+    _confirm(client, admin, act, approve=False)
+    stu = login(client, u.student_id)
+    assert _record(client, stu)["hours"] == 4.0
+
+    assert _add_manual(client, admin, act, u.student_id, 2,
+                       "场外搬运").status_code == 200
+
+    row = _record(client, stu)
+    assert row["hours"] == 6.0                      # 合计是一个数
+    assert [p["kind"] for p in row["parts"]] == ["shift", "manual"]
+    assert row["parts"][1]["label"] == "场外搬运"
+    # 本人那边只有一笔账，不是同一个活动列两行
+    assert len(client.get("/api/me/hours", headers=stu).json()["records"]) == 1
+
+    # 管理者那张总表也合起来了，不再另有一块「手动添加时长」
+    d = client.get(f"/api/staff/activities/{act.id}/hours", headers=admin).json()
+    assert "manual" not in d
+    m = next(x for x in d["items"] if x["user"]["id"] == u.id)
+    assert m["hours"] == 6.0 and len(m["parts"]) == 2
+
+
+def test_确认全部不会抹掉手动加的那几段(client, admin, db, served):
+    """「确认全部」每次重算明细——不特意保住手动那几段，管理者加的东西就没了。
+
+    这正是当初把它拆成单独一张表的原因，现在改成拆开记、合起来算。
+    """
+    act, g, u = served
+    _confirm(client, admin, act, approve=False)
+    _add_manual(client, admin, act, u.student_id, 2, "场外搬运")
+
+    client.post(f"/api/staff/activities/{act.id}/hours/confirm",
+                headers=admin, json={})
+
+    stu = login(client, u.student_id)
+    row = _record(client, stu)
+    assert row["hours"] == 6.0
+    assert [p["kind"] for p in row["parts"]] == ["shift", "manual"]
+
+
+def test_只补录过的人也在总表里(client, admin, db, served, take_student):
+    """没签到、只被手动补录的人，从前根本不出现在这张表里——这笔账就没人核。"""
+    act, g, u = served
+    other = student_row(db, take_student())
+    _add_manual(client, admin, act, other.student_id, 1.5, "场外搬运")
+
+    d = client.get(f"/api/staff/activities/{act.id}/hours", headers=admin).json()
+    m = next(x for x in d["items"] if x["user"]["id"] == other.id)
+    assert m["hours"] == 1.5 and m["confirmed"] is True
+    assert m["parts"][0]["kind"] == "manual"
+
+
+def test_删手动那一段只减那一截(client, admin, db, served):
+    act, g, u = served
+    _confirm(client, admin, act, approve=False)
+    _add_manual(client, admin, act, u.student_id, 2, "场外搬运")
+    _add_manual(client, admin, act, u.student_id, 1, "通勤")
+
+    stu = login(client, u.student_id)
+    row = _record(client, stu)
+    assert row["hours"] == 7.0 and len(row["parts"]) == 3
+    rid, last = row["id"], 2                       # 最后一段是「通勤」
+
+    # 签到算出来的那一段删不得：它是账的依据
+    assert client.delete(
+        f"/api/staff/activities/{act.id}/hours/manual/{rid}/0",
+        headers=admin).status_code == 404
+
+    assert client.delete(
+        f"/api/staff/activities/{act.id}/hours/manual/{rid}/{last}",
+        headers=admin).status_code == 200
+    row = _record(client, stu)
+    assert row["hours"] == 6.0 and len(row["parts"]) == 2
+
+
+def test_手动时长删空之后整笔账消失(client, admin, db, served, take_student):
+    """本来源自补录的一笔，删空就不该留一条 0 小时的记录在表里。"""
+    act, g, u = served
+    other = student_row(db, take_student())
+    _add_manual(client, admin, act, other.student_id, 2, "场外搬运")
+
+    d = client.get(f"/api/staff/activities/{act.id}/hours", headers=admin).json()
+    m = next(x for x in d["items"] if x["user"]["id"] == other.id)
+    assert client.delete(
+        f"/api/staff/activities/{act.id}/hours/manual/{m['record_id']}/0",
+        headers=admin).status_code == 200
+
+    d = client.get(f"/api/staff/activities/{act.id}/hours", headers=admin).json()
+    assert not [x for x in d["items"] if x["user"]["id"] == other.id]
+
+
+def test_时长核准通知把人带到我的志愿时长(client, admin, db, served):
+    """那笔账的确认/申诉按钮在「我的志愿时长」，活动详情页上没有。"""
+    act, g, u = served
+    _confirm(client, admin, act)
+    n = (db.query(Notification)
+         .filter(Notification.user_id == u.id,
+                 Notification.title.like("志愿时长已核准%")).first())
+    assert n is not None and n.data == {"route": "hours"}
+
+
+def test_确认无误之后就不能再申诉(client, admin, db, served):
+    """「确认无误」是对着这个数字说的，说过之后前端不给入口，后端也挡住。"""
+    act, g, u = served
+    _confirm(client, admin, act)
+    stu = login(client, u.student_id)
+    rec = _record(client, stu)
+    assert rec["can_appeal"] is True
+
+    client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu,
+                json={"reward": "hours"})
+    after = _record(client, stu)
+    assert after["can_appeal"] is False
+    assert after["can_confirm"] is True            # 还能改报酬方式
+
+    r = client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu,
+                    json={"claimed_hours": 3, "reason": "实际提前走了"})
+    assert r.status_code == 409 and "已确认" in r.json()["detail"]

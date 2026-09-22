@@ -56,6 +56,9 @@ async function openMessage(n) {
       .catch(() => { n.read = false })
   }
   if (n.data?.route === 'approvals') return router.push('/approvals')
+  // 时长核准、申诉答复去「我的志愿时长」：确认/申诉的按钮在那儿，活动详情页
+  // 上没有，跳过去等于让人自己再找一遍
+  if (n.data?.route === 'hours') return router.push('/hours')
   if (n.data?.activity_id) router.push('/activity/' + n.data.activity_id)
 }
 
@@ -71,6 +74,7 @@ const TAGS = {
   assignment: ['primary', '岗位分配'],
   activity_changed: ['warning', '活动变更'],
   checkin_reminder: ['info', '签到提醒'],
+  hours_approved: ['success', '时长核准'],
 }
 const tagType = k => TAGS[k]?.[0] || 'info'
 const tagLabel = k => TAGS[k]?.[1] || '通知'
