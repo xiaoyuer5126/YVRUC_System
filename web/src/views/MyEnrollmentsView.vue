@@ -202,6 +202,7 @@ const loading = ref(false)
 const teamDlg = ref({ visible: false, data: null })
 const groupQr = ref(null)
 const scanVisible = ref(false)
+const geoBusy = ref(false)      // 取坐标要几秒，连点两下就是两次签到请求
 
 /** 这一行现在能不能签 / 该显示什么按钮。
  *
@@ -215,10 +216,58 @@ function signAction(row) {
   return row.checkout_at ? '' : '签退'
 }
 
-// method 目前恒为 scan（后端 _checkin_state）。定位签到接进来时在这分流：
-// geo 走取坐标，其余一律调起扫码。
-function openCheckin() {
-  scanVisible.value = true
+// 扫还是定，由后端说了算（_checkin_state 的 method）：同一场次里有的岗位
+// 现场有码可扫，有的岗位（散在校门口、看台这种）就只能靠定位。
+function openCheckin(row) {
+  if (row.checkin?.method === 'geo') geoCheckin(row)
+  else scanVisible.value = true
+}
+
+/** 定位签到/签退：取一次坐标交给服务端比对。
+
+ *  按钮本身不带任何「我到了」的凭据——到没到由服务端拿坐标和锚点算出来，
+ *  这里取的坐标只是喂给它的输入。所以手机上的定位权限、精度都还有意义，
+ *  但不用指望它防住有心人（见后端 routers/checkin.py 里那段说明）。 */
+async function geoCheckin(row) {
+  if (geoBusy.value) return
+  if (!navigator.geolocation) {
+    ElMessage.error('这个浏览器不能定位，请联系负责人手动补签')
+    return
+  }
+  geoBusy.value = true
+  const tip = ElMessage({ message: '正在定位…', duration: 0 })
+  try {
+    const pos = await new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true, timeout: 15000, maximumAge: 0,
+      })
+    })
+    const d = await api.post(`/api/checkin/enrollments/${row.id}`, {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      accuracy: pos.coords.accuracy || 0,
+    }, { skipErrorToast: true })
+    ElMessage.success(d.message)
+    await load()
+  } catch (e) {
+    // 取不到坐标和服务端判定不在范围内是两回事，说法不能混
+    ElMessage.error(geoFailText(e))
+  } finally {
+    tip.close()
+    geoBusy.value = false
+  }
+}
+
+/** 定位失败的原因就在 PositionError.code 里，照它说人话；
+ *  其余的是服务端返回的 (api 层已经把 detail 放进 message)。 */
+function geoFailText(e) {
+  if (typeof e?.code === 'number') {
+    if (!window.isSecureContext) return '定位只能在 https 下使用，请用平台正式网址打开'
+    if (e.code === 1) return '您没有允许定位，无法签到；请在浏览器设置里允许后重试'
+    if (e.code === 2) return '取不到定位，请到空旷处或窗边重试'
+    if (e.code === 3) return '定位超时，请重试'
+  }
+  return e?.message || '签到失败'
 }
 
 // 成功提示由扫码弹窗自己发（带服务端的原话），这里只管把状态刷成已到岗

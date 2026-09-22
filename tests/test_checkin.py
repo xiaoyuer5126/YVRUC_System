@@ -357,3 +357,155 @@ def test_签完到按钮就该翻成签退(client, db, live_group):
 
     row = row_of(client, h, g)
     assert row["checkout_at"] is not None        # 签退完按钮就该消失
+
+
+# ======================= 定位签到 =======================
+#
+# 现场根本没人能出示二维码的岗位（散在校门口、看台、停车场），管理者站在
+# 岗位上量一个坐标，志愿者到场点一下，平台比距离。比扫码弱——手机定位能
+# 伪造——所以只该用在那类岗位上，规则见 routers/checkin.py。
+
+LAT, LNG = 39.9603, 116.3130          # 人大东门一带，随便取的
+
+
+def mark_geo(client, admin, act, lat=LAT, lng=LNG, radius=200, accuracy=8):
+    """照前端的路径量坐标：先列码表拿 task_id，再 PUT 锚点。"""
+    tid = task_id_of(client, admin, act)
+    r = client.put(f"/api/staff/checkin-tasks/{tid}/geo", headers=admin,
+                   json={"lat": lat, "lng": lng, "accuracy": accuracy,
+                         "radius_m": radius})
+    assert r.status_code == 200, r.text
+    return tid
+
+
+def geo_post(client, h, enr_id, lat=LAT, lng=LNG, accuracy=10):
+    return client.post(f"/api/checkin/enrollments/{enr_id}", headers=h,
+                       json={"lat": lat, "lng": lng, "accuracy": accuracy})
+
+
+def test_没量坐标的场次不能走定位(client, admin, live_group):
+    """这条入口不带任何凭据，要是能随便用，扫码那道防线就从侧门没了。"""
+    _act, g, h, _token = live_group
+    enr = row_of(client, h, g)
+    r = geo_post(client, h, enr["id"])
+    assert r.status_code == 409 and "扫码签到" in r.json()["detail"]
+
+
+def test_量了坐标就能定位签到(client, admin, live_group):
+    act, g, h, _token = live_group
+    tid = mark_geo(client, admin, act)
+
+    assert row_of(client, h, g)["checkin"]["method"] == "geo"
+    d = geo_post(client, h, row_of(client, h, g)["id"]).json()
+    assert d["action"] == "checkin" and d["distance_m"] < 50
+
+    # 看板上的「方式」要认出这是定位签到的，不能一律写成扫码
+    rec = client.get(f"/api/staff/checkin-tasks/{tid}/board",
+                     headers=admin).json()["records"][0]
+    assert rec["method"] == "geo" and rec["checked_in"]
+
+
+def test_离签到点远了签不了(client, admin, live_group):
+    """纬度差 0.01 度 ≈ 1.1 公里，远超 200 米。"""
+    act, g, h, _token = live_group
+    mark_geo(client, admin, act)
+    r = geo_post(client, h, row_of(client, h, g)["id"], lat=LAT + 0.01)
+    assert r.status_code == 409 and "超出签到范围" in r.json()["detail"]
+
+
+def test_手机定位误差比半径还大就签不了(client, admin, live_group):
+    """误差 ±500 米、范围才 200 米：这样的定位证明不了他在现场，
+    放过去等于把「到场」变成「报一个大概位置」。"""
+    act, g, h, _token = live_group
+    mark_geo(client, admin, act)
+    r = geo_post(client, h, row_of(client, h, g)["id"], accuracy=500)
+    assert r.status_code == 409 and "误差" in r.json()["detail"]
+
+
+def test_半径之内的误差照签(client, admin, live_group):
+    """误差 150 米、范围 200 米，站得也准——一栋楼的定位就是这么晃。"""
+    act, g, h, _token = live_group
+    mark_geo(client, admin, act)
+    d = geo_post(client, h, row_of(client, h, g)["id"], accuracy=150).json()
+    assert d["action"] == "checkin"
+
+
+def test_改成定位之后老码就作废(client, admin, live_group):
+    """二维码可能早就打印出去了。码要是还能签，定位那道判定就是摆设——
+    谁都会挑松的那条路走。"""
+    act, g, h, token = live_group
+    assert client.get(f"/api/checkin/qr.svg?token={token}").status_code == 200
+    mark_geo(client, admin, act)
+
+    assert client.get(f"/api/checkin/qr.svg?token={token}").status_code == 404
+    r = client.post(f"/api/checkin/task/{token}", headers=h)
+    assert r.status_code == 409 and "定位签到" in r.json()["detail"]
+    # 扫开旧码进来的落地页也要说清楚，而不是等他点按钮再报错
+    info = client.get(f"/api/checkin/task/{token}", headers=h).json()
+    assert info["method"] == "geo"
+
+
+def test_定位签到也守十分钟那道窗(client, admin, live_group):
+    """签到规则只写一份（_apply_checkin）就是为了这个：两条入口各写一遍，
+    早晚有一侧漏掉保护窗，那侧就成了「当场签退」的后门。"""
+    act, g, h, _token = live_group
+    mark_geo(client, admin, act)
+    enr_id = row_of(client, h, g)["id"]
+    assert geo_post(client, h, enr_id).json()["action"] == "checkin"
+
+    again = geo_post(client, h, enr_id)
+    assert again.status_code == 409 and "刚签到" in again.json()["detail"]
+
+
+def test_改回扫码就得扫码(client, admin, live_group):
+    act, g, h, token = live_group
+    tid = mark_geo(client, admin, act)
+    assert client.delete(f"/api/staff/checkin-tasks/{tid}/geo",
+                         headers=admin).status_code == 200
+
+    assert row_of(client, h, g)["checkin"]["method"] == "scan"
+    assert geo_post(client, h, row_of(client, h, g)["id"]).status_code == 409
+    assert client.post(f"/api/checkin/task/{token}",
+                       headers=h).json()["action"] == "checkin"
+
+
+def test_坐标取不到时浏览器给的零点会被拒(client, admin, live_group):
+    """navigator.geolocation 取不到定位时给的是 (0,0)（几内亚湾）。
+    照单全收就成了一个谁都不在范围内的签到点，现场还查不出原因。"""
+    act, _g, _h, _token = live_group
+    tid = task_id_of(client, admin, act)
+    r = client.put(f"/api/staff/checkin-tasks/{tid}/geo", headers=admin,
+                   json={"lat": 0, "lng": 0, "radius_m": 200})
+    assert r.status_code == 400 and "定位" in r.json()["detail"]
+
+
+def test_半径要填在合理区间(client, admin, live_group):
+    act, _g, _h, _token = live_group
+    tid = task_id_of(client, admin, act)
+    url = f"/api/staff/checkin-tasks/{tid}/geo"
+    for bad in (5, 99999):
+        r = client.put(url, headers=admin,
+                       json={"lat": LAT, "lng": LNG, "radius_m": bad})
+        assert r.status_code == 400 and "范围" in r.json()["detail"]
+
+
+def test_不是管理者量不了坐标(client, admin, live_group, take_student):
+    """能量坐标就等于能决定「人在哪儿算到场」，只能本活动的管理者来。"""
+    act, g, h, _token = live_group
+    tid = task_id_of(client, admin, act)
+    r = client.put(f"/api/staff/checkin-tasks/{tid}/geo",
+                   headers=login(client, take_student()),
+                   json={"lat": LAT, "lng": LNG, "radius_m": 200})
+    assert r.status_code == 403
+
+
+def test_只能给自己的报名记录定位签到(client, admin, live_group, take_student):
+    """这条入口认的是报名 id。不认人，就等于谁都能替别人签到。"""
+    act, g, h, _token = live_group
+    mark_geo(client, admin, act)
+    enr_id = row_of(client, h, g)["id"]
+    other = login(client, take_student())        # 没报这场名的人
+    assert geo_post(client, other, enr_id).status_code == 404
+    assert [r for r in client.get("/api/me/enrollments",
+                                  headers=other).json()
+            if r["shift"]["id"] == g.id] == []

@@ -12,7 +12,7 @@ from .. import config
 from .. import hours as hours_flow
 from ..database import db_session
 from ..deps import current_user
-from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
+from ..models import (Activity, CheckinRecord, Enrollment,
                       HoursAppeal, HoursRecord, Notification, Shift, Position,
                       User, iso, now, uid)
 from ..notify import notify_managers
@@ -41,18 +41,17 @@ def _checkin_state(db: OrmSession, enr: Enrollment, g: Shift) -> dict:
 
     码要本人到现场扫出来——接口把码发给每个报名的人，「我的报名」里点一下
     就能签，动态码防代签那套就白做了。这里只回答「按钮要不要亮、亮的是签到
-    还是签退」，真正的凭据仍在扫码那一步。
+    还是签退、点了之后调扫码还是调定位」。
 
-    method 现在恒为 scan；定位签到接进来时只改这一个字段。
+    method：有坐标锚点就是 geo（点到场按钮、平台比距离），否则是 scan
+    （调起扫一扫）。两条路都不能凭这个字段直接签成——见 routers/checkin.py。
     """
-    tasks = (db.query(CheckinTask)
-             .filter(CheckinTask.shift_id == g.id, CheckinTask.active.is_(True))
-             .order_by(CheckinTask.created_at.desc()).all())
-    if not tasks:
+    from .checkin import geo_anchor, resolve_task
+
+    task = resolve_task(db, g.id, enr.position_id)
+    if task is None:
         return {"state": "none", "method": "scan", "open": False}
-    # 分岗位签到：优先本岗位那张码，没有就退回统一的那张
-    task = (next((t for t in tasks if t.position_id == enr.position_id), None)
-            or next((t for t in tasks if not t.position_id), None) or tasks[0])
+    method = "geo" if geo_anchor(db, task) else "scan"
     t = now()
     if task.valid_from and t < task.valid_from:
         state = "early"
@@ -60,7 +59,7 @@ def _checkin_state(db: OrmSession, enr: Enrollment, g: Shift) -> dict:
         state = "expired"
     else:
         state = "active"
-    return {"state": state, "method": "scan", "open": state == "active",
+    return {"state": state, "method": method, "open": state == "active",
             "from": iso_of(task.valid_from), "to": iso_of(task.valid_to)}
 
 

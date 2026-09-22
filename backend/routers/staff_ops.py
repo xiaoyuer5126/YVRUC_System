@@ -22,7 +22,7 @@ from ..perm import ensure_activity_manager
 from ..integrations import msgcenter
 from ..locks import current_checkin_code
 from ..notify import notify, notify_checkin
-from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
+from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask, Enrollment,
                       HoursAppeal, HoursRecord, HoursRequest, Shift,
                       Position, User, iso, new_checkin_token, now, uid)
 from ..serializers import iso_of, recruit_scope_text
@@ -90,12 +90,16 @@ def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
     tasks = (db.query(CheckinTask)
              .filter(CheckinTask.activity_id == activity_id)
              .order_by(CheckinTask.created_at.desc()).all())
+    # 锚点一次查完按 task_id 归位，别在循环里一人一次查询
+    geos = {x.task_id: x for x in db.query(CheckinGeo)
+            .filter(CheckinGeo.task_id.in_([t.id for t in tasks] or [""])).all()}
     out = []
     for t in tasks:
         g = db.get(Shift, t.shift_id)
         st = db.get(Position, t.position_id) if t.position_id else None
         n = (db.query(func.count(CheckinRecord.id))
              .filter(CheckinRecord.task_id == t.id).scalar() or 0)
+        x = geos.get(t.id)
         out.append({"id": t.id, "token": t.token, "mode": t.mode,
                     # shift_id 前端要用：一个活动多场次时，码表要按场次分辨，
                     # 手动补签也只能打到当前这块大屏对应的那一场上
@@ -103,8 +107,98 @@ def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
                     "shift_kind": g.kind, "shift_kind_label": g.kind_label(),
                     "position_name": st.name if st else "",
                     "valid_from": iso(t.valid_from), "valid_to": iso(t.valid_to),
-                    "active": t.active, "count": n})
+                    "active": t.active, "count": n,
+                    # 有锚点 = 这个任务走定位签到，前端据此显示「方式」列
+                    "geo": ({"lat": x.lat, "lng": x.lng, "radius_m": x.radius_m,
+                             "accuracy_m": x.accuracy_m} if x else None)})
     return out
+
+
+# ======================= 定位签到的坐标锚点 =======================
+
+class GeoBody(BaseModel):
+    """管理者站在岗位上量的那个坐标。前端用 navigator.geolocation 取。"""
+    lat: float
+    lng: float
+    accuracy: float = 0
+    radius_m: int = config.GEO_RADIUS_DEFAULT_M
+
+
+@router.put("/checkin-tasks/{task_id}/geo")
+def set_geo(task_id: str, body: GeoBody,
+            db: OrmSession = Depends(db_session),
+            user: User = Depends(require_manager)):
+    """把这个任务改成定位签到（已有锚点则改半径/位置）。
+
+    坐标必须由管理者**在现场**用手机量：它就是「人在哪儿算到场」的唯一依据，
+    坐办公室里填一个坐标，等于把这个岗位的签到作废。
+    """
+    task = db.get(CheckinTask, task_id)
+    if task is None:
+        raise HTTPException(404, "任务不存在")
+    ensure_activity_manager(db, user, task.activity_id)
+    ensure_not_finished(_act(db, task.activity_id))
+
+    if not (-90 <= body.lat <= 90 and -180 <= body.lng <= 180):
+        raise HTTPException(400, "坐标不合法")
+    if body.lat == 0 and body.lng == 0:
+        # 浏览器取不到定位时会给 (0,0)（几内亚湾），照单全收就成了一个
+        # 谁都不在范围内的签到点，现场还查不出原因
+        raise HTTPException(400, "没有取到有效定位，请到现场重新量一次")
+    if not (config.GEO_RADIUS_MIN_M <= body.radius_m <= config.GEO_RADIUS_MAX_M):
+        raise HTTPException(
+            400, f"签到范围请填 {config.GEO_RADIUS_MIN_M}~"
+                 f"{config.GEO_RADIUS_MAX_M} 米")
+
+    geo = (db.query(CheckinGeo).filter(CheckinGeo.task_id == task.id).first())
+    if geo is None:
+        geo = CheckinGeo(id=uid("geo"), task_id=task.id, set_by=user.id)
+        db.add(geo)
+    geo.lat, geo.lng = round(body.lat, 6), round(body.lng, 6)
+    geo.radius_m = body.radius_m
+    geo.accuracy_m = round(body.accuracy, 1)
+    geo.set_by, geo.set_at = user.id, now()
+
+    g = db.get(Shift, task.shift_id)
+    st = db.get(Position, task.position_id) if task.position_id else None
+    audit_log(db, actor=user, action="checkin_geo", target_type="checkin",
+              target_id=task.id,
+              target_label=f"{_act(db, task.activity_id).title}·"
+                           f"{st.name if st else g.name}",
+              activity_id=task.activity_id,
+              summary=f"把「{st.name if st else g.name}」改成定位签到："
+                      f"({geo.lat:.5f}, {geo.lng:.5f}) 半径 {geo.radius_m} 米"
+                      + (f"，量点时误差 ±{geo.accuracy_m:.0f} 米"
+                         if geo.accuracy_m else ""))
+    db.commit()
+    return {"ok": True, "geo": {"lat": geo.lat, "lng": geo.lng,
+                               "radius_m": geo.radius_m,
+                               "accuracy_m": geo.accuracy_m}}
+
+
+@router.delete("/checkin-tasks/{task_id}/geo")
+def clear_geo(task_id: str, db: OrmSession = Depends(db_session),
+              user: User = Depends(require_manager)):
+    """撤销定位签到，改回扫码。"""
+    task = db.get(CheckinTask, task_id)
+    if task is None:
+        raise HTTPException(404, "任务不存在")
+    ensure_activity_manager(db, user, task.activity_id)
+    ensure_not_finished(_act(db, task.activity_id))
+    geo = (db.query(CheckinGeo).filter(CheckinGeo.task_id == task.id).first())
+    if geo is not None:
+        g = db.get(Shift, task.shift_id)
+        st = db.get(Position, task.position_id) if task.position_id else None
+        audit_log(db, actor=user, action="checkin_geo", target_type="checkin",
+                  target_id=task.id,
+                  target_label=f"{_act(db, task.activity_id).title}·"
+                               f"{st.name if st else g.name}",
+                  activity_id=task.activity_id,
+                  summary=f"取消定位签到，改回扫码："
+                          f"{st.name if st else g.name}")
+        db.delete(geo)
+        db.commit()
+    return {"ok": True}
 
 
 @router.get("/checkin-tasks/{task_id}/code")

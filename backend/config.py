@@ -140,6 +140,14 @@ CHECKIN_WINDOW_PAD_MINUTES = 30
 CHECKIN_CODE_REFRESH_SECONDS = 30
 CHECKIN_CODE_TTL_SECONDS = 60
 
+# 定位签到：管理者站在岗位上用手机量一个坐标存下来，志愿者到场后由平台比对
+# 距离。它比动态码弱——手机定位能伪造，精度也看环境——所以只该用在「现场
+# 根本没人能出示二维码」的岗位上（比如散在校园各处的值守点）。
+# 默认半径 200 米，是「同一栋楼、同一个广场」的量级，管理员可按现场调整。
+GEO_RADIUS_DEFAULT_M = 200
+GEO_RADIUS_MIN_M = 30          # 再小就不是「人在现场」，是「贴着一个点站」
+GEO_RADIUS_MAX_M = 3000
+
 # 活动开始前多少天起，每天给管理者推一条人员变动摘要；几点推
 ROSTER_DIGEST_DAYS = 3
 ROSTER_DIGEST_HOUR = 6

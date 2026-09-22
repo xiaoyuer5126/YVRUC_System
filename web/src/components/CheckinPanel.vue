@@ -49,9 +49,16 @@
           {{ row.mode === 'position' ? `分岗位·${row.position_name}` : '统一签到' }} ·
           {{ fmtDT(row.valid_from) }} ~ {{ fmtDT(row.valid_to) }} · 已签 {{ row.count }} 人
         </div>
+        <div class="dim">
+          {{ row.geo ? `定位签到：半径 ${row.geo.radius_m} 米`
+                     : '扫码签到：到场出示二维码' }}
+        </div>
       </template>
       <template #actions="{ row }">
-        <el-button size="small" @click="openQR(row)">二维码 / 大屏</el-button>
+        <el-button size="small" @click="openQR(row)">
+          {{ row.geo ? '大屏' : '二维码 / 大屏' }}
+        </el-button>
+        <el-button size="small" :disabled="over" @click="openGeo(row)">定位</el-button>
         <el-button size="small" :type="row.active ? 'danger' : 'success'" link
                    @click="toggle(row)">{{ row.active ? '关闭' : '开启' }}</el-button>
       </template>
@@ -81,9 +88,20 @@
       <el-table-column label="已签/应签" width="100">
         <template #default="{row}">{{ row.count }} 人</template>
       </el-table-column>
-      <el-table-column label="操作" width="220">
+      <el-table-column label="方式" width="130">
         <template #default="{row}">
-          <el-button size="small" @click="openQR(row)">二维码 / 大屏</el-button>
+          <!-- 一个任务要么扫码要么定位：真两样都开，定位那道「人在不在场」的
+               判定就成了摆设，谁都能挑松的那条走 -->
+          <el-tag v-if="row.geo" size="small" effect="plain">定位 · {{ row.geo.radius_m }}m</el-tag>
+          <el-tag v-else size="small">扫码</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="300">
+        <template #default="{row}">
+          <el-button size="small" @click="openQR(row)">
+            {{ row.geo ? '大屏' : '二维码 / 大屏' }}
+          </el-button>
+          <el-button size="small" :disabled="over" @click="openGeo(row)">定位</el-button>
           <el-popconfirm :title="row.active ? '关闭后无法继续扫码' : '重新开启？'"
                          :disabled="over" @confirm="toggle(row)">
             <template #reference>
@@ -199,11 +217,14 @@
                       type="info" effect="plain">已请假</el-tag>
               <el-tag v-else-if="!row.checked_in" size="small" type="info" effect="plain">未签到</el-tag>
               <template v-else>
-                <el-tag size="small" :effect="row.method === 'scan' ? 'light' : 'plain'">
-                  {{ row.method === 'scan' ? '扫码' : '补签' }}
+                <el-tag size="small" :effect="row.method === 'manual' ? 'plain' : 'light'">
+                  {{ METHOD_LABEL[row.method] || row.method }}
                 </el-tag>
-                <el-tag v-if="row.checkout_method === 'manual'" size="small" effect="plain"
-                        style="margin-left:4px">手动退</el-tag>
+                <!-- 只标例外：扫码签退是常态，每条都挂个「扫码退」只是噪音 -->
+                <el-tag v-if="row.checkout_method === 'manual' || row.checkout_method === 'geo'"
+                        size="small" effect="plain" style="margin-left:4px">
+                  {{ row.checkout_method === 'geo' ? '定位退' : '手动退' }}
+                </el-tag>
               </template>
             </template>
           </el-table-column>
@@ -264,43 +285,106 @@
     <!-- 二维码 -->
     <el-dialog v-model="qrVisible" title="现场签到二维码" width="380">
       <div style="text-align:center" v-if="qrTask">
+        <!-- 定位签到的任务没有可扫的码：这一屏显示在墙上也没人能扫。
+             说清楚该干什么，别让现场的人对着一块空屏瞎猜 -->
+        <el-alert v-if="qrTask.geo" type="info" :closable="false" style="text-align:left">
+          <p style="margin:0;line-height:1.9">
+            本场次用<b>定位签到</b>，不需要二维码。<br>
+            志愿者到场后在「我的报名」里点「签到」，平台比对距离
+            （半径 {{ qrTask.geo.radius_m }} 米）。<br>
+            定位取不到时，由负责人在下面的名单里手动补签。
+          </p>
+        </el-alert>
         <!-- 默认动态码：固定码能打印，可也意味着拍一张发进群里就能代签，要打印时手动切 -->
-        <el-radio-group v-model="qrMode" size="small" style="margin-bottom:12px">
+        <el-radio-group v-show="!qrTask.geo" v-model="qrMode" size="small"
+                        style="margin-bottom:12px">
           <el-radio-button value="dynamic">动态码</el-radio-button>
           <el-radio-button value="fixed">固定码</el-radio-button>
         </el-radio-group>
         <!-- 只出二维码，不出那串字符，也不出扫码链接：能照着念、能转发的码，
              等于谁都能替别人签。要给人扫，就把这一屏亮在他面前。
              必须带 base：不传的话码里编的是相对路径，相机只会当一行字显示 -->
-        <img v-if="qrSrc" :src="qrSrc" width="280" height="280" alt="签到二维码" />
-        <div v-else class="qr-blank">正在取码…</div>
-        <!-- 这张码是哪一场、哪个岗位的：打印出来贴到现场，光看码分不出 -->
-        <div class="qr-who">
-          <b>{{ qrTask.shift_name }}</b>
-          <el-tag v-if="qrTask.shift_kind !== 'service'" size="small" effect="plain">
-            {{ qrTask.shift_kind_label }}
-          </el-tag>
-          <template v-if="qrTask.mode === 'position'">
-            <span class="sep">·</span><b>{{ qrTask.position_name }}</b>
-            <el-tag size="small" effect="plain">分岗位</el-tag>
+        <template v-if="!qrTask.geo">
+          <img v-if="qrSrc" :src="qrSrc" width="280" height="280" alt="签到二维码" />
+          <div v-else class="qr-blank">正在取码…</div>
+          <!-- 这张码是哪一场、哪个岗位的：打印出来贴到现场，光看码分不出 -->
+          <div class="qr-who">
+            <b>{{ qrTask.shift_name }}</b>
+            <el-tag v-if="qrTask.shift_kind !== 'service'" size="small" effect="plain">
+              {{ qrTask.shift_kind_label }}
+            </el-tag>
+            <template v-if="qrTask.mode === 'position'">
+              <span class="sep">·</span><b>{{ qrTask.position_name }}</b>
+              <el-tag size="small" effect="plain">分岗位</el-tag>
+            </template>
+            <el-tag v-else size="small" effect="plain">统一签到</el-tag>
+          </div>
+          <div class="dim">可签 {{ fmtDT(qrTask.valid_from) }} ~ {{ fmtDT(qrTask.valid_to) }}</div>
+          <div class="dim">首次扫码签到，再次扫码签退</div>
+          <template v-if="isDynamic">
+            <!-- 数字在动，就说明这块屏还活着：现场最怕的是分不清「码没换」和「页面卡了」 -->
+            <el-tag size="small" :type="qrStale ? 'danger' : 'success'" effect="plain"
+                    style="margin-top:6px">
+              {{ qrStale ? '取不到新码，正在重试…' : `${qrSeconds} 秒后换下一张` }}
+            </el-tag>
+            <div v-if="qrStale" class="dim">屏幕上这张可能已经过期，先别让人扫</div>
+            <div v-else class="dim">每 {{ qrRefresh }} 秒换一张，上一张还能再用一会儿；一块屏给所有人扫</div>
           </template>
-          <el-tag v-else size="small" effect="plain">统一签到</el-tag>
-        </div>
-        <div class="dim">可签 {{ fmtDT(qrTask.valid_from) }} ~ {{ fmtDT(qrTask.valid_to) }}</div>
-        <div class="dim">首次扫码签到，再次扫码签退</div>
-        <template v-if="isDynamic">
-          <!-- 数字在动，就说明这块屏还活着：现场最怕的是分不清「码没换」和「页面卡了」 -->
-          <el-tag size="small" :type="qrStale ? 'danger' : 'success'" effect="plain"
-                  style="margin-top:6px">
-            {{ qrStale ? '取不到新码，正在重试…' : `${qrSeconds} 秒后换下一张` }}
-          </el-tag>
-          <div v-if="qrStale" class="dim">屏幕上这张可能已经过期，先别让人扫</div>
-          <div v-else class="dim">每 {{ qrRefresh }} 秒换一张，上一张还能再用一会儿；一块屏给所有人扫</div>
+          <div v-else class="dim" style="margin-top:6px">
+            固定码从头用到尾，可以右键存图打印贴在现场——也因此别发进群里
+          </div>
         </template>
-        <div v-else class="dim" style="margin-top:6px">
-          固定码从头用到尾，可以右键存图打印贴在现场——也因此别发进群里
+        <div v-else class="dim" style="margin-top:10px">
+          {{ qrTask.shift_name }}
+          <template v-if="qrTask.mode === 'position'">· {{ qrTask.position_name }}</template>
+          · 可签 {{ fmtDT(qrTask.valid_from) }} ~ {{ fmtDT(qrTask.valid_to) }}
         </div>
       </div>
+    </el-dialog>
+
+    <!-- 定位签到：坐标由管理者站在岗位上量 -->
+    <el-dialog v-model="geoDlg" title="定位签到" width="440">
+      <template v-if="geoTask">
+        <el-alert type="warning" :closable="false" style="margin-bottom:12px">
+          <p style="margin:0;line-height:1.9">
+            坐标要<b>站在岗位上</b>量，它就是「人在哪儿算到场」的唯一依据——
+            坐办公室填一个，这个岗位的签到就作废了。
+          </p>
+        </el-alert>
+        <el-form label-width="90px">
+          <el-form-item label="签到点">
+            <el-button size="small" :loading="geoLocating"
+                       @click="locateMe">使用我的当前位置</el-button>
+            <div v-if="geoForm.lat" class="dim" style="line-height:1.7">
+              {{ geoForm.lat.toFixed(5) }}, {{ geoForm.lng.toFixed(5) }}
+              <template v-if="geoForm.accuracy">
+                （手机报的误差约 ±{{ Math.round(geoForm.accuracy) }} 米）
+              </template>
+            </div>
+            <div v-else class="dim">
+              {{ geoTask.geo ? '沿用已量的坐标，只改半径可直接保存' : '还没有坐标' }}
+            </div>
+          </el-form-item>
+          <el-form-item label="签到范围">
+            <el-input-number v-model="geoForm.radius_m" :min="30" :max="3000"
+                             :step="50" />
+            <span class="dim" style="margin-left:8px">米</span>
+            <div class="dim">
+              200 米大约是一栋楼、一个广场；范围越大越好签，也越不说明人到没到
+            </div>
+          </el-form-item>
+        </el-form>
+        <p class="dim" style="line-height:1.8;margin:0">
+          设好之后，志愿者在「我的报名」里点「签到」就是定位签到，
+          现场不再需要二维码。定位取不到时，仍可在下面的名单里手动补签。
+        </p>
+      </template>
+      <template #footer>
+        <el-button v-if="geoTask?.geo" type="danger" plain :loading="geoBusy"
+                   @click="clearGeo">改回扫码</el-button>
+        <el-button @click="geoDlg = false">取消</el-button>
+        <el-button type="primary" :loading="geoBusy" @click="saveGeo">保存</el-button>
+      </template>
     </el-dialog>
   </div>
 
@@ -345,7 +429,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT, qrBase } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
@@ -363,6 +447,9 @@ const props = defineProps({
 
 // 与后端 config.CHECKIN_WINDOW_PAD_MINUTES 保持一致
 const WINDOW_PAD = 30
+
+// 签到记录的 method：scan 扫码 / geo 定位 / manual 管理员补签（见 CheckinRecord）
+const METHOD_LABEL = { scan: '扫码', geo: '定位', manual: '补签' }
 const actId = computed(() => props.activityId)   // vuecheck: script-only
 
 const creating = ref(false)
@@ -445,10 +532,11 @@ function stopCode() {
   qrStale.value = false
 }
 
-/** 只在弹窗开着、且选的是动态码时才转。开关弹窗、换任务、切模式都走这里。 */
+/** 只在弹窗开着、且选的是动态码时才转。开关弹窗、换任务、切模式都走这里。
+ *  定位签到的任务没有码可取，转起来只是白打接口。 */
 function startCode() {
   stopCode()
-  if (!qrVisible.value || !qrTask.value || !isDynamic.value) return
+  if (!qrVisible.value || !qrTask.value || qrTask.value.geo || !isDynamic.value) return
   tickCode()                                  // 立刻取一张，别让弹窗空着等一秒
   qrTimer = setInterval(tickCode, 1000)
 }
@@ -575,6 +663,82 @@ function openQR(row) {
   qrTask.value = row
   qrVisible.value = true
 }
+
+// ======================= 定位签到 =======================
+
+const geoDlg = ref(false)
+const geoTask = ref(null)
+const geoBusy = ref(false)
+const geoLocating = ref(false)
+const geoForm = ref({ lat: 0, lng: 0, accuracy: 0, radius_m: 200 })
+
+function openGeo(row) {
+  geoTask.value = row
+  // 已经有锚点的，先把旧的填进去：多数时候只是改个半径，
+  // 不该逼着人再站到太阳底下量一次
+  geoForm.value = {
+    lat: row.geo?.lat || 0,
+    lng: row.geo?.lng || 0,
+    accuracy: row.geo?.accuracy_m || 0,
+    radius_m: row.geo?.radius_m || 200,
+  }
+  geoDlg.value = true
+}
+
+/** 量当前位置。这个坐标只是「管理者此刻站在哪」，判定用的仍是服务端。 */
+function locateMe() {
+  if (!navigator.geolocation) {
+    return ElMessage.error('这个浏览器不能定位，请换手机浏览器再试')
+  }
+  geoLocating.value = true
+  navigator.geolocation.getCurrentPosition(pos => {
+    geoLocating.value = false
+    geoForm.value.lat = pos.coords.latitude
+    geoForm.value.lng = pos.coords.longitude
+    geoForm.value.accuracy = pos.coords.accuracy || 0
+  }, e => {
+    geoLocating.value = false
+    if (!window.isSecureContext) {
+      return ElMessage.error('定位只能在 https 下使用，请用平台正式网址打开')
+    }
+    ElMessage.error(e?.code === 1 ? '您没有允许定位，请在浏览器设置里允许后重试'
+                   : e?.code === 3 ? '定位超时，请到空旷处重试'
+                   : '取不到定位，请到空旷处或窗边重试')
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 })
+}
+
+async function saveGeo() {
+  if (!geoForm.value.lat && !geoForm.value.lng) {
+    return ElMessage.warning('请先点「使用我的当前位置」量一下坐标')
+  }
+  geoBusy.value = true
+  try {
+    await api.put(`/api/staff/checkin-tasks/${geoTask.value.id}/geo`, geoForm.value)
+    ElMessage.success('已改为定位签到')
+    geoDlg.value = false
+    await loadTasks()
+  } finally {
+    geoBusy.value = false
+  }
+}
+
+async function clearGeo() {
+  const ok = await ElMessageBox.confirm(
+    '改回扫码后，志愿者要在现场扫描二维码才能签到。确定吗？',
+    '改回扫码', { type: 'warning' })
+    .catch(() => false)
+  if (!ok) return
+  geoBusy.value = true
+  try {
+    await api.del(`/api/staff/checkin-tasks/${geoTask.value.id}/geo`)
+    ElMessage.success('已改回扫码签到')
+    geoDlg.value = false
+    await loadTasks()
+  } finally {
+    geoBusy.value = false
+  }
+}
+
 const reminding = ref(false)
 
 // 现场催场往往是「东门那三个人没到」，所以可以只催某个岗位组或岗位

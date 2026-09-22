@@ -12,7 +12,8 @@
               {{ task.position.name }}（{{ task.position.location }}）
             </el-descriptions-item>
             <el-descriptions-item label="签到方式">
-              {{ task.mode === 'position' ? '分岗位签到' : '统一签到' }}
+              {{ task.method === 'geo' ? '定位签到'
+                 : (task.mode === 'position' ? '分岗位签到' : '统一签到') }}
             </el-descriptions-item>
             <el-descriptions-item label="当前状态">
               <template v-if="task.checked_in">
@@ -26,7 +27,19 @@
             </el-descriptions-item>
           </el-descriptions>
 
-          <el-button :type="task.checked_in ? 'warning' : 'primary'" size="large"
+          <!-- 定位签到的场次现场没有码。多半是扫了张早先打印的旧码进来的，
+               说清楚去哪儿签，别让人对着这个按钮点了报错 -->
+          <el-alert v-if="task.method === 'geo'" type="info" :closable="false"
+                    style="margin-top:16px;text-align:left">
+            <p style="margin:0 0 8px;line-height:1.9">
+              本场次用<b>定位签到</b>，不用扫码：「我的报名」里点「签到」，
+              平台会比对您与签到点的距离。
+            </p>
+            <el-button size="small" type="primary" @click="$router.push('/my')">
+              去我的报名签到
+            </el-button>
+          </el-alert>
+          <el-button v-else :type="task.checked_in ? 'warning' : 'primary'" size="large"
                      style="width:100%;margin-top:16px"
                      :disabled="task.state !== 'active' || !task.enrolled"
                      :loading="submitting" @click="doCheckin">

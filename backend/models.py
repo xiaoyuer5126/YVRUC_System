@@ -756,6 +756,31 @@ class CheckinTask(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+class CheckinGeo(Base):
+    """定位签到的坐标锚点：**这张表有行 = 这个任务改用定位签到**，没有 = 扫码。
+
+    单独一张表而不是给 checkin_tasks 加列：线上没有 Alembic，
+    `create_all()` 只建缺失的表，不会给已有的表加列（见 database.py）。
+    加表当场就能用，加列得手工去生产库上 ALTER。
+
+    锚点由管理者站在现场用手机量（「使用我的当前位置」），所以它的可信度
+    等于「管理者的手机可信」；志愿者那一端传上来的坐标只用来比对，不采信
+    任何客户端自己算出来的结论。
+    """
+    __tablename__ = "checkin_geos"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("checkin_tasks.id"),
+                                         unique=True, index=True)
+    lat: Mapped[float] = mapped_column(Float)
+    lng: Mapped[float] = mapped_column(Float)
+    radius_m: Mapped[int] = mapped_column(Integer, default=config.GEO_RADIUS_DEFAULT_M)
+    # 量锚点的那一刻手机报的误差，只用于展示（让管理员知道这个点准不准）
+    accuracy_m: Mapped[float] = mapped_column(Float, default=0)
+    set_by: Mapped[str] = mapped_column(String(32), default="")
+    set_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
 class CheckinRecord(Base):
     __tablename__ = "checkin_records"
 
