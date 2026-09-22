@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -70,6 +71,13 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
     rec = db.query(CheckinRecord).filter(
         CheckinRecord.user_id == enr.user_id,
         CheckinRecord.shift_id == enr.shift_id).first()
+    ck = (_checkin_state(db, enr, g) if enr.status == "enrolled" else None)
+    # 刚签完到的这段时间里点了「签退」也是白点：服务端十分钟内不认（防手滑，
+    # 见 config.CHECKOUT_MIN_GAP_MINUTES），扫完码只会被挡回来。把「几点之后
+    # 才能签退」一并给出，前端点下去就能当场说明白，不用先支使人去扫一遍。
+    if ck is not None and rec is not None and rec.checkout_at is None:
+        ck["checkout_from"] = iso(rec.checkin_at + timedelta(
+            minutes=config.CHECKOUT_MIN_GAP_MINUTES))
     return {
         "id": enr.id,
         "activity": {"id": act.id, "title": act.title,
@@ -95,9 +103,9 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "joined_at": iso_of(enr.joined_at),
         "confirm_deadline": iso_of(enr.confirm_deadline),
         "checked_in": rec is not None,
+        "checkin_at": iso(rec.checkin_at) if rec else None,
         "checkout_at": iso(rec.checkout_at) if rec else None,
-        "checkin": (_checkin_state(db, enr, g)
-                    if enr.status == "enrolled" else None),
+        "checkin": ck,
         # 联络群二维码只给已报上的人，「我的报名」里按需点开
         "contact_group_qr": (act.contact_group_qr
                              if enr.status == "enrolled" else ""),

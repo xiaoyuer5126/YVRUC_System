@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 import redis
@@ -357,6 +357,31 @@ def test_签完到按钮就该翻成签退(client, db, live_group):
 
     row = row_of(client, h, g)
     assert row["checkout_at"] is not None        # 签退完按钮就该消失
+
+
+def test_刚签完到就知道几点才能签退(client, db, live_group):
+    """按钮点下去要能当场说「还要等几分钟」，就得先拿到这个时间。
+
+    不给的话，前端只能放人去扫一遍码、被服务端挡回来才知道——而那时候他
+    已经举着手机对着二维码转了半天，还以为是自己没扫上。
+    """
+    _act, g, h, token = live_group
+    client.post(f"/api/checkin/task/{token}", headers=h)
+
+    row = row_of(client, h, g)
+    assert row["checkin_at"]
+    gap = (datetime.fromisoformat(row["checkin"]["checkout_from"])
+           - datetime.fromisoformat(row["checkin_at"]))
+    assert gap == timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES)
+
+    # 签退之后这个时间就没意义了，不该再挂着（按钮本来也不显示）
+    rec = db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id).one()
+    rec.checkin_at = now() - timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES + 1)
+    db.commit()
+    client.post(f"/api/checkin/task/{token}", headers=h)
+    row = row_of(client, h, g)
+    assert row["checkout_at"] is not None
+    assert "checkout_from" not in row["checkin"]
 
 
 # ======================= 定位签到 =======================

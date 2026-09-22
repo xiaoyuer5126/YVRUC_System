@@ -7,7 +7,8 @@
      扫到的码不显示、也不留痕——它是别人现场出示的凭据，落地页那边同样只出
      二维码不出码文。 -->
 <template>
-  <el-dialog :model-value="modelValue" title="扫码签到" :width="narrow ? '92vw' : '340px'"
+  <el-dialog :model-value="modelValue" :title="'扫码' + action"
+             :width="narrow ? '92vw' : '340px'"
              :close-on-click-modal="false" @close="close">
     <div class="scan-box">
       <!-- muted + playsinline：iOS 上不这样写，video 根本不出画面 -->
@@ -27,7 +28,12 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 
-const props = defineProps({ modelValue: { type: Boolean, default: false } })
+const props = defineProps({
+  modelValue: { type: Boolean, default: false },
+  // 这一轮扫的是签到还是签退。标题和「正在…」都得跟着它走，否则签退的时候
+  // 屏幕上一律写着「签到」，人还以为自己点错了
+  action: { type: String, default: '签到' },
+})
 const emit = defineEmits(['update:modelValue', 'done'])
 
 const narrow = useNarrow()
@@ -65,7 +71,7 @@ function onResult(result) {
 
 async function submit(code) {
   busy = true
-  hint.value = '正在签到…'
+  hint.value = `正在${props.action}…`
   bad.value = false
   try {
     // skipErrorToast：失败的话得留在框里（见下），再弹一个同样内容的飘字是重复
@@ -79,7 +85,7 @@ async function submit(code) {
     // 提示留在框里而不是弹个飘字：飘字三秒就没了，人举着手机对着同一张码
     // 反复扫，却不知道为什么一直不成功。现场那张码正在换，所以不停扫描，
     // 让人直接扫下一张。
-    fail(e.message || '签到失败')
+    fail(e.message || `${props.action}失败`)
     busy = false
   }
 }

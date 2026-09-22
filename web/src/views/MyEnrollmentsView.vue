@@ -151,7 +151,7 @@
 
     <GroupQrDialog ref="groupQr" />
 
-    <ScanCheckinDialog v-model="scanVisible" @done="onChecked" />
+    <ScanCheckinDialog v-model="scanVisible" :action="scanLabel" @done="onChecked" />
 
     <el-dialog v-model="teamDlg.visible" :title="'组员名单 · ' + (teamDlg.data?.scope || '')"
                width="560">
@@ -202,6 +202,7 @@ const loading = ref(false)
 const teamDlg = ref({ visible: false, data: null })
 const groupQr = ref(null)
 const scanVisible = ref(false)
+const scanLabel = ref('签到')   // 这轮扫的是签到还是签退，弹窗照着它说话
 const geoBusy = ref(false)      // 取坐标要几秒，连点两下就是两次签到请求
 
 /** 这一行现在能不能签 / 该显示什么按钮。
@@ -216,11 +217,28 @@ function signAction(row) {
   return row.checkout_at ? '' : '签退'
 }
 
+/** 还要等几分钟才能签退；不在保护窗里就返回 0。
+ *
+ *  刚签完到又点「签退」的，多半是想确认刚才签上没有。这一下无论调摄像头还是
+ *  调定位都是白费——服务端十分钟内不认签退（见 config.CHECKOUT_MIN_GAP_MINUTES），
+ *  扫完只会被挡回来告诉你「刚签到」。所以先在这儿算出来，点下去就把话说清楚。 */
+function checkoutWait(row) {
+  const from = row.checkin?.checkout_from
+  if (!from || !row.checked_in || row.checkout_at) return 0
+  const left = Math.ceil(
+    (new Date(from.replace(' ', 'T')).getTime() - Date.now()) / 60000)
+  return left > 0 ? left : 0
+}
+
 // 扫还是定，由后端说了算（_checkin_state 的 method）：同一场次里有的岗位
 // 现场有码可扫，有的岗位（散在校门口、看台这种）就只能靠定位。
 function openCheckin(row) {
-  if (row.checkin?.method === 'geo') geoCheckin(row)
-  else scanVisible.value = true
+  const wait = checkoutWait(row)
+  if (wait) return ElMessage.warning(`刚签到不久，${wait} 分钟后才能签退`)
+  if (row.checkin?.method === 'geo') return geoCheckin(row)
+  // 这一轮是签到还是签退：弹窗的标题和「正在…」都得跟着走
+  scanLabel.value = signAction(row) || '签到'
+  scanVisible.value = true
 }
 
 /** 定位签到/签退：取一次坐标交给服务端比对。
