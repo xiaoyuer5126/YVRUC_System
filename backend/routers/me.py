@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
+from .. import config
 from .. import hours as hours_flow
 from ..database import db_session
 from ..deps import current_user
@@ -336,6 +337,7 @@ def appeal_hours(record_id: str, body: AppealBody,
 class ProfileBody(BaseModel):
     phone: str
     wechat: str
+    campus: str = ""
     id_card: str = ""
     no_mainland_id: bool = False
 
@@ -344,17 +346,22 @@ class ProfileBody(BaseModel):
 def update_profile(body: ProfileBody,
                    db: OrmSession = Depends(db_session),
                    user: User = Depends(current_user)):
-    """完善/修改个人联系方式：手机号、微信号、身份证号。
+    """完善/修改个人资料：手机号、微信号、校区、身份证号。
 
-    数智人大拿不到这三项，志愿者需自行补全后才能报名。
+    这四项学校接口里都没有（校区是 2026-09-22 与学校确认过的），只能本人填。
     港澳台学生与留学生可勾选「无内地身份证号」，这一项留空即可。
     """
     phone = (body.phone or "").strip()
     wechat = (body.wechat or "").strip()
+    campus = (body.campus or "").strip()
     id_card = (body.id_card or "").strip().upper()
 
     if not (phone and wechat):
         raise HTTPException(400, "手机号与微信号均为必填项")
+    if campus not in config.CAMPUSES:
+        # 校区同时是招募范围的筛选项：写个不在册的值进去，人会静默匹配不上
+        # 任何「限校区」的活动，且事后查不出原因（同 integrations/sso.py 的学段）
+        raise HTTPException(400, "请选择所在校区")
     if not re.fullmatch(r"1[3-9]\d{9}", phone):
         raise HTTPException(400, "手机号格式不正确")
     # 微信号不卡格式——有人填昵称，有人填「同手机号」，卡死只会误伤。
@@ -375,6 +382,7 @@ def update_profile(body: ProfileBody,
 
     user.phone = phone
     user.wechat = wechat
+    user.campus = campus
     user.id_card = id_card
     user.no_mainland_id = body.no_mainland_id
     db.commit()

@@ -2,7 +2,7 @@
   <div class="page page-wide">
     <h2>集成设置（外部系统对接）</h2>
     <el-alert type="info" :closable="false">
-      四个外部系统均已完成<b>接口层</b>对接：关闭开关时使用内置演示实现，
+      三个外部系统均已完成<b>接口层</b>对接：关闭开关时使用内置演示实现，
       填入学校信息化部门提供的地址与密钥并打开开关，即可切换到真实接口。
     </el-alert>
 
@@ -76,7 +76,6 @@ const FIELD_LABELS = {
 // 只在页面上打码显示用；这两项的密钥都存在 .env 里，不下发到前端
 const SECRET_KEYS = new Set(['app_secret', 'client_secret'])
 const PLACEHOLDERS = {
-  shuzhi_renda_base_url: 'https://shuzhi.ruc.edu.cn/openapi',
   msgcenter_gateway: 'https://opengw.ruc.edu.cn',
   msgcenter_appid: '开放平台应用标识。密钥在 .env 的 RUCVA_OPENPLATFORM_SECRET，不在此填写',
   msgcenter_channels: '4（企业微信）。1=短信、2=邮件——本平台不使用短信',
@@ -103,8 +102,7 @@ function startEdit(c) {
 // 与后端 integrations/__init__.py 的 REQUIRED_FIELD 一一对应。
 // appid / client_id 默认来自 .env，测试环境为空 → 即便开关打开也回落 Mock。
 const REQUIRED_FIELD = {
-  shuzhi_renda: 'base_url', msgcenter: 'appid',
-  checkin_gateway: 'base_url', sso: 'client_id',
+  msgcenter: 'appid', checkin_gateway: 'base_url', sso: 'client_id',
 }
 
 async function toggleEnabled(c) {
@@ -126,8 +124,6 @@ async function load() { configs.value = await api.get('/api/staff/integrations')
 onMounted(load)
 
 const notes = [
-  { sys: '数智人大', use: '获取姓名、学号、手机、身份证号；活动结束回传时长',
-    how: '只读API实时查询，或每日同步宽表（离线同步），二选一' },
   { sys: '消息中心（企业微信）', use: '向特定学号的学生发送模板消息（报名成功/候补转正/岗位分配/变更警告/信用提醒）',
     how: '经学校开放平台的统一消息接口下发，收件人用学号指定；模板库已在平台内建好，只走企业微信通道（不发短信）' },
   { sys: '现有签到码系统', use: '生成签到任务、核验签到码、回调签到状态',

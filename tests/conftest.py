@@ -201,7 +201,8 @@ def take_student(student_seq):
         try:
             u = User(id=uid("u"), student_id=sid, name=f"测试用户{n}",
                      gender="女" if n % 2 else "男", college="明理书院",
-                     grade="2024", phone=f"13900{n:06d}"[:11],
+                     grade="2024", campus="中关村校区",
+                     phone=f"13900{n:06d}"[:11],
                      email=f"{sid}@test.local", wechat=f"wx_{sid}",
                      id_card=fake_id_card("20050101", n),
                      user_type="student", roles=["student"])

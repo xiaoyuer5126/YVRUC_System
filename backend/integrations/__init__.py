@@ -14,15 +14,6 @@ from ..database import SessionLocal
 from ..models import IntegrationConfig
 
 DEFAULTS: dict[str, dict] = {
-    "shuzhi_renda": {
-        "label": "数智人大",
-        "enabled": False,
-        "base_url": "",            # 如 https://shuzhi.ruc.edu.cn/openapi
-        "app_key": "",
-        "app_secret": "",
-        "mode_hint": "只读API实时查询 / 每日同步宽表，二选一，由学校确定",
-        "capabilities": ["按学号取身份信息"],
-    },
     "msgcenter": {
         "label": "消息中心",
         "enabled": False,
@@ -123,7 +114,6 @@ def is_mock(key: str) -> bool:
 
 # 启用真实接口前必须填好的参数
 REQUIRED_FIELD = {
-    "shuzhi_renda": "base_url",
     # appid / client_id 默认来自环境变量：测试环境没有这些变量 → 值为空 →
     # 即便用例把开关打开了也照样回落 Mock，不会误打真实接口。
     "msgcenter": "appid",

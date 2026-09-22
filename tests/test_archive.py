@@ -197,7 +197,7 @@ def test_身份证号在库里是密文(client, db, take_student):
     card = "110101200512250016"
     r = client.put("/api/me/profile", headers=t,
                    json={"phone": "13900000000", "wechat": "kaoshi",
-                         "id_card": card})
+                         "campus": "中关村校区", "id_card": card})
     assert r.status_code == 200, r.text
 
     u = db.query(User).filter(User.student_id == sid).one()

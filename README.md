@@ -165,19 +165,18 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
 
 ## 八、外部对接适配层（backend/integrations/）
 
-四个适配器：`shuzhi_renda` 数智人大 / `msgcenter` 消息中心 / `checkin_gateway` 签到系统 /
-`sso` 统一身份认证。参数存 `integration_configs` 表，「集成设置」页在线切换 `enabled=true`
+三个适配器：`msgcenter` 消息中心 / `checkin_gateway` 签到系统 / `sso` 统一身份认证。
+参数存 `integration_configs` 表，「集成设置」页在线切换 `enabled=true`
 即启用真实 HTTP 调用，改完生效、无需重启；**开关已开但必填参数为空时自动回落演示模式**。
 
-演示模式行为：数智人大读本地 users 表；消息中心把模板消息落 `notifications` 表
+演示模式行为：消息中心把模板消息落 `notifications` 表
 （消息中心即收件箱，模板库 13 类场景），发送失败只标 `delivered=False`，不打断业务；
 签到 token 本地生成并本地核验；SSO 模拟「认证已通过」。
 
-真实侧：`sso` 与 `msgcenter` 已备完整的 HTTP 实现；`shuzhi` 只有骨架、当前没有
-调用点（保留备查人员信息里的校区字段）。`checkin_gateway` 的
+真实侧：`sso` 与 `msgcenter` 已备完整的 HTTP 实现。`checkin_gateway` 的
 `create_task` / `verify_scan` 待学校提供接口后补全（表结构不变，token 字段可存对方任务号）。
 
-志愿时长记在本平台、不对外回传；数智人大只用来取人员信息。
+志愿时长记在本平台、不对外回传。
 
 ## 九、目录结构
 
@@ -217,7 +216,7 @@ rucva_system/
 │   │                           （staff_* 共用 /api/staff 前缀：activities 管活动结构与
 │   │                             名单调配，ops 管签到、导出与时长，admin 管总览、
 │   │                             档案、违规与集成配置）
-│   └── integrations/           shuzhi / msgcenter / checkin_gateway / sso
+│   └── integrations/           msgcenter / checkin_gateway / sso
 └── web/                        Vue3 + Element Plus + ECharts（Vite，无 Pinia）
     ├── Dockerfile / nginx.conf Node 构建 → nginx 托管并反代 /api
     └── src/

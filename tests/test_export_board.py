@@ -285,9 +285,9 @@ def test_微信号不能以公式符号开头(client, take_student):
     t = login(client, sid)
     bad = client.put("/api/me/profile", headers=t,
                      json={"phone": "13900000000", "wechat": "=1+1",
-                           "no_mainland_id": True})
+                           "campus": "中关村校区", "no_mainland_id": True})
     assert bad.status_code == 400
     ok = client.put("/api/me/profile", headers=t,
                     json={"phone": "13900000000", "wechat": "zhang_san-01",
-                          "no_mainland_id": True})
+                          "campus": "中关村校区", "no_mainland_id": True})
     assert ok.status_code == 200, ok.text

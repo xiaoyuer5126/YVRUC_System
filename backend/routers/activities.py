@@ -228,9 +228,9 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
     if user.user_type == "teacher":
         raise HTTPException(403, "老师类型用户不参与志愿报名")
 
-    # 学生必须先完善个人信息（数智人大拿不到手机号/微信号/身份证号）
+    # 学生必须先完善个人信息（学校接口里没有手机号/微信号/身份证号/校区）
     if not user.profile_complete():
-        raise HTTPException(403, "请先完善个人信息（手机号/微信号/身份证号）后再报名")
+        raise HTTPException(403, "请先完善个人信息（手机号/微信号/校区/身份证号）后再报名")
 
     # 招募范围（活动级）与场次条件：不满足的人根本不该出现在这场的名单上。
     # assign 模式下报名时没有岗位可选，岗位那层条件轮不到，只能靠这两层。

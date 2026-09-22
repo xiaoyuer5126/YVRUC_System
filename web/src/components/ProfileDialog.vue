@@ -7,7 +7,7 @@
              :close-on-press-escape="!forced"
              :show-close="!forced">
     <el-alert v-if="forced" type="warning" :closable="false"
-              title="数智人大无法同步您的联系方式，请先补全以下信息" />
+              title="以下信息学校不提供，请先补全后才能报名" />
     <el-form label-width="82px">
       <el-form-item label="手机号" required>
         <el-input v-model="form.phone" placeholder="11 位手机号" maxlength="11" />
@@ -16,6 +16,13 @@
         <el-input v-model="form.wechat" placeholder="请输入微信号" maxlength="64" />
         <!-- 只提示不校验：初始号也是能加上的，拦下来反而挡住一部分人 -->
         <div class="dim">请不要填写 wxid_ 开头的初始微信号</div>
+      </el-form-item>
+      <el-form-item label="校区" required>
+        <!-- 学校接口里没有校区，只能本人选。它是招募范围的筛选项：不选的人
+             会在「限校区」的活动上被静默挡掉，所以这里必填 -->
+        <el-select v-model="form.campus" placeholder="请选择所在校区" style="width:100%">
+          <el-option v-for="c in campuses" :key="c" :value="c" :label="c" />
+        </el-select>
       </el-form-item>
 
       <el-form-item v-if="!form.no_mainland_id" label="身份证号"
@@ -62,32 +69,42 @@ const visible = ref(false)
 const forced = ref(false)
 const saving = ref(false)
 const editingId = ref(false)
-const form = ref({ phone: '', wechat: '', id_card: '', no_mainland_id: false })
+const form = ref({ phone: '', wechat: '', campus: '', id_card: '', no_mainland_id: false })
+const campuses = ref([])
 
 const maskedId = computed(() => auth.user?.id_card_masked || '')
 const hasIdOnFile = computed(() => !!maskedId.value)
 
 // 打开对话框。forced=true 时不可关闭（资料没补全就不能报名）
-function open(isForced = false) {
+async function open(isForced = false) {
   form.value = {
     phone: auth.user?.phone || '',
     wechat: auth.user?.wechat || '',
+    campus: auth.user?.campus || '',
     id_card: '',                       // 永远不回填原号，只发改动
     no_mainland_id: !!auth.user?.no_mainland_id,
   }
   editingId.value = false
   forced.value = isForced
   visible.value = true
+  if (!campuses.value.length) {
+    // 选项以后端 /api/auth/constants 为准，别在这里抄第二份（同 store.js）。
+    // 只取一次，之后开这个对话框不再等网络。
+    const c = await api.get('/api/auth/constants', { silent: true })
+    campuses.value = c.campuses || []
+  }
 }
 defineExpose({ open })
 
 async function save() {
   const phone = form.value.phone.trim()
   const wechat = form.value.wechat.trim()
+  const campus = form.value.campus
   const idCard = form.value.id_card.trim().toUpperCase()
   const noId = form.value.no_mainland_id
 
   if (!phone || !wechat) return ElMessage.warning('手机号与微信号均为必填项')
+  if (!campus) return ElMessage.warning('请选择所在校区')
   if (!/^1[3-9]\d{9}$/.test(phone)) return ElMessage.warning('手机号格式不正确')
   if (!noId) {
     // 已填过且没点「修改」→ 留空提交表示这一项不动
@@ -100,7 +117,7 @@ async function save() {
   saving.value = true
   try {
     const d = await api.put('/api/me/profile', {
-      phone, wechat, id_card: noId ? '' : idCard, no_mainland_id: noId,
+      phone, wechat, campus, id_card: noId ? '' : idCard, no_mainland_id: noId,
     })
     auth.user = d.user
     localStorage.setItem('rucva_user', JSON.stringify(d.user))

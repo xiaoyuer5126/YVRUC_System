@@ -64,6 +64,43 @@ def test_logout_only_kills_current_session(client):
     assert client.get("/api/auth/me", headers=laptop).status_code == 200
 
 
+# ======================= 校区 =======================
+#
+# 学校接口里没有校区（2026-09-22 与学校确认），只能本人到「个人资料」选。
+# 它同时是招募范围的筛选项，所以是必填——留空的人会在「限校区」的活动上被
+# 静默挡掉，还会显示「校区需为…（您是 未填写）」。
+
+def test_校区不在册就拒(client, db, take_student):
+    from backend.models import User
+    sid = take_student()
+    t = login(client, sid)
+    r = client.put("/api/me/profile", headers=t,
+                   json={"phone": "13800000002", "wechat": "wx_c",
+                         "campus": "火星校区", "no_mainland_id": True})
+    assert r.status_code == 400
+    u = db.query(User).filter(User.student_id == sid).one()
+    assert u.campus == "中关村校区"      # 被拒的请求不该改掉任何东西
+
+
+def test_没选校区就不算资料完善(client, db, take_student):
+    """校区是 2026-09-22 之后才加的必填项，此前建的档案都是空的。
+
+    这些人下次报名会被拦下并弹出表单——正是要的效果：一次性补齐，
+    而不是让他们在某个「限校区」的活动上对着拦截提示发愣。
+    """
+    from backend.models import User
+    sid = take_student()
+    db.query(User).filter(User.student_id == sid).one().campus = ""
+    db.commit()
+    t = login(client, sid)
+    r = client.put("/api/me/profile", headers=t,
+                   json={"phone": "13800000003", "wechat": "wx_c",
+                         "no_mainland_id": True})
+    assert r.status_code == 400
+    u = db.query(User).filter(User.student_id == sid).one()
+    assert u.profile_complete() is False
+
+
 # ======================= 证件号豁免 =======================
 
 def test_港澳台留学生可免填身份证号(client, db, take_student):
@@ -72,7 +109,7 @@ def test_港澳台留学生可免填身份证号(client, db, take_student):
     t = login(client, sid)
     r = client.put("/api/me/profile", headers=t,
                    json={"phone": "13800000001", "wechat": "wx_hk",
-                         "no_mainland_id": True})
+                         "campus": "通州校区", "no_mainland_id": True})
     assert r.status_code == 200
     user = r.json()["user"]
     assert user["profile_complete"] is True
@@ -90,6 +127,7 @@ def test_首次填写时身份证号必填且校验末位(client, db, take_stude
     t = login(client, sid)
     r = client.put("/api/me/profile", headers=t,
                    json={"phone": "13800000004", "wechat": "wx_z",
+                         "campus": "中关村校区",
                          "id_card": "110101200001011111"})
     assert r.status_code == 400
 
@@ -103,7 +141,7 @@ def test_修改资料时留空不会清掉已填的身份证号(client, db, take
     t = login(client, sid)
     r = client.put("/api/me/profile", headers=t,
                    json={"phone": "13800000009", "wechat": "wx_new",
-                         "id_card": ""})
+                         "campus": "中关村校区", "id_card": ""})
     assert r.status_code == 200
     assert r.json()["user"]["id_card_masked"].endswith(before[-3:])
     db.expire_all()

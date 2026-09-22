@@ -73,7 +73,7 @@ class User(Base):
     stage: Mapped[str] = mapped_column(String(16), default="")       # 本科生/硕士研究生/…
     phone: Mapped[str] = mapped_column(String(32), default="")
     email: Mapped[str] = mapped_column(String(128), default="")
-    # 数智人大拿不到微信号/身份证号，需志愿者自行完善后才能报名
+    # 学校接口里没有微信号/身份证号，需志愿者自行完善后才能报名
     wechat: Mapped[str] = mapped_column(String(64), default="")
     # 身份证号仅存储不外显（导出表也不含，见 exporter.py）
     # 密文比原文长得多（Fernet 约 140 字符），列宽按密文留
@@ -144,14 +144,20 @@ class User(Base):
         return self.is_admin() or self.has_role(*MANAGER_ROLES)
 
     def profile_complete(self) -> bool:
-        """资料完善度：手机号 + 微信号 + 身份证号（老师类型不要求）。
+        """资料完善度：手机号 + 微信号 + 校区 + 身份证号（老师类型不要求）。
 
         港澳台学生与留学生勾了「无内地身份证号」的，这一项直接跳过——
         他们本来就开不出这个号，卡着不让报名没有道理。
+
+        校区必填是因为它同时是招募范围的筛选项：留空的人在「限校区」的活动上
+        会被静默挡掉，拦下来的话还会显示「校区需为…（您是 未填写）」。与其让
+        人对着这么一句发愣，不如在完善资料时就让他选。
         """
         if self.user_type == "teacher":
             return True
         if not ((self.phone or "").strip() and (self.wechat or "").strip()):
+            return False
+        if not (self.campus or "").strip():
             return False
         return self.no_mainland_id or bool((self.id_card or "").strip())
 
@@ -1004,8 +1010,8 @@ class Notification(Base):
 class IntegrationConfig(Base):
     """外部系统对接参数。key → JSON。
 
-    固定四个 key：
-      shuzhi_renda / msgcenter / checkin_gateway / sso
+    固定三个 key：
+      msgcenter / checkin_gateway / sso
     enabled=false 时走内置 Mock 实现（演示模式），true 时走真实 HTTP 实现。
     """
     __tablename__ = "integration_configs"
