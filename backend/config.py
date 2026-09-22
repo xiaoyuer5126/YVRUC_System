@@ -129,6 +129,12 @@ CHECKIN_REMINDER_MINUTES = 30
 # 现场只能改时段或补签。管理者仍可在生成时自行调整。
 CHECKIN_WINDOW_PAD_MINUTES = 30
 
+# 动态签到码：管理端每 30 秒换一张，每张在 Redis 里活 60 秒。
+# 换码不等于旧码立刻作废——留一倍时间给正在排队扫码的人（相机对焦慢、
+# 手机卡一下），所以任意时刻最多两张码能用。截图转发出去，也就活这么久。
+CHECKIN_CODE_REFRESH_SECONDS = 30
+CHECKIN_CODE_TTL_SECONDS = 60
+
 # 活动开始前多少天起，每天给管理者推一条人员变动摘要；几点推
 ROSTER_DIGEST_DAYS = 3
 ROSTER_DIGEST_HOUR = 6

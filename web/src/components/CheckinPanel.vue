@@ -269,11 +269,16 @@
     <!-- 二维码 -->
     <el-dialog v-model="qrVisible" title="现场签到二维码" width="380">
       <div style="text-align:center" v-if="qrTask">
+        <!-- 默认动态码：固定码能打印，可也意味着拍一张发进群里就能代签，要打印时手动切 -->
+        <el-radio-group v-model="qrMode" size="small" style="margin-bottom:12px">
+          <el-radio-button value="dynamic">动态码</el-radio-button>
+          <el-radio-button value="fixed">固定码</el-radio-button>
+        </el-radio-group>
         <!-- 必须带 base：不传的话码里编的是相对路径，相机只会当一行字显示 -->
-        <img :src="`/api/checkin/qr.svg?token=${qrTask.token}&base=${qrBase()}&t=${Date.now()}`"
-             width="280" height="280" alt="签到二维码" />
-        <div class="mono" style="font-size:22px;letter-spacing:4px;margin-top:8px">{{ qrTask.token }}</div>
-        <!-- 这张码是哪一场、哪个岗位的：打印出来贴到现场，光看六位码分不出 -->
+        <img v-if="qrSrc" :src="qrSrc" width="280" height="280" alt="签到二维码" />
+        <div v-else class="qr-blank">正在取码…</div>
+        <div class="mono" style="font-size:22px;letter-spacing:4px;margin-top:8px">{{ activeCode || '—' }}</div>
+        <!-- 这张码是哪一场、哪个岗位的：固定码打印出来贴到现场，光看码分不出 -->
         <div class="qr-who">
           <b>{{ qrTask.shift_name }}</b>
           <el-tag v-if="qrTask.shift_kind !== 'service'" size="small" effect="plain">
@@ -287,10 +292,23 @@
         </div>
         <div class="dim">可签 {{ fmtDT(qrTask.valid_from) }} ~ {{ fmtDT(qrTask.valid_to) }}</div>
         <div class="dim">首次扫码签到，再次扫码签退</div>
+        <template v-if="isDynamic">
+          <!-- 数字在动，就说明这块屏还活着：现场最怕的是分不清「码没换」和「页面卡了」 -->
+          <el-tag size="small" :type="qrStale ? 'danger' : 'success'" effect="plain"
+                  style="margin-top:6px">
+            {{ qrStale ? '取不到新码，正在重试…' : `${qrSeconds} 秒后换下一张` }}
+          </el-tag>
+          <div v-if="qrStale" class="dim">屏幕上这张可能已经过期，先别让人扫</div>
+          <div v-else class="dim">每 {{ qrRefresh }} 秒换一张，上一张还能再用一会儿；一块屏给所有人扫</div>
+        </template>
+        <div v-else class="dim" style="margin-top:6px">
+          固定码从头用到尾，可以打印贴在现场——也因此别发进群里
+        </div>
         <div style="margin-top:12px">
           <el-input size="small" readonly :model-value="scanUrl">
             <template #append><el-button @click="copyLink">复制</el-button></template>
           </el-input>
+          <div v-if="isDynamic" class="dim">链接里的码同样只有一分钟有效</div>
         </div>
       </div>
     </el-dialog>
@@ -336,7 +354,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT, pageUrl, qrBase } from '../api'
@@ -376,6 +394,15 @@ const tasks = ref([])
 const board = ref(null)
 const qrVisible = ref(false)
 const qrTask = ref(null)
+// 默认动态码。这个默认值就是安全边界本身，所以不记忆上次的选择——
+// 谁要打印固定码，谁当场自己切一下。
+const qrMode = ref('dynamic')
+const qrCode = ref('')
+const qrSeconds = ref(0)
+const qrRefresh = ref(30)
+const qrStale = ref(false)          // 取码失败：屏上那张可能已经过期，得说出来
+let qrTimer = null
+let codeBusy = false
 const manualSid = ref('')
 const selected = ref([])
 const boardRefresh = ref(null)
@@ -384,8 +411,65 @@ const pct = computed(() => board.value
   ? Math.min(100, Math.round(board.value.checked / Math.max(1, board.value.expected) * 100))
   : 0)
 
+const isDynamic = computed(() => qrMode.value === 'dynamic')
+// 当前真正生效的那串码：动态码来自接口，固定码就是任务自己的 token
+const activeCode = computed(() => (isDynamic.value ? qrCode.value : qrTask.value?.token || ''))
+
+const qrSrc = computed(() => {
+  if (!activeCode.value) return ''      // 还没取到码：空 src 会让浏览器去请求当前页
+  const key = isDynamic.value ? 'code' : 'token'
+  return `/api/checkin/qr.svg?${key}=${activeCode.value}&base=${qrBase()}&t=${Date.now()}`
+})
+
 // 扫码链接放 computed：模板里不能直接用 location（不在 Vue 模板全局白名单）
-const scanUrl = computed(() => pageUrl(`/checkin/${qrTask.value?.token || ''}`))
+const scanUrl = computed(() => pageUrl(`/checkin/${activeCode.value}`))
+
+async function pullCode() {
+  const task = qrTask.value
+  if (codeBusy || !task) return
+  codeBusy = true
+  try {
+    const d = await api.get(`/api/staff/checkin-tasks/${task.id}/code`, { silent: true })
+    // 这一秒里可能已经关了弹窗或换到另一张码，那这次结果就不要了
+    if (!qrVisible.value || !isDynamic.value || qrTask.value?.id !== task.id) return
+    qrCode.value = d.code
+    qrSeconds.value = d.expires_in
+    qrRefresh.value = d.refresh || qrRefresh.value
+    qrStale.value = false
+  } catch {
+    // 取不到就留着上一张，隔几秒再试——现场网络不稳是常事，屏不该因此空掉。
+    // 但要把「这张可能已经过期」标出来，否则等于拿一张废码继续招呼人扫。
+    qrStale.value = true
+    qrSeconds.value = 3
+  } finally {
+    codeBusy = false
+  }
+}
+
+function tickCode() {
+  if (qrSeconds.value > 0) { qrSeconds.value -= 1; return }
+  pullCode()
+}
+
+function stopCode() {
+  clearInterval(qrTimer)
+  qrTimer = null
+  codeBusy = false
+  qrCode.value = ''
+  qrSeconds.value = 0
+  qrStale.value = false
+}
+
+/** 只在弹窗开着、且选的是动态码时才转。开关弹窗、换任务、切模式都走这里。 */
+function startCode() {
+  stopCode()
+  if (!qrVisible.value || !qrTask.value || !isDynamic.value) return
+  tickCode()                                  // 立刻取一张，别让弹窗空着等一秒
+  qrTimer = setInterval(tickCode, 1000)
+}
+
+watch([qrVisible, qrTask, qrMode], startCode)
+onUnmounted(stopCode)
 
 // 批量/单个补签需要一个 task_id，且它必须属于**当前大屏这一场**：码表列的是
 // 整个活动的码，取「第一个激活的」可能取到别的场次，后端按 task.shift_id 找人，
@@ -574,5 +658,9 @@ function setWindowEnd(v) { form.value.range = [form.value.range[0] || '', v || '
 .qr-who { display:flex; justify-content:center; align-items:center; gap:8px;
           flex-wrap:wrap; margin:8px 0 4px; font-size:14px; }
 .qr-who .sep { color:#c0c4cc; }
+/* 动态码还没取到的这一两秒：占住 280×280，否则弹窗会跳一下 */
+.qr-blank { width:280px; height:280px; margin:0 auto; display:flex;
+            align-items:center; justify-content:center; color:#c0c4cc;
+            background:#fafafa; border:1px dashed #e4e7ed; border-radius:8px; }
 :deep(tr.row-wait td.el-table__cell) { color:#9c9c9c; }
 </style>

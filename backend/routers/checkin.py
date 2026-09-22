@@ -4,8 +4,11 @@
 签退宽限：场次结束后 2 小时内可自行签退；超时未签退由系统按场次结束时间
 兜底（见 staff_ops.compute_hours 的 effective_checkout）。
 
-对接说明：演示模式由本平台生成 token 并核验；接入学校现有签到系统后，
-create/verify 换到 checkin_gateway 适配器的真实实现，路由层不变。
+**两类签到码都从这个入口进**：
+  · 动态码——管理端每 30 秒换一张，只活在 Redis 里（见 locks.py）。默认用这个，
+    因为固定码拍张照发群里就能代签；
+  · 固定码——建任务时生成、存在 CheckinTask.token 里，可以打印出来贴到现场。
+学生端拿到的就是串字符，不区分，由这里认。
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ from .. import config
 from ..database import db_session
 from ..deps import current_user
 from ..integrations import checkin_gateway
+from ..locks import redeem_checkin_code
 from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
                       Shift, Position, User, now, uid)
 from ..qrcodes import page_qr
@@ -28,8 +32,16 @@ router = APIRouter(prefix="/api/checkin", tags=["checkin"])
 CHECKOUT_GRACE = timedelta(hours=config.CHECKOUT_GRACE_HOURS)
 
 
-def _load_task(db: OrmSession, token: str) -> tuple[CheckinTask, Activity, Shift]:
-    task = db.query(CheckinTask).filter(CheckinTask.token == token.upper()).first()
+def _task_by_code(db: OrmSession, code: str) -> CheckinTask | None:
+    """签到码 → 任务。先查动态码：它有寿命，晚一步就没了。"""
+    task_id = redeem_checkin_code(code)
+    if task_id:
+        return db.get(CheckinTask, task_id)
+    return db.query(CheckinTask).filter(CheckinTask.token == code.upper()).first()
+
+
+def _load_task(db: OrmSession, code: str) -> tuple[CheckinTask, Activity, Shift]:
+    task = _task_by_code(db, code)
     if task is None:
         raise HTTPException(404, "签到码无效")
     act = db.get(Activity, task.activity_id)
@@ -133,6 +145,16 @@ def do_checkin(token: str, db: OrmSession = Depends(db_session),
 
 
 @router.get("/qr.svg", response_class=Response)
-def qr(request: Request, token: str, base: str = ""):
-    """签到码二维码。内容是签到落地页的完整网址，手机扫码直达。"""
-    return page_qr(request, f"/checkin/{token}", base)
+def qr(request: Request, token: str = "", code: str = "", base: str = "",
+       db: OrmSession = Depends(db_session)):
+    """签到码二维码。内容是签到落地页的完整网址，手机扫码直达。
+
+    两种码都**必须在册才画**。这个口子不需要登录，收下任意一串字符，就等于
+    让任何人拿平台的域名生成一张指向任意路径的码贴出去，扫的人无从分辨。
+    所以在册判定用的是和扫码同一个入口：动态码要 Redis 里活着，固定码要
+    库里存在。
+    """
+    value = (code or token).strip().upper()
+    if _task_by_code(db, value) is None:
+        raise HTTPException(404, "签到码无效")
+    return page_qr(request, f"/checkin/{value}", base)

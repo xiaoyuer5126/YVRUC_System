@@ -20,6 +20,7 @@ from ..exporter import (build_activity_workbook, build_application_workbook,
                         build_hours_workbook)
 from ..perm import ensure_activity_manager
 from ..integrations import checkin_gateway, msgcenter
+from ..locks import current_checkin_code
 from ..notify import notify, notify_checkin
 from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
                       HoursAppeal, HoursRecord, HoursRequest, Shift,
@@ -105,6 +106,27 @@ def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
                     "valid_from": iso(t.valid_from), "valid_to": iso(t.valid_to),
                     "active": t.active, "count": n})
     return out
+
+
+@router.get("/checkin-tasks/{task_id}/code")
+def checkin_code(task_id: str, db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_manager)):
+    """取该任务此刻的动态签到码（没有就发一张），管理端每 30 秒来取一次。
+
+    **换码不删旧码**：新码发出后旧码还有一段寿命，留给正在排队扫码的人。
+    所以前端拿到 expires_in 后照着它定时刷新即可，不必自己算时间。
+    """
+    task = db.get(CheckinTask, task_id)
+    if task is None:
+        raise HTTPException(404, "任务不存在")
+    ensure_activity_manager(db, user, task.activity_id)
+    code, expires_in = current_checkin_code(
+        task.id, config.CHECKIN_CODE_TTL_SECONDS,
+        config.CHECKIN_CODE_REFRESH_SECONDS)
+    # refresh 一并返回：前端照着它说明「多久换一张」，节奏只在 config 里写一份
+    return {"code": code, "expires_in": expires_in,
+            "ttl": config.CHECKIN_CODE_TTL_SECONDS,
+            "refresh": config.CHECKIN_CODE_REFRESH_SECONDS}
 
 
 @router.patch("/checkin-tasks/{task_id}")

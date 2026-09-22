@@ -66,6 +66,8 @@ const done = ref(false)
 const doneAt = ref('')
 const doneAction = ref('签到')
 const submitting = ref(false)
+// 扫的是动态码、又绕去登录了一趟：回来时那张码多半已经换掉了
+const afterLogin = ref(false)
 
 const stateText = computed(() => ({
   active: '可签到', closed: '任务已关闭',
@@ -78,7 +80,11 @@ async function load() {
   try {
     task.value = await api.get(`/api/checkin/task/${route.params.token}`)
   } catch (e) {
-    ElMessage.error(e.message)
+    // 动态码只活一分钟，登录这几步走完就过期了。只说「签到码无效」会让人
+    // 对着屏幕反复刷新——直接告诉他回现场再扫一次。
+    ElMessage.error(afterLogin.value
+      ? '这个签到码已经失效了（现场码每分钟更换），请重新扫一次现场的二维码'
+      : e.message)
   } finally {
     loading.value = false
   }
@@ -92,7 +98,10 @@ onMounted(async () => {
     return
   }
   const pending = localStorage.getItem('rucva_after_checkin')
-  if (pending && auth.token) localStorage.removeItem('rucva_after_checkin')
+  if (pending && auth.token) {
+    localStorage.removeItem('rucva_after_checkin')
+    afterLogin.value = true
+  }
   await load()
 })
 

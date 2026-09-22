@@ -4,8 +4,10 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+import redis
 
 from backend import config
+from backend.locks import CHECKIN_CODE_LEN
 from backend.models import (Activity, ActivityManager, CheckinTask, Enrollment,
                             Position, Shift, User, now, uid)
 from conftest import ADMIN, login, student_row
@@ -162,3 +164,93 @@ def test_分岗位签到只认本场次的岗位(client, admin, two_shift_act):
     r = client.post(f"/api/staff/shifts/{train.id}/checkin-tasks", headers=admin,
                     json={"mode": "position", "position_id": pos_id})
     assert r.status_code == 400 and "本场次" in r.json()["detail"]
+
+
+# ======================= 动态签到码 =======================
+#
+# 固定码贴在墙上能从头用到尾，拍张照发进群里，人不到场也能签。动态码把这条
+# 路堵上：管理端那块屏每 30 秒换一张，每张在 Redis 里只活 60 秒。
+
+@pytest.fixture
+def rds():
+    """动态码只活在 Redis 里，用例得能直接抹掉它——「一分钟到了」就是这么发生的。"""
+    conn = redis.Redis.from_url(config.REDIS_URL, decode_responses=True)
+    yield conn
+    conn.close()
+
+
+def task_id_of(client, admin, act):
+    """照前端的路径拿任务 id：先列码表，再去取码。"""
+    rows = client.get(f"/api/staff/activities/{act.id}/checkin-tasks",
+                      headers=admin).json()
+    return rows[0]["id"]
+
+
+def test_动态码能签到也能签退(client, admin, live_group):
+    """管理端取的码和学生扫的码必须是同一张——两条路径唯一的约定就在这里。"""
+    act, _g, h, _token = live_group
+    tid = task_id_of(client, admin, act)
+    url = f"/api/staff/checkin-tasks/{tid}/code"
+    d = client.get(url, headers=admin).json()
+    assert len(d["code"]) == CHECKIN_CODE_LEN
+    assert 0 < d["expires_in"] <= config.CHECKIN_CODE_REFRESH_SECONDS
+
+    # 几十个人扫的是同一块屏：有效期内反复取必须拿到同一张，不能一人一码
+    assert client.get(url, headers=admin).json()["code"] == d["code"]
+
+    code = d["code"]
+    # 画的是签到落地页的网址，不是那串码本身——手机扫完得能直接点开
+    svg = client.get(f"/api/checkin/qr.svg?code={code}")
+    assert svg.status_code == 200 and svg.headers["content-type"].startswith("image/svg")
+
+    assert client.get(f"/api/checkin/task/{code}", headers=h).json()["enrolled"] is True
+    assert client.post(f"/api/checkin/task/{code}", headers=h).json()["action"] == "checkin"
+    assert client.post(f"/api/checkin/task/{code}", headers=h).json()["action"] == "checkout"
+
+
+def test_动态码一过期就作废(client, admin, live_group, rds):
+    act, _g, h, _token = live_group
+    tid = task_id_of(client, admin, act)
+    code = client.get(f"/api/staff/checkin-tasks/{tid}/code",
+                      headers=admin).json()["code"]
+
+    rds.delete(f"rucva:ckcode:{code}")        # 一分钟过去了
+    assert client.get(f"/api/checkin/task/{code}", headers=h).status_code == 404
+    assert client.post(f"/api/checkin/task/{code}", headers=h).status_code == 404
+    # 画码也得拒：这个口子不用登录，收下任意一串字符就等于让人拿平台的
+    # 域名生成一张指向任意路径的码，扫的人无从分辨
+    assert client.get(f"/api/checkin/qr.svg?code={code}").status_code == 404
+
+
+def test_换码不会把正在扫的人挡在外面(client, admin, live_group, rds):
+    """换码换的是「下次取哪张」，不撤上一张：正在排队扫码的人不该因为
+    管理员那一刻恰好取了新码就失败。"""
+    act, _g, h, _token = live_group
+    tid = task_id_of(client, admin, act)
+    first = client.get(f"/api/staff/checkin-tasks/{tid}/code",
+                       headers=admin).json()["code"]
+
+    rds.delete(f"rucva:cktask:{tid}")         # 续期键到点，下次调用就换码
+    second = client.get(f"/api/staff/checkin-tasks/{tid}/code",
+                        headers=admin).json()["code"]
+    assert second != first
+    assert client.get(f"/api/checkin/task/{first}", headers=h).status_code == 200
+    assert client.get(f"/api/checkin/task/{second}", headers=h).status_code == 200
+
+
+def test_固定码没被动态码取代(client, live_group):
+    """现场还有打印张贴的用法（码旁边写着是哪一场、哪个岗位），所以固定码留着。
+    它比动态码短一位，两类码在形状上分得开。"""
+    _act, _g, h, token = live_group
+    assert len(token) == 6
+    assert client.post(f"/api/checkin/task/{token}",
+                       headers=h).json()["action"] == "checkin"
+
+
+def test_不是管理者取不到动态码(client, admin, live_group, take_student,
+                          initiator):
+    """取码接口等于把「谁能签这一场」发出去，只有本活动的管理者能拿。"""
+    act, _g, _h, _token = live_group
+    url = f"/api/staff/checkin-tasks/{task_id_of(client, admin, act)}/code"
+    assert client.get(url, headers=login(client, take_student())).status_code == 403
+    assert client.get(url, headers=initiator).status_code == 403

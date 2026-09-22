@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import secrets
+import string
 import time
 
 import redis
@@ -116,6 +117,49 @@ def redeem_sso_state(state: str) -> str | None:
     if not state:
         return None
     return _client.getdel(f"rucva:sso:{state}")
+
+
+# —— 动态签到码 ——
+#
+# 固定码贴在墙上能从头用到尾，拍张照发到群里，人不到场也能签。改成滚动的：
+# 管理端每 30 秒来取一次，取到的码 60 秒后自动从 Redis 消失。
+#
+# **码不落库**：它是一次性的临时凭证，不是任务的一部分，过了那 60 秒就没有
+# 任何意义。任务的固定 token 仍在 CheckinTask 里，作为身份与对账依据。
+#
+# 两个方向都要存：扫码是「码 → 任务」，续期是「任务 → 当前码」，
+# 后者让同一张码在有效期内被反复取到（几十个人扫同一块屏，不能一人一码）。
+CHECKIN_CODE_LEN = 8      # 固定码是 6 位，长度不同，两类码在形状上就不会撞
+_CODE_ALPHABET = string.ascii_uppercase + string.digits
+
+
+def current_checkin_code(task_id: str, ttl: int, refresh: int) -> tuple[str, int]:
+    """取该任务此刻的签到码，没有就发一张。返回 (码, 距离下次换码的秒数)。
+
+    续期用的键比码本身短命（refresh < ttl）：键一过期，下次调用就发新码，
+    而旧码还能再用一会儿——正是要的「换码不打断正在扫的人」。
+    """
+    key = f"rucva:cktask:{task_id}"
+    code = _client.get(key)
+    if code:
+        return code, max(1, int(_client.ttl(key)))
+    code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(CHECKIN_CODE_LEN))
+    pipe = _client.pipeline()
+    pipe.setex(f"rucva:ckcode:{code}", ttl, task_id)
+    pipe.setex(key, refresh, code)
+    pipe.execute()
+    return code, refresh
+
+
+def redeem_checkin_code(code: str) -> str | None:
+    """签到码 → 任务 id；没这个码（过期、伪造、打错）返回 None。
+
+    **只读不删**：一场活动几十个人扫的是同一张码，核销掉第一个后面的人就
+    全扫不进了。这也是它能被截图转发的原因，所以寿命必须短。
+    """
+    if not code:
+        return None
+    return _client.get(f"rucva:ckcode:{code}")
 
 
 @contextlib.contextmanager
