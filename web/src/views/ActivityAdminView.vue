@@ -2530,26 +2530,3 @@ button.dashed { border-style:dashed; }
 .qr-preview { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .qr-preview img { max-width: 160px; max-height: 160px; border-radius: 8px; border: 1px solid #e4e7ed; }
 </style>
-
-<!-- 部门下拉的样式不能写在 scoped 里：下拉是挂到 body 上的，
-     scoped 选择器要求有本组件的祖先节点，到了那边一个都匹配不上 -->
-<style>
-/* el-select 的选项默认是 34px 单行 + nowrap，长备注被裁掉、右边看不见。
-   备注本来就可能有好几行（「本院系的活动一律归我们」这种），放开换行 */
-.dept-popper .el-select-dropdown__item {
-  height: auto;
-  min-height: 34px;
-  padding-top: 6px;
-  padding-bottom: 6px;
-  line-height: 1.45;
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-}
-.dept-popper .dept-opt-note {
-  margin-top: 2px;
-  font-size: 12.5px;
-  color: var(--el-text-color-secondary);
-  word-break: break-word;   /* 备注里粘贴了一长串没有空格的字也不会撑破 */
-}
-</style>

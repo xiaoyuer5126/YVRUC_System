@@ -106,6 +106,29 @@ h3 { margin: 12px 0 8px; }
 
 .el-table .warning-cell { color: #f56c6c !important; font-weight: 600; }
 
+/* ===== 部门下拉（popper-class="dept-popper"）=====
+   好几个地方要选部门（提交审批、转交审批），选项上带部门备注。el-select 的
+   选项默认是 34px 单行 + nowrap：备注写上几行字，在手机上就被裁掉，右边直接
+   看不见。这里放开换行、高度跟着内容走。
+   放在全局样式里而不是组件的 scoped 里：下拉挂在 body 上，scoped 选择器要求
+   有本组件的祖先节点，到了那边一个都匹配不上。 */
+.dept-popper .el-select-dropdown__item {
+  height: auto;
+  min-height: 34px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  line-height: 1.45;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+.dept-popper .dept-opt-note {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--el-text-color-secondary);
+  word-break: break-word;   /* 备注里粘一长串没空格的字也不会撑破 */
+}
+
 /* ===== 窄屏（≤860px）===== */
 /* 手机上不做「缩小的桌面版」：留白收紧、栅格拉直、表格交给卡片。 */
 @media (max-width: 860px) {

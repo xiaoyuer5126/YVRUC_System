@@ -147,11 +147,23 @@
       <p class="dim">{{ tr.row?.title }}</p>
       <el-form label-width="88px">
         <el-form-item label="转交给">
+          <!-- 转交时最需要知道的就是「这个部门管什么」，所以备注要露出来。
+               它可能有好几行，换行的样式在 styles.css 的 .dept-popper 里 -->
           <el-select v-model="tr.deptId" placeholder="选择部门（活动归口随之改为该部门）"
-                     style="width:100%" clearable>
+                     popper-class="dept-popper" style="width:100%" clearable>
             <el-option v-for="d in depts" :key="d.id" :value="d.id"
-                       :label="d.name + (d.head_name ? `（${d.head_name}）` : '（未设部长）')"
-                       :disabled="!d.has_head" />
+                       :label="d.name + (d.head_name ? `（部长 ${d.head_name}）` : '（未设部长）')"
+                       :disabled="!d.has_head">
+              <div class="dept-opt">
+                <div>
+                  {{ d.name }}
+                  <span class="dim">
+                    {{ d.head_name ? `部长 ${d.head_name}` : '未设部长' }}
+                  </span>
+                </div>
+                <div v-if="d.note" class="dept-opt-note">{{ d.note }}</div>
+              </div>
+            </el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="或指定人">
