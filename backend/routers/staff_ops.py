@@ -19,12 +19,12 @@ from ..enroll_logic import position_enrolled_count
 from ..exporter import (build_activity_workbook, build_application_workbook,
                         build_hours_workbook)
 from ..perm import ensure_activity_manager
-from ..integrations import checkin_gateway, msgcenter
+from ..integrations import msgcenter
 from ..locks import current_checkin_code
 from ..notify import notify, notify_checkin
 from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
                       HoursAppeal, HoursRecord, HoursRequest, Shift,
-                      Position, User, iso, now, uid)
+                      Position, User, iso, new_checkin_token, now, uid)
 from ..serializers import iso_of, recruit_scope_text
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
@@ -61,8 +61,7 @@ def create_task(shift_id: str, body: TaskBody,
         position = db.get(Position, body.position_id or "")
         if position is None or position.shift_id != g.id:
             raise HTTPException(400, "分岗位签到必须指定本场次下的岗位")
-    token = checkin_gateway.create_task(body.mode, g.id,
-                                        position.id if position else "")
+    token = new_checkin_token()
     pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
                        position_id=position.id if position else None,

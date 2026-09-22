@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+import secrets
+import string
 import uuid
 from datetime import datetime
 
@@ -25,6 +27,16 @@ from .database import Base
 
 def uid(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def new_checkin_token() -> str:
+    """固定的签到码：6 位大写字母数字，能被念、能被抄在纸上。
+
+    跟动态码的 8 位刻意错开长度：两类码在形状上分得开，扫码的人看不出、
+    但看日志和聊天记录的人一眼能认出哪串是哪种。
+    """
+    return "".join(secrets.choice(string.ascii_uppercase + string.digits)
+                   for _ in range(6))
 
 
 def now() -> datetime:
@@ -726,8 +738,8 @@ class Enrollment(Base):
 class CheckinTask(Base):
     """签到任务：整场次一个统一码，或每个岗位一个独立码。
 
-    token 是签到码的核心串；对接学校现有签到系统时由 checkin_gateway
-    适配器换成对方返回的任务号，本表结构不变。
+    token 是**固定码**——建任务时生成、一直在册，可以打印出来贴到现场。
+    日常用的动态码不落这张表，它只活在 Redis 里（见 locks.py 那一节）。
     """
     __tablename__ = "checkin_tasks"
 
@@ -1010,8 +1022,10 @@ class Notification(Base):
 class IntegrationConfig(Base):
     """外部系统对接参数。key → JSON。
 
-    固定三个 key：
-      msgcenter / checkin_gateway / sso
+    固定两个 key：
+      msgcenter / sso
+    签到不在这里：它整个是自建的（学校那套的 typecode 等参数始终没拿到，
+    2026-09-22 定下自己做），没有可切换的外部实现。
     enabled=false 时走内置 Mock 实现（演示模式），true 时走真实 HTTP 实现。
     """
     __tablename__ = "integration_configs"

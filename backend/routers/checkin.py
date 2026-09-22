@@ -20,7 +20,6 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import config
 from ..database import db_session
 from ..deps import current_user
-from ..integrations import checkin_gateway
 from ..locks import redeem_checkin_code
 from ..models import (Activity, CheckinRecord, CheckinTask, Enrollment,
                       Shift, Position, User, now, uid)
@@ -92,8 +91,6 @@ def do_checkin(token: str, db: OrmSession = Depends(db_session),
                user: User = Depends(current_user)):
     """同一签到码：无记录 → 签到；已签未退 → 签退；已签已退 → 拒绝重复。"""
     task, act, g = _load_task(db, token)
-    if not checkin_gateway.verify_scan(task.token):
-        raise HTTPException(400, "签到码核验失败")
     t = now()
 
     if not task.active:

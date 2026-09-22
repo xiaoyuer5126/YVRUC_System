@@ -165,16 +165,21 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
 
 ## 八、外部对接适配层（backend/integrations/）
 
-三个适配器：`msgcenter` 消息中心 / `checkin_gateway` 签到系统 / `sso` 统一身份认证。
+两个适配器：`msgcenter` 消息中心 / `sso` 统一身份认证。
 参数存 `integration_configs` 表，「集成设置」页在线切换 `enabled=true`
 即启用真实 HTTP 调用，改完生效、无需重启；**开关已开但必填参数为空时自动回落演示模式**。
 
+签到不在适配层里——**它是自建的**，没有可切换的外部实现：学校签到中台的
+`typecode` 等参数始终没拿到，2026-09-22 定下自己做（动态码 + 固定码，见
+`locks.py` 的「动态签到码」一节）。原来那个 `checkin_gateway` 适配器连同
+「集成设置」里的卡片一起删掉了：它的真实分支是 `NotImplementedError`，
+开关一旦被打开，每次扫码都会 500。
+
 演示模式行为：消息中心把模板消息落 `notifications` 表
 （消息中心即收件箱，模板库 13 类场景），发送失败只标 `delivered=False`，不打断业务；
-签到 token 本地生成并本地核验；SSO 模拟「认证已通过」。
+SSO 模拟「认证已通过」。
 
-真实侧：`sso` 与 `msgcenter` 已备完整的 HTTP 实现。`checkin_gateway` 的
-`create_task` / `verify_scan` 待学校提供接口后补全（表结构不变，token 字段可存对方任务号）。
+真实侧：`sso` 与 `msgcenter` 已备完整的 HTTP 实现。
 
 志愿时长记在本平台、不对外回传。
 
@@ -216,7 +221,7 @@ rucva_system/
 │   │                           （staff_* 共用 /api/staff 前缀：activities 管活动结构与
 │   │                             名单调配，ops 管签到、导出与时长，admin 管总览、
 │   │                             档案、违规与集成配置）
-│   └── integrations/           msgcenter / checkin_gateway / sso
+│   └── integrations/           msgcenter / sso（签到自建，不走适配层）
 └── web/                        Vue3 + Element Plus + ECharts（Vite，无 Pinia）
     ├── Dockerfile / nginx.conf Node 构建 → nginx 托管并反代 /api
     └── src/

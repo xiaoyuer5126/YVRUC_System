@@ -102,7 +102,7 @@ function startEdit(c) {
 // 与后端 integrations/__init__.py 的 REQUIRED_FIELD 一一对应。
 // appid / client_id 默认来自 .env，测试环境为空 → 即便开关打开也回落 Mock。
 const REQUIRED_FIELD = {
-  msgcenter: 'appid', checkin_gateway: 'base_url', sso: 'client_id',
+  msgcenter: 'appid', sso: 'client_id',
 }
 
 async function toggleEnabled(c) {

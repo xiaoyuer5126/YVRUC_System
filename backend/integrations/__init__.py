@@ -28,15 +28,6 @@ DEFAULTS: dict[str, dict] = {
         "capabilities": ["报名成功通知", "候补转正通知", "岗位分配通知",
                           "活动变更警告", "时长核准通知"],
     },
-    "checkin_gateway": {
-        "label": "签到码系统",
-        "enabled": False,
-        "base_url": "",
-        "app_key": "",
-        "app_secret": "",
-        "mode_hint": "由对方提供 SDK / RESTful 接口：建任务、核销、状态回调",
-        "capabilities": ["生成签到任务与二维码", "核验扫码核销", "签到状态回流"],
-    },
     "sso": {
         "label": "微人大统一身份认证",
         "enabled": False,
@@ -117,6 +108,5 @@ REQUIRED_FIELD = {
     # appid / client_id 默认来自环境变量：测试环境没有这些变量 → 值为空 →
     # 即便用例把开关打开了也照样回落 Mock，不会误打真实接口。
     "msgcenter": "appid",
-    "checkin_gateway": "base_url",
     "sso": "client_id",
 }
