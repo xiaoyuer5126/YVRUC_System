@@ -33,21 +33,19 @@
     </div>
 
     <!-- 场次与岗位放到 #body 里一起讲（要带培训/彩排标记），不再单列字段 -->
-    <DataCards v-if="narrow" :rows="tasks" title-key="token" style="margin-bottom:16px"
-               :fields="[]" empty="还没有签到码">
-      <template #title="{ row }">
-        <span class="mono" style="font-size:18px;letter-spacing:3px">{{ row.token }}</span>
-      </template>
+    <DataCards v-if="narrow" :rows="tasks" title-key="shift_name"
+               style="margin-bottom:16px" :fields="[]" empty="还没有签到码">
       <template #extra="{ row }">
+        <el-tag v-if="row.shift_kind !== 'service'" size="small" effect="plain">
+          {{ row.shift_kind_label }}
+        </el-tag>
         <el-tag size="small" :type="row.active ? 'success' : 'info'">
           {{ row.active ? '开启' : '已关闭' }}
         </el-tag>
       </template>
       <template #body="{ row }">
         <div class="dim">
-          <b>{{ row.shift_name }}</b>
-          <template v-if="row.shift_kind !== 'service'">（{{ row.shift_kind_label }}）</template>
-          <template v-if="row.shift_id === boardShiftId"> · 当前大屏</template><br />
+          <template v-if="row.shift_id === boardShiftId">当前大屏 · </template>
           {{ row.mode === 'position' ? `分岗位·${row.position_name}` : '统一签到' }} ·
           {{ fmtDT(row.valid_from) }} ~ {{ fmtDT(row.valid_to) }} · 已签 {{ row.count }} 人
         </div>
@@ -59,13 +57,9 @@
       </template>
     </DataCards>
     <el-table v-else :data="tasks" size="small" style="margin-bottom:16px">
-      <!-- 列的是固定码：动态码每分钟换一张，不在这里列，得去弹窗里看 -->
-      <el-table-column label="固定码" width="110">
-        <template #default="{row}">
-          <b class="mono" style="font-size:15px;letter-spacing:2px">{{ row.token }}</b>
-        </template>
-      </el-table-column>
-      <!-- 码表列的是整个活动的码：没有场次列就分不出哪张码是哪一场的 -->
+      <!-- 不列码：列出来就能被念给群里、抄进聊天框，代签的门槛只剩一张嘴。
+           要看码只有一条路——打开二维码弹窗，把那一屏亮在来签到的人面前。
+           这张表是整个活动的签到任务，所以场次必须单独成列，否则分不出哪行是哪一场 -->
       <el-table-column label="场次" min-width="150">
         <template #default="{row}">
           {{ row.shift_name }}
@@ -275,11 +269,12 @@
           <el-radio-button value="dynamic">动态码</el-radio-button>
           <el-radio-button value="fixed">固定码</el-radio-button>
         </el-radio-group>
-        <!-- 必须带 base：不传的话码里编的是相对路径，相机只会当一行字显示 -->
+        <!-- 只出二维码，不出那串字符，也不出扫码链接：能照着念、能转发的码，
+             等于谁都能替别人签。要给人扫，就把这一屏亮在他面前。
+             必须带 base：不传的话码里编的是相对路径，相机只会当一行字显示 -->
         <img v-if="qrSrc" :src="qrSrc" width="280" height="280" alt="签到二维码" />
         <div v-else class="qr-blank">正在取码…</div>
-        <div class="mono" style="font-size:22px;letter-spacing:4px;margin-top:8px">{{ activeCode || '—' }}</div>
-        <!-- 这张码是哪一场、哪个岗位的：固定码打印出来贴到现场，光看码分不出 -->
+        <!-- 这张码是哪一场、哪个岗位的：打印出来贴到现场，光看码分不出 -->
         <div class="qr-who">
           <b>{{ qrTask.shift_name }}</b>
           <el-tag v-if="qrTask.shift_kind !== 'service'" size="small" effect="plain">
@@ -303,13 +298,7 @@
           <div v-else class="dim">每 {{ qrRefresh }} 秒换一张，上一张还能再用一会儿；一块屏给所有人扫</div>
         </template>
         <div v-else class="dim" style="margin-top:6px">
-          固定码从头用到尾，可以打印贴在现场——也因此别发进群里
-        </div>
-        <div style="margin-top:12px">
-          <el-input size="small" readonly :model-value="scanUrl">
-            <template #append><el-button @click="copyLink">复制</el-button></template>
-          </el-input>
-          <div v-if="isDynamic" class="dim">链接里的码同样只有一分钟有效</div>
+          固定码从头用到尾，可以右键存图打印贴在现场——也因此别发进群里
         </div>
       </div>
     </el-dialog>
@@ -356,9 +345,8 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { api, fmtDT, pageUrl, qrBase } from '../api'
+import { api, fmtDT, qrBase } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
 import DateTimeField from './DateTimeField.vue'
@@ -375,7 +363,6 @@ const props = defineProps({
 
 // 与后端 config.CHECKIN_WINDOW_PAD_MINUTES 保持一致
 const WINDOW_PAD = 30
-const route = useRoute()
 const actId = computed(() => props.activityId)   // vuecheck: script-only
 
 const creating = ref(false)
@@ -421,9 +408,6 @@ const qrSrc = computed(() => {
   const key = isDynamic.value ? 'code' : 'token'
   return `/api/checkin/qr.svg?${key}=${activeCode.value}&base=${qrBase()}&t=${Date.now()}`
 })
-
-// 扫码链接放 computed：模板里不能直接用 location（不在 Vue 模板全局白名单）
-const scanUrl = computed(() => pageUrl(`/checkin/${activeCode.value}`))
 
 async function pullCode() {
   const task = qrTask.value
@@ -530,12 +514,8 @@ async function quick(action) {
 }
 
 onMounted(async () => {
-  // 深链 ?qr=GALA01 直接打开二维码弹窗，并把看板切到那张码所在的场次
-  const qrt = route.query.qr
   await loadTasks()
-  const row = qrt && tasks.value.find(t => t.token === String(qrt).toUpperCase())
-  boardShiftId.value = row?.shift_id || shiftOptions.value[0]?.id || ''
-  if (row) { qrTask.value = row; qrVisible.value = true }
+  boardShiftId.value = shiftOptions.value[0]?.id || ''
   await loadBoard()
   boardRefresh.value?.markLoaded()
 })
@@ -594,10 +574,6 @@ function toISO(v) {
 function openQR(row) {
   qrTask.value = row
   qrVisible.value = true
-}
-function copyLink() {
-  navigator.clipboard.writeText(scanUrl.value)
-  ElMessage.success('已复制')
 }
 const reminding = ref(false)
 
