@@ -59,7 +59,8 @@
       </template>
     </DataCards>
     <el-table v-else :data="tasks" size="small" style="margin-bottom:16px">
-      <el-table-column label="签到码" width="110">
+      <!-- 列的是固定码：动态码每分钟换一张，不在这里列，得去弹窗里看 -->
+      <el-table-column label="固定码" width="110">
         <template #default="{row}">
           <b class="mono" style="font-size:15px;letter-spacing:2px">{{ row.token }}</b>
         </template>
