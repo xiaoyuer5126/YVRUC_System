@@ -1,6 +1,7 @@
 """签到/签退：任务信息、扫码核验（学生）、二维码 SVG。
 
-同一个签到码：第一次扫 = 签到，第二次扫 = 签退。
+同一个签到码：第一次扫 = 签到，第二次扫 = 签退——但刚签完就再扫一遍不算数，
+按「重复操作」挡回去（见 do_checkin 里的最短间隔）。
 签退宽限：场次结束后 2 小时内可自行签退；超时未签退由系统按场次结束时间
 兜底（见 staff_ops.compute_hours 的 effective_checkout）。
 
@@ -12,6 +13,7 @@
 """
 from __future__ import annotations
 
+import math
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -89,7 +91,11 @@ def task_info(token: str, db: OrmSession = Depends(db_session),
 @router.post("/task/{token}")
 def do_checkin(token: str, db: OrmSession = Depends(db_session),
                user: User = Depends(current_user)):
-    """同一签到码：无记录 → 签到；已签未退 → 签退；已签已退 → 拒绝重复。"""
+    """同一签到码：无记录 → 签到；已签未退 → 签退；已签已退 → 拒绝重复。
+
+    但「已签未退」里分两种：刚签完又扫一遍（手滑）和散场回来签退。前者挡回去，
+    见下面 CHECKOUT_MIN_GAP_MINUTES。
+    """
     task, act, g = _load_task(db, token)
     t = now()
 
@@ -131,6 +137,16 @@ def do_checkin(token: str, db: OrmSession = Depends(db_session),
 
     if rec.checkout_at:
         raise HTTPException(409, "您已完成本场次的签到与签退，请勿重复操作")
+
+    # 刚签完又扫一遍，多半是「以为没成功」或相机连读了两下。这条要是当成签退，
+    # 人就当场被签退了、时长按 0 算——而他自己看不出发生了什么。所以挡回去。
+    gap = t - rec.checkin_at
+    floor = timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES)
+    if gap < floor:
+        left = math.ceil((floor - gap).total_seconds() / 60)
+        raise HTTPException(
+            409, f"您 {int(gap.total_seconds() // 60)} 分钟前刚签到，无需重复扫码；"
+                 f"{left} 分钟后才能签退")
 
     # ---- 签退 ----
     rec.checkout_at = t

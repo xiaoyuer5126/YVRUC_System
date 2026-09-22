@@ -113,6 +113,11 @@ PROMOTE_CONFIRM_HOURS = 2  # 候补转正确认窗口（小时）
 # 签退宽限：场次结束后这么久内仍可自行签退，超时按场次结束时间兜底并标记待核
 CHECKOUT_GRACE_HOURS = 2
 
+# 同一个码扫两遍就是签到→签退，方便，但也意味着手滑扫两遍人就当场被签退了，
+# 时长按 0 分钟算。所以签到后这么久之内，第二次扫码一律当作「重复操作」挡回去
+# （见 routers/checkin.do_checkin）。散场时的正常签退都在这之后，不受影响。
+CHECKOUT_MIN_GAP_MINUTES = 10
+
 # 审批放着没人处理多久开始催（小时）。只催人，**绝不自动通过**——
 # 审批不能因为没人看就默认放行。
 APPROVAL_REMIND_HOURS = int(os.environ.get("RUCVA_APPROVAL_REMIND_HOURS", "24"))

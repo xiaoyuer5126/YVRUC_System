@@ -8,8 +8,8 @@ import redis
 
 from backend import config
 from backend.locks import CHECKIN_CODE_LEN
-from backend.models import (Activity, ActivityManager, CheckinTask, Enrollment,
-                            Position, Shift, User, now, uid)
+from backend.models import (Activity, ActivityManager, CheckinRecord, CheckinTask,
+                            Enrollment, Position, Shift, User, now, uid)
 from conftest import ADMIN, login, student_row
 
 
@@ -51,14 +51,20 @@ def live_group(client, db, admin, take_student):
     return act, g, h, token
 
 
-def test_scan_twice_is_checkin_then_checkout(client, live_group):
-    _act, _g, h, token = live_group
+def test_scan_twice_is_checkin_then_checkout(client, db, live_group):
+    _act, g, h, token = live_group
 
     info = client.get(f"/api/checkin/task/{token}", headers=h).json()
     assert info["state"] == "active" and info["enrolled"] is True
 
     first = client.post(f"/api/checkin/task/{token}", headers=h).json()
     assert first["action"] == "checkin"
+
+    # 散场时的那第二扫：把签到时间往回拨过保护窗，不然会被当成手滑挡回来
+    # （手滑那一路见 test_签完马上再扫一遍不会被签退）
+    rec = db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id).one()
+    rec.checkin_at = now() - timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES + 1)
+    db.commit()
 
     second = client.post(f"/api/checkin/task/{token}", headers=h).json()
     assert second["action"] == "checkout"
@@ -68,6 +74,35 @@ def test_scan_twice_is_checkin_then_checkout(client, live_group):
 
     info = client.get(f"/api/checkin/task/{token}", headers=h).json()
     assert info["checked_in"] and info["checked_out"]
+
+
+def test_签完马上再扫一遍不会被签退(client, db, live_group):
+    """手滑扫两遍 = 当场签退、时长归零，而当事人看不出发生了什么。挡回去。"""
+    _act, _g, h, token = live_group
+    assert client.post(f"/api/checkin/task/{token}",
+                       headers=h).json()["action"] == "checkin"
+
+    again = client.post(f"/api/checkin/task/{token}", headers=h)
+    assert again.status_code == 409 and "刚签到" in again.json()["detail"]
+
+    db.expire_all()                        # 另开一个会话读，别信本会话的缓存
+    rec = (db.query(CheckinRecord)
+           .filter(CheckinRecord.shift_id == _g.id).one())
+    assert rec.checkout_at is None          # 关键：没被当成签退落下记录
+
+
+def test_隔够时间再扫就是正常签退(client, db, live_group):
+    """保护窗只挡「刚刚」，散场回来签退照旧。"""
+    _act, g, h, token = live_group
+    client.post(f"/api/checkin/task/{token}", headers=h)
+
+    # 把签到时间往回拨到保护窗之外：现实里这段时间是干活干掉的
+    rec = db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id).one()
+    rec.checkin_at = now() - timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES + 1)
+    db.commit()
+
+    d = client.post(f"/api/checkin/task/{token}", headers=h).json()
+    assert d["action"] == "checkout"
 
 
 def test_outsider_cannot_check_in(client, live_group, take_student):
@@ -186,7 +221,7 @@ def task_id_of(client, admin, act):
     return rows[0]["id"]
 
 
-def test_动态码能签到也能签退(client, admin, live_group):
+def test_动态码能签到也能签退(client, admin, db, live_group):
     """管理端取的码和学生扫的码必须是同一张——两条路径唯一的约定就在这里。"""
     act, _g, h, _token = live_group
     tid = task_id_of(client, admin, act)
@@ -205,6 +240,11 @@ def test_动态码能签到也能签退(client, admin, live_group):
 
     assert client.get(f"/api/checkin/task/{code}", headers=h).json()["enrolled"] is True
     assert client.post(f"/api/checkin/task/{code}", headers=h).json()["action"] == "checkin"
+    # 同一个码要能签退，得先把签到时间拨过保护窗（10 分钟的理由见 config）
+    _act, g, _h, _token = live_group
+    rec = db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id).one()
+    rec.checkin_at = now() - timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES + 1)
+    db.commit()
     assert client.post(f"/api/checkin/task/{code}", headers=h).json()["action"] == "checkout"
 
 
