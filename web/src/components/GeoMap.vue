@@ -24,6 +24,19 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+// 图钉的三个图：Leaflet 默认是**运行时**去扫页面里的 leaflet.css、按它的路径
+// 拼出 icons 地址的。打包之后 CSS 变成带 hash 的 index-xxxx.css，它扫不到，
+// 就退回 'images/marker-icon-2x.png' 这种相对路径——于是 404、图钉不显示。
+// 显式把 Vite 处理过的地址塞给它，绕开那段运行时推断。
+import markerIcon from 'leaflet/dist/images/marker-icon.png'
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
+import markerShadow from 'leaflet/dist/images/marker-shadow.png'
+
+L.Icon.Default.mergeOptions({
+  iconUrl: markerIcon,
+  iconRetinaUrl: markerIcon2x,
+  shadowUrl: markerShadow,
+})
 
 const props = defineProps({
   lat: { type: Number, required: true },
