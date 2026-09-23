@@ -116,6 +116,17 @@ def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
 
 # ======================= 定位签到的坐标锚点 =======================
 
+@router.get("/map-config")
+def map_config(user: User = Depends(require_manager)):
+    """管理端画地图要的参数。
+
+    tk 是**浏览器端**的密钥，会原样进前端（瓦片地址得在浏览器里拼），所以它
+    本来就公开，真正的保护是天地图后台的域名白名单。走这个接口而不是构建时
+    写死，是为了换 key 不用重新构建前端。留空 = 前端不画地图，功能照旧。
+    """
+    return {"provider": "tianditu", "tk": config.TIANDITU_TK}
+
+
 class GeoBody(BaseModel):
     """管理者站在岗位上量的那个坐标。前端用 navigator.geolocation 取。"""
     lat: float

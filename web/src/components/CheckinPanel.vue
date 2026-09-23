@@ -374,7 +374,15 @@
             </div>
           </el-form-item>
         </el-form>
-        <p class="dim" style="line-height:1.8;margin:0">
+        <!-- 地图只给人看，不能拖：锚点必须站在现场量，能拖着改就等于允许
+             坐办公室把点位挪到任何地方，那道判定就白设了。leaflet 只在打开
+             这个弹窗时才去加载（异步组件），大多数管理者不会开这一页 -->
+        <GeoMap v-if="geoForm.lat" :lat="geoForm.lat" :lng="geoForm.lng"
+                :radius="geoForm.radius_m" :tk="mapTk" />
+        <div v-else class="dim" style="line-height:1.8">
+          量到坐标后这里会显示签到点与范围。
+        </div>
+        <p class="dim" style="line-height:1.8;margin:12px 0 0">
           设好之后，志愿者在「我的报名」里点「签到」就是定位签到，
           现场不再需要二维码。定位取不到时，仍可在下面的名单里手动补签。
         </p>
@@ -428,13 +436,17 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT, qrBase } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
 import DateTimeField from './DateTimeField.vue'
 import RefreshBar from './RefreshBar.vue'
+
+// leaflet 六十来 KB，只有打开「定位」弹窗才用得上，就别让它跟着这一页一起
+// 进包——大多数管理者整场活动都不会开那个弹窗
+const GeoMap = defineAsyncComponent(() => import('./GeoMap.vue'))
 
 const props = defineProps({
   activityId: { type: String, required: true },
@@ -672,8 +684,23 @@ const geoBusy = ref(false)
 const geoLocating = ref(false)
 const geoForm = ref({ lat: 0, lng: 0, accuracy: 0, radius_m: 200 })
 
+// 天地图的 tk：从后端取，不是构建时写死——换 key 不用重新构建前端。
+// 取不到（没配）就只是不画底图，点位和范围照样有
+const mapTk = ref('')
+let mapTkLoaded = false
+
+async function loadMapTk() {
+  if (mapTkLoaded) return
+  mapTkLoaded = true
+  try {
+    const d = await api.get('/api/staff/map-config', { silent: true })
+    mapTk.value = d.tk || ''
+  } catch { /* 没配就没有地图，不影响定位签到本身 */ }
+}
+
 function openGeo(row) {
   geoTask.value = row
+  loadMapTk()
   // 已经有锚点的，先把旧的填进去：多数时候只是改个半径，
   // 不该逼着人再站到太阳底下量一次
   geoForm.value = {

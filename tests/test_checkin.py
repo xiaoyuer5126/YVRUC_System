@@ -534,3 +534,14 @@ def test_只能给自己的报名记录定位签到(client, admin, live_group, t
     assert [r for r in client.get("/api/me/enrollments",
                                   headers=other).json()
             if r["shift"]["id"] == g.id] == []
+
+
+# ======================= 地图配置 =======================
+
+def test_地图配置只给管理者(client, admin, live_group, take_student):
+    """管理端画签到点用的天地图 tk。它是浏览器端密钥，本来就会进前端，
+    但也只给管理者——学生端根本没有要看地图的地方。"""
+    d = client.get("/api/staff/map-config", headers=admin)
+    assert d.status_code == 200 and "tk" in d.json()
+    assert client.get("/api/staff/map-config",
+                      headers=login(client, take_student())).status_code == 403
