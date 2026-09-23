@@ -545,3 +545,26 @@ def test_地图配置只给管理者(client, admin, live_group, take_student):
     assert d.status_code == 200 and "tk" in d.json()
     assert client.get("/api/staff/map-config",
                       headers=login(client, take_student())).status_code == 403
+
+
+def test_坐标的来源会写进审计(client, admin, db, live_group):
+    """现场量的 vs 图上点的，在记录里必须分得出来：前者是「人到过现场」的证据，
+    后者不是。将来复盘或追责，这一句话就是全部区别。"""
+    from backend.models import AuditLog
+
+    act, _g, _h, _token = live_group
+    tid = task_id_of(client, admin, act)
+    r = client.put(f"/api/staff/checkin-tasks/{tid}/geo", headers=admin,
+                   json={"lat": LAT, "lng": LNG, "radius_m": 200, "source": "map"})
+    assert r.status_code == 200, r.text
+
+    row = (db.query(AuditLog).filter(AuditLog.target_id == tid)
+           .order_by(AuditLog.created_at.desc()).first())
+    assert "地图上点" in row.summary
+
+    # 不传 source = 现场量的（老前端、以及「使用我的当前位置」那条路）
+    client.put(f"/api/staff/checkin-tasks/{tid}/geo", headers=admin,
+               json={"lat": LAT, "lng": LNG, "radius_m": 200})
+    row = (db.query(AuditLog).filter(AuditLog.target_id == tid)
+           .order_by(AuditLog.created_at.desc()).first())
+    assert "现场量" in row.summary

@@ -128,11 +128,15 @@ def map_config(user: User = Depends(require_manager)):
 
 
 class GeoBody(BaseModel):
-    """管理者站在岗位上量的那个坐标。前端用 navigator.geolocation 取。"""
+    """签到点的坐标。前端两种给法：站在现场用 navigator.geolocation 取，
+    或者在管理端的地图上点/拖。**只有前者能说明「人到过现场」**，所以
+    source 要传上来，写进审计——后者也允许（有时候没别的办法），
+    但得留下「这个点是坐办公室定的」这个事实。"""
     lat: float
     lng: float
     accuracy: float = 0
     radius_m: int = config.GEO_RADIUS_DEFAULT_M
+    source: str = "gps"        # gps 现场量的 / map 图上点的
 
 
 @router.put("/checkin-tasks/{task_id}/geo")
@@ -180,7 +184,9 @@ def set_geo(task_id: str, body: GeoBody,
               summary=f"把「{st.name if st else g.name}」改成定位签到："
                       f"({geo.lat:.5f}, {geo.lng:.5f}) 半径 {geo.radius_m} 米"
                       + (f"，量点时误差 ±{geo.accuracy_m:.0f} 米"
-                         if geo.accuracy_m else ""))
+                         if geo.accuracy_m else "")
+                      + ("；**坐标是在地图上点的，不是站在现场量的**"
+                         if body.source == "map" else "；坐标在现场量的"))
     db.commit()
     return {"ok": True, "geo": {"lat": geo.lat, "lng": geo.lng,
                                "radius_m": geo.radius_m,

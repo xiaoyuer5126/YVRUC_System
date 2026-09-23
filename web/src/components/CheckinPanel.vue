@@ -378,10 +378,23 @@
              坐办公室把点位挪到任何地方，那道判定就白设了。leaflet 只在打开
              这个弹窗时才去加载（异步组件），大多数管理者不会开这一页 -->
         <GeoMap v-if="geoForm.lat" :lat="geoForm.lat" :lng="geoForm.lng"
-                :radius="geoForm.radius_m" :tk="mapTk" />
+                :radius="geoForm.radius_m" :tk="mapTk" pickable
+                @pick="onPick" />
         <div v-else class="dim" style="line-height:1.8">
           量到坐标后这里会显示签到点与范围。
         </div>
+        <div class="dim" style="line-height:1.8">
+          图上可以直接点一下、或者拖着图钉挪位置。
+        </div>
+        <!-- 地图点选比现场量弱：手机定位本来就只是「大概在这儿」，而点选连
+             这一点都省了。不禁止，但要说清楚、并且留痕（后端写进审计） -->
+        <el-alert v-if="geoForm.source === 'map'" type="warning" :closable="false"
+                  style="margin-top:8px">
+          <p style="margin:0;line-height:1.9">
+            这个坐标是<b>在图上点的</b>，不是站在现场量的。签到判定会因此变弱：
+            手机定位本来就只是「大概在这一带」，而点选连这一点都省了。
+          </p>
+        </el-alert>
         <p class="dim" style="line-height:1.8;margin:12px 0 0">
           设好之后，志愿者在「我的报名」里点「签到」就是定位签到，
           现场不再需要二维码。定位取不到时，仍可在下面的名单里手动补签。
@@ -682,7 +695,9 @@ const geoDlg = ref(false)
 const geoTask = ref(null)
 const geoBusy = ref(false)
 const geoLocating = ref(false)
-const geoForm = ref({ lat: 0, lng: 0, accuracy: 0, radius_m: 200 })
+// source：这个坐标是怎么来的——'gps' 站在现场量的 / 'map' 在图上点的。
+// 后端按它写审计，别让两种来源在记录里分不出来
+const geoForm = ref({ lat: 0, lng: 0, accuracy: 0, radius_m: 200, source: '' })
 
 // 天地图的 tk：从后端取，不是构建时写死——换 key 不用重新构建前端。
 // 取不到（没配）就只是不画底图，点位和范围照样有
@@ -708,8 +723,17 @@ function openGeo(row) {
     lng: row.geo?.lng || 0,
     accuracy: row.geo?.accuracy_m || 0,
     radius_m: row.geo?.radius_m || 200,
+    source: '',
   }
   geoDlg.value = true
+}
+
+/** 在图上点了一下或拖了图钉：坐标以这个为准，并且记下它不是现场量的。 */
+function onPick(lat, lng) {
+  geoForm.value.lat = lat
+  geoForm.value.lng = lng
+  geoForm.value.accuracy = 0
+  geoForm.value.source = 'map'
 }
 
 /** 量当前位置。这个坐标只是「管理者此刻站在哪」，判定用的仍是服务端。 */
@@ -723,6 +747,7 @@ function locateMe() {
     geoForm.value.lat = pos.coords.latitude
     geoForm.value.lng = pos.coords.longitude
     geoForm.value.accuracy = pos.coords.accuracy || 0
+    geoForm.value.source = 'gps'
   }, e => {
     geoLocating.value = false
     if (!window.isSecureContext) {

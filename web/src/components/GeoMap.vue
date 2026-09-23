@@ -43,7 +43,12 @@ const props = defineProps({
   lng: { type: Number, required: true },
   radius: { type: Number, default: 200 },
   tk: { type: String, default: '' },
+  // 允许在图上点/拖来定坐标。默认关着：锚点本该站在现场量，
+  // 放开就等于允许坐办公室把点位挪到任何地方——要开就得把代价说清楚，
+  // 见 CheckinPanel 里那段提示
+  pickable: { type: Boolean, default: false },
 })
+const emit = defineEmits(['pick'])
 
 const mapEl = ref(null)
 let map = null
@@ -77,11 +82,20 @@ onMounted(() => {
     // 总比什么都不显示强
     mapEl.value.style.background = '#eef0f2'
   }
-  marker = L.marker([props.lat, props.lng]).addTo(map)
+  marker = L.marker([props.lat, props.lng],
+                    { draggable: props.pickable }).addTo(map)
   circle = L.circle([props.lat, props.lng], {
     radius: props.radius,
     color: '#9e2235', weight: 1.5, fillColor: '#9e2235', fillOpacity: 0.12,
   }).addTo(map)
+  if (props.pickable) {
+    // 拖图钉比点地图准：点击是「大致那一带」，拖动能看着圈挪到位
+    marker.on('dragend', () => {
+      const p = marker.getLatLng()
+      emit('pick', p.lat, p.lng)
+    })
+    map.on('click', e => emit('pick', e.latlng.lat, e.latlng.lng))
+  }
   fit()
 })
 

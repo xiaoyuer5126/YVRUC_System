@@ -1,6 +1,26 @@
 /** 极简 fetch 封装：自动带 token、统一错误提示。 */
 import { ElMessage } from 'element-plus'
-import { auth } from './store'
+import { auth, clearAuth } from './store'
+
+/** 令牌失效了：清掉本地登录态，把人送回登录页，登完再回到刚才那一页。
+ *
+ *  不清的话人卡在原地对着满屏「加载失败」发懵——路由守卫看的是「本地有没有
+ *  令牌」，令牌过期或那个用户在库里已经没了（比如库被重置过）都不影响它放行，
+ *  于是每个请求各自 401，一个红字接着一个红字。
+ *
+ *  多个请求同时 401 时只处理第一次：不然会连弹好几条提示、反复改地址。
+ */
+function sessionExpired() {
+  if (!auth.token) return              // 已经处理过了
+  clearAuth()
+  ElMessage.warning('登录已过期，请重新登录')
+  const here = window.location.hash.slice(1)
+  if (here && !here.startsWith('/login')) {
+    window.location.hash = '#/login?next=' + encodeURIComponent(here)
+  } else if (!here) {
+    window.location.hash = '#/login'
+  }
+}
 
 async function request(method, url, body, opts = {}) {
   const headers = { 'Content-Type': 'application/json' }
@@ -16,6 +36,13 @@ async function request(method, url, body, opts = {}) {
     return resp
   }
   const data = await resp.json().catch(() => ({}))
+  if (resp.status === 401) {
+    // 登录接口自己回的 401（口令错）不算「过期」，那时本来就在登录页上
+    sessionExpired()
+    const e = new Error('登录已过期')
+    e.status = 401
+    throw e
+  }
   if (!resp.ok) {
     const detail = typeof data.detail === 'string'
       ? data.detail
