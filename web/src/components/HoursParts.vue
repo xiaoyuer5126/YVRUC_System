@@ -10,7 +10,7 @@
       <!-- 只有管理者能删，而且只删得掉手动加的那几段：签到算出来的那些段是
            记录的依据，删了账就没了出处 -->
       <el-button v-if="removable && p.kind === 'manual'" size="small" link
-                 type="danger" @click="$emit('remove', i)">删除</el-button>
+                 type="danger" @click="$emit('remove', p)">删除</el-button>
     </div>
   </div>
   <span v-else class="dim">没有明细</span>

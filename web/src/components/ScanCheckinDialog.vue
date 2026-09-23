@@ -15,7 +15,7 @@
       <video ref="videoEl" muted playsinline></video>
       <div v-if="hint" class="scan-hint" :class="{ bad: bad }">{{ hint }}</div>
     </div>
-    <p class="dim" style="text-align:center;margin:10px 0 0">
+    <p class="dim" style="text-align:center;margin:8px 0 0">
       把现场二维码放进框里，扫到自动完成
     </p>
   </el-dialog>

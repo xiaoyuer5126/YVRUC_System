@@ -80,7 +80,7 @@ const doneAt = ref('')
 const doneAction = ref('签到')
 const submitting = ref(false)
 // 扫的是动态码、又绕去登录了一趟：回来时那张码多半已经换掉了
-const afterLogin = ref(false)
+const afterLogin = ref(false)   // vuecheck: script-only，只用来挑报错的说法
 
 const stateText = computed(() => ({
   active: '可签到', closed: '任务已关闭',

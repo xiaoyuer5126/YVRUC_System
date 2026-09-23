@@ -14,7 +14,7 @@
 <template>
   <div>
     <div ref="mapEl" class="geo-map" />
-    <div v-if="!tk" class="dim" style="margin-top:6px">
+    <div v-if="!tk" class="dim" style="margin-top:8px">
       没有配置天地图的 tk（.env 里的 RUCVA_TIANDITU_TK），先只显示坐标。
     </div>
   </div>

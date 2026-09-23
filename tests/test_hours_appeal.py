@@ -562,18 +562,44 @@ def test_删手动那一段只减那一截(client, admin, db, served):
     stu = login(client, u.student_id)
     row = _record(client, stu)
     assert row["hours"] == 7.0 and len(row["parts"]) == 3
-    rid, last = row["id"], 2                       # 最后一段是「通勤」
+    rid, seg = row["id"], row["parts"][2]          # 最后一段是「通勤」
+    assert seg["label"] == "通勤"
 
-    # 签到算出来的那一段删不得：它是账的依据
+    # 签到算出来的那一段没有编号，删不到：它是账的依据
+    assert "id" not in row["parts"][0]
     assert client.delete(
-        f"/api/staff/activities/{act.id}/hours/manual/{rid}/0",
+        f"/api/staff/activities/{act.id}/hours/manual/{rid}/none",
         headers=admin).status_code == 404
 
     assert client.delete(
-        f"/api/staff/activities/{act.id}/hours/manual/{rid}/{last}",
+        f"/api/staff/activities/{act.id}/hours/manual/{rid}/{seg['id']}",
         headers=admin).status_code == 200
     row = _record(client, stu)
     assert row["hours"] == 6.0 and len(row["parts"]) == 2
+    assert row["parts"][1]["label"] == "场外搬运"
+
+
+def test_没确认过也删得对那一段(client, admin, db, served):
+    """管理端的明细是现拼的（签到段在前、手动段在后），而没「确认全部」过的人，
+    库里那一笔只存了手动那几段。两边顺序不一样，按位置删会删到另一段上。"""
+    act, g, u = served
+    _add_manual(client, admin, act, u.student_id, 2, "场外搬运")
+    _add_manual(client, admin, act, u.student_id, 1, "通勤")
+
+    def mine():
+        d = client.get(f"/api/staff/activities/{act.id}/hours",
+                       headers=admin).json()
+        return next(x for x in d["items"] if x["user"]["id"] == u.id)
+
+    m = mine()
+    assert [p["label"] for p in m["parts"]] == ["服务场", "场外搬运", "通勤"]
+    assert client.delete(
+        f"/api/staff/activities/{act.id}/hours/manual/{m['record_id']}/"
+        f"{m['parts'][1]['id']}", headers=admin).status_code == 200
+
+    m = mine()
+    assert [p["label"] for p in m["parts"]] == ["服务场", "通勤"]
+    assert m["hours"] == 5.0
 
 
 def test_手动时长删空之后整笔账消失(client, admin, db, served, take_student):
@@ -585,8 +611,8 @@ def test_手动时长删空之后整笔账消失(client, admin, db, served, take
     d = client.get(f"/api/staff/activities/{act.id}/hours", headers=admin).json()
     m = next(x for x in d["items"] if x["user"]["id"] == other.id)
     assert client.delete(
-        f"/api/staff/activities/{act.id}/hours/manual/{m['record_id']}/0",
-        headers=admin).status_code == 200
+        f"/api/staff/activities/{act.id}/hours/manual/{m['record_id']}/"
+        f"{m['parts'][0]['id']}", headers=admin).status_code == 200
 
     d = client.get(f"/api/staff/activities/{act.id}/hours", headers=admin).json()
     assert not [x for x in d["items"] if x["user"]["id"] == other.id]

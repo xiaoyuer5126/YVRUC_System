@@ -900,8 +900,9 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
         if hours <= 0:
             raise HTTPException(400, f"{u.name} 的时长必须大于 0")
         note = (it.get("note") or "").strip()
-        part = {"label": note or "手动添加", "time": "", "position": "",
-                "hours": round(hours, 2), "kind": "manual"}
+        # id 是这一段的编号，删除时按它找（见 hours_manual_delete）
+        part = {"id": uid("seg"), "label": note or "手动添加", "time": "",
+                "position": "", "hours": round(hours, 2), "kind": "manual"}
         rec = hours_record_of(db, act.id, u.id)
         if rec is None:
             db.add(HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id,
@@ -921,14 +922,18 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
     return {"ok": True, "count": len(added)}
 
 
-@router.delete("/activities/{activity_id}/hours/manual/{record_id}/{index}")
-def hours_manual_delete(activity_id: str, record_id: str, index: int,
+@router.delete("/activities/{activity_id}/hours/manual/{record_id}/{part_id}")
+def hours_manual_delete(activity_id: str, record_id: str, part_id: str,
                         db: OrmSession = Depends(db_session),
                         user: User = Depends(require_manager)):
-    """删掉手动加的那**一段**（不是整笔账）。index 是它在明细里的位置。
+    """删掉手动加的那**一段**（不是整笔账），按补录时发的段编号找。
 
-    只认 kind="manual" 的段：签到算出来的那些段是记录的依据，删不得——要改
-    就改合计（hours/confirm 的 items）。
+    不能按「它在明细里排第几」找：管理端看到的明细是 compute_hours 现拼的
+    （签到段在前、手动段在后），而还没「确认全部」过的人，库里这一笔只存了
+    手动那几段——两边顺序对不上，按位置取会删掉另一段，合计和审计也跟着错。
+
+    只认 kind="manual" 的段：签到算出来的那些段没有编号，是记录的依据，删不得
+    ——要改就改合计（hours/confirm 的 items）。
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
@@ -937,9 +942,11 @@ def hours_manual_delete(activity_id: str, record_id: str, index: int,
         raise HTTPException(404, "时长记录不存在")
     ensure_hours_editable(db, act)
     parts = list(rec.parts or [])
-    if not (0 <= index < len(parts)) or parts[index].get("kind") != "manual":
+    hit = next((i for i, p in enumerate(parts)
+                if p.get("kind") == "manual" and p.get("id") == part_id), None)
+    if hit is None:
         raise HTTPException(404, "这一段不是手动添加的时长")
-    gone = parts.pop(index)
+    gone = parts.pop(hit)
     hours = round(float(gone.get("hours") or 0), 2)
     rec.hours = round(max(0.0, (rec.hours or 0) - hours), 2)
     rec.parts = parts

@@ -722,7 +722,7 @@
               <span class="dim">本人表态</span><VolunteerSide :row="row" />
             </div>
             <HoursParts :parts="row.parts" removable
-                        @remove="i => delManualPart(row, i)" />
+                        @remove="p => delManualPart(row, p)" />
           </template>
         </DataCards>
         <div v-else-if="hours.length" class="scroll-x">
@@ -732,7 +732,7 @@
           <el-table-column type="expand" width="30">
             <template #default="{row}">
               <HoursParts :parts="row.parts" removable
-                          @remove="i => delManualPart(row, i)" />
+                          @remove="p => delManualPart(row, p)" />
             </template>
           </el-table-column>
           <el-table-column label="姓名" width="110">
@@ -2275,11 +2275,12 @@ async function addManualHours() {
   } catch { /* toast by api */ }
 }
 
-/** 删掉手动加的那一段（不是整笔账）。i 是它在明细里的位置。 */
-async function delManualPart(row, i) {
+/** 删掉手动加的那一段（不是整笔账）。按段编号删，不按它在明细里排第几：
+ *  这张明细是现拼的，和库里那一笔的顺序不一定一样（见后端 hours_manual_delete）。 */
+async function delManualPart(row, part) {
   if (!row.record_id) return ElMessage.warning('这一行还没有时长记录，无法删除')
   await api.del(
-    `/api/staff/activities/${activityId}/hours/manual/${row.record_id}/${i}`)
+    `/api/staff/activities/${activityId}/hours/manual/${row.record_id}/${part.id}`)
   ElMessage.success('已删除该段时长')
   hoursPreview(true)
 }

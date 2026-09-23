@@ -203,7 +203,8 @@ const teamDlg = ref({ visible: false, data: null })
 const groupQr = ref(null)
 const scanVisible = ref(false)
 const scanLabel = ref('签到')   // 这轮扫的是签到还是签退，弹窗照着它说话
-const geoBusy = ref(false)      // 取坐标要几秒，连点两下就是两次签到请求
+// 取坐标要几秒，连点两下就是两次签到请求。界面上的「正在定位…」由 geoCheckin 自己弹
+const geoBusy = ref(false)   // vuecheck: script-only
 
 /** 这一行现在能不能签 / 该显示什么按钮。
  *

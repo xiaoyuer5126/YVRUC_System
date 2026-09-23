@@ -324,17 +324,17 @@
           <template v-if="isDynamic">
             <!-- 数字在动，就说明这块屏还活着：现场最怕的是分不清「码没换」和「页面卡了」 -->
             <el-tag size="small" :type="qrStale ? 'danger' : 'success'" effect="plain"
-                    style="margin-top:6px">
+                    style="margin-top:8px">
               {{ qrStale ? '取不到新码，正在重试…' : `${qrSeconds} 秒后换下一张` }}
             </el-tag>
             <div v-if="qrStale" class="dim">屏幕上这张可能已经过期，先别让人扫</div>
             <div v-else class="dim">每 {{ qrRefresh }} 秒换一张，上一张还能再用一会儿；一块屏给所有人扫</div>
           </template>
-          <div v-else class="dim" style="margin-top:6px">
+          <div v-else class="dim" style="margin-top:8px">
             固定码从头用到尾，可以右键存图打印贴在现场——也因此别发进群里
           </div>
         </template>
-        <div v-else class="dim" style="margin-top:10px">
+        <div v-else class="dim" style="margin-top:12px">
           {{ qrTask.shift_name }}
           <template v-if="qrTask.mode === 'position'">· {{ qrTask.position_name }}</template>
           · 可签 {{ fmtDT(qrTask.valid_from) }} ~ {{ fmtDT(qrTask.valid_to) }}
@@ -499,7 +499,7 @@ const qrTask = ref(null)
 // 默认动态码。这个默认值就是安全边界本身，所以不记忆上次的选择——
 // 谁要打印固定码，谁当场自己切一下。
 const qrMode = ref('dynamic')
-const qrCode = ref('')
+const qrCode = ref('')   // vuecheck: script-only，模板经 activeCode → qrSrc 读它
 const qrSeconds = ref(0)
 const qrRefresh = ref(30)
 const qrStale = ref(false)          // 取码失败：屏上那张可能已经过期，得说出来
@@ -515,7 +515,8 @@ const pct = computed(() => board.value
 
 const isDynamic = computed(() => qrMode.value === 'dynamic')
 // 当前真正生效的那串码：动态码来自接口，固定码就是任务自己的 token
-const activeCode = computed(() => (isDynamic.value ? qrCode.value : qrTask.value?.token || ''))
+const activeCode = computed(   // vuecheck: script-only，模板只读 qrSrc
+  () => (isDynamic.value ? qrCode.value : qrTask.value?.token || ''))
 
 const qrSrc = computed(() => {
   if (!activeCode.value) return ''      // 还没取到码：空 src 会让浏览器去请求当前页
