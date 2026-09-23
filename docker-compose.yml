@@ -30,6 +30,11 @@ x-backend-env: &backend_env
   RUCVA_OPENPLATFORM_GATEWAY: ${RUCVA_OPENPLATFORM_GATEWAY:-}
   RUCVA_CAS_BASE_URL: ${RUCVA_CAS_BASE_URL:-}
   RUCVA_SSO_REDIRECT_URI: ${RUCVA_SSO_REDIRECT_URI:-}
+  # 天地图的浏览器端 tk（管理端画签到点用）。它本身会进前端，不是机密，
+  # 但**得从后端转一手**：管理员在页面里换 key 时不用重新构建前端。
+  # 注意这一份是逐个变量列出来的——往 .env 加了新变量，忘了在这儿加一行，
+  # 容器里就当它不存在（表现为「地图不出来、也不报错」）。
+  RUCVA_TIANDITU_TK: ${RUCVA_TIANDITU_TK:-}
   TZ: Asia/Shanghai
 
 services:
