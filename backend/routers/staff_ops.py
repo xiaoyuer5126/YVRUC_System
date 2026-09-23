@@ -124,7 +124,8 @@ def map_config(user: User = Depends(require_manager)):
     本来就公开，真正的保护是天地图后台的域名白名单。走这个接口而不是构建时
     写死，是为了换 key 不用重新构建前端。留空 = 前端不画地图，功能照旧。
     """
-    return {"provider": "tianditu", "tk": config.TIANDITU_TK}
+    return {"provider": "tianditu", "tk": config.TIANDITU_TK,
+            "campuses": config.CAMPUS_PRESETS}
 
 
 class GeoBody(BaseModel):
@@ -185,8 +186,10 @@ def set_geo(task_id: str, body: GeoBody,
                       f"({geo.lat:.5f}, {geo.lng:.5f}) 半径 {geo.radius_m} 米"
                       + (f"，量点时误差 ±{geo.accuracy_m:.0f} 米"
                          if geo.accuracy_m else "")
-                      + ("；**坐标是在地图上点的，不是站在现场量的**"
-                         if body.source == "map" else "；坐标在现场量的"))
+                      + {"map": "；**坐标是在地图上点的，不是站在现场量的**",
+                         "campus": "；坐标取自校区预设点（多半不是具体岗位），"
+                                   "落点未经现场核对",
+                         }.get(body.source, "；坐标在现场量的"))
     db.commit()
     return {"ok": True, "geo": {"lat": geo.lat, "lng": geo.lng,
                                "radius_m": geo.radius_m,

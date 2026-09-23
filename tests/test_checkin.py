@@ -568,3 +568,26 @@ def test_坐标的来源会写进审计(client, admin, db, live_group):
     row = (db.query(AuditLog).filter(AuditLog.target_id == tid)
            .order_by(AuditLog.created_at.desc()).first())
     assert "现场量" in row.summary
+
+
+def test_校区预设点也留痕(client, admin, db, live_group):
+    """按校区快捷选点比地图点选更粗——那只是校区中心，多半不是岗位位置。
+    审计里要写明白，别让它看起来像现场量的。"""
+    from backend.models import AuditLog
+
+    act, _g, _h, _token = live_group
+    tid = task_id_of(client, admin, act)
+    client.put(f"/api/staff/checkin-tasks/{tid}/geo", headers=admin,
+               json={"lat": LAT, "lng": LNG, "radius_m": 200, "source": "campus"})
+    row = (db.query(AuditLog).filter(AuditLog.target_id == tid)
+           .order_by(AuditLog.created_at.desc()).first())
+    assert "校区预设点" in row.summary and "未经现场核对" in row.summary
+
+
+def test_地图配置带上校区预设点(client, admin):
+    """坐标放后端：改一个校区的位置不该要重新构建前端。"""
+    d = client.get("/api/staff/map-config", headers=admin).json()
+    names = [c["name"] for c in d["campuses"]]
+    assert names == ["中关村校区", "通州校区"]
+    assert all(isinstance(c["lat"], float) and isinstance(c["lng"], float)
+               for c in d["campuses"])

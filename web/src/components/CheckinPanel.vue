@@ -355,6 +355,10 @@
           <el-form-item label="签到点">
             <el-button size="small" :loading="geoLocating"
                        @click="locateMe">使用我的当前位置</el-button>
+            <!-- 快捷选点：只把人和地图带到校区，落点还得拖着图钉挪到具体岗位。
+                 校区坐标各来源能差四百米，当签到点用是不行的 -->
+            <el-button v-for="c in campuses" :key="c.name" size="small" plain
+                       @click="useCampus(c)">{{ c.name }}</el-button>
             <div v-if="geoForm.lat" class="dim" style="line-height:1.7">
               {{ geoForm.lat.toFixed(5) }}, {{ geoForm.lng.toFixed(5) }}
               <template v-if="geoForm.accuracy">
@@ -386,14 +390,12 @@
         <div class="dim" style="line-height:1.8">
           图上可以直接点一下、或者拖着图钉挪位置。
         </div>
-        <!-- 地图点选比现场量弱：手机定位本来就只是「大概在这儿」，而点选连
-             这一点都省了。不禁止，但要说清楚、并且留痕（后端写进审计） -->
-        <el-alert v-if="geoForm.source === 'map'" type="warning" :closable="false"
+        <!-- 不是现场量的就得说清楚、并且留痕（后端按 source 写进审计）。
+             地图点选比现场量弱；校区预设更弱——那只是个校区的中心，多半
+             不是具体岗位的位置 -->
+        <el-alert v-if="geoWarn" type="warning" :closable="false"
                   style="margin-top:8px">
-          <p style="margin:0;line-height:1.9">
-            这个坐标是<b>在图上点的</b>，不是站在现场量的。签到判定会因此变弱：
-            手机定位本来就只是「大概在这一带」，而点选连这一点都省了。
-          </p>
+          <p style="margin:0;line-height:1.9">{{ geoWarn }}</p>
         </el-alert>
         <p class="dim" style="line-height:1.8;margin:12px 0 0">
           设好之后，志愿者在「我的报名」里点「签到」就是定位签到，
@@ -704,14 +706,41 @@ const geoForm = ref({ lat: 0, lng: 0, accuracy: 0, radius_m: 200, source: '' })
 const mapTk = ref('')
 let mapTkLoaded = false
 
+// 校区快捷选点的坐标也来自后端（config.CAMPUS_PRESETS）：改一个校区的位置
+// 不该要重新构建前端
+const campuses = ref([])
+
 async function loadMapTk() {
   if (mapTkLoaded) return
   mapTkLoaded = true
   try {
     const d = await api.get('/api/staff/map-config', { silent: true })
     mapTk.value = d.tk || ''
+    campuses.value = d.campuses || []
   } catch { /* 没配就没有地图，不影响定位签到本身 */ }
 }
+
+/** 按校区把地图挪过去。**这是起点不是终点**：校区中心跟具体岗位（东门、
+ *  某栋楼前）能差好几百米，落点要拖着图钉挪到实际位置上。 */
+function useCampus(c) {
+  geoForm.value.lat = c.lat
+  geoForm.value.lng = c.lng
+  geoForm.value.accuracy = 0
+  geoForm.value.source = 'campus'
+}
+
+/** 不是现场量的，就把代价说清楚——这几句话同时对应后端审计里的写法。 */
+const geoWarn = computed(() => {
+  if (geoForm.value.source === 'map') {
+    return '这个坐标是在图上点的，不是站在现场量的。签到判定会因此变弱：'
+         + '手机定位本来就只是「大概在这一带」，而点选连这一点都省了。'
+  }
+  if (geoForm.value.source === 'campus') {
+    return '这是校区的默认位置，多半不是岗位真正所在的地方——'
+         + '请拖着图钉挪到实际位置上，再保存。'
+  }
+  return ''
+})
 
 function openGeo(row) {
   geoTask.value = row
