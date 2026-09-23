@@ -378,9 +378,9 @@
             </div>
           </el-form-item>
         </el-form>
-        <!-- 地图只给人看，不能拖：锚点必须站在现场量，能拖着改就等于允许
-             坐办公室把点位挪到任何地方，那道判定就白设了。leaflet 只在打开
-             这个弹窗时才去加载（异步组件），大多数管理者不会开这一页 -->
+        <!-- 地图既给人看，也能点选、拖图钉改坐标：onPick 会把来源记成 map，
+             下面的警告随即亮出来。leaflet 只在打开这个弹窗时才去加载（异步
+             组件），大多数管理者不会开这一页 -->
         <GeoMap v-if="geoForm.lat" :lat="geoForm.lat" :lng="geoForm.lng"
                 :radius="geoForm.radius_m" :tk="mapTk" pickable
                 @pick="onPick" />
@@ -698,8 +698,8 @@ const geoDlg = ref(false)
 const geoTask = ref(null)
 const geoBusy = ref(false)
 const geoLocating = ref(false)
-// source：这个坐标是怎么来的——'gps' 站在现场量的 / 'map' 在图上点的。
-// 后端按它写审计，别让两种来源在记录里分不出来
+// source：这个坐标是怎么来的——'gps' 站在现场量的 / 'map' 在图上点或拖的 /
+// 'campus' 校区预设点。后端按它写审计，别让几种来源在记录里分不出来
 const geoForm = ref({ lat: 0, lng: 0, accuracy: 0, radius_m: 200, source: '' })
 
 // 天地图的 tk：从后端取，不是构建时写死——换 key 不用重新构建前端。

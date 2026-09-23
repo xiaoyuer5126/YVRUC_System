@@ -129,15 +129,15 @@ def map_config(user: User = Depends(require_manager)):
 
 
 class GeoBody(BaseModel):
-    """签到点的坐标。前端两种给法：站在现场用 navigator.geolocation 取，
-    或者在管理端的地图上点/拖。**只有前者能说明「人到过现场」**，所以
-    source 要传上来，写进审计——后者也允许（有时候没别的办法），
-    但得留下「这个点是坐办公室定的」这个事实。"""
+    """签到点的坐标。前端三种给法：站在现场用 navigator.geolocation 取（gps）、
+    在管理端的地图上点/拖（map）、点校区快捷按钮落到校区中心（campus）。
+    **只有 gps 能说明「人到过现场」**，所以 source 要传上来，写进审计——
+    另两种也允许（有时候没别的办法），但得留下「这个点不是现场量的」这个事实。"""
     lat: float
     lng: float
     accuracy: float = 0
     radius_m: int = config.GEO_RADIUS_DEFAULT_M
-    source: str = "gps"        # gps 现场量的 / map 图上点的
+    source: str = "gps"        # gps 现场量的 / map 图上点的 / campus 校区预设点
 
 
 @router.put("/checkin-tasks/{task_id}/geo")
@@ -146,8 +146,9 @@ def set_geo(task_id: str, body: GeoBody,
             user: User = Depends(require_manager)):
     """把这个任务改成定位签到（已有锚点则改半径/位置）。
 
-    坐标必须由管理者**在现场**用手机量：它就是「人在哪儿算到场」的唯一依据，
-    坐办公室里填一个坐标，等于把这个岗位的签到作废。
+    坐标就是「人在哪儿算到场」的唯一依据，所以最好由管理者**在现场**用手机量。
+    图上点的、校区预设的也收，但审计里写明来源（见 GeoBody）：日后有人质疑
+    签到判定，得查得出这个点是不是坐办公室定的。
     """
     task = db.get(CheckinTask, task_id)
     if task is None:
