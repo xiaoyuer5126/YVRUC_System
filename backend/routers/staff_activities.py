@@ -1586,15 +1586,38 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
         db.query(FormQuestion).filter(FormQuestion.activity_id == act.id)
         .order_by(FormQuestion.sort).all())
 
+    # 四组名单先都取出来，再一次性取用户与评分。一行一条 SQL 的话，29 个人的
+    # 名单就是 88 条（实测），而这里只需要个位数——名单端点是这一页最重的请求
+    groups = {
+        "enrolled": (db.query(Enrollment)
+                     .filter(Enrollment.shift_id == g.id,
+                             Enrollment.status == "enrolled")
+                     .order_by(Enrollment.joined_at).all()),
+        "held": (db.query(Enrollment)
+                 .filter(Enrollment.shift_id == g.id,
+                         Enrollment.seat_held.is_(True))
+                 .order_by(Enrollment.joined_at).all()),
+        "cancelled": (db.query(Enrollment)
+                      .filter(Enrollment.shift_id == g.id,
+                              Enrollment.status == "cancelled")
+                      .order_by(Enrollment.joined_at.desc()).limit(20).all()),
+        "waitlist": logic.waitlist_rows(db, g.id),
+    }
+    everyone = [e for rows_ in groups.values() for e in rows_]
+    users = {u.id: u for u in db.query(User).filter(
+        User.id.in_({e.user_id for e in everyone})).all()}
+    pos_by_id = {p.id: p for p in positions}
+    scores = scoring.briefs(db, [e.user_id for e in everyone])
+
     def user_row(e: Enrollment) -> dict:
-        u = db.get(User, e.user_id)
-        st = db.get(Position, e.position_id) if e.position_id else None
+        u = users[e.user_id]
+        st = pos_by_id.get(e.position_id) if e.position_id else None
         return {
             "enrollment_id": e.id,
             "answers": answers_out(db, questions, e.answers) if questions else [],
             "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
                      "college": u.college, "gender": u.gender, "phone": u.phone,
-                     "grade": u.grade, **scoring.brief(db, u.id)},
+                     "grade": u.grade, **scores.get(u.id, {})},
             "position_id": e.position_id,
             "position_name": st.name if st else "",
             "position_group": st.group_name if st else "",
@@ -1611,24 +1634,15 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
             "seat_held": e.seat_held,
         }
 
-    enrolled = [user_row(e) for e in db.query(Enrollment)
-                 .filter(Enrollment.shift_id == g.id,
-                         Enrollment.status == "enrolled")
-                 .order_by(Enrollment.joined_at).all()]
+    enrolled = [user_row(e) for e in groups["enrolled"]]
     waitlist = []
-    for e in logic.waitlist_rows(db, g.id):
+    for e in groups["waitlist"]:
         row = user_row(e)
         # 队列按岗位分，名次也要按岗位算（见 logic.waitlist_position）
         row["queue_position"] = logic.waitlist_position(db, e)
         waitlist.append(row)
-    held = [user_row(e) for e in db.query(Enrollment)
-            .filter(Enrollment.shift_id == g.id,
-                    Enrollment.seat_held.is_(True))
-            .order_by(Enrollment.joined_at).all()]
-    cancelled = [user_row(e) for e in db.query(Enrollment)
-                 .filter(Enrollment.shift_id == g.id,
-                         Enrollment.status == "cancelled")
-                 .order_by(Enrollment.joined_at.desc()).limit(20).all()]
+    held = [user_row(e) for e in groups["held"]]
+    cancelled = [user_row(e) for e in groups["cancelled"]]
     deadline = logic.auto_promote_deadline(db, g)
     # 人员变动流水：活动前一天少了几个人，得看得见是谁、什么时候退的
     changes = (db.query(AuditLog)

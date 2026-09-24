@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .enroll_logic import (enroll_deadline, group_leader, group_needs_leader,
+from .enroll_logic import (Occupancy, enroll_deadline, group_leader, group_needs_leader,
                            group_positions,
                            position_enrolled_count,
                            position_held_count,
@@ -149,19 +149,27 @@ def _unassigned_count(db: OrmSession, g: Shift) -> int:
 
 def position_out(db: OrmSession, p: Position, user=None, *,
                  enrolled: bool = False, manager: bool = False,
-                 same_group: bool = False) -> dict:
+                 same_group: bool = False, occ=None) -> dict:
     """岗位。
 
     带 user 时附上「这个人能不能报」——前端据此灰掉并说明原因，比让人点了
     再被拒要清楚。培训内容、学习材料与组长姓名只对**已报名本场次的人**
     和管理者可见：培训材料是发给要上岗的人的，组长姓名属于个人信息，
     不该挂在公开页面上供人浏览。
+
+    occ：传了 Occupancy 就用它里面算好的人数（一次查完的），否则各查各的。
+    列十几个岗位时前者省几十条 SQL——见 activity_detail。
     """
     # 变量名要和「我是否已报名」的参数区分开：一个是人数，一个是布尔
-    n_enrolled = position_enrolled_count(db, p.id)
-    occupied = position_occupied_count(db, p.id)
-    queued = len([r for r in waitlist_rows(db, p.shift_id)
-                  if r.position_id == p.id])
+    if occ is not None:
+        n_enrolled = occ.position_enrolled(p.id)
+        occupied = occ.position_occupied(p.id)
+        queued = occ.position_wait(p.id)
+    else:
+        n_enrolled = position_enrolled_count(db, p.id)
+        occupied = position_occupied_count(db, p.id)
+        queued = len([r for r in waitlist_rows(db, p.shift_id)
+                      if r.position_id == p.id])
     out = {
         "id": p.id, "name": p.name,
         # 岗位没有独立时间：显示所属场次的时段
@@ -169,7 +177,7 @@ def position_out(db: OrmSession, p: Position, user=None, *,
         "location": p.location, "quota": p.quota, "enrolled": n_enrolled,
         "remaining": max(0, p.quota - occupied),
         # 临期退选扣留的名额：不发出去的话，「已报名 8/10、剩余 0」没人看得懂
-        "held_seats": position_held_count(db, p.id),
+        "held_seats": occ.position_held(p.id) if occ is not None else position_held_count(db, p.id),
         "waitlist_quota": p.waitlist_quota, "waitlist_count": queued,
         "needs_leader": p.needs_leader,
         "attire": p.attire, "attire_label": p.attire_label(),
@@ -279,7 +287,7 @@ def attached_out(db: OrmSession, s: Shift, my_enr=None) -> dict:
 
 
 def shift_out(db: OrmSession, g: Shift, user=None, *,
-              manager: bool = False) -> dict:
+              manager: bool = False, occ=None) -> dict:
     positions = sorted(g.positions, key=lambda p: p.sort)
     capacity = g.total_capacity()
     # 报名本场次的人才看得到培训内容与组长（见 position_out）
@@ -305,9 +313,12 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
         "started": now() >= g.start_time,
         # 名额一律是各岗位之和；assign 场次的名额挂在占位岗位上
         "capacity": capacity,
-        "enrolled": shift_enrolled_count(db, g.id),
-        "remaining": max(0, capacity - shift_occupied_count(db, g.id)),
-        "held_seats": sum(position_held_count(db, p.id) for p in g.positions),
+        "enrolled": (occ.shift_enrolled(g.id) if occ is not None
+                     else shift_enrolled_count(db, g.id)),
+        "remaining": max(0, capacity - (occ.shift_occupied(g.id) if occ is not None
+                                        else shift_occupied_count(db, g.id))),
+        "held_seats": sum(occ.position_held(p.id) if occ is not None
+                          else position_held_count(db, p.id) for p in g.positions),
         "needs_assign": g.needs_assign(),
         "mode": g.mode,
         "mode_label": g.mode_label(),
@@ -325,7 +336,7 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
                          key=lambda x: x.start_time)],
         "note": g.note, "sort": g.sort,
         "positions": [position_out(db, p, user, enrolled=enrolled,
-                                   manager=manager,
+                                   manager=manager, occ=occ,
                                    same_group=_same_group(db, my_enr, p))
                       for p in positions],
         # 还没安排到真实岗位的人：待在占位岗位里的，加上岗位为空的
@@ -396,6 +407,9 @@ def application_out(db: OrmSession, act: Activity, user=None) -> dict:
 
 def activity_detail(db: OrmSession, act: Activity, user=None,
                     include_logs: bool = True, *, manager: bool = False) -> dict:
+    # 各场次/岗位的人数一次查完再往下传：这一页要列十几个岗位的「已报/占用/
+    # 占位/候补」，各自去 count 的话光这一页就是几十条 SQL（实测 80 条）
+    occ = Occupancy(db, act.id)
     out = activity_brief(db, act)
     out.update({
         "intro": act.intro,
@@ -408,7 +422,7 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
         "auto_publish": act.auto_publish,
         "volunteer_benefit": act.volunteer_benefit,
         # 培训/彩排不单列，它们挂在各自主场次的 attached 里
-        "shifts": sorted([shift_out(db, g, user, manager=manager)
+        "shifts": sorted([shift_out(db, g, user, manager=manager, occ=occ)
                           for g in act.main_shifts()],
                          key=lambda x: x["start_time"]),
     })

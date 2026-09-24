@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timedelta
 
 from sqlalchemy import or_
@@ -153,6 +154,62 @@ def position_held_count(db: OrmSession, position_id: str) -> int:
     return db.query(Enrollment).filter(
         Enrollment.position_id == position_id,
         Enrollment.seat_held.is_(True)).count()
+
+
+class Occupancy:
+    """一个活动里各场次/岗位的人数，**一次查完**。
+
+    展示页要列十几个岗位的「已报 / 占用 / 占位 / 候补」，一个岗位一条 count
+    就是几十条 SQL（实测：一个活动详情页 80 条，大头在这儿）。这里按
+    (场次, 岗位, 状态, 是否占位) 分组取回来，之后都在内存里加。
+
+    只给展示路径用；报名、抢名额那些地方仍走单条 count——那里要的是此刻
+    这一刻的准确值，缓存下来反而危险。
+    """
+
+    def __init__(self, db: OrmSession, activity_id: str):
+        n = lambda: defaultdict(int)                       # noqa: E731
+        self._shift = {"enrolled": n(), "occupied": n(), "wait": n()}
+        self._pos = {"enrolled": n(), "occupied": n(), "held": n(), "wait": n()}
+        rows = (db.query(Enrollment.shift_id, Enrollment.position_id,
+                         Enrollment.status, Enrollment.seat_held)
+                .filter(Enrollment.activity_id == activity_id).all())
+        for sid, pid, status, held in rows:
+            enr = status == "enrolled"
+            occ = held or status in ("enrolled", "pending_confirm")
+            wait = status in ("waitlisted", "pending_confirm")
+            if enr:
+                self._shift["enrolled"][sid] += 1
+                if pid:
+                    self._pos["enrolled"][pid] += 1
+            if occ:
+                self._shift["occupied"][sid] += 1
+                if pid:
+                    self._pos["occupied"][pid] += 1
+            if wait:
+                self._shift["wait"][sid] += 1
+                if pid:
+                    self._pos["wait"][pid] += 1
+            if held and pid:
+                self._pos["held"][pid] += 1
+
+    def shift_enrolled(self, shift_id: str) -> int:
+        return self._shift["enrolled"][shift_id]
+
+    def shift_occupied(self, shift_id: str) -> int:
+        return self._shift["occupied"][shift_id]
+
+    def position_enrolled(self, position_id: str) -> int:
+        return self._pos["enrolled"][position_id]
+
+    def position_occupied(self, position_id: str) -> int:
+        return self._pos["occupied"][position_id]
+
+    def position_held(self, position_id: str) -> int:
+        return self._pos["held"][position_id]
+
+    def position_wait(self, position_id: str) -> int:
+        return self._pos["wait"][position_id]
 
 
 def has_room(db: OrmSession, shift: Shift, position=None) -> bool:
