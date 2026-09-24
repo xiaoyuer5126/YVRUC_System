@@ -618,3 +618,32 @@ def test_没配服务端tk时说清楚是没配(client, admin, live_group, monke
     monkeypatch.setattr(config, "TIANDITU_TK_SERVER", "")
     d = client.get("/api/staff/geo/search?q=明德楼", headers=admin).json()
     assert d == {"configured": False, "items": []}
+
+
+def test_分岗位的应到岗是分到的人数不是名额(client, admin, db, live_group):
+    """名额 5、只排了 1 个人时，卡片不该写「0/5 到岗」——那是名额没招满，
+    不是缺勤。分母要按真分到这个岗位的人数算，名额另说。"""
+    act, g, h, token = live_group
+
+    d = client.get(f"/api/staff/shifts/{g.id}/board", headers=admin).json()
+    card = d["positions"][0]
+    assert card["quota"] == 5          # 名额还是 5，但那是招募的事
+    assert card["expected"] == 1       # 分到这个岗位的就 1 个人
+    assert card["checked"] == 0
+
+    client.post(f"/api/checkin/task/{token}", headers=h)
+    card = client.get(f"/api/staff/shifts/{g.id}/board",
+                      headers=admin).json()["positions"][0]
+    assert card["checked"] == 1 and card["expected"] == 1
+
+
+def test_请假的人不算进岗位的应到岗(client, admin, db, live_group):
+    """场次总数一直是这么算的（请假的人不进分母），岗位卡片跟着一致。"""
+    act, g, h, token = live_group
+    enr = db.query(Enrollment).filter(Enrollment.shift_id == g.id).one()
+    enr.excused = True
+    db.commit()
+
+    d = client.get(f"/api/staff/shifts/{g.id}/board", headers=admin).json()
+    assert d["expected"] == 0 and d["excused"] == 1
+    assert d["positions"][0]["expected"] == 0

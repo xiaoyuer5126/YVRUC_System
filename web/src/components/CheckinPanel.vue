@@ -136,12 +136,17 @@
         <el-col :span="18">
           <el-card shadow="never">
             <div class="st-grid">
+              <!-- 分母是分到这个岗位的人数，不是名额：名额 5、只排了 2 个人时
+                   写「0/5 到岗」会像缺 5 个，其实是名额没招满。名额另说一行 -->
               <div v-for="s in board.positions" :key="s.id" class="st-box">
                 <b>{{ s.name }}</b>
-                <div class="dim">{{ s.checked }}/{{ s.quota }} 到岗</div>
-                <el-progress :percentage="Math.min(100, Math.round(s.checked / Math.max(1, s.quota) * 100))"
+                <div class="dim">
+                  {{ s.checked }}/{{ s.expected }} 到岗
+                  <template v-if="s.quota !== s.expected">· 名额 {{ s.quota }}</template>
+                </div>
+                <el-progress :percentage="Math.min(100, Math.round(s.checked / Math.max(1, s.expected) * 100))"
                              :stroke-width="7" :show-text="false"
-                             :color="s.checked >= s.quota ? '#67c23a' : '#9e2235'" />
+                             :color="s.checked >= s.expected ? '#67c23a' : '#9e2235'" />
               </div>
             </div>
           </el-card>

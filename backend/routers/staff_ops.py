@@ -392,15 +392,18 @@ def board(task_id: str, db: OrmSession = Depends(db_session),
 
     items = []
     checked = checked_out = 0
-    by_position: dict[str, int] = {}   # 到岗统计只基于有签到记录的
+    # 分母是「分到这个岗位的人数」，不是名额——同 shift_board 里的说明
+    by_position: dict[str, int] = {}
+    expected_by_position: dict[str, int] = {}
     for enr, u in roster:
         st = db.get(Position, enr.position_id) if enr.position_id else None
         rec = rec_by_user.get(u.id)
+        key = enr.position_id or "_shift"
+        expected_by_position[key] = expected_by_position.get(key, 0) + 1
         if rec:
             checked += 1
             if rec.checkout_at:
                 checked_out += 1
-            key = rec.position_id or "_shift"
             by_position[key] = by_position.get(key, 0) + 1
         items.append({
             "record_id": rec.id if rec else "",
@@ -416,8 +419,9 @@ def board(task_id: str, db: OrmSession = Depends(db_session),
             "checkout_method": (rec.checkout_method or "") if rec else "",
         })
     positions = [{"id": s.id, "name": s.name, "quota": s.quota,
-                 "checked": by_position.get(s.id, 0)}
-                for s in sorted(g.positions, key=lambda x: x.sort)]
+                  "checked": by_position.get(s.id, 0),
+                  "expected": expected_by_position.get(s.id, 0)}
+                 for s in sorted(g.positions, key=lambda x: x.sort)]
     return {
         "task": {"id": task.id, "token": task.token, "mode": task.mode,
                  "active": task.active},
@@ -454,16 +458,22 @@ def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
 
     items = []
     checked = checked_out = excused = 0
-    by_position: dict[str, int] = {}   # 到岗统计只基于有签到记录者
+    # 两个都按**名单上分的岗位**归堆（不按签到记录里的岗位）：岗位卡片回答的是
+    # 「分给我的这几个人来了没有」。用名额当分母会把人吓一跳——名额 5、只排了
+    # 2 个人时写「0/5 到岗」，看着像缺 5 个，其实是名额没招满，那是另一回事
+    by_position: dict[str, int] = {}          # 到岗
+    expected_by_position: dict[str, int] = {}  # 应到岗
     for enr, u, rec in rows:
+        key = enr.position_id or "_shift"
         if enr.excused and not rec:
             excused += 1
+        else:
+            expected_by_position[key] = expected_by_position.get(key, 0) + 1
         st = db.get(Position, enr.position_id) if enr.position_id else None
         if rec:
             checked += 1
             if rec.checkout_at:
                 checked_out += 1
-            key = rec.position_id or "_shift"
             by_position[key] = by_position.get(key, 0) + 1
         items.append({
             "record_id": rec.id if rec else "",
@@ -480,8 +490,9 @@ def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
             "excused": enr.excused, "excuse_reason": enr.excuse_reason,
         })
     positions = [{"id": s.id, "name": s.name, "quota": s.quota,
-                 "checked": by_position.get(s.id, 0)}
-                for s in sorted(g.positions, key=lambda x: x.sort)]
+                  "checked": by_position.get(s.id, 0),
+                  "expected": expected_by_position.get(s.id, 0)}
+                 for s in sorted(g.positions, key=lambda x: x.sort)]
     return {
         "activity_id": act.id, "activity_title": act.title,
         "shift_id": g.id, "shift_name": g.name,
