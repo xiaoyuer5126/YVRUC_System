@@ -35,6 +35,8 @@ x-backend-env: &backend_env
   # 注意这一份是逐个变量列出来的——往 .env 加了新变量，忘了在这儿加一行，
   # 容器里就当它不存在（表现为「地图不出来、也不报错」）。
   RUCVA_TIANDITU_TK: ${RUCVA_TIANDITU_TK:-}
+  # 地名搜索用的**服务端** tk，与上面那把不是同一个应用，不能混用
+  RUCVA_TIANDITU_TK_SERVER: ${RUCVA_TIANDITU_TK_SERVER:-}
   TZ: Asia/Shanghai
 
 services:

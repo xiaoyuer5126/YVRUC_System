@@ -591,3 +591,30 @@ def test_地图配置带上校区预设点(client, admin):
     assert names == ["中关村校区", "通州校区"]
     assert all(isinstance(c["lat"], float) and isinstance(c["lng"], float)
                for c in d["campuses"])
+
+
+# ======================= 地名搜索 =======================
+
+def test_地名搜索要登录且要是管理者(client, live_group, take_student):
+    """搜索走的是服务端 tk（配额算我们的），不能谁都能调。"""
+    assert client.get("/api/staff/geo/search?q=明德楼").status_code == 401
+    assert client.get("/api/staff/geo/search?q=明德楼",
+                      headers=login(client, take_student())).status_code == 403
+
+
+def test_地名搜索至少两个字(client, admin, live_group):
+    """一个字能搜出一堆无关的，白费配额也白让人挑。"""
+    r = client.get("/api/staff/geo/search?q=楼", headers=admin)
+    assert r.status_code == 400 and "两个字" in r.json()["detail"]
+
+
+def test_没配服务端tk时说清楚是没配(client, admin, live_group, monkeypatch):
+    """「没配」和「没搜到」是两回事：不说清楚，人会一直换关键词试。
+
+    测试环境故意不注入这类密钥（见 docker-compose.yml 的注释），所以这里
+    本来就是没配的状态——正好拿它当断言。
+    """
+    from backend import config
+    monkeypatch.setattr(config, "TIANDITU_TK_SERVER", "")
+    d = client.get("/api/staff/geo/search?q=明德楼", headers=admin).json()
+    assert d == {"configured": False, "items": []}

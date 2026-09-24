@@ -1,8 +1,11 @@
 """教师/青协端：签到任务、导出中心、时长核准。"""
 from __future__ import annotations
 
+import json
 import math
+import urllib.request
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -116,6 +119,61 @@ def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
 
 # ======================= 定位签到的坐标锚点 =======================
 
+# 天地图的地名搜索。它的密钥分类型不能混用，这类接口要的是**服务端** tk，
+# 而服务端 tk 绝不能进前端——所以由后端转一手，前端只跟我们说话。
+GEO_SEARCH_URL = "https://api.tianditu.gov.cn/v2/search"
+GEO_SEARCH_TIMEOUT = 8
+# 搜索范围：以当前签到点为中心画一个方框（单位：度）。0.15° 约 16 公里，
+# 盖得住一个校区和周边。不限定的话，「明德楼」能搜出桂林和深圳的来。
+GEO_SEARCH_SPAN = 0.15
+
+
+@router.get("/geo/search")
+def geo_search(q: str, lat: float | None = None, lng: float | None = None,
+               user: User = Depends(require_manager)):
+    """按地名找坐标：管理端输「明德楼」，给一串候选点和它们的经纬度。
+
+    给了中心点就在那附近搜（管理端多半已经选过校区或量过位置），没给就搜全国
+    ——那样同名异地会很多，界面上要把地址一并列出来让人认。
+    """
+    kw = (q or "").strip()
+    if len(kw) < 2:
+        raise HTTPException(400, "请至少输入两个字")
+    if not config.TIANDITU_TK_SERVER:
+        # 没配服务端 tk：说清楚是没配，而不是「没搜到」，免得人反复换关键词
+        return {"configured": False, "items": []}
+    if lat is None or lng is None:
+        bound = "-180,-90,180,90"
+    else:
+        bound = (f"{lng - GEO_SEARCH_SPAN},{lat - GEO_SEARCH_SPAN},"
+                 f"{lng + GEO_SEARCH_SPAN},{lat + GEO_SEARCH_SPAN}")
+    # queryType 必须是 1（普通搜索）：7 是「地名搜索」，但**它不认 mapBound**，
+    # 实测会把桂林、深圳的同名楼一起返回
+    post = {"keyWord": kw, "mapBound": bound, "level": 16, "queryType": 1,
+            "start": 0, "count": 10}
+    url = GEO_SEARCH_URL + "?" + urlencode({
+        "postStr": json.dumps(post, ensure_ascii=False),
+        "type": "query", "tk": config.TIANDITU_TK_SERVER})
+    try:
+        with urllib.request.urlopen(url, timeout=GEO_SEARCH_TIMEOUT) as resp:  # noqa: S310
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        # 天地图挂了不该把人堵在这一步：手填坐标那条路照旧
+        raise HTTPException(502, "地名搜索暂时不可用，请稍后再试或直接填坐标")
+    items = []
+    for p in (data.get("pois") or []):
+        parts = (p.get("lonlat") or "").split(",")
+        if len(parts) != 2:
+            continue
+        try:
+            lo, la = float(parts[0]), float(parts[1])
+        except ValueError:
+            continue
+        items.append({"name": p.get("name") or "", "address": p.get("address") or "",
+                      "lat": la, "lng": lo})
+    return {"configured": True, "items": items}
+
+
 @router.get("/map-config")
 def map_config(user: User = Depends(require_manager)):
     """管理端画地图要的参数。
@@ -190,6 +248,7 @@ def set_geo(task_id: str, body: GeoBody,
                       + {"map": "；**坐标是在地图上点的，不是站在现场量的**",
                          "campus": "；坐标取自校区预设点（多半不是具体岗位），"
                                    "落点未经现场核对",
+                         "search": "；坐标来自地名搜索，落点未经现场核对",
                          }.get(body.source, "；坐标在现场量的"))
     db.commit()
     return {"ok": True, "geo": {"lat": geo.lat, "lng": geo.lng,

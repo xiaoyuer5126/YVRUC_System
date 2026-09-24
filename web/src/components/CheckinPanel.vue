@@ -369,6 +369,28 @@
               {{ geoTask.geo ? '沿用已量的坐标，只改半径可直接保存' : '还没有坐标' }}
             </div>
           </el-form-item>
+          <el-form-item label="搜索地点">
+            <el-input v-model="geoQuery" size="small" style="width:220px"
+                      placeholder="地名，如「明德楼」" clearable
+                      @keyup.enter="searchPlace" />
+            <el-button size="small" :loading="geoSearching" style="margin-left:8px"
+                       @click="searchPlace">搜索</el-button>
+            <!-- 同名异地很常见（「明德楼」全国一堆），所以地址必须列出来 -->
+            <div v-if="geoResults.length" class="geo-results">
+              <div v-for="(r, i) in geoResults" :key="i" class="geo-result"
+                   @click="pickResult(r)">
+                <b>{{ r.name }}</b>
+                <span class="dim">{{ r.address }}</span>
+              </div>
+            </div>
+            <div v-else-if="geoUnconfigured" class="dim">
+              没配天地图的服务端 tk（.env 里的 RUCVA_TIANDITU_TK_SERVER），
+              搜索用不了——手动填坐标或在地图上点。
+            </div>
+            <div v-else-if="geoSearched" class="dim">
+              没搜到。加上校区或城市名再试（如「人民大学明德楼」）。
+            </div>
+          </el-form-item>
           <el-form-item label="签到范围">
             <el-input-number v-model="geoForm.radius_m" :min="30" :max="3000"
                              :step="50" />
@@ -730,6 +752,42 @@ function useCampus(c) {
   geoForm.value.source = 'campus'
 }
 
+// —— 按地名搜坐标 ——
+const geoQuery = ref('')
+const geoResults = ref([])
+const geoSearching = ref(false)
+const geoSearched = ref(false)        // 搜过一次了（搜空和没搜过要分得开）
+const geoUnconfigured = ref(false)    // 后端没配服务端 tk
+
+/** 搜地名。**带上当前坐标**：搜出来的范围限定在这附近，
+ *  不然「明德楼」会把桂林、深圳的都端上来。 */
+async function searchPlace() {
+  const q = geoQuery.value.trim()
+  if (q.length < 2) return ElMessage.warning('请至少输入两个字')
+  geoSearching.value = true
+  try {
+    const d = await api.get(
+      `/api/staff/geo/search?q=${encodeURIComponent(q)}`
+      + (geoForm.value.lat ? `&lat=${geoForm.value.lat}&lng=${geoForm.value.lng}` : ''),
+      { silent: true })
+    geoUnconfigured.value = !d.configured
+    geoResults.value = d.items || []
+    geoSearched.value = true
+  } catch { /* 搜索坏了不影响手填坐标，api 层已经提示过 */ } finally {
+    geoSearching.value = false
+  }
+}
+
+/** 选中一个候选点：坐标以它为准，并且记下来源不是现场量的。 */
+function pickResult(r) {
+  geoForm.value.lat = r.lat
+  geoForm.value.lng = r.lng
+  geoForm.value.accuracy = 0
+  geoForm.value.source = 'search'
+  geoResults.value = []
+  geoQuery.value = r.name
+}
+
 /** 不是现场量的，就把代价说清楚——这几句话同时对应后端审计里的写法。 */
 const geoWarn = computed(() => {
   if (geoForm.value.source === 'map') {
@@ -739,6 +797,10 @@ const geoWarn = computed(() => {
   if (geoForm.value.source === 'campus') {
     return '这是校区的默认位置，多半不是岗位真正所在的地方——'
          + '请拖着图钉挪到实际位置上，再保存。'
+  }
+  if (geoForm.value.source === 'search') {
+    return '这个坐标来自地名搜索。搜出来的点往往是「那栋楼」本身，而不是岗位上'
+         + '具体站的位置——请对照现场拖着图钉微调一下。'
   }
   return ''
 })
@@ -877,6 +939,13 @@ function setWindowEnd(v) { form.value.range = [form.value.range[0] || '', v || '
 .ratio b { font-size:30px; color: var(--ruc-red); }
 .st-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap:12px; }
 .manual-bar { display:flex; gap:8px; margin-bottom:8px; align-items:center; flex-wrap:wrap; }
+/* 搜索结果：一条一行，点一下就用它的坐标。地址必须显示——同名异地太多了 */
+.geo-results { margin-top:8px; max-height:180px; overflow-y:auto; width:100%;
+               border:1px solid #eceef1; border-radius:8px; }
+.geo-result { padding:6px 10px; cursor:pointer; line-height:1.6; font-size:13px; }
+.geo-result + .geo-result { border-top:1px solid #f2f3f5; }
+.geo-result:hover { background:#f7f8fa; }
+.geo-result .dim { margin-left:8px; }
 /* 二维码下面那行「这是哪一场、哪个岗位」 */
 .qr-who { display:flex; justify-content:center; align-items:center; gap:8px;
           flex-wrap:wrap; margin:8px 0 4px; font-size:14px; }

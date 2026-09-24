@@ -61,6 +61,11 @@ SSO_REDIRECT_URI = os.environ.get("RUCVA_SSO_REDIRECT_URI", "").strip()
 # 定位签到功能照旧（那个本来就不依赖地图）。
 TIANDITU_TK = os.environ.get("RUCVA_TIANDITU_TK", "").strip()
 
+# 同一家的**服务端** tk，用于地名搜索（管理端输个地名找坐标）。
+# 天地图的密钥分类型、**不能混用**：上面那把是浏览器端（拼瓦片地址用），
+# 这把是服务端（后端请求用）。服务端这把绝不能进前端——会被抄走。
+TIANDITU_TK_SERVER = os.environ.get("RUCVA_TIANDITU_TK_SERVER", "").strip()
+
 # 校区的大致中心点：管理端「快捷选点」按它把地图挪过去、给个起点。
 # 数值由用户提供（比网上查的可靠——不同来源能差四百米，比我们默认的 200 米
 # 半径还大）。**它仍然不是签到点**：真正要定的是「东门」「某栋楼前」这种岗位
