@@ -1,10 +1,13 @@
 """志愿服务管理平台 · FastAPI 入口。
 
-单进程同时提供：
+每个进程同时提供：
   · /api/**      业务接口
   · /assets/**   前端构建产物（web/dist）
   · /            SPA 回退（hash 路由的兜底直链）
-  · 候补转正确认窗口的后台清扫协程（每 60s 一轮）
+
+进程数由部署决定（Dockerfile CMD 读 RUCVA_WORKERS，默认 4）。后台清扫协程
+也是每个进程各起一份，靠 Redis 租约选主，同一时刻只有主进程在跑，见
+locks.hold_sweeper_lease。
 """
 from __future__ import annotations
 
@@ -35,18 +38,22 @@ def _sweep_once() -> dict[str, int]:
         db.close()
 
 
-async def _sweeper():
+async def _sweeper(token: str):
     """定时任务循环：候补清扫、活动状态流转、签到提醒（见 scheduled.py）。
 
     一次异常不能让循环退出：它一停，超时的候补永远卡在「待确认」、活动永远
     停在「报名中」、签到提醒再也不发，而这些都没有任何外部表现。
+
+    跑多个进程时每个进程都会进到这里，所以每轮先抢一次租约（locks.py 的
+    选主）——否则提醒按进程数发几遍，收到的是真人。
     """
     while True:
         try:
-            done = await asyncio.to_thread(_sweep_once)
-            if any(done.values()):
-                logger.info("定时任务：候补清理 %(promotions)d、状态流转 %(advanced)d、"
-                            "签到提醒 %(reminders)d", done)
+            if locks.hold_sweeper_lease(token):
+                done = await asyncio.to_thread(_sweep_once)
+                if any(done.values()):
+                    logger.info("定时任务：候补清理 %(promotions)d、状态流转 %(advanced)d、"
+                                "签到提醒 %(reminders)d", done)
         except Exception:  # noqa: BLE001
             logger.exception("定时任务循环出错")
         await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
@@ -73,12 +80,17 @@ async def lifespan(_app: FastAPI):
     if config.DEMO_LOGIN_PASSWORD:
         logger.warning("演示登录已启用（口令登录）。接入统一身份认证后请清空 "
                        "RUCVA_DEMO_PASSWORD")
-    task = asyncio.create_task(_sweeper()) if config.RUN_SWEEPER else None
+    task, token = None, ""
+    if config.RUN_SWEEPER:
+        token = locks.sweeper_token()
+        task = asyncio.create_task(_sweeper(token))
     yield
     if task is not None:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+        # 交还主位：不交，下一个进程要等租期到期才接手（重启一次白停五分钟）
+        locks.release_sweeper_lease(token)
 
 
 def create_app() -> FastAPI:

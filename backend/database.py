@@ -10,7 +10,9 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from . import config
 
-engine = create_engine(config.DATABASE_URL, pool_pre_ping=True, future=True)
+engine = create_engine(config.DATABASE_URL, pool_pre_ping=True, future=True,
+                       pool_size=config.DB_POOL_SIZE,
+                       max_overflow=config.DB_MAX_OVERFLOW)
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False,
                             expire_on_commit=False, future=True)

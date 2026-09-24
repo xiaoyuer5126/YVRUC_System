@@ -31,5 +31,14 @@ FROM base AS runtime
 EXPOSE 8000
 # --proxy-headers：让 request.base_url 认 X-Forwarded-Proto，否则永远是 http，
 # 二维码兜底会给 https 站点拼出 http:// 的网址。只信任内网反代。
-CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", \
-     "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+#
+# --workers：一个进程只吃一个核（压测结论见 tests/perf_probe.py），多开几个
+# 才是加并发。进程数写进环境变量是为了不改镜像就能调：compose 从 .env 的
+# RUCVA_WORKERS 传进来，没给就按 4（本机 8 核，另留一半给数据库与反代）。
+# 定时任务因此变成每个进程各一份，靠 Redis 选主只留一个——见 locks.py。
+#
+# 包一层 sh -c 是为了能读环境变量，**exec 不能省**：少了它，docker stop 发的
+# SIGTERM 会停在 sh 上，uvicorn 收不到，容器要空等满 10 秒才被强杀。
+CMD ["sh", "-c", "exec python -m uvicorn backend.main:app --host 0.0.0.0 \
+     --port 8000 --proxy-headers --forwarded-allow-ips '*' \
+     --workers ${RUCVA_WORKERS:-4}"]

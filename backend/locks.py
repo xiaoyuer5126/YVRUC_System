@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import contextlib
+import logging
+import os
 import secrets
 import string
 import time
@@ -19,6 +21,8 @@ import redis
 from fastapi import HTTPException
 
 from . import config
+
+logger = logging.getLogger(__name__)
 
 _client = redis.Redis.from_url(config.REDIS_URL, decode_responses=True)
 
@@ -100,6 +104,70 @@ def clear_failures(key: str) -> None:
 # 授权回调是「带着 ?code=..&state=.. 从外部跳回来」的入口。不校验 state，
 # 任何人都能构造一条回调链接，把别人登进某个账号——这是登录 CSRF。
 # state 一次一用、过期即废，顺带把跳转前想去的页面捎回来。
+
+# —— 定时任务的选主 ——
+#
+# 定时任务从前靠「只有一个进程」保证不重复跑。多进程之后这条前提没了：每个
+# 进程各起一份 _sweeper，签到提醒会发两遍、候补清两遍、日报发两份——这些
+# 都有外部表现，且是发给真人的。所以用一个带租期的键选出唯一的主。
+#
+# 租期取得比一轮（60s）长得多：正常跑一轮远用不到它，主进程只要还活着就
+# 一定续得上；反过来它被 kill 时，最多一个租期内就有人接手，而这几个任务
+# 本来就是分钟级的（提醒按提前量发、候补按截止时间清），晚一轮没有外部表现。
+SWEEPER_KEY = "rucva:sweeper:leader"
+SWEEPER_LEASE_SECONDS = 300
+
+# 抢占与续期必须在一段 Lua 里做完：分成「抢」和「看是不是我的」两步的话，
+# 中间那一瞬别的进程正好可以抢走，于是两个进程都以为自己持锁。
+#
+# 返回值要分得开：1 = 新抢到，2 = 续上自己的，0 = 别人持有。续期**不能**也回 1
+# （expire 成功本来就返回 1），否则每轮续期都打一行「选主」，日志上看着像
+# 每分钟换一次主——真换主的那次就淹在里面了。
+_TAKE_LEASE = _client.register_script("""
+if redis.call('set', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2]) then
+    return 1
+end
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    if redis.call('expire', KEYS[1], ARGV[2]) == 1 then
+        return 2
+    end
+end
+return 0
+""")
+
+
+def sweeper_token() -> str:
+    """这一进程的选主标识：pid 打头，便于在 ps 与日志里对号。"""
+    return f"{os.getpid()}-{secrets.token_hex(4)}"
+
+
+def release_sweeper_lease(token: str) -> None:
+    """退出时把主位交还（只删自己那把）。不是主进程、或已经过期，都是空操作。
+
+    **不交还的话，重启一次就白停一个租期**：新进程一看键还在（持它的那个
+    进程刚被 kill 掉，谁也没告诉），就得多等五分钟才接手。被强杀的进程没
+    机会走这一步，所以租期还得留着兜底——正常退出走这里，意外死亡靠租期。
+    """
+    with contextlib.suppress(redis.RedisError):
+        _RELEASE(keys=[SWEEPER_KEY], args=[token])
+
+
+def hold_sweeper_lease(token: str, ttl: int = SWEEPER_LEASE_SECONDS) -> bool:
+    """这一轮定时任务由我来跑吗？拿到、或续上自己的，是；别人持有则不是。
+
+    **Redis 不可用时返回 True**：宁可几个进程各跑一遍，也不能谁都不跑——
+    候补永远卡在「待确认」、提醒永远不发，没有任何外部表现，比偶尔重发
+    一条消息更难发现。
+    """
+    try:
+        result = int(_TAKE_LEASE(keys=[SWEEPER_KEY], args=[token, ttl]))
+    except redis.RedisError:
+        logger.warning("Redis 不可用，定时任务选主失效：本轮照跑")
+        return True
+    if result == 1:      # 抢到的（原本没人，或前任的租期已过）
+        logger.info("定时任务选主：由本进程（%s）负责，租期 %ss", token, ttl)
+    return result != 0
+
 
 def issue_sso_state(next_url: str, ttl: int) -> str:
     state = secrets.token_urlsafe(24)

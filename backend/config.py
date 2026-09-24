@@ -109,6 +109,14 @@ DOWNLOAD_TICKET_SECONDS = 60
 # 改成超时，扫描线程也看见了，于是解冻通知发了两条，断言随机失败。
 RUN_SWEEPER = os.environ.get("RUCVA_DISABLE_SWEEPER", "").strip() != "1"
 
+# —— 连接池 ——
+# 每个进程各有一个池子，所以池子大小要乘上进程数一起算：Postgres 默认
+# max_connections=100，按默认的 4 进程 4×(5+10)=60，留了余量。往上加进程
+# （RUCVA_WORKERS）要顺手把这两个调小，否则峰值一连就顶到数据库上限，
+# 表现是所有请求一起变慢甚至报错，而不是只慢一点。
+DB_POOL_SIZE = int(os.environ.get("RUCVA_DB_POOL_SIZE", "5"))
+DB_MAX_OVERFLOW = int(os.environ.get("RUCVA_DB_MAX_OVERFLOW", "10"))
+
 # —— 业务规则常量 ——
 # 平台不对志愿者做任何限制：没有准入名单，也不拦任何人报名。临期退选只影响
 # 那个名额（报名已截止时扣留不释放），并记一次「临期退选」供青协查看。
