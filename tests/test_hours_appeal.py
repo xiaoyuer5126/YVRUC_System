@@ -705,7 +705,11 @@ def test_备注就是明细导出拼的是全部段落(client, admin, db, served
 
 def test_明细写的是实际签到签退那一段不是场次时段(client, admin, db, served):
     """迟到早退的人，明细里写场次时段就对不上账了：标着「09:00-12:00」，
-    小时数却是 2.5，谁看都得问一句。写实际那一段，数就解释得通。"""
+    小时数却只有 2 小时出头，谁看都得问一句。写实际那一段，数就解释得通。
+
+    明细里的小时数是**原始值**（2 小时 10 分 → 2.17），只有合计才按
+    「向上取整到 0.5」换算成 2.5——取整是给整笔账定的政策，明细记的是事实。
+    """
     act, g, u = served
     late = g.start_time + timedelta(minutes=40)
     left = g.end_time - timedelta(minutes=70)
@@ -714,11 +718,12 @@ def test_明细写的是实际签到签退那一段不是场次时段(client, ad
     db.commit()
 
     _confirm(client, admin, act, approve=False)
-    part = _record(client, login(client, u.student_id))["parts"][0]
-    assert part["hours"] == 2.5                    # 2 小时 10 分
-    assert part["time"] == f"{late:%m-%d %H:%M}-{left:%H:%M}"
-    assert part["time"] != g.span_text()
-    assert part["position"] == "引导"
+    row = _record(client, login(client, u.student_id))
+    assert row["hours"] == 2.5                     # 合计：2 小时 10 分向上取整
+    assert row["parts"][0]["hours"] == 2.17        # 明细：实际那一段
+    assert row["parts"][0]["time"] == f"{late:%m-%d %H:%M}-{left:%H:%M}"
+    assert row["parts"][0]["time"] != g.span_text()
+    assert row["parts"][0]["position"] == "引导"
 
 
 def test_多个岗位就是多句话(client, admin, db, served):
