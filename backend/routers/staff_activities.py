@@ -1885,6 +1885,7 @@ def add_walkin(shift_id: str, body: dict,
 
     force = bool(body.get("force"))
     reasons: list[str] = []
+    db.commit()          # 还连接再抢锁，理由同 enroll（routers/activities.py）
     with shift_lock(g.id):
         live = (db.query(Enrollment)
                 .filter(Enrollment.shift_id == g.id, Enrollment.user_id == u.id)

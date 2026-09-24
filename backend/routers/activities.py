@@ -294,6 +294,15 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                            f"{logic.conflict_message(clashes)}",
                 "conflicts": clashes})
 
+    # 上面全是读，先落一个空事务把**数据库连接还回池子**，再去抢场次锁。
+    # 不还的话，等锁的这段时间是「占着一条连接在等」：几百个请求一起到的时候，
+    # 池子会被等锁的人占满，反而轮到锁的持有者拿不到连接去干活——两边互相等，
+    # 一直到连接池 30 秒超时才一批批散开。压测里这一幕是实打实的：700 个请求
+    # 同时到，p50 卡在 30 秒，整站跟着瘫了两分钟。
+    # （commit 而不是 rollback：这就是读阶段的正常收尾，语义更直白；
+    #   本会话 expire_on_commit=False，对象在 commit 后照样能读。）
+    db.commit()
+
     # ★ 名额判断与落库整段串行化到场次粒度，防止超卖与重复报名
     with shift_lock(g.id):
         live = (db.query(Enrollment)
@@ -462,6 +471,9 @@ def cancel_enroll(enrollment_id: str,
     act = db.get(Activity, enr.activity_id)
     _ensure_not_editing(act)
 
+    # 把连接还回池子再去抢锁，理由同 enroll
+    db.commit()
+
     with shift_lock(g.id):
         if enr.status == "pending_confirm":
             # 放弃候补转正：名额顺延下一位
@@ -536,6 +548,7 @@ def confirm_promotion(enrollment_id: str,
     enr = db.get(Enrollment, enrollment_id)
     if enr is None or enr.user_id != user.id:
         raise HTTPException(404, "报名记录不存在")
+    db.commit()          # 还连接再抢锁，理由同 enroll
     with shift_lock(enr.shift_id):
         db.refresh(enr)
         if enr.status != "pending_confirm":
