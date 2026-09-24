@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session as OrmSession
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import current_user, require_manager
-from ..models import (Activity, Enrollment, Position, User, AttireRecord,
+from ..models import (Activity, Enrollment, Position, Shift, User, AttireRecord,
                       AttireTask, iso, now, uid)
 from ..perm import ensure_activity_manager
 from ..qrcodes import page_qr
@@ -262,6 +262,8 @@ def attire_batch(activity_id: str, body: AttireOpBody,
 
 class AttireRemindBody(BaseModel):
     action: str = "return"      # take 催领取 / return 催归还
+    shift_id: str = ""          # 空 = 全部场次
+    campus: str = ""            # 空 = 全部校区
     need_ack: bool = False
 
 
@@ -269,10 +271,13 @@ class AttireRemindBody(BaseModel):
 def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
                 db: OrmSession = Depends(db_session),
                 user: User = Depends(require_manager)):
-    """一键催领取或催归还。
+    """催领取或催归还，可以只催某个场次、某个校区的人。
 
     催领取：岗位统一发放服装、但还没领的人——活动当天没穿统一服装，现场认不出是志愿者。
     催归还：领了还没还的人。
+
+    为什么要能挑范围：现场往往是「东门那几个人还没还」或者「通州校区那批」，
+    整场群发等于给几十个已经还了的人白推一条消息。
     """
     from ..integrations import msgcenter
 
@@ -281,6 +286,22 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
     body = body or AttireRemindBody()
     if body.action not in ACTIONS:
         raise HTTPException(400, "未知操作")
+
+    def in_scope(uid_: str) -> bool:
+        """这个人是不是落在这回要提醒的范围里。"""
+        if body.shift_id:
+            hit = (db.query(Enrollment.id)
+                   .filter(Enrollment.activity_id == activity_id,
+                           Enrollment.user_id == uid_,
+                           Enrollment.shift_id == body.shift_id,
+                           Enrollment.status == "enrolled").first())
+            if hit is None:
+                return False
+        if body.campus:
+            u = db.get(User, uid_)
+            if u is None or u.campus != body.campus:
+                return False
+        return True
 
     if body.action == "return":
         targets = [db.get(User, r.user_id) for r in
@@ -303,9 +324,10 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
         text = (f"您在「{act.title}」的岗位由平台统一发放志愿服装，尚无领取记录。\n"
                 f"请到指定地点扫「领取码」领取，并按要求归还。")
 
-    targets = [u for u in targets if u is not None]
+    targets = [u for u in targets if u is not None and in_scope(u.id)]
+    scope = _scope_text(db, activity_id, body)
     if not targets:
-        raise HTTPException(400, empty_msg)
+        raise HTTPException(400, f"{empty_msg}（{scope}）")
     batch_id = uid("bat") if body.need_ack else None
     for u in targets:
         msgcenter.send_user(db, u, "custom", data={"activity_id": activity_id},
@@ -315,7 +337,20 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
     audit_log(db, actor=user, action="update", target_type="attire",
               target_id=activity_id, target_label=act.title,
               activity_id=activity_id,
-              summary=f"提醒 {len(targets)} 位志愿者{label}服装"
+              summary=f"提醒 {len(targets)} 位志愿者{label}服装（{scope}）"
                       + ("，要求签收" if body.need_ack else ""))
     db.commit()
-    return {"ok": True, "count": len(targets), "batch_id": batch_id}
+    return {"ok": True, "count": len(targets), "batch_id": batch_id,
+            "scope": scope}
+
+
+def _scope_text(db: OrmSession, activity_id: str, body: AttireRemindBody) -> str:
+    """这次提醒的范围，写成一句人话——通知的回执和审计里都要看得懂。"""
+    parts = []
+    if body.shift_id:
+        g = db.get(Shift, body.shift_id)
+        parts.append(g.name if g else "未知场次")
+    else:
+        parts.append("全部场次")
+    parts.append(body.campus or "全部校区")
+    return " · ".join(parts)

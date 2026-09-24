@@ -182,3 +182,104 @@ def test_统一发放或自备都必须写服装备注(client, admin, db, open_g
     assert pos["attire_text"] == "志愿者自备，白色上衣"
     # 自备的不进领取台账；改成统一发放后才出现在「应领」里
     assert not d["attire_issued"]
+
+
+# ======================= 提醒的范围：场次 + 校区 =======================
+#
+# 现场往往是「东门那几个人还没还」或者「通州校区那批」，整场群发等于给已经
+# 还了的人白推一条。
+
+@pytest.fixture
+def two_campus(db, attire_activity, take_student):
+    """在那个活动里再加两个人：一个别的场次、一个别的校区。"""
+    act, a, _b = attire_activity
+    g = db.query(Shift).filter(Shift.activity_id == act.id).one()
+    g2 = Shift(id=uid("g"), activity_id=act.id, name="次日",
+               start_time=now() + timedelta(days=4),
+               end_time=now() + timedelta(days=4, hours=4), mode="pick", sort=1)
+    db.add(g2)
+    db.flush()
+    pos = Position(id=uid("p"), shift_id=g2.id, name="引导", quota=5,
+                   attire="issued", attire_note="北门物资桌", sort=0, **POSITION_TEXT)
+    db.add(pos)
+    db.flush()
+    a.campus = "中关村校区"
+    other_shift = student_row(db, take_student())
+    other_campus = student_row(db, take_student())
+    other_campus.campus = "通州校区"
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g2.id,
+                      user_id=other_shift.id, position_id=pos.id,
+                      status="enrolled", joined_at=now()))
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                      user_id=other_campus.id, position_id=pos.id,
+                      status="enrolled", joined_at=now()))
+    db.commit()
+    return act, g, g2, a, other_shift, other_campus
+
+
+def test_催取可以只发某个场次(client, admin, db, two_campus):
+    act, g, g2, a, other_shift, other_campus = two_campus
+    _tokens(client, admin, act)
+    url = f"/api/staff/activities/{act.id}/attire"
+
+    r = client.post(f"{url}/remind", headers=admin,
+                    json={"action": "take", "shift_id": g.id})
+    assert r.status_code == 200, r.text
+    assert r.json()["count"] == 2                    # g 场次的两个人
+    assert "当日" in r.json()["scope"]
+
+    # 另一场次的那个人没被惊动
+    from backend.models import Notification
+    assert not (db.query(Notification)
+                .filter(Notification.user_id == other_shift.id,
+                        Notification.title.like("请领取志愿服装%")).first())
+
+
+def test_催取可以只发某个校区(client, admin, db, two_campus):
+    act, g, g2, a, other_shift, other_campus = two_campus
+    _tokens(client, admin, act)
+    url = f"/api/staff/activities/{act.id}/attire"
+
+    r = client.post(f"{url}/remind", headers=admin,
+                    json={"action": "take", "campus": "通州校区"})
+    assert r.status_code == 200 and r.json()["count"] == 1
+    assert "通州校区" in r.json()["scope"]
+
+    from backend.models import Notification
+    assert (db.query(Notification)
+            .filter(Notification.user_id == other_campus.id,
+                    Notification.title.like("请领取志愿服装%")).first())
+    assert not (db.query(Notification)
+                .filter(Notification.user_id == a.id,
+                        Notification.title.like("请领取志愿服装%")).first())
+
+
+def test_范围里没人时说清楚是哪个范围(client, admin, two_campus):
+    """「没人可提醒」和「这个范围里没人」是两回事：不说清范围，人会以为
+    全活动都催过了。"""
+    act, g, g2, a, other_shift, other_campus = two_campus
+    _tokens(client, admin, act)
+    url = f"/api/staff/activities/{act.id}/attire"
+
+    r = client.post(f"{url}/remind", headers=admin,
+                    json={"action": "take", "campus": "苏州校区"})
+    assert r.status_code == 400 and "苏州校区" in r.json()["detail"]
+
+
+def test_催归还同样认范围和动作(client, admin, db, two_campus):
+    """还了的不能再催；没劝过的不能催还。两件事都按范围算。"""
+    act, g, g2, a, other_shift, other_campus = two_campus
+    _tokens(client, admin, act)
+    url = f"/api/staff/activities/{act.id}/attire"
+
+    client.post(f"{url}/batch", headers=admin,
+                json={"action": "take", "student_ids": [a.student_id]})
+    r = client.post(f"{url}/remind", headers=admin,
+                    json={"action": "return", "campus": "中关村校区"})
+    assert r.status_code == 200 and r.json()["count"] == 1
+
+    client.post(f"{url}/batch", headers=admin,
+                json={"action": "return", "student_ids": [a.student_id]})
+    r = client.post(f"{url}/remind", headers=admin,
+                    json={"action": "return", "campus": "中关村校区"})
+    assert r.status_code == 400 and "没有未归还" in r.json()["detail"]

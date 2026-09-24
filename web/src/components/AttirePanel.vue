@@ -26,16 +26,6 @@
       <el-col :span="6"><el-card shadow="never" class="num warn"><b>{{ data?.outstanding || 0 }}</b><div class="dim">未归还</div></el-card></el-col>
     </el-row>
 
-    <div class="toolbar">
-      <template v-if="selected.length">
-        <span class="dim">已选 {{ selected.length }} 人：</span>
-        <el-button size="small" type="primary" @click="batch('take')">登记领取</el-button>
-        <el-button size="small" type="warning" @click="batch('return')">登记归还</el-button>
-        <el-button size="small" plain @click="batch('cancel_return')">撤销归还</el-button>
-        <el-button size="small" type="danger" plain @click="batch('cancel_take')">撤销领取</el-button>
-      </template>
-    </div>
-
     <DataCards v-if="narrow" :rows="data?.items || []" title-key="name"
                row-key="student_id"
                :fields="[{ key: 'student_id', label: '学号' },
@@ -45,28 +35,27 @@
         <el-tag size="small" :type="tagType(row)">{{ tagText(row) }}</el-tag>
       </template>
       <template #actions="{ row }">
-        <el-button v-if="!row.taken && !row.returned" size="small" type="primary" plain
-                   @click="one('take', row)">登记领取</el-button>
-        <el-button v-else-if="row.taken" size="small" type="warning" plain
-                   @click="one('return', row)">登记归还</el-button>
+        <AttireOps :row="row" @do="one" />
       </template>
     </DataCards>
-    <el-table v-else :data="data?.items || []" size="small" max-height="360"
-              @selection-change="onSelect">
-      <el-table-column type="selection" width="40" />
+    <el-table v-else :data="data?.items || []" size="small" max-height="360">
       <el-table-column prop="name" label="姓名" width="110" />
       <el-table-column prop="student_id" label="学号" width="120" />
       <el-table-column prop="position" label="岗位" min-width="130" />
-      <el-table-column label="状态" width="120">
+      <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag size="small" :type="tagType(row)">{{ tagText(row) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="领取 / 归还" min-width="180">
+      <el-table-column label="领取 / 归还" min-width="170">
         <template #default="{ row }">
           <span class="dim">{{ fmtDT(row.taken_at) || '—' }}</span>
           <span class="dim"> / {{ fmtDT(row.returned_at) || '—' }}</span>
         </template>
+      </el-table-column>
+      <!-- 现场没网、码贴反了都得有人工兜底，所以按钮就放在人这一行上 -->
+      <el-table-column label="手动登记" width="210" fixed="right">
+        <template #default="{ row }"><AttireOps :row="row" @do="one" /></template>
       </el-table-column>
     </el-table>
 
@@ -74,9 +63,24 @@
                width="440">
       <p class="dim" style="line-height:1.8">
         {{ rm.action === 'take'
-           ? `发给尚未领取服装的 ${data?.not_taken || 0} 位志愿者。`
-           : `发给尚未归还服装的 ${data?.outstanding || 0} 位志愿者。` }}
+           ? '发给该范围内尚未领取服装的志愿者。'
+           : '发给该范围内尚未归还服装的志愿者。' }}
       </p>
+      <!-- 现场往往是「东门那几个人还没还」或者「通州校区那批」，
+           整场群发等于给已经还了的人白推一条 -->
+      <el-form label-width="72px">
+        <el-form-item label="场次">
+          <el-select v-model="rm.shiftId" clearable placeholder="全部场次" style="width:100%">
+            <el-option v-for="g in allShifts" :key="g.id" :value="g.id"
+                       :label="`${g.name}（${g.time_text}）`" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="校区">
+          <el-select v-model="rm.campus" clearable placeholder="全部校区" style="width:100%">
+            <el-option v-for="c in campuses" :key="c" :value="c" :label="c" />
+          </el-select>
+        </el-form-item>
+      </el-form>
       <el-checkbox v-model="rm.needAck">要求志愿者点「我已知悉」</el-checkbox>
       <div class="dim">勾选后可在「签收情况」查看并一键提醒。</div>
       <template #footer>
@@ -90,55 +94,54 @@
         <!-- 必须带 base：不传的话码里编的是相对路径，相机只会当一行字显示 -->
         <img :src="`/api/attire/qr.svg?token=${qr.token}&base=${qrBase()}&t=${Date.now()}`"
              width="260" height="260" alt="服装二维码" />
-        <div class="mono" style="font-size:22px;letter-spacing:4px">{{ qr.token }}</div>
-        <div class="dim">请把这张码贴在{{ qr.label }}处，别和另一张弄混</div>
-        <div style="margin-top:12px">
-          <el-input size="small" readonly :model-value="scanUrl">
-            <template #append><el-button @click="copyLink">复制</el-button></template>
-          </el-input>
-        </div>
+        <!-- 不出那串码、也不出链接：能念给群里、能转发的凭据，等于谁都能替别人领。
+             要看码只有一条路——把这一屏亮在来领的人面前（同签到二维码那边） -->
+        <div>{{ title }}·服装{{ qr.label }}码</div>
+        <div class="dim">请把这一屏亮在{{ qr.label }}处，别和另一张弄混</div>
       </div>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { api, fmtDT, pageUrl, qrBase } from '../api'
+import { api, fmtDT, qrBase } from '../api'
 import { useNarrow } from '../composables/useNarrow'
+import AttireOps from './AttireOps.vue'
 import DataCards from './DataCards.vue'
 import RefreshBar from './RefreshBar.vue'
 
-const props = defineProps({ activityId: { type: String, required: true } })
+const props = defineProps({
+  activityId: { type: String, required: true },
+  // 二维码弹窗上要写「活动名·服装领取码」：那一屏是贴在现场的，
+  // 光看码分不出是哪场活动的哪个码
+  title: { type: String, default: '' },
+  // 提醒时能挑场次
+  allShifts: { type: Array, default: () => [] },
+})
 const narrow = useNarrow()
 const data = ref(null)
 const loading = ref(false)
-const selected = ref([])
 const qr = ref({ visible: false, token: '', label: '' })
 const refresher = ref(null)
-
-// 模板里不能直接用 location（不在 Vue 模板全局白名单），放 computed
-const scanUrl = computed(() => pageUrl(`/attire/${qr.value.token}`))
-function copyLink() {
-  navigator.clipboard.writeText(scanUrl.value)
-  ElMessage.success('链接已复制')
-}
+const campuses = ref([])      // 校区清单以后端为准，别在这儿抄第二份
 
 async function load() {
   loading.value = true
   try {
     data.value = await api.get(`/api/staff/activities/${props.activityId}/attire`)
-    selected.value = []
   } finally { loading.value = false }
 }
 onMounted(async () => {
   await load()
   refresher.value?.markLoaded()
+  try {
+    campuses.value = (await api.get('/api/auth/constants', { silent: true })).campuses || []
+  } catch { /* 拿不到就只按场次筛 */ }
 })
 
-const onSelect = rows => { selected.value = rows }
 const tagText = r => (r.returned ? '已归还' : r.taken ? '未归还' : '未领取')
 const tagType = r => (r.returned ? 'success' : r.taken ? 'warning' : 'info')
 
@@ -153,13 +156,6 @@ function openQR(action) {
                label: action === 'take' ? '领取' : '归还' }
 }
 
-async function batch(action) {
-  await api.post(`/api/staff/activities/${props.activityId}/attire/batch`,
-    { action, student_ids: selected.value.map(r => r.student_id) })
-  ElMessage.success('已登记')
-  load()
-}
-
 async function one(action, row) {
   await api.post(`/api/staff/activities/${props.activityId}/attire/batch`,
     { action, student_ids: [row.student_id] })
@@ -167,18 +163,21 @@ async function one(action, row) {
   load()
 }
 
-const rm = ref({ visible: false, action: 'return', needAck: false, busy: false })
+const rm = ref({ visible: false, action: 'return', shiftId: '', campus: '',
+                 needAck: false, busy: false })
 const openRemind = action => {
-  rm.value = { visible: true, action, needAck: false, busy: false }
+  rm.value = { visible: true, action, shiftId: '', campus: '',
+               needAck: false, busy: false }
 }
 
 async function remind() {
   rm.value.busy = true
   try {
     const d = await api.post(`/api/staff/activities/${props.activityId}/attire/remind`,
-      { action: rm.value.action, need_ack: rm.value.needAck })
-    ElMessage.success(`已提醒 ${d.count} 位志愿者`
-      + (d.batch_id ? '（要求签收）' : ''))
+      { action: rm.value.action, shift_id: rm.value.shiftId,
+        campus: rm.value.campus, need_ack: rm.value.needAck })
+    ElMessage.success(`已提醒 ${d.count} 位志愿者（${d.scope}）`
+      + (d.batch_id ? '，要求签收' : ''))
     rm.value.visible = false
   } finally { rm.value.busy = false }
 }

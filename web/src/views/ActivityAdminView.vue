@@ -563,7 +563,8 @@
 
       <!-- ============ 志愿服装 ============ -->
       <el-tab-pane v-if="isPublic && act.attire_issued" label="志愿服装" name="attire" lazy>
-        <AttirePanel :activity-id="act.id" />
+        <AttirePanel :activity-id="act.id" :title="act.title"
+                     :all-shifts="allShifts" />
       </el-tab-pane>
 
       <!-- ============ 时长管理 ============ -->
