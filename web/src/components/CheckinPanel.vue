@@ -345,36 +345,23 @@
     <!-- 定位签到：坐标由管理者站在岗位上量 -->
     <el-dialog v-model="geoDlg" title="定位签到" width="440">
       <template v-if="geoTask">
-        <el-alert type="warning" :closable="false" style="margin-bottom:12px">
-          <p style="margin:0;line-height:1.9">
-            坐标要<b>站在岗位上</b>量，它就是「人在哪儿算到场」的唯一依据——
-            坐办公室填一个，这个岗位的签到就作废了。
-          </p>
-        </el-alert>
         <el-form label-width="90px">
-          <el-form-item label="签到点">
-            <el-button size="small" :loading="geoLocating"
-                       @click="locateMe">使用我的当前位置</el-button>
-            <!-- 快捷选点：只把人和地图带到校区，落点还得拖着图钉挪到具体岗位。
-                 校区坐标各来源能差四百米，当签到点用是不行的 -->
-            <el-button v-for="c in campuses" :key="c.name" size="small" plain
-                       @click="useCampus(c)">{{ c.name }}</el-button>
-            <div v-if="geoForm.lat" class="dim" style="line-height:1.7">
-              {{ geoForm.lat.toFixed(5) }}, {{ geoForm.lng.toFixed(5) }}
-              <template v-if="geoForm.accuracy">
-                （手机报的误差约 ±{{ Math.round(geoForm.accuracy) }} 米）
-              </template>
+          <el-form-item label="签到地点">
+            <!-- 三行：快捷来源 / 按地名搜 / 坐标。校区按钮只把地图带到校区，
+                 落点还得拖着图钉挪到具体岗位 -->
+            <div class="geo-line">
+              <el-button size="small" :loading="geoLocating"
+                         @click="locateMe">使用我的当前位置</el-button>
+              <el-button v-for="c in campuses" :key="c.name" size="small" plain
+                         @click="useCampus(c)">{{ c.name }}</el-button>
             </div>
-            <div v-else class="dim">
-              {{ geoTask.geo ? '沿用已量的坐标，只改半径可直接保存' : '还没有坐标' }}
+            <div class="geo-line">
+              <el-input v-model="geoQuery" size="small" style="width:200px"
+                        placeholder="地名，如「明德楼」" clearable
+                        @keyup.enter="searchPlace" />
+              <el-button size="small" :loading="geoSearching"
+                         @click="searchPlace">搜索</el-button>
             </div>
-          </el-form-item>
-          <el-form-item label="搜索地点">
-            <el-input v-model="geoQuery" size="small" style="width:220px"
-                      placeholder="地名，如「明德楼」" clearable
-                      @keyup.enter="searchPlace" />
-            <el-button size="small" :loading="geoSearching" style="margin-left:8px"
-                       @click="searchPlace">搜索</el-button>
             <!-- 同名异地很常见（「明德楼」全国一堆），所以地址必须列出来 -->
             <div v-if="geoResults.length" class="geo-results">
               <div v-for="(r, i) in geoResults" :key="i" class="geo-result"
@@ -383,12 +370,11 @@
                 <span class="dim">{{ r.address }}</span>
               </div>
             </div>
-            <div v-else-if="geoUnconfigured" class="dim">
-              没配天地图的服务端 tk（.env 里的 RUCVA_TIANDITU_TK_SERVER），
-              搜索用不了——手动填坐标或在地图上点。
-            </div>
-            <div v-else-if="geoSearched" class="dim">
-              没搜到。加上校区或城市名再试（如「人民大学明德楼」）。
+            <div v-if="geoForm.lat" class="dim" style="line-height:1.7">
+              {{ geoForm.lat.toFixed(5) }}, {{ geoForm.lng.toFixed(5) }}
+              <template v-if="geoForm.accuracy">
+                （手机报的误差约 ±{{ Math.round(geoForm.accuracy) }} 米）
+              </template>
             </div>
           </el-form-item>
           <el-form-item label="签到范围">
@@ -400,29 +386,15 @@
             </div>
           </el-form-item>
         </el-form>
-        <!-- 地图既给人看，也能点选、拖图钉改坐标：onPick 会把来源记成 map，
-             下面的警告随即亮出来。leaflet 只在打开这个弹窗时才去加载（异步
-             组件），大多数管理者不会开这一页 -->
+        <!-- 地图只给人看，不能拖：锚点必须站在现场量，能拖着改就等于允许
+             坐办公室把点位挪到任何地方，那道判定就白设了。leaflet 只在打开
+             这个弹窗时才去加载（异步组件），大多数管理者不会开这一页 -->
         <GeoMap v-if="geoForm.lat" :lat="geoForm.lat" :lng="geoForm.lng"
                 :radius="geoForm.radius_m" :tk="mapTk" pickable
                 @pick="onPick" />
-        <div v-else class="dim" style="line-height:1.8">
-          量到坐标后这里会显示签到点与范围。
-        </div>
         <div class="dim" style="line-height:1.8">
           图上可以直接点一下、或者拖着图钉挪位置。
         </div>
-        <!-- 不是现场量的就得说清楚、并且留痕（后端按 source 写进审计）。
-             地图点选比现场量弱；校区预设更弱——那只是个校区的中心，多半
-             不是具体岗位的位置 -->
-        <el-alert v-if="geoWarn" type="warning" :closable="false"
-                  style="margin-top:8px">
-          <p style="margin:0;line-height:1.9">{{ geoWarn }}</p>
-        </el-alert>
-        <p class="dim" style="line-height:1.8;margin:12px 0 0">
-          设好之后，志愿者在「我的报名」里点「签到」就是定位签到，
-          现场不再需要二维码。定位取不到时，仍可在下面的名单里手动补签。
-        </p>
       </template>
       <template #footer>
         <el-button v-if="geoTask?.geo" type="danger" plain :loading="geoBusy"
@@ -756,8 +728,6 @@ function useCampus(c) {
 const geoQuery = ref('')
 const geoResults = ref([])
 const geoSearching = ref(false)
-const geoSearched = ref(false)        // 搜过一次了（搜空和没搜过要分得开）
-const geoUnconfigured = ref(false)    // 后端没配服务端 tk
 
 /** 搜地名。**带上当前坐标**：搜出来的范围限定在这附近，
  *  不然「明德楼」会把桂林、深圳的都端上来。 */
@@ -770,9 +740,7 @@ async function searchPlace() {
       `/api/staff/geo/search?q=${encodeURIComponent(q)}`
       + (geoForm.value.lat ? `&lat=${geoForm.value.lat}&lng=${geoForm.value.lng}` : ''),
       { silent: true })
-    geoUnconfigured.value = !d.configured
     geoResults.value = d.items || []
-    geoSearched.value = true
   } catch { /* 搜索坏了不影响手填坐标，api 层已经提示过 */ } finally {
     geoSearching.value = false
   }
@@ -787,23 +755,6 @@ function pickResult(r) {
   geoResults.value = []
   geoQuery.value = r.name
 }
-
-/** 不是现场量的，就把代价说清楚——这几句话同时对应后端审计里的写法。 */
-const geoWarn = computed(() => {
-  if (geoForm.value.source === 'map') {
-    return '这个坐标是在图上点的，不是站在现场量的。签到判定会因此变弱：'
-         + '手机定位本来就只是「大概在这一带」，而点选连这一点都省了。'
-  }
-  if (geoForm.value.source === 'campus') {
-    return '这是校区的默认位置，多半不是岗位真正所在的地方——'
-         + '请拖着图钉挪到实际位置上，再保存。'
-  }
-  if (geoForm.value.source === 'search') {
-    return '这个坐标来自地名搜索。搜出来的点往往是「那栋楼」本身，而不是岗位上'
-         + '具体站的位置——请对照现场拖着图钉微调一下。'
-  }
-  return ''
-})
 
 function openGeo(row) {
   geoTask.value = row
@@ -939,8 +890,11 @@ function setWindowEnd(v) { form.value.range = [form.value.range[0] || '', v || '
 .ratio b { font-size:30px; color: var(--ruc-red); }
 .st-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap:12px; }
 .manual-bar { display:flex; gap:8px; margin-bottom:8px; align-items:center; flex-wrap:wrap; }
+/* 签到地点那三行：快捷来源 / 搜索 / 坐标 */
+.geo-line { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+            margin-bottom:8px; width:100%; }
 /* 搜索结果：一条一行，点一下就用它的坐标。地址必须显示——同名异地太多了 */
-.geo-results { margin-top:8px; max-height:180px; overflow-y:auto; width:100%;
+.geo-results { margin-bottom:8px; max-height:180px; overflow-y:auto; width:100%;
                border:1px solid #eceef1; border-radius:8px; }
 .geo-result { padding:6px 10px; cursor:pointer; line-height:1.6; font-size:13px; }
 .geo-result + .geo-result { border-top:1px solid #f2f3f5; }
