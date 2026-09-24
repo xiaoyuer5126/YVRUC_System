@@ -202,6 +202,26 @@ def my_notifications(db: OrmSession = Depends(db_session),
             "items": [n.out() for n in rows]}
 
 
+@router.get("/notifications/unread")
+def notifications_unread(db: OrmSession = Depends(db_session),
+                         user: User = Depends(current_user)):
+    """只要两个数：未读数、待签收数。
+
+    给顶上那个 30 秒轮询用。走完整的 /notifications 会把最近 50 条通知的
+    正文一并拉回来，而轮询只用到其中一个数字——开着的每个页面每 30 秒拉
+    一次几十 KB 的正文，纯浪费。
+    """
+    return {
+        "unread": (db.query(func.count(Notification.id))
+                   .filter(Notification.user_id == user.id,
+                           Notification.read.is_(False)).scalar() or 0),
+        "pending_ack": (db.query(func.count(Notification.id))
+                        .filter(Notification.user_id == user.id,
+                                Notification.need_ack.is_(True),
+                                Notification.acked_at.is_(None)).scalar() or 0),
+    }
+
+
 @router.post("/notifications/read-all")
 def read_all(db: OrmSession = Depends(db_session), user=Depends(current_user)):
     """全部标为已读。待签收的通知只标已读，签收仍需本人逐条点。"""

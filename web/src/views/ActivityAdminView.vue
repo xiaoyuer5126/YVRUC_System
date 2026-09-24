@@ -931,6 +931,7 @@
 
       <!-- ============ 变更记录 ============ -->
       <el-tab-pane label="变更记录" name="logs" lazy>
+        <div v-loading="logsLoading">
         <el-timeline v-if="logs.length">
           <el-timeline-item v-for="l in logs" :key="l.id" placement="top"
                             :timestamp="fmtDT(l.created_at)"
@@ -944,6 +945,7 @@
           </el-timeline-item>
         </el-timeline>
         <el-empty v-else description="暂无操作记录" />
+        </div>
       </el-tab-pane>
     </el-tabs>
 
@@ -1624,6 +1626,17 @@ const rosterOptions = computed(() => {
   return [...byStudent.values()].map(v => ({ ...v, where: v.places.join('、') }))
 })
 const logs = ref([])
+const logsLoading = ref(false)
+
+/** 变更记录：切到这一页才拉（见 watch(tab) 与 loadAll 里的直达分支）。 */
+async function loadLogs() {
+  logsLoading.value = true
+  try {
+    const d = await api.get(
+      `/api/staff/audit-logs?activity_id=${activityId}&size=50`)
+    logs.value = d.items || []
+  } finally { logsLoading.value = false }
+}
 const cancelType = x => ({ normal: '退选', late: '临近扣分', expired: '确认超时',
                            abandoned: '放弃候补', shift_deleted: '场次取消' }[x.cancel_type] || '取消')
 
@@ -1647,8 +1660,6 @@ async function loadAll() {
     d.shifts.forEach((g, i) => {
       g._roster = rosters[i]
     })
-    const logsResp = await api.get(`/api/staff/audit-logs?activity_id=${activityId}&size=50`)
-    logs.value = logsResp.items || []
     // 弹窗里的表要等打开才加载，题数得自己先问一句，按钮上要写
     formCount.value = (await api.get(
       `/api/staff/activities/${activityId}/form`)).questions.length
@@ -1657,6 +1668,7 @@ async function loadAll() {
     // ?tab=hours 直达：watch(tab) 不会触发，时长这一页要在这里加载，
     // 否则核准按钮拿不到申诉截止时间的默认值
     if (tab.value === 'hours') hoursPreview(true)
+    if (tab.value === 'logs') loadLogs()
     loadApproval()
     if (!currentGroupId.value && shifts.value.length) {
       currentGroupId.value = shifts.value[0].id
@@ -2467,6 +2479,11 @@ watch(tab, async t => {
     await loadBatches()
     await nextTick()                 // lazy 页签这一轮才渲染，ref 要等一帧
     ackRefresh.value?.markLoaded()   // 首次由这里加载，时刻也要记上
+  }
+  if (t === 'logs') {
+    // 变更记录是给「翻旧账」用的，多数人从不点开；进活动就拉 50 条，
+    // 等于替没打开的页签白干一趟
+    loadLogs()
   }
 })
 watch(currentGroupId, loadRoster)

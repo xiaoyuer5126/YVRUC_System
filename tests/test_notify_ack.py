@@ -238,3 +238,29 @@ def test_管理者收到的通知也点得进活动(client, admin, db, enrolled_
            .filter(Notification.user_id == admin_user.id,
                    Notification.title == "[人员变动] 测试").one())
     assert row.data.get("activity_id") == act.id
+
+
+def test_未读数有瘦接口(client, admin, db, enrolled_activity):
+    """顶上那个 30 秒轮询只要一个数字，不该把最近 50 条通知的正文一起拉回去。
+
+    完整接口的 items 里每条都带 content（集合地点、注意事项那种长文本），
+    而轮询只用到 unread——开着的每个页面每 30 秒拉一次，纯浪费。
+    """
+    act, _shift, u = enrolled_activity
+    _send(client, admin, act.id, need_ack=True, title="集合地点变更")
+
+    stu = login(client, u.student_id)
+    thin = client.get("/api/me/notifications/unread", headers=stu)
+    assert thin.status_code == 200
+    assert set(thin.json()) == {"unread", "pending_ack"}      # 没有 items
+
+    # 两个数字要和完整接口对得上，否则顶上那个红点会骗人
+    full = client.get("/api/me/notifications", headers=stu).json()
+    assert thin.json()["unread"] == full["unread"]
+    assert thin.json()["pending_ack"] == full["pending_ack"] == 1
+
+    # 签收之后待签收数归零
+    item = next(n for n in full["items"] if n["need_ack"])
+    client.post(f"/api/me/notifications/{item['id']}/ack", headers=stu)
+    assert client.get("/api/me/notifications/unread",
+                      headers=stu).json()["pending_ack"] == 0

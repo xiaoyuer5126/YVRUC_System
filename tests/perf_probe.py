@@ -57,7 +57,8 @@ def test_量各接口的_SQL_条数(client, admin, db):
         ("签到看板", f"/api/staff/shifts/{shifts[0].id}/board"),
         ("服装台账", f"/api/staff/activities/{act.id}/attire"),
         ("时长预览", f"/api/staff/activities/{act.id}/hours"),
-        ("通知（每 30 秒）", "/api/me/notifications"),
+        ("通知列表", "/api/me/notifications"),
+        ("通知未读数（每 30 秒轮询）", "/api/me/notifications/unread"),
     ]:
         rows.append(_measure(client, admin, label, path))
 
@@ -69,6 +70,23 @@ def test_量各接口的_SQL_条数(client, admin, db):
     print("-" * 56)
     print(f"{'合计':24} {'':>4} {sum(r[2] for r in rows):>5} "
           f"{sum(r[3] for r in rows) / 1024:>7.1f}KB")
+
+    # 响应里各字段占多少字节：谁在撑大 payload，不看一眼是猜的
+    import json as _json
+    d = client.get(f"/api/activities/{act.id}", headers=admin).json()
+    whole = len(_json.dumps(d, ensure_ascii=False).encode())
+    att = cnt = 0
+    n_pos = n_with_mat = 0
+    for g in d.get("shifts", []):
+        for p in g.get("positions", []):
+            n_pos += 1
+            att += len(_json.dumps(p.get("attachments") or [], ensure_ascii=False).encode())
+            if p.get("material_count"):
+                n_with_mat += 1
+    print(f"\n活动详情响应 {whole/1024:.1f}KB，其中：")
+    print(f"  各岗位 attachments 合计 {att/1024:.1f}KB"
+          f"（{n_pos} 个岗位，{n_with_mat} 个有材料）")
+    print(f"  其余 {whole/1024 - att/1024:.1f}KB（岗位树、场次、问卷、日志…）")
 
     worst = max(rows, key=lambda x: x[2])
     print(f"\n最费 SQL 的：{worst[0]}（{worst[2]} 条），它在重复查什么：")

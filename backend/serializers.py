@@ -149,7 +149,7 @@ def _unassigned_count(db: OrmSession, g: Shift) -> int:
 
 def position_out(db: OrmSession, p: Position, user=None, *,
                  enrolled: bool = False, manager: bool = False,
-                 same_group: bool = False, occ=None) -> dict:
+                 same_group: bool = False, occ=None, atts=None) -> dict:
     """岗位。
 
     带 user 时附上「这个人能不能报」——前端据此灰掉并说明原因，比让人点了
@@ -157,7 +157,7 @@ def position_out(db: OrmSession, p: Position, user=None, *,
     和管理者可见：培训材料是发给要上岗的人的，组长姓名属于个人信息，
     不该挂在公开页面上供人浏览。
 
-    occ：传了 Occupancy 就用它里面算好的人数（一次查完的），否则各查各的。
+    occ / atts：传了就用传进来的（一次查完的），否则各查各的。
     列十几个岗位时前者省几十条 SQL——见 activity_detail。
     """
     # 变量名要和「我是否已报名」的参数区分开：一个是人数，一个是布尔
@@ -200,8 +200,13 @@ def position_out(db: OrmSession, p: Position, user=None, *,
     visible = enrolled or manager
     out["training_visible"] = visible
     out["training_note"] = p.training_note if visible else ""
-    out["attachments"] = attachments_out(db, "position", p.id) if visible else []
-    out["material_count"] = attachment_count(db, "position", p.id)
+    mine = atts.get(p.id, []) if atts is not None else None
+    out["attachments"] = ((mine if mine is not None
+                           else attachments_out(db, "position", p.id))
+                          if visible else [])
+    # 数量始终公开，列表只有报名的人和管理者看得到
+    out["material_count"] = (len(mine) if mine is not None
+                             else attachment_count(db, "position", p.id))
     # 组长按「组」取：同组岗位共用一名组长
     siblings = group_positions(db, p)
     out["group_positions"] = [x.name for x in siblings] if len(siblings) > 1 else []
@@ -223,10 +228,37 @@ def position_out(db: OrmSession, p: Position, user=None, *,
 
 def attachment_count(db: OrmSession, owner_type: str, owner_id: str) -> int:
     """材料**数量**始终公开：让人知道「报名后有 3 份培训材料」是招募信息，
-    内容本身才需要报名后才能看。"""
+    内容本身才需要报名后才能看。
+
+    要一批的时候用 attachments_by_owner——数量就是那个列表的长度，
+    各查一遍等于同一批行查两回。
+    """
     return (db.query(Attachment)
             .filter(Attachment.owner_type == owner_type,
                     Attachment.owner_id == owner_id).count())
+
+
+def attachments_by_owner(db: OrmSession, owner_type: str,
+                         owner_ids: list[str]) -> dict[str, list[dict]]:
+    """一批 owner 的材料，一次查完：{owner_id: [材料…]}。
+
+    **数量和列表同源**（attachment_count 就是 len(attachments_out)），所以
+    一次查询两样都有了。活动详情页要列十几个岗位的「材料 N」角标，各自去查
+    的话就是十几条 SQL，而结果往往还是空的（实测 14 条，占那一页的三分之一）。
+    """
+    ids = list(dict.fromkeys(owner_ids))
+    out: dict[str, list[dict]] = {i: [] for i in ids}
+    if not ids:
+        return out
+    rows = (db.query(Attachment)
+            .filter(Attachment.owner_type == owner_type,
+                    Attachment.owner_id.in_(ids))
+            .order_by(Attachment.created_at).all())
+    for a in rows:
+        out.setdefault(a.owner_id, []).append({
+            "id": a.id, "kind": a.kind, "title": a.title, "size": a.size,
+            "url": (a.url if a.kind == "link" else f"/api/materials/{a.id}")})
+    return out
 
 
 def attachments_out(db: OrmSession, owner_type: str, owner_id: str) -> list[dict]:
@@ -287,7 +319,7 @@ def attached_out(db: OrmSession, s: Shift, my_enr=None) -> dict:
 
 
 def shift_out(db: OrmSession, g: Shift, user=None, *,
-              manager: bool = False, occ=None) -> dict:
+              manager: bool = False, occ=None, atts=None) -> dict:
     positions = sorted(g.positions, key=lambda p: p.sort)
     capacity = g.total_capacity()
     # 报名本场次的人才看得到培训内容与组长（见 position_out）
@@ -336,7 +368,7 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
                          key=lambda x: x.start_time)],
         "note": g.note, "sort": g.sort,
         "positions": [position_out(db, p, user, enrolled=enrolled,
-                                   manager=manager, occ=occ,
+                                   manager=manager, occ=occ, atts=atts,
                                    same_group=_same_group(db, my_enr, p))
                       for p in positions],
         # 还没安排到真实岗位的人：待在占位岗位里的，加上岗位为空的
@@ -410,6 +442,9 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
     # 各场次/岗位的人数一次查完再往下传：这一页要列十几个岗位的「已报/占用/
     # 占位/候补」，各自去 count 的话光这一页就是几十条 SQL（实测 80 条）
     occ = Occupancy(db, act.id)
+    # 材料同样一次查完：每个岗位查两遍（列表 + 计数）而结果常常是空的
+    atts = attachments_by_owner(db, "position",
+                                [p.id for g in act.shifts for p in g.positions])
     out = activity_brief(db, act)
     out.update({
         "intro": act.intro,
@@ -422,7 +457,8 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
         "auto_publish": act.auto_publish,
         "volunteer_benefit": act.volunteer_benefit,
         # 培训/彩排不单列，它们挂在各自主场次的 attached 里
-        "shifts": sorted([shift_out(db, g, user, manager=manager, occ=occ)
+        "shifts": sorted([shift_out(db, g, user, manager=manager, occ=occ,
+                                    atts=atts)
                           for g in act.main_shifts()],
                          key=lambda x: x["start_time"]),
     })
