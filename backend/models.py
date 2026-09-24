@@ -404,6 +404,17 @@ class ActivityManager(Base):
               "hours": "志愿时长"}
 
 
+def span_text(start: datetime, end: datetime) -> str:
+    """一段时间的说法：「09-20 09:00-12:00」，跨天就把两个日期都写上。
+
+    场次和「实际签到签退那一段」共用它。同一段服务在两处各写各的格式，
+    对账时就得靠眼睛去认它们说的是同一件事。
+    """
+    if start.date() == end.date():
+        return f"{start:%m-%d} {start:%H:%M}-{end:%H:%M}"
+    return f"{start:%m-%d %H:%M} ~ {end:%m-%d %H:%M}"
+
+
 class Shift(Base):
     """场次：一段服务时间。**时间只存在于这一层**，用于时段冲突检测。
 
@@ -466,11 +477,7 @@ class Shift(Base):
         return self.parent_id is not None
 
     def span_text(self) -> str:
-        same_day = self.start_time.date() == self.end_time.date()
-        if same_day:
-            return (f"{self.start_time:%m-%d} {self.start_time:%H:%M}"
-                    f"-{self.end_time:%H:%M}")
-        return f"{self.start_time:%m-%d %H:%M} ~ {self.end_time:%m-%d %H:%M}"
+        return span_text(self.start_time, self.end_time)
 
     def mode_label(self) -> str:
         return self.MODE_LABELS.get(self.mode, self.mode)

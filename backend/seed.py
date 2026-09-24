@@ -24,6 +24,9 @@ from .audit import log as audit_log
 from .database import SessionLocal, engine, init_db
 from .qrcodes import qr_svg
 from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, User, ViolationRecord, uid)
+# 已确认的时长要连明细一起种：明细不是另写的一段文字，是这套算法从签到记录
+# 里推出来的，所以直接借过来用，免得演示数据和线上算出来的两套口径
+from .routers.staff_ops import compute_hours
 
 random.seed(42)
 
@@ -472,15 +475,14 @@ def main() -> None:
                                  activity_id=elder.id, shift_id=e1.id,
                                  user_id=u.id, method="scan",
                                  checkin_at=e1.start_time + timedelta(minutes=5 + i)))
+
+        # 已确认的时长也走同一套算法，不在这儿另写一份：备注就是明细
+        # （签到签退时间 + 岗位名）——手写的那份跟实际算出来的迟早对不上
+        db.flush()
+        for row in compute_hours(db, elder):
             db.add(HoursRecord(id=uid("hrs"), activity_id=elder.id,
-                               user_id=u.id, hours=3.0,
-                               # 明细要有：时长记录导出的「备注」列拼的就是它，
-                               # 空着的话那张表全是空白。
-                               # kind 不能写 "manual"——手动段会被 compute_hours
-                               # 再加一遍，这 3 小时就成了 6 小时
-                               parts=[{"label": "敬老院陪伴", "time": "09-20 08:00-12:00",
-                                       "position": "", "hours": 3.0}],
-                               confirmed_by=wang.id))
+                               user_id=row["user"]["id"], hours=row["hours"],
+                               parts=row["parts"], confirmed_by=wang.id))
 
         db.commit()
 

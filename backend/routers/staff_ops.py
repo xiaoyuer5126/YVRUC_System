@@ -27,7 +27,7 @@ from ..locks import current_checkin_code
 from ..notify import notify, notify_checkin
 from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask, Enrollment,
                       HoursAppeal, HoursRecord, HoursRequest, Shift,
-                      Position, User, iso, new_checkin_token, now, uid)
+                      Position, User, iso, new_checkin_token, now, span_text, uid)
 from ..serializers import iso_of, recruit_scope_text
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
@@ -869,23 +869,30 @@ def effective_checkout(rec: CheckinRecord, g: Shift):
 
 
 def shift_hours(rec: CheckinRecord, g: Shift, t: datetime):
-    """一条签到记录在该场次记多少小时，以及要不要人工过目。
+    """一条签到记录在该场次记多少小时、要不要人工过目，**以及按哪段时间算的**。
 
     时长认定方式是建场次时定下的一次决定，不是事后逐条判断：
       fixed  到场即按场次时长计——两小时的彩排人就在那儿，不值得卡分钟，
              顺带消灭了「忘记签退」这类麻烦的一大半；
       none   只记出勤，不产生时长（线上培训）；
       checkin 签退 − 签到，未签退按宽限期规则兜底并标记待核。
+
+    返回 (小时数, 待核标记, 计时起点, 计时终点)。时段跟着一起给：备注里写的
+    就是它，只回小时数的话，明细和数字会各说各的。
     """
     if g.hours_mode == "none":
-        return 0.0, ""
+        return 0.0, "", None, None
     if g.hours_mode == "fixed":
-        return (g.end_time - g.start_time).total_seconds() / 3600, ""
+        # 到场即按场次时长：写场次的起止，不写他实际几点到的
+        return ((g.end_time - g.start_time).total_seconds() / 3600, "",
+                g.start_time, g.end_time)
     checkout, kind = effective_checkout(rec, g)
     if checkout is None:
-        return (min(t, g.end_time) - rec.checkin_at).total_seconds() / 3600, "pending"
+        end = min(t, g.end_time)
+        return ((end - rec.checkin_at).total_seconds() / 3600, "pending",
+                rec.checkin_at, end)
     return ((checkout - rec.checkin_at).total_seconds() / 3600,
-            "auto" if kind == "auto" else "")
+            "auto" if kind == "auto" else "", rec.checkin_at, checkout)
 
 
 def hours_record_of(db: OrmSession, activity_id: str, user_id: str
@@ -933,11 +940,15 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
         g = db.get(Shift, rec.shift_id)
         if g is None:
             continue
-        hours, flag = shift_hours(rec, g, t)
+        hours, flag, start, end = shift_hours(rec, g, t)
         if flag:
             flags.setdefault(rec.user_id, set()).add(flag)
         per_user[rec.user_id] = per_user.get(rec.user_id, 0.0) + max(0.0, hours)
-        # 明细一段一段记：哪一场、什么时段、什么岗位、几小时
+        # 明细一段一段记：哪一场、什么时段、什么岗位、几小时。
+        # 时段用的是**这次计时实际依据的那一段**，跟上面那个小时数同源——
+        # 备注要能解释这个数，各写各的就没法对账。0 小时的场次不占一行
+        if hours <= 0:
+            continue
         pos = db.get(Position, rec.position_id) if rec.position_id else None
         if pos is None and not g.is_attached():
             enr = (db.query(Enrollment)
@@ -947,7 +958,7 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
             pos = db.get(Position, enr.position_id) if enr and enr.position_id else None
         parts.setdefault(rec.user_id, []).append({
             "label": g.name if not g.is_attached() else f"{g.name}（{g.kind_label()}）",
-            "time": g.span_text(),
+            "time": span_text(start, end) if start and end else g.span_text(),
             "position": pos.name if pos and not pos.is_placeholder else "",
             "hours": round(max(0.0, hours), 2), "kind": "shift"})
 

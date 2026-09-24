@@ -701,3 +701,65 @@ def test_备注就是明细导出拼的是全部段落(client, admin, db, served
     note = row[4]
     assert g.span_text() in note and "引导" in note     # 签到算出来的那一段
     assert "场外搬运" in note                            # 手动加的那一段
+
+
+def test_明细写的是实际签到签退那一段不是场次时段(client, admin, db, served):
+    """迟到早退的人，明细里写场次时段就对不上账了：标着「09:00-12:00」，
+    小时数却是 2.5，谁看都得问一句。写实际那一段，数就解释得通。"""
+    act, g, u = served
+    late = g.start_time + timedelta(minutes=40)
+    left = g.end_time - timedelta(minutes=70)
+    (db.query(CheckinRecord).filter(CheckinRecord.activity_id == act.id)
+       .update({"checkin_at": late, "checkout_at": left}))
+    db.commit()
+
+    _confirm(client, admin, act, approve=False)
+    part = _record(client, login(client, u.student_id))["parts"][0]
+    assert part["hours"] == 2.5                    # 2 小时 10 分
+    assert part["time"] == f"{late:%m-%d %H:%M}-{left:%H:%M}"
+    assert part["time"] != g.span_text()
+    assert part["position"] == "引导"
+
+
+def test_多个岗位就是多句话(client, admin, db, served):
+    """一天赶两场：明细两段、备注两句话，各带各的时段和岗位名。"""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    act, g, u = served
+    g2 = Shift(id=uid("g"), activity_id=act.id, name="晚场",
+               start_time=g.end_time + timedelta(days=1),
+               end_time=g.end_time + timedelta(days=1, hours=3),
+               mode="pick", sort=1)
+    db.add(g2)
+    db.flush()
+    pos2 = Position(id=uid("p"), shift_id=g2.id, name="登记", quota=5, sort=0,
+                    **POSITION_TEXT)
+    db.add(pos2)
+    db.flush()
+    task2 = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g2.id,
+                        mode="shift", token=uid("T")[:6].upper(),
+                        created_by=act.created_by, valid_from=g2.start_time,
+                        valid_to=g2.end_time)
+    db.add(task2)
+    db.flush()
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g2.id,
+                      user_id=u.id, position_id=pos2.id, status="enrolled",
+                      joined_at=now()))
+    db.add(CheckinRecord(id=uid("ckr"), task_id=task2.id, activity_id=act.id,
+                         shift_id=g2.id, position_id=pos2.id, user_id=u.id,
+                         method="manual", checkin_at=g2.start_time,
+                         checkout_at=g2.end_time))
+    db.commit()
+
+    _confirm(client, admin, act, approve=False)
+    stu = login(client, u.student_id)
+    parts = _record(client, stu)["parts"]
+    assert [p["position"] for p in parts] == ["引导", "登记"]
+    assert [p["hours"] for p in parts] == [4.0, 3.0]
+
+    r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
+    ws = load_workbook(BytesIO(r.content)).active
+    note = next(x for x in ws.values if x[0] == u.name)[4]
+    assert note == (f"{g.span_text()} 引导；{g2.span_text()} 登记")
