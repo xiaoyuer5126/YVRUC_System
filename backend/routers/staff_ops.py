@@ -64,6 +64,17 @@ def create_task(shift_id: str, body: TaskBody,
         position = db.get(Position, body.position_id or "")
         if position is None or position.shift_id != g.id:
             raise HTTPException(400, "分岗位签到必须指定本场次下的岗位")
+    # 同一场次、同一岗位（含「统一签到」这个空岗位）只许有一个开着的码：
+    # 学生扫的不是这一个就是那一个，两个都开着，签到记录会分到两张任务下，
+    # 看板上的「已签」也会各算各的，现场没人说得清该扫哪张
+    live = (db.query(CheckinTask)
+            .filter(CheckinTask.shift_id == g.id,
+                    CheckinTask.position_id == (position.id if position else None),
+                    CheckinTask.active.is_(True)).first())
+    if live is not None:
+        raise HTTPException(
+            409, f"「{position.name if position else g.name}」已经有一个开启的签到码，"
+                 f"请先把它关掉再生成新的")
     token = new_checkin_token()
     pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
@@ -541,7 +552,9 @@ def batch_op(task_id: str, body: dict,
                        Enrollment.user_id == u.id,
                        Enrollment.status == "enrolled").first())
         if enr is None:
-            skipped.append(f"{u.name}（非本场次确认志愿者）")
+            # 不回姓名：这条提示等于「输个学号就能查出他叫什么」——不是本场次
+            # 的人，管理者本来也不该从这儿认识他。学号是他自己填进来的，还给他
+            skipped.append(f"{sid}（非本场次确认志愿者）")
             continue
         rec = (db.query(CheckinRecord)
                .filter(CheckinRecord.user_id == u.id,
@@ -941,7 +954,12 @@ def hours_preview(activity_id: str, db: OrmSession = Depends(db_session),
 
 
 class ManualHoursBody(BaseModel):
-    items: list[dict]   # [{student_id, hours, note}]
+    """手动加/扣时长。items: [{student_id, hours, note}]，hours 为负就是扣减。
+
+    备注必填：手动改的是账，事后只有审计和这条备注能说明为什么——「场外支援
+    2 小时」和「扣掉中途离场 1 小时」在台账上得看得出来。
+    """
+    items: list[dict]
 
 
 @router.post("/activities/{activity_id}/hours/manual")
@@ -968,13 +986,25 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
             hours = float(it.get("hours"))
         except (TypeError, ValueError):
             raise HTTPException(400, f"{u.name} 的时长不是数字")
-        if hours <= 0:
-            raise HTTPException(400, f"{u.name} 的时长必须大于 0")
+        if hours == 0:
+            raise HTTPException(400, f"{u.name} 的时长不能是 0")
         note = (it.get("note") or "").strip()
-        # id 是这一段的编号，删除时按它找（见 hours_manual_delete）
-        part = {"id": uid("seg"), "label": note or "手动添加", "time": "",
-                "position": "", "hours": round(hours, 2), "kind": "manual"}
+        if not note:
+            # 手动动的就是账：事后只有这条备注能说明为什么加、为什么扣
+            raise HTTPException(400, f"{u.name} 的备注必填（写明加/扣的原因）")
         rec = hours_record_of(db, act.id, u.id)
+        if hours < 0:
+            if rec is None:
+                raise HTTPException(400, f"{u.name} 这场活动还没有时长记录，"
+                                         f"没有可扣的")
+            if (rec.hours or 0) + hours < 0:
+                # 不偷偷扣到 0 了事：说清楚现在有多少，让管理者自己决定
+                raise HTTPException(
+                    400, f"{u.name} 当前只有 {rec.hours:g} 小时，"
+                         f"扣不了 {-hours:g} 小时")
+        # id 是这一段的编号，删除时按它找（见 hours_manual_delete）
+        part = {"id": uid("seg"), "label": note, "time": "",
+                "position": "", "hours": round(hours, 2), "kind": "manual"}
         if rec is None:
             db.add(HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id,
                                hours=part["hours"], source="manual", note=note,
@@ -985,10 +1015,10 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
             rec.confirmed_by = user.id
             # 数值变了，本人之前那句「确认无误」是对着旧数字说的，不算数了
             rec.confirmed_at = None
-        added.append(f"{u.name} {hours}h")
+        added.append(f"{u.name} {'扣减' if hours < 0 else '添加'}{abs(hours):g}h")
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"手动添加时长：{'、'.join(added)}")
+              summary=f"手动调整时长：{'、'.join(added)}")
     db.commit()
     return {"ok": True, "count": len(added)}
 

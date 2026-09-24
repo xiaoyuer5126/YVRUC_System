@@ -315,7 +315,7 @@
           <el-button type="primary" plain @click="openNotify">
             <el-icon><Bell /></el-icon>&nbsp;发送通知
           </el-button>
-          <el-button plain @click="doExport" style="margin-left:auto">
+          <el-button type="danger" @click="doExport" style="margin-left:auto">
             <el-icon><Download /></el-icon>&nbsp;导出排班表
           </el-button>
         </div>
@@ -624,11 +624,8 @@
         </template>
         <el-divider />
         <div class="toolbar">
-          <span class="dim" style="flex:1 1 260px">
-            时长按签到与签退记录算出，点上方「刷新」重算一次；未确认的改动会被重算覆盖
-          </span>
           <el-button type="primary" plain :disabled="hoursFrozen || !hoursSel.length"
-                     @click="confirmSelectedHours">
+                     @click="confirmSelectedHours" style="margin-left:auto">
             {{ hoursSel.length ? `确认选中时长（${hoursSel.length} 人）` : '确认选中时长' }}
           </el-button>
           <el-tooltip content="确认正常签退的记录；未签退/自动兜底请逐条核对后手动确认" placement="top">
@@ -715,9 +712,10 @@
           </template>
           <template #body="{ row }">
             <div class="mh-row">
-              <span class="dim">时长(h)</span>
-              <el-input-number v-model="row.editHours" size="small" :disabled="hoursFrozen"
-                               :min="0" :step="0.5" style="width:130px" />
+              <span class="dim">时长</span>
+              <!-- 只读：这个数是从签到签退算出来的，当场改一个数字既没有依据、
+                   也会在下次重算时被覆盖。要动账去下面的「手动加/扣」 -->
+              <b>{{ row.hours }}h</b>
             </div>
             <div v-if="hoursState.approved_at" class="mh-row">
               <span class="dim">本人表态</span><VolunteerSide :row="row" />
@@ -749,11 +747,10 @@
             </el-table-column>
           <el-table-column prop="user.student_id" label="学号" width="110" />
           <el-table-column prop="user.college" label="学院" width="130" />
-          <el-table-column label="时长(h)" width="170">
-            <template #default="{row}">
-              <el-input-number v-model="row.editHours" size="small" :disabled="hoursFrozen"
-                               :min="0" :step="0.5" style="width:130px" />
-            </template>
+          <!-- 只读：这个数是从签到签退算出来的，当场改一个数字既没有依据、
+               也会在下次重算时被覆盖。要动账去下面的「手动加/扣」 -->
+          <el-table-column label="时长(h)" width="100">
+            <template #default="{row}"><b>{{ row.hours }}</b></template>
           </el-table-column>
           <el-table-column label="标记" width="150">
             <template #default="{row}">
@@ -781,24 +778,29 @@
 
         <!-- 手动添加时长 -->
         <div class="section-title" style="margin-top:16px">
-          手动添加时长（场外支援/补录/通勤等情况）
+          手动加 / 扣时长（场外支援、补录、中途离场等情况）
         </div>
         <el-card shadow="never">
           <div class="toolbar" style="align-items:flex-start">
             <el-select v-model="mh.userIds" multiple filterable collapse-tags
                        collapse-tags-tooltip placeholder="选择志愿者（可多选）"
-                       :disabled="hoursFrozen" style="width:320px">
+                       :disabled="hoursFrozen" style="width:300px">
               <el-option v-for="v in rosterOptions" :key="v.student_id"
                          :value="v.student_id"
                          :label="`${v.name}（${v.student_id}）· ${v.where}`" />
             </el-select>
+            <el-radio-group v-model="mh.sign" :disabled="hoursFrozen">
+              <el-radio-button value="add">加</el-radio-button>
+              <el-radio-button value="deduct">扣</el-radio-button>
+            </el-radio-group>
             <el-input-number v-model="mh.hours" :min="0.5" :step="0.5"
                              :disabled="hoursFrozen" style="width:120px" />
-            <el-input v-model="mh.note" placeholder="备注（如：场外支援）"
+            <el-input v-model="mh.note" placeholder="备注（必填，写明为什么）"
                       :disabled="hoursFrozen" style="width:220px" />
-            <el-button type="primary" :disabled="hoursFrozen || !mh.userIds.length"
+            <el-button type="primary"
+                       :disabled="hoursFrozen || !mh.userIds.length || !mh.note.trim()"
                        @click="addManualHours">
-              批量添加{{ mh.userIds.length ? `（${mh.userIds.length} 人）` : '' }}
+              {{ mh.sign === 'deduct' ? '批量扣减' : '批量添加' }}{{ mh.userIds.length ? `（${mh.userIds.length} 人）` : '' }}
             </el-button>
           </div>
           <div class="dim" style="line-height:1.8">
@@ -1557,7 +1559,8 @@ const hoursLoading = ref(false)
 const hoursSel = ref([])                       // 时长表勾选行
 const hoursState = ref({})                     // 核准/锁定状态，这一页按它决定给哪些按钮
 const approveDlg = ref({ visible: false, deadline: '', busy: false })
-const mh = ref({ userIds: [], hours: 0.5, note: '' })
+// sign：add 加 / deduct 扣。扣减传负数（见后端 hours_manual），备注两边都必填
+const mh = ref({ userIds: [], sign: 'add', hours: 0.5, note: '' })
 
 // 手动加时长的候选人 = 本活动全部场次的已报名志愿者（含未签到的）
 // pick 模式却一个岗位都没有 = 学生根本报不了名
@@ -2243,8 +2246,8 @@ async function hoursPreview(silent = false) {
   hoursLoading.value = true
   try {
     const d = await api.get(`/api/staff/activities/${activityId}/hours`)
-    // editHours：可编辑时长，加载时初始化为后端计算值，勾选确认时按此值提交
-    hours.value = (d.items || []).map(it => ({ ...it, editHours: Number(it.hours) || 0 }))
+    // 时长不再就地编辑（见模板里的说明），勾选确认时按后端算出来的值提交
+    hours.value = d.items || []
     hoursState.value = d
     hoursSel.value = []
     if (!hours.value.length && !silent) ElMessage.info('暂无签到数据')
@@ -2256,8 +2259,10 @@ function onHoursSelect(rows) { hoursSel.value = rows }
 // 确认选中志愿者的时长（可先在表格里修改数值）
 async function confirmSelectedHours() {
   if (!hoursSel.value.length) return ElMessage.warning('请先勾选志愿者')
+  // 按后端算出来的数值确认（不再有可就地改的输入框）：勾选的意义是
+  // 「只确认这几个人」，比如把未签退的几条留着逐条核对
   const items = hoursSel.value.map(r => ({
-    student_id: r.user.student_id, hours: Number(r.editHours),
+    student_id: r.user.student_id, hours: Number(r.hours),
   }))
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/hours/confirm`, { items })
@@ -2277,13 +2282,16 @@ async function confirmAllHours() {
 
 // 手动添加时长（不依赖签到，如场外支援/补录）。批量：一次给多人写同一条时长
 async function addManualHours() {
-  const { userIds, hours, note } = mh.value
+  const { userIds, sign, hours, note } = mh.value
   if (!userIds.length) return ElMessage.warning('请先选择志愿者')
+  if (!note.trim()) return ElMessage.warning('备注必填：写清楚为什么加、为什么扣')
+  // 扣减就是同一个接口传负数——后台按正负分「加」和「扣」，台账上是一段
+  const value = sign === 'deduct' ? -Math.abs(hours) : Math.abs(hours)
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/hours/manual`,
-      { items: userIds.map(sid => ({ student_id: sid, hours, note })) })
-    ElMessage.success(`已为 ${d.count} 位志愿者添加时长`)
-    mh.value = { userIds: [], hours: 0.5, note: '' }
+      { items: userIds.map(sid => ({ student_id: sid, hours: value, note })) })
+    ElMessage.success(`已为 ${d.count} 位志愿者${sign === 'deduct' ? '扣减' : '添加'}时长`)
+    mh.value = { userIds: [], sign: 'add', hours: 0.5, note: '' }
     hoursPreview(true)
   } catch { /* toast by api */ }
 }

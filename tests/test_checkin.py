@@ -647,3 +647,40 @@ def test_请假的人不算进岗位的应到岗(client, admin, db, live_group):
     d = client.get(f"/api/staff/shifts/{g.id}/board", headers=admin).json()
     assert d["expected"] == 0 and d["excused"] == 1
     assert d["positions"][0]["expected"] == 0
+
+
+def test_同一场次同一岗位只能有一个开着的码(client, admin, db, live_group):
+    """两个都开着，学生扫哪张、签到记录落到哪张任务下都说不清，
+    看板上的「已签」还会各算各的。"""
+    act, g, _h, _token = live_group        # live_group 已经建了一个统一码
+    r = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks",
+                    headers=admin, json={"mode": "shift"})
+    assert r.status_code == 409 and "已经有一个开启的签到码" in r.json()["detail"]
+
+    # 关掉它就能再建
+    tid = task_id_of(client, admin, act)
+    assert client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                        json={"active": False}).status_code == 200
+    r = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks",
+                    headers=admin, json={"mode": "shift"})
+    assert r.status_code == 200, r.text
+
+    # 但那是「同一岗位」的限制：另一个岗位照样可以有自己的码
+    pos = db.query(Position).filter(Position.shift_id == g.id).first()
+    r = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks", headers=admin,
+                    json={"mode": "position", "position_id": pos.id})
+    assert r.status_code == 200, r.text
+
+
+def test_非本场次的人不该被查出姓名(client, admin, db, live_group, take_student):
+    """批量补签的提示里回过姓名 = 输个学号就能查出他叫什么。
+    学号是他自己填进来的，还给他；名字不该给。"""
+    act, _g, _h, _token = live_group
+    sid = take_student()
+    u = student_row(db, sid)
+    d = client.post(f"/api/staff/checkin-tasks/{task_id_of(client, admin, act)}/batch",
+                    headers=admin,
+                    json={"action": "checkin", "student_ids": [sid]}).json()
+    assert d["done"] == 0 and len(d["skipped"]) == 1
+    assert sid in d["skipped"][0]
+    assert u.name not in d["skipped"][0]

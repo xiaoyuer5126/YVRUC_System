@@ -650,3 +650,22 @@ def test_活动不许重名(client, admin, db, draft_activity):
     r = client.post(f"/api/staff/activities/{other}/copy", headers=admin,
                     json={"shift_days": 1, "contact_group_qr": "x"})
     assert r.json()["title"] == f"{first_copy} 2"
+
+
+def test_补招要通知本人(client, admin, db, assigned_group, take_student):
+    """补招是管理者单方面加进来的：不通知的话本人一点动静都没有——
+    不知道自己报了名，更不知道哪天要去。"""
+    from backend.models import Notification, User
+
+    act, g, _s1, s2 = assigned_group
+    sid = take_student()
+    r = client.post(f"/api/staff/shifts/{g.id}/add-walkin", headers=admin,
+                    json={"student_id": sid, "position_id": s2.id})
+    assert r.status_code == 200, r.text
+
+    u = db.query(User).filter(User.student_id == sid).one()
+    n = (db.query(Notification)
+         .filter(Notification.user_id == u.id,
+                 Notification.title.like("您已被补招%")).first())
+    assert n is not None and n.data.get("activity_id") == act.id
+    assert g.name in n.content

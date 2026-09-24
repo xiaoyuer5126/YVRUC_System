@@ -291,3 +291,17 @@ def test_微信号不能以公式符号开头(client, take_student):
                     json={"phone": "13900000000", "wechat": "zhang_san-01",
                           "campus": "中关村校区", "no_mainland_id": True})
     assert ok.status_code == 200, ok.text
+
+
+def test_排班表的页签只有概览和名单(client, admin, db,
+                                       enrolled_activity, take_student):
+    """这张表是拿去现场点名的。时长另有专门的一份导出，不混在这儿。"""
+    act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
+                                     take_student)
+
+    r = client.get(dl_url(client, admin,
+                          f"/api/staff/activities/{act.id}/export.xlsx"))
+    assert r.status_code == 200
+    names = load_workbook(BytesIO(r.content)).sheetnames
+    assert "活动概览" in names
+    assert "志愿时长" not in names

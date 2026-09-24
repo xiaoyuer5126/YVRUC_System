@@ -272,25 +272,8 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
                     ws.cell(row=i, column=1, value=u.name)
                     ws.cell(row=i, column=2, value=u.student_id)
 
-    # ---------- 志愿时长 Sheet：有账才有这一页 ----------
-    hours_rows = (db.query(HoursRecord, User)
-                  .join(User, HoursRecord.user_id == User.id)
-                  .filter(HoursRecord.activity_id == activity.id)
-                  .order_by(User.name).all())
-    if hours_rows:
-        ws = wb.create_sheet(_safe_sheet_name("志愿时长", used_names))
-        header = ["姓名", "学号", "学院", "时长(h)", "报酬方式", "本人确认",
-                  "来源", "明细"]
-        ws.append(header)
-        _style_header(ws, len(header))
-        for rec, u in hours_rows:
-            ws.append([u.name, u.student_id, u.college, rec.hours,
-                       rec.reward_label(),
-                       rec.confirmed_at.strftime("%m-%d %H:%M") if rec.confirmed_at else "未确认",
-                       "签到统计" if rec.source == "checkin" else "手动添加",
-                       rec.parts_text()])
-        for idx, w in enumerate((12, 14, 16, 10, 10, 14, 10, 40), start=1):
-            ws.column_dimensions[get_column_letter(idx)].width = w
+    # 这张表是给现场点名用的：只有活动概览和每个场次一张名单。
+    # 时长另有一份专门的导出（见 build_hours_workbook），不混在这儿。
 
     return ex
 

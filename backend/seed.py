@@ -474,6 +474,12 @@ def main() -> None:
                                  checkin_at=e1.start_time + timedelta(minutes=5 + i)))
             db.add(HoursRecord(id=uid("hrs"), activity_id=elder.id,
                                user_id=u.id, hours=3.0,
+                               # 明细要有：时长记录导出的「备注」列拼的就是它，
+                               # 空着的话那张表全是空白。
+                               # kind 不能写 "manual"——手动段会被 compute_hours
+                               # 再加一遍，这 3 小时就成了 6 小时
+                               parts=[{"label": "敬老院陪伴", "time": "09-20 08:00-12:00",
+                                       "position": "", "hours": 3.0}],
                                confirmed_by=wang.id))
 
         db.commit()

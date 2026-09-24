@@ -375,6 +375,12 @@
                 <span class="dim">{{ r.address }}</span>
               </div>
             </div>
+            <!-- 只在搜过且为空时说：地名库对校园里的楼不一定收，加上校区名
+                 （「人民大学明德楼」）常能搜到 -->
+            <div v-else-if="geoSearched" class="dim">
+              没找到这个地名。加上校区或城市再试（如「人民大学明德楼」），
+              或者直接在地图上点、拖着图钉挪。
+            </div>
             <div v-if="geoForm.lat" class="dim" style="line-height:1.7">
               {{ geoForm.lat.toFixed(5) }}, {{ geoForm.lng.toFixed(5) }}
               <template v-if="geoForm.accuracy">
@@ -733,6 +739,7 @@ function useCampus(c) {
 const geoQuery = ref('')
 const geoResults = ref([])
 const geoSearching = ref(false)
+const geoSearched = ref(false)     // 搜过一次了：搜空和从没搜过要分得开
 
 /** 搜地名。**带上当前坐标**：搜出来的范围限定在这附近，
  *  不然「明德楼」会把桂林、深圳的都端上来。 */
@@ -746,6 +753,7 @@ async function searchPlace() {
       + (geoForm.value.lat ? `&lat=${geoForm.value.lat}&lng=${geoForm.value.lng}` : ''),
       { silent: true })
     geoResults.value = d.items || []
+    geoSearched.value = true
   } catch { /* 搜索坏了不影响手填坐标，api 层已经提示过 */ } finally {
     geoSearching.value = false
   }
@@ -758,6 +766,7 @@ function pickResult(r) {
   geoForm.value.accuracy = 0
   geoForm.value.source = 'search'
   geoResults.value = []
+  geoSearched.value = false        // 选完了就不是「没搜到」的状态了
   geoQuery.value = r.name
 }
 

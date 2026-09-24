@@ -415,7 +415,7 @@ def test_再次核准只惊动申诉过或数值变过的人(client, admin, db, 
     # 再来一位志愿者：手动补录 2 小时，第一轮就确认无误
     other = student_row(db, take_student())
     r = client.post(f"/api/staff/activities/{act.id}/hours/manual", headers=admin,
-                    json={"items": [{"student_id": other.student_id, "hours": 2}]})
+                    json={"items": [{"student_id": other.student_id, "hours": 2, "note": "场外补录"}]})
     assert r.status_code == 200, r.text
     _confirm(client, admin, act)
     o = login(client, other.student_id)
@@ -645,3 +645,59 @@ def test_确认无误之后就不能再申诉(client, admin, db, served):
     r = client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu,
                     json={"claimed_hours": 3, "reason": "实际提前走了"})
     assert r.status_code == 409 and "已确认" in r.json()["detail"]
+
+
+def test_手动扣减要写备注也不能扣成负数(client, admin, db, served):
+    """扣减和添加走同一个接口，传负数。手动动的就是账，备注必须写清楚。"""
+    act, _g, u = served
+    _confirm(client, admin, act, approve=False)
+    url = f"/api/staff/activities/{act.id}/hours/manual"
+
+    r = client.post(url, headers=admin,
+                    json={"items": [{"student_id": u.student_id, "hours": -1}]})
+    assert r.status_code == 400 and "备注必填" in r.json()["detail"]
+
+    r = client.post(url, headers=admin,
+                    json={"items": [{"student_id": u.student_id, "hours": -99,
+                                     "note": "记错了"}]})
+    assert r.status_code == 400 and "扣不了" in r.json()["detail"]
+
+    r = client.post(url, headers=admin,
+                    json={"items": [{"student_id": u.student_id, "hours": -1.5,
+                                     "note": "中途离场 1.5 小时"}]})
+    assert r.status_code == 200, r.text
+
+    stu = login(client, u.student_id)
+    row = _record(client, stu)
+    assert row["hours"] == 2.5                     # 4 - 1.5
+    assert row["parts"][-1]["hours"] == -1.5       # 那段是负数，明细里看得出来
+    assert row["parts"][-1]["kind"] == "manual"
+
+
+def test_没有时长记录就无从扣减(client, admin, db, served, take_student):
+    """扣减要有个账可扣：这场活动他一条记录都没有，扣什么？"""
+    act, _g, _u = served
+    other = student_row(db, take_student())
+    r = client.post(f"/api/staff/activities/{act.id}/hours/manual", headers=admin,
+                    json={"items": [{"student_id": other.student_id,
+                                     "hours": -1, "note": "记错了"}]})
+    assert r.status_code == 400 and "没有可扣的" in r.json()["detail"]
+
+
+def test_备注就是明细导出拼的是全部段落(client, admin, db, served):
+    """「备注」列不是另写的一句说明，是把明细一段段拼起来——签到算出来的那段
+    也在里头。"""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    act, g, u = served
+    _confirm(client, admin, act, approve=False)
+    _add_manual(client, admin, act, u.student_id, 2, "场外搬运")
+
+    r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
+    ws = load_workbook(BytesIO(r.content)).active
+    row = next(x for x in ws.values if x[0] == u.name)
+    note = row[4]
+    assert g.span_text() in note and "引导" in note     # 签到算出来的那一段
+    assert "场外搬运" in note                            # 手动加的那一段
