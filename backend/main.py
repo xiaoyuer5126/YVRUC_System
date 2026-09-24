@@ -102,8 +102,12 @@ def create_app() -> FastAPI:
     for r in all_routers:
         app.include_router(r)
 
+    # async 不是随手写的：同步的 def 接口要占一条线程池的线程，而线程池是**每个
+    # 进程 40 条**、所有业务接口共用的。抢报那种几百个请求一起到的时候，线程全
+    # 被报名请求占住，探针拿不到线程就得干等着——容器被判不健康、被摘出负载均衡，
+    # 全站 502。它只回一个常量、不碰数据库，本来就不该排队。
     @app.get("/api/health")
-    def health():
+    async def health():
         return {"status": "ok"}
 
     if WEB_DIST.exists():
