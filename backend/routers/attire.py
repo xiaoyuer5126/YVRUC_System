@@ -261,9 +261,9 @@ def attire_batch(activity_id: str, body: AttireOpBody,
 
 
 class AttireRemindBody(BaseModel):
-    action: str = "return"      # take 催领取 / return 催归还
-    shift_id: str = ""          # 空 = 全部场次
-    campus: str = ""            # 空 = 全部校区
+    action: str = "return"          # take 催领取 / return 催归还
+    shift_ids: list[str] = []       # 空 = 全部场次
+    campuses: list[str] = []        # 空 = 全部校区
     need_ack: bool = False
 
 
@@ -288,18 +288,19 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
         raise HTTPException(400, "未知操作")
 
     def in_scope(uid_: str) -> bool:
-        """这个人是不是落在这回要提醒的范围里。"""
-        if body.shift_id:
+        """这个人是不是落在这回要提醒的范围里。多个场次/校区之间是「或」：
+        勾了「当日」和「次日」就是这两场的人都要，不是要求两场都报了。"""
+        if body.shift_ids:
             hit = (db.query(Enrollment.id)
                    .filter(Enrollment.activity_id == activity_id,
                            Enrollment.user_id == uid_,
-                           Enrollment.shift_id == body.shift_id,
+                           Enrollment.shift_id.in_(body.shift_ids),
                            Enrollment.status == "enrolled").first())
             if hit is None:
                 return False
-        if body.campus:
+        if body.campuses:
             u = db.get(User, uid_)
-            if u is None or u.campus != body.campus:
+            if u is None or u.campus not in body.campuses:
                 return False
         return True
 
@@ -346,11 +347,10 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
 
 def _scope_text(db: OrmSession, activity_id: str, body: AttireRemindBody) -> str:
     """这次提醒的范围，写成一句人话——通知的回执和审计里都要看得懂。"""
-    parts = []
-    if body.shift_id:
-        g = db.get(Shift, body.shift_id)
-        parts.append(g.name if g else "未知场次")
+    if body.shift_ids:
+        names = [g.name for g in db.query(Shift)
+                 .filter(Shift.id.in_(body.shift_ids)).all()]
+        shifts = "、".join(names) if names else "未知场次"
     else:
-        parts.append("全部场次")
-    parts.append(body.campus or "全部校区")
-    return " · ".join(parts)
+        shifts = "全部场次"
+    return f"{shifts} · {'、'.join(body.campuses) if body.campuses else '全部校区'}"

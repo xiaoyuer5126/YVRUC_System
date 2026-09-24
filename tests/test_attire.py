@@ -223,7 +223,7 @@ def test_催取可以只发某个场次(client, admin, db, two_campus):
     url = f"/api/staff/activities/{act.id}/attire"
 
     r = client.post(f"{url}/remind", headers=admin,
-                    json={"action": "take", "shift_id": g.id})
+                    json={"action": "take", "shift_ids": [g.id]})
     assert r.status_code == 200, r.text
     assert r.json()["count"] == 2                    # g 场次的两个人
     assert "当日" in r.json()["scope"]
@@ -241,7 +241,7 @@ def test_催取可以只发某个校区(client, admin, db, two_campus):
     url = f"/api/staff/activities/{act.id}/attire"
 
     r = client.post(f"{url}/remind", headers=admin,
-                    json={"action": "take", "campus": "通州校区"})
+                    json={"action": "take", "campuses": ["通州校区"]})
     assert r.status_code == 200 and r.json()["count"] == 1
     assert "通州校区" in r.json()["scope"]
 
@@ -262,7 +262,7 @@ def test_范围里没人时说清楚是哪个范围(client, admin, two_campus):
     url = f"/api/staff/activities/{act.id}/attire"
 
     r = client.post(f"{url}/remind", headers=admin,
-                    json={"action": "take", "campus": "苏州校区"})
+                    json={"action": "take", "campuses": ["苏州校区"]})
     assert r.status_code == 400 and "苏州校区" in r.json()["detail"]
 
 
@@ -275,11 +275,37 @@ def test_催归还同样认范围和动作(client, admin, db, two_campus):
     client.post(f"{url}/batch", headers=admin,
                 json={"action": "take", "student_ids": [a.student_id]})
     r = client.post(f"{url}/remind", headers=admin,
-                    json={"action": "return", "campus": "中关村校区"})
+                    json={"action": "return", "campuses": ["中关村校区"]})
     assert r.status_code == 200 and r.json()["count"] == 1
 
     client.post(f"{url}/batch", headers=admin,
                 json={"action": "return", "student_ids": [a.student_id]})
     r = client.post(f"{url}/remind", headers=admin,
-                    json={"action": "return", "campus": "中关村校区"})
+                    json={"action": "return", "campuses": ["中关村校区"]})
     assert r.status_code == 400 and "没有未归还" in r.json()["detail"]
+
+
+def test_勾多个场次是或不是且(client, admin, db, two_campus):
+    """勾了「当日」和「次日」= 这两场的人都要，不是要求两场都报了名。"""
+    act, g, g2, a, other_shift, other_campus = two_campus
+    _tokens(client, admin, act)
+    url = f"/api/staff/activities/{act.id}/attire"
+
+    r = client.post(f"{url}/remind", headers=admin,
+                    json={"action": "take", "shift_ids": [g.id, g2.id]})
+    assert r.status_code == 200, r.text
+    assert r.json()["count"] == 3               # 两场的人都在
+    assert "当日" in r.json()["scope"] and "次日" in r.json()["scope"]
+
+
+def test_场次和校区是叠加的(client, admin, db, two_campus):
+    """同时勾了场次和校区：两个条件都要满足（落在选中的场次里，且校区也在选中）。"""
+    act, g, g2, a, other_shift, other_campus = two_campus
+    _tokens(client, admin, act)
+    url = f"/api/staff/activities/{act.id}/attire"
+
+    r = client.post(f"{url}/remind", headers=admin,
+                    json={"action": "take", "shift_ids": [g.id],
+                          "campuses": ["通州校区"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["count"] == 1               # 只有通州校区那一个
