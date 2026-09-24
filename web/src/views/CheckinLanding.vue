@@ -47,8 +47,10 @@
             <template v-else-if="task.checked_in && !task.checked_out">签退离岗</template>
             <template v-else>签到到岗</template>
           </el-button>
+          <!-- 不写具体几小时：可签时段是管理者在生成码时定的，默认只是「场次
+               前后各半小时」。写死一个数，跟现场实际的码对不上 -->
           <p v-if="task.checked_in && !task.checked_out" class="dim" style="margin:12px 0 0">
-            场次结束 2 小时内请完成签退，超时未签退将按场次结束时间计算时长
+            离岗时请签退
           </p>
         </template>
         <template v-else>

@@ -43,10 +43,39 @@ def _act(db: OrmSession, activity_id: str) -> Activity:
 # ======================= 签到任务 =======================
 
 class TaskBody(BaseModel):
-    mode: str = "shift"                 # group 统一签到 / position 分岗位
-    position_id: str | None = None
+    mode: str = "shift"                 # shift 统一签到 / position 分岗位
+    position_id: str | None = None      # 单岗位（旧的调用方式）
+    position_ids: list[str] = []        # 分岗位时可选多个，一个岗位一张码
     valid_from: str | None = None
     valid_to: str | None = None
+
+
+def live_task_conflict(db: OrmSession, shift_id: str, position_id: str | None,
+                       *, exclude_id: str | None = None) -> CheckinTask | None:
+    """这一场里有没有已经开着的码跟它冲突。
+
+    **整场的码算「所有岗位」**：整场开着的时候，再给某个岗位开一张，学生扫的
+    是哪张、记录落到哪张任务下都说不清（看板还会各算各的）。反过来也一样——
+    某个岗位开着码时再开整场的，同样会让两拨人扫到不同的任务。
+
+    自己跟自己不算冲突（改时段、重新开启时要把自己排除掉）。
+    """
+    q = (db.query(CheckinTask)
+         .filter(CheckinTask.shift_id == shift_id,
+                 CheckinTask.active.is_(True)))
+    if exclude_id:
+        q = q.filter(CheckinTask.id != exclude_id)
+    for t in q.all():
+        if t.position_id is None or position_id is None \
+                or t.position_id == position_id:
+            return t
+    return None
+
+
+def _conflict_message(db: OrmSession, t: CheckinTask, g: Shift) -> str:
+    st = db.get(Position, t.position_id) if t.position_id else None
+    return (f"本场次已经有开启的签到码（"
+            f"{st.name if st else '整场统一签到'}），请先把它关掉再开新的")
 
 
 @router.post("/shifts/{shift_id}/checkin-tasks")
@@ -59,41 +88,46 @@ def create_task(shift_id: str, body: TaskBody,
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
     ensure_not_finished(act)
-    position = None
+    positions: list[Position] = []
     if body.mode == "position":
-        position = db.get(Position, body.position_id or "")
-        if position is None or position.shift_id != g.id:
+        # 可多选：一个岗位一张码。只认本场次下的岗位
+        wanted = body.position_ids or ([body.position_id] if body.position_id else [])
+        if not wanted:
             raise HTTPException(400, "分岗位签到必须指定本场次下的岗位")
-    # 同一场次、同一岗位（含「统一签到」这个空岗位）只许有一个开着的码：
-    # 学生扫的不是这一个就是那一个，两个都开着，签到记录会分到两张任务下，
-    # 看板上的「已签」也会各算各的，现场没人说得清该扫哪张
-    live = (db.query(CheckinTask)
-            .filter(CheckinTask.shift_id == g.id,
-                    CheckinTask.position_id == (position.id if position else None),
-                    CheckinTask.active.is_(True)).first())
-    if live is not None:
-        raise HTTPException(
-            409, f"「{position.name if position else g.name}」已经有一个开启的签到码，"
-                 f"请先把它关掉再生成新的")
-    token = new_checkin_token()
+        for pid in wanted:
+            st = db.get(Position, pid)
+            if st is None or st.shift_id != g.id:
+                raise HTTPException(400, "分岗位签到必须指定本场次下的岗位")
+            positions.append(st)
+    # 一次一张地查冲突：多选时只要有一个岗位撞上就整体拒绝，别做一半
+    for st in (positions or [None]):
+        live = live_task_conflict(db, g.id, st.id if st else None)
+        if live is not None:
+            raise HTTPException(409, _conflict_message(db, live, g))
     pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
-    task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
-                       position_id=position.id if position else None,
-                       mode=body.mode, token=token,
-                       valid_from=(datetime.fromisoformat(body.valid_from)
-                                   if body.valid_from else g.start_time - pad),
-                       valid_to=(datetime.fromisoformat(body.valid_to)
-                                 if body.valid_to else g.end_time + pad),
-                       created_by=user.id)
-    db.add(task)
-    label = f"{position.name}" if position else f"{g.name}·统一签到"
-    audit_log(db, actor=user, action="checkin_task", target_type="checkin",
-              target_id=task.id, target_label=f"{act.title}·{label}",
-              activity_id=act.id,
-              summary=f"生成签到码 {token}（{'岗位' if position else '统一'}模式，"
-                      f"有效 {task.valid_from:%H:%M}~{task.valid_to:%H:%M}）")
+    made: list[CheckinTask] = []
+    for st in (positions or [None]):
+        task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+                           position_id=st.id if st else None,
+                           mode=body.mode, token=new_checkin_token(),
+                           valid_from=(datetime.fromisoformat(body.valid_from)
+                                       if body.valid_from else g.start_time - pad),
+                           valid_to=(datetime.fromisoformat(body.valid_to)
+                                     if body.valid_to else g.end_time + pad),
+                           created_by=user.id)
+        db.add(task)
+        label = st.name if st else f"{g.name}·统一签到"
+        audit_log(db, actor=user, action="checkin_task", target_type="checkin",
+                  target_id=task.id, target_label=f"{act.title}·{label}",
+                  activity_id=act.id,
+                  summary=f"生成签到码 {task.token}"
+                          f"（{'岗位' if st else '统一'}模式，"
+                          f"有效 {task.valid_from:%H:%M}~{task.valid_to:%H:%M}）")
+        made.append(task)
     db.commit()
-    return {"id": task.id, "token": token}
+    return {**({"id": made[0].id, "token": made[0].token} if made else {}),
+            # 多选时一次生成好几张，按 tasks 拿全的
+            "tasks": [{"id": t.id, "token": t.token} for t in made]}
 
 
 @router.get("/activities/{activity_id}/checkin-tasks")
@@ -317,15 +351,48 @@ def checkin_code(task_id: str, db: OrmSession = Depends(db_session),
 def toggle_task(task_id: str, body: dict,
                 db: OrmSession = Depends(db_session),
                 user: User = Depends(require_manager)):
+    """开启/关闭，改可签时段。
+
+    开启时同样要查冲突：关掉一张、再打开另一张，很容易凑出两张同时开着的
+    （同一个岗位的两张、或者一张整场的一张分岗位的），现场就说不清该扫哪张了。
+    """
     task = db.get(CheckinTask, task_id)
     if task is None:
         raise HTTPException(404, "任务不存在")
     ensure_activity_manager(db, user, task.activity_id)
     ensure_not_finished(_act(db, task.activity_id))
+
+    if "valid_from" in body or "valid_to" in body:
+        # 现场最常见的意外是场次提前或拖堂：以前只能关掉重建，而重建会让
+        # 已经扫过的那张码作废（记录还挂在老任务下）。时段本来就该能改
+        for key in ("valid_from", "valid_to"):
+            if key in body:
+                raw = (body[key] or "").strip()
+                setattr(task, key, datetime.fromisoformat(raw) if raw else None)
+        if task.valid_from and task.valid_to and task.valid_to <= task.valid_from:
+            raise HTTPException(400, "结束时间要晚于开始时间")
+        g = db.get(Shift, task.shift_id)
+        st = db.get(Position, task.position_id) if task.position_id else None
+        audit_log(db, actor=user, action="checkin_task", target_type="checkin",
+                  target_id=task.id,
+                  target_label=f"{_act(db, task.activity_id).title}·"
+                               f"{st.name if st else (g.name + '·统一签到')}",
+                  activity_id=task.activity_id,
+                  summary=f"改可签时段：{task.valid_from:%m-%d %H:%M} ~ "
+                          f"{task.valid_to:%m-%d %H:%M}")
+
     if "active" in body:
-        task.active = bool(body["active"])
+        want = bool(body["active"])
+        if want:
+            live = live_task_conflict(db, task.shift_id, task.position_id,
+                                      exclude_id=task.id)
+            if live is not None:
+                raise HTTPException(
+                    409, _conflict_message(db, live, db.get(Shift, task.shift_id)))
+        task.active = want
     db.commit()
-    return {"ok": True, "active": task.active}
+    return {"ok": True, "active": task.active,
+            "valid_from": iso(task.valid_from), "valid_to": iso(task.valid_to)}
 
 
 class ReminderBody(BaseModel):

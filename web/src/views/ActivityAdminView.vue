@@ -315,7 +315,9 @@
           <el-button type="primary" plain @click="openNotify">
             <el-icon><Bell /></el-icon>&nbsp;发送通知
           </el-button>
-          <el-button type="danger" @click="doExport" style="margin-left:auto">
+          <!-- 用主题色（人大红）而不是 danger：平台把 primary 覆盖成了 #9e2235，
+               danger 那个亮红在这一屏里显得突兀 -->
+          <el-button type="primary" @click="doExport" style="margin-left:auto">
             <el-icon><Download /></el-icon>&nbsp;导出排班表
           </el-button>
         </div>

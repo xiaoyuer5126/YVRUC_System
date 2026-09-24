@@ -59,6 +59,7 @@
           {{ row.geo ? '大屏' : '二维码 / 大屏' }}
         </el-button>
         <el-button size="small" :disabled="over" @click="openGeo(row)">定位</el-button>
+        <el-button size="small" :disabled="over" @click="openWindow(row)">改时段</el-button>
         <el-button size="small" :type="row.active ? 'danger' : 'success'" link
                    @click="toggle(row)">{{ row.active ? '关闭' : '开启' }}</el-button>
       </template>
@@ -96,12 +97,15 @@
           <el-tag v-else size="small">扫码</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="300">
+      <el-table-column label="操作" width="360">
         <template #default="{row}">
           <el-button size="small" @click="openQR(row)">
             {{ row.geo ? '大屏' : '二维码 / 大屏' }}
           </el-button>
           <el-button size="small" :disabled="over" @click="openGeo(row)">定位</el-button>
+          <!-- 现场最常见的意外是场次提前或拖堂：以前只能关掉重建，而重建会让
+               已经扫过的那张码作废 -->
+          <el-button size="small" :disabled="over" @click="openWindow(row)">改时段</el-button>
           <el-popconfirm :title="row.active ? '关闭后无法继续扫码' : '重新开启？'"
                          :disabled="over" @confirm="toggle(row)">
             <template #reference>
@@ -266,7 +270,10 @@
           </div>
         </el-form-item>
         <el-form-item v-if="form.mode === 'position'" label="选择岗位" required>
-          <el-select v-model="form.position_id" style="width:100%">
+          <!-- 可多选：一个岗位一张码。整场一张码的情况请用「统一签到」，
+               两者不能同时开着（见后端 live_task_conflict） -->
+          <el-select v-model="form.position_ids" multiple style="width:100%"
+                     placeholder="可多选，每个岗位一张码">
             <el-option v-for="s in formShift?.positions || []" :key="s.id" :value="s.id"
                        :label="`${s.name}（${s.time_text}）`" />
           </el-select>
@@ -345,6 +352,25 @@
           · 可签 {{ fmtDT(qrTask.valid_from) }} ~ {{ fmtDT(qrTask.valid_to) }}
         </div>
       </div>
+    </el-dialog>
+
+    <!-- 改可签时段：场次提前或拖堂时用，不必关掉重建（重建会让已扫过的码作废） -->
+    <el-dialog v-model="winDlg.visible" title="改可签时段" width="440">
+      <p class="dim" style="line-height:1.8;margin:0 0 12px">
+        {{ winDlg.task?.shift_name }}<template
+          v-if="winDlg.task?.mode === 'position'"> · {{ winDlg.task?.position_name }}</template>
+        。改时段不影响已经扫过的记录，码也还是同一张。
+      </p>
+      <div class="two-col">
+        <DateTimeField :model-value="winDlg.range[0]" placeholder="开放签到"
+                       @update:model-value="v => winDlg.range[0] = v" />
+        <DateTimeField :model-value="winDlg.range[1]" placeholder="停止签到"
+                       @update:model-value="v => winDlg.range[1] = v" />
+      </div>
+      <template #footer>
+        <el-button @click="winDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="winDlg.busy" @click="saveWindow">保存</el-button>
+      </template>
     </el-dialog>
 
     <!-- 定位签到：坐标由管理者站在岗位上量 -->
@@ -485,7 +511,7 @@ const METHOD_LABEL = { scan: '扫码', geo: '定位', manual: '补签' }
 const actId = computed(() => props.activityId)   // vuecheck: script-only
 
 const creating = ref(false)
-const form = ref({ shift_id: '', mode: 'shift', position_id: '', range: [] })
+const form = ref({ shift_id: '', mode: 'shift', position_ids: [], range: [] })
 
 const shiftOptions = computed(() => props.allShifts)
 const formShift = computed(
@@ -655,7 +681,7 @@ function defaultRange(g) {
 
 function openCreate() {
   const g = boardShift.value || shiftOptions.value[0]
-  form.value = { shift_id: g?.id || '', mode: 'shift', position_id: '',
+  form.value = { shift_id: g?.id || '', mode: 'shift', position_ids: [],
                  range: defaultRange(g) }
   creating.value = true
 }
@@ -664,23 +690,24 @@ function openCreate() {
 function onPickShift() {
   const g = formShift.value
   form.value.range = defaultRange(g)
-  form.value.position_id = ''
+  form.value.position_ids = []
   if (!g?.positions?.length) form.value.mode = 'shift'
 }
 
 async function createTask() {
   if (!form.value.shift_id) return ElMessage.warning('请选择签到场次')
-  if (form.value.mode === 'position' && !form.value.position_id)
+  if (form.value.mode === 'position' && !form.value.position_ids.length)
     return ElMessage.warning('请选择岗位')
   const body = {
     mode: form.value.mode,
-    position_id: form.value.mode === 'position' ? form.value.position_id : null,
+    position_ids: form.value.mode === 'position' ? form.value.position_ids : [],
   }
   const [f1, f2] = form.value.range || []
   if (f1) body.valid_from = toISO(f1)
   if (f2) body.valid_to = toISO(f2)
-  await api.post(`/api/staff/shifts/${form.value.shift_id}/checkin-tasks`, body)
-  ElMessage.success('签到码已生成')
+  const d = await api.post(`/api/staff/shifts/${form.value.shift_id}/checkin-tasks`,
+                           body)
+  ElMessage.success(`已生成 ${d.tasks?.length || 1} 张签到码`)
   creating.value = false
   await loadTasks()
 }
@@ -690,6 +717,33 @@ function toISO(v) {
   const d = v instanceof Date ? v : new Date(v)
   const p = n => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+// ======================= 改可签时段 =======================
+
+const winDlg = ref({ visible: false, task: null, range: [], busy: false })
+
+function openWindow(row) {
+  // 列表给的是 "YYYY-MM-DDTHH:MM"，直接 new Date 能认
+  winDlg.value = {
+    visible: true, task: row, busy: false,
+    range: [row.valid_from ? new Date(row.valid_from) : null,
+            row.valid_to ? new Date(row.valid_to) : null],
+  }
+}
+
+async function saveWindow() {
+  const [f1, f2] = winDlg.value.range || []
+  if (!f1 || !f2) return ElMessage.warning('起止时间都要填')
+  if (f2 <= f1) return ElMessage.warning('结束时间要晚于开始时间')
+  winDlg.value.busy = true
+  try {
+    await api.patch(`/api/staff/checkin-tasks/${winDlg.value.task.id}`,
+                    { valid_from: toISO(f1), valid_to: toISO(f2) })
+    ElMessage.success('可签时段已改')
+    winDlg.value.visible = false
+    await loadTasks()
+  } finally { winDlg.value.busy = false }
 }
 
 function openQR(row) {

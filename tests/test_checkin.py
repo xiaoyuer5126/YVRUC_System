@@ -649,27 +649,94 @@ def test_请假的人不算进岗位的应到岗(client, admin, db, live_group):
     assert d["positions"][0]["expected"] == 0
 
 
-def test_同一场次同一岗位只能有一个开着的码(client, admin, db, live_group):
+def test_同一场次同时只能有一张开着的码(client, admin, db, live_group):
     """两个都开着，学生扫哪张、签到记录落到哪张任务下都说不清，
-    看板上的「已签」还会各算各的。"""
-    act, g, _h, _token = live_group        # live_group 已经建了一个统一码
-    r = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks",
-                    headers=admin, json={"mode": "shift"})
-    assert r.status_code == 409 and "已经有一个开启的签到码" in r.json()["detail"]
+    看板上的「已签」还会各算各的。
 
-    # 关掉它就能再建
+    **整场的码算「所有岗位」**：整场开着时不给某个岗位再开一张，反过来也一样。
+    """
+    act, g, _h, _token = live_group        # live_group 已经建了一个统一码
+    pos = db.query(Position).filter(Position.shift_id == g.id).first()
+
+    # 整场开着 → 整场的、分岗位的都建不了
+    for body in ({"mode": "shift"},
+                 {"mode": "position", "position_id": pos.id}):
+        r = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks",
+                        headers=admin, json=body)
+        assert r.status_code == 409, r.text
+        assert "已经有开启的签到码" in r.json()["detail"]
+
+    # 关掉它，就能建分岗位的
     tid = task_id_of(client, admin, act)
     assert client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
                         json={"active": False}).status_code == 200
-    r = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks",
-                    headers=admin, json={"mode": "shift"})
-    assert r.status_code == 200, r.text
-
-    # 但那是「同一岗位」的限制：另一个岗位照样可以有自己的码
-    pos = db.query(Position).filter(Position.shift_id == g.id).first()
     r = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks", headers=admin,
                     json={"mode": "position", "position_id": pos.id})
     assert r.status_code == 200, r.text
+
+    # 分岗位的开着时，整场的也建不了（整场 = 所有岗位）
+    r = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks",
+                    headers=admin, json={"mode": "shift"})
+    assert r.status_code == 409, r.text
+
+
+def test_重新开启也要查冲突(client, admin, db, live_group):
+    """关掉一张、再打开另一张，很容易凑出两张同时开着的——这条路上原来没有
+    任何检查（把已生成的码再点开启，就出现两张）。"""
+    act, g, _h, _token = live_group
+    live_id = task_id_of(client, admin, act)          # 开着的那张
+    # 再建一张同场次同岗位的（先关掉才建得了）
+    client.patch(f"/api/staff/checkin-tasks/{live_id}", headers=admin,
+                 json={"active": False})
+    other = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks",
+                        headers=admin, json={"mode": "shift"}).json()["id"]
+
+    # 现在 other 开着，把先前那张重新打开 → 必须挡住
+    r = client.patch(f"/api/staff/checkin-tasks/{live_id}", headers=admin,
+                     json={"active": True})
+    assert r.status_code == 409 and "已经有开启的签到码" in r.json()["detail"]
+    assert client.get(f"/api/staff/activities/{act.id}/checkin-tasks",
+                      headers=admin).json()
+    still = [t for t in client.get(f"/api/staff/activities/{act.id}/checkin-tasks",
+                                   headers=admin).json() if t["active"]]
+    assert len(still) == 1, "不能出现两张同时开着的"
+
+
+def test_分岗位可以一次建好几个(client, admin, db, live_group):
+    """一个岗位一张码：选了三个就建三张，时段都一样。"""
+    act, g, _h, _token = live_group
+    tid = task_id_of(client, admin, act)
+    client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                 json={"active": False})
+    db.add_all([Position(id=uid("p"), shift_id=g.id, name=f"岗位{i}",
+                         location="x", quota=3, sort=i) for i in (1, 2)])
+    db.commit()
+    ids = [p.id for p in db.query(Position).filter(Position.shift_id == g.id).all()]
+    d = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks", headers=admin,
+                    json={"mode": "position", "position_ids": ids}).json()
+    assert len(d["tasks"]) == len(ids)
+
+    # 其中任何一个岗位再建一张，还是被挡（同一岗位）
+    r = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks", headers=admin,
+                    json={"mode": "position", "position_ids": [ids[0]]})
+    assert r.status_code == 409
+
+
+def test_改可签时段(client, admin, db, live_group):
+    """场次提前或拖堂时改时段用——不必关掉重建（重建会让已扫过的码作废）。"""
+    act, g, _h, _token = live_group
+    tid = task_id_of(client, admin, act)
+    f = (g.start_time - timedelta(hours=2)).isoformat()
+    t = (g.end_time + timedelta(hours=2)).isoformat()
+
+    r = client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                     json={"valid_from": f, "valid_to": t})
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/checkin/task/{_token}", headers=_h).json()["state"] == "active"
+
+    bad = client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                       json={"valid_to": f})
+    assert bad.status_code == 400 and "晚于" in bad.json()["detail"]
 
 
 def test_非本场次的人不该被查出姓名(client, admin, db, live_group, take_student):
