@@ -1,23 +1,5 @@
 <template>
   <div v-if="boardShift">
-    <!-- 本页自己管场次，不跟着「报名与调配」走：那边在排人，这边在盯现场，
-         两件事同时在做，共用一个选择等于互相打架 -->
-    <div class="toolbar">
-      <span>签到场次</span>
-      <el-select v-model="boardShiftId" style="width:280px" @change="onSwitchBoard">
-        <el-option v-for="g in shiftOptions" :key="g.id" :value="g.id"
-                   :label="`${g.name}（${g.time_text}）`">
-          <span>{{ g.name }}</span>
-          <el-tag v-if="g.kind !== 'service'" size="small" effect="plain"
-                  style="margin-left:8px">{{ g.kind_label }}</el-tag>
-          <span class="dim" style="margin-left:8px">{{ g.time_text }}</span>
-        </el-option>
-      </el-select>
-      <!-- 刷新条放在这里而不是看板里：换场次时看板会整块卸载重建，
-           待在里面的话组件跟着重来一次，「更新于」被清空 -->
-      <RefreshBar ref="boardRefresh" :load="loadBoard" />
-    </div>
-
     <div class="toolbar">
       <el-button type="primary" size="small" :disabled="over" @click="openCreate">
         <el-icon><Plus /></el-icon>&nbsp;生成签到码
@@ -118,6 +100,26 @@
         </template>
       </el-table-column>
     </el-table>
+
+    <!-- 这一行只影响下面的大屏（到岗看板与到场名单），跟上面的签到码列表无关
+         ——签到码是整个活动的，列的是每一场。所以排在列表之后、大屏之前。
+         本页自己管场次，不跟着「报名与调配」走：那边在排人，这边在盯现场，
+         两件事同时在做，共用一个选择等于互相打架。 -->
+    <div class="toolbar">
+      <span>大屏场次</span>
+      <el-select v-model="boardShiftId" style="width:280px" @change="onSwitchBoard">
+        <el-option v-for="g in shiftOptions" :key="g.id" :value="g.id"
+                   :label="`${g.name}（${g.time_text}）`">
+          <span>{{ g.name }}</span>
+          <el-tag v-if="g.kind !== 'service'" size="small" effect="plain"
+                  style="margin-left:8px">{{ g.kind_label }}</el-tag>
+          <span class="dim" style="margin-left:8px">{{ g.time_text }}</span>
+        </el-option>
+      </el-select>
+      <!-- 刷新条放在这里而不是看板里：换场次时看板会整块卸载重建，
+           待在里面的话组件跟着重来一次，「更新于」被清空 -->
+      <RefreshBar ref="boardRefresh" :load="loadBoard" />
+    </div>
 
     <!-- 到岗看板：按场次拉取，不依赖激活任务 -->
     <template v-if="board">
