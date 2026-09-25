@@ -1,0 +1,134 @@
+"""名额闸门：抢报时把洪水挡在数据库外面，但**不许改变谁能报上**。
+
+闸门是 Redis 上一个「还剩几个」的计数器，报名先扣一个、扣不到就回「满了」，
+这一步不碰数据库。水位会漂移（退选、补招、扩容都不经过它），所以这些用例
+盯的就是漂移的两面：多了不能超卖，少了不能冤枉人。
+"""
+from __future__ import annotations
+
+import redis
+import pytest
+
+from backend import locks
+from backend.database import SessionLocal
+from backend.locks import reset_gate
+from backend.models import Enrollment
+from conftest import login
+from test_enroll import enroll
+
+
+def _enrolled(g) -> int:
+    db = SessionLocal()
+    try:
+        return db.query(Enrollment).filter(
+            Enrollment.shift_id == g.id,
+            Enrollment.status == "enrolled").count()
+    finally:
+        db.close()
+
+
+@pytest.fixture(autouse=True)
+def clean_gates():
+    """每个用例从「没预热」开始，也不把计数器留给下一个用例。"""
+    keys = locks._client.keys("rucva:gate:*")
+    if keys:
+        locks._client.delete(*keys)
+    yield
+    keys = locks._client.keys("rucva:gate:*")
+    if keys:
+        locks._client.delete(*keys)
+
+
+def test_报名会扣闸门(client, open_group, take_student):
+    """机制本身：报上一个，水位少一个（这样下一个请求连库都不用查）。"""
+    act, g = open_group(5)
+    pid = g.test_position_id
+    assert locks.gate_left(g.id, pid, "seat") is None      # 还没预热
+    assert enroll(client, login(client, take_student()), act, g).status_code == 200
+    assert locks.gate_left(g.id, pid, "seat") == 4         # 5 - 1
+
+
+def test_水位虚高也不会超卖(client, open_group, take_student):
+    """闸门说还有 99 个，也不能真发 99 个出去——名额最终由数据库说了算。
+
+    水位虚高是常态：退选、补招、扩容都不经过闸门，计数器只会在「报名」这条
+    路上减少。所以拿到闸门只是「放行」，判定还得回数据库那条老路。
+    """
+    act, g = open_group(2, waitlist_quota=0)
+    pid = g.test_position_id
+    reset_gate(g.id, pid, "seat", 99)                   # 计数器撒谎
+    for _ in range(2):
+        assert enroll(client, login(client, take_student()), act, g
+                      ).json()["status"] == "enrolled"
+    assert enroll(client, login(client, take_student()), act, g).status_code == 409
+    assert _enrolled(g) == 2
+
+
+def test_水位偏少也不会冤枉人(client, open_group, take_student):
+    """反过来：闸门说没了、数据库其实有位子，也得让人报上。
+
+    这是「退选之后名额要立刻能用」的那条路——退选不经过闸门，计数器还是 0。
+    """
+    act, g = open_group(1)
+    reset_gate(g.id, g.test_position_id, "seat", 0)     # 计数器说满了
+    assert enroll(client, login(client, take_student()), act, g).status_code == 200
+    assert _enrolled(g) == 1
+
+
+def test_退选之后水位自己纠正过来(client, open_group, take_student, db):
+    """一个人报了又退，第二个人照样能报上（闸门旧了会自己核一遍）。"""
+    act, g = open_group(1)
+    pid = g.test_position_id
+    h1 = login(client, take_student())
+    assert enroll(client, h1, act, g).status_code == 200
+    reset_gate(g.id, pid, "seat", 0)                    # 假装水位停在 0
+    enr = db.query(Enrollment).filter(Enrollment.shift_id == g.id).one()
+    assert client.delete(f"/api/activities/enrollments/{enr.id}",
+                         headers=h1).status_code == 200
+    assert enroll(client, login(client, take_student()), act, g
+                  ).json()["status"] == "enrolled"
+
+
+def test_闸门扣到号但没报上要还回去(client, open_group, take_student):
+    """扣了号最后却转去候补：号得还，否则水位会比实际少，白白少发一个名额。"""
+    act, g = open_group(1, waitlist_quota=3)
+    pid = g.test_position_id
+    assert enroll(client, login(client, take_student()), act, g
+                  ).json()["status"] == "enrolled"
+    assert locks.gate_left(g.id, pid, "seat") == 0
+    # 第二个人：位置满了，去看候补——走的是候补闸门，正式名额的水位不该动
+    assert enroll(client, login(client, take_student()), act, g
+                  ).json()["status"] == "waitlisted"
+    assert locks.gate_left(g.id, pid, "seat") == 0
+    assert locks.gate_left(g.id, pid, "waitlist") == 2
+
+
+def test_资格不符的报名不占水位(client, open_group, take_student, db):
+    """资料不全的人报不了名——但他短暂扣走的那个号必须还回去。
+
+    不还的话，水位比实际低，后面明明有位子的人会被闸门挡住（这类漏洞平时
+    看不出来，只有在抢报那几分钟才现形）。
+    """
+    from conftest import student_row
+
+    act, g = open_group(2)
+    pid = g.test_position_id
+    u = student_row(db, take_student())
+    u.phone = ""                       # 资料不全 → 报名会被 403 挡下
+    db.commit()
+
+    assert enroll(client, login(client, u.student_id), act, g).status_code == 403
+    assert locks.gate_left(g.id, pid, "seat") == 2      # 号还回来了，水位没少
+
+
+def test_redis不可用时照常报名(client, open_group, take_student, monkeypatch):
+    """闸门是加速用的，不能成为新的单点故障：Redis 不通就退回查库那条路。"""
+    act, g = open_group(1)
+
+    def boom(*_args, **_kwargs):
+        raise redis.ConnectionError("redis 不在了")
+
+    monkeypatch.setattr(locks, "_TAKE_GATE", boom)
+    assert enroll(client, login(client, take_student()), act, g
+                  ).json()["status"] == "enrolled"
+    assert _enrolled(g) == 1

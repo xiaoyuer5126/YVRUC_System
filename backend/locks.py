@@ -136,6 +136,73 @@ return 0
 """)
 
 
+# —— 名额闸门 ——
+#
+# 抢报时几百个请求同一瞬间到。每个请求都进数据库「数一遍还剩几个位子」的话，
+# 数据库连接和线程池会被一起拖垮（实测：几百个请求把整站拖住两分钟，50 个
+# 名额只发出去 5 个）。所以在 Redis 上放一个「还剩几个」的计数器，报名先来
+# 扣一个：扣不到就直接回「满了」，这一步完全不碰数据库。
+#
+# **闸门只挡洪水，不判定名额**：拿到闸门的请求照样走原来的锁 + 实际人数判定，
+# 数据库始终是账本。所以计数器旧了也不会超卖。反过来，闸门说「满了」时要拿
+# 数据库核一遍再回绝——不然计数器旧了会把本该报上的人冤枉掉。核的时候顺手
+# 把计数器覆盖成数据库的实际剩余（覆盖，不是加减）。
+#
+# 计数器会随时间漂移（退选、补招、扩容、候补顺延都不经过它）。漂移最多造成
+# 「暂时误拒」，一核就自愈；超卖不会发生，因为名额最终由数据库说了算。
+GATE_TTL_SECONDS = 300
+GATE_NONE, GATE_FULL, GATE_OK = -1, 0, 1
+
+# 扣一个，但**不扣到负数**：负数会让后来的还号把计数顶回去，一个旧计数器
+# 就能凭空变出名额来。所以在 Lua 里判完再扣。
+_TAKE_GATE = _client.register_script("""
+local n = redis.call('get', KEYS[1])
+if not n then return -1 end
+if tonumber(n) <= 0 then return 0 end
+redis.call('decr', KEYS[1])
+return 1
+""")
+
+
+def gate_key(shift_id: str, position_id: str, kind: str) -> str:
+    """一个岗位一种闸门一条键。kind 目前是 seat（正式名额）与 waitlist（候补）。"""
+    return f"rucva:gate:{kind}:{shift_id}:{position_id}"
+
+
+def take_gate(shift_id: str, position_id: str, kind: str) -> int:
+    """扣一个名额。返回 GATE_OK（扣到了）/ GATE_FULL（说满了）/ GATE_NONE（没预热）。
+
+    Redis 不可用时返回 GATE_NONE：闸门是加速用的，不该成为新的单点故障——
+    退回到「每个请求都查库」那条老路，功能照旧，只是慢。
+    """
+    try:
+        return int(_TAKE_GATE(keys=[gate_key(shift_id, position_id, kind)]))
+    except redis.RedisError:
+        return GATE_NONE
+
+
+def return_gate(shift_id: str, position_id: str, kind: str) -> None:
+    """把扣掉的那个还回去。只有拿到 GATE_OK、最后又没占上的才需要还。"""
+    with contextlib.suppress(redis.RedisError):
+        _client.incr(gate_key(shift_id, position_id, kind))
+
+
+def gate_left(shift_id: str, position_id: str, kind: str) -> int | None:
+    """闸门现在还剩几个。None = 没预热。给用例和排查用。"""
+    try:
+        raw = _client.get(gate_key(shift_id, position_id, kind))
+    except redis.RedisError:
+        return None
+    return int(raw) if raw is not None else None
+
+
+def reset_gate(shift_id: str, position_id: str, kind: str, left: int) -> None:
+    """按数据库的实际剩余名额覆盖计数器（不是加减，是覆盖）。"""
+    with contextlib.suppress(redis.RedisError):
+        _client.set(gate_key(shift_id, position_id, kind), max(0, left),
+                    ex=GATE_TTL_SECONDS)
+
+
 def sweeper_token() -> str:
     """这一进程的选主标识：pid 打头，便于在 ps 与日志里对号。"""
     return f"{os.getpid()}-{secrets.token_hex(4)}"

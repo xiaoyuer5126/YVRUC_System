@@ -12,7 +12,8 @@ from ..database import db_session
 from ..deps import current_user
 from .. import notify
 from ..integrations import msgcenter
-from ..locks import shift_lock
+from ..locks import (GATE_OK, reset_gate, return_gate, shift_lock,
+                     take_gate)
 from ..models import (Activity, Application, Enrollment, Shift, Position,
                       User, like_pattern, now, uid)
 from ..perm import is_activity_manager, managed_activity_ids
@@ -243,6 +244,67 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
                                  f"{'；'.join(unmet_shift)}")
 
 
+def _room_left(db, g, position) -> int:
+    """岗位还剩几个正式名额（待确认的也算占着，见 logic.position_occupied_count）。"""
+    return position.quota - logic.position_occupied_count(db, position.id)
+
+
+def _waitlist_left(db, g, position) -> int:
+    """岗位的候补队列还剩几个位子。"""
+    if position.waitlist_quota <= 0:
+        return 0        # 不设候补：连查都不用查，这条路上每次查库都是白花
+    queued = [r for r in logic.waitlist_rows(db, g.id)
+              if r.position_id == position.id]
+    return position.waitlist_quota - len(queued)
+
+
+def _gate(db, g, position, kind, left_fn) -> bool | None:
+    """闸门放行吗。返回 True（号已扣在手里）/ False（确实没位子）/ None（闸门用不了）。
+
+    闸门说「满了」或者「没预热」时一律以数据库为准：核一遍、把计数器覆盖成
+    实际剩余，还剩就再扣一次——所以计数器旧了最多多一次查库，不会超卖、也不会
+    冤枉人。**Redis 用不了时返回 None**：闸门只是加速用的，它不在就该退回
+    「每个请求都查库」那条老路，而不是反过来把人挡在外面。
+    """
+    if take_gate(g.id, position.id, kind) == GATE_OK:
+        return True
+    # 闸门说「没了」（或者没预热）→ 拿数据库核一遍。绝大多数请求走到这里就结束了，
+    # 所以这一段要瘦：只查一次，别做多余的写。
+    left = left_fn(db, g, position)
+    if left <= 0:
+        # 确实满了。计数器不必再动——它本来就是 0
+        return False
+    # 数据库说还有位子：那是计数器旧了，覆盖成实际剩余再扣一次
+    reset_gate(g.id, position.id, kind, left)
+    # reset 成功了键就一定在，所以再扣不到就是 Redis 用不了——那就别拿闸门
+    # 拦人，交回数据库那条路（它才是账本）
+    return True if take_gate(g.id, position.id, kind) == GATE_OK else None
+
+
+def _release_gates(g, position, seat_gate, wl_gate) -> None:
+    """报不上时把闸门的号原样还回去（拿过才还）。"""
+    if seat_gate:
+        return_gate(g.id, position.id, "seat")
+    if wl_gate:
+        return_gate(g.id, position.id, "waitlist")
+
+
+def _settle_gate(db, g, position, status, seat_gate, wl_gate) -> None:
+    """按最终结果给闸门结账。
+
+    闸门是「先扣了再说」，可最终判定在数据库那边，两者可能对不上：
+      · 扣到号的却转去了候补 / 被拒 → 号还回去；
+      · 没扣到号的却报上了（计数器旧了，数据库其实有位子）→ 按实际剩余重新覆盖。
+    """
+    if status == "enrolled":
+        if not seat_gate:
+            reset_gate(g.id, position.id, "seat", _room_left(db, g, position))
+        if wl_gate:
+            return_gate(g.id, position.id, "waitlist")
+    elif seat_gate:
+        return_gate(g.id, position.id, "seat")
+
+
 @router.post("/{activity_id}/shifts/{shift_id}/enroll")
 def enroll(activity_id: str, shift_id: str, body: EnrollBody,
            db: OrmSession = Depends(db_session),
@@ -253,8 +315,6 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         raise HTTPException(400, "场次不属于该活动")
     if act.is_screened():
         raise HTTPException(409, "本活动需填写报名问卷申请，由负责人筛选后录取")
-
-    _check_eligibility(db, user, act, g)
 
     # 岗位有效性与硬性条件（与名额无关，锁外先判）。
     # 「截止后统一分配」的场次不让学生挑岗位，一律落到占位岗位上——
@@ -275,98 +335,124 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
     else:
         raise HTTPException(400, "请选择具体岗位")
 
-    # 报名问卷答案：题目不存在就是空表，答案照样为空。挂了适用岗位的题只问
-    # 报这个岗位的人，所以要等岗位定下来再校验
-    from .screening import validate_answers
-    answers = validate_answers(db, act, user, body.answers or {}, [position.id])
+    # ★ 名额闸门排在资格校验**前面**，这是它存在的全部意义：几百个请求同一瞬间
+    # 到的时候，抢不到的那些只花一次 Redis 往返就被挡回去，下面那十来条资格
+    # 查询、时段比较、场次锁根本不会执行。闸门只挡洪水、不判定名额——拿不到号
+    # 也可能是计数器旧了（_gate 会拿数据库核一遍），拿到号也照样要走下面那条
+    # 以数据库为准的老路，所以它旧了也不会超卖。
+    seat_gate = _gate(db, g, position, "seat", _room_left)
+    wl_gate = False
+    if seat_gate is False:
+        wl_gate = _gate(db, g, position, "waitlist", _waitlist_left)
+        if wl_gate is False:
+            raise HTTPException(409, f"候补名额已满（上限{position.waitlist_quota}人）")
 
-    # ★ 时段冲突（粗粒度）：与所有有效报名的场次比区间，重叠即拦截。
-    # 候补中的场次同样算已占用——排了队就等于预留了这段时间。
-    # 培训/彩排是连带报上的，它们的时间也要一起比：报完才发现彩排那晚
-    # 有别的活动，等于把冲突留给了现场。
-    for target in [g] + logic.attached_shifts(
-            db, g.id, position.id if position else None):
-        clashes = logic.time_conflicts(db, user, target)
-        if clashes:
-            extra = "" if target is g else f"（{target.kind_label()}：{target.name}）"
-            raise HTTPException(409, {
-                "message": f"时间段与您已报名的活动冲突{extra}："
-                           f"{logic.conflict_message(clashes)}",
-                "conflicts": clashes})
+    enrolled = False          # 报名有没有真的落库
+    try:
+        _check_eligibility(db, user, act, g)
 
-    # 上面全是读，先落一个空事务把**数据库连接还回池子**，再去抢场次锁。
-    # 不还的话，等锁的这段时间是「占着一条连接在等」：几百个请求一起到的时候，
-    # 池子会被等锁的人占满，反而轮到锁的持有者拿不到连接去干活——两边互相等，
-    # 一直到连接池 30 秒超时才一批批散开。压测里这一幕是实打实的：700 个请求
-    # 同时到，p50 卡在 30 秒，整站跟着瘫了两分钟。
-    # （commit 而不是 rollback：这就是读阶段的正常收尾，语义更直白；
-    #   本会话 expire_on_commit=False，对象在 commit 后照样能读。）
-    db.commit()
+        # 报名问卷答案：题目不存在就是空表，答案照样为空。挂了适用岗位的题只问
+        # 报这个岗位的人，所以要等岗位定下来再校验
+        from .screening import validate_answers
+        answers = validate_answers(db, act, user, body.answers or {}, [position.id])
 
-    # ★ 名额判断与落库整段串行化到场次粒度，防止超卖与重复报名
-    with shift_lock(g.id):
-        live = (db.query(Enrollment)
-                .filter(Enrollment.shift_id == g.id,
-                        Enrollment.user_id == user.id)
-                .filter((Enrollment.status.in_(logic.ACTIVE))
-                        | (Enrollment.seat_held.is_(True))).first())
-        if live is not None:
-            if live.seat_held:
-                raise HTTPException(
-                    409, "您此前在该场次临期退选，名额已按规则扣留，无法再次报名；"
-                         "如确有需要请联系负责人")
-            label = {"enrolled": "已报名为正式成员", "waitlisted": "已在候补队列中",
-                     "pending_confirm": "有候补转正待确认"}[live.status]
-            raise HTTPException(409, f"该场次{label}，请勿重复报名")
+        # ★ 时段冲突（粗粒度）：与所有有效报名的场次比区间，重叠即拦截。
+        # 候补中的场次同样算已占用——排了队就等于预留了这段时间。
+        # 培训/彩排是连带报上的，它们的时间也要一起比：报完才发现彩排那晚
+        # 有别的活动，等于把冲突留给了现场。
+        for target in [g] + logic.attached_shifts(
+                db, g.id, position.id if position else None):
+            clashes = logic.time_conflicts(db, user, target)
+            if clashes:
+                extra = "" if target is g else f"（{target.kind_label()}：{target.name}）"
+                raise HTTPException(409, {
+                    "message": f"时间段与您已报名的活动冲突{extra}："
+                               f"{logic.conflict_message(clashes)}",
+                    "conflicts": clashes})
 
-        enr = Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
-                         user_id=user.id, joined_at=now(),
-                         allow_reassign=body.allow_reassign,
-                         leader_willing=body.leader_willing,
-                         answers=answers)
-        if position is not None:
-            enr.position_id = position.id
-        if logic.has_room(db, g, position):
-            enr.status = "enrolled"
+        # 上面全是读，先落一个空事务把**数据库连接还回池子**，再去抢场次锁。
+        # 不还的话，等锁的这段时间是「占着一条连接在等」：请求一多，池子会被
+        # 等锁的人占满，反而轮到锁的持有者拿不到连接去干活——两边互相等，
+        # 一直到连接池 30 秒超时才一批批散开。
+        # （commit 而不是 rollback：这就是读阶段的正常收尾，语义更直白；
+        #   本会话 expire_on_commit=False，对象在 commit 后照样能读。）
+        db.commit()
+
+        # ★ 名额判断与落库整段串行化到场次粒度，防止超卖与重复报名。
+        # 走完闸门的请求最多只剩「名额数」这么多个，所以等锁的队伍很短——
+        # 从前是几百个一起排队，大半等到超时。
+        with shift_lock(g.id):
+            live = (db.query(Enrollment)
+                    .filter(Enrollment.shift_id == g.id,
+                            Enrollment.user_id == user.id)
+                    .filter((Enrollment.status.in_(logic.ACTIVE))
+                            | (Enrollment.seat_held.is_(True))).first())
+            if live is not None:
+                if live.seat_held:
+                    raise HTTPException(
+                        409, "您此前在该场次临期退选，名额已按规则扣留，无法再次报名；"
+                             "如确有需要请联系负责人")
+                label = {"enrolled": "已报名为正式成员", "waitlisted": "已在候补队列中",
+                         "pending_confirm": "有候补转正待确认"}[live.status]
+                raise HTTPException(409, f"该场次{label}，请勿重复报名")
+
+            enr = Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                             user_id=user.id, joined_at=now(),
+                             allow_reassign=body.allow_reassign,
+                             leader_willing=body.leader_willing,
+                             answers=answers)
             if position is not None:
-                enr.assigned_at = enr.joined_at
-        else:
-            # 队列上限按岗位算；assign 场次的队列就排在占位岗位上
-            queued = [r for r in logic.waitlist_rows(db, g.id)
-                      if r.position_id == position.id]
-            limit = position.waitlist_quota
-            if len(queued) >= limit:
-                raise HTTPException(409, f"候补名额已满（上限{limit}人）")
-            enr.status = "waitlisted"
-            # 候补必须接受调剂：管理者要能把排队的人调到还有空位的岗位，
-            # 否则队列会卡在一个岗位上，别处空着没人。
-            enr.allow_reassign = True
-        db.add(enr)
-        db.flush()
-        logic.record_change(db, user, enr,
-                            "enroll" if enr.status == "enrolled" else "waitlist")
-
-        if enr.status == "enrolled":
-            logic.sync_attached(db, enr)      # 培训/彩排连带报上
-            extra = "".join(
-                f"\n{s.kind_label()}：{s.span_text()}"
-                f"（{s.location or act.location or '地点待定'}）"
-                for s in logic.attached_shifts(
-                    db, g.id, position.id if position else None))
-            msgcenter.send_user(db, user, "signup_success", activity=act.title,
-                            shift=g.name, time=g.span_text(),
-                            detail=(f"岗位：{position.name}（{position.location}）"
-                                    if position else "具体岗位将于报名截止后公布")
-                                   + extra)
-        else:
+                enr.position_id = position.id
+            if logic.has_room(db, g, position):
+                enr.status = "enrolled"
+                if position is not None:
+                    enr.assigned_at = enr.joined_at
+            else:
+                # 队列上限按岗位算；assign 场次的队列就排在占位岗位上
+                queued = [r for r in logic.waitlist_rows(db, g.id)
+                          if r.position_id == position.id]
+                limit = position.waitlist_quota
+                if len(queued) >= limit:
+                    raise HTTPException(409, f"候补名额已满（上限{limit}人）")
+                enr.status = "waitlisted"
+                # 候补必须接受调剂：管理者要能把排队的人调到还有空位的岗位，
+                # 否则队列会卡在一个岗位上，别处空着没人。
+                enr.allow_reassign = True
+            db.add(enr)
             db.flush()
-            msgcenter.send_user(db, user, "waitlist_queued", activity=act.title,
-                            shift=g.name, pos=logic.waitlist_position(db, enr))
-        try:
-            db.commit()
-        except IntegrityError:      # 唯一索引兜底：锁失效时的并发重复报名
-            db.rollback()
-            raise HTTPException(409, "该场次您已有报名记录，请勿重复报名")
+            logic.record_change(db, user, enr,
+                                "enroll" if enr.status == "enrolled" else "waitlist")
+
+            if enr.status == "enrolled":
+                logic.sync_attached(db, enr)      # 培训/彩排连带报上
+                extra = "".join(
+                    f"\n{s.kind_label()}：{s.span_text()}"
+                    f"（{s.location or act.location or '地点待定'}）"
+                    for s in logic.attached_shifts(
+                        db, g.id, position.id if position else None))
+                msgcenter.send_user(db, user, "signup_success", activity=act.title,
+                                shift=g.name, time=g.span_text(),
+                                detail=(f"岗位：{position.name}（{position.location}）"
+                                        if position else "具体岗位将于报名截止后公布")
+                                       + extra)
+            else:
+                db.flush()
+                msgcenter.send_user(db, user, "waitlist_queued", activity=act.title,
+                                shift=g.name, pos=logic.waitlist_position(db, enr))
+            try:
+                db.commit()
+            except IntegrityError:  # 唯一索引兜底：锁失效时的并发重复报名
+                db.rollback()
+                raise HTTPException(409, "该场次您已有报名记录，请勿重复报名")
+            enrolled = True         # 到这儿报名已经落库了，剩下的只是收尾
+    finally:
+        if not enrolled:
+            # 上面任何一步没走通（资格不符、时段冲突、名额没了、库出错），
+            # 扣在手里的号都要还回去，否则一次失败的报名白占一个名额
+            _release_gates(g, position, seat_gate, wl_gate)
+        else:
+            # 落库成功了才结算：先结算再 commit 的话，commit 失败会重复还号
+            _settle_gate(db, g, position, enr.status, seat_gate, wl_gate)
 
     return {
         "status": enr.status,
