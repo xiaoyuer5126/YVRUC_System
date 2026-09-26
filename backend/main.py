@@ -16,6 +16,7 @@ import contextlib
 import logging
 from pathlib import Path
 
+import anyio.to_thread
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -74,6 +75,8 @@ async def lifespan(_app: FastAPI):
     logging.basicConfig(level=logging.INFO,
                         format="%(levelname)s [%(name)s] %(message)s")
     logging.getLogger("uvicorn.access").addFilter(_NoHealthAccess())
+    # 线程池上限按进程设，只能在事件循环里设（见 config.THREADS）
+    anyio.to_thread.current_default_thread_limiter().total_tokens = config.THREADS
     locks.ping()          # Redis 是硬依赖：连不上就别假装能扛住抢报
     crypto.check()        # 身份证号的密钥：不对就别起来，别等到有人填资料
     logger.info("数据库：%s", config.DATABASE_URL.split("@")[-1])
@@ -103,7 +106,7 @@ def create_app() -> FastAPI:
         app.include_router(r)
 
     # async 不是随手写的：同步的 def 接口要占一条线程池的线程，而线程池是**每个
-    # 进程 40 条**、所有业务接口共用的。抢报那种几百个请求一起到的时候，线程全
+    # 进程共用、有上限的**（config.THREADS）。抢报那种几百个请求一起到的时候，线程全
     # 被报名请求占住，探针拿不到线程就得干等着——容器被判不健康、被摘出负载均衡，
     # 全站 502。它只回一个常量、不碰数据库，本来就不该排队。
     @app.get("/api/health")

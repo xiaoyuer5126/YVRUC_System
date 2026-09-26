@@ -123,6 +123,13 @@ RUN_SWEEPER = os.environ.get("RUCVA_DISABLE_SWEEPER", "").strip() != "1"
 DB_POOL_SIZE = int(os.environ.get("RUCVA_DB_POOL_SIZE", "5"))
 DB_MAX_OVERFLOW = int(os.environ.get("RUCVA_DB_MAX_OVERFLOW", "10"))
 
+# —— 线程池 ——
+# 同步的 def 接口都跑在线程池里，默认每个进程只有 40 条线程、所有接口共用。
+# 抢报时拿到闸门号的报名请求要排队等场次锁（最多 TICKET_WAIT_TIMEOUT 秒），
+# 排队期间占着一条线程；名额一多，刷页面的请求就得等线程。等锁的线程大多在
+# 睡、不占 CPU，也不占数据库连接（进锁前已还回池子），多开的代价只是内存。
+THREADS = int(os.environ.get("RUCVA_THREADS", "100"))
+
 # —— 业务规则常量 ——
 # 平台不对志愿者做任何限制：没有准入名单，也不拦任何人报名。临期退选只影响
 # 那个名额（报名已截止时扣留不释放），并记一次「临期退选」供青协查看。
