@@ -1,0 +1,16 @@
+# 压测用的 compose 覆盖文件（用法见 run.sh 开头）：
+#   · 内部网络：压测不需要出网，也不该有机会碰到外部接口；
+#   · 容器名、镜像名都换掉、端口不映射：和正在跑的那一套互不相干。
+networks:
+  default:
+    internal: true
+services:
+  postgres:
+    container_name: rucva-bench-postgres
+    ports: !reset []
+  redis:
+    container_name: rucva-bench-redis
+    ports: !reset []
+  tests:
+    container_name: rucva-bench-tests
+    image: rucva-backend:bench
