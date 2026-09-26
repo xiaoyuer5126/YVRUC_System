@@ -128,8 +128,19 @@ async function poll() {
 const profileDialog = ref(null)
 const openProfileDialog = (forced = false) => profileDialog.value.open(forced)
 
+// 本地存的用户信息是登录那一刻的：部门、层级、值班资格事后可能被调过，
+// 打开页面时刷一次，菜单（比如「活动审批」）才跟得上
+async function refreshUser() {
+  try {
+    const d = await api.get('/api/auth/me', { silent: true })
+    auth.user = d.user
+    localStorage.setItem('rucva_user', JSON.stringify(d.user))
+  } catch { /* 静默：401 由 api 层处理 */ }
+}
+
 onMounted(() => {
   poll(); timer = setInterval(poll, 30000)
+  if (auth.token) refreshUser()
   // 学生资料未完善 → 强制弹出（不可关闭），补全前不可报名
   if (auth.token && auth.user?.user_type === 'student' && !auth.user.profile_complete) {
     openProfileDialog(true)

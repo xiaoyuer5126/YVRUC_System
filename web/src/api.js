@@ -107,3 +107,22 @@ export async function download(url) {
   a.href = url + (url.includes('?') ? '&' : '?') + 'ticket=' + encodeURIComponent(ticket)
   a.click()
 }
+
+/** 上传一个文件（multipart）。FormData 不能走 api 的 JSON 封装，错误提示照旧。 */
+export async function uploadFile(url, file) {
+  const form = new FormData()
+  form.append('file', file)
+  const resp = await fetch(url, {
+    method: 'POST', body: form,
+    headers: auth.token ? { Authorization: `Bearer ${auth.token}` } : {},
+  })
+  const data = await resp.json().catch(() => ({}))
+  if (resp.status === 401) sessionExpired()
+  if (!resp.ok) {
+    const detail = typeof data.detail === 'string' ? data.detail : `上传失败(${resp.status})`
+    if (data.detail?.code === 'TRAINEE_READONLY') ElMessage.warning(data.detail.message)
+    else ElMessage.error(detail)
+    throw new Error(detail)
+  }
+  return data
+}

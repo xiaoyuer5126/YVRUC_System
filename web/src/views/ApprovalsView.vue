@@ -5,6 +5,76 @@
       驳回与转交均须写明理由，相关各方都会收到通知。
     </el-alert>
 
+    <!-- 值班：对外联络部的审批通知只发给值班的人，没人值班才发部长。
+         部长在这里指定，在班的人在这里交班 -->
+    <el-card v-for="d in duties" :key="d.dept_id" shadow="never" class="item duty">
+      <div class="head">
+        <b>{{ d.dept_name }} · 值班</b>
+        <el-tag v-if="d.on_duty" type="success" effect="plain">
+          当前值班：{{ d.on_duty.name }}（{{ d.on_duty.post_label }}）
+        </el-tag>
+        <el-tag v-else type="warning" effect="plain">
+          无人值班，审批通知发给部长{{ d.head ? ' ' + d.head.name : '' }}
+        </el-tag>
+        <el-link v-if="d.history.length" type="primary" underline="never"
+                 style="margin-left:auto" @click="d.showHistory = !d.showHistory">
+          {{ d.showHistory ? '收起交接记录' : `交接记录（${d.history.length}）` }}
+        </el-link>
+      </div>
+      <div class="dim" style="margin-top:6px">
+        本部门的活动审批、时长锁定/解锁与志愿北京登记由值班人处理，部长随时可以直接处理；
+        部长每晚 21 点收到当天的汇总。
+      </div>
+      <div v-if="d.can_assign || d.can_handover" class="toolbar" style="margin:8px 0 0">
+        <el-select v-model="d.pick" :placeholder="d.can_assign ? '选择值班人' : '交班给'"
+                   clearable style="width:220px">
+          <el-option v-for="u in d.eligible" :key="u.id" :value="u.id"
+                     :disabled="u.id === d.on_duty?.id"
+                     :label="`${u.name}（${u.post_label}）`" />
+        </el-select>
+        <el-input v-model="d.note" placeholder="备注（选填）" style="width:200px" />
+        <el-button type="primary" :loading="d.busy" @click="setDuty(d)">
+          {{ d.can_assign ? '指定值班' : '交班' }}
+        </el-button>
+        <el-popconfirm v-if="d.can_assign && d.on_duty" title="撤下值班后，审批通知改发部长。确定？"
+                       @confirm="setDuty(d, true)">
+          <template #reference><el-button plain>撤下值班</el-button></template>
+        </el-popconfirm>
+      </div>
+      <el-table v-if="d.showHistory" :data="d.history" size="small" style="margin-top:8px">
+        <el-table-column label="时间" width="120">
+          <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column label="交接" min-width="160">
+          <template #default="{ row }">{{ row.from || '无人' }} → {{ row.to || '无人值班' }}</template>
+        </el-table-column>
+        <el-table-column prop="actor" label="操作人" width="100" />
+        <el-table-column prop="note" label="备注" min-width="140" />
+      </el-table>
+    </el-card>
+
+    <!-- 志愿北京登记：管理者说「我在志愿北京建好了」，这边上志愿北京核对 -->
+    <template v-if="vbRegs.length">
+      <div class="section-title">志愿北京登记待核对</div>
+      <el-card v-for="v in vbRegs" :key="v.id" shadow="never" class="item">
+        <div class="head">
+          <b class="title" @click="$router.push('/activity/' + v.activity_id)">
+            {{ v.activity_title }}
+          </b>
+          <span style="margin-left:auto">
+            <el-button size="small" type="success" @click="decideVb(v, true)">通过</el-button>
+            <el-button size="small" type="danger" plain @click="decideVb(v, false)">驳回</el-button>
+          </span>
+        </div>
+        <div class="submit-note">
+          <b>志愿北京活动名称</b><span>{{ v.vb_name }}</span>
+        </div>
+        <div class="dim" style="margin-top:8px">
+          {{ v.organizer }} · {{ v.submitted_by }} 登记于 {{ fmtDT(v.submitted_at) }}
+        </div>
+      </el-card>
+    </template>
+
     <!-- 时长的两道审批：锁定（批的是这场活动的账能不能结）与解锁（结完还要改）。
          批的都是「能不能」，改成多少仍由管理者填 -->
     <template v-if="hoursReqs.length">
@@ -33,11 +103,13 @@
                                : '通过后解锁，管理者改完须重新核准' }}
         </div>
       </el-card>
-      <div class="section-title">待审批活动</div>
     </template>
+    <div v-if="hoursReqs.length || vbRegs.length" class="section-title">待审批活动</div>
 
     <el-empty v-if="!rows.length && !loading" :image-size="70"
-              description="没有待你审批的活动" />
+              :description="duties.length && !duties.some(d => d.can_handover || d.can_assign)
+                ? '没有待你审批的活动（轮到你值班时，本部门的审批会出现在这里）'
+                : '没有待你审批的活动'" />
 
     <el-card v-for="a in rows" :key="a.id" shadow="never" class="item">
       <div class="head">
@@ -45,6 +117,9 @@
         <el-tag size="small" effect="plain">{{ a.recruit_label }}</el-tag>
         <el-tag v-if="!a.mine" size="small" type="info" effect="plain">
           当前审批人：{{ a.assignee }}
+        </el-tag>
+        <el-tag v-if="a.on_duty" size="small" type="success" effect="plain">
+          值班：{{ a.on_duty }}
         </el-tag>
         <span style="margin-left:auto">
           <el-button size="small" type="success" @click="decide(a, true)">通过</el-button>
@@ -65,6 +140,13 @@
       <div class="submit-note">
         <b>提交说明</b>
         <span :class="{ dim: !a.submit_note }">{{ a.submit_note || '提交时未填写' }}</span>
+      </div>
+      <!-- 对外活动的立项书：批的就是它 -->
+      <div v-if="a.external" class="submit-note">
+        <b>立项书</b>
+        <el-link v-if="a.proposal" type="primary" underline="never"
+                 @click="download(`/api/materials/${a.proposal.id}`)">{{ a.proposal.title }}</el-link>
+        <el-tag v-else size="small" type="danger" effect="plain">未上传（不能通过，请驳回让发起方补传）</el-tag>
       </div>
       <div class="dim" style="margin-top:8px">
         提交于 {{ fmtDT(a.submitted_at) }} ·
@@ -185,13 +267,15 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api, fmtDT } from '../api'
+import { api, download, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import { auth } from '../store'
 
 const narrow = useNarrow()
 const rows = ref([])
 const hoursReqs = ref([])
+const vbRegs = ref([])
+const duties = ref([])
 const depts = ref([])
 const loading = ref(false)
 const dlg = ref({ visible: false, row: null, approve: true, comment: '', busy: false })
@@ -242,10 +326,41 @@ async function load() {
   try {
     rows.value = await api.get('/api/staff/approvals')
     hoursReqs.value = await api.get('/api/staff/hours-requests')
+    vbRegs.value = await api.get('/api/staff/vb-registrations')
     depts.value = await api.get('/api/staff/departments')
+    duties.value = (await api.get('/api/staff/duty')).map(withForm)
   } finally { loading.value = false }
 }
 onMounted(load)
+
+const withForm = d => ({ ...d, pick: '', note: '', busy: false, showHistory: false })
+
+/** 指定 / 交班 / 撤下值班（clear=true）。 */
+async function setDuty(d, clear = false) {
+  if (!clear && !d.pick) return ElMessage.warning(d.can_assign ? '请选择值班人' : '请选择交班给谁')
+  d.busy = true
+  try {
+    const r = await api.post(`/api/staff/duty/${d.dept_id}`,
+                             { user_id: clear ? '' : d.pick, note: d.note })
+    ElMessage.success(r.on_duty ? `现在由 ${r.on_duty.name} 值班` : '已撤下值班')
+    // 交班之后自己可能就不在班了，列表要跟着刷新
+    load()
+  } finally { d.busy = false }
+}
+
+async function decideVb(row, approve) {
+  let reply = ''
+  if (!approve) {
+    const r = await ElMessageBox.prompt('写明为什么没通过（如志愿北京上查不到这个名称），会发给登记人。',
+                                        '驳回登记',
+                                        { inputValidator: v => (v || '').trim().length >= 2
+                                                               || '至少 2 个字' })
+    reply = r.value.trim()
+  }
+  await api.post(`/api/staff/vb-registrations/${row.id}/decide`, { approve, reply })
+  ElMessage.success(approve ? '已通过' : '已驳回并通知登记人')
+  load()
+}
 
 /** 锁定：同意即封账、活动标记已完成；驳回退回管理者改。
  *  解锁：同意即允许改已经封了的账，改完他要重新核准。 */
