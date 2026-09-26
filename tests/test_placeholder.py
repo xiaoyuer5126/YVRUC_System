@@ -10,8 +10,8 @@ from datetime import timedelta
 
 import pytest
 
-from backend.models import Enrollment, Position, Shift, now, uid
-from conftest import POSITION_TEXT, editing, login, student_row
+from backend.models import Shift, now, uid
+from conftest import POSITION_TEXT, editing, login
 
 ASSIGN = {"name": "统一分配场", "mode": "assign", "capacity": 3,
           "waitlist_quota": 2}
@@ -46,30 +46,41 @@ def published(client, admin, db, assign_shift):
     return aid, g
 
 
-def test_建assign场次自动带占位岗位(db, assign_shift):
-    _aid, g = assign_shift
-    db.expire_all()
-    g = db.get(Shift, g.id)
-    holder = g.placeholder()
-    assert holder is not None
-    assert holder.is_placeholder and holder.name == "待分配"
+def _shift_view(client, admin, aid) -> dict:
+    """管理者视角的活动详情里唯一那个场次。"""
+    r = client.get(f"/api/activities/{aid}", headers=admin)
+    assert r.status_code == 200, r.text
+    [sh] = r.json()["shifts"]
+    return sh
+
+
+def _roster(client, admin, g) -> dict:
+    r = client.get(f"/api/staff/shifts/{g.id}/roster", headers=admin)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_建assign场次自动带占位岗位(client, admin, assign_shift):
+    aid, _g = assign_shift
+    sh = _shift_view(client, admin, aid)
+    [holder] = sh["positions"]
+    assert holder["is_placeholder"] and holder["name"] == "待分配"
     # 名额记在它头上，场次不再自己存一份
-    assert holder.quota == 3 and holder.waitlist_quota == 2
-    assert g.total_capacity() == 3
-    assert g.real_positions() == []
+    assert holder["quota"] == 3 and holder["waitlist_quota"] == 2
+    assert sh["capacity"] == 3
+    assert sh["position_quota_sum"] == 0         # 没有真实岗位
 
 
-def test_学生报名落在占位岗位上(client, db, published, take_student):
+def test_学生报名落在占位岗位上(client, admin, db, published, take_student):
     aid, g = published
     sid = take_student()
     t = login(client, sid)
     r = client.post(f"/api/activities/{aid}/shifts/{g.id}/enroll",
                     headers=t, json={})
     assert r.status_code == 200, r.text
-    enr = (db.query(Enrollment)
-           .filter(Enrollment.shift_id == g.id,
-                   Enrollment.user_id == student_row(db, sid).id).one())
-    assert enr.position_id == g.placeholder().id, "报名不该留下没有岗位的记录"
+    [row] = [x for x in _roster(client, admin, g)["enrolled"]
+             if x["user"]["student_id"] == sid]
+    assert row["position_id"] == g.placeholder().id, "报名不该留下没有岗位的记录"
 
 
 def test_assign场次学生端看到的是说明而不是岗位名(client, db, published,
@@ -88,8 +99,8 @@ def test_切成pick后占位就是普通岗位(client, admin, db, published, tak
     """名字换回本名，也能像别的岗位一样被选中——人从里面往外挪。"""
     aid, g = published
     with editing(client, admin, aid):
-        client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
-                     json={"mode": "pick"})
+        assert client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+                            json={"mode": "pick"}).status_code == 200
     t = login(client, take_student())
     d = client.get(f"/api/activities/{aid}", headers=t).json()
     holder_out = d["shifts"][0]["positions"][0]
@@ -100,7 +111,7 @@ def test_切成pick后占位就是普通岗位(client, admin, db, published, tak
                        json={"position_id": holder_out["id"]}).status_code == 200
 
 
-def test_名额满了排到占位岗位的候补(client, db, published, take_student):
+def test_名额满了排到占位岗位的候补(client, admin, db, published, take_student):
     aid, g = published
     for _ in range(3):                      # quota=3，占满
         t = login(client, take_student())
@@ -109,11 +120,9 @@ def test_名额满了排到占位岗位的候补(client, db, published, take_stu
     t = login(client, take_student())
     assert client.post(f"/api/activities/{aid}/shifts/{g.id}/enroll",
                        headers=t, json={}).status_code == 200
-    rows = (db.query(Enrollment)
-            .filter(Enrollment.shift_id == g.id,
-                    Enrollment.status == "waitlisted").all())
+    rows = _roster(client, admin, g)["waitlist"]
     assert len(rows) == 1
-    assert rows[0].position_id == g.placeholder().id, "候补也排在占位岗位上"
+    assert rows[0]["position_id"] == g.placeholder().id, "候补也排在占位岗位上"
 
 
 # ======================= 截止后：改模式、建岗位、一键分配 =======================
@@ -123,8 +132,8 @@ def test_改回选岗位后占位岗位成为普通岗位(client, admin, db, pub
     aid, g = published
     for _ in range(3):
         t = login(client, take_student())
-        client.post(f"/api/activities/{aid}/shifts/{g.id}/enroll",
-                    headers=t, json={})
+        assert client.post(f"/api/activities/{aid}/shifts/{g.id}/enroll",
+                           headers=t, json={}).status_code == 200
     holder_id = g.placeholder().id
 
     with editing(client, admin, aid):
@@ -140,13 +149,13 @@ def test_改回选岗位后占位岗位成为普通岗位(client, admin, db, pub
                           ).json()["id"]
 
     # 「待分配」原地变成普通岗位：名字不变，预置文案清空，参与分配
-    db.expire_all()
-    g = db.get(Shift, g.id)
-    holder = db.get(Position, holder_id)
-    assert g.placeholder() is None
-    assert holder.name == "待分配" and not holder.is_placeholder
-    assert holder.service_task == "" and holder.training_note == ""
-    assert sorted(p.name for p in g.real_positions()) == ["分拣", "待分配"]
+    sh = _shift_view(client, admin, aid)
+    assert not any(p["is_placeholder"] for p in sh["positions"])
+    holder = next(p for p in sh["positions"] if p["id"] == holder_id)
+    assert holder["name"] == "待分配"
+    assert holder["service_task"] == "" and holder["training_note"] == ""
+    assert sorted(p["name"] for p in sh["positions"]) == ["分拣", "待分配"]
+    assert sh["position_quota_sum"] == 2 + 3      # 两个都算真实岗位的名额
 
     r = client.post(f"/api/staff/shifts/{g.id}/assign/preview", headers=admin,
                     json={})
@@ -162,19 +171,22 @@ def test_改回选岗位后占位岗位成为普通岗位(client, admin, db, pub
         row["position_id"] = pid if i < 2 else holder_id
     assert client.post(f"/api/staff/shifts/{g.id}/assign/apply", headers=admin,
                        json={"plan": plan}).status_code == 200
-    db.expire_all()
-    rows = (db.query(Enrollment)
-            .filter(Enrollment.shift_id == g.id,
-                    Enrollment.status == "enrolled").all())
-    assert sum(1 for r_ in rows if r_.position_id == pid) == 2
-    assert sum(1 for r_ in rows if r_.position_id == holder_id) == 1
+    rows = _roster(client, admin, g)["enrolled"]
+    assert sum(1 for r_ in rows if r_["position_id"] == pid) == 2
+    assert sum(1 for r_ in rows if r_["position_id"] == holder_id) == 1
 
 
-def test_占位岗位空了才删得掉(client, admin, db, published, take_student):
-    """所有岗位一个规矩：里面有人就不能删。"""
+def test_待分配岗位有人时删不掉_挪空后才删得掉(client, admin, db, published,
+                                         take_student):
+    """所有岗位一个规矩：里面有人就不能删。
+
+    占位岗位本身挪不出人（assign 场次只有它一个），所以「挪空再删」要先切成
+    pick——那时它已经是名叫「待分配」的普通岗位了。
+    """
     aid, g = published
     t = login(client, take_student())
-    client.post(f"/api/activities/{aid}/shifts/{g.id}/enroll", headers=t, json={})
+    assert client.post(f"/api/activities/{aid}/shifts/{g.id}/enroll",
+                       headers=t, json={}).status_code == 200
     holder = g.placeholder()
 
     with editing(client, admin, aid):
@@ -182,20 +194,20 @@ def test_占位岗位空了才删得掉(client, admin, db, published, take_stude
         assert r.status_code == 409 and "仍有 1 人已报名" in r.json()["detail"]
 
         # 把人挪走之后就删得掉了
-        enr = (db.query(Enrollment)
-               .filter(Enrollment.position_id == holder.id).one())
-        client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
-                     json={"mode": "pick"})
+        [enr] = _roster(client, admin, g)["enrolled"]
+        assert client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+                            json={"mode": "pick"}).status_code == 200
         pid = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
                           json={"name": "分拣", "quota": 5, **POSITION_TEXT}
                           ).json()["id"]
         assert client.post(
             f"/api/staff/shifts/{g.id}/assign/apply", headers=admin,
             json={"source": "manual",
-                  "plan": [{"enrollment_id": enr.id, "position_id": pid}]}
+                  "plan": [{"enrollment_id": enr["enrollment_id"], "position_id": pid}]}
         ).status_code == 200
         assert client.delete(f"/api/staff/positions/{holder.id}",
                              headers=admin).status_code == 200
+    assert [p["name"] for p in _shift_view(client, admin, aid)["positions"]] == ["分拣"]
 
 
 def test_待分配人数把占位里的人算进去(client, admin, db, published, take_student):
@@ -203,8 +215,8 @@ def test_待分配人数把占位里的人算进去(client, admin, db, published
     aid, g = published
     for _ in range(2):
         t = login(client, take_student())
-        client.post(f"/api/activities/{aid}/shifts/{g.id}/enroll",
-                    headers=t, json={})
+        assert client.post(f"/api/activities/{aid}/shifts/{g.id}/enroll",
+                           headers=t, json={}).status_code == 200
     d = client.get(f"/api/activities/{aid}", headers=admin).json()
     sh = d["shifts"][0]
     assert sh["unassigned_count"] == 2

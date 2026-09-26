@@ -94,36 +94,32 @@ def test_所有场次都开过了就不给恢复报名(client, admin, db, two_sh
 
 # ======================= 场次级：开场即关闸 =======================
 
-def test_场次开过了就报不进去(client, db, open_group, take_student):
+def test_场次开过了就报不进去_同活动没开场的照常报(client, db, open_group,
+                                            take_student):
     """活动的报名截止还远在天边，但这一场昨天就结束了。
 
     报进去的后果是死结：签不了到，也退不了选（活动已开始一律不许退），
-    最后挂在名单上算一个未签到。
+    最后挂在名单上算一个未签到。同一个活动里还没开场的那一场不受影响。
     """
-    act, g = open_group(3)
-    g.start_time = now() - timedelta(days=1, hours=3)
-    g.end_time = now() - timedelta(days=1)
-    db.commit()
-    assert act.reg_end > now()                    # 活动整体还在报名期
+    from backend.models import Position
 
-    t = login(client, take_student())
-    r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
-                    headers=t, json={"position_id": g.test_position_id})
-    assert r.status_code == 409 and "开场" in r.json()["detail"]
-
-
-def test_同一个活动里没开场的那一场照常报名(client, db, open_group, take_student):
     act, g = open_group(3, day_offset=0, start_in_hours=5)
     past = Shift(id=uid("g"), activity_id=act.id, name="昨天那场",
                  start_time=now() - timedelta(days=1, hours=3),
                  end_time=now() - timedelta(days=1), mode="assign",
                  sort=1)
     db.add(past)
+    db.flush()
+    # 给它配上「待分配」占位岗位：结构齐全，409 只能是因为开过场了
+    db.add(Position(id=uid("p"), shift_id=past.id, name="待分配",
+                    is_placeholder=True, quota=3, sort=-1, **POSITION_TEXT))
     db.commit()
+    assert act.reg_end > now()                    # 活动整体还在报名期
 
     t = login(client, take_student())
-    assert client.post(f"/api/activities/{act.id}/shifts/{past.id}/enroll",
-                       headers=t, json={}).status_code == 409
+    r = client.post(f"/api/activities/{act.id}/shifts/{past.id}/enroll",
+                    headers=t, json={})
+    assert r.status_code == 409 and "开场" in r.json()["detail"]
     assert client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                        headers=t,
                        json={"position_id": g.test_position_id}).status_code == 200

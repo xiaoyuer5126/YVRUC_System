@@ -58,12 +58,12 @@ def _add_attached(client, admin, act, parent, *, kind="rehearsal",
 
 def _checkin(db, act, shift_id, u):
     """给某人在某场次记一条签到（现场扫码的等价物）。"""
-    from backend.models import CheckinRecord, CheckinTask
+    from backend.models import CheckinRecord, CheckinTask, new_checkin_token
 
     g = db.get(Shift, shift_id)
     admin = db.query(User).filter(User.student_id == ADMIN).one()
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=shift_id,
-                       mode="shift", token=uid("T")[:6].upper(),
+                       mode="shift", token=new_checkin_token(),
                        created_by=admin.id,
                        valid_from=g.start_time, valid_to=g.end_time)
     db.add(task)
@@ -71,6 +71,13 @@ def _checkin(db, act, shift_id, u):
     db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
                          shift_id=shift_id, user_id=u.id, method="manual"))
     db.commit()
+
+
+def _roster(client, admin, shift_id) -> dict[str, str]:
+    """某场次（含彩排/培训）名单上在册的人：学号 → 报名记录 id。"""
+    r = client.get(f"/api/staff/shifts/{shift_id}/roster", headers=admin)
+    assert r.status_code == 200, r.text
+    return {x["user"]["student_id"]: x["enrollment_id"] for x in r.json()["enrolled"]}
 
 
 def _enroll(client, sid, act, g, position):
@@ -88,9 +95,7 @@ def test_报名主场次会连带报上彩排(client, admin, db, act_with_positi
     u = student_row(db, take_student())
     _enroll(client, u.student_id, act, g, east)
 
-    assert db.query(Enrollment).filter(
-        Enrollment.shift_id == sid, Enrollment.user_id == u.id,
-        Enrollment.status == "enrolled").count() == 1
+    assert u.student_id in _roster(client, admin, sid)
 
 
 def test_彩排只对指定岗位生效(client, admin, db, act_with_positions,
@@ -104,9 +109,8 @@ def test_彩排只对指定岗位生效(client, admin, db, act_with_positions,
     _enroll(client, a.student_id, act, g, east)
     _enroll(client, b.student_id, act, g, check)
 
-    joined = {r.user_id for r in db.query(Enrollment)
-              .filter(Enrollment.shift_id == sid).all()}
-    assert a.id in joined and b.id not in joined
+    joined = _roster(client, admin, sid)
+    assert a.student_id in joined and b.student_id not in joined
 
 
 def test_改岗位时彩排跟着走(client, admin, db, act_with_positions, take_student):
@@ -114,16 +118,15 @@ def test_改岗位时彩排跟着走(client, admin, db, act_with_positions, take
     sid = _add_attached(client, admin, act, g, positions=[east.id])
     u = student_row(db, take_student())
     _enroll(client, u.student_id, act, g, east)
-    enr = db.query(Enrollment).filter(Enrollment.shift_id == g.id,
-                                      Enrollment.user_id == u.id).one()
+    assert u.student_id in _roster(client, admin, sid)
+    enr_id = _roster(client, admin, g.id)[u.student_id]
 
     r = client.post(f"/api/staff/shifts/{g.id}/assign/apply", headers=admin,
-                    json={"plan": [{"enrollment_id": enr.id,
+                    json={"plan": [{"enrollment_id": enr_id,
                                     "position_id": check.id}],
                           "source": "manual"})
     assert r.status_code == 200, r.text
-    assert db.query(Enrollment).filter(Enrollment.shift_id == sid,
-                                       Enrollment.user_id == u.id).count() == 0
+    assert u.student_id not in _roster(client, admin, sid)
 
 
 def test_退选主场次会连带退掉彩排(client, admin, db, act_with_positions,
@@ -132,13 +135,12 @@ def test_退选主场次会连带退掉彩排(client, admin, db, act_with_positi
     sid = _add_attached(client, admin, act, g)
     u = student_row(db, take_student())
     h = _enroll(client, u.student_id, act, g, east)
-    enr = db.query(Enrollment).filter(Enrollment.shift_id == g.id,
-                                      Enrollment.user_id == u.id).one()
+    assert u.student_id in _roster(client, admin, sid)
+    enr_id = _roster(client, admin, g.id)[u.student_id]
 
-    r = client.delete(f"/api/activities/enrollments/{enr.id}", headers=h)
+    r = client.delete(f"/api/activities/enrollments/{enr_id}", headers=h)
     assert r.status_code == 200, r.text
-    assert db.query(Enrollment).filter(Enrollment.shift_id == sid,
-                                       Enrollment.user_id == u.id).count() == 0
+    assert u.student_id not in _roster(client, admin, sid)
 
 
 def test_后加的彩排会补上已报名的人(client, admin, db, act_with_positions,
@@ -149,8 +151,7 @@ def test_后加的彩排会补上已报名的人(client, admin, db, act_with_pos
     _enroll(client, u.student_id, act, g, east)
     sid = _add_attached(client, admin, act, g)
 
-    assert db.query(Enrollment).filter(Enrollment.shift_id == sid,
-                                       Enrollment.user_id == u.id).count() == 1
+    assert u.student_id in _roster(client, admin, sid)
 
 
 def test_彩排时间冲突会拦住报名(client, admin, db, act_with_positions,
@@ -193,8 +194,6 @@ def test_彩排时间冲突会拦住报名(client, admin, db, act_with_positions
 
 def test_固定计时不要求签退(client, admin, db, act_with_positions, take_student):
     """两小时的彩排人就在那儿，不值得卡分钟——也就没有「忘记签退」。"""
-    from backend.models import CheckinRecord, CheckinTask
-
     act, g, east, _check = act_with_positions
     sid = _add_attached(client, admin, act, g, hours_mode="fixed")
     u = student_row(db, take_student())
@@ -211,8 +210,6 @@ def test_固定计时不要求签退(client, admin, db, act_with_positions, take
 
 def test_不计时长的场合不产生时长(client, admin, db, act_with_positions,
                                   take_student):
-    from backend.models import CheckinRecord, CheckinTask
-
     act, g, east, _check = act_with_positions
     sid = _add_attached(client, admin, act, g, kind="training", hours_mode="none")
     u = student_row(db, take_student())
@@ -235,6 +232,7 @@ def test_附属场次不占活动的名额与时间跨度(client, admin, db, act
     assert brief["shifts_count"] == 1
     assert brief["total_capacity"] == 6          # 两个岗位各 3
     assert f"{(now() + timedelta(days=10)):%m-%d}" in brief["time_text"]
+    assert f"{(now() + timedelta(days=5)):%m-%d}" not in brief["time_text"]
 
     detail = client.get(f"/api/activities/{act.id}", headers=admin).json()
     assert len(detail["shifts"]) == 1
