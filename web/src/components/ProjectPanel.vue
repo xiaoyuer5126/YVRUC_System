@@ -33,6 +33,9 @@
           在志愿北京建好对应活动后在这里登记名称，由对外联络部核对
         </span>
       </template>
+      <div v-if="vb.manager && !vb.published" class="dim">
+        活动正式发布之后才能登记（先立项、再结项）。
+      </div>
       <div v-if="vb.can_submit" class="toolbar">
         <el-input v-model="vbName" maxlength="200" style="flex:1 1 260px"
                   placeholder="志愿北京上的活动名称" @keyup.enter="submitVb" />
@@ -92,7 +95,8 @@ const emit = defineEmits(['changed'])
 const VB_TAG = { submitted: 'warning', approved: 'success', rejected: 'danger', void: 'info' }
 const loading = ref(false)
 const files = ref(null)
-const vb = ref({ items: [], can_submit: false, can_decide: false })
+const vb = ref({ items: [], can_submit: false, can_decide: false,
+                 manager: false, published: false })
 const vbName = ref('')
 const vbBusy = ref(false)
 

@@ -189,7 +189,9 @@ def list_vb(activity_id: str, db: OrmSession = Depends(db_session),
             .filter(VbRegistration.activity_id == act.id)
             .order_by(VbRegistration.submitted_at.desc()).all())
     return {"items": [_vb_out(db, r) for r in rows],
-            "can_submit": manager and user.can_write(), "can_decide": decider}
+            "can_submit": manager and user.can_write() and liaison.is_published(act),
+            "can_decide": decider, "manager": manager,
+            "published": liaison.is_published(act)}
 
 
 class VbBody(BaseModel):
@@ -202,6 +204,8 @@ def submit_vb(activity_id: str, body: VbBody, db: OrmSession = Depends(db_sessio
     """「我在志愿北京建好了活动，名称是 X」。条数不限，建错了作废再报。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
+    if not liaison.is_published(act):
+        raise HTTPException(409, "活动正式发布之后才能登记志愿北京")
     name = body.vb_name.strip()
     if len(name) < 2:
         raise HTTPException(400, "请填写志愿北京上的活动名称")
@@ -313,6 +317,8 @@ def _slot_block(db: OrmSession, act: Activity, slot: str) -> str:
         return ""
     if not liaison.is_external(db, act):
         return "盖章立项书只用于对外联络部归口的活动"
+    if not liaison.is_published(act):
+        return "活动正式发布之后才能上传盖章立项书"
     if act.hours_locked():
         return "时长已锁定，盖章立项书不能再更换"
     if hours_flow.pending_lock(db, act.id) is not None:

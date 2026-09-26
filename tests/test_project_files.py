@@ -2,6 +2,7 @@
 对外活动的时长报批要盖章立项书，自动报批缺它就停下来提醒一次。"""
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 
 from backend import scheduled
@@ -189,7 +190,7 @@ def test_手动报批时长要盖章立项书(client, admin, db, liaison):
     assert r.status_code == 409 and "已锁定" in r.json()["detail"]
 
 
-def test_自动报批缺盖章立项书就停下提醒一次(client, admin, db, liaison):
+def test_自动报批缺盖章立项书_每轮提醒一次(client, admin, db, liaison):
     act = _external_due(db, liaison)
     title = f"请上传盖章立项书｜{act.title}"
 
@@ -205,11 +206,24 @@ def test_自动报批缺盖章立项书就停下提醒一次(client, admin, db, 
     assert requests() == 0
     assert len(inbox(db, ADMIN, title)) == 1
 
+    # 重新核准时长算新的一轮：到点还没传，再提醒一次
+    db.expire_all()
+    a = db.get(Activity, act.id)
+    a.hours_approved_at = now()             # 在上一次提醒之后
+    a.appeal_deadline = now()
+    db.commit()
+    time.sleep(0.01)
+    scheduled.submit_lock_when_due(db)
+    assert requests() == 0
+    assert len(inbox(db, ADMIN, title)) == 2
+    scheduled.submit_lock_when_due(db)
+    assert len(inbox(db, ADMIN, title)) == 2
+
     # 补传之后下一轮照常自动提交，也不再多发提醒
     assert _upload(client, admin, act.id, "stamped").status_code == 200
     scheduled.submit_lock_when_due(db)
     assert requests() == 1
-    assert len(inbox(db, ADMIN, title)) == 1
+    assert len(inbox(db, ADMIN, title)) == 2
     assert inbox(db, LIAISON_HEAD, f"时长锁定审批｜{act.title}")
 
 

@@ -123,8 +123,9 @@ def submit_lock_when_due(db: OrmSession) -> int:
             continue
         if liaison.is_external(db, act) \
                 and liaison.project_file(db, act.id, "stamped") is None:
-            # 只提醒一次：每分钟一轮，不记下来就是每分钟一条
-            if act.stamped_reminded_at is None:
+            # 每一轮自动报批提醒一次：时长每核准一次算新的一轮（since 往后走）。
+            # 定时任务每分钟一趟，不记下来就是每分钟一条
+            if act.stamped_reminded_at is None or act.stamped_reminded_at < since:
                 act.stamped_reminded_at = t
                 notify_managers(
                     db, act.id, f"请上传盖章立项书｜{act.title}",

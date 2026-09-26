@@ -117,6 +117,15 @@ def session_user(db: OrmSession, user: User) -> dict:
 
 # ======================= 对外活动与立项书 =======================
 
+# 活动正式发布之后的状态。先立项再结项：志愿北京登记、盖章立项书都是
+# 活动发布之后才交的材料，草稿和审批中的活动交不了
+PUBLISHED_STATES = ("published", "closed", "finished", "completed")
+
+
+def is_published(act: Activity) -> bool:
+    return act.status in PUBLISHED_STATES
+
+
 def is_external(db: OrmSession, act: Activity) -> bool:
     """对外活动：归口对外联络部。"""
     if not act.approval_dept_id:

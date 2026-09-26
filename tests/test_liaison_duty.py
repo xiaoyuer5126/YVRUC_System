@@ -10,7 +10,7 @@ from backend import scheduled
 from backend.models import (Activity, ActivityManager, AuditLog, Department,
                             DutyHandover, HoursRequest, Notification, User, now, uid)
 from conftest import (ADMIN, INITIATOR, LIAISON_CORE, LIAISON_HEAD, LIAISON_MEMBER,
-                      inbox, login, make_draft, student_row)
+                      approve, inbox, login, make_draft, student_row)
 
 
 def _set_duty(client, headers, dept_id, user_id, note=""):
@@ -75,6 +75,12 @@ def test_骨干不能自己上岗_在班的人才能交班(client, db, liaison, 
     # 接班的人收到通知，部长也知道换了人
     assert inbox(db, extra_core.student_id, "您开始值班")
     assert inbox(db, LIAISON_HEAD, "值班交接")
+
+    # 在班的人也可以把班交回给部长
+    r = _set_duty(client, login(client, extra_core.student_id), liaison.id,
+                  student_row(db, LIAISON_HEAD).id)
+    assert r.status_code == 200, r.text
+    assert r.json()["on_duty"]["id"] == student_row(db, LIAISON_HEAD).id
 
     # 部长可以撤下值班（回落给自己）
     r = _set_duty(client, head, liaison.id, "")
@@ -360,9 +366,16 @@ def test_志愿北京登记_提交核对作废(client, admin, db, liaison, take_
     head = login(client, LIAISON_HEAD)
     core = login(client, LIAISON_CORE)
     assert _set_duty(client, head, liaison.id, lin.id).status_code == 200
-    aid = make_draft(client, admin)          # 登记不看状态，也不限对外活动
+    aid = make_draft(client, admin)
     title = db.get(Activity, aid).title
     url = f"/api/staff/activities/{aid}/vb-registrations"
+    # 先立项再结项：没发布的活动不能登记
+    r = client.post(url, headers=admin, json={"vb_name": "校运会志愿服务"})
+    assert r.status_code == 409 and "发布" in r.json()["detail"]
+    assert client.get(url, headers=admin).json()["can_submit"] is False
+    approve(client, admin, aid)
+    db.expire_all()
+    assert db.get(Activity, aid).status == "published"
 
     # 不是这场活动的管理者：不能登记
     initiator = login(client, INITIATOR)
@@ -417,8 +430,15 @@ def test_志愿北京登记_提交核对作废(client, admin, db, liaison, take_
     assert client.get(url, headers=initiator).status_code == 403
 
 
-def test_志愿北京_没人值班通知部长_不在班的骨干拍不了(client, admin, db, liaison):
+def _published(client, admin) -> str:
+    """一个已发布的活动：志愿北京登记要等活动发布之后才能交。"""
     aid = make_draft(client, admin)
+    approve(client, admin, aid)
+    return aid
+
+
+def test_志愿北京_没人值班通知部长_不在班的骨干拍不了(client, admin, db, liaison):
+    aid = _published(client, admin)
     title = db.get(Activity, aid).title
     r = client.post(f"/api/staff/activities/{aid}/vb-registrations", headers=admin,
                     json={"vb_name": "某某活动"})
@@ -431,7 +451,7 @@ def test_志愿北京_没人值班通知部长_不在班的骨干拍不了(clien
 
 @pytest.mark.parametrize("who", [ADMIN, "2025003"])
 def test_志愿北京_会长团管理员也能核对(client, admin, db, liaison, who):
-    aid = make_draft(client, admin)
+    aid = _published(client, admin)
     rid = client.post(f"/api/staff/activities/{aid}/vb-registrations", headers=admin,
                       json={"vb_name": "某某活动"}).json()["id"]
     r = client.post(f"/api/staff/vb-registrations/{rid}/decide",
