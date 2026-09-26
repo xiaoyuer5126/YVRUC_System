@@ -4,7 +4,6 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
-import pytest
 from fastapi.testclient import TestClient
 
 from backend.database import SessionLocal
@@ -19,16 +18,6 @@ def enroll(client, headers, act, g, **body):
         body["position_id"] = g.test_position_id
     return client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                        json=body, headers=headers)
-
-
-def test_full_group_falls_back_to_waitlist(client, open_group, take_student):
-    act, g = open_group(1)
-    first, second = take_student(), take_student()
-
-    assert enroll(client, login(client, first), act, g
-                  ).json()["status"] == "enrolled"
-    assert enroll(client, login(client, second), act, g
-                  ).json()["status"] == "waitlisted"
 
 
 def test_duplicate_enroll_rejected(client, open_group, take_student):
@@ -62,39 +51,6 @@ def test_waitlisted_group_also_locks_the_slot(client, open_group, take_student):
     assert enroll(client, h, act2, g2).status_code == 409
 
 
-def test_late_cancel_holds_the_seat(client, admin, db, open_group, take_student):
-    """开始前 24 小时内 + 报名已截止：名额被扣留占位。
-
-    报名还开着时只记临期退选、不扣留（见 test_seat_hold.py）：平台仍在招人，
-    这时把位子废掉，等于新人能报、候补能转正，唯独这个位子谁都不能用。
-    """
-    act, g = open_group(1, day_offset=0, start_in_hours=5)
-    h = login(client, take_student())
-    enr_id = enroll(client, h, act, g).json()["enrollment_id"]
-
-    db.get(Activity, act.id).reg_end = now() - timedelta(hours=1)
-    db.commit()
-
-    assert client.delete(f"/api/activities/enrollments/{enr_id}",
-                         headers=h).json()["effect"] == "held"
-    db.expunge_all()
-    assert db.get(Enrollment, enr_id).seat_held is True
-
-    # 位子仍被占着：确认人数掉到 0，但剩余名额还是 0
-    shift = client.get(f"/api/activities/{act.id}", headers=h).json()["shifts"][0]
-    assert shift["enrolled"] == 0
-    assert shift["remaining"] == 0
-    assert shift["held_seats"] == 1
-
-    # 老师能在名单里找到它，并放回去
-    roster = client.get(f"/api/staff/shifts/{g.id}/roster", headers=admin).json()
-    assert [x["enrollment_id"] for x in roster["held"]] == [enr_id]
-    assert client.post(f"/api/staff/enrollments/{enr_id}/release-seat",
-                       headers=admin).status_code == 200
-    shift = client.get(f"/api/activities/{act.id}", headers=h).json()["shifts"][0]
-    assert shift["remaining"] == 1
-
-
 def test_扣留期间本人不能把位子拿回去(client, admin, db, open_group, take_student):
     """报名若被老师重新打开，扣留的约束仍然对本人有效。"""
     act, g = open_group(1, day_offset=0, start_in_hours=5)
@@ -102,7 +58,8 @@ def test_扣留期间本人不能把位子拿回去(client, admin, db, open_grou
     enr_id = enroll(client, h, act, g).json()["enrollment_id"]
     db.get(Activity, act.id).reg_end = now() - timedelta(hours=1)
     db.commit()
-    client.delete(f"/api/activities/enrollments/{enr_id}", headers=h)
+    assert client.delete(f"/api/activities/enrollments/{enr_id}",
+                         headers=h).json()["effect"] == "held"
 
     db.get(Activity, act.id).reg_end = now() + timedelta(days=1)   # 又开放报名
     db.commit()
@@ -128,7 +85,10 @@ def test_normal_cancel_promotes_waitlist_head(client, db, open_group,
 
 
 def test_concurrent_enroll_does_not_oversell(open_group, take_student):
-    """20 人同时抢 5 个名额：确认的必须正好 5 个。"""
+    """20 人同时抢 5 个名额：确认的必须正好 5 个，其余的都是明确的「满了」。
+
+    输家只看状态码的话，500 或锁等超时的 503 也会被当成「没抢到」混过去。
+    """
     act, g = open_group(5, waitlist_quota=0)
     pid = g.test_position_id
     students = [take_student() for _ in range(20)]
@@ -136,13 +96,18 @@ def test_concurrent_enroll_does_not_oversell(open_group, take_student):
     def grab(sid):
         with TestClient(app) as c:
             r = c.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
-                           json={"position_id": pid}, headers=login(c, sid))
-            return r.json().get("status") if r.status_code == 200 else None
+                       json={"position_id": pid}, headers=login(c, sid))
+            return r.status_code, r.json()
 
     with ThreadPoolExecutor(max_workers=20) as pool:
         results = list(pool.map(grab, students))
 
-    assert results.count("enrolled") == 5
+    won = [body for code, body in results if code == 200]
+    lost = [(code, body) for code, body in results if code != 200]
+    assert [b["status"] for b in won] == ["enrolled"] * 5
+    assert len(lost) == 15
+    for code, body in lost:
+        assert code == 409 and "名额已满" in body["detail"], (code, body)
     check = SessionLocal()
     try:
         assert check.query(Enrollment).filter(
@@ -169,30 +134,29 @@ def test_allow_reassign_recorded(client, open_group, take_student):
     assert group["my_enrollment"]["allow_reassign"] is True
 
 
-def test_quota_zero_is_rejected(client, admin):
+def test_quota_zero_is_rejected(client, admin, open_group):
     """0 人的岗位没有意义：以前会被当成「不限人数」。"""
-    target = client.get("/api/staff/activities", headers=admin).json()["items"][0]["id"]
-    with editing(client, admin, target):
-        r = client.post(f"/api/staff/activities/{target}/shifts", headers=admin,
-                        json={"name": "测试场次", "mode": "pick",
-                              "start_time": (now() + timedelta(days=400)).isoformat(),
-                              "end_time": (now() + timedelta(days=400, hours=2)).isoformat()})
-        assert r.status_code == 200
-        shift_id = r.json()["id"]
-        r = client.post(f"/api/staff/shifts/{shift_id}/positions", headers=admin,
+    act, g = open_group(5)
+    with editing(client, admin, act.id):
+        r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
                         json={"name": "零名额", "quota": 0, **POSITION_TEXT})
         assert r.status_code == 422
+        assert [e["loc"][-1] for e in r.json()["detail"]] == ["quota"]
+        # 对照：同一个请求只把名额改成 1 就能建，拦下的确实是 0 这个数
+        r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
+                        json={"name": "一个名额", "quota": 1, **POSITION_TEXT})
+        assert r.status_code == 200, r.text
 
 
-def test_assign_shift_requires_capacity(client, admin):
+def test_assign_shift_requires_capacity(client, admin, open_group):
     """截止后统一分配的场次，名额只能记在场次上，必须填。"""
-    target = client.get("/api/staff/activities", headers=admin).json()["items"][0]["id"]
-    with editing(client, admin, target):
-        r = client.post(f"/api/staff/activities/{target}/shifts", headers=admin,
+    act, _g = open_group(5)
+    with editing(client, admin, act.id):
+        r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
                         json={"name": "待分配场次", "mode": "assign", "capacity": 0,
                               "start_time": (now() + timedelta(days=401)).isoformat(),
                               "end_time": (now() + timedelta(days=401, hours=2)).isoformat()})
-        assert r.status_code == 400
+        assert r.status_code == 400 and "人数上限" in r.json()["detail"]
 
 
 def test_候补名次按岗位算而不是按场次(client, db, open_group, take_student):
@@ -221,30 +185,36 @@ def test_候补名次按岗位算而不是按场次(client, db, open_group, take
     assert third["waitlist_position"] == 1
 
 
-def test_锁外读到的旧状态不会让退选做两遍(client, open_group, take_student):
-    """连点两下退选：第二下拿到锁时，手里的报名记录还是锁外读的「已报名」。
+def test_连点两下退选只退一次(client, admin, db, open_group, take_student):
+    """连点两下退选：两个请求都在锁外读到「已报名」，第二个拿到锁时手里的
+    记录已经旧了。锁里不重读的话，它会照着旧状态再退一遍——多记一条退选
+    流水、再跑一轮递补，两下都回「退选成功」。
 
-    这里直接构造那一瞬：会话里先缓存住这条记录，再在别处把它退掉。
+    两个请求真的并发打过去，而不是手工造一个旧会话去调路由函数：锁外那段
+    只有一次查库，锁里要落库、递补、发通知，第二下几乎总是在第一下持锁期间
+    读完旧状态、排到锁后面，正好落进这个窗口。
     """
-    from backend.models import User
-    from backend.routers.activities import cancel_enroll
-    from fastapi import HTTPException
+    import threading
 
     act, g = open_group(1)
-    sid = take_student()
-    h = login(client, sid)
-    assert enroll(client, h, act, g).status_code == 200
+    h = login(client, take_student())
+    enr_id = enroll(client, h, act, g).json()["enrollment_id"]
+    queued = enroll(client, login(client, take_student()), act, g).json()
+    assert queued["status"] == "waitlisted"
 
-    s = SessionLocal()
-    try:
-        enr = s.query(Enrollment).filter(Enrollment.shift_id == g.id).one()
-        user = s.get(User, enr.user_id)
-        assert enr.status == "enrolled"      # 缓存在 s 的身份映射里
-        # 第一下退选（另一个会话）已经完成
-        assert client.delete(f"/api/activities/enrollments/{enr.id}",
-                             headers=h).status_code == 200
-        with pytest.raises(HTTPException) as e:
-            cancel_enroll(enr.id, db=s, user=user)
-        assert e.value.status_code == 400
-    finally:
-        s.close()
+    both_ready = threading.Barrier(2)
+
+    def cancel(_):
+        with TestClient(app) as c:
+            both_ready.wait()
+            return c.delete(f"/api/activities/enrollments/{enr_id}",
+                            headers=h).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        codes = sorted(pool.map(cancel, range(2)))
+
+    assert codes == [200, 400]
+    roster = client.get(f"/api/staff/shifts/{g.id}/roster", headers=admin).json()
+    assert [c["action"] for c in roster["roster_changes"]].count("cancel") == 1
+    db.expire_all()
+    assert db.get(Enrollment, queued["enrollment_id"]).status == "pending_confirm"

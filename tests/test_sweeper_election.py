@@ -37,21 +37,14 @@ def test_同一时刻只有一个进程当主(caplog):
 
 
 def test_主进程一停别人一个租期内接手():
+    """解锁靠租期到期，不靠进程自己放手——被 kill 的进程没机会放手，
+    所以这里 a 什么都不做，只是不再续期。"""
     a, b = locks.sweeper_token(), locks.sweeper_token()
     assert locks.hold_sweeper_lease(a, ttl=1) is True
     assert locks.hold_sweeper_lease(b) is False
     time.sleep(1.2)                       # 租期过了，锁自己就没了
     assert locks.hold_sweeper_lease(b) is True
     assert locks.hold_sweeper_lease(a) is False
-
-
-def test_进程被杀不会把定时任务锁死():
-    """解锁靠租期到期，不靠进程自己放手——被 kill 的进程没机会放手。"""
-    token = locks.sweeper_token()
-    assert locks.hold_sweeper_lease(token, ttl=1) is True
-    assert locks._client.ttl(locks.SWEEPER_KEY) <= 1
-    time.sleep(1.2)
-    assert locks._client.get(locks.SWEEPER_KEY) is None
 
 
 def test_主进程正常退出后下一个立刻接手():
@@ -61,10 +54,10 @@ def test_主进程正常退出后下一个立刻接手():
     assert locks.hold_sweeper_lease(a) is True
     locks.release_sweeper_lease(a)
     assert locks.hold_sweeper_lease(b) is True
-    # 交还只交自己那把：已经不是主的进程再交一次，不该把别人的主位删掉
+    # 交还只交自己那把：已经不是主的进程再交一次，不该把别人的主位删掉。
+    # 用第三个进程来看：b 自己再抢一次也会成功，看不出主位被删过
     locks.release_sweeper_lease(a)
-    assert locks.hold_sweeper_lease(b) is True
-    assert locks._client.get(locks.SWEEPER_KEY) == b
+    assert locks.hold_sweeper_lease(locks.sweeper_token()) is False
 
 
 def test_redis挂了照跑不误(monkeypatch):

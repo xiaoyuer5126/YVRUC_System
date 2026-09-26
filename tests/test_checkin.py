@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timedelta
 
 import pytest
-import redis
 
 from backend import config
 from backend.locks import CHECKIN_CODE_LEN
@@ -52,8 +52,24 @@ def live_group(client, db, admin, take_student):
     return act, g, h, token
 
 
+def _past_checkout_gap(db, g):
+    """把签到时间往回拨过保护窗：现实里这段时间是干活干掉的。
+
+    不拨的话第二扫会被当成手滑挡回来（见 test_签完马上再扫一遍不会被签退）。
+    """
+    rec = db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id).one()
+    rec.checkin_at = now() - timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES + 1)
+    db.commit()
+
+
 def test_scan_twice_is_checkin_then_checkout(client, db, live_group):
+    """固定码扫一次签到、隔够时间再扫一次签退。
+
+    固定码没被动态码取代：现场还有打印张贴的用法（码旁边写着是哪一场、
+    哪个岗位）。它比动态码短一位，两类码在形状上分得开。
+    """
     _act, g, h, token = live_group
+    assert len(token) == 6 != CHECKIN_CODE_LEN
 
     info = client.get(f"/api/checkin/task/{token}", headers=h).json()
     assert info["state"] == "active" and info["enrolled"] is True
@@ -61,12 +77,7 @@ def test_scan_twice_is_checkin_then_checkout(client, db, live_group):
     first = client.post(f"/api/checkin/task/{token}", headers=h).json()
     assert first["action"] == "checkin"
 
-    # 散场时的那第二扫：把签到时间往回拨过保护窗，不然会被当成手滑挡回来
-    # （手滑那一路见 test_签完马上再扫一遍不会被签退）
-    rec = db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id).one()
-    rec.checkin_at = now() - timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES + 1)
-    db.commit()
-
+    _past_checkout_gap(db, g)
     second = client.post(f"/api/checkin/task/{token}", headers=h).json()
     assert second["action"] == "checkout"
 
@@ -90,20 +101,6 @@ def test_签完马上再扫一遍不会被签退(client, db, live_group):
     rec = (db.query(CheckinRecord)
            .filter(CheckinRecord.shift_id == _g.id).one())
     assert rec.checkout_at is None          # 关键：没被当成签退落下记录
-
-
-def test_隔够时间再扫就是正常签退(client, db, live_group):
-    """保护窗只挡「刚刚」，散场回来签退照旧。"""
-    _act, g, h, token = live_group
-    client.post(f"/api/checkin/task/{token}", headers=h)
-
-    # 把签到时间往回拨到保护窗之外：现实里这段时间是干活干掉的
-    rec = db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id).one()
-    rec.checkin_at = now() - timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES + 1)
-    db.commit()
-
-    d = client.post(f"/api/checkin/task/{token}", headers=h).json()
-    assert d["action"] == "checkout"
 
 
 def test_outsider_cannot_check_in(client, live_group, take_student):
@@ -208,11 +205,13 @@ def test_分岗位签到只认本场次的岗位(client, admin, two_shift_act):
 # 路堵上：管理端那块屏每 30 秒换一张，每张在 Redis 里只活 60 秒。
 
 @pytest.fixture
-def rds():
-    """动态码只活在 Redis 里，用例得能直接抹掉它——「一分钟到了」就是这么发生的。"""
-    conn = redis.Redis.from_url(config.REDIS_URL, decode_responses=True)
-    yield conn
-    conn.close()
+def short_codes(monkeypatch):
+    """把动态码的寿命调到秒级，用例真等它过期，而不是去删 Redis 里的键——
+    键名是实现细节，「一分钟到了」该由过期本身来发生。"""
+    def _set(ttl: int, refresh: int):
+        monkeypatch.setattr(config, "CHECKIN_CODE_TTL_SECONDS", ttl)
+        monkeypatch.setattr(config, "CHECKIN_CODE_REFRESH_SECONDS", refresh)
+    return _set
 
 
 def task_id_of(client, admin, act):
@@ -242,20 +241,19 @@ def test_动态码能签到也能签退(client, admin, db, live_group):
     assert client.get(f"/api/checkin/task/{code}", headers=h).json()["enrolled"] is True
     assert client.post(f"/api/checkin/task/{code}", headers=h).json()["action"] == "checkin"
     # 同一个码要能签退，得先把签到时间拨过保护窗（10 分钟的理由见 config）
-    _act, g, _h, _token = live_group
-    rec = db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id).one()
-    rec.checkin_at = now() - timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES + 1)
-    db.commit()
+    _past_checkout_gap(db, live_group[1])
     assert client.post(f"/api/checkin/task/{code}", headers=h).json()["action"] == "checkout"
 
 
-def test_动态码一过期就作废(client, admin, live_group, rds):
+def test_动态码一过期就作废(client, admin, live_group, short_codes):
     act, _g, h, _token = live_group
+    short_codes(ttl=1, refresh=1)
     tid = task_id_of(client, admin, act)
     code = client.get(f"/api/staff/checkin-tasks/{tid}/code",
                       headers=admin).json()["code"]
+    assert client.get(f"/api/checkin/task/{code}", headers=h).status_code == 200
 
-    rds.delete(f"rucva:ckcode:{code}")        # 一分钟过去了
+    time.sleep(1.2)                           # 码的寿命过去了
     assert client.get(f"/api/checkin/task/{code}", headers=h).status_code == 404
     assert client.post(f"/api/checkin/task/{code}", headers=h).status_code == 404
     # 画码也得拒：这个口子不用登录，收下任意一串字符就等于让人拿平台的
@@ -263,29 +261,21 @@ def test_动态码一过期就作废(client, admin, live_group, rds):
     assert client.get(f"/api/checkin/qr.svg?code={code}").status_code == 404
 
 
-def test_换码不会把正在扫的人挡在外面(client, admin, live_group, rds):
+def test_换码不会把正在扫的人挡在外面(client, admin, live_group, short_codes):
     """换码换的是「下次取哪张」，不撤上一张：正在排队扫码的人不该因为
     管理员那一刻恰好取了新码就失败。"""
     act, _g, h, _token = live_group
+    short_codes(ttl=10, refresh=1)            # 1 秒换一张，每张活 10 秒
     tid = task_id_of(client, admin, act)
     first = client.get(f"/api/staff/checkin-tasks/{tid}/code",
                        headers=admin).json()["code"]
 
-    rds.delete(f"rucva:cktask:{tid}")         # 续期键到点，下次调用就换码
+    time.sleep(1.2)                           # 到了换码的点
     second = client.get(f"/api/staff/checkin-tasks/{tid}/code",
                         headers=admin).json()["code"]
     assert second != first
     assert client.get(f"/api/checkin/task/{first}", headers=h).status_code == 200
     assert client.get(f"/api/checkin/task/{second}", headers=h).status_code == 200
-
-
-def test_固定码没被动态码取代(client, live_group):
-    """现场还有打印张贴的用法（码旁边写着是哪一场、哪个岗位），所以固定码留着。
-    它比动态码短一位，两类码在形状上分得开。"""
-    _act, _g, h, token = live_group
-    assert len(token) == 6
-    assert client.post(f"/api/checkin/task/{token}",
-                       headers=h).json()["action"] == "checkin"
 
 
 def test_不是管理者取不到动态码(client, admin, live_group, take_student,
@@ -341,7 +331,12 @@ def test_过了时段按钮就不亮(client, admin, db, live_group):
 
 
 def test_签完到按钮就该翻成签退(client, db, live_group):
-    """学生点签到 → 扫到码 → 按钮变「签退」，这一跳靠的就是这两个字段。"""
+    """学生点签到 → 扫到码 → 按钮变「签退」，这一跳靠的就是这几个字段。
+
+    还得当场说得出「还要等几分钟」才能签退：不给这个时间，前端只能放人
+    去扫一遍码、被服务端挡回来才知道——而那时候他已经举着手机对着二维码
+    转了半天，还以为是自己没扫上。
+    """
     _act, g, h, token = live_group
     assert row_of(client, h, g)["checked_in"] is False
 
@@ -349,38 +344,16 @@ def test_签完到按钮就该翻成签退(client, db, live_group):
 
     row = row_of(client, h, g)
     assert row["checked_in"] is True and row["checkout_at"] is None
-
-    rec = db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id).one()
-    rec.checkin_at = now() - timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES + 1)
-    db.commit()
-    client.post(f"/api/checkin/task/{token}", headers=h)
-
-    row = row_of(client, h, g)
-    assert row["checkout_at"] is not None        # 签退完按钮就该消失
-
-
-def test_刚签完到就知道几点才能签退(client, db, live_group):
-    """按钮点下去要能当场说「还要等几分钟」，就得先拿到这个时间。
-
-    不给的话，前端只能放人去扫一遍码、被服务端挡回来才知道——而那时候他
-    已经举着手机对着二维码转了半天，还以为是自己没扫上。
-    """
-    _act, g, h, token = live_group
-    client.post(f"/api/checkin/task/{token}", headers=h)
-
-    row = row_of(client, h, g)
-    assert row["checkin_at"]
     gap = (datetime.fromisoformat(row["checkin"]["checkout_from"])
            - datetime.fromisoformat(row["checkin_at"]))
     assert gap == timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES)
 
-    # 签退之后这个时间就没意义了，不该再挂着（按钮本来也不显示）
-    rec = db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id).one()
-    rec.checkin_at = now() - timedelta(minutes=config.CHECKOUT_MIN_GAP_MINUTES + 1)
-    db.commit()
+    _past_checkout_gap(db, g)
     client.post(f"/api/checkin/task/{token}", headers=h)
+
     row = row_of(client, h, g)
-    assert row["checkout_at"] is not None
+    assert row["checkout_at"] is not None        # 签退完按钮就该消失
+    # 签退之后这个时间就没意义了，不该再挂着
     assert "checkout_from" not in row["checkin"]
 
 
@@ -531,9 +504,7 @@ def test_只能给自己的报名记录定位签到(client, admin, live_group, t
     enr_id = row_of(client, h, g)["id"]
     other = login(client, take_student())        # 没报这场名的人
     assert geo_post(client, other, enr_id).status_code == 404
-    assert [r for r in client.get("/api/me/enrollments",
-                                  headers=other).json()
-            if r["shift"]["id"] == g.id] == []
+    assert row_of(client, h, g)["checked_in"] is False   # 本人没被代签上
 
 
 # ======================= 地图配置 =======================
@@ -695,8 +666,6 @@ def test_重新开启也要查冲突(client, admin, db, live_group):
     r = client.patch(f"/api/staff/checkin-tasks/{live_id}", headers=admin,
                      json={"active": True})
     assert r.status_code == 409 and "已经有开启的签到码" in r.json()["detail"]
-    assert client.get(f"/api/staff/activities/{act.id}/checkin-tasks",
-                      headers=admin).json()
     still = [t for t in client.get(f"/api/staff/activities/{act.id}/checkin-tasks",
                                    headers=admin).json() if t["active"]]
     assert len(still) == 1, "不能出现两张同时开着的"

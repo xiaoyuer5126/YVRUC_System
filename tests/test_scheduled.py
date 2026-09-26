@@ -7,7 +7,8 @@ import pytest
 
 from backend import scheduled
 from backend.models import (Activity, ActivityManager, Enrollment,
-                            Notification, Position, Shift, User, now, uid)
+                            Notification, Position, Shift, User, new_checkin_token,
+                            now, uid)
 from conftest import ADMIN, POSITION_TEXT, editing, login
 
 
@@ -214,7 +215,7 @@ def test_manual_reminder_skips_checked_in(client, db, admin, make_activity,
     # 该志愿者签到后再补发，就没人需要提醒了
     from backend.models import CheckinRecord, CheckinTask
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
-                       mode="group", token=uid("T")[:6].upper(),
+                       mode="group", token=new_checkin_token(),
                        valid_from=g.start_time, valid_to=g.end_time,
                        created_by="system")
     db.add(task)
