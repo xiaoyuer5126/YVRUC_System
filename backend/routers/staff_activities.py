@@ -36,7 +36,7 @@ from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
                       CheckinRecord, CheckinTask, Enrollment, FormQuestion,
                       Notification, Position, Shift, User,
                       iso, like_pattern, now, uid)
-from ..serializers import activity_brief
+from ..serializers import activity_brief, load_trees
 from .screening import answers_out
 
 router = APIRouter(prefix="/api/staff", tags=["staff"])
@@ -115,10 +115,14 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
     total = rows.count()
     size = max(1, min(size, 100))
     page = max(1, page)
+    acts = rows.offset((page - 1) * size).limit(size).all()
+    # 场次、岗位、人数各一次查完，条数不随一页多少个活动涨
+    load_trees(db, acts)
+    counts = logic.shift_counts(db, [a.id for a in acts])
     out = []
-    for a in rows.offset((page - 1) * size).limit(size).all():
-        item = activity_brief(db, a)
-        item["waitlist_count"] = sum(len(logic.waitlist_rows(db, g.id))
+    for a in acts:
+        item = activity_brief(db, a, counts)
+        item["waitlist_count"] = sum(counts.get(g.id, (0, 0, 0))[2]
                                      for g in a.shifts)
         out.append(item)
     return {"items": out, "total": total, "page": page, "size": size}

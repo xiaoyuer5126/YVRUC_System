@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from sqlalchemy import or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session as OrmSession
 
 from . import config
@@ -31,18 +31,34 @@ def overlaps(a1, a2, b1, b2) -> bool:
     return a1 < b2 and b1 < a2
 
 
-def time_conflicts(db: OrmSession, user: User,
-                   target: Shift) -> list[dict]:
-    """该用户有效报名中与 target 组时间段重叠的记录（跨活动）。"""
-    rows = (db.query(Enrollment, Shift, Activity)
+def active_rows(db: OrmSession, user: User) -> list[tuple]:
+    """该用户全部有效报名（跨活动），连同场次与活动。
+
+    活动详情页要拿它和本活动的每个场次各比一遍：逐场次去查就是一个场次
+    一条 SQL，查一次在内存里比就够了——见 conflicts_among。
+    """
+    return (db.query(Enrollment, Shift, Activity)
             .join(Shift, Enrollment.shift_id == Shift.id)
             .join(Activity, Enrollment.activity_id == Activity.id)
             .filter(Enrollment.user_id == user.id,
-                    Enrollment.status.in_(ACTIVE),
-                    Enrollment.shift_id != target.id).all())
+                    Enrollment.status.in_(ACTIVE)).all())
+
+
+def time_conflicts(db: OrmSession, user: User,
+                   target: Shift) -> list[dict]:
+    """该用户有效报名中与 target 组时间段重叠的记录（跨活动）。"""
+    return conflicts_among(active_rows(db, user), target.id,
+                           target.start_time, target.end_time)
+
+
+def conflicts_among(rows, target_id: str, start: datetime,
+                    end: datetime) -> list[dict]:
+    """在 active_rows 查回来的报名里挑出与 [start, end) 重叠的（本场次自己除外）。"""
     out = []
     for enr, g, act in rows:
-        if overlaps(g.start_time, g.end_time, target.start_time, target.end_time):
+        if enr.shift_id == target_id:
+            continue
+        if overlaps(g.start_time, g.end_time, start, end):
             out.append({
                 "enrollment_id": enr.id, "activity_id": act.id,
                 "activity_title": act.title, "shift_name": g.name,
@@ -169,12 +185,14 @@ class Occupancy:
 
     def __init__(self, db: OrmSession, activity_id: str):
         n = lambda: defaultdict(int)                       # noqa: E731
-        self._shift = {"enrolled": n(), "occupied": n(), "wait": n()}
+        self._shift = {"enrolled": n(), "occupied": n(), "wait": n(),
+                       "excused": n(), "unplaced": n()}
         self._pos = {"enrolled": n(), "occupied": n(), "held": n(), "wait": n()}
         rows = (db.query(Enrollment.shift_id, Enrollment.position_id,
-                         Enrollment.status, Enrollment.seat_held)
+                         Enrollment.status, Enrollment.seat_held,
+                         Enrollment.excused)
                 .filter(Enrollment.activity_id == activity_id).all())
-        for sid, pid, status, held in rows:
+        for sid, pid, status, held, excused in rows:
             enr = status == "enrolled"
             occ = held or status in ("enrolled", "pending_confirm")
             wait = status in ("waitlisted", "pending_confirm")
@@ -182,6 +200,10 @@ class Occupancy:
                 self._shift["enrolled"][sid] += 1
                 if pid:
                     self._pos["enrolled"][pid] += 1
+                else:
+                    self._shift["unplaced"][sid] += 1
+                if excused:
+                    self._shift["excused"][sid] += 1
             if occ:
                 self._shift["occupied"][sid] += 1
                 if pid:
@@ -199,6 +221,18 @@ class Occupancy:
     def shift_occupied(self, shift_id: str) -> int:
         return self._shift["occupied"][shift_id]
 
+    def shift_wait(self, shift_id: str) -> int:
+        """候补队列长度（waitlisted + pending_confirm），同 waitlist_rows。"""
+        return self._shift["wait"][shift_id]
+
+    def shift_excused(self, shift_id: str) -> int:
+        """已报名但请了假的人数（培训/彩排）。"""
+        return self._shift["excused"][shift_id]
+
+    def shift_unplaced(self, shift_id: str) -> int:
+        """已报名却没有岗位的人数（岗位被删或管理员补录留下的）。"""
+        return self._shift["unplaced"][shift_id]
+
     def position_enrolled(self, position_id: str) -> int:
         return self._pos["enrolled"][position_id]
 
@@ -210,6 +244,29 @@ class Occupancy:
 
     def position_wait(self, position_id: str) -> int:
         return self._pos["wait"][position_id]
+
+
+def shift_counts(db: OrmSession,
+                 activity_ids: list[str]) -> dict[str, tuple[int, int, int]]:
+    """一批活动里每个场次的（正式报名, 已消耗名额, 候补）三个数，一条分组查询。
+
+    广场一页十几个活动，逐个活动逐个场次 count 的话，SQL 条数跟着活动数涨
+    （实测一页 39 条）。口径与 shift_enrolled_count / shift_occupied_count /
+    waitlist_rows 相同。
+    """
+    if not activity_ids:
+        return {}
+    enrolled = Enrollment.status == "enrolled"
+    occupied = or_(Enrollment.status.in_(("enrolled", "pending_confirm")),
+                   Enrollment.seat_held.is_(True))
+    waiting = Enrollment.status.in_(("waitlisted", "pending_confirm"))
+    rows = (db.query(Enrollment.shift_id,
+                     func.count(case((enrolled, 1))),
+                     func.count(case((occupied, 1))),
+                     func.count(case((waiting, 1))))
+            .filter(Enrollment.activity_id.in_(activity_ids))
+            .group_by(Enrollment.shift_id).all())
+    return {sid: (e, o, w) for sid, e, o, w in rows}
 
 
 def has_room(db: OrmSession, shift: Shift, position=None) -> bool:
