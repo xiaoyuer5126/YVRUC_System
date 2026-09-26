@@ -1689,6 +1689,12 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
     }
 
 
+def _status_label(enr: Enrollment) -> str:
+    return {"enrolled": "已报名", "waitlisted": "候补中",
+            "pending_confirm": "待确认转正", "cancelled": "已取消",
+            "applied": "申请中"}.get(enr.status, enr.status)
+
+
 @router.post("/enrollments/{enrollment_id}/release-seat")
 def release_held_seat(enrollment_id: str, db: OrmSession = Depends(db_session),
                       user: User = Depends(require_manager)):
@@ -1708,9 +1714,14 @@ def release_held_seat(enrollment_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(409, "该记录没有扣留名额")
     g = _shift(db, enr.shift_id)
     target = db.get(User, enr.user_id)
+    db.commit()          # 还连接再排锁，理由同 enroll
     # 放名额与递补同一个事务提交：场次锁在 commit 时就放了，分两次提交的话
     # 中间那一瞬放出来的位子会被新报名抢走，候补队首反倒轮不上
     with shift_lock(db, g.id):
+        # 锁外读到的可能已经旧了：另一位管理者刚释放过（会话不会自己重读）
+        db.refresh(enr)
+        if not enr.seat_held:
+            raise HTTPException(409, "该名额已被释放（可能是其他管理者刚操作过），请刷新")
         enr.seat_held = False
         audit_log(db, actor=user, action="update", target_type="enrollment",
                   target_id=enr.id, target_label=target.name,
@@ -1748,7 +1759,13 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(409, "该记录不在候补队列中")
     g = _shift(db, enr.shift_id)
     position = db.get(Position, enr.position_id) if enr.position_id else None
+    db.commit()          # 还连接再排锁，理由同 enroll
     with shift_lock(db, g.id):
+        # 锁外看到的「候补中」可能已经旧了：另一位管理者刚转正过，或者本人
+        # 刚退出了队列。不重读的话会给一个已经不在队里的人再开一次确认窗
+        db.refresh(enr)
+        if enr.status != "waitlisted":
+            raise HTTPException(409, f"该记录已被处理（当前状态：{_status_label(enr)}），请刷新")
         if not logic.has_room(db, g, position):
             where = f"岗位「{position.name}」" if position else f"场次「{g.name}」"
             raise HTTPException(409, f"{where}没有空余名额，"
