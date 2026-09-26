@@ -41,9 +41,9 @@
         <div class="meta-row"><el-icon><Location /></el-icon>{{ a.location || '待定' }}</div>
         <div class="meta-row">
           <!-- 还没开始报名：这张卡上最要紧的信息是「还有多久」，不是剩几个名额 -->
-          <span v-if="a.opens_in" class="countdown-row">
+          <span v-if="a.opensAt" class="countdown-row">
             距报名开始
-            <el-countdown :value="opensAt(a)" :format="fmt(a)" @finish="load" />
+            <el-countdown :value="a.opensAt" :format="fmt(a)" @finish="unlock(a)" />
           </span>
           <span v-else-if="a.status === 'published'">
             剩余 <b style="color:var(--el-color-primary)">{{ a.remaining }}</b> / {{ a.total_capacity }}
@@ -61,7 +61,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import { MODE_COLORS } from '../store'
@@ -101,13 +101,28 @@ const STATUS_TYPES = {
 }
 const statusType = code => STATUS_TYPES[code] || 'info'
 
-/** 倒计时目标：后端给的「还剩多少秒」加上此刻。
+/** 倒计时目标：后端给的「还剩多少毫秒」加上收到响应的此刻，在 load 里算一次。
  *
  * 不直接 parse reg_start——客户端时钟偏一点，倒计时就跟服务端对不上。
- * 归零时重拉列表，卡片自己从「未开始报名」翻成「报名中」。
+ * 也不能写在模板里现算：每重绘一次目标就往后挪一截。
  */
-const opensAt = a => Date.now() + a.opens_in * 1000
 const fmt = a => (a.opens_in > 86400 ? 'DD 天 HH:mm:ss' : 'HH:mm:ss')
+
+/** 倒计时归零：卡片就地翻成「报名中」，不等重拉（道理同活动详情页的 unlock）。
+ * 列表随后错开 0–3 秒再拉，几百人别在同一毫秒一起刷。 */
+let refreshTimer = null
+function unlock(a) {
+  a.opens_in = 0
+  a.opens_in_ms = 0
+  a.opensAt = 0
+  if (a.display_status === 'upcoming') {
+    a.display_status = 'published'
+    a.display_label = '报名中'
+  }
+  clearTimeout(refreshTimer)
+  refreshTimer = setTimeout(load, Math.random() * 3000)
+}
+onBeforeUnmount(() => clearTimeout(refreshTimer))
 
 async function load() {
   const query = new URLSearchParams({
@@ -115,6 +130,11 @@ async function load() {
     page: f.page, size: f.size,
   })
   const d = await api.get(`/api/activities?${query}`)
+  const at = Date.now()
+  for (const a of d.items) {
+    const ms = a.opens_in_ms ?? a.opens_in * 1000
+    a.opensAt = ms ? at + ms : 0
+  }
   list.value = d.items
   total.value = d.total
   organizers.value = d.organizers
