@@ -47,10 +47,19 @@ def check(candidates, quota):
 
 
 def test_贪心会漏人的经典反例():
-    """甲不限(1)、乙限女(1)，报名顺序 女A、男B：必须两个人都排上。"""
+    """甲不限(1)、乙限女(1)，报名顺序 女A、男B：必须两个人都排上。
+
+    贪心让女A占了甲，男B进不了乙 → 乙空着、B没岗位。增广路（让位）要能
+    把女A挪到乙；让位那层加了 seen 约束之后，这条路也必须还在。
+    """
     candidates = [("女A", ["甲", "乙"]), ("男B", ["甲"])]
     got, best = check(candidates, {"甲": 1, "乙": 1})
     assert got == best == 2
+    assert match(candidates, {"甲": 1, "乙": 1}) == {"女A": "乙", "男B": "甲"}
+
+
+def test_没有能去的岗位就不排():
+    assert match([("谁都去不了", [])], {"A": 1}) == {}
 
 
 def test_随机对拍():
@@ -82,41 +91,36 @@ def test_连续性优先():
 
 
 def test_连续性不能以牺牲总人数为代价():
-    """优先只是排序，不是硬约束：为了照顾连续性而少排人是不可接受的。"""
+    """优先只是排序，不是硬约束：为了照顾连续性而少排人是不可接受的。
+
+    A 想回 p1，但 B 只能去 p1——A 得让出来去 p2。
+    """
     candidates = [("A", ["p1", "p2"]), ("B", ["p1"])]
     placed = match(candidates, {"p1": 1, "p2": 1}, prefer={"A": "p1"})
-    assert len(placed) == 2
+    assert placed == {"A": "p2", "B": "p1"}
 
 
-def test_名额不够时不会卡死(monkeypatch):
+def test_名额不够时不会卡死():
     """让位那一层必须受 seen 约束，否则被挤走的人回头再挤同一批岗位。
 
     名额充足时走不到让位这一层，所以这个坑一直没露出来；名额一旦不够，
     请求会直接挂死（实测 18 人抢 14 个位子就再也回不来）。
+    放到线程里跑、限时等它：挂死的话用例报失败而不是把整轮测试拖住，
+    也不像量墙钟那样会被一台慢机器误判。
     """
-    import time
-
-    from backend.assign import match
+    import threading
 
     n, quota = 18, {"A": 8, "B": 6}
     candidates = [(f"u{i}", ["A", "B"]) for i in range(n)]
-    t0 = time.time()
-    placed = match(candidates, quota)
-    assert time.time() - t0 < 2, "名额不够就算不出来 = 挂死"
+    out: dict = {}
+    worker = threading.Thread(
+        target=lambda: out.update(placed=match(candidates, quota)), daemon=True)
+    worker.start()
+    worker.join(timeout=30)
+    assert not worker.is_alive(), "名额不够就算不出来 = 挂死"
+    placed = out["placed"]
     assert len(placed) == 14, f"14 个位子该排满，实际 {len(placed)}"
     assert sum(1 for p in placed.values() if p == "A") == 8
     assert sum(1 for p in placed.values() if p == "B") == 6
     # 先到先得：排上的是前 14 个人
     assert set(placed) == {f"u{i}" for i in range(14)}
-
-
-def test_让位仍然能救回被贪心挡住的人():
-    """文档里那个例子：甲不限(1)、乙限女(1)，顺序 女A、男B。
-
-    贪心让女A占了甲，男B进不了乙；正确解是女A→乙、男B→甲。
-    加了 seen 约束之后这条路必须还在。
-    """
-    from backend.assign import match
-
-    placed = match([("A", ["甲", "乙"]), ("B", ["甲"])], {"甲": 1, "乙": 1})
-    assert placed == {"A": "乙", "B": "甲"}

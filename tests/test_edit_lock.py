@@ -49,12 +49,25 @@ def test_保存并发布后恢复报名并汇总改动(client, admin, db, enroll
     assert r.status_code == 200
 
 
-def test_两个管理者不能同时进入编辑态(client, admin, db, enrolled_activity):
+def test_两个管理者不能同时进入编辑态(client, admin, initiator, db,
+                                    enrolled_activity):
+    """后来的那位要被挡下，并被告知是谁在改，好去找人。"""
+    from backend.models import ActivityManager, User, uid
+    from conftest import ADMIN, INITIATOR
+
     act, _shift, _u = enrolled_activity
+    other = db.query(User).filter(User.student_id == INITIATOR).one()
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                           user_id=other.id, added_by=other.id))
+    db.commit()
+    editor = db.query(User).filter(User.student_id == ADMIN).one()
+
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
-                       headers=admin).status_code == 409
+    r = client.post(f"/api/staff/activities/{act.id}/edit-lock",
+                    headers=initiator)
+    assert r.status_code == 409
+    assert r.json()["detail"].startswith(f"{editor.name} 正在编辑本活动")
 
 
 def test_超时自动解冻并通知管理者(client, admin, db, enrolled_activity):
@@ -86,12 +99,16 @@ def test_未冻结时不能保存并发布(client, admin, enrolled_activity):
 
 
 def test_余几人待分配的统计(client, admin, db, enrolled_activity, take_student):
-    """已确认人数 − 岗位名额之和 = 落空的人，管理者要当场看得见。"""
+    """没分到真实岗位的人要按人头数出来，管理者要当场看得见。
+
+    名额给得比人多：按「已确认人数 − 岗位名额之和」算的话这里是负数，
+    落空的那一个人就被名额盖掉了。
+    """
     act, shift, _u = enrolled_activity
     pos = shift.positions[0]
-    pos.quota = 1
+    pos.quota = 5
     db.commit()
-    # 再塞一个人进来但不给岗位（模拟统一分配后还没分完）
+    # 再塞一个人进来但不给岗位（岗位被删过、或管理员手工补录留下的）
     from backend.models import User, uid
     other = db.query(User).filter(
         User.student_id == take_student()).one()
@@ -102,7 +119,7 @@ def test_余几人待分配的统计(client, admin, db, enrolled_activity, take_
     d = client.get(f"/api/activities/{act.id}", headers=admin).json()
     sh = d["shifts"][0]
     assert sh["unassigned_count"] == 1
-    assert sh["position_quota_sum"] == 1
+    assert sh["position_quota_sum"] == 5
 
 
 # ======================= 未进编辑态时结构只读 =======================

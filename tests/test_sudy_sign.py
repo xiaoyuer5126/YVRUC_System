@@ -6,8 +6,6 @@
 """
 from __future__ import annotations
 
-import re
-
 import pytest
 
 from backend import sudy_sign
@@ -19,18 +17,12 @@ TS = "1608626070885"
 
 
 def test_文档样例的签名值():
-    assert sudy_sign.build_signature(APPID, SECRET, NONCE, TS) == \
-        "5801B6A8F543F619DB608B06D3D65C11958B2C23"
-
-
-def test_大写十六进制():
-    """SDK 用 Hex.encodeHexString(digest, false)，false 即**大写**。
+    """基准值是大写的：SDK 用 Hex.encodeHexString(digest, false)，false 即**大写**。
 
     小写看着只差一点，远端只会回一句校验失败。真机上查这个要查很久。
     """
-    sig = sudy_sign.build_signature(APPID, SECRET, NONCE, TS)
-    assert sig == sig.upper()
-    assert re.fullmatch(r"[0-9A-F]{40}", sig)
+    assert sudy_sign.build_signature(APPID, SECRET, NONCE, TS) == \
+        "5801B6A8F543F619DB608B06D3D65C11958B2C23"
 
 
 def test_summary_插在_nonce_与_timestamp_之间():

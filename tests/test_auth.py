@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
+
 from backend.models import Session, User, now
-from conftest import ADMIN, DEMO_PASSWORD, login
+from conftest import ADMIN, DEMO_PASSWORD, dl_url, login
 
 
 def test_login_requires_password(client):
@@ -38,8 +40,6 @@ def test_expired_session_rejected(client, db):
     db.commit()
 
     assert client.get("/api/auth/me", headers=headers).status_code == 401
-    db.expunge_all()                                  # 绕开身份映射缓存
-    assert db.get(Session, token) is None             # 过期会话顺手清掉
 
 
 def test_会话令牌不能走地址栏(client, admin):
@@ -77,7 +77,7 @@ def test_校区不在册就拒(client, db, take_student):
     r = client.put("/api/me/profile", headers=t,
                    json={"phone": "13800000002", "wechat": "wx_c",
                          "campus": "火星校区", "no_mainland_id": True})
-    assert r.status_code == 400
+    assert r.status_code == 400 and r.json()["detail"] == "请选择所在校区"
     u = db.query(User).filter(User.student_id == sid).one()
     assert u.campus == "中关村校区"      # 被拒的请求不该改掉任何东西
 
@@ -96,9 +96,9 @@ def test_没选校区就不算资料完善(client, db, take_student):
     r = client.put("/api/me/profile", headers=t,
                    json={"phone": "13800000003", "wechat": "wx_c",
                          "no_mainland_id": True})
-    assert r.status_code == 400
-    u = db.query(User).filter(User.student_id == sid).one()
-    assert u.profile_complete() is False
+    assert r.status_code == 400 and r.json()["detail"] == "请选择所在校区"
+    me = client.get("/api/auth/me", headers=t).json()["user"]
+    assert me["profile_complete"] is False
 
 
 # ======================= 证件号豁免 =======================
@@ -119,7 +119,12 @@ def test_港澳台留学生可免填身份证号(client, db, take_student):
     assert u.id_card == ""          # 免填就不该留下半个号
 
 
-def test_首次填写时身份证号必填且校验末位(client, db, take_student):
+@pytest.mark.parametrize("id_card, reason", [
+    ("", "请填写身份证号"),                        # 首次填写不能留空
+    ("110101200001011111", "身份证号不合法"),      # 末位校验码不对
+])
+def test_首次填写时身份证号必填且校验末位(client, db, take_student, id_card,
+                                          reason):
     from backend.models import User
     sid = take_student()
     db.query(User).filter(User.student_id == sid).one().id_card = ""
@@ -127,9 +132,10 @@ def test_首次填写时身份证号必填且校验末位(client, db, take_stude
     t = login(client, sid)
     r = client.put("/api/me/profile", headers=t,
                    json={"phone": "13800000004", "wechat": "wx_z",
-                         "campus": "中关村校区",
-                         "id_card": "110101200001011111"})
-    assert r.status_code == 400
+                         "campus": "中关村校区", "id_card": id_card})
+    assert r.status_code == 400 and r.json()["detail"].startswith(reason)
+    me = client.get("/api/auth/me", headers=t).json()["user"]
+    assert me["profile_complete"] is False
 
 
 def test_修改资料时留空不会清掉已填的身份证号(client, db, take_student):
@@ -164,10 +170,10 @@ def test_下载票据只能用一次且认准那个网址(client, admin, db, enr
     # 换一张票去别的网址，对不上
     other = client.post("/api/auth/download-ticket", headers=admin,
                         json={"path": path}).json()["ticket"]
-    assert client.get(
-        f"/api/staff/activities/{act.id}/hours.xlsx?ticket={other}").status_code == 401
-
-
+    hours = f"/api/staff/activities/{act.id}/hours.xlsx"
+    assert client.get(f"{hours}?ticket={other}").status_code == 401
+    # 对照：给那个网址开的票就进得去——上面的 401 是票对不上，不是网址本身不通
+    assert client.get(dl_url(client, admin, hours)).status_code == 200
 
 
 def test_过期会话会被定时任务清掉(client, db):

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from backend.models import Enrollment, Position, uid
-from conftest import POSITION_TEXT, login
+from conftest import ADMIN, POSITION_TEXT, login
 
 
 def _group_of(client, admin, db, enrolled_activity, take_student, *,
@@ -97,11 +97,11 @@ def test_组长退选后不自动补位而是提醒管理者(client, admin, db,
                          headers=t).status_code == 200
     db.expire_all()
     assert _leaders(db, p1, p2) == [], "不该有人自动顶上"
-    admin_user = db.query(User).filter(User.student_id == "2025001").one()
+    admin_user = db.query(User).filter(User.student_id == ADMIN).one()
     n = (db.query(Notification)
          .filter(Notification.user_id == admin_user.id,
-                 Notification.title.like("[组长空缺]%")).count())
-    assert n >= 1, "管理者要收到重新指定的提醒"
+                 Notification.title == f"[组长空缺] {act.title}").count())
+    assert n == 1, "管理者要收到（且只收到一条）重新指定的提醒"
 
 
 def test_取消组长身份不自动补位(client, admin, db, enrolled_activity,
@@ -126,27 +126,31 @@ def test_不同组各有各的组长(client, admin, db, enrolled_activity, take_
     db.add(p3)
     db.commit()
     t = login(client, take_student())
-    client.post(f"/api/activities/{act.id}/shifts/{shift.id}/enroll",
-                headers=t, json={"position_id": p3.id, "leader_willing": True})
+    assert client.post(f"/api/activities/{act.id}/shifts/{shift.id}/enroll",
+                       headers=t, json={"position_id": p3.id,
+                                        "leader_willing": True}).status_code == 200
     x = _enrolled(db, p1, p2)[0]
     y = _enrolled(db, p3)[0]
-    _appoint(client, admin, x.id)
-    _appoint(client, admin, y.id)
+    assert _appoint(client, admin, x.id).status_code == 200
+    assert _appoint(client, admin, y.id).status_code == 200
     db.expire_all()
-    assert len(_leaders(db, p1, p2)) == 1
-    assert len(_leaders(db, p3)) == 1
+    # 指定南门的组长不会摘掉东门的
+    assert [r.id for r in _leaders(db, p1, p2)] == [x.id]
+    assert [r.id for r in _leaders(db, p3)] == [y.id]
 
 
 def test_岗位详情展示同组岗位(client, admin, db, enrolled_activity, take_student):
     act, shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,
                                    take_student)
-    _make_leader(client, admin, db, p1, p2)
+    from backend.models import User
+
+    leader = _make_leader(client, admin, db, p1, p2)
+    name = db.get(User, leader.user_id).name
     d = client.get(f"/api/activities/{act.id}", headers=admin).json()
     pos = {p["name"]: p for p in d["shifts"][0]["positions"]}
     assert set(pos[p1.name]["group_positions"]) == {p1.name, p2.name}
-    assert pos[p1.name]["leader_name"]      # 管理者看得到
-    # 组里任一岗位问到的都是同一个组长
-    assert pos[p1.name]["leader_name"] == pos[p2.name]["leader_name"]
+    # 管理者看得到；组里任一岗位问到的都是同一个组长
+    assert pos[p1.name]["leader_name"] == pos[p2.name]["leader_name"] == name
 
 
 def test_组长可以看组员联系方式(client, admin, db, enrolled_activity,
@@ -165,12 +169,12 @@ def test_组长可以看组员联系方式(client, admin, db, enrolled_activity,
     d = r.json()
     # 同组两个岗位的人都在，且带着联系方式
     assert {m["position"] for m in d["members"]} == {p1.name, p2.name}
-    expected = (db.query(Enrollment)
-                .filter(Enrollment.position_id.in_([p1.id, p2.id]),
-                        Enrollment.status == "enrolled").count())
-    assert len(d["members"]) == expected
+    expected = {u.student_id: (u.phone, u.wechat)
+                for u in (db.get(User, e.user_id) for e in _enrolled(db, p1, p2))}
+    assert {m["student_id"]: (m["phone"], m["wechat"])
+            for m in d["members"]} == expected
+    assert len(d["members"]) == len(expected)
     assert next(m for m in d["members"] if m["is_me"])["is_leader"] is True
-    assert all("phone" in m and "wechat" in m for m in d["members"])
 
     logs = db.query(AuditLog).filter(AuditLog.action == "view_team",
                                      AuditLog.activity_id == act.id).all()

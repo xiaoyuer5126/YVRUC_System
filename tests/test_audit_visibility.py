@@ -9,8 +9,10 @@ from conftest import editing, login
 
 
 def _visible_summaries(client, headers, activity_id):
-    d = client.get(f"/api/activities/{activity_id}", headers=headers).json()
-    return [l["summary"] for l in d.get("change_logs", [])]
+    r = client.get(f"/api/activities/{activity_id}", headers=headers)
+    assert r.status_code == 200, r.text
+    # 字段缺了的话「一条都看不到」就成了空转，这里直接挂
+    return [l["summary"] for l in r.json()["change_logs"]]
 
 
 def test_签到码不出现在志愿者可见的留痕里(client, admin, db, enrolled_activity,
@@ -86,16 +88,20 @@ def test_筹备期的改动不进志愿者的变更记录(client, admin, db, tak
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(hours=1)).isoformat(),
                           "reg_end": (now() + timedelta(days=2)).isoformat()})
+    assert r.status_code == 200, r.text
     aid = r.json()["id"]
-    gid = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
-                      json={"name": "上午场", "mode": "pick",
-                            "start_time": (now() + timedelta(days=5)).isoformat(),
-                            "end_time": (now() + timedelta(days=5, hours=3)).isoformat()}
-                      ).json()["id"]
-    pid = client.post(f"/api/staff/shifts/{gid}/positions", headers=admin,
-                      json={"name": "引导岗", "quota": 3, **POSITION_TEXT}
-                      ).json()["id"]
-    client.patch(f"/api/staff/positions/{pid}", headers=admin, json={"quota": 5})
+    r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
+                    json={"name": "上午场", "mode": "pick",
+                          "start_time": (now() + timedelta(days=5)).isoformat(),
+                          "end_time": (now() + timedelta(days=5, hours=3)).isoformat()})
+    assert r.status_code == 200, r.text
+    gid = r.json()["id"]
+    r = client.post(f"/api/staff/shifts/{gid}/positions", headers=admin,
+                    json={"name": "引导岗", "quota": 3, **POSITION_TEXT})
+    assert r.status_code == 200, r.text
+    pid = r.json()["id"]
+    assert client.patch(f"/api/staff/positions/{pid}", headers=admin,
+                        json={"quota": 5}).status_code == 200
 
     # 发布之前：这些留痕都在，但一条都不该对学生可见
     assert _visible_summaries(client, admin, aid) == []
@@ -107,8 +113,10 @@ def test_筹备期的改动不进志愿者的变更记录(client, admin, db, tak
     assert _visible_summaries(client, t, aid) == []
 
     # 发布之后的改动才进得去
-    client.post(f"/api/staff/activities/{aid}/edit-lock", headers=admin)
-    client.patch(f"/api/staff/positions/{pid}", headers=admin, json={"quota": 8})
+    assert client.post(f"/api/staff/activities/{aid}/edit-lock",
+                       headers=admin).status_code == 200
+    assert client.patch(f"/api/staff/positions/{pid}", headers=admin,
+                        json={"quota": 8}).status_code == 200
     got = _visible_summaries(client, t, aid)
     assert len(got) == 1 and "修改岗位「引导岗」" in got[0]
 
@@ -126,10 +134,12 @@ def test_审批中的改动同样不可见(client, admin, db, take_student):
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(hours=1)).isoformat(),
                           "reg_end": (now() + timedelta(days=2)).isoformat()})
+    assert r.status_code == 200, r.text
     aid = r.json()["id"]
     for status in ("pending", "approved"):
         db.get(Activity, aid).status = status
         db.commit()
-        client.patch(f"/api/staff/activities/{aid}", headers=admin,
-                     json={"location": f"改到 {status}"})
+        r = client.patch(f"/api/staff/activities/{aid}", headers=admin,
+                         json={"location": f"改到 {status}"})
+        assert r.status_code == 200, (status, r.text)
         assert _visible_summaries(client, admin, aid) == [], status

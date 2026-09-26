@@ -28,7 +28,6 @@ def test_通道里永远没有短信():
     assert msgcenter._channels({"channels": "1"}) == "4"
     assert msgcenter._channels({"channels": "1,2,4"}) == "2,4"
     assert msgcenter._channels({}) == "4"
-    assert "1" not in msgcenter._channels({"channels": "1,4"}).split(",")
 
 
 def test_邮件通道照样放行():
@@ -90,7 +89,11 @@ def test_Mock_下落库且标记送达(db, take_student):
 def test_真实推送在事务提交且场次锁放掉之后才发(client, open_group, take_student,
                                     monkeypatch):
     """锁 5 秒过期，一次推送最长等 8 秒：锁里推送会把锁拖过期、放第二个人进来超卖。"""
+    from fastapi import HTTPException
+
     from backend import locks
+    from backend.database import SessionLocal
+    from backend.models import Enrollment
     from conftest import login
     from test_enroll import enroll
 
@@ -98,16 +101,32 @@ def test_真实推送在事务提交且场次锁放掉之后才发(client, open_
     seen = []
 
     def fake_send(student_id, title, content):
-        seen.append(locks._client.exists(f"rucva:lock:group:{g.id}"))
+        # 锁还攥着的话这里抢不到，等满 WAIT_TIMEOUT 报 503
+        try:
+            with locks.shift_lock(g.id):
+                lock_free = True
+        except HTTPException:
+            lock_free = False
+        # 另开一个会话看得到这条报名，才说明业务事务已经提交
+        fresh = SessionLocal()
+        try:
+            committed = (fresh.query(Enrollment)
+                         .join(User, Enrollment.user_id == User.id)
+                         .filter(User.student_id == student_id,
+                                 Enrollment.shift_id == g.id,
+                                 Enrollment.status == "enrolled").count())
+        finally:
+            fresh.close()
+        seen.append((lock_free, committed))
         return True
 
+    monkeypatch.setattr(locks, "WAIT_TIMEOUT", 0.3)   # 锁被占着时别干等 3 秒
     monkeypatch.setattr(msgcenter, "real_mode", lambda: True)
     monkeypatch.setattr(msgcenter, "_send", fake_send)
     sid = take_student()
     assert enroll(client, login(client, sid), act, g).status_code == 200
-    assert seen == [0]                       # 推了一次，且当时锁已经放掉
+    assert seen == [(True, 1)]               # 推了一次，锁已放掉、事务已提交
 
-    from backend.database import SessionLocal
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.student_id == sid).one()

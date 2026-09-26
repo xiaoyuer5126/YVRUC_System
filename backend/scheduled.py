@@ -130,23 +130,25 @@ def submit_lock_when_due(db: OrmSession) -> int:
 def staffing_gaps(db: OrmSession, act: Activity) -> list[str]:
     """报名截止时还没排好的场次，各写一句人话。
 
-    两种缺口：岗位一个都没建，和岗位建了但还有人没分到。
+    两种缺口：真岗位一个都没建，和岗位建了但还有人没分到。
     只看前者的话，「建了 3 个岗位、报了 40 个人」这种最常见的漏排会漏掉。
+    「截止后统一分配」的场次自带占位岗位，报名的人全落在它上面——
+    占位不算岗位，待在里面的人也不算分到了（口径同管理端的「待分配」人数）。
     """
-    from .models import Enrollment
+    from .serializers import _unassigned_count
 
     out = []
     for s in act.main_shifts():          # 培训/彩排不排岗位
-        if not s.positions:
-            out.append(f"「{s.name}」还没有岗位"
-                       + ("（截止后统一分配，请先改回「报名即选岗位」"
-                          "再建岗位）" if s.needs_assign()
-                          else "（报名期间学生无法报名该场次）"))
+        n = _unassigned_count(db, s)
+        if not s.real_positions():
+            if s.needs_assign():
+                # 没人报就没什么可排的，不打扰
+                if n:
+                    out.append(f"「{s.name}」还没有岗位，{n} 人等待分配"
+                               "（请先改回「报名即选岗位」再建岗位）")
+            else:
+                out.append(f"「{s.name}」还没有岗位（报名期间学生无法报名该场次）")
             continue
-        n = (db.query(Enrollment)
-             .filter(Enrollment.shift_id == s.id,
-                     Enrollment.status == "enrolled",
-                     Enrollment.position_id.is_(None)).count())
         if n:
             out.append(f"「{s.name}」还有 {n} 人没分到岗位")
     return out
