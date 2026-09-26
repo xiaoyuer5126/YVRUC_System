@@ -61,7 +61,7 @@ def test_推送失败只标未送达不打断业务(db, take_student, monkeypatc
     def boom(*_a, **_kw):
         raise RuntimeError("网关不通")
 
-    monkeypatch.setattr(msgcenter, "real_mode", lambda: True)
+    monkeypatch.setattr(msgcenter, "real_mode", lambda *_: True)
     monkeypatch.setattr(msgcenter, "_send", boom)
     msgcenter.send_user(db, user, "custom", title="标题", content="正文")
     db.commit()
@@ -121,7 +121,7 @@ def test_真实推送在事务提交且场次锁放掉之后才发(client, open_
         return True
 
     monkeypatch.setattr(locks, "WAIT_TIMEOUT", 0.3)   # 锁被占着时别干等 3 秒
-    monkeypatch.setattr(msgcenter, "real_mode", lambda: True)
+    monkeypatch.setattr(msgcenter, "real_mode", lambda *_: True)
     monkeypatch.setattr(msgcenter, "_send", fake_send)
     sid = take_student()
     assert enroll(client, login(client, sid), act, g).status_code == 200
@@ -142,7 +142,7 @@ def test_业务回滚了就不推(db, take_student, monkeypatch):
     sid = take_student()
     user = db.query(User).filter(User.student_id == sid).one()
     sent = []
-    monkeypatch.setattr(msgcenter, "real_mode", lambda: True)
+    monkeypatch.setattr(msgcenter, "real_mode", lambda *_: True)
     monkeypatch.setattr(msgcenter, "_send", lambda *a: sent.append(a) or True)
     msgcenter.send_user(db, user, "custom", title="标题", content="正文")
     db.rollback()

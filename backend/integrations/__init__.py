@@ -9,7 +9,10 @@
 """
 from __future__ import annotations
 
+from sqlalchemy.orm import Session as OrmSession
+
 from .. import config
+
 from ..database import SessionLocal
 from ..models import IntegrationConfig
 
@@ -50,9 +53,16 @@ DEFAULTS: dict[str, dict] = {
 }
 
 
-def get_config(key: str) -> dict:
-    """读某个对接配置（带默认值兜底）。"""
-    db = SessionLocal()
+def get_config(key: str, db: OrmSession | None = None) -> dict:
+    """读某个对接配置（带默认值兜底）。
+
+    db：调用方已经开着的会话。**请求里能传就传**：另开一个会话就是再占一条
+    连接，而调用方手里那条还没还——抢报时连接池已经满了，这第二条就要不到，
+    锁里的人卡住，排在后面的全跟着卡（2026-09-26 压测里测出来过）。
+    """
+    own = db is None
+    if own:
+        db = SessionLocal()
     try:
         row = db.get(IntegrationConfig, key)
         cfg = dict(DEFAULTS.get(key, {}))
@@ -61,7 +71,8 @@ def get_config(key: str) -> dict:
         cfg["key"] = key
         return cfg
     finally:
-        db.close()
+        if own:
+            db.close()
 
 
 def save_config(key: str, value: dict) -> None:
@@ -88,13 +99,13 @@ def all_configs() -> list[dict]:
     return out
 
 
-def is_mock(key: str) -> bool:
+def is_mock(key: str, db: OrmSession | None = None) -> bool:
     """true = 当前走 Mock（演示模式）。
 
     除了开关未打开，**开了开关但必填参数为空**也回落演示——
     否则请求会打到空地址上，表现为莫名其妙的接口错误。
     """
-    cfg = get_config(key)
+    cfg = get_config(key, db)
     if not cfg.get("enabled"):
         return True
     required = REQUIRED_FIELD.get(key)

@@ -112,14 +112,15 @@ def render(template_key: str, extra: str = "", **kw) -> tuple[str, str]:
     return title, body
 
 
-def real_mode() -> bool:
+def real_mode(db: OrmSession | None = None) -> bool:
     """是否走真实推送。
 
     比 `is_mock()` 多要一个 secret：开关打开但密钥没配时，请求会带着一份空签名
     打到学校网关上，换回一句看不懂的「签名校验失败」——不如老实在本地落库，
     前端「消息中心」照样能看到内容。
     """
-    return not is_mock("msgcenter") and bool(config.OPENPLATFORM_SECRET)
+    # 先看密钥：没配就不必去库里读开关（演示期每次发通知都省一次查询）
+    return bool(config.OPENPLATFORM_SECRET) and not is_mock("msgcenter", db)
 
 
 def send_user(db: OrmSession, user: User, template_key: str,
@@ -132,7 +133,7 @@ def send_user(db: OrmSession, user: User, template_key: str,
     need_ack=True 的消息要志愿者点一次「我已知悉」才算到人。
     """
     title, content = render(template_key, **fields)
-    real = real_mode()
+    real = real_mode(db)    # 用调用方的会话读配置，别另占一条连接
     row = Notification(id=uid("ntf"), user_id=user.id,
                        template_key=template_key, title=title,
                        content=content, data=data or {},
