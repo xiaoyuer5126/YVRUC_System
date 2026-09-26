@@ -58,13 +58,12 @@ def test_名额调小后计数器偏高也不会超卖(client, admin, db, open_g
 
 
 def test_名额调大后计数器偏低也不会冤枉人(client, admin, db, open_group, take_student):
-    """满员后闸门停在 0，管理者加了一个名额：下一个人得报得上。"""
+    """满员后闸门停在 0，管理者加了一个名额：下一个人马上得报得上，
+    不用等核库限流窗口过去（改名额会作废闸门）。"""
     act, g = open_group(1, waitlist_quota=0)
     assert enroll(client, login(client, take_student()), act, g).status_code == 200
     assert enroll(client, login(client, take_student()), act, g).status_code == 409
-    _set_quota(client, admin, act, g, 2)
-    locks._client.delete(locks.gate_key(g.id, g.test_position_id, "seat")
-                         + ":recheck")      # 核库限流窗口是时间上的，不等它
+    _set_quota(client, admin, act, g, 2)     # 刚撞过闸门，核库限流窗口还没过
     assert enroll(client, login(client, take_student()), act, g
                   ).json()["status"] == "enrolled"
     assert _enrolled(db, g) == 2
@@ -171,4 +170,5 @@ def test_满了之后核库限流(open_group):
     act, g = open_group(1)
     pid = g.test_position_id
     assert locks.may_recheck_gate(g.id, pid, "seat") is True
-    assert not any(locks.may_recheck_gate(g.id, pid, "seat") for _ in range(100))
+    # 次数别多：这几次都得落在同一个限流窗口（GATE_RECHECK_MS）里
+    assert not any(locks.may_recheck_gate(g.id, pid, "seat") for _ in range(5))

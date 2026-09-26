@@ -25,7 +25,7 @@ from ..stage import ensure_hours_editable, ensure_not_finished
 from ..audit import diff_changes, log as audit_log
 from ..database import db_session
 from ..deps import require_council, require_manager
-from ..locks import shift_lock
+from ..locks import invalidate_gates, shift_lock
 from ..notify import notify_enrolled
 from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, managed_activity_ids,
@@ -1252,6 +1252,11 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
               changes=changes,
               visible=True)
     db.commit()
+    if (s.quota, s.waitlist_quota) != (before_raw["quota"],
+                                       before_raw["waitlist_quota"]):
+        # 名额在闸门之外变了：作废计数器，下一个报名按数据库重新对齐。
+        # 不作废的话，加了名额之后要等核库限流窗口过去才报得上
+        invalidate_gates(g.id, s.id)
     return {"ok": True, "changes": changes}
 
 
