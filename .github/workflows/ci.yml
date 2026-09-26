@@ -1,8 +1,8 @@
-# 持续集成：main 上一有新提交（直接推送或 PR 合并）就跑一遍。
+# 持续集成：PR 提交到 main 时跑一遍（合并前把关），合并进 main 后再跑一遍。
 #
-# 只挂在 main 的 push 上，是为了省 GitHub Actions 的免费额度（私有仓库每月
-# 2000 分钟）。代价是 PR 合并**之前**不会跑——想改成「不过不许合并」，在 on:
-# 下加 pull_request: { branches: [main] } 即可。
+# PR 上的结果就是合并前的依据：绿了才合，本地不必再跑全量，开发时只跑
+# 改动相关的几个测试文件。额度按每次约 1.5 分钟算，私有仓库每月 2000 分钟
+# 够一千多次；同一分支连推时只跑最新那次（见下面的 concurrency）。
 #
 # 跟本地 `docker compose --profile test run --rm tests` 是同一套用例，只是
 # postgres / redis 用 Actions 的 service 容器起，依赖走默认 PyPI / npm 源
@@ -10,6 +10,8 @@
 name: CI
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:        # 需要时可在 Actions 页手动点一次
