@@ -12,6 +12,7 @@ from ..database import db_session
 from ..deps import current_user
 from .. import notify
 from ..integrations import msgcenter
+from .. import locks
 from ..locks import (GATE_FULL, GATE_OK, invalidate_gates, may_recheck_gate,
                      new_gate_ticket, settle_gate, shift_lock,
                      sync_and_take_gate, take_gate)
@@ -383,7 +384,9 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         # ★ 名额判断与落库整段串行化到场次粒度，防止超卖与重复报名。
         # 走完闸门的请求最多只剩「名额数」这么多个，所以等锁的队伍很短——
         # 从前是几百个一起排队，大半等到超时。
-        with shift_lock(g.id):
+        # 扣到号的人是先到的那批，多给它们等一会儿，别让 503 把名额送给后来者
+        with shift_lock(g.id, wait=(locks.TICKET_WAIT_TIMEOUT if tickets
+                                    else None)):
             live = (db.query(Enrollment)
                     .filter(Enrollment.shift_id == g.id,
                             Enrollment.user_id == user.id)
