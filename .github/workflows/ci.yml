@@ -1,0 +1,89 @@
+# 持续集成：main 上一有新提交（直接推送或 PR 合并）就跑一遍。
+#
+# 只挂在 main 的 push 上，是为了省 GitHub Actions 的免费额度（私有仓库每月
+# 2000 分钟）。代价是 PR 合并**之前**不会跑——想改成「不过不许合并」，在 on:
+# 下加 pull_request: { branches: [main] } 即可。
+#
+# 跟本地 `docker compose --profile test run --rm tests` 是同一套用例，只是
+# postgres / redis 用 Actions 的 service 容器起，依赖走默认 PyPI / npm 源
+# （Dockerfile 里的国内镜像在海外机器上反而慢）。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # 需要时可在 Actions 页手动点一次
+
+# 连着推了几次时，只跑最新那次，前面没跑完的直接取消——省额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: 后端回归测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: rucva
+          POSTGRES_PASSWORD: rucva_ci
+          POSTGRES_DB: rucva
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U rucva -d rucva"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    env:
+      RUCVA_TEST_DATABASE_URL: postgresql+psycopg://rucva:rucva_ci@127.0.0.1:5432/rucva_test
+      RUCVA_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+      RUCVA_DEMO_PASSWORD: test-pass
+      TZ: Asia/Shanghai
+      # 学校侧的对接参数一律留空：消息中心与统一身份认证因此走演示模式，
+      # 测试不会往学校的接口上打任何请求
+      RUCVA_OPENPLATFORM_APPID: ""
+      RUCVA_OPENPLATFORM_SECRET: ""
+      RUCVA_OPENPLATFORM_GATEWAY: ""
+      RUCVA_CAS_BASE_URL: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            requirements-dev.txt
+      - name: 装依赖
+        run: pip install -r backend/requirements.txt -r requirements-dev.txt
+      # 统一身份认证那组用例本身全是 mock，但登录这条路离学校接口最近，
+      # 按约定不在 CI 里跑
+      - name: 跑测试
+        run: python -m pytest -q --ignore=tests/test_sso_oauth.py
+
+  web:
+    name: 前端自检与构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: vuecheck（模板里用了没定义的标识符、把数据当 HTML 渲染）
+        run: python scripts/vuecheck.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: 构建
+        working-directory: web
+        run: npm ci --no-audit --no-fund && npm run build
