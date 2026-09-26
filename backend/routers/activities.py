@@ -374,9 +374,9 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                     "conflicts": clashes})
 
         # 上面全是读，先落一个空事务把**数据库连接还回池子**，再去抢场次锁。
-        # 不还的话，等锁的这段时间是「占着一条连接在等」：请求一多，池子会被
-        # 等锁的人占满，反而轮到锁的持有者拿不到连接去干活——两边互相等，
-        # 一直到连接池 30 秒超时才一批批散开。
+        # 不还的话，排进程名额（见 locks.shift_lock）的这段时间是「占着一条连接
+        # 在等」：请求一多，池子会被等锁的人占满，反而轮到锁的人拿不到连接去
+        # 干活——两边互相等，一直到连接池 30 秒超时才一批批散开。
         # （commit 而不是 rollback：这就是读阶段的正常收尾，语义更直白；
         #   本会话 expire_on_commit=False，对象在 commit 后照样能读。）
         db.commit()
@@ -385,8 +385,10 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         # 走完闸门的请求最多只剩「名额数」这么多个，所以等锁的队伍很短——
         # 从前是几百个一起排队，大半等到超时。
         # 扣到号的人是先到的那批，多给它们等一会儿，别让 503 把名额送给后来者
-        with shift_lock(g.id, wait=(locks.TICKET_WAIT_TIMEOUT if tickets
-                                    else None)):
+        # 锁随事务走：下面判定、落库、结算闸门都在这一个事务里，最后那次
+        # commit 同时就是放锁
+        with shift_lock(db, g.id, wait=(locks.TICKET_WAIT_TIMEOUT if tickets
+                                        else None)):
             live = (db.query(Enrollment)
                     .filter(Enrollment.shift_id == g.id,
                             Enrollment.user_id == user.id)
@@ -567,7 +569,9 @@ def cancel_enroll(enrollment_id: str,
     # 把连接还回池子再去抢锁，理由同 enroll
     db.commit()
 
-    with shift_lock(g.id):
+    # 退选、递补、通知在同一个事务里：场次锁在 commit 时就放了，从前「先提交
+    # 退选、再递补」的中间那一瞬，别人能看到放出来的位子、抢在候补队首前面报上
+    with shift_lock(db, g.id):
         # 锁外读到的状态可能已经旧了（连点两下退选：第一下在锁里退掉、放出名额、
         # 候补顶上；第二下拿到锁时手里的 enr 还是「已报名」）。会话是
         # expire_on_commit=False，不重读就会照着旧状态再退一遍
@@ -581,7 +585,7 @@ def cancel_enroll(enrollment_id: str,
             enr.cancelled_at = now()
             enr.confirm_deadline = None
             logic.record_change(db, user, enr, "abandon")
-            db.commit()
+            db.flush()                   # 递补按落库后的人数算，但先不提交（见上）
             logic.promote_all(db, g)
             db.commit()
             invalidate_gates(g.id, enr.position_id)
@@ -625,7 +629,7 @@ def cancel_enroll(enrollment_id: str,
             db, user, enr, "cancel",
             f"距开始 {hours_left:.1f} 小时"
             + ("，临期退选并扣留名额" if hold_seat else "，临期退选" if late else ""))
-        db.commit()
+        db.flush()                       # 同上：只 flush，和递补一起提交
 
         notify.notify_late_dropout(db, enr, user)
         if not hold_seat:
@@ -653,7 +657,7 @@ def confirm_promotion(enrollment_id: str,
     if enr is None or enr.user_id != user.id:
         raise HTTPException(404, "报名记录不存在")
     db.commit()          # 还连接再抢锁，理由同 enroll
-    with shift_lock(enr.shift_id):
+    with shift_lock(db, enr.shift_id):
         db.refresh(enr)
         if enr.status != "pending_confirm":
             raise HTTPException(400, "该记录不在待确认状态")

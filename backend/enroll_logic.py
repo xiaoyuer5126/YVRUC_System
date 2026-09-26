@@ -7,7 +7,8 @@
     （seat_held，不释放给任何人）；
   · 候补按 joined_at 排队，正常退选释放名额 → 队首转正，2 小时确认窗口。
 
-调用容量相关函数前必须持有 locks.shift_lock(shift_id)，见 locks.py。
+调用容量相关函数前必须持有 locks.shift_lock(db, shift_id)，且判定与落库在同一个
+事务里（锁随事务结束而放，见 locks.py）。
 """
 from __future__ import annotations
 
@@ -550,25 +551,33 @@ def expire_stale_promotions(db: OrmSession) -> int:
                        Enrollment.confirm_deadline < now()).all())
     if not expired:
         return 0
-
-    n = 0
-    touched: set[str] = set()
+    by_shift: dict[str, list[str]] = defaultdict(list)
     for enr in expired:
-        with shift_lock(enr.shift_id):
-            fresh = db.get(Enrollment, enr.id)
-            db.refresh(fresh)
-            if fresh.status != "pending_confirm" or fresh.confirm_deadline >= now():
-                continue      # 用户在这一瞬间点了确认
-            fresh.status = "cancelled"
-            fresh.cancel_type = "expired"
-            fresh.cancelled_at = now()
+        by_shift[enr.shift_id].append(enr.id)
+    db.commit()      # 读完先还连接，别占着连接排锁（理由同报名）
+
+    # 一个场次一个事务：放弃与顺延一起提交。场次锁随事务结束而放，从前
+    # 「先提交放弃、再另拿一次锁递补」的中间那一瞬，别人能看到空出来的位子
+    # 抢在队首前面报上；合成一个事务就没有这个窗口
+    n = 0
+    for sid, ids in by_shift.items():
+        with shift_lock(db, sid):
+            hit = 0
+            for enr_id in ids:
+                fresh = db.get(Enrollment, enr_id)
+                db.refresh(fresh)
+                if (fresh.status != "pending_confirm"
+                        or fresh.confirm_deadline >= now()):
+                    continue      # 用户在这一瞬间点了确认
+                fresh.status = "cancelled"
+                fresh.cancel_type = "expired"
+                fresh.cancelled_at = now()
+                hit += 1
+            if hit:
+                db.flush()        # 递补要按落库后的人数算（会话不自动 flush）
+                promote_all(db, db.get(Shift, sid))
             db.commit()
-            touched.add(fresh.shift_id)
-            n += 1
-    for sid in touched:
-        with shift_lock(sid):
-            promote_all(db, db.get(Shift, sid))
-            db.commit()
+            n += hit
     return n
 
 

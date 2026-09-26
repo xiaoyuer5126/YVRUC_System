@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from uuid import uuid4
 
@@ -512,32 +513,46 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
     if not pending:
         raise HTTPException(409, "所选申请都已经处理过了")
 
-    done = []
-    for app in pending:
-        u = db.get(User, app.user_id)
-        rows = (db.query(Enrollment)
-                .filter(Enrollment.activity_id == act.id,
-                        Enrollment.user_id == app.user_id,
-                        Enrollment.status == "applied").all())
-        if body.accept:
-            pick = body.picks.get(app.id) or Pick()
-            want_shift = pick.shift_id or body.shift_id
-            target = None
-            if want_shift:
-                target = next((e for e in rows if e.shift_id == want_shift), None)
+    # 录取要占名额：涉及的场次整批先锁上，判名额、落库、留痕同一个事务提交。
+    # 从前锁只包住「判名额 + 改状态」，提交在放锁之后，中间别人看到的还是旧
+    # 人数；场次锁现在随事务走，正好一直持有到下面那次 commit。
+    # 一次锁多个场次按 id 排序（shift_lock 里做），两位管理者同时批量录取时
+    # 加锁顺序一致，不会互相等成死锁。不录取不动名额，不用锁
+    if body.accept:
+        shift_ids = [sid for (sid,) in (
+            db.query(Enrollment.shift_id)
+            .filter(Enrollment.activity_id == act.id,
+                    Enrollment.user_id.in_([a.user_id for a in pending]),
+                    Enrollment.status == "applied").distinct())]
+        guard = shift_lock(db, *shift_ids)
+    else:
+        guard = contextlib.nullcontext()
+    with guard:
+        done = []
+        for app in pending:
+            u = db.get(User, app.user_id)
+            rows = (db.query(Enrollment)
+                    .filter(Enrollment.activity_id == act.id,
+                            Enrollment.user_id == app.user_id,
+                            Enrollment.status == "applied").all())
+            if body.accept:
+                pick = body.picks.get(app.id) or Pick()
+                want_shift = pick.shift_id or body.shift_id
+                target = None
+                if want_shift:
+                    target = next((e for e in rows if e.shift_id == want_shift), None)
+                    if target is None:
+                        raise HTTPException(400, f"{u.name} 没有申请这个场次")
+                else:
+                    target = rows[0] if rows else None
                 if target is None:
-                    raise HTTPException(400, f"{u.name} 没有申请这个场次")
-            else:
-                target = rows[0] if rows else None
-            if target is None:
-                raise HTTPException(409, f"{u.name} 的申请没有可用的场次")
-            g = db.get(Shift, target.shift_id)
-            position = _accept_position(db, g, target,
-                                        pick.position_id or body.position_id)
-            # 条件不满足照样录得进去：筛选本来就是人的判断。但要留痕，
-            # 名单上也跟着标出来，别让「怎么排了个不符合条件的人」成为悬案
-            unmet = logic.unmet_requirements(u, position)
-            with shift_lock(g.id):
+                    raise HTTPException(409, f"{u.name} 的申请没有可用的场次")
+                g = db.get(Shift, target.shift_id)
+                position = _accept_position(db, g, target,
+                                            pick.position_id or body.position_id)
+                # 条件不满足照样录得进去：筛选本来就是人的判断。但要留痕，
+                # 名单上也跟着标出来，别让「怎么排了个不符合条件的人」成为悬案
+                unmet = logic.unmet_requirements(u, position)
                 if not logic.has_room(db, g, position):
                     raise HTTPException(
                         409, f"「{g.name}·{position.name}」名额已满"
@@ -555,24 +570,24 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                 app.decided_by, app.decided_at = user.id, now()
                 db.flush()
                 logic.sync_attached(db, target)
-            msgcenter.send_user(db, u, "application_accepted",
-                            data={"activity_id": act.id},
-                            activity=act.title, shift=g.name, time=g.span_text(),
-                            detail=("岗位：" + position.name
-                                    if not position.is_placeholder
-                                    else "具体岗位将于稍后公布"))
-            done.append(f"{u.name}→{g.name}·{position.name}"
-                        + (f"（不满足：{'；'.join(unmet)}）" if unmet else ""))
-        else:
-            for e in rows:
-                e.status, e.cancel_type = "cancelled", "rejected"
-            app.status = "rejected"
-            app.decided_by, app.decided_at = user.id, now()
-            msgcenter.send_user(db, u, "application_rejected",
-                            data={"activity_id": act.id}, activity=act.title)
-            done.append(u.name)
-    audit_log(db, actor=user, action="assign", target_type="activity",
-              target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=("录取 " if body.accept else "未录取 ") + "、".join(done))
-    db.commit()
+                msgcenter.send_user(db, u, "application_accepted",
+                                data={"activity_id": act.id},
+                                activity=act.title, shift=g.name, time=g.span_text(),
+                                detail=("岗位：" + position.name
+                                        if not position.is_placeholder
+                                        else "具体岗位将于稍后公布"))
+                done.append(f"{u.name}→{g.name}·{position.name}"
+                            + (f"（不满足：{'；'.join(unmet)}）" if unmet else ""))
+            else:
+                for e in rows:
+                    e.status, e.cancel_type = "cancelled", "rejected"
+                app.status = "rejected"
+                app.decided_by, app.decided_at = user.id, now()
+                msgcenter.send_user(db, u, "application_rejected",
+                                data={"activity_id": act.id}, activity=act.title)
+                done.append(u.name)
+        audit_log(db, actor=user, action="assign", target_type="activity",
+                  target_id=act.id, target_label=act.title, activity_id=act.id,
+                  summary=("录取 " if body.accept else "未录取 ") + "、".join(done))
+        db.commit()
     return {"ok": True, "count": len(done)}

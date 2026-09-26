@@ -106,8 +106,14 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
   （409 附冲突明细）。**候补中的场次同样算已占用时段**——排了队就等于预留了这段时间。
 - 每个场次各自算截止：`min(活动报名截止, 本场次开始时间)`，开场即不收人。
 - 名额只有岗位上这一个来源。已消耗 = `enrolled` + `pending_confirm` + `seat_held`。
-  容量判断与落库整段持 Redis 场次锁串行化，配合 `enrollments` 的部分唯一索引，
-  杜绝抢报瞬间的超卖与重复报名（见 `backend/locks.py`）。
+  容量判断与落库整段持场次锁串行化，配合 `enrollments` 的部分唯一索引，
+  杜绝抢报瞬间的超卖与重复报名（见 `backend/locks.py`）。场次锁是 Postgres 的
+  事务级咨询锁，拿在请求自己的会话上、随事务提交/回滚释放（没有租期，不会
+  「活还没干完锁先过期」）；每个进程最多 `RUCVA_LOCK_SLOTS`（默认 5）个请求
+  带着连接去数据库排队，其余在进程内等，不占连接池。前面再挡一道 Redis 名额闸门，
+  抢不到号的请求一次 Redis 往返就回「满了」。
+- 抢报压测：`scripts/rush_bench/`（300 人抢 200 名额 + 50 候补，另有 20 人刷页面），
+  用法见其中 `run.sh` 开头。数字只做同一台机器上的前后对比。
 - 满员进候补队列（按报名时间排序）。有人退选释放名额 → 队首转正 `pending_confirm`，
   开 **2 小时确认窗口**（清扫协程 + 惰性判定双保险），超时记一次「放弃」并顺延下一位。
 - 开始前 **24h 内退选**（且报名已截止）：该名额被**扣留**（`seat_held`）——不释放给候补、
@@ -196,12 +202,13 @@ rucva_system/
 ├── scripts/                    前端自检：vuecheck.py（模板里用到却没定义的标识符）、
 │                               viewcheck.mjs（各视口渲染与横向溢出）、
 │                               spacecheck.py（间距是否还在同一套尺度上）、
-│                               shot.mjs（CDP 直连 Edge 的截图/点击，Node≥22）
+│                               shot.mjs（CDP 直连 Edge 的截图/点击，Node≥22）；
+│                               rush_bench/（抢报压测，见其 run.sh）
 ├── backend/
 │   ├── Dockerfile              base → test（跑 pytest）/ runtime（跑 uvicorn）两个 target
 │   ├── main.py                 FastAPI 入口：API + SPA 托管 + 定时任务协程
 │   ├── config.py / database.py 业务常量与环境变量；PostgreSQL 连接
-│   ├── locks.py                ★ Redis 场次锁、登录失败计数、一次性下载票据
+│   ├── locks.py                ★ 场次锁（PG 咨询锁）、名额闸门、登录失败计数、下载票据
 │   ├── crypto.py               身份证号的字段级加密（Fernet）
 │   ├── models.py / serializers.py   全部表结构与出参组装
 │   ├── deps.py                 会话鉴权（require_admin / require_council / …）

@@ -467,7 +467,8 @@ def _fill_vacancies(db: OrmSession, act: Activity) -> int:
     for g in act.shifts:
         if g.is_attached():
             continue      # 培训/彩排跟着主场次走，没有自己的队列
-        with shift_lock(g.id):
+        # 一个场次一个事务：锁随 commit 放掉，下一个场次重新拿
+        with shift_lock(db, g.id):
             total += logic.fill_vacancies(db, g)
             db.commit()
     return total
@@ -1707,14 +1708,16 @@ def release_held_seat(enrollment_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(409, "该记录没有扣留名额")
     g = _shift(db, enr.shift_id)
     target = db.get(User, enr.user_id)
-    with shift_lock(g.id):
+    # 放名额与递补同一个事务提交：场次锁在 commit 时就放了，分两次提交的话
+    # 中间那一瞬放出来的位子会被新报名抢走，候补队首反倒轮不上
+    with shift_lock(db, g.id):
         enr.seat_held = False
         audit_log(db, actor=user, action="update", target_type="enrollment",
                   target_id=enr.id, target_label=target.name,
                   activity_id=enr.activity_id,
                   summary=f"释放 {target.name} 临期退选扣留的名额"
                           f"（{db.get(Position, enr.position_id).name if enr.position_id else g.name}）")
-        db.commit()
+        db.flush()                       # 递补按落库后的人数算（会话不自动 flush）
         promoted = logic.promote_all(db, g)
         db.commit()
     # 过了自动转正截止点，放出来的位子不会自动被候补占上——老师释放名额
@@ -1745,7 +1748,7 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(409, "该记录不在候补队列中")
     g = _shift(db, enr.shift_id)
     position = db.get(Position, enr.position_id) if enr.position_id else None
-    with shift_lock(g.id):
+    with shift_lock(db, g.id):
         if not logic.has_room(db, g, position):
             where = f"岗位「{position.name}」" if position else f"场次「{g.name}」"
             raise HTTPException(409, f"{where}没有空余名额，"
@@ -1895,7 +1898,7 @@ def add_walkin(shift_id: str, body: dict,
     force = bool(body.get("force"))
     reasons: list[str] = []
     db.commit()          # 还连接再抢锁，理由同 enroll（routers/activities.py）
-    with shift_lock(g.id):
+    with shift_lock(db, g.id):
         live = (db.query(Enrollment)
                 .filter(Enrollment.shift_id == g.id, Enrollment.user_id == u.id)
                 .filter((Enrollment.status.in_(logic.ACTIVE))

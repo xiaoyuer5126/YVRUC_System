@@ -143,8 +143,8 @@ def send_user(db: OrmSession, user: User, template_key: str,
                        need_ack=need_ack, batch_id=batch_id)
     db.add(row)
     if real:
-        # 真正的推送等**这个事务提交之后**、而且**场次锁放掉之后**再做：
-        # 业务回滚了就不该发出去；锁里做外呼会把锁拖过期（见 locks.after_unlock）
+        # 真正的推送等**这个事务提交之后**、而且**场次锁的 with 块结束之后**再做：
+        # 业务回滚了就不该发出去；锁里做外呼会占着进程名额干等（见 locks.after_unlock）
         db.info.setdefault(_OUTBOX, []).append(
             (row.id, user.student_id, title, content))
 

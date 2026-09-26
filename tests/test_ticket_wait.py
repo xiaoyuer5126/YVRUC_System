@@ -9,6 +9,7 @@ import threading
 import time
 
 from backend import locks
+from backend.database import SessionLocal
 from backend.routers import activities as activities_router
 from conftest import login
 
@@ -24,9 +25,15 @@ def test_拿到号的人等锁更久(client, open_group, take_student, monkeypat
     held, release = threading.Event(), threading.Event()
 
     def hold():
-        with locks.shift_lock(g.id):
-            held.set()
-            release.wait(5)
+        # 锁随事务走：在自己的会话上拿住，回滚时放
+        s = SessionLocal()
+        try:
+            with locks.shift_lock(s, g.id):
+                held.set()
+                release.wait(5)
+        finally:
+            s.rollback()
+            s.close()
     th = threading.Thread(target=hold)
     th.start()
     assert held.wait(5)
