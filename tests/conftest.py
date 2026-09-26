@@ -273,6 +273,16 @@ def enrolled_activity(db, take_student):
     return make_enrolled_activity(db, take_student)
 
 
+def upload_proposal(client, headers, activity_id, name="立项书.pdf"):
+    """传一份立项书。提交对外联络部审批必须带它（种子里只有这个部门有部长，
+    走审批的用例大多交到这里）。"""
+    r = client.post(f"/api/staff/activities/{activity_id}/project-files/proposal",
+                    headers=headers,
+                    files={"file": (name, b"%PDF-1.4 proposal", "application/pdf")})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 def approve(client, headers, activity_id, auto_publish=True):
     """走一遍审批：提交给一个有部长的部门 → 通过。要发布活动就得先过这关。
     默认「通过即发布」，回来活动就在报名中了。
@@ -283,6 +293,7 @@ def approve(client, headers, activity_id, auto_publish=True):
     depts = [d for d in client.get("/api/staff/departments", headers=headers).json()
              if d["has_head"]]
     assert depts, "没有任何部门设了部长，无法走审批"
+    upload_proposal(client, headers, activity_id)
     r = client.post(f"/api/staff/activities/{activity_id}/submit", headers=headers,
                     json={"department_id": depts[0]["id"],
                           "auto_publish": auto_publish})
@@ -312,3 +323,84 @@ def editing(client: TestClient, headers: dict, activity_id: str):
     # 块里没出错，保存发布就必须成功——不然改动其实没发出去，用例却照样通过
     r = client.post(url, headers=headers)
     assert r.status_code == 200, r.text
+
+
+# ======================= 对外联络部（值班 / 立项书） =======================
+
+LIAISON_HEAD = "2025004"    # 周砚，对外联络部部长
+LIAISON_CORE = "2025005"    # 林骁，对外联络部骨干
+LIAISON_MEMBER = "2025006"  # 苏昀，对外联络部成员（学习权限）
+
+
+def liaison_dept(db):
+    from backend.models import Department
+    return db.query(Department).filter(Department.name == "对外联络部").one()
+
+
+@pytest.fixture
+def liaison(db):
+    """对外联络部。值班人是全库共享的状态：用例结束（无论成败）一律撤下，
+    否则后面所有「通知发给部长」的用例都会莫名收不到。"""
+    dept = liaison_dept(db)
+    dept.duty_user_id = None
+    db.commit()
+    yield dept
+    db.rollback()
+    db.expire_all()
+    dept = liaison_dept(db)
+    dept.duty_user_id = None
+    db.commit()
+
+
+@pytest.fixture
+def extra_core(db, take_student, liaison):
+    """再来一位对外联络部骨干（交接班要有第二个人）。用完调离本部门。"""
+    from backend.models import User
+    sid = take_student()
+    u = db.query(User).filter(User.student_id == sid).one()
+    u.roles = ["qingxie", "student"]
+    u.department_id = liaison.id
+    u.qingxie_post = "core"
+    db.commit()
+    yield u
+    db.rollback()
+    db.expire_all()
+    u = db.query(User).filter(User.student_id == sid).one()
+    u.department_id = None
+    u.qingxie_post = "member"
+    db.commit()
+
+
+def inbox(db, student_id: str, title_prefix: str) -> list:
+    """某人库里标题以 title_prefix 开头的通知（接口在另一个会话里写的，先 expire）。"""
+    from backend.models import Notification
+    db.expire_all()
+    u = student_row(db, student_id)
+    return (db.query(Notification)
+            .filter(Notification.user_id == u.id,
+                    Notification.title.startswith(title_prefix)).all())
+
+
+def make_draft(client, headers, *, proposal: bool = True) -> str:
+    """一个结构完整、可以提交审批的草稿；proposal=True 顺手传好立项书。"""
+    from datetime import timedelta
+    from backend.models import now, uid
+    r = client.post("/api/staff/activities", headers=headers,
+                    json={"contact_group_qr": "x", "title": f"对外活动 {uid('t')}",
+                          "organizer": "文学院青协", "intro": "x", "location": "世纪馆",
+                          "contacts": [{"name": "王", "phone": "13900000000"}],
+                          "reg_start": (now() - timedelta(days=1)).isoformat(),
+                          "reg_end": (now() + timedelta(days=5)).isoformat()})
+    assert r.status_code == 200, r.text
+    aid = r.json()["id"]
+    r = client.post(f"/api/staff/activities/{aid}/shifts", headers=headers,
+                    json={"name": "上午场", "mode": "pick",
+                          "start_time": (now() + timedelta(days=9)).isoformat(),
+                          "end_time": (now() + timedelta(days=9, hours=3)).isoformat()})
+    assert r.status_code == 200, r.text
+    r = client.post(f"/api/staff/shifts/{r.json()['id']}/positions", headers=headers,
+                    json={"name": "引导", "quota": 3, **POSITION_TEXT})
+    assert r.status_code == 200, r.text
+    if proposal:
+        upload_proposal(client, headers, aid)
+    return aid

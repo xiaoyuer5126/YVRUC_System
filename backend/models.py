@@ -14,9 +14,9 @@ from __future__ import annotations
 import secrets
 import string
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Index,
+from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Index,
                         Integer, String, Text, text)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -221,6 +221,30 @@ class Department(Base):
     name: Mapped[str] = mapped_column(String(64), unique=True)
     note: Mapped[str] = mapped_column(String(128), default="")
     sort: Mapped[int] = mapped_column(Integer, default=0)
+    # —— 值班（目前只有对外联络部启用，见 duty.py）——
+    # 二级团体的审批量大，部长一个人盯不过来：由骨干轮流值班，审批通知只发给
+    # 值班的人。空 = 没人值班，通知回落给部长。
+    duty_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 每晚给部长的值班日报发到了哪一天：清扫每分钟一轮、多进程抢主，
+    # 落库才能保证一天只发一次（进程重启也不补发第二遍）
+    duty_digest_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class DutyHandover(Base):
+    """值班交接流水：谁、从谁手里、交给谁、什么时候。
+
+    当前值班人挂在 Department 上，历史留在这里——哪天那条审批为什么没人管，
+    事后要查得到当时是谁在班。
+    """
+    __tablename__ = "duty_handovers"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    dept_id: Mapped[str] = mapped_column(ForeignKey("departments.id"), index=True)
+    from_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    actor_id: Mapped[str] = mapped_column(String(32))
+    note: Mapped[str] = mapped_column(String(256), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
 
 
 class Session(Base):
@@ -298,6 +322,10 @@ class Activity(Base):
     appeal_deadline: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
     hours_locked_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True)
+    # 对外联络部归口的活动，时长报批前要交盖章立项书。申诉期满时还没交，
+    # 自动报批就停下来提醒管理者一次；记下时间，别每分钟提醒一遍。
+    stamped_reminded_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
 
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
@@ -587,7 +615,8 @@ class Attachment(Base):
     __tablename__ = "attachments"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    # shift / position：学习材料；application：报名问卷里志愿者上传的文件
+    # shift / position：学习材料；application：报名问卷里志愿者上传的文件；
+    # proposal / stamped：立项书与盖章立项书（owner_id = 活动 id，各留一份）
     owner_type: Mapped[str] = mapped_column(String(12))
     owner_id: Mapped[str] = mapped_column(String(32), index=True)
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
@@ -599,6 +628,32 @@ class Attachment(Base):
     url: Mapped[str] = mapped_column(String(512), default="")
     uploaded_by: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class VbRegistration(Base):
+    """志愿北京登记：管理者在志愿北京建好活动后来报一声，对外联络部核对。
+
+    志愿时长最终要录进志愿北京，平台上的活动得在那边有一个对应的活动。
+    一个活动可以登记多次（建错了就作废重报，分几场建的就报几条），
+    不设上限；作废的留着，谁报错过什么事后查得到。
+    """
+    __tablename__ = "vb_registrations"
+
+    STATUS_LABELS = {"submitted": "已提交", "approved": "已通过",
+                     "rejected": "已驳回", "void": "作废"}
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
+    vb_name: Mapped[str] = mapped_column(String(200))     # 志愿北京上的活动名称
+    status: Mapped[str] = mapped_column(String(12), default="submitted", index=True)
+    submitted_by: Mapped[str] = mapped_column(String(32))
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    handled_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reply: Mapped[str] = mapped_column(String(512), default="")
+
+    def status_label(self) -> str:
+        return self.STATUS_LABELS.get(self.status, self.status)
 
 
 # ======================= 报名后筛选：报名问卷与申请 =======================

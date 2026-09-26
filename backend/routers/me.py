@@ -449,4 +449,5 @@ def update_profile(body: ProfileBody,
     user.id_card = id_card
     user.no_mainland_id = body.no_mainland_id
     db.commit()
-    return {"ok": True, "user": user.full()}
+    from ..liaison import session_user
+    return {"ok": True, "user": session_user(db, user)}

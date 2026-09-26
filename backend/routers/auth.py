@@ -20,6 +20,7 @@ from .. import config, school_id
 from ..database import db_session
 from ..deps import create_session, current_token, current_user
 from ..integrations import sso
+from ..liaison import session_user
 from ..locks import (clear_failures, failure_count, issue_ticket,
                      note_failure)
 from ..models import Session, User, ViolationRecord, uid
@@ -91,7 +92,8 @@ def demo_login(body: DemoLoginBody, request: Request,
     if user is None:
         raise HTTPException(404, f"平台没有学号 {sid} 的档案")
     clear_failures(source)
-    return {"token": create_session(db, user), "user": user.full(), "mode": "demo"}
+    return {"token": create_session(db, user), "user": session_user(db, user),
+            "mode": "demo"}
 
 
 @router.get("/demo-accounts")
@@ -143,7 +145,7 @@ def sso_callback(body: SsoCallbackBody,
         user = _provision(db, info)
     else:
         _sync_from_school(db, user, info)
-    return {"token": create_session(db, user), "user": user.full(),
+    return {"token": create_session(db, user), "user": session_user(db, user),
             "mode": sso.mode(), "next": info.get("next") or ""}
 
 
@@ -220,8 +222,9 @@ def logout(token: str = Depends(current_token),
 
 
 @router.get("/me")
-def me(user: User = Depends(current_user)):
-    return {"user": user.full()}
+def me(user: User = Depends(current_user),
+       db: OrmSession = Depends(db_session)):
+    return {"user": session_user(db, user)}
 
 
 class TicketBody(BaseModel):

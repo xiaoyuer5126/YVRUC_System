@@ -34,7 +34,7 @@ from ..integrations import msgcenter
 from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
                       AttireRecord, AttireTask, AuditLog,
                       CheckinRecord, CheckinTask, Enrollment, FormQuestion,
-                      Notification, Position, Shift, User,
+                      Notification, Position, Shift, User, VbRegistration,
                       iso, like_pattern, now, uid)
 from ..serializers import activity_brief, load_trees
 from .screening import answers_out
@@ -739,9 +739,13 @@ def delete_activity(activity_id: str, db: OrmSession = Depends(db_session),
                                  "已发布的活动请使用「结束活动」归档")
     label = act.title
     for model in (ActivityManager, ApprovalEvent, AttireRecord, AttireTask,
-                  CheckinTask, Enrollment, FormQuestion):
+                  CheckinTask, Enrollment, FormQuestion, VbRegistration):
         (db.query(model).filter(model.activity_id == activity_id)
          .delete(synchronize_session=False))
+    # 立项书没有外键拦着，不清就是磁盘上一份没人指向的文件
+    from ..liaison import SLOTS, drop_project_file
+    for slot in SLOTS:
+        drop_project_file(db, activity_id, slot)
     db.flush()
     db.delete(act)
     audit_log(db, actor=user, action="delete", target_type="activity",

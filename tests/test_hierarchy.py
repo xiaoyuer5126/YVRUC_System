@@ -168,10 +168,15 @@ def test_会长团除集成设置外与管理员同权(client, db):
     assert client.get("/api/staff/integrations", headers=council).status_code == 403
 
 
-def test_骨干进不了审批档案与总览(client):
+def test_骨干进不了档案与总览(client):
     core = login(client, CORE)
-    for path in ("/api/staff/approvals", "/api/staff/users", "/api/staff/overview"):
+    for path in ("/api/staff/users", "/api/staff/overview"):
         assert client.get(path, headers=core).status_code == 403, path
+    # 审批页例外：对外联络部的骨干有值班资格，要看得到谁在班、接得了班；
+    # 不在班时只看得到点名转给自己的（值班见 test_liaison_duty.py）
+    r = client.get("/api/staff/approvals", headers=core)
+    assert r.status_code == 200
+    assert all(a["assignee"] == "林骁" for a in r.json())
 
 
 def test_骨干只能把本部门成员归到自己名下(client, admin, db, take_student):

@@ -147,9 +147,12 @@ def require_council(user: User = Depends(current_user)) -> User:
     return user
 
 
-def require_approver(user: User = Depends(current_user)) -> User:
-    """能进「活动审批」页的人：管理员 / 会长团 / 部长。"""
-    if not (user.has_full_access() or user.is_head()):
+def require_approver(user: User = Depends(current_user),
+                     db: OrmSession = Depends(db_session)) -> User:
+    """能进「活动审批」页的人：管理员 / 会长团 / 部长，加上启用值班的部门里
+    有值班资格的骨干（不在班时列表是空的，但要看得到现在谁在班、接得了班）。"""
+    from .liaison import duty_eligible
+    if not (user.has_full_access() or user.is_head() or duty_eligible(db, user)):
         raise HTTPException(403, "需要 管理员/会长团/部长 身份")
     return user
 

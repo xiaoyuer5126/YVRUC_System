@@ -123,7 +123,8 @@ def add_link(body: LinkBody, db: OrmSession = Depends(db_session),
 def delete_material(material_id: str, db: OrmSession = Depends(db_session),
                     user: User = Depends(require_manager)):
     row = db.get(Attachment, material_id)
-    if row is None:
+    # 立项书不走这里删：一格只能换不能空，否则「已上传」的前提说没就没
+    if row is None or row.owner_type in ("proposal", "stamped"):
         raise HTTPException(404, "材料不存在")
     ensure_activity_manager(db, user, row.activity_id)
     ensure_not_finished(db.get(Activity, row.activity_id))
@@ -154,7 +155,13 @@ def download_material(material_id: str, db: OrmSession = Depends(db_session),
     # 活动公开之前（草稿、审批中、待发布）它的材料也不对外：
     # 只按 draft 判断的话，交上去等审批的那一段时间材料就漏出去了
     act = db.get(Activity, row.activity_id) if row.activity_id else None
-    if act is not None and act.status not in PUBLIC_STATUSES \
+    if row.owner_type in ("proposal", "stamped"):
+        # 立项书是内部材料：不管活动公没公开，只给管理者与审批线上的人
+        # （值班人审的正是还没公开的活动，下面那条公开判断会把他挡掉）
+        from ..liaison import can_see_project_files
+        if act is None or not can_see_project_files(db, user, act):
+            raise HTTPException(404, "材料不存在")
+    elif act is not None and act.status not in PUBLIC_STATUSES \
             and not is_activity_manager(db, user, act.id):
         raise HTTPException(404, "材料不存在")
     # 报名问卷里志愿者交的文件是个人材料：只有本人和这场活动的管理者能看

@@ -9,6 +9,7 @@ from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, FormQuestion, Shift,
                             Position, User, new_checkin_token, now, uid)
 from conftest import (ADMIN, POSITION_TEXT, QINGXIE, approve, editing,
+                      upload_proposal,
                       login, student_row)
 
 
@@ -530,6 +531,7 @@ def test_删除草稿要连带清干净引用(client, admin, db):
     assert len(form["questions"]) == 1
     dept = next(d for d in client.get("/api/staff/departments",
                                       headers=admin).json() if d["has_head"])
+    upload_proposal(client, admin, aid)
     assert client.post(f"/api/staff/activities/{aid}/submit", headers=admin,
                        json={"department_id": dept["id"]}).status_code == 200
     assert client.post(f"/api/staff/activities/{aid}/decide", headers=admin,
