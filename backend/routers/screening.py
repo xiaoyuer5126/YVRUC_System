@@ -11,7 +11,6 @@
 """
 from __future__ import annotations
 
-import contextlib
 from pathlib import Path
 from uuid import uuid4
 
@@ -517,17 +516,28 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
     # 从前锁只包住「判名额 + 改状态」，提交在放锁之后，中间别人看到的还是旧
     # 人数；场次锁现在随事务走，正好一直持有到下面那次 commit。
     # 一次锁多个场次按 id 排序（shift_lock 里做），两位管理者同时批量录取时
-    # 加锁顺序一致，不会互相等成死锁。不录取不动名额，不用锁
-    if body.accept:
-        shift_ids = [sid for (sid,) in (
-            db.query(Enrollment.shift_id)
-            .filter(Enrollment.activity_id == act.id,
-                    Enrollment.user_id.in_([a.user_id for a in pending]),
-                    Enrollment.status == "applied").distinct())]
-        guard = shift_lock(db, *shift_ids)
-    else:
-        guard = contextlib.nullcontext()
-    with guard:
+    # 加锁顺序一致，不会互相等成死锁。
+    # 不录取也要锁：它不动名额，但会和别人的录取改同一批记录——一位录取、
+    # 另一位同时不录取，不锁的话后提交的那个会把申请状态盖成相反的结论
+    shift_ids = [sid for (sid,) in (
+        db.query(Enrollment.shift_id)
+        .filter(Enrollment.activity_id == act.id,
+                Enrollment.user_id.in_([a.user_id for a in pending]),
+                Enrollment.status == "applied").distinct())]
+    db.commit()          # 还连接再排锁，理由同 enroll
+    with shift_lock(db, *shift_ids):
+        # 锁外筛出来的「待处理」可能已经旧了：另一位管理者刚处理过其中几条。
+        # 重读后只处理仍在申请中的；一条都不剩就明说，别让人以为操作成功了
+        for app in pending:
+            db.refresh(app)
+        handled = [a for a in pending if a.status != "applied"]
+        pending = [a for a in pending if a.status == "applied"]
+        if not pending:
+            raise HTTPException(409, "所选申请已被其他管理者处理，请刷新")
+        if handled and body.accept:
+            # 录取是整批判名额的，混着已处理的人继续会让结果和管理者看到的不一致
+            names = "、".join(db.get(User, a.user_id).name for a in handled)
+            raise HTTPException(409, f"{names} 的申请已被其他管理者处理，请刷新后重新选择")
         done = []
         for app in pending:
             u = db.get(User, app.user_id)
