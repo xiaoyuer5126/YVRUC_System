@@ -62,6 +62,12 @@ def _staff_write_routes():
     return sorted(out)
 
 
+# 这些接口的门槛比「管理身份」更高（管理员/会长团/部长/骨干），部门成员在
+# 那一道就被拦下，轮不到学习权限出场。点名列出：新接口不在表里就必须是学习权限拦的。
+STRICTER_GATE = {"create_department", "update_department", "delete_department",
+                 "pin", "put_integration", "set_roles"}
+
+
 def test_部门成员对每一个写接口都被拦在写库之前(client):
     """枚举全部路由而不是挑几个：以后新加接口忘了这件事，这里会红。"""
     member = login(client, MEMBER)
@@ -79,9 +85,13 @@ def test_部门成员对每一个写接口都被拦在写库之前(client):
         trainee_hit = isinstance(detail, dict) and detail.get("code") == "TRAINEE_READONLY"
         if name == "assign_preview":
             ok = not trainee_hit          # 试算不写库，不该被学习权限拦
+        elif name in STRICTER_GATE:
+            # 被更严的身份闸先拦下，同样没写进去
+            ok = isinstance(detail, str) and detail.startswith("需要")
         else:
-            # 被学习权限拦，或被更严的闸（仅管理员/会长团/部长）先拦，都算没写进去
-            ok = r.status_code == 403
+            # 只认学习权限那一道：别处的 403（比如「不是该活动管理者」）
+            # 发生在处理函数里，说明请求已经越过了这道闸
+            ok = trainee_hit
         if not ok:
             leaked.append(f"{method} {path} → {r.status_code}")
     assert not leaked, "这些接口没有被学习权限拦住：\n" + "\n".join(leaked)
@@ -132,7 +142,7 @@ def test_试算不被学习权限拦(client, db, dept_activity):
     _add_core_manager(db, aid)
     member = login(client, MEMBER)
     r = client.post(f"/api/staff/shifts/{g}/assign/preview", headers=member, json={})
-    assert r.status_code != 403, r.text
+    assert r.status_code == 200, r.text
 
 
 # ======================= 可见范围 =======================
@@ -164,7 +174,7 @@ def test_骨干进不了审批档案与总览(client):
         assert client.get(path, headers=core).status_code == 403, path
 
 
-def test_骨干只能把本部门成员归到自己名下(client, db):
+def test_骨干只能把本部门成员归到自己名下(client, admin, db, take_student):
     """角色页对骨干只开一个口子：认领成员。身份、层级、部门一概动不了。"""
     core = login(client, CORE)
     me = _user(db, CORE)
@@ -179,13 +189,21 @@ def test_骨干只能把本部门成员归到自己名下(client, db):
     assert r.status_code == 200, r.text
     db.expire_all()
     assert db.get(User, member.id).supervisor_id == me.id
-    # 归给别人、升成骨干、加发起方身份：都不行
-    other_core = (db.query(User).filter(User.department_id == me.department_id,
-                                        User.qingxie_post == "core",
-                                        User.id != me.id).first())
-    if other_core is not None:
+    # 归给别人、升成骨干、加发起方身份：都不行。
+    # 「别人」现立一位本部门骨干，演示数据里未必有第二个
+    other_core = student_row(db, take_student())
+    assert client.put(f"/api/staff/roles/{other_core.id}", headers=admin,
+                      json={"roles": ["student", "qingxie"], "qingxie_post": "core",
+                            "department_id": me.department_id}).status_code == 200
+    try:
         assert client.put(f"/api/staff/roles/{member.id}", headers=core,
                           json={**base, "supervisor_id": other_core.id}).status_code == 403
+    finally:
+        # 部门骨干名单是共享状态，别让它多出一个人影响别的用例
+        assert client.put(f"/api/staff/roles/{other_core.id}", headers=admin,
+                          json={"roles": ["student"]}).status_code == 200
+    db.expire_all()
+    assert db.get(User, member.id).supervisor_id == me.id
     assert client.put(f"/api/staff/roles/{member.id}", headers=core,
                       json={**base, "qingxie_post": "core"}).status_code == 403
     assert client.put(f"/api/staff/roles/{member.id}", headers=core,

@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from backend.models import (Activity, ActivityManager, Enrollment, Position,
-                            Shift, User, AttireRecord, now, uid)
+                            Shift, User, now, uid)
 from conftest import ADMIN, POSITION_TEXT, login, student_row
 
 
@@ -60,7 +60,12 @@ def test_一场活动两个码且幂等(client, admin, attire_activity):
     assert (take1, ret1) == (take2, ret2)   # 再点一次不会换码
 
 
-def test_扫码领取与归还(client, admin, db, attire_activity):
+def _ledger_row(client, admin, act, student_id):
+    d = client.get(f"/api/staff/activities/{act.id}/attire", headers=admin).json()
+    return next(x for x in d["items"] if x["student_id"] == student_id)
+
+
+def test_扫码领取与归还(client, admin, attire_activity):
     act, a, _b = attire_activity
     take, ret = _tokens(client, admin, act)
     h = login(client, a.student_id)
@@ -69,18 +74,16 @@ def test_扫码领取与归还(client, admin, db, attire_activity):
     assert info["action"] == "take" and info["need_attire"] is True
 
     assert client.post(f"/api/attire/scan/{take}", headers=h).status_code == 200
-    rec = db.query(AttireRecord).filter(AttireRecord.activity_id == act.id,
-                                      AttireRecord.user_id == a.id).one()
-    assert rec.taken_at is not None and rec.returned_at is None
+    row = _ledger_row(client, admin, act, a.student_id)
+    assert row["taken"] is True and row["taken_at"] and row["returned_at"] is None
 
     # 重复领取被拦
     r = client.post(f"/api/attire/scan/{take}", headers=h)
     assert r.status_code == 409 and "已经领过" in r.json()["detail"]
 
     assert client.post(f"/api/attire/scan/{ret}", headers=h, json={}).status_code == 200
-    db.expire_all()
-    assert db.query(AttireRecord).filter(
-        AttireRecord.activity_id == act.id, AttireRecord.user_id == a.id).one().returned_at
+    row = _ledger_row(client, admin, act, a.student_id)
+    assert row["returned"] is True and row["returned_at"]
 
 
 def test_没领过不能归还(client, admin, attire_activity):
@@ -207,14 +210,29 @@ def two_campus(db, attire_activity, take_student):
     other_shift = student_row(db, take_student())
     other_campus = student_row(db, take_student())
     other_campus.campus = "通州校区"
+    g_need = (db.query(Position)
+              .filter(Position.shift_id == g.id, Position.attire == "issued").one())
     db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g2.id,
                       user_id=other_shift.id, position_id=pos.id,
                       status="enrolled", joined_at=now()))
     db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
-                      user_id=other_campus.id, position_id=pos.id,
+                      user_id=other_campus.id, position_id=g_need.id,
                       status="enrolled", joined_at=now()))
     db.commit()
     return act, g, g2, a, other_shift, other_campus
+
+
+def _add_issued(db, take_student, shift, *, campus="中关村校区"):
+    """往某个场次的统一发放岗位上再报一个人。"""
+    pos = (db.query(Position)
+           .filter(Position.shift_id == shift.id, Position.attire == "issued").one())
+    u = student_row(db, take_student())
+    u.campus = campus
+    db.add(Enrollment(id=uid("enr"), activity_id=shift.activity_id,
+                      shift_id=shift.id, user_id=u.id, position_id=pos.id,
+                      status="enrolled", joined_at=now()))
+    db.commit()
+    return u
 
 
 def test_催取可以只发某个场次(client, admin, db, two_campus):
@@ -285,22 +303,35 @@ def test_催归还同样认范围和动作(client, admin, db, two_campus):
     assert r.status_code == 400 and "没有未归还" in r.json()["detail"]
 
 
-def test_勾多个场次是或不是且(client, admin, db, two_campus):
+def test_勾多个场次是或不是且(client, admin, db, two_campus, take_student):
     """勾了「当日」和「次日」= 这两场的人都要，不是要求两场都报了名。"""
     act, g, g2, a, other_shift, other_campus = two_campus
+    # 再加一场没勾的，才看得出筛选真的生效了，而不是整场全发
+    g3 = Shift(id=uid("g"), activity_id=act.id, name="第三日",
+               start_time=now() + timedelta(days=5),
+               end_time=now() + timedelta(days=5, hours=4), mode="pick", sort=2)
+    db.add(g3)
+    db.flush()
+    db.add(Position(id=uid("p"), shift_id=g3.id, name="引导", quota=5,
+                    attire="issued", attire_note="北门物资桌", sort=0, **POSITION_TEXT))
+    db.commit()
+    _add_issued(db, take_student, g3)
     _tokens(client, admin, act)
     url = f"/api/staff/activities/{act.id}/attire"
 
     r = client.post(f"{url}/remind", headers=admin,
                     json={"action": "take", "shift_ids": [g.id, g2.id]})
     assert r.status_code == 200, r.text
-    assert r.json()["count"] == 3               # 两场的人都在
+    assert r.json()["count"] == 3               # 两场的人都在，第三日的不在
     assert "当日" in r.json()["scope"] and "次日" in r.json()["scope"]
+    assert "第三日" not in r.json()["scope"]
 
 
-def test_场次和校区是叠加的(client, admin, db, two_campus):
+def test_场次和校区是叠加的(client, admin, db, two_campus, take_student):
     """同时勾了场次和校区：两个条件都要满足（落在选中的场次里，且校区也在选中）。"""
     act, g, g2, a, other_shift, other_campus = two_campus
+    # 次日场也放一个通州的：只按校区是 2 人，只按场次也是 2 人，叠加才是 1 人
+    _add_issued(db, take_student, g2, campus="通州校区")
     _tokens(client, admin, act)
     url = f"/api/staff/activities/{act.id}/attire"
 

@@ -1,8 +1,7 @@
 """通知签收：发送时要求签收、志愿者签收、管理端查看与催办。"""
 from __future__ import annotations
 
-from backend.models import Notification, User
-from conftest import ADMIN, login
+from conftest import editing, login
 
 
 def _send(client, admin, act_id, *, need_ack, title="集合地点变更"):
@@ -26,7 +25,7 @@ def test_签收全流程(client, admin, db, enrolled_activity):
     act, _shift, u = enrolled_activity
     body = _send(client, admin, act.id, need_ack=True)
     batch = body["batch_id"]
-    assert batch and body["count"] >= 1
+    assert batch and body["count"] == 1         # 活动里只有这一位志愿者
 
     # 志愿者侧：收件箱里带待签收标记与计数
     student = login(client, u.student_id)
@@ -79,30 +78,43 @@ def test_一键已读不代替签收(client, admin, db, enrolled_activity):
     assert inbox["pending_ack"] == 1
 
 
+def _first_ack_item(client, headers) -> dict:
+    return next(n for n in client.get("/api/me/notifications",
+                                      headers=headers).json()["items"]
+                if n["need_ack"])
+
+
 def test_不能签收别人的通知(client, admin, db, enrolled_activity, take_student):
     act, _shift, u = enrolled_activity
     _send(client, admin, act.id, need_ack=True)
-    mine = (db.query(Notification)
-            .filter(Notification.user_id == u.id,
-                    Notification.need_ack.is_(True)).first())
+    student = login(client, u.student_id)
+    mine = _first_ack_item(client, student)
     other = login(client, take_student())
-    r = client.post(f"/api/me/notifications/{mine.id}/ack", headers=other)
+    r = client.post(f"/api/me/notifications/{mine['id']}/ack", headers=other)
     assert r.status_code == 404
+    # 本人那条仍是待签收
+    assert client.get("/api/me/notifications",
+                      headers=student).json()["pending_ack"] == 1
 
 
-def test_催办只发给未签收的人(client, admin, db, enrolled_activity):
-    act, _shift, u = enrolled_activity
+def test_催办只发给未签收的人(client, admin, db, enrolled_activity, take_student):
+    act, shift, u = enrolled_activity
+    # 再报一个人：两人一签一不签，才看得出催办是挑着发的
+    other = login(client, take_student())
+    assert client.post(f"/api/activities/{act.id}/shifts/{shift.id}/enroll",
+                       headers=other, json={"position_id": shift.positions[0].id}
+                       ).status_code == 200
     batch = _send(client, admin, act.id, need_ack=True)["batch_id"]
 
-    r = client.post(f"/api/staff/notify-batches/{batch}/remind", headers=admin)
-    assert r.status_code == 200 and r.json()["count"] >= 1
-
-    # 签收后再催，应该没人可催
     student = login(client, u.student_id)
-    for n in client.get("/api/me/notifications",
-                        headers=student).json()["items"]:
-        if n["need_ack"] and not n["acked_at"]:
-            client.post(f"/api/me/notifications/{n['id']}/ack", headers=student)
+    assert client.post(f"/api/me/notifications/{_first_ack_item(client, student)['id']}/ack",
+                       headers=student).status_code == 200
+    r = client.post(f"/api/staff/notify-batches/{batch}/remind", headers=admin)
+    assert r.status_code == 200 and r.json()["count"] == 1
+
+    # 都签收了再催，应该没人可催
+    assert client.post(f"/api/me/notifications/{_first_ack_item(client, other)['id']}/ack",
+                       headers=other).status_code == 200
     r = client.post(f"/api/staff/notify-batches/{batch}/remind", headers=admin)
     assert r.status_code == 400
 
@@ -214,30 +226,32 @@ def test_点开一条就算已读_签收仍要本人点(client, admin, db, enrol
     act, _shift, u = enrolled_activity
     _send(client, admin, act.id, need_ack=True)
     student = login(client, u.student_id)
-    mine = (db.query(Notification)
-            .filter(Notification.user_id == u.id).first())
-    assert client.post(f"/api/me/notifications/{mine.id}/read",
+    mine = _first_ack_item(client, student)
+    # 别人的点不动（先验这个，免得本人已读之后看不出差别）
+    other = login(client, take_student())
+    assert client.post(f"/api/me/notifications/{mine['id']}/read",
+                       headers=other).status_code == 404
+    assert client.get("/api/me/notifications",
+                      headers=student).json()["unread"] == 1
+    assert client.post(f"/api/me/notifications/{mine['id']}/read",
                        headers=student).status_code == 200
     inbox = client.get("/api/me/notifications", headers=student).json()
     assert inbox["unread"] == 0 and inbox["pending_ack"] == 1
-    # 别人的点不动
-    other = login(client, take_student())
-    assert client.post(f"/api/me/notifications/{mine.id}/read",
-                       headers=other).status_code == 404
 
 
 def test_管理者收到的通知也点得进活动(client, admin, db, enrolled_activity):
-    """人员变动、排岗提醒这些原来没带活动 id，点了没反应。"""
-    from backend.notify import notify_managers
+    """人员变动、排岗提醒这些原来没带活动 id，点了没反应。
 
-    act, _shift, _u = enrolled_activity
-    notify_managers(db, act.id, "[人员变动] 测试", "过去 24 小时：新增 1 人")
-    db.commit()
-    admin_user = db.query(User).filter(User.student_id == ADMIN).one()
-    row = (db.query(Notification)
-           .filter(Notification.user_id == admin_user.id,
-                   Notification.title == "[人员变动] 测试").one())
-    assert row.data.get("activity_id") == act.id
+    用「打开组长开关 → 提醒管理者指定组长」这条真实链路触发一条给管理者的通知。
+    """
+    act, shift, _u = enrolled_activity
+    with editing(client, admin, act.id):
+        r = client.patch(f"/api/staff/positions/{shift.positions[0].id}",
+                         headers=admin, json={"needs_leader": True})
+        assert r.status_code == 200, r.text
+    rows = [n for n in client.get("/api/me/notifications", headers=admin).json()["items"]
+            if n["title"] == f"[组长空缺] {act.title}"]
+    assert len(rows) == 1 and rows[0]["data"].get("activity_id") == act.id
 
 
 def test_未读数有瘦接口(client, admin, db, enrolled_activity):

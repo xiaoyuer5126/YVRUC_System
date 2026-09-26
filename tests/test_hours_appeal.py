@@ -7,7 +7,8 @@ import pytest
 
 from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, HoursRecord, Notification,
-                            Position, Shift, User, now, uid)
+                            Position, Shift, User, new_checkin_token, now,
+                            span_text, uid)
 from conftest import ADMIN, POSITION_TEXT, login, student_row
 
 
@@ -38,7 +39,7 @@ def served(db, take_student):
                       user_id=u.id, position_id=pos.id, status="enrolled",
                       joined_at=now()))
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
-                       mode="shift", token=uid("T")[:6].upper(),
+                       mode="shift", token=new_checkin_token(),
                        created_by=admin.id,
                        valid_from=g.start_time, valid_to=g.end_time)
     db.add(task)
@@ -75,6 +76,23 @@ def _approve_lock(client, admin, act, *, approve=True, reply="核对无误"):
                     headers=admin, json={"approve": approve, "reply": reply})
     assert r.status_code == 200, r.text
     return rows[0]
+
+
+def _lock_requests(client, admin, act):
+    """这场活动挂着的时长审批。只看本活动：定时任务扫的是全库，
+    别的用例留下的活动也会被它顺手送审。"""
+    return [x for x in client.get("/api/staff/hours-requests", headers=admin).json()
+            if x["activity_id"] == act.id]
+
+
+def _appeal_window_closes(db, act):
+    """把确认/申诉截止时间拨到刚刚过去，再跑一轮定时任务。"""
+    from backend import scheduled
+
+    db.expire_all()
+    db.get(Activity, act.id).appeal_deadline = now() - timedelta(minutes=1)
+    db.commit()
+    scheduled.submit_lock_when_due(db)
 
 
 def test_申诉全流程_采纳(client, admin, db, served):
@@ -201,19 +219,17 @@ def test_到点无人申诉自动提交审批_通过后才锁定(client, admin, 
 
     act, _g, u = served
     _confirm(client, admin, act)
-    db.expire_all()
-    row = db.get(Activity, act.id)
-    row.appeal_deadline = now() - timedelta(minutes=1)
-    db.commit()
+    _appeal_window_closes(db, act)
 
-    assert scheduled.submit_lock_when_due(db) >= 1
+    assert [x["kind"] for x in _lock_requests(client, admin, act)] == ["lock"]
     db.expire_all()
     assert db.get(Activity, act.id).hours_locked_at is None, "等校青协点头才算数"
     # 审批期间冻结：账送上去了就不能再动
     assert client.post(f"/api/staff/activities/{act.id}/hours/confirm",
                        headers=admin, json={}).status_code == 409
     # 挂着一条就不重复提交
-    assert scheduled.submit_lock_when_due(db) == 0
+    scheduled.submit_lock_when_due(db)
+    assert len(_lock_requests(client, admin, act)) == 1
 
     _approve_lock(client, admin, act)
     db.expire_all()
@@ -236,20 +252,16 @@ def test_到点无人申诉自动提交审批_通过后才锁定(client, admin, 
 
 
 def test_有人申诉就不自动提交审批(client, admin, db, served):
-    from backend import scheduled
-
     act, _g, u = served
     _confirm(client, admin, act)
     stu = login(client, u.student_id)
     rec = _record(client, stu)
-    client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu,
-                json={"claimed_hours": 3, "reason": "忘记签退，实际提前走了"})
-    db.expire_all()
-    db.get(Activity, act.id).appeal_deadline = now() - timedelta(minutes=1)
-    db.commit()
+    assert client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu,
+                       json={"claimed_hours": 3, "reason": "忘记签退，实际提前走了"}
+                       ).status_code == 200
+    _appeal_window_closes(db, act)
 
-    assert scheduled.submit_lock_when_due(db) == 0
-    assert not client.get("/api/staff/hours-requests", headers=admin).json()
+    assert _lock_requests(client, admin, act) == []
 
     # 处理完申诉，管理者可以自己提交审批，不必再等一轮
     a = client.get(f"/api/staff/activities/{act.id}/hours-appeals",
@@ -387,15 +399,10 @@ def test_岗位没开劳务就选不了(client, admin, db, served):
 
 
 def test_到点未表态视同确认并按志愿时长记(client, admin, db, served):
-    from backend import scheduled
-
     act, _g, u = served
     _served_pay_position(db, act)
     _confirm(client, admin, act)
-    db.expire_all()
-    db.get(Activity, act.id).appeal_deadline = now() - timedelta(minutes=1)
-    db.commit()
-    assert scheduled.submit_lock_when_due(db) >= 1
+    _appeal_window_closes(db, act)
     _approve_lock(client, admin, act)
     db.expire_all()
     rec = db.query(HoursRecord).filter(HoursRecord.activity_id == act.id).one()
@@ -474,6 +481,7 @@ def test_时长带明细且导出时长记录(client, admin, db, served, take_st
     rows = list(ws.values)
     assert rows[0] == ("姓名", "身份证号", "岗位", "时长", "备注")
     by_name = {r_[0]: r_ for r_ in rows[1:]}
+    # 「岗位」列是产品确认故意留空的（岗位写在备注的明细里），别去「修」它
     assert by_name[u.name] == (u.name, "110101200001011234", None, 4.0,
                                f"{g.span_text()} 引导")
     assert by_name[other.name][3] == 2 and by_name[other.name][4] == "场外搬运"
@@ -521,6 +529,16 @@ def test_手动时长并进本人那一笔(client, admin, db, served):
     assert "manual" not in d
     m = next(x for x in d["items"] if x["user"]["id"] == u.id)
     assert m["hours"] == 6.0 and len(m["parts"]) == 2
+
+    # 导出的「备注」列不是另写的一句说明，是把明细一段段拼起来——
+    # 签到算出来的那段和手动加的那段都在里头
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+    r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
+    xrow = next(x for x in load_workbook(BytesIO(r.content)).active.values
+                if x[0] == u.name)
+    assert xrow[3] == 6.0 and xrow[4] == f"{g.span_text()} 引导；场外搬运"
 
 
 def test_确认全部不会抹掉手动加的那几段(client, admin, db, served):
@@ -684,25 +702,6 @@ def test_没有时长记录就无从扣减(client, admin, db, served, take_stude
     assert r.status_code == 400 and "没有可扣的" in r.json()["detail"]
 
 
-def test_备注就是明细导出拼的是全部段落(client, admin, db, served):
-    """「备注」列不是另写的一句说明，是把明细一段段拼起来——签到算出来的那段
-    也在里头。"""
-    from io import BytesIO
-
-    from openpyxl import load_workbook
-
-    act, g, u = served
-    _confirm(client, admin, act, approve=False)
-    _add_manual(client, admin, act, u.student_id, 2, "场外搬运")
-
-    r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
-    ws = load_workbook(BytesIO(r.content)).active
-    row = next(x for x in ws.values if x[0] == u.name)
-    note = row[4]
-    assert g.span_text() in note and "引导" in note     # 签到算出来的那一段
-    assert "场外搬运" in note                            # 手动加的那一段
-
-
 def test_明细写的是实际签到签退那一段不是场次时段(client, admin, db, served):
     """迟到早退的人，明细里写场次时段就对不上账了：标着「09:00-12:00」，
     小时数却只有 2 小时出头，谁看都得问一句。写实际那一段，数就解释得通。
@@ -721,7 +720,8 @@ def test_明细写的是实际签到签退那一段不是场次时段(client, ad
     row = _record(client, login(client, u.student_id))
     assert row["hours"] == 2.5                     # 合计：2 小时 10 分向上取整
     assert row["parts"][0]["hours"] == 2.17        # 明细：实际那一段
-    assert row["parts"][0]["time"] == f"{late:%m-%d %H:%M}-{left:%H:%M}"
+    # 跨不跨零点格式不同（见 span_text），跑用例的钟点不同，这段可能跨天
+    assert row["parts"][0]["time"] == span_text(late, left)
     assert row["parts"][0]["time"] != g.span_text()
     assert row["parts"][0]["position"] == "引导"
 
@@ -744,7 +744,7 @@ def test_多个岗位就是多句话(client, admin, db, served):
     db.add(pos2)
     db.flush()
     task2 = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g2.id,
-                        mode="shift", token=uid("T")[:6].upper(),
+                        mode="shift", token=new_checkin_token(),
                         created_by=act.created_by, valid_from=g2.start_time,
                         valid_to=g2.end_time)
     db.add(task2)
@@ -818,8 +818,8 @@ def test_没确认过时扣签到时长会提示先确认(client, admin, served)
 def test_时长拒绝非有限数(client, admin, served):
     act, g, u = served
     for bad in ("nan", "inf", "-inf"):
-        assert _add_manual(client, admin, act, u.student_id, bad,
-                           "x").status_code == 400
+        r = _add_manual(client, admin, act, u.student_id, bad, "x")
+        assert r.status_code == 400 and "不是有效数字" in r.json()["detail"], bad
 
 
 def test_同一批里同一人出现两次只有一笔(client, admin, db, served, take_student):

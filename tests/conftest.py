@@ -8,6 +8,7 @@ Redis 也用另一个 db 号。可用 RUCVA_TEST_DATABASE_URL / RUCVA_TEST_REDIS
 """
 from __future__ import annotations
 
+import itertools
 import os
 from contextlib import contextmanager
 
@@ -115,18 +116,27 @@ POSITION_TEXT = {"location": "北门", "service_task": "无特殊要求",
                  "training_note": "现场由负责人统一讲解"}
 
 
+@pytest.fixture(scope="session")
+def open_group_days():
+    """open_group 默认场次日期的发生器，整个会话共用一个。
+
+    放在用例级的话每个用例都从同一天数起，不同用例的场次照样会撞在一起。
+    """
+    return itertools.count(30)
+
+
 @pytest.fixture
-def open_group(db):
+def open_group(db, open_group_days):
     """一个报名中的活动 + 一个空场次，名额由用例自己定。
 
-    每次调用把场次往后挪一天：用例之间的场次不能重叠，否则同一个学生
-    在别处占的时段会把这里的报名挡掉。需要重叠的用例自己指定 day_offset。
+    每次调用把场次往后挪一天（整个会话内递增）：场次不能重叠，否则同一个
+    学生在别处占的时段会把这里的报名挡掉。需要重叠的用例自己指定 day_offset。
     reg_end 默认给得很远，需要「报名已截止」的用例自己改。
     """
     from datetime import timedelta
     from backend.models import (Activity, ActivityManager, Position, Shift,
                                 User, now, uid)
-    seq = iter(range(30, 300))
+    seq = open_group_days
 
     def _make(capacity: int, *, mode: str = "pick", waitlist_quota: int = 3,
               day_offset: int | None = None, start_in_hours: float = 4,
@@ -292,8 +302,13 @@ def editing(client: TestClient, headers: dict, activity_id: str):
     r = client.post(f"/api/staff/activities/{activity_id}/edit-lock",
                     headers=headers)
     assert r.status_code == 200, r.text
+    url = f"/api/staff/activities/{activity_id}/publish-changes"
     try:
         yield
-    finally:
-        client.post(f"/api/staff/activities/{activity_id}/publish-changes",
-                    headers=headers)
+    except BaseException:
+        # 块里已经失败了：尽量解冻，但别让这里的结果盖住原来那个错误
+        client.post(url, headers=headers)
+        raise
+    # 块里没出错，保存发布就必须成功——不然改动其实没发出去，用例却照样通过
+    r = client.post(url, headers=headers)
+    assert r.status_code == 200, r.text

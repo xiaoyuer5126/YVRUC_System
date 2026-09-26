@@ -70,6 +70,8 @@ def test_量各接口的_SQL_条数(client, admin, db):
     print("-" * 56)
     print(f"{'合计':24} {'':>4} {sum(r[2] for r in rows):>5} "
           f"{sum(r[3] for r in rows) / 1024:>7.1f}KB")
+    # 量的是正常响应的开销：哪个接口报错了，它那一行的数字就没有意义
+    assert all(r[1] == 200 for r in rows), [(r[0], r[1]) for r in rows if r[1] != 200]
 
     # 响应里各字段占多少字节：谁在撑大 payload，不看一眼是猜的
     import json as _json

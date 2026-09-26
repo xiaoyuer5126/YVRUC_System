@@ -51,7 +51,9 @@ def test_不在招募学段的人报不了(client, db, scoped):
     act, g, _u, h = scoped
     db.get(Activity, act.id).recruit_stages = [STAGE_B]
     db.commit()
-    assert _enroll(client, act, g, h).status_code == 403
+    r = _enroll(client, act, g, h)
+    assert r.status_code == 403 and "招募范围" in r.json()["detail"]
+    assert STAGE_B in r.json()["detail"]
 
 
 def test_在范围内照常报名(client, db, scoped):

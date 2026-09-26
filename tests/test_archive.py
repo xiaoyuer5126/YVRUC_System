@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from backend.models import Enrollment, User, ViolationRecord, now
+from backend import config
+from backend.models import Enrollment, User, now
 from conftest import login, student_row
 
 HEAD, CORE, MEMBER = "2025004", "2025005", "2025006"
@@ -30,12 +31,16 @@ def _late_cancel(client, db, open_group, take_student):
     return act, sid, r.json()
 
 
-def test_临期退选只扣留名额不扣任何分(client, db, open_group, take_student):
+def test_临期退选只扣留名额不处罚志愿者(client, admin, db, open_group, take_student):
+    """对志愿者：只是那个名额被扣留，不提分数、不拦报名。
+    对青协：内部提示分按临期退选的权重掉一截，供排人时参考。"""
     act, sid, body = _late_cancel(client, db, open_group, take_student)
     assert body["effect"] == "held"
     assert "分" not in body["message"]
     u = student_row(db, sid)
-    assert not hasattr(u, "credit_score")
+    d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
+    # 新建的学生没有别的记录，扣的就只有这一次
+    assert d["score"]["score"] == config.SCORE_BASE - config.LATE_CANCEL_WEIGHT
     # 之后照样能报别的活动
     act2, g2 = open_group(3)
     assert client.post(f"/api/activities/{act2.id}/shifts/{g2.id}/enroll",
@@ -78,8 +83,11 @@ def test_撤销违规登记(client, admin, db, enrolled_activity):
     vid = client.post("/api/staff/violations", headers=admin,
                       json={"user_id": u.id, "activity_id": act.id,
                             "kind": "other", "detail": "登记错了"}).json()["id"]
+    d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
+    assert vid in [v["id"] for v in d["violations"]]
     assert client.delete(f"/api/staff/violations/{vid}", headers=admin).status_code == 200
-    assert db.get(ViolationRecord, vid) is None
+    d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
+    assert vid not in [v["id"] for v in d["violations"]]
 
 
 # ======================= 谁能看档案 =======================
@@ -122,8 +130,10 @@ def test_部门成员在活动里也看不了档案(client, db, enrolled_activit
 def test_提示分按违规与参与现算(client, admin, db, enrolled_activity):
     """分数不落库：登记一条违规立刻掉分，销掉就长回来。"""
     _act, _shift, u = enrolled_activity
+    W = config.VIOLATION_WEIGHTS
     base = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
-    assert base["score"]["score"] == 100 and base["score"]["score_alert"] is False
+    assert base["score"]["score"] == config.SCORE_BASE
+    assert base["score"]["score_alert"] is False
 
     ids = []
     for kind in ("contact", "leave", "late", "passive"):
@@ -133,17 +143,22 @@ def test_提示分按违规与参与现算(client, admin, db, enrolled_activity)
         assert r.status_code == 200, r.text
         ids.append(r.json()["id"])
     d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
-    assert d["score"]["score"] == 100 - 20 - 15 - 10 - 10
+    four = config.SCORE_BASE - sum(W[k] for k in ("contact", "leave", "late", "passive"))
+    assert d["score"]["score"] == four
+    # 下面两处「挂/不挂感叹号」依赖分数落在阈值两侧；权重改了这里先报出来
+    assert four < config.SCORE_ALERT_BELOW <= four + W["contact"]
     assert d["score"]["score_alert"] is True
 
     # 名单上这个人要挂感叹号
     roster = client.get(f"/api/staff/shifts/{_shift.id}/roster", headers=admin).json()
     me = next(r for r in roster["enrolled"] if r["user"]["id"] == u.id)
-    assert me["user"]["score_alert"] is True and me["user"]["score"] == 45
+    assert me["user"]["score_alert"] is True and me["user"]["score"] == four
 
-    client.delete(f"/api/staff/violations/{ids[0]}", headers=admin)
+    assert client.delete(f"/api/staff/violations/{ids[0]}",
+                         headers=admin).status_code == 200
     d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
-    assert d["score"]["score"] == 65 and d["score"]["score_alert"] is False
+    assert d["score"]["score"] == four + W["contact"]
+    assert d["score"]["score_alert"] is False
 
 
 def test_退选画像统计次数与间隔(client, admin, db, open_group, take_student):

@@ -125,6 +125,15 @@ def test_空清单不报错():
     assert config._url_list("[]") == []
 
 
-def test_半截_JSON_不会把整条配置吃掉():
-    """写法坏掉时退回按逗号切，至少还留下点东西可查——总好过静默清空。"""
-    assert config._url_list('["https://a.cn"')
+def test_半截_JSON_不会把整条配置吃掉(caplog):
+    """写法坏掉时退回按逗号切，切出来的也得是能用的域名，并留一行日志。
+
+    光是「非空」不够：'["https://a.cn"' 原样留着的话 netloc 是空串，
+    白名单照样静默失效。
+    """
+    from urllib.parse import urlparse
+    with caplog.at_level("WARNING", logger="backend.config"):
+        got = config._url_list('["https://a.cn", "https://b.cn/"')
+    assert got == ["https://a.cn", "https://b.cn"]
+    assert {urlparse(u).netloc for u in got} == {"a.cn", "b.cn"}
+    assert any("域名清单" in r.getMessage() for r in caplog.records)

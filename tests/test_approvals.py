@@ -6,32 +6,66 @@ from datetime import timedelta
 import pytest
 
 from backend.models import Activity, Department, User, now, uid
-from conftest import ADMIN, POSITION_TEXT, login
+from conftest import POSITION_TEXT, login
 
 QINGXIE_HEAD = "2025004"        # 周砚，对外联络部部长
 COUNCIL = "2025003"             # 张远航，会长团
 CORE = "2025005"                # 林骁，对外联络部骨干
 
 
-@pytest.fixture
-def draft(client, admin, db):
-    """一个结构完整、可以提交审批的草稿。"""
+def _make_draft(client, admin, *, reg_start_in=timedelta(days=-1)) -> str:
+    """一个结构完整、可以提交审批的草稿。reg_start_in 是报名开始距现在多久。"""
     r = client.post("/api/staff/activities", headers=admin,
                     json={"contact_group_qr": "x", "title": f"待审批活动 {uid('t')}", "organizer": "文学院青协",
                           "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
-                          "reg_start": (now() - timedelta(days=1)).isoformat(),
+                          "reg_start": (now() + reg_start_in).isoformat(),
                           "reg_end": (now() + timedelta(days=5)).isoformat()})
     assert r.status_code == 200, r.text
     aid = r.json()["id"]
-    g = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
+    r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
                     json={"name": "上午场", "mode": "pick",
                           "start_time": (now() + timedelta(days=9)).isoformat(),
-                          "end_time": (now() + timedelta(days=9, hours=3)).isoformat()}
-                    ).json()["id"]
-    client.post(f"/api/staff/shifts/{g}/positions", headers=admin,
-                json={"name": "引导", "quota": 3, **POSITION_TEXT})
+                          "end_time": (now() + timedelta(days=9, hours=3)).isoformat()})
+    assert r.status_code == 200, r.text
+    r = client.post(f"/api/staff/shifts/{r.json()['id']}/positions", headers=admin,
+                    json={"name": "引导", "quota": 3, **POSITION_TEXT})
+    assert r.status_code == 200, r.text
     return aid
+
+
+@pytest.fixture
+def draft(client, admin):
+    return _make_draft(client, admin)
+
+
+@pytest.fixture
+def liaison_head_restored(client, admin, db):
+    """用例会把对外联络部部长调走；结束时（无论成败）放回去并确认放回去了。
+
+    部长是全库共享的状态，放不回去的话后面所有走审批的用例都会莫名失败。
+    """
+    yield
+    r = client.patch(f"/api/staff/departments/{_liaison(db).id}", headers=admin,
+                     json={"head_student_id": QINGXIE_HEAD})
+    assert r.status_code == 200, r.text
+    rows = client.get("/api/staff/departments", headers=admin).json()
+    assert next(d for d in rows if d["name"] == "对外联络部")["head_name"] == "周砚"
+
+
+def _events(client, headers, activity_id) -> list[dict]:
+    r = client.get(f"/api/staff/activities/{activity_id}/approval", headers=headers)
+    assert r.status_code == 200, r.text
+    return r.json()["events"]
+
+
+def _my_notes(client, headers, activity_id, title_prefix) -> list[dict]:
+    """某人收件箱里关于这场活动、标题以 title_prefix 开头的通知。"""
+    r = client.get("/api/me/notifications", headers=headers)
+    assert r.status_code == 200, r.text
+    return [n for n in r.json()["items"]
+            if n["data"].get("activity_id") == activity_id
+            and n["title"].startswith(title_prefix)]
 
 
 def _liaison(db):
@@ -43,7 +77,9 @@ def test_草稿不能绕过审批直接发布(client, admin, draft):
     assert r.status_code == 409 and "先提交校青协审批" in r.json()["detail"]
 
 
-def test_提交后由部长通过即发布(client, admin, db, draft):
+def test_提交后由部长通过即发布(client, admin, db):
+    # 报名还没开始的活动：通过即发布不该等到报名开始那一刻
+    draft = _make_draft(client, admin, reg_start_in=timedelta(days=2))
     dept = _liaison(db)
     r = client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
                     json={"department_id": dept.id, "note": "校庆相关"})
@@ -59,10 +95,10 @@ def test_提交后由部长通过即发布(client, admin, db, draft):
     r = client.post(f"/api/staff/activities/{draft}/decide", headers=head,
                     json={"approve": True, "comment": "同意"})
     assert r.status_code == 200 and r.json()["status"] == "published"
-    db.expire_all()
-    assert db.get(Activity, draft).status == "published"
     # 报名开始时间没到也照样发布，广场上显示倒计时
-    assert db.get(Activity, draft).reg_start is not None
+    d = client.get(f"/api/activities/{draft}", headers=admin).json()
+    assert d["status"] == "published"
+    assert d["opens_in"] > 0
 
 
 def test_关掉通过即发布就停在待发布(client, admin, db, draft):
@@ -137,7 +173,9 @@ def test_会长团可以接管任何一条(client, admin, db, draft):
                      client.get("/api/staff/approvals", headers=council).json()]
     r = client.post(f"/api/staff/activities/{draft}/decide", headers=council,
                     json={"approve": True, "comment": "会长团直接通过"})
-    assert r.status_code == 200
+    assert r.status_code == 200 and r.json()["status"] == "published"
+    last = _events(client, admin, draft)[-1]
+    assert last["kind"] == "approve" and last["actor"] == "张远航"
 
 
 def test_转交要写理由且换审批人(client, admin, db, draft):
@@ -175,7 +213,7 @@ def test_没有部长的部门不能被选(client, admin, db, draft):
 
 def test_部长自审要在流水里标明本人(client, db, draft):
     """部长自己办的活动归口自己部门、由自己审：允许，但留痕写清是本人。"""
-    from backend.models import ActivityManager, ApprovalEvent
+    from backend.models import ActivityManager
 
     head_user = db.query(User).filter(User.student_id == QINGXIE_HEAD).one()
     db.add(ActivityManager(id=uid("mgr"), activity_id=draft,
@@ -188,10 +226,9 @@ def test_部长自审要在流水里标明本人(client, db, draft):
     r = client.post(f"/api/staff/activities/{draft}/decide", headers=head,
                     json={"approve": True, "comment": "自己批"})
     assert r.status_code == 200, r.text
-    ev = (db.query(ApprovalEvent)
-          .filter(ApprovalEvent.activity_id == draft,
-                  ApprovalEvent.kind == "approve").one())
-    assert ev.comment.startswith("【本人审批】")
+    approves = [e for e in _events(client, head, draft) if e["kind"] == "approve"]
+    assert len(approves) == 1
+    assert approves[0]["comment"].startswith("【本人审批】")
 
 
 def test_青协建的活动自动归口自己部门(client, db, draft):
@@ -214,7 +251,6 @@ def test_青协建的活动自动归口自己部门(client, db, draft):
 
 def test_审批超时只催人不放行(client, admin, db, draft):
     from backend import scheduled
-    from backend.models import Notification
 
     dept = _liaison(db)
     client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
@@ -223,17 +259,16 @@ def test_审批超时只催人不放行(client, admin, db, draft):
     act.submitted_at = now() - timedelta(hours=48)
     db.commit()
 
-    assert scheduled.remind_stale_approvals(db) == 1
-    db.expire_all()
-    assert db.get(Activity, draft).status == "pending"      # 绝不自动通过
-
-    head_user = db.query(User).filter(User.student_id == QINGXIE_HEAD).one()
-    assert db.query(Notification).filter(
-        Notification.user_id == head_user.id,
-        Notification.title.like("审批已等待%")).count() == 1
+    # 返回值是全库催了几条，别的用例也可能留下待审批的活动，所以只按本活动的通知数
+    head = login(client, QINGXIE_HEAD)
+    assert scheduled.remind_stale_approvals(db) >= 1
+    assert client.get(f"/api/staff/activities/{draft}/approval",
+                      headers=admin).json()["status"] == "pending"   # 绝不自动通过
+    assert len(_my_notes(client, head, draft, "审批已等待")) == 1
 
     # 催过一次就不再催
-    assert scheduled.remind_stale_approvals(db) == 0
+    scheduled.remind_stale_approvals(db)
+    assert len(_my_notes(client, head, draft, "审批已等待")) == 1
 
 
 # ======================= 审批人看得到活动 =======================
@@ -265,16 +300,24 @@ def test_审批人能看未公开活动的完整安排(client, admin, db, draft,
 
 
 def test_批过之后仍能回看自己批的那条(client, admin, db, draft):
-    """通过到发起方点发布之间活动还不公开，审批人要能核对自己批了什么。"""
-    head = login(client, QINGXIE_HEAD)
-    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
-                json={"department_id": _liaison(db).id})
-    client.post(f"/api/staff/activities/{draft}/transfer-approval", headers=head,
-                json={"student_id": COUNCIL, "reason": "请会长定"})
-    # 已经不是审批人了，但转交这一下留在流水里
-    assert client.post(f"/api/staff/activities/{draft}/decide", headers=head,
-                       json={"approve": True}).status_code == 403
-    assert client.get(f"/api/activities/{draft}", headers=head).status_code == 200
+    """通过到发起方点发布之间活动还不公开，审批人要能核对自己批了什么。
+
+    用骨干而不是部长来批：部长按归口部门本来就看得到，验不出这条规则。
+    """
+    head, core = login(client, QINGXIE_HEAD), login(client, CORE)
+    assert client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                       json={"department_id": _liaison(db).id,
+                             "auto_publish": False}).status_code == 200
+    assert client.post(f"/api/staff/activities/{draft}/transfer-approval",
+                       headers=head, json={"student_id": CORE, "reason": "请骨干定"}
+                       ).status_code == 200
+    r = client.post(f"/api/staff/activities/{draft}/decide", headers=core,
+                    json={"approve": True})
+    assert r.status_code == 200 and r.json()["status"] == "approved"
+
+    d = client.get(f"/api/activities/{draft}", headers=core)
+    assert d.status_code == 200, d.text
+    assert d.json()["review_preview"] is True
 
 
 def test_活动一旦公开审批人就退回普通视角(client, admin, db, draft, take_student):
@@ -303,20 +346,25 @@ def test_转交审批就是改归口(client, admin, db, draft, take_student):
     assert client.put(f"/api/staff/roles/{new_head.id}", headers=admin,
                       json={"roles": ["student", "qingxie"], "qingxie_post": "head",
                             "department_id": other.id}).status_code == 200
-    assert client.post(f"/api/staff/activities/{draft}/transfer-approval",
-                       headers=head, json={"department_id": other.id,
-                                           "reason": "环保类活动归他们"}
-                       ).status_code == 200
-    db.expire_all()
-    assert db.get(Activity, draft).approval_dept_id == other.id
-    assert draft not in [a["id"] for a in
-                         client.get("/api/staff/activities", headers=head).json()["items"]]
-    # 复原：撤掉这位临时部长，别影响别的用例
-    client.put(f"/api/staff/roles/{new_head.id}", headers=admin,
-               json={"roles": ["student"]})
+    try:
+        assert client.post(f"/api/staff/activities/{draft}/transfer-approval",
+                           headers=head, json={"department_id": other.id,
+                                               "reason": "环保类活动归他们"}
+                           ).status_code == 200
+        db.expire_all()
+        assert db.get(Activity, draft).approval_dept_id == other.id
+        assert draft not in [a["id"] for a in
+                             client.get("/api/staff/activities", headers=head).json()["items"]]
+    finally:
+        # 复原：撤掉这位临时部长，别让环保项目部从此「有部长」影响别的用例
+        r = client.put(f"/api/staff/roles/{new_head.id}", headers=admin,
+                       json={"roles": ["student"]})
+        assert r.status_code == 200, r.text
+        rows = client.get("/api/staff/departments", headers=admin).json()
+        assert next(d for d in rows if d["name"] == "环保项目部")["has_head"] is False
 
 
-def test_只有管理员能指定部长(client, admin, db):
+def test_只有管理员能指定部长(client, admin, db, liaison_head_restored):
     head = login(client, QINGXIE_HEAD)
     dept = db.query(Department).filter(Department.name == "环保项目部").one()
     assert client.patch(f"/api/staff/departments/{dept.id}", headers=head,
@@ -329,10 +377,6 @@ def test_只有管理员能指定部长(client, admin, db):
     assert next(d for d in rows if d["name"] == "环保项目部")["head_name"] == "周砚"
     # 换部门后原部门的部长位就空了
     assert next(d for d in rows if d["name"] == "对外联络部")["head_name"] == ""
-
-    # 用例之间共用一个库，改完的全局状态要放回去
-    client.patch(f"/api/staff/departments/{_liaison(db).id}", headers=admin,
-                 json={"head_student_id": QINGXIE_HEAD})
 
 
 def test_提交说明要出现在审批页上(client, admin, db, draft):
@@ -363,22 +407,18 @@ def test_没写说明就给空串而不是缺字段(client, admin, db, draft):
 
 def test_待审批的通知指向审批页(client, admin, db, draft):
     """审批人在活动详情页看不到通过/驳回，消息点开要进审批页。"""
-    from backend.models import Notification
-
     dept = _liaison(db)
     r = client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
                     json={"department_id": dept.id})
     assert r.status_code == 200, r.text
-    head = db.query(User).filter(User.student_id == QINGXIE_HEAD).one()
-    row = (db.query(Notification)
-           .filter(Notification.user_id == head.id,
-                   Notification.title.like("待审批%"))
-           .order_by(Notification.created_at.desc()).first())
-    assert row is not None and row.data.get("route") == "approvals"
+    notes = _my_notes(client, login(client, QINGXIE_HEAD), draft, "待审批")
+    assert len(notes) == 1 and notes[0]["data"]["route"] == "approvals"
 
 
 def test_部门可以新增和删除(client, admin, db):
     """换届之外还有增设与撤销：新部门建出来能选，空部门删掉就没了。"""
+    before = [d["name"] for d in
+              client.get("/api/staff/departments", headers=admin).json()]
     r = client.post("/api/staff/departments", headers=admin,
                     json={"name": "测试新部门", "note": "临时"})
     assert r.status_code == 200, r.text
@@ -394,24 +434,24 @@ def test_部门可以新增和删除(client, admin, db):
                          headers=admin).status_code == 200
     names = [d["name"] for d in
              client.get("/api/staff/departments", headers=admin).json()]
-    assert "测试新部门" not in names
-    # 删空之后不会被默认部门表重新灌回来
-    assert len(names) == 12
+    # 回到建之前的样子：新部门没了，也没有被默认部门表重新灌回什么
+    assert names == before
 
 
-def test_名下还有人或活动的部门不能删(client, admin, db, draft):
+def test_名下还有人或活动的部门不能删(client, admin, db, draft,
+                             liaison_head_restored):
     dept = _liaison(db)
     r = client.delete(f"/api/staff/departments/{dept.id}", headers=admin)
     assert r.status_code == 409 and "还有" in r.json()["detail"]
 
     empty = client.post("/api/staff/departments", headers=admin,
-                        json={"name": "测试挂活动部门"}).json()["id"]
-    client.patch(f"/api/staff/departments/{empty}", headers=admin,
-                 json={"head_student_id": QINGXIE_HEAD})
-    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
-                json={"department_id": empty})
+                        json={"name": f"测试挂活动部门 {uid('t')}"}).json()["id"]
+    assert client.patch(f"/api/staff/departments/{empty}", headers=admin,
+                        json={"head_student_id": QINGXIE_HEAD}).status_code == 200
+    assert client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                       json={"department_id": empty}).status_code == 200
     # 部长撤走，剩下的只有那场活动的归口
-    client.patch(f"/api/staff/departments/{_liaison(db).id}", headers=admin,
-                 json={"head_student_id": QINGXIE_HEAD})
+    assert client.patch(f"/api/staff/departments/{_liaison(db).id}", headers=admin,
+                        json={"head_student_id": QINGXIE_HEAD}).status_code == 200
     r = client.delete(f"/api/staff/departments/{empty}", headers=admin)
     assert r.status_code == 409 and "归口着 1 场活动" in r.json()["detail"]

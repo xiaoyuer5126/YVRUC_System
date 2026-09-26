@@ -7,7 +7,7 @@ import pytest
 
 from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, FormQuestion, Shift,
-                            Position, User, now, uid)
+                            Position, User, new_checkin_token, now, uid)
 from conftest import (ADMIN, POSITION_TEXT, QINGXIE, approve, editing,
                       login, student_row)
 
@@ -15,7 +15,7 @@ from conftest import (ADMIN, POSITION_TEXT, QINGXIE, approve, editing,
 @pytest.fixture
 def draft_activity(db):
     admin = db.query(User).filter(User.student_id == ADMIN).one()
-    act = Activity(id=uid("act"), title="尚未发布的草稿活动",
+    act = Activity(id=uid("act"), title=f"尚未发布的草稿活动 {uid('t')}",
                    intro="筹备中", location="待定",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
                    contact_group_qr="x", status="draft",
@@ -36,10 +36,12 @@ def test_draft_hidden_from_students(client, draft_activity, take_student):
     """筹备中的活动没定稿，学生不该在广场上看到、也不该能直接翻到详情。"""
     h = login(client, take_student())
 
+    # 按标题搜：只翻第一页的话，草稿排在第二页也会被当成「看不到」
     for status in ("published", ""):
         titles = [a["title"] for a in
-                  client.get(f"/api/activities?status={status}",
-                             headers=h).json()["items"]]
+                  client.get("/api/activities", headers=h,
+                             params={"status": status,
+                                     "q": draft_activity.title}).json()["items"]]
         assert draft_activity.title not in titles
 
     assert client.get(f"/api/activities/{draft_activity.id}",
@@ -176,7 +178,7 @@ def test_unchecked_out_hours_need_review(client, admin, db, take_student):
     db.add(g)
     db.flush()
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
-                       mode="group", token=uid("T")[:6].upper(),
+                       mode="group", token=new_checkin_token(),
                        valid_from=g.start_time, valid_to=g.end_time,
                        created_by=admin_user.id)
     db.add(task)
@@ -480,9 +482,8 @@ def test_扣留的名额不挡住岗位的其它修改(client, admin, db, open_g
                    Enrollment.status == "enrolled").first())
     who = db.get(User, enr.user_id)
     assert client.delete(f"/api/activities/enrollments/{enr.id}",
-                         headers=login(client, who.student_id)).status_code == 200
-    db.expire_all()
-    assert db.get(Enrollment, enr.id).seat_held
+                         headers=login(client, who.student_id)
+                         ).json()["effect"] == "held"
 
     # 名额 2 / 已报名 1 / 已占用 2：改培训内容不该被拦
     with editing(client, admin, act.id):
@@ -504,35 +505,43 @@ def test_删除草稿要连带清干净引用(client, admin, db):
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
                           "reg_end": (now() + timedelta(days=1)).isoformat()})
+    assert r.status_code == 200, r.text
     aid = r.json()["id"]
     assert db.query(ActivityManager).filter(
         ActivityManager.activity_id == aid).count() == 1
 
-    # 场次、岗位、被驳回过的审批流水都在，一并要能删掉
-    g = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
+    # 场次、岗位、问卷、被驳回过的审批流水都在，一并要能删掉。
+    # 每一步都得真的建成——哪步悄悄失败了，删除时就少验一种引用
+    r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
                     json={"name": "上午场", "mode": "pick",
                           "start_time": (now() + timedelta(days=6)).isoformat(),
-                          "end_time": (now() + timedelta(days=6, hours=3)).isoformat()}
-                    ).json()["id"]
-    client.post(f"/api/staff/shifts/{g}/positions", headers=admin,
-                json={"name": "引导", "quota": 2, **POSITION_TEXT})
-    client.put(f"/api/staff/activities/{aid}/form", headers=admin,
-               json={"questions": [{"id": "", "kind": "text", "title": "为什么报名",
-                                    "options": [], "required": True,
-                                    "show_if": {}}]})
+                          "end_time": (now() + timedelta(days=6, hours=3)).isoformat()})
+    assert r.status_code == 200, r.text
+    g = r.json()["id"]
+    r = client.post(f"/api/staff/shifts/{g}/positions", headers=admin,
+                    json={"name": "引导", "quota": 2, **POSITION_TEXT})
+    assert r.status_code == 200, r.text
+    r = client.put(f"/api/staff/activities/{aid}/form", headers=admin,
+                   json={"questions": [{"id": "", "kind": "text", "title": "为什么报名",
+                                        "options": [], "required": True,
+                                        "show_if": {}}]})
+    assert r.status_code == 200, r.text
+    form = client.get(f"/api/staff/activities/{aid}/form", headers=admin).json()
+    assert len(form["questions"]) == 1
     dept = next(d for d in client.get("/api/staff/departments",
                                       headers=admin).json() if d["has_head"])
-    client.post(f"/api/staff/activities/{aid}/submit", headers=admin,
-                json={"department_id": dept["id"]})
-    client.post(f"/api/staff/activities/{aid}/decide", headers=admin,
-                json={"approve": False, "comment": "先撤下"})
+    assert client.post(f"/api/staff/activities/{aid}/submit", headers=admin,
+                       json={"department_id": dept["id"]}).status_code == 200
+    assert client.post(f"/api/staff/activities/{aid}/decide", headers=admin,
+                       json={"approve": False, "comment": "先撤下"}).status_code == 200
     assert db.query(ApprovalEvent).filter(
         ApprovalEvent.activity_id == aid).count() == 2
 
     assert client.delete(f"/api/staff/activities/{aid}",
                          headers=admin).status_code == 200
+    assert client.get(f"/api/activities/{aid}", headers=admin).status_code == 404
+    # 活动没了，挂在它身上的记录已无接口可查，只能直接看库
     db.expire_all()
-    assert db.get(Activity, aid) is None
     assert db.query(ActivityManager).filter(
         ActivityManager.activity_id == aid).count() == 0
     assert db.query(ApprovalEvent).filter(
@@ -541,13 +550,13 @@ def test_删除草稿要连带清干净引用(client, admin, db):
         FormQuestion.activity_id == aid).count() == 0
 
 
-def test_管理者分工只筛通知不限操作(client, admin, db, enrolled_activity,
-                                    take_student):
-    """分了工的人只收自己那摊的通知；没分工的照收全部，操作权限一点不变。"""
-    from backend.models import ActivityManager, Notification
-    from backend.notify import notify_managers
+def test_管理者分工只筛通知不限操作(client, admin, db, open_group, take_student):
+    """分了工的人只收自己那摊的通知；没分工的照收全部，操作权限一点不变。
 
-    act, shift, _u = enrolled_activity
+    用真实的「临近减员」提醒来验（它属于「志愿者管理」那一摊）：5 小时后
+    开始的场次里有人退选，就会通知管理者。
+    """
+    act, g = open_group(2, day_offset=0, start_in_hours=5)
     other = student_row(db, take_student())
     other.roles = ["student", "initiator"]
     db.commit()
@@ -559,28 +568,40 @@ def test_管理者分工只筛通知不限操作(client, admin, db, enrolled_act
     assert "hours" in d["duties"] and "roster" in d["duties"]
     assert all(m["duties"] == [] for m in d["items"])
 
-    r = client.patch(
-        f"/api/staff/activities/{act.id}/managers/{other.id}/duties",
-        headers=admin, json={"duties": ["hours"]})
+    url = f"/api/staff/activities/{act.id}/managers/{other.id}/duties"
+    r = client.patch(url, headers=admin, json={"duties": ["hours"]})
     assert r.status_code == 200 and r.json()["duties"] == ["hours"]
-    assert client.patch(
-        f"/api/staff/activities/{act.id}/managers/{other.id}/duties",
-        headers=admin, json={"duties": ["nope"]}).status_code == 400
+    assert client.patch(url, headers=admin,
+                        json={"duties": ["nope"]}).status_code == 400
 
-    before = db.query(Notification).filter(Notification.user_id == other.id).count()
-    notify_managers(db, act.id, "[人员变动] 测试", "只发给管志愿者管理的人",
-                    duty="roster")
-    db.commit()
-    assert db.query(Notification).filter(
-        Notification.user_id == other.id).count() == before
-    notify_managers(db, act.id, "[时长申诉] 测试", "这条他要收", duty="hours")
-    db.commit()
-    assert db.query(Notification).filter(
-        Notification.user_id == other.id).count() == before + 1
+    them = login(client, other.student_id)
+
+    def dropouts(headers):
+        items = client.get("/api/me/notifications", headers=headers).json()["items"]
+        return [n for n in items
+                if n["title"] == f"[临近减员] {act.title}"]
+
+    def late_dropout():
+        h = login(client, take_student())
+        enr_id = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                             headers=h, json={"position_id": g.test_position_id}
+                             ).json()["enrollment_id"]
+        assert client.delete(f"/api/activities/enrollments/{enr_id}",
+                             headers=h).status_code == 200
+
+    # 只管时长的人收不到减员提醒；没分工的管理者照收
+    late_dropout()
+    assert dropouts(them) == []
+    assert len(dropouts(admin)) == 1
+    # 把这一摊也分给他，就收得到了
+    assert client.patch(url, headers=admin,
+                        json={"duties": ["hours", "roster"]}).status_code == 200
+    late_dropout()
+    assert len(dropouts(them)) == 1
+    assert len(dropouts(admin)) == 2
 
     # 分工不影响能不能干活：他照样能进这场活动的名单
-    them = login(client, other.student_id)
-    assert client.get(f"/api/staff/shifts/{shift.id}/roster",
+    assert client.get(f"/api/staff/shifts/{g.id}/roster",
                       headers=them).status_code == 200
 
 
@@ -599,10 +620,11 @@ def test_活动结束后名单与签到码只读(client, admin, db, assigned_gro
                     json={"plan": [{"enrollment_id": enr.id, "position_id": s2.id}],
                           "source": "manual"})
     assert r.status_code == 409 and "已结束" in r.json()["detail"]
-    assert client.post(f"/api/staff/enrollments/{enr.id}/leader", headers=admin,
-                       json={"is_leader": True}).status_code == 409
-    assert client.post(f"/api/staff/shifts/{g.id}/checkin-tasks", headers=admin,
-                       json={"mode": "shift"}).status_code == 409
+    for r in (client.post(f"/api/staff/enrollments/{enr.id}/leader", headers=admin,
+                          json={"is_leader": True}),
+              client.post(f"/api/staff/shifts/{g.id}/checkin-tasks", headers=admin,
+                          json={"mode": "shift"})):
+        assert r.status_code == 409 and "已结束" in r.json()["detail"]
     # 账还没结完：补招仍然要能用（现场漏登记的人事后才补进来）
     r = client.post(f"/api/staff/shifts/{g.id}/add-walkin", headers=admin,
                     json={"student_id": take_student(), "position_id": s2.id})
@@ -610,16 +632,29 @@ def test_活动结束后名单与签到码只读(client, admin, db, assigned_gro
 
 
 def test_时长封账后补招与补签也停(client, admin, db, assigned_group, take_student):
+    """活动结束后补招、补签本来还开着（见上一条），时长一送审就都得停：
+    部长看的必须和最终封的是同一份账。"""
     from backend.models import HoursRequest
 
-    act, g, _s1, _s2 = assigned_group
+    act, g, _s1, s2 = assigned_group
+    # 码要在活动结束前建好：结束之后建码本身就被拦了
+    tid = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks", headers=admin,
+                      json={"mode": "shift"}).json()["id"]
+    sid = take_student()
+    r = client.post(f"/api/staff/shifts/{g.id}/add-walkin", headers=admin,
+                    json={"student_id": sid, "position_id": s2.id})
+    assert r.status_code == 200, r.text
+
     row = db.get(Activity, act.id)
     row.status = "finished"
     db.add(HoursRequest(id=uid("hrq"), activity_id=act.id, kind="lock",
                         reason="送审", requested_by=""))
     db.commit()
     r = client.post(f"/api/staff/shifts/{g.id}/add-walkin", headers=admin,
-                    json={"student_id": take_student(), "position_id": g.positions[0].id})
+                    json={"student_id": take_student(), "position_id": s2.id})
+    assert r.status_code == 409 and "审批" in r.json()["detail"]
+    r = client.post(f"/api/staff/checkin-tasks/{tid}/batch", headers=admin,
+                    json={"action": "checkin", "student_ids": [sid]})
     assert r.status_code == 409 and "审批" in r.json()["detail"]
 
 

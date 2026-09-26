@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -95,7 +96,12 @@ def _url_list(raw: str) -> list[str]:
             loaded = json.loads(raw)
             if isinstance(loaded, list):
                 return [s for s in (str(x).strip().rstrip("/") for x in loaded) if s]
-    return [s.strip().rstrip("/") for s in raw.split(",") if s.strip()]
+        # 半截 JSON（少了右括号之类）：退回按逗号切，但同样得把方括号和引号
+        # 剥掉，否则切出来的 '["https://a.cn"' netloc 为空，白名单照样静默失效
+        logging.getLogger(__name__).warning(
+            "域名清单不是合法的 JSON 数组，已按逗号分隔解析：%s", raw)
+    pieces = (s.strip().strip("[]\"' ").rstrip("/") for s in raw.split(","))
+    return [s for s in pieces if s]
 
 
 PUBLIC_BASE_URLS = _url_list(os.environ.get("RUCVA_PUBLIC_BASE_URL", ""))

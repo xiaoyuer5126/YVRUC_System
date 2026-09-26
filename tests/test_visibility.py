@@ -6,10 +6,32 @@ from conftest import login
 
 def test_未报名看不到培训内容与组长(client, admin, db, enrolled_activity,
                                   take_student):
+    """组长和材料都得真有，否则「看不到」什么也没验到。"""
+    import io
+
+    from backend.models import Enrollment
+
     act, shift, enrolled_user = enrolled_activity
     pos = shift.positions[0]
     pos.needs_leader = True
     db.commit()
+    enr = db.query(Enrollment).filter(Enrollment.shift_id == shift.id,
+                                      Enrollment.user_id == enrolled_user.id).one()
+    r = client.post(f"/api/staff/enrollments/{enr.id}/leader", headers=admin,
+                    json={"is_leader": True})
+    assert r.status_code == 200, r.text
+    r = client.post("/api/staff/materials", headers=admin,
+                    data={"owner_type": "position", "owner_id": pos.id,
+                          "title": "培训手册"},
+                    files={"file": ("t.pdf", io.BytesIO(b"x"), "application/pdf")})
+    assert r.status_code == 200, r.text
+
+    # 对照：报了名的人看得到组长和材料
+    me = login(client, enrolled_user.student_id)
+    mine = client.get(f"/api/activities/{act.id}",
+                      headers=me).json()["shifts"][0]["positions"][0]
+    assert mine["leader_name"] == enrolled_user.name
+    assert len(mine["attachments"]) == 1
 
     outsider = login(client, take_student())
     d = client.get(f"/api/activities/{act.id}", headers=outsider).json()
@@ -18,8 +40,9 @@ def test_未报名看不到培训内容与组长(client, admin, db, enrolled_act
     assert p["training_note"] == ""
     assert p["attachments"] == []
     assert p["leader_name"] == ""
-    # 招募信息该看的还得看得到
+    # 招募信息该看的还得看得到——「报名后有几份材料」也算招募信息
     assert p["service_task"] and p["quota"] and p["location"]
+    assert p["material_count"] == 1
 
 
 def test_报名后能看到培训内容(client, db, enrolled_activity):
@@ -28,7 +51,7 @@ def test_报名后能看到培训内容(client, db, enrolled_activity):
     p = client.get(f"/api/activities/{act.id}",
                    headers=me).json()["shifts"][0]["positions"][0]
     assert p["training_visible"] is True
-    assert p["training_note"]
+    assert p["training_note"] == shift.positions[0].training_note
 
 
 def test_管理者不必先报名就能核对(client, admin, enrolled_activity):
@@ -36,23 +59,6 @@ def test_管理者不必先报名就能核对(client, admin, enrolled_activity):
     p = client.get(f"/api/activities/{act.id}",
                    headers=admin).json()["shifts"][0]["positions"][0]
     assert p["training_visible"] is True
-
-
-def test_材料数量始终公开(client, admin, db, enrolled_activity, take_student):
-    """「报名后有几份材料」属于招募信息，内容才需要报名后才能看。"""
-    import io
-    act, shift, _u = enrolled_activity
-    pos = shift.positions[0]
-    r = client.post("/api/staff/materials", headers=admin,
-                    data={"owner_type": "position", "owner_id": pos.id,
-                          "title": "培训手册"},
-                    files={"file": ("t.pdf", io.BytesIO(b"x"), "application/pdf")})
-    assert r.status_code == 200
-
-    outsider = login(client, take_student())
-    p = client.get(f"/api/activities/{act.id}",
-                   headers=outsider).json()["shifts"][0]["positions"][0]
-    assert p["material_count"] == 1 and p["attachments"] == []
 
 
 def test_急招置顶排最前且只有会长团能点(client, admin, initiator, db,

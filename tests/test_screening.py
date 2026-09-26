@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-import pytest
-
 from backend.models import (Activity, Application, Enrollment, Notification,
                             User, now)
 from conftest import login, student_row
@@ -79,6 +77,14 @@ def _pick_shift(client, admin, act_id, name="选岗场", *, days=6, positions=("
     return gid, pids
 
 
+def _placed(client, admin, act_id) -> dict[str, list[str]]:
+    """管理者的申请名单里，每份申请录到了哪些岗位（申请 id → 岗位名）。"""
+    lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
+    return {a["id"]: [w["position_name"] for w in a["wanted"]
+                      if w["status"] == "enrolled"]
+            for a in lst["applications"]}
+
+
 def test_筛选活动的两类场次都能用(client, admin, db):
     """统一分配的场次只勾场次；报名即选岗位的场次连岗位一起勾。"""
     act_id, ids, _q = _create_screened(client, admin, db, status="draft")
@@ -118,43 +124,24 @@ def test_报名即选岗位的场次要连岗位一起勾(client, admin, db, tak
                     json={"application_ids": [lst["applications"][0]["id"]],
                           "accept": True})
     assert r.status_code == 200, r.text
-    row = (db.query(Enrollment)
-           .filter(Enrollment.activity_id == act_id,
-                   Enrollment.status == "enrolled").one())
-    assert row.position_id == pids[1]
-
-
-def test_录取时可以把人放到别的岗位(client, admin, db, take_student):
-    act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    gid, pids = _pick_shift(client, admin, act_id)
-    db.get(Activity, act_id).status = "published"
-    db.commit()
-    t = login(client, take_student())
-    client.post(f"/api/activities/{act_id}/apply", headers=t,
-                json={"position_ids": [pids[0]],
-                      "answers": _answers(q)})
-    lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
-    r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
-                    json={"application_ids": [lst["applications"][0]["id"]],
-                          "accept": True, "shift_id": gid, "position_id": pids[1]})
-    assert r.status_code == 200, r.text
-    row = (db.query(Enrollment)
-           .filter(Enrollment.activity_id == act_id,
-                   Enrollment.status == "enrolled").one())
-    assert row.position_id == pids[1]
+    assert _placed(client, admin, act_id) == {lst["applications"][0]["id"]: ["登记"]}
 
 
 def test_录取时逐人指定岗位(client, admin, db, take_student):
-    """一批人一起录，去向各不相同：批量下拉只是默认值，行内选的说了算。"""
+    """一批人一起录，去向各不相同：批量下拉只是默认值，行内选的说了算。
+
+    两人的意向都跟最终去向不同：第一人被整批指定改到别的岗位（整批 > 意向），
+    第二人被行内指定再改一次（逐人 > 整批）。
+    """
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    gid, pids = _pick_shift(client, admin, act_id)
+    gid, pids = _pick_shift(client, admin, act_id)       # 引导、登记
     db.get(Activity, act_id).status = "published"
     db.commit()
-    for _ in range(2):
+    for wish in (pids[1], pids[0]):
         t = login(client, take_student())
-        client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"position_ids": [pids[0]],
-                          "answers": _answers(q)})
+        r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                        json={"position_ids": [wish], "answers": _answers(q)})
+        assert r.status_code == 200, r.text
     apps = client.get(f"/api/staff/activities/{act_id}/applications",
                       headers=admin).json()["applications"]
     first, second = apps[0]["id"], apps[1]["id"]
@@ -164,11 +151,7 @@ def test_录取时逐人指定岗位(client, admin, db, take_student):
                           "picks": {second: {"shift_id": gid,
                                              "position_id": pids[1]}}})
     assert r.status_code == 200, r.text
-    got = {e.user_id: e.position_id
-           for e in db.query(Enrollment)
-           .filter(Enrollment.activity_id == act_id,
-                   Enrollment.status == "enrolled").all()}
-    assert sorted(got.values()) == sorted([pids[0], pids[1]])
+    assert _placed(client, admin, act_id) == {first: ["引导"], second: ["登记"]}
 
 
 def test_录取到不满足条件的岗位会留痕(client, admin, db, take_student):
@@ -438,16 +421,21 @@ def test_录取名额不够先拦下(client, admin, db, take_student):
     holder = db.get(Shift, ids[0]).placeholder()
     holder.quota = 1
     db.commit()
-    app_ids = []
     for _ in range(2):
         t = login(client, take_student())
-        client.post(f"/api/activities/{act_id}/apply", headers=t,
-                    json={"position_ids": _holders(db, ids), "answers": _answers(q)})
+        r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                        json={"position_ids": _holders(db, ids), "answers": _answers(q)})
+        assert r.status_code == 200, r.text
     lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
     app_ids = [a["id"] for a in lst["applications"]]
+    assert len(app_ids) == 2
     r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
                     json={"application_ids": app_ids, "accept": True})
     assert r.status_code == 409 and "名额" in r.json()["detail"]
+    # 整批拦下，不是录一个算一个：两份申请都还在待筛选，谁都没被录上
+    lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
+    assert [a["status"] for a in lst["applications"]] == ["applied", "applied"]
+    assert _placed(client, admin, act_id) == {a: [] for a in app_ids}
 
 
 def test_公开后报名问卷锁定(client, admin, db):

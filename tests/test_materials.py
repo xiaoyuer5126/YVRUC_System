@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import io
-
 from datetime import timedelta
+
+import pytest
 
 from backend.models import Activity, Attachment, now
 from conftest import POSITION_TEXT, dl_url, editing, login
@@ -44,10 +45,13 @@ def test_没有令牌下载不了(client, admin, enrolled_activity):
     assert client.get(f"/api/materials/{mid}").status_code == 401
 
 
-def test_筹备中活动的材料不外泄(client, admin, db, enrolled_activity, take_student):
+@pytest.mark.parametrize("status", ["draft", "pending"])
+def test_未公开活动的材料不外泄(client, admin, db, enrolled_activity, take_student,
+                              status):
+    """筹备中、交上去等审批的那段时间，活动还没公开，材料也不该能下到。"""
     act, shift, _u = enrolled_activity
     mid = _upload(client, admin, shift).json()["id"]
-    db.get(Activity, act.id).status = "draft"
+    db.get(Activity, act.id).status = status
     db.commit()
 
     stu = login(client, take_student())
@@ -150,17 +154,3 @@ def test_附件配额与无人引用的清理(client, db, take_student, enrolled
     assert purge_orphan_attachments(db) >= len(ids)
     assert db.query(Attachment).filter(Attachment.id.in_(ids)).count() == 0
 
-
-def test_审批中的活动材料同样不外泄(client, admin, db, enrolled_activity,
-                                  take_student):
-    """交上去等审批那段时间活动还没公开，材料也不该能下到。"""
-    act, shift, _u = enrolled_activity
-    mid = _upload(client, admin, shift).json()["id"]
-    db.get(Activity, act.id).status = "pending"
-    db.commit()
-
-    stu = login(client, take_student())
-    assert client.get(
-        dl_url(client, stu, f"/api/materials/{mid}")).status_code == 404
-    assert client.get(
-        dl_url(client, admin, f"/api/materials/{mid}")).status_code == 200
