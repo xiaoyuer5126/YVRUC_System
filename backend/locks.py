@@ -1,12 +1,16 @@
-"""报名并发控制：场次粒度的 Redis 分布式锁。
+"""并发控制与 Redis 上的瞬时状态。
 
+★ 场次锁（shift_lock）：Postgres 事务级咨询锁 + 进程内限流。
 抢报瞬间「数已报名人数 → 判断还有没有位 → 写一条报名」是读-改-写，
 多个进程/多个 worker 同时跑就会双双读到「还剩 1 个位」而双双写入，
 表现为超卖；同一个人双击也会插出两条。所以容量判断与落库整段串行化
-到 group 粒度——锁的是场次，不同场次互不阻塞，抢报高峰照样并行。
+到场次粒度——锁的是场次，不同场次互不阻塞，抢报高峰照样并行。
 
-唯一索引（models.Enrollment.__table_args__）是第二道防线：锁没拿住的
-极端情况（Redis 重启、锁过期）仍然插不进重复报名。
+唯一索引（models.Enrollment.__table_args__）是第二道防线：哪条改报名的
+路径漏了加锁，也插不进重复报名。
+
+其余几样（登录失败计数、下载票据、名额闸门、定时任务选主、签到码）是
+Redis 上可丢可重建的瞬时状态，见各节。
 """
 from __future__ import annotations
 
@@ -16,10 +20,14 @@ import logging
 import os
 import secrets
 import string
+import threading
 import time
 
 import redis
 from fastapi import HTTPException
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session as OrmSession
 
 from . import config
 
@@ -27,13 +35,11 @@ logger = logging.getLogger(__name__)
 
 _client = redis.Redis.from_url(config.REDIS_URL, decode_responses=True)
 
-LOCK_TTL_MS = 5_000      # 锁自动过期：持锁进程崩了也不会把场次锁死
 WAIT_TIMEOUT = 3.0       # 等锁上限，超过就让用户重试而不是干等
 # 已经扣到闸门号的报名请求等得更久，见 shift_lock
 TICKET_WAIT_TIMEOUT = 15.0
-RETRY_INTERVAL = 0.02
 
-# 只删自己那把锁：TTL 到期后锁可能已被别人持有，无条件 del 会误删。
+# 只删自己那把：租期到了之后键可能已被别人持有，无条件 del 会误删。
 _RELEASE = _client.register_script("""
 if redis.call('get', KEYS[1]) == ARGV[1] then
     return redis.call('del', KEYS[1])
@@ -378,12 +384,36 @@ def redeem_checkin_code(code: str) -> str | None:
     return _client.get(f"rucva:ckcode:{code}")
 
 
+# —— 场次锁 ——
+#
+# 从前是 Redis 上 SET NX 加租期、20ms 轮询一次的锁，压测（300 人抢 200+50 个位）
+# 里毛病全出来了：几百个线程轮询把 CPU 烧在空转上，持锁的人反而跑不动；持锁
+# 一慢过 5 秒租期，锁自动过期、放第二个人进来，就是超卖。
+#
+# 现在用 Postgres 的事务级咨询锁（pg_advisory_xact_lock），在**请求自己的会话**
+# 上拿：
+#   · 和业务写入在同一个事务里，提交或回滚时由数据库放锁——没有租期，不会
+#     「还在干活锁却过期了」；请求中途抛错、会话被关，锁也跟着放掉；
+#   · 等锁的人在数据库里按先来后到排队，不轮询、不占 CPU。
+# 代价是**锁只活到第一次 commit**：锁里不能 commit 一半再接着改名额，调用方
+# 要把「判定 + 落库 + 递补」放进同一个事务（各调用点有注释）。
+#
+# 在数据库里等锁要占着一条连接。几百个请求都进去等的话，连接池被等锁的人占满，
+# 刷页面的请求拿不到连接。所以前面再加一道**进程内**的名额（LOCK_SLOTS）：
+# 同一进程里最多这么多个请求带着连接去数据库排队，其余的在进程里等（不占连接、
+# 不占 CPU），轮到了再去。
+_SLOTS = threading.BoundedSemaphore(config.LOCK_SLOTS)
+# 双参数形式的第一个参数当命名空间：将来别处也用咨询锁时，不会跟场次锁撞号
+_LOCK_NS = 1
+_SLOT_DEPTH = "rucva_shift_lock_depth"     # 会话上记着：这一个请求已经占了名额
+
 # —— 锁内不做外呼 ——
 #
-# 锁 LOCK_TTL_MS（5 秒）自动过期，而一次外部 HTTP（消息中心推送）最长要等 8 秒。
-# 锁里做外呼，锁就可能在「判完名额、还没落库」时过期，下一个人进来照样判
-# 「还有位子」——超卖。所以锁里产生的外呼一律排到锁放掉之后再做：
-# after_unlock(fn) 在锁里调用就排队，最外层的锁放掉时依次执行；不在锁里就立刻执行。
+# 场次锁在事务提交时就放了，外呼（消息中心推送）本来就挂在 after_commit 上，
+# 不会拖住数据库锁；但它仍在 with 块里、占着进程内的名额和这条线程——一次推送
+# 最长等 8 秒，名额被推送占着，排在后面的人全跟着等。所以锁里产生的外呼
+# 一律排到 with 块结束（名额也还了）之后再做：
+# after_unlock(fn) 在锁里调用就排队，最外层的锁结束时依次执行；不在锁里就立刻执行。
 _after_unlock: contextvars.ContextVar[list | None] = contextvars.ContextVar(
     "rucva_after_unlock", default=None)
 
@@ -404,37 +434,72 @@ def _run_after_unlock(queued: list) -> None:
             logger.exception("锁外收尾动作失败")
 
 
-@contextlib.contextmanager
-def shift_lock(shift_id: str, *, wait: float | None = None):
-    """锁住一个场次的名额账本。
+def _busy() -> HTTPException:
+    return HTTPException(503, "当前操作人数较多，请稍后重试")
 
-    wait：最多等多久，默认 WAIT_TIMEOUT。报名时**已经扣到闸门号**的请求传
-    TICKET_WAIT_TIMEOUT：它是前 N 个到的人之一，名额本就该是它的，3 秒没排到
-    就回 503 等于把名额让给了后来重试的人——抢报时几十上百个持号的人排一把锁，
-    每人十几二十毫秒，排到后面的正好要等好几秒。闸门把这种人限在「名额数」
-    上下，所以多等的队伍不会无限长；没拿到号的照旧 3 秒，洪水不会因此堆起来。
-    多等不影响锁的 TTL：TTL 管的是**持锁**多久，锁里只有几条 SQL，外呼都排在
-    放锁之后（after_unlock）；等待期间号一直登记在途，GATE_INFLIGHT_SECONDS
-    比这宽得多，不会被当成崩掉的请求清走。
+
+def _pg_lock(db: OrmSession, shift_id: str, seconds: float) -> None:
+    """在 db 当前的事务里拿一个场次的咨询锁，最多等 seconds 秒。
+
+    lock_timeout 只在拿锁这一句上生效，拿到后马上改回默认：SET LOCAL 管的是
+    整个事务，不改回去的话，锁里后面的 SQL 等行锁时也会被这点剩余时间掐掉。
     """
-    key = f"rucva:lock:group:{shift_id}"
-    token = secrets.token_hex(8)
-    # 在调用时读模块变量而不是写成默认参数：用例会 monkeypatch 它
-    deadline = time.monotonic() + (WAIT_TIMEOUT if wait is None else wait)
+    ms = max(1, int(seconds * 1000))
     try:
-        while not _client.set(key, token, nx=True, px=LOCK_TTL_MS):
-            if time.monotonic() >= deadline:
-                raise HTTPException(503, "当前操作人数较多，请稍后重试")
-            time.sleep(RETRY_INTERVAL)
-    except redis.RedisError as exc:
-        raise HTTPException(503, "报名服务暂时不可用，请稍后重试") from exc
+        db.execute(text("SELECT set_config('lock_timeout', :t, true)"),
+                   {"t": f"{ms}ms"})
+        db.execute(text("SELECT pg_advisory_xact_lock(:ns, hashtext(:k))"),
+                   {"ns": _LOCK_NS, "k": shift_id})
+    except OperationalError as exc:
+        # 55P03 lock_not_available：等满了。事务已经废了，调用方抛出去之后
+        # 会话回滚（请求里由 db_session 关掉），不会留半截
+        if getattr(exc.orig, "sqlstate", None) == "55P03":
+            raise _busy() from exc
+        raise
+    db.execute(text("SET LOCAL lock_timeout TO DEFAULT"))
+
+
+@contextlib.contextmanager
+def shift_lock(db: OrmSession, *shift_ids: str, wait: float | None = None):
+    """锁住场次的名额账本，直到 db 的**这个事务**结束（commit / rollback）。
+
+    with 块只管「拿锁」和「还进程名额」；锁本身随事务走，所以块里 commit 过
+    之后就不再受保护——要么一个事务做完，要么重新进一次 shift_lock。
+
+    shift_ids 可以给多个：按 id 排序依次加锁，两个请求锁同一批场次时顺序一致，
+    不会互相等成死锁。
+
+    wait：最多等多久（进程名额 + 数据库锁合计），默认 WAIT_TIMEOUT，等不到回 503。
+    报名时**已经扣到闸门号**的请求传 TICKET_WAIT_TIMEOUT：它是前 N 个到的人之一，
+    名额本就该是它的，3 秒没排到就回 503 等于把名额让给了后来重试的人——抢报时
+    几十上百个持号的人排一把锁，排到后面的正好要等好几秒。闸门把这种人限在
+    「名额数」上下，所以多等的队伍不会无限长；没拿到号的照旧 3 秒，洪水不会
+    因此堆起来。等待期间号一直登记在途，GATE_INFLIGHT_SECONDS 比这宽得多，
+    不会被当成崩掉的请求清走。
+    """
+    # 在调用时读模块变量而不是写成默认参数：用例会 monkeypatch 它
+    budget = WAIT_TIMEOUT if wait is None else wait
+    deadline = time.monotonic() + budget
+    depth = db.info.get(_SLOT_DEPTH, 0)
+    # 同一个会话嵌套进锁不再占第二个名额：名额只有几个，自己等自己会卡死
+    if depth == 0 and not _SLOTS.acquire(timeout=budget):
+        raise _busy()
+    db.info[_SLOT_DEPTH] = depth + 1
     outer = _after_unlock.get() is None
     reset = _after_unlock.set([]) if outer else None
     try:
+        for sid in sorted(set(shift_ids)):
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise _busy()
+            _pg_lock(db, sid, left)
         yield
     finally:
-        with contextlib.suppress(redis.RedisError):
-            _RELEASE(keys=[key], args=[token])
+        if depth == 0:
+            db.info.pop(_SLOT_DEPTH, None)
+            _SLOTS.release()
+        else:
+            db.info[_SLOT_DEPTH] = depth
         if outer:
             queued = _after_unlock.get()
             _after_unlock.reset(reset)

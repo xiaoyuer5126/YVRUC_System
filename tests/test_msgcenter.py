@@ -88,10 +88,11 @@ def test_Mock_下落库且标记送达(db, take_student):
 
 def test_真实推送在事务提交且场次锁放掉之后才发(client, open_group, take_student,
                                     monkeypatch):
-    """锁 5 秒过期，一次推送最长等 8 秒：锁里推送会把锁拖过期、放第二个人进来超卖。"""
+    """一次推送最长等 8 秒：锁里推送会占着场次锁（或进程名额）干等，排在后面的
+    人全跟着等；业务回滚了也不该推出去。"""
     from fastapi import HTTPException
 
-    from backend import locks
+    from backend import config, locks
     from backend.database import SessionLocal
     from backend.models import Enrollment
     from conftest import login
@@ -101,15 +102,22 @@ def test_真实推送在事务提交且场次锁放掉之后才发(client, open_
     seen = []
 
     def fake_send(student_id, title, content):
-        # 锁还攥着的话这里抢不到，等满 WAIT_TIMEOUT 报 503
-        try:
-            with locks.shift_lock(g.id):
-                lock_free = True
-        except HTTPException:
-            lock_free = False
+        # 进程名额全都空着，才说明报名请求已经走出 with 块、把名额还了
+        got = [locks._SLOTS.acquire(timeout=0) for _ in range(config.LOCK_SLOTS)]
+        for ok in got:
+            if ok:
+                locks._SLOTS.release()
+        slots_free = all(got)
+        # 数据库锁还攥着的话这里抢不到，等满 WAIT_TIMEOUT 报 503；
         # 另开一个会话看得到这条报名，才说明业务事务已经提交
         fresh = SessionLocal()
         try:
+            try:
+                with locks.shift_lock(fresh, g.id):
+                    lock_free = True
+            except HTTPException:
+                lock_free = False
+            fresh.rollback()      # 放掉刚拿的锁（等锁超时的话事务也已作废）
             committed = (fresh.query(Enrollment)
                          .join(User, Enrollment.user_id == User.id)
                          .filter(User.student_id == student_id,
@@ -117,7 +125,7 @@ def test_真实推送在事务提交且场次锁放掉之后才发(client, open_
                                  Enrollment.status == "enrolled").count())
         finally:
             fresh.close()
-        seen.append((lock_free, committed))
+        seen.append((slots_free, lock_free, committed))
         return True
 
     monkeypatch.setattr(locks, "WAIT_TIMEOUT", 0.3)   # 锁被占着时别干等 3 秒
@@ -125,7 +133,7 @@ def test_真实推送在事务提交且场次锁放掉之后才发(client, open_
     monkeypatch.setattr(msgcenter, "_send", fake_send)
     sid = take_student()
     assert enroll(client, login(client, sid), act, g).status_code == 200
-    assert seen == [(True, 1)]               # 推了一次，锁已放掉、事务已提交
+    assert seen == [(True, True, 1)]    # 推了一次：名额已还、锁已放掉、事务已提交
 
     db = SessionLocal()
     try:

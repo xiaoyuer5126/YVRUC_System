@@ -686,7 +686,7 @@ class Enrollment(Base):
     __tablename__ = "enrollments"
     __table_args__ = (
         # 一人在一个场次只能有一条有效记录（含占位不释放的临期退选记录）。
-        # 这是并发抢报的兜底：Redis 锁没拿住也插不进第二条。
+        # 这是并发抢报的兜底：哪条路径漏了加场次锁也插不进第二条。
         Index("uq_enrollment_live", "shift_id", "user_id", unique=True,
               postgresql_where=text(
                   "status IN ('applied', 'enrolled', 'waitlisted', 'pending_confirm')"

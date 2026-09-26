@@ -43,6 +43,9 @@ x-backend-env: &backend_env
   RUCVA_WORKERS: ${RUCVA_WORKERS:-4}
   RUCVA_DB_POOL_SIZE: ${RUCVA_DB_POOL_SIZE:-5}
   RUCVA_DB_MAX_OVERFLOW: ${RUCVA_DB_MAX_OVERFLOW:-10}
+  # 场次锁在数据库里排队、各占一条连接：每进程最多放这么多个进去，
+  # 要明显小于上面「池子+溢出」，否则抢报时读请求拿不到连接
+  RUCVA_LOCK_SLOTS: ${RUCVA_LOCK_SLOTS:-5}
   RUCVA_THREADS: ${RUCVA_THREADS:-100}
   TZ: Asia/Shanghai
 
@@ -69,7 +72,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: rucva-redis
-    # 抢报锁与限流计数都是可重建的瞬时状态，不做持久化
+    # 名额闸门与限流计数都是可重建的瞬时状态，不做持久化
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"
