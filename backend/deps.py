@@ -53,9 +53,22 @@ def current_token(request: Request) -> str:
     return _bearer(request)
 
 
+def _release(db: OrmSession, user: User) -> User:
+    """鉴权读完就把**数据库连接还回池子**，再交给处理函数。
+
+    同步的依赖和同步的处理函数各在线程池里跑一次，中间要重新排队等一条线程。
+    不还的话，这段排队是「占着连接等线程」：抢报时线程全被等连接的请求占着，
+    连接全被等线程的请求占着，两边互相等到连接池 30 秒超时（2026-09-26 压测：
+    300 人抢 200 个名额，大半请求卡 30 秒以上）。expire_on_commit=False，
+    commit 之后 user 照样能读。
+    """
+    db.commit()
+    return user
+
+
 def current_user(request: Request,
                  db: OrmSession = Depends(db_session)) -> User:
-    return _authorize(db, _bearer(request))
+    return _release(db, _authorize(db, _bearer(request)))
 
 
 def current_user_download(request: Request,
@@ -63,7 +76,7 @@ def current_user_download(request: Request,
     """浏览器直链下载：认 Authorization 头，或一次性票据 ?ticket=。"""
     token = _bearer(request)
     if token:
-        return _authorize(db, token)
+        return _release(db, _authorize(db, token))
     ticket = request.query_params.get("ticket", "").strip()
     user_id = locks.redeem_ticket(ticket, request.url.path)
     if user_id is None:
@@ -71,7 +84,7 @@ def current_user_download(request: Request,
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(401, "用户不存在")
-    return user
+    return _release(db, user)
 
 
 # 部门成员的学习权限：非 GET 一律拦，下面两张表是例外。
