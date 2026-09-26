@@ -651,7 +651,7 @@
           <!-- 对外活动凭盖章立项书报批：缺了先说，别等点了才被拦 -->
           <el-alert v-if="hoursState.stamped_missing && !hoursState.locked_at"
                     type="warning" :closable="false" show-icon style="flex:1 1 100%"
-                    title="对外联络部归口的活动须先在「立项与登记」上传盖章立项书，才能提交时长审核（到点也不会自动提交）" />
+                    title="对外联络部归口的活动须先在「审核」页签上传盖章立项书，才能提交时长审核（到点也不会自动提交）" />
           <el-button v-if="hoursState.locked_at" type="warning" plain
                      @click="openUnlock">申请解锁</el-button>
         </div>
@@ -675,6 +675,7 @@
                   title="时长已提交校青协审核，审核期间本页只读">
           <div style="line-height:1.8">
             通过即锁定并把活动标记为「已完成」；驳回会退回给你，改完重新核准再提交一次。
+            审核进度与历史见 <el-link type="primary" @click="tab = 'review'">「审核」页签</el-link>。
             <template v-if="hoursState.request">
               <br />提交说明：{{ hoursState.request.reason }}
             </template>
@@ -856,9 +857,9 @@
         </el-card>
       </el-tab-pane>
 
-      <!-- ============ 立项与登记：对外联络部要看的材料 ============ -->
-      <el-tab-pane label="立项与登记" name="project" lazy>
-        <ProjectPanel :activity-id="activityId" />
+      <!-- ============ 审核：立项、时长、志愿北京三道审核的进度与材料 ============ -->
+      <el-tab-pane label="审核" name="review" lazy>
+        <ReviewPanel :activity-id="activityId" :act="act" />
       </el-tab-pane>
 
       <el-tab-pane label="管理者" name="managers" lazy>
@@ -1428,7 +1429,7 @@ import FormBuilder from '../components/FormBuilder.vue'
 import AnswerList from '../components/AnswerList.vue'
 import HoursParts from '../components/HoursParts.vue'
 import ApplicationList from '../components/ApplicationList.vue'
-import ProjectPanel from '../components/ProjectPanel.vue'
+import ReviewPanel from '../components/ReviewPanel.vue'
 import ProjectFileSlot from '../components/ProjectFileSlot.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'

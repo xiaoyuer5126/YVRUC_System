@@ -131,7 +131,7 @@ def submit_lock_when_due(db: OrmSession) -> int:
                     db, act.id, f"请上传盖章立项书｜{act.title}",
                     f"「{act.title}」的确认/申诉期已满，本该自动提交时长审核，"
                     f"但这是对外联络部归口的活动，还没有上传盖章立项书。\n"
-                    f"请到活动管理的「立项与登记」上传，上传后系统会自动提交。",
+                    f"请到活动管理的「审核」页签上传，上传后系统会自动提交。",
                     duty="hours")
                 reminded += 1
             continue

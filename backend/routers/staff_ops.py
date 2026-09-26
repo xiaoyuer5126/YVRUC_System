@@ -1571,6 +1571,44 @@ def _decide_text(act: Activity, req, approve: bool, reply: str) -> str:
     return f"「{act.title}」的时长已解锁，修改后请重新核准。{tail}"
 
 
+@router.get("/activities/{activity_id}/hours-requests")
+def activity_hours_requests(activity_id: str, db: OrmSession = Depends(db_session),
+                            user: User = Depends(require_manager)):
+    """这场活动所有的时长审核（锁定与解锁），新的在前。给活动管理页「审核」
+    页签看：提交在「时长管理」里点，审到哪一步、谁批的、意见是什么在这里看。
+    管理者与这场活动的时长审批人都能看。"""
+    act = _act(db, activity_id)
+    approvers = _hours_approvers(db, act)
+    if user.id not in {u.id for u in approvers}:
+        ensure_activity_manager(db, user, activity_id)
+    rows = (db.query(HoursRequest)
+            .filter(HoursRequest.activity_id == act.id)
+            .order_by(HoursRequest.created_at.desc()).all())
+
+    def name(uid_):
+        u = db.get(User, uid_) if uid_ else None
+        return u.name if u else ""
+    dept = db.get(Department, act.approval_dept_id) if act.approval_dept_id else None
+    head = liaison.dept_head(db, dept.id) if dept else None
+    duty = liaison.on_duty(db, dept)
+    return {
+        "department": dept.name if dept else "",
+        # 等谁处理：启用值班的部门是值班人，否则是部长（会长团、管理员也能批）
+        "handler": (f"{duty.name}（值班）" if duty
+                    else (f"{head.name}（部长）" if head else "")),
+        "locked_at": iso_of(act.hours_locked_at),
+        "items": [{
+            "id": r.id, "kind": r.kind, "kind_label": r.kind_label(),
+            "status": r.status, "status_label": r.status_label(),
+            "reason": r.reason, "reply": r.reply,
+            "requested_by": name(r.requested_by) or "系统",
+            "created_at": iso(r.created_at),
+            "handled_by": name(r.handled_by),
+            "handled_at": iso_of(r.handled_at),
+        } for r in rows],
+    }
+
+
 @router.get("/hours-requests")
 def my_hours_requests(db: OrmSession = Depends(db_session),
                       user: User = Depends(require_manager)):

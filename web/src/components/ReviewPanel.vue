@@ -1,9 +1,31 @@
-<!-- 活动管理「立项与登记」页签：立项书、盖章立项书、志愿北京登记。
-     三样都是对外联络部要看的东西，放在一处，管理者不用到处找。 -->
+<!-- 活动管理「审核」页签：这场活动要过的三道审核放在一处看。
+     立项审核（发布前）→ 时长审核（结项）→ 志愿北京项目审核。
+     提交动作各在原处（提交审批在页头、提交时长审核在「时长管理」），这里看进度、
+     意见与历史，并管理各自要附的材料。 -->
 <template>
   <div v-loading="loading">
+    <!-- ① 立项审核 -->
     <el-card shadow="never">
-      <template #header><b>立项材料</b></template>
+      <template #header>
+        <b>立项审核</b>
+        <el-tag v-if="approval" size="small" effect="plain" style="margin-left:8px">
+          {{ approval.status_label }}
+        </el-tag>
+        <span v-if="approval?.department" class="dim" style="margin-left:8px">
+          归口：{{ approval.department }}
+          <template v-if="act?.status === 'pending'">
+            · 等待 {{ approval.on_duty ? approval.on_duty + '（值班）' : approval.assignee }} 处理
+          </template>
+        </span>
+      </template>
+      <el-timeline v-if="approval?.events?.length" style="padding-left:2px">
+        <el-timeline-item v-for="(e, i) in approval.events" :key="i"
+                          :timestamp="fmtDT(e.created_at)" :type="EVENT_TYPE[e.kind]">
+          {{ e.actor }} {{ e.kind_label }}<template v-if="e.to"> → {{ e.to }}</template>
+          <div v-if="e.comment" class="dim">{{ e.comment }}</div>
+        </el-timeline-item>
+      </el-timeline>
+      <div v-else class="dim" style="margin-bottom:8px">还没有提交过审批（在页头点「提交审批」）。</div>
       <el-alert v-if="files && !files.external" type="info" :closable="false"
                 style="margin-bottom:8px">
         提交<b>对外联络部</b>审批的活动（二级志愿团体的活动）须上传立项书；
@@ -14,21 +36,59 @@
                          :file="files.proposal" :can-upload="files.can_upload_proposal"
                          :block="files.manager ? files.proposal_block : ''"
                          :required="files.external && !files.proposal" @changed="load" />
-        <template v-if="files.external">
-          <el-divider style="margin:8px 0" />
-          <ProjectFileSlot :activity-id="activityId" kind="stamped" label="盖章立项书"
-                           :file="files.stamped" :can-upload="files.can_upload_stamped"
-                           :block="files.manager ? files.stamped_block : ''"
-                           :required="!files.stamped"
-                           hint="对外活动的时长须凭盖章立项书报校青协审核；时长锁定前可随时更换"
-                           @changed="load" />
-        </template>
       </template>
     </el-card>
 
+
+    <!-- ② 时长审核 -->
     <el-card shadow="never" style="margin-top:12px">
       <template #header>
-        <b>志愿北京登记</b>
+        <b>时长审核</b>
+        <span class="dim" style="margin-left:8px">
+          在「时长管理」核准后提交；
+          <template v-if="hours?.handler">由 {{ hours.handler }} 审核</template>
+        </span>
+      </template>
+      <template v-if="files?.external">
+        <ProjectFileSlot :activity-id="activityId" kind="stamped" label="盖章立项书"
+                         :file="files.stamped" :can-upload="files.can_upload_stamped"
+                         :block="files.manager ? files.stamped_block : ''"
+                         :required="!files.stamped"
+                         hint="对外活动提交时长审核必须附盖章立项书；活动发布后、时长锁定前可随时更换"
+                         @changed="load" />
+        <el-divider style="margin:8px 0" />
+      </template>
+      <el-table :data="hours?.items || []" size="small" empty-text="还没有提交过时长审核">
+        <el-table-column label="类型" width="70" prop="kind_label" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain" :type="REQ_TAG[row.status]">
+              {{ row.status_label }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="提交" min-width="200">
+          <template #default="{ row }">
+            {{ row.requested_by }} · {{ fmtDT(row.created_at) }}
+            <div class="dim">{{ row.reason }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="审核" min-width="180">
+          <template #default="{ row }">
+            <template v-if="row.handled_by">
+              {{ row.handled_by }} · {{ fmtDT(row.handled_at) }}
+              <div v-if="row.reply" class="dim">意见：{{ row.reply }}</div>
+            </template>
+            <span v-else class="dim">等待审核</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- ③ 志愿北京项目审核 -->
+    <el-card shadow="never" style="margin-top:12px">
+      <template #header>
+        <b>志愿北京项目审核</b>
         <span class="dim" style="margin-left:8px">
           在志愿北京建好对应活动后在这里登记名称，由对外联络部核对
         </span>
@@ -89,10 +149,15 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT } from '../api'
 import ProjectFileSlot from './ProjectFileSlot.vue'
 
-const props = defineProps({ activityId: { type: String, required: true } })
+const props = defineProps({ activityId: { type: String, required: true },
+                            act: { type: Object, default: null } })
 const emit = defineEmits(['changed'])
 
 const VB_TAG = { submitted: 'warning', approved: 'success', rejected: 'danger', void: 'info' }
+const REQ_TAG = { pending: 'warning', approved: 'success', rejected: 'danger' }
+const EVENT_TYPE = { approve: 'success', reject: 'danger', submit: 'primary' }
+const approval = ref(null)
+const hours = ref(null)
 const loading = ref(false)
 const files = ref(null)
 const vb = ref({ items: [], can_submit: false, can_decide: false,
@@ -104,8 +169,10 @@ async function load() {
   loading.value = true
   try {
     const base = `/api/staff/activities/${props.activityId}`
-    ;[files.value, vb.value] = await Promise.all([
-      api.get(`${base}/project-files`), api.get(`${base}/vb-registrations`)])
+    ;[files.value, vb.value, approval.value, hours.value] = await Promise.all([
+      api.get(`${base}/project-files`), api.get(`${base}/vb-registrations`),
+      api.get(`${base}/approval`, { silent: true }).catch(() => null),
+      api.get(`${base}/hours-requests`, { silent: true }).catch(() => null)])
     emit('changed', files.value)
   } finally { loading.value = false }
 }

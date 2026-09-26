@@ -250,3 +250,25 @@ def test_删草稿连立项书一起删(client, admin, db, liaison):
     db.expire_all()
     assert not db.query(Attachment).filter(Attachment.owner_id == aid).count()
     assert not (MATERIAL_DIR / stored).exists()
+
+
+def test_审核页签能看到时长审核的历史(client, admin, db, liaison, take_student):
+    """时长管理里提交，审核页签里看：状态、谁审的、意见，新的在前。"""
+    act = _external_due(db, liaison)
+    url = f"/api/staff/activities/{act.id}/hours-requests"
+    assert client.get(url, headers=admin).json()["items"] == []
+    assert _upload(client, admin, act.id, "stamped").status_code == 200
+    assert client.post(f"/api/staff/activities/{act.id}/hours/lock-request",
+                       headers=admin, json={}).status_code == 200
+    head = login(client, LIAISON_HEAD)
+    d = client.get(url, headers=head).json()          # 审批人也能看
+    assert d["department"] == "对外联络部" and "部长" in d["handler"]
+    rid = d["items"][0]["id"]
+    assert d["items"][0]["status"] == "pending"
+    assert client.post(f"/api/staff/hours-requests/{rid}/decide", headers=head,
+                       json={"approve": False, "reply": "盖章不清楚"}).status_code == 200
+    item = client.get(url, headers=admin).json()["items"][0]
+    assert (item["status"], item["reply"], item["handled_by"]) == \
+        ("rejected", "盖章不清楚", "周砚")
+    # 不相干的人看不到
+    assert client.get(url, headers=login(client, INITIATOR)).status_code == 403
