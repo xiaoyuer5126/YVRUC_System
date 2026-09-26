@@ -5,18 +5,20 @@
 """
 from __future__ import annotations
 
-from sqlalchemy.orm import Session as OrmSession
+import math
+from collections import defaultdict
+from datetime import datetime
 
-from .enroll_logic import (Occupancy, enroll_deadline, group_leader, group_needs_leader,
-                           group_positions,
-                           position_enrolled_count,
-                           position_held_count,
-                           position_occupied_count,
-                           shift_enrolled_count, shift_occupied_count,
-                           time_conflicts, unmet_requirements,
-                           waitlist_position, waitlist_rows)
-from . import config
-from .models import (Activity, Application, Attachment, AuditLog, Enrollment, FormQuestion, Position, Shift, User, iso, now)
+from sqlalchemy import func
+from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.orm.attributes import set_committed_value
+
+from . import pubcache
+from .enroll_logic import (Occupancy, active_rows, conflicts_among,
+                           enroll_deadline, group_needs_leader, shift_counts,
+                           unmet_for_tags, waitlist_position)
+from .models import (Activity, Application, Attachment, AuditLog, Enrollment,
+                     FormQuestion, Position, Shift, User, iso, now)
 
 
 def iso_of(dt):
@@ -29,8 +31,19 @@ def display_status(act: Activity) -> tuple[str, str]:
                              act.time_span())
 
 
+def reg_started(reg_start, t) -> bool:
+    """报名开始了没有。
+
+    **全站「开没开始报名」只有这一处比较**：展示状态、各场次的 enroll_open、
+    倒计时毫秒数、报名接口的拦截都走它。从前详情页用的是截断成整秒的
+    opens_in，比报名接口认的 reg_start 早了不到一秒——手最快的那批人倒计时
+    归零、按钮亮了，点下去却是「报名尚未开始」。
+    """
+    return reg_start is None or t >= reg_start
+
+
 def display_status_of(status: str, reg_start, reg_end,
-                      span) -> tuple[str, str]:
+                      span, t=None) -> tuple[str, str]:
     """按状态与时间算展示状态。
 
     状态流转由定时任务每分钟推进，中间那一分钟里 status 还没跟上；报名开始
@@ -42,7 +55,7 @@ def display_status_of(status: str, reg_start, reg_end,
     拆成不吃 Activity 的一版：广场列表筛状态时手上只有几个字段，不能为了
     算状态把每个活动的场次都加载一遍。
     """
-    t = now()
+    t = t or now()
     # 三种「还没公开」的状态在展示层是一回事：学生看不到，管理端各有各的按钮
     if status == "draft":
         return "draft", "草稿"
@@ -59,7 +72,7 @@ def display_status_of(status: str, reg_start, reg_end,
         return "ongoing", "进行中"
 
     if status == "published":
-        if reg_start and t < reg_start:
+        if not reg_started(reg_start, t):
             return "upcoming", "未开始报名"
         if reg_end and t > reg_end:
             return "closed", "已截止"
@@ -89,33 +102,146 @@ def recruit_scope_text(act) -> str:
     return text or "面向全校"
 
 
-def opens_in(act: Activity) -> int:
-    """距报名开始还有多少秒；已经开始或没设开始时间给 0。
+def opens_in_ms(reg_start, t) -> int:
+    """距报名开始还有多少**毫秒**；已经开始或没设开始时间给 0。
 
-    发**秒数**而不是让前端拿 reg_start 自己减：客户端时钟偏几分钟是常事，
-    自己减出来的倒计时会比服务端早到或晚到，按钮跟着错。秒数只用到客户端的
-    「流逝时间」，那部分是准的。倒计时归零时前端重拉一次，以服务端为准。
+    向上取整，且没开始就至少是 1：宁可倒计时晚归零一毫秒，也不能早——早了
+    按钮亮了、点下去却是「尚未开始」。与 reg_started 永远说同一句话。
     """
-    if act.reg_start and now() < act.reg_start:
-        return int((act.reg_start - now()).total_seconds())
-    return 0
+    if reg_started(reg_start, t):
+        return 0
+    return max(1, math.ceil((reg_start - t).total_seconds() * 1000))
 
 
-def activity_brief(db: OrmSession, act: Activity) -> dict:
+def opens_in(act: Activity, t=None) -> int:
+    """距报名开始还有多少秒（向上取整）；已经开始或没设开始时间给 0。
+
+    发**时长**而不是让前端拿 reg_start 自己减：客户端时钟偏几分钟是常事，
+    自己减出来的倒计时会比服务端早到或晚到，按钮跟着错。时长只用到客户端的
+    「流逝时间」，那部分是准的。前端用的是更精确的 opens_in_ms，这个整秒数
+    留给老调用方；向上取整，所以它不会在还没开始时就报 0。
+    """
+    return math.ceil(opens_in_ms(act.reg_start, t or now()) / 1000)
+
+
+# ======================= 因人而异的字段 =======================
+#
+# 学生端的活动详情与广场卡片，「人人都一样」的部分会在 Redis 里存 3 秒、
+# 给所有人共用（见 pubcache）。所以凡是随「谁在看」而变的字段，一律不许
+# 进 _detail_public / _brief_public，只能在 _for_viewer 里每次现算：
+#
+#   活动      my_time_conflicts   我已有的报名与本活动各场次的时段冲突
+#             application         报名后筛选：题目 + **我的**申请
+#             contact_group_qr    联络群二维码，只给管理者
+#             attire_issued       只给管理者（后台有没有服装台账）
+#             manager / review_preview   路由里按人填
+#   场次      my_enrollment       我的报名状态、候补名次、是否组长、确认期限
+#   培训/彩排 mine / my_enrollment_id / excused / excuse_reason
+#   岗位      eligible / ineligible_reason     按我的档案匹配条件
+#             training_visible / training_note / attachments
+#                                 报了本场次的人和管理者才看得到
+#             leader_name         同上
+#             leader_contact      同组**正式**报名的人和管理者才看得到
+#
+# 与「此刻」有关的字段同样不进缓存，按原始时间每次现算（_with_times）：
+#   display_status / display_label / opens_in / opens_in_ms，
+#   场次的 enroll_open / started / closes_in_ms。
+# 否则报名开始那一刻缓存里的「未开始」会再挂 3 秒，按钮刷新后又灰回去。
+#
+# 私密内容（培训内容、材料列表、组长）**根本不经过缓存**，而不是存进去再挑着
+# 给：缓存里没有它，就不存在「忘了挑」把它发给外人的那一天。
+
+def _ts(dt):
+    return dt.isoformat() if dt else None
+
+
+def _dt(text):
+    return datetime.fromisoformat(text) if text else None
+
+
+def _time_basis(act: Activity, *, shifts: bool) -> dict:
+    """算「此刻」相关字段要用的原始时间，精确到微秒（iso_of 只到分钟）。"""
+    span = act.time_span()
+    out = {"status": act.status,
+           "reg_start": _ts(act.reg_start), "reg_end": _ts(act.reg_end),
+           "span": [_ts(span[0]), _ts(span[1])] if span else None}
+    if shifts:
+        # [场次, 开始, 结束, 本场截止]，按 act.shifts 的顺序、含培训/彩排——
+        # 时段冲突要逐场比，培训那晚撞了别的活动也得提示
+        out["shifts"] = [[g.id, _ts(g.start_time), _ts(g.end_time),
+                          _ts(enroll_deadline(act, g))] for g in act.shifts]
+    return out
+
+
+def with_times(out: dict, t=None) -> dict:
+    """把公共部分里的时间原料（_t）换成此刻的状态。每次请求都要走一遍。"""
+    basis = out.pop("_t")
+    t = t or now()
+    reg_start = _dt(basis["reg_start"])
+    span = basis["span"] and (_dt(basis["span"][0]), _dt(basis["span"][1]))
+    code, label = display_status_of(basis["status"], reg_start,
+                                    _dt(basis["reg_end"]), span, t)
+    ms = opens_in_ms(reg_start, t)
+    out.update({"display_status": code, "display_label": label,
+                "opens_in_ms": ms, "opens_in": math.ceil(ms / 1000)})
+    if "shifts" in out:
+        times = {sid: (_dt(start), _dt(dl))
+                 for sid, start, _end, dl in basis["shifts"]}
+        started = reg_started(reg_start, t)
+        for g in out["shifts"]:
+            start, deadline = times[g["id"]]
+            # 本场次的报名闸门，与报名接口的判断逐字相同（见 reg_started）：
+            # 前端据此灰按钮，别让人点了才知道这一场已经开过了，或者报名
+            # 压根还没开始——「活动已发布」不等于「现在能报」
+            g["enroll_open"] = started and t <= deadline
+            g["started"] = t >= start
+            # 离本场截止还有多少毫秒：倒计时归零、前端本地开闸时靠它判断
+            # 哪几场还收人，不拿客户端时钟去比截止时间（道理同 opens_in）
+            g["closes_in_ms"] = max(0, math.floor(
+                (deadline - t).total_seconds() * 1000))
+    return out
+
+
+def load_trees(db: OrmSession, acts: list[Activity]) -> None:
+    """一批活动的场次与岗位，两条 SQL 装好。
+
+    懒加载的话是一个活动一条（场次）、一个场次一条（岗位），广场一页十几张卡片、
+    详情页十几个场次，条数跟着涨。已经加载过的不重查。
+    """
+    todo = [a for a in acts if "shifts" not in a.__dict__]
+    if todo:
+        by_act = defaultdict(list)
+        for g in (db.query(Shift)
+                  .filter(Shift.activity_id.in_([a.id for a in todo]))
+                  .order_by(Shift.start_time).all()):
+            by_act[g.activity_id].append(g)
+        for a in todo:
+            set_committed_value(a, "shifts", by_act[a.id])
+    shifts = [g for a in acts for g in a.shifts if "positions" not in g.__dict__]
+    if shifts:
+        by_shift = defaultdict(list)
+        for p in (db.query(Position)
+                  .filter(Position.shift_id.in_([g.id for g in shifts]))
+                  .order_by(Position.sort).all()):
+            by_shift[p.shift_id].append(p)
+        for g in shifts:
+            set_committed_value(g, "positions", by_shift[g.id])
+
+
+def _brief_public(act: Activity, counts: dict) -> dict:
+    """广场卡片里人人都一样的部分。counts 见 enroll_logic.shift_counts。"""
     # 只数服务场次：培训/彩排不招人，算进「共几场、多少名额」会把学生看晕
     shifts = sorted(act.main_shifts(), key=lambda g: g.sort)
     total_cap = sum(g.total_capacity() for g in shifts)
-    total_conf = sum(shift_enrolled_count(db, g.id) for g in shifts)
-    total_used = sum(shift_occupied_count(db, g.id) for g in shifts)
+    total_conf = sum(counts.get(g.id, (0, 0, 0))[0] for g in shifts)
+    total_used = sum(counts.get(g.id, (0, 0, 0))[1] for g in shifts)
     span = act.time_span()
-    ds_code, ds_label = display_status(act)
     return {
         "id": act.id, "title": act.title, "recruit_mode": act.recruit_mode,
         "organizer": act.organizer,
         "recruit_label": act.recruit_label(), "status": act.status,
         "status_label": act.label_status(), "location": act.location,
         "intro": act.intro[:120], "cover_hue": act.cover_hue,
-        "display_status": ds_code, "display_label": ds_label,
         "shifts_count": len(shifts),
         "total_capacity": total_cap, "total_enrolled": total_conf,
         # 剩余名额扣掉临期退选扣留的占位，不然广场上显示有位、点进去报不了
@@ -123,12 +249,33 @@ def activity_brief(db: OrmSession, act: Activity) -> dict:
         "time_text": (f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}"
                       if span else "待定"),
         "reg_start": iso_of(act.reg_start), "reg_end": iso_of(act.reg_end),
-        "opens_in": opens_in(act),
         "contacts": act.contacts or [],
         "editing": act.editing_since is not None,
         "pinned": act.pinned_at is not None,
         "urgent": act.pinned_at is not None and act.status == "published",
+        "_t": _time_basis(act, shifts=False),
     }
+
+
+def brief_parts(db: OrmSession, ids: list[str]) -> dict[str, dict]:
+    """一批活动的卡片公共部分：{id: dict}，SQL 条数与活动个数无关。
+
+    返回的还带着时间原料，发出去之前要过 with_times。
+    """
+    acts = db.query(Activity).filter(Activity.id.in_(ids)).all() if ids else []
+    load_trees(db, acts)
+    counts = shift_counts(db, [a.id for a in acts])
+    return {a.id: _brief_public(a, counts) for a in acts}
+
+
+def activity_brief(db: OrmSession, act: Activity, counts=None) -> dict:
+    """一张活动卡片（管理端列表直接用；广场走 brief_parts + 缓存）。
+
+    counts：shift_counts 一次查好的一批；不给就只为这一个活动查一次。
+    """
+    if counts is None:
+        counts = shift_counts(db, [act.id])
+    return with_times(_brief_public(act, counts))
 
 
 def _unassigned_count(db: OrmSession, g: Shift) -> int:
@@ -136,6 +283,7 @@ def _unassigned_count(db: OrmSession, g: Shift) -> int:
 
     「截止后统一分配」的场次里，这些人待在占位岗位上；pick 场次里也可能有
     岗位为空的（岗位被删过，或管理员手工补录）。两种都算。
+    活动详情页里同一个数从 Occupancy 里取（shift_unplaced + 占位岗位人数）。
     """
     holder = g.placeholder()
     q = (db.query(Enrollment)
@@ -147,39 +295,28 @@ def _unassigned_count(db: OrmSession, g: Shift) -> int:
                     | (Enrollment.position_id == holder.id)).count()
 
 
-def position_out(db: OrmSession, p: Position, user=None, *,
-                 enrolled: bool = False, manager: bool = False,
-                 same_group: bool = False, occ=None, atts=None) -> dict:
-    """岗位。
+def _group_of(p: Position, positions: list[Position]) -> list[Position]:
+    """同组岗位（含自己）。口径同 enroll_logic.group_positions，只是在本场次
+    已加载的岗位里找，不再一个岗位查一次。"""
+    if not (p.group_name or "").strip():
+        return [p]
+    return [x for x in positions if x.group_name == p.group_name]
 
-    带 user 时附上「这个人能不能报」——前端据此灰掉并说明原因，比让人点了
-    再被拒要清楚。培训内容、学习材料与组长姓名只对**已报名本场次的人**
-    和管理者可见：培训材料是发给要上岗的人的，组长姓名属于个人信息，
-    不该挂在公开页面上供人浏览。
 
-    occ / atts：传了就用传进来的（一次查完的），否则各查各的。
-    列十几个岗位时前者省几十条 SQL——见 activity_detail。
-    """
-    # 变量名要和「我是否已报名」的参数区分开：一个是人数，一个是布尔
-    if occ is not None:
-        n_enrolled = occ.position_enrolled(p.id)
-        occupied = occ.position_occupied(p.id)
-        queued = occ.position_wait(p.id)
-    else:
-        n_enrolled = position_enrolled_count(db, p.id)
-        occupied = position_occupied_count(db, p.id)
-        queued = len([r for r in waitlist_rows(db, p.shift_id)
-                      if r.position_id == p.id])
-    out = {
+def _position_public(p: Position, siblings: list[Position], occ: Occupancy,
+                     n_materials: int) -> dict:
+    """岗位里人人都一样的部分。培训内容、材料列表、组长、能不能报见 _for_viewer。"""
+    return {
         "id": p.id, "name": p.name,
         # 岗位没有独立时间：显示所属场次的时段
         "time_text": p.time_text(),
-        "location": p.location, "quota": p.quota, "enrolled": n_enrolled,
-        "remaining": max(0, p.quota - occupied),
+        "location": p.location, "quota": p.quota,
+        "enrolled": occ.position_enrolled(p.id),
+        "remaining": max(0, p.quota - occ.position_occupied(p.id)),
         # 临期退选扣留的名额：不发出去的话，「已报名 8/10、剩余 0」没人看得懂
-        "held_seats": occ.position_held(p.id) if occ is not None else position_held_count(db, p.id),
-        "waitlist_quota": p.waitlist_quota, "waitlist_count": queued,
-        "needs_leader": p.needs_leader,
+        "held_seats": occ.position_held(p.id),
+        "waitlist_quota": p.waitlist_quota,
+        "waitlist_count": occ.position_wait(p.id),
         "attire": p.attire, "attire_label": p.attire_label(),
         "attire_note": p.attire_note, "attire_text": p.attire_text(),
         "pay_optional": p.pay_optional, "pay_note": p.pay_note,
@@ -196,55 +333,22 @@ def position_out(db: OrmSession, p: Position, user=None, *,
                          if p.is_placeholder and p.shift.needs_assign()
                          else p.name),
         "sort": p.sort,
+        # 材料数量始终公开：让人知道「报名后有 3 份培训材料」是招募信息，
+        # 内容本身才需要报名后才能看
+        "material_count": n_materials,
+        # 组长按「组」取：同组岗位共用一名组长
+        "group_positions": ([x.name for x in siblings]
+                            if len(siblings) > 1 else []),
+        "needs_leader": group_needs_leader(siblings),
     }
-    visible = enrolled or manager
-    out["training_visible"] = visible
-    out["training_note"] = p.training_note if visible else ""
-    mine = atts.get(p.id, []) if atts is not None else None
-    out["attachments"] = ((mine if mine is not None
-                           else attachments_out(db, "position", p.id))
-                          if visible else [])
-    # 数量始终公开，列表只有报名的人和管理者看得到
-    out["material_count"] = (len(mine) if mine is not None
-                             else attachment_count(db, "position", p.id))
-    # 组长按「组」取：同组岗位共用一名组长
-    siblings = group_positions(db, p)
-    out["group_positions"] = [x.name for x in siblings] if len(siblings) > 1 else []
-    out["needs_leader"] = group_needs_leader(siblings)
-    # 组长联系方式只给**同组已正式报名**的人：现场要找得到组长，
-    # 但候补和别的组的人拿他的手机号没有意义，只是多暴露一份个人信息。
-    leader = group_leader(db, p)
-    leader_user = db.get(User, leader.user_id) if leader else None
-    out["leader_name"] = (leader_user.name if leader_user else "") if visible else ""
-    out["leader_contact"] = (
-        {"phone": leader_user.phone, "wechat": leader_user.wechat}
-        if leader_user and (manager or same_group) else None)
-    if user is not None:
-        unmet = unmet_requirements(user, p)
-        out["eligible"] = not unmet
-        out["ineligible_reason"] = "；".join(unmet)
-    return out
-
-
-def attachment_count(db: OrmSession, owner_type: str, owner_id: str) -> int:
-    """材料**数量**始终公开：让人知道「报名后有 3 份培训材料」是招募信息，
-    内容本身才需要报名后才能看。
-
-    要一批的时候用 attachments_by_owner——数量就是那个列表的长度，
-    各查一遍等于同一批行查两回。
-    """
-    return (db.query(Attachment)
-            .filter(Attachment.owner_type == owner_type,
-                    Attachment.owner_id == owner_id).count())
 
 
 def attachments_by_owner(db: OrmSession, owner_type: str,
                          owner_ids: list[str]) -> dict[str, list[dict]]:
     """一批 owner 的材料，一次查完：{owner_id: [材料…]}。
 
-    **数量和列表同源**（attachment_count 就是 len(attachments_out)），所以
-    一次查询两样都有了。活动详情页要列十几个岗位的「材料 N」角标，各自去查
-    的话就是十几条 SQL，而结果往往还是空的（实测 14 条，占那一页的三分之一）。
+    活动详情页要列十几个岗位的材料，各自去查的话就是十几条 SQL，而结果
+    往往还是空的。
     """
     ids = list(dict.fromkeys(owner_ids))
     out: dict[str, list[dict]] = {i: [] for i in ids}
@@ -261,50 +365,23 @@ def attachments_by_owner(db: OrmSession, owner_type: str,
     return out
 
 
-def attachments_out(db: OrmSession, owner_type: str, owner_id: str) -> list[dict]:
-    rows = (db.query(Attachment)
-            .filter(Attachment.owner_type == owner_type,
-                    Attachment.owner_id == owner_id)
-            .order_by(Attachment.created_at).all())
-    return [{"id": a.id, "kind": a.kind, "title": a.title, "size": a.size,
-             "url": (a.url if a.kind == "link" else f"/api/materials/{a.id}")}
-            for a in rows]
+def _material_counts(db: OrmSession, position_ids: list[str]) -> dict[str, int]:
+    """各岗位有几份材料，一条分组查询（公共部分只要数量，不要列表）。"""
+    if not position_ids:
+        return {}
+    return dict(db.query(Attachment.owner_id, func.count(Attachment.id))
+                .filter(Attachment.owner_type == "position",
+                        Attachment.owner_id.in_(position_ids))
+                .group_by(Attachment.owner_id).all())
 
 
-def _same_group(db: OrmSession, my_enr, position: Position) -> bool:
-    """我是否**正式报名**在该岗位所属的组里。候补不算：还没确定要去现场。"""
-    if my_enr is None or my_enr.status != "enrolled" or not my_enr.position_id:
-        return False
-    mine = db.get(Position, my_enr.position_id)
-    if mine is None:
-        return False
-    return any(x.id == mine.id for x in group_positions(db, position))
-
-
-def attached_out(db: OrmSession, s: Shift, my_enr=None) -> dict:
-    """附属场次（培训/彩排）在主场次上的一行摘要。
+def _attached_public(s: Shift, occ: Occupancy) -> dict:
+    """附属场次（培训/彩排）在主场次上的一行摘要，人人都一样的部分。
 
     自己不招人，所以没有名额与候补；关心的是什么时候、在哪、对谁生效、算不算时长。
     """
-    applies = s.applies_to_positions or []
-    mine = (my_enr is not None and my_enr.status == "enrolled"
-            and (not applies or my_enr.position_id in applies))
-    # 我在这一场的报名记录（培训/彩排是连带产生的），用来显示请假状态
-    row = None
-    if mine:
-        row = (db.query(Enrollment)
-               .filter(Enrollment.shift_id == s.id,
-                       Enrollment.user_id == my_enr.user_id,
-                       Enrollment.status == "enrolled").first())
-    excused_n = (db.query(Enrollment)
-                 .filter(Enrollment.shift_id == s.id,
-                         Enrollment.status == "enrolled",
-                         Enrollment.excused.is_(True)).count())
     return {
-        "my_enrollment_id": row.id if row else "",
-        "excused": bool(row and row.excused),
-        "excuse_reason": row.excuse_reason if row else "",
-        "excused_count": excused_n,
+        "excused_count": occ.shift_excused(s.id),
         "id": s.id, "name": s.name, "kind": s.kind, "kind_label": s.kind_label(),
         "start_time": iso_of(s.start_time), "end_time": iso_of(s.end_time),
         "time_text": s.span_text(), "location": s.location,
@@ -312,45 +389,26 @@ def attached_out(db: OrmSession, s: Shift, my_enr=None) -> dict:
         "hours_mode": s.hours_mode, "hours_label": s.hours_label(),
         "requirement_tags": s.requirement_tags or {},
         "requirement_desc": tags_desc(s.requirement_tags) or "不限",
-        "applies_to_positions": applies,
-        "enrolled": shift_enrolled_count(db, s.id),
-        "mine": mine,        # 我这次报名要不要去这一场
+        "applies_to_positions": s.applies_to_positions or [],
+        "enrolled": occ.shift_enrolled(s.id),
     }
 
 
-def shift_out(db: OrmSession, g: Shift, user=None, *,
-              manager: bool = False, occ=None, atts=None) -> dict:
+def _shift_public(g: Shift, occ: Occupancy, n_materials: dict) -> dict:
     positions = sorted(g.positions, key=lambda p: p.sort)
     capacity = g.total_capacity()
-    # 报名本场次的人才看得到培训内容与组长（见 position_out）
-    my_enr = None
-    if user is not None:
-        my_enr = (db.query(Enrollment)
-                  .filter(Enrollment.shift_id == g.id,
-                          Enrollment.user_id == user.id,
-                          Enrollment.status.in_(("enrolled", "waitlisted",
-                                                 "pending_confirm")))
-                  .first())
-    enrolled = my_enr is not None
-    # 本场次的报名闸门。前端据此灰按钮，别让人点了才知道这一场已经开过了，
-    # 或者报名压根还没开始——「活动已发布」不等于「现在能报」。
-    deadline = enroll_deadline(g.activity, g)
-    out = {
+    holder = g.placeholder()
+    return {
         "id": g.id, "name": g.name,
         "activity_id": g.activity_id,
         "start_time": iso_of(g.start_time), "end_time": iso_of(g.end_time),
         "time_text": g.span_text(),
-        "enroll_deadline": iso_of(deadline),
-        "enroll_open": not opens_in(g.activity) and now() <= deadline,
-        "started": now() >= g.start_time,
+        "enroll_deadline": iso_of(enroll_deadline(g.activity, g)),
         # 名额一律是各岗位之和；assign 场次的名额挂在占位岗位上
         "capacity": capacity,
-        "enrolled": (occ.shift_enrolled(g.id) if occ is not None
-                     else shift_enrolled_count(db, g.id)),
-        "remaining": max(0, capacity - (occ.shift_occupied(g.id) if occ is not None
-                                        else shift_occupied_count(db, g.id))),
-        "held_seats": sum(occ.position_held(p.id) if occ is not None
-                          else position_held_count(db, p.id) for p in g.positions),
+        "enrolled": occ.shift_enrolled(g.id),
+        "remaining": max(0, capacity - occ.shift_occupied(g.id)),
+        "held_seats": sum(occ.position_held(p.id) for p in g.positions),
         "needs_assign": g.needs_assign(),
         "mode": g.mode,
         "mode_label": g.mode_label(),
@@ -362,35 +420,23 @@ def shift_out(db: OrmSession, g: Shift, user=None, *,
         "requirement_tags": g.requirement_tags or {},
         "requirement_desc": tags_desc(g.requirement_tags) or "不限",
         # 本场次附带的培训/彩排：学生看的是「报这个岗位还要去哪几场」
-        "attached": [attached_out(db, s, my_enr)
+        "attached": [_attached_public(s, occ)
                      for s in sorted(
                          (x for x in g.activity.shifts if x.parent_id == g.id),
                          key=lambda x: x.start_time)],
         "note": g.note, "sort": g.sort,
-        "positions": [position_out(db, p, user, enrolled=enrolled,
-                                   manager=manager, occ=occ, atts=atts,
-                                   same_group=_same_group(db, my_enr, p))
+        "positions": [_position_public(p, _group_of(p, positions), occ,
+                                       n_materials.get(p.id, 0))
                       for p in positions],
         # 还没安排到真实岗位的人：待在占位岗位里的，加上岗位为空的
         # （岗位被删或管理员补录留下的）。管理者要当场看见这个缺口，
-        # 而不是等分配面板报「未排上」。
-        "unassigned_count": _unassigned_count(db, g),
+        # 而不是等分配面板报「未排上」。口径同 _unassigned_count。
+        "unassigned_count": (occ.shift_unplaced(g.id)
+                             + (occ.position_enrolled(holder.id) if holder else 0)),
         # 真实岗位的名额之和，不含占位——拿它跟已报名比才看得出还差多少位子
         "position_quota_sum": sum(p.quota for p in g.real_positions()),
-        "waitlist_count": len(waitlist_rows(db, g.id)),
+        "waitlist_count": occ.shift_wait(g.id),
     }
-
-    if my_enr is not None:
-        out["my_enrollment"] = {
-            "enrollment_id": my_enr.id, "status": my_enr.status,
-            "position_id": my_enr.position_id,
-            "allow_reassign": my_enr.allow_reassign,
-            "is_leader": my_enr.is_leader,
-            "confirm_deadline": iso_of(my_enr.confirm_deadline),
-            "waitlist_position": (waitlist_position(db, my_enr)
-                                  if my_enr.status != "enrolled" else 0),
-        }
-    return out
 
 
 def application_out(db: OrmSession, act: Activity, user=None) -> dict:
@@ -437,15 +483,18 @@ def application_out(db: OrmSession, act: Activity, user=None) -> dict:
     }
 
 
-def activity_detail(db: OrmSession, act: Activity, user=None,
-                    include_logs: bool = True, *, manager: bool = False) -> dict:
-    # 各场次/岗位的人数一次查完再往下传：这一页要列十几个岗位的「已报/占用/
-    # 占位/候补」，各自去 count 的话光这一页就是几十条 SQL（实测 80 条）
+def _detail_public(db: OrmSession, act: Activity) -> dict:
+    """活动详情里人人都一样的部分（可缓存）。SQL 条数与场次、岗位个数无关。"""
+    load_trees(db, [act])
+    # 各场次/岗位的人数一次查完：这一页要列十几个岗位的「已报/占用/占位/候补」，
+    # 各自去 count 的话光这一页就是几十条 SQL
     occ = Occupancy(db, act.id)
-    # 材料同样一次查完：每个岗位查两遍（列表 + 计数）而结果常常是空的
-    atts = attachments_by_owner(db, "position",
-                                [p.id for g in act.shifts for p in g.positions])
-    out = activity_brief(db, act)
+    n_materials = _material_counts(
+        db, [p.id for g in act.shifts for p in g.positions])
+    out = _brief_public(act, {g.id: (occ.shift_enrolled(g.id),
+                                     occ.shift_occupied(g.id), 0)
+                              for g in act.shifts})
+    out["_t"] = _time_basis(act, shifts=True)
     out.update({
         "intro": act.intro,
         "contact_info": act.contact_info,
@@ -457,33 +506,143 @@ def activity_detail(db: OrmSession, act: Activity, user=None,
         "auto_publish": act.auto_publish,
         "volunteer_benefit": act.volunteer_benefit,
         # 培训/彩排不单列，它们挂在各自主场次的 attached 里
-        "shifts": sorted([shift_out(db, g, user, manager=manager, occ=occ,
-                                    atts=atts)
+        "shifts": sorted([_shift_public(g, occ, n_materials)
                           for g in act.main_shifts()],
                          key=lambda x: x["start_time"]),
     })
+    if not act.is_screened():
+        # 即选即得的报名问卷：题目直接给，报名弹窗里答；答案记在报名记录上。
+        # 报名后筛选的题目跟着「我的申请」一起在 _for_viewer 里给
+        out["questions"] = [q.out() for q in db.query(FormQuestion)
+                            .filter(FormQuestion.activity_id == act.id)
+                            .order_by(FormQuestion.sort).all()]
+    logs = (db.query(AuditLog)
+            .filter(AuditLog.activity_id == act.id, AuditLog.visible.is_(True))
+            .order_by(AuditLog.created_at.desc()).limit(10).all())
+    out["change_logs"] = [l.out() for l in logs]
+    return out
+
+
+def _leaders(db: OrmSession, activity_id: str) -> dict[str, User]:
+    """本活动各岗位的组长：{岗位 id: 用户}，一条 SQL。"""
+    rows = (db.query(Enrollment.position_id, User)
+            .join(User, User.id == Enrollment.user_id)
+            .filter(Enrollment.activity_id == activity_id,
+                    Enrollment.is_leader.is_(True),
+                    Enrollment.status == "enrolled")
+            .order_by(Enrollment.joined_at).all())
+    out: dict[str, User] = {}
+    for pid, u in rows:
+        out.setdefault(pid, u)
+    return out
+
+
+def _for_viewer(db: OrmSession, act: Activity, out: dict, user,
+                manager: bool) -> dict:
+    """在公共部分上补「因人而异」的字段（清单见上），再按此刻算时间字段。
+
+    out 会被就地改掉——它要么是刚现算的，要么是刚从缓存里解出来的新对象。
+    """
+    basis = out["_t"]
+    # 我在本活动每个场次的有效报名（含培训/彩排），一条 SQL
+    mine: dict[str, Enrollment] = {}
+    if user is not None:
+        mine = {e.shift_id: e for e in db.query(Enrollment).filter(
+            Enrollment.activity_id == act.id, Enrollment.user_id == user.id,
+            Enrollment.status.in_(("enrolled", "waitlisted", "pending_confirm")))}
+
+    # 培训内容、材料列表、组长：只对报了该场次的人和管理者可见。培训材料是
+    # 发给要上岗的人的，组长姓名属于个人信息，不该挂在公开页面上供人浏览。
+    # 只在真用得上时才查——来抢报的人绝大多数一样也看不到。
+    notes: dict = {}
+    atts: dict = {}
+    leaders: dict = {}
+    visible_pids = [p["id"] for g in out["shifts"]
+                    if manager or g["id"] in mine for p in g["positions"]]
+    if visible_pids:
+        notes = dict(db.query(Position.id, Position.training_note)
+                     .filter(Position.id.in_(visible_pids)).all())
+        atts = attachments_by_owner(db, "position", visible_pids)
+        leaders = _leaders(db, act.id)
+
+    for g in out["shifts"]:
+        my_enr = mine.get(g["id"])
+        enrolled = my_enr is not None
+        visible = enrolled or manager
+        for p in g["positions"]:
+            group = ([p["id"]] if not (p["group_name"] or "").strip() else
+                     [x["id"] for x in g["positions"]
+                      if x["group_name"] == p["group_name"]])
+            leader = next((leaders[i] for i in group if i in leaders), None)
+            # 组长联系方式只给**同组已正式报名**的人：现场要找得到组长，
+            # 但候补和别的组的人拿他的手机号没有意义，只是多暴露一份个人信息。
+            same_group = (my_enr is not None and my_enr.status == "enrolled"
+                          and my_enr.position_id in group)
+            p["training_visible"] = visible
+            p["training_note"] = notes.get(p["id"], "") if visible else ""
+            p["attachments"] = atts.get(p["id"], []) if visible else []
+            p["leader_name"] = leader.name if (visible and leader) else ""
+            p["leader_contact"] = (
+                {"phone": leader.phone, "wechat": leader.wechat}
+                if leader and (manager or same_group) else None)
+            # 带 user 时附上「这个人能不能报」——前端据此灰掉并说明原因，
+            # 比让人点了再被拒要清楚
+            if user is not None:
+                unmet = unmet_for_tags(user, p["requirement_tags"])
+                p["eligible"] = not unmet
+                p["ineligible_reason"] = "；".join(unmet)
+        for s in g["attached"]:
+            applies = s["applies_to_positions"]
+            # 我这次报名要不要去这一场
+            s["mine"] = (my_enr is not None and my_enr.status == "enrolled"
+                         and (not applies or my_enr.position_id in applies))
+            # 我在这一场的报名记录（培训/彩排是连带产生的），用来显示请假状态
+            row = mine.get(s["id"]) if s["mine"] else None
+            if row is not None and row.status != "enrolled":
+                row = None
+            s["my_enrollment_id"] = row.id if row else ""
+            s["excused"] = bool(row and row.excused)
+            s["excuse_reason"] = row.excuse_reason if row else ""
+        if my_enr is not None:
+            g["my_enrollment"] = {
+                "enrollment_id": my_enr.id, "status": my_enr.status,
+                "position_id": my_enr.position_id,
+                "allow_reassign": my_enr.allow_reassign,
+                "is_leader": my_enr.is_leader,
+                "confirm_deadline": iso_of(my_enr.confirm_deadline),
+                "waitlist_position": (waitlist_position(db, my_enr)
+                                      if my_enr.status != "enrolled" else 0),
+            }
+
     # 联络群二维码不公开：志愿者报名成功后才弹给本人，管理者在后台能看
     if manager:
         out["contact_group_qr"] = act.contact_group_qr or ""
         # 有岗位统一发放服装，后台才有「志愿服装」页；自备的没有台账可管
         out["attire_issued"] = any(p.attire == "issued"
                                    for g in act.shifts for p in g.positions)
-    if act.is_screened():
+    if out["recruit_mode"] == "screened":
         out["application"] = application_out(db, act, user)
-    else:
-        # 即选即得的报名问卷：题目直接给，报名弹窗里答；答案记在报名记录上
-        out["questions"] = [q.out() for q in db.query(FormQuestion)
-                            .filter(FormQuestion.activity_id == act.id)
-                            .order_by(FormQuestion.sort).all()]
-    if include_logs:
-        logs = (db.query(AuditLog)
-                .filter(AuditLog.activity_id == act.id, AuditLog.visible.is_(True))
-                .order_by(AuditLog.created_at.desc()).limit(10).all())
-        out["change_logs"] = [l.out() for l in logs]
-    # 我在该活动的冲突提示（报名前预检用）
+    # 我在该活动的冲突提示（报名前预检用）：我的报名查一次，逐场次在内存里比
     if user is not None:
+        rows = active_rows(db, user)
         clashes = []
-        for g in act.shifts:
-            clashes.extend(time_conflicts(db, user, g))
+        for sid, start, end, _deadline in basis["shifts"]:
+            clashes.extend(conflicts_among(rows, sid, _dt(start), _dt(end)))
         out["my_time_conflicts"] = clashes
-    return out
+    return with_times(out)
+
+
+def activity_detail(db: OrmSession, act: Activity, user=None, *,
+                    manager: bool = False, cached: bool = False) -> dict:
+    """活动详情。
+
+    cached=True：人人都一样的部分走 3 秒缓存（见 pubcache）；因人而异的部分
+    与时间字段照样每次现算。管理者看自己的活动不要开——改完要立刻看到原样。
+    """
+    if cached:
+        pub = pubcache.get_many("detail", [act.id],
+                                lambda _ids: {act.id: _detail_public(db, act)})
+        out = pub[act.id]
+    else:
+        out = _detail_public(db, act)
+    return _for_viewer(db, act, out, user, manager)

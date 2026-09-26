@@ -12,6 +12,7 @@ from ..database import db_session
 from ..deps import current_user
 from .. import notify
 from ..integrations import msgcenter
+from .. import locks
 from ..locks import (GATE_FULL, GATE_OK, invalidate_gates, may_recheck_gate,
                      new_gate_ticket, settle_gate, shift_lock,
                      sync_and_take_gate, take_gate)
@@ -19,8 +20,9 @@ from ..models import (Activity, Application, Enrollment, Shift, Position,
                       User, like_pattern, now, uid)
 from ..perm import is_activity_manager, managed_activity_ids
 from ..qrcodes import page_qr
-from ..serializers import (activity_brief, activity_detail, display_status_of,
-                           recruit_scope_text)
+from .. import pubcache
+from ..serializers import (activity_detail, brief_parts, display_status_of,
+                           recruit_scope_text, reg_started, with_times)
 from .approvals import can_review
 
 router = APIRouter(prefix="/api/activities", tags=["activities"])
@@ -154,9 +156,14 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
     size = max(1, min(size, 50))
     page = max(1, page)
     picked = ids[(page - 1) * size: page * size]
-    found = {a.id: a for a in db.query(Activity).filter(Activity.id.in_(picked))}
+    # 卡片内容与看的人无关，走 3 秒缓存（见 pubcache）；自己管的活动例外，
+    # 管理者改完回广场核对，得看到刚改的样子。时间字段每次现算（with_times）
+    fresh = [i for i in picked if managed is None or i in managed]
+    found = pubcache.get_many("brief", [i for i in picked if i not in fresh],
+                              lambda want: brief_parts(db, want))
+    found.update(brief_parts(db, fresh))
     return {
-        "items": [activity_brief(db, found[i]) for i in picked if i in found],
+        "items": [with_times(found[i]) for i in picked if i in found],
         "total": len(ids), "page": page, "size": size,
         "organizers": [o for (o,) in
                        db.query(Activity.organizer)
@@ -178,7 +185,9 @@ def get_activity(activity_id: str,
     review = (not manager and act.status not in PUBLIC_STATUSES
               and can_review(db, user, act))
     # 管理者要能在同一个页面核对培训内容与组长，不必先去后台
-    out = activity_detail(db, act, user, manager=manager or review)
+    # 管理视角不走缓存：刚改完的东西必须立刻看到原样
+    out = activity_detail(db, act, user, manager=manager or review,
+                          cached=not (manager or review))
     out["manager"] = manager
     out["review_preview"] = review
     return out
@@ -217,7 +226,8 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
     _ensure_not_editing(act)
 
     t = now()
-    if act.reg_start and t < act.reg_start:
+    # 与详情页的 enroll_open、倒计时毫秒数同一个判断（serializers.reg_started）
+    if not reg_started(act.reg_start, t):
         raise HTTPException(409, f"报名尚未开始（{act.reg_start:%m-%d %H:%M} 起）")
     # 截止按场次各算各的：活动的报名窗可能还没到期，但这一场已经开场了
     deadline = logic.enroll_deadline(act, g)
@@ -374,7 +384,9 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         # ★ 名额判断与落库整段串行化到场次粒度，防止超卖与重复报名。
         # 走完闸门的请求最多只剩「名额数」这么多个，所以等锁的队伍很短——
         # 从前是几百个一起排队，大半等到超时。
-        with shift_lock(g.id):
+        # 扣到号的人是先到的那批，多给它们等一会儿，别让 503 把名额送给后来者
+        with shift_lock(g.id, wait=(locks.TICKET_WAIT_TIMEOUT if tickets
+                                    else None)):
             live = (db.query(Enrollment)
                     .filter(Enrollment.shift_id == g.id,
                             Enrollment.user_id == user.id)

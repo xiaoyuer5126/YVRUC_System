@@ -1,0 +1,146 @@
+"""SQL 条数不随岗位数、活动数涨（N+1 回归）。
+
+抢报那一刻几百人同时打开同一个活动页、同时刷广场。从前详情页一个岗位就要
+查好几遍（组长、同组、材料……），7 个岗位 31 条 SQL；广场一张卡片数一遍
+人数，一页 39 条。这里造「少」和「多」两份同样形状的数据，比两边的条数：
+相等才算过——只比「不超过多少条」的话，每个岗位多一条也能混过去。
+
+缓存关掉量：量的是现算那条路径，缓存命中时条数只会更少。
+"""
+from __future__ import annotations
+
+from contextlib import contextmanager
+from datetime import timedelta
+
+import pytest
+from sqlalchemy import event
+
+from backend import pubcache
+from backend.database import engine
+from backend.models import (Activity, ActivityManager, Attachment, Enrollment,
+                            Position, Shift, now, uid)
+from conftest import ADMIN, POSITION_TEXT, login, student_row
+
+
+@contextmanager
+def counting():
+    n = {"sql": 0}
+
+    def _count(*_a):
+        n["sql"] += 1
+    event.listen(engine, "before_cursor_execute", _count)
+    try:
+        yield n
+    finally:
+        event.remove(engine, "before_cursor_execute", _count)
+
+
+def sql_of(client, headers, path) -> int:
+    with counting() as n:
+        r = client.get(path, headers=headers)
+    assert r.status_code == 200, r.text
+    return n["sql"]
+
+
+@pytest.fixture
+def no_cache(monkeypatch):
+    monkeypatch.setattr(pubcache, "ENABLED", False)
+
+
+_days = iter(range(400, 10_000, 3))
+
+
+def build(db, take_student, per_shift: int, title: str = "") -> dict:
+    """两个服务场次（各带一场培训）、每场 per_shift 个岗位，岗位两两成组、
+    各挂一份材料；每组一名组长，另有一名报在第一个岗位上的志愿者。
+
+    返回活动 id 与几个人的学号。场次按天错开，各用例之间不会撞时段。
+    """
+    admin = student_row(db, ADMIN)
+    day = next(_days)
+    act = Activity(id=uid("act"), title=title or f"条数 {uid('t')}",
+                   intro="x", location="世纪馆", contact_group_qr="x",
+                   contacts=[{"name": "王", "phone": "13900000000"}],
+                   status="published", reg_start=now() - timedelta(days=1),
+                   reg_end=now() + timedelta(days=day), created_by=admin.id)
+    db.add(act)
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                           user_id=admin.id, added_by=admin.id))
+    first_pos = None
+    for k in range(2):
+        start = now() + timedelta(days=day + k, hours=2)
+        g = Shift(id=uid("g"), activity_id=act.id, name=f"场次{k}",
+                  start_time=start, end_time=start + timedelta(hours=3),
+                  mode="pick", sort=k)
+        db.add(g)
+        db.flush()
+        db.add(Shift(id=uid("g"), activity_id=act.id, name=f"培训{k}",
+                     kind="training", parent_id=g.id,
+                     start_time=start - timedelta(hours=2),
+                     end_time=start - timedelta(hours=1)))
+        for i in range(per_shift):
+            p = Position(id=uid("p"), shift_id=g.id, name=f"岗位{i}", quota=5,
+                         group_name=f"组{i // 2}", needs_leader=True, sort=i,
+                         **POSITION_TEXT)
+            db.add(p)
+            db.flush()          # 报名记录外键指向岗位，先落岗位
+            db.add(Attachment(id=uid("att"), owner_type="position",
+                              owner_id=p.id, activity_id=act.id, kind="link",
+                              title="手册", url="https://v.ruc.edu.cn/x"))
+            first_pos = first_pos or p
+            if i % 2 == 0:
+                u = student_row(db, take_student())
+                db.add(Enrollment(id=uid("enr"), activity_id=act.id,
+                                  shift_id=g.id, user_id=u.id,
+                                  position_id=p.id, status="enrolled",
+                                  is_leader=True, joined_at=now()))
+    member = take_student()
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id,
+                      shift_id=first_pos.shift_id,
+                      user_id=student_row(db, member).id,
+                      position_id=first_pos.id, status="enrolled",
+                      joined_at=now()))
+    db.commit()
+    return {"id": act.id, "member": member, "outsider": take_student()}
+
+
+def test_活动详情的条数不随岗位数涨(client, admin, db, take_student, no_cache):
+    few = build(db, take_student, per_shift=2)
+    many = build(db, take_student, per_shift=10)
+
+    def measure(case):
+        path = f"/api/activities/{case['id']}"
+        return {
+            "外人": sql_of(client, login(client, case["outsider"]), path),
+            "已报名": sql_of(client, login(client, case["member"]), path),
+            "管理者": sql_of(client, admin, path),
+        }
+
+    a, b = measure(few), measure(many)
+    assert a == b, (a, b)
+    # 顺带钉一个上限：从前 7 个岗位就是 31 条，别让它悄悄长回去
+    assert max(b.values()) <= 20, b
+
+
+def test_详情缓存命中时条数更少(client, db, take_student):
+    case = build(db, take_student, per_shift=4)
+    t = login(client, case["outsider"])
+    path = f"/api/activities/{case['id']}"
+    cold = sql_of(client, t, path)
+    warm = sql_of(client, t, path)
+    assert warm < cold, (cold, warm)
+
+
+def test_广场列表的条数不随活动数涨(client, admin, db, take_student, no_cache):
+    t = login(client, take_student())
+    counts = {}
+    for n in (2, 8):
+        tag = uid("sq")
+        for _ in range(n):
+            build(db, take_student, per_shift=3, title=f"{tag} 广场")
+        counts[n] = (
+            sql_of(client, t, f"/api/activities?q={tag}&status=&size=50"),
+            # 管理端列表同样是一页一张卡片
+            sql_of(client, admin, f"/api/staff/activities?q={tag}&size=50"),
+        )
+    assert counts[2] == counts[8], counts

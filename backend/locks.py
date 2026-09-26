@@ -29,6 +29,8 @@ _client = redis.Redis.from_url(config.REDIS_URL, decode_responses=True)
 
 LOCK_TTL_MS = 5_000      # 锁自动过期：持锁进程崩了也不会把场次锁死
 WAIT_TIMEOUT = 3.0       # 等锁上限，超过就让用户重试而不是干等
+# 已经扣到闸门号的报名请求等得更久，见 shift_lock
+TICKET_WAIT_TIMEOUT = 15.0
 RETRY_INTERVAL = 0.02
 
 # 只删自己那把锁：TTL 到期后锁可能已被别人持有，无条件 del 会误删。
@@ -403,11 +405,22 @@ def _run_after_unlock(queued: list) -> None:
 
 
 @contextlib.contextmanager
-def shift_lock(shift_id: str):
-    """锁住一个场次的名额账本。"""
+def shift_lock(shift_id: str, *, wait: float | None = None):
+    """锁住一个场次的名额账本。
+
+    wait：最多等多久，默认 WAIT_TIMEOUT。报名时**已经扣到闸门号**的请求传
+    TICKET_WAIT_TIMEOUT：它是前 N 个到的人之一，名额本就该是它的，3 秒没排到
+    就回 503 等于把名额让给了后来重试的人——抢报时几十上百个持号的人排一把锁，
+    每人十几二十毫秒，排到后面的正好要等好几秒。闸门把这种人限在「名额数」
+    上下，所以多等的队伍不会无限长；没拿到号的照旧 3 秒，洪水不会因此堆起来。
+    多等不影响锁的 TTL：TTL 管的是**持锁**多久，锁里只有几条 SQL，外呼都排在
+    放锁之后（after_unlock）；等待期间号一直登记在途，GATE_INFLIGHT_SECONDS
+    比这宽得多，不会被当成崩掉的请求清走。
+    """
     key = f"rucva:lock:group:{shift_id}"
     token = secrets.token_hex(8)
-    deadline = time.monotonic() + WAIT_TIMEOUT
+    # 在调用时读模块变量而不是写成默认参数：用例会 monkeypatch 它
+    deadline = time.monotonic() + (WAIT_TIMEOUT if wait is None else wait)
     try:
         while not _client.set(key, token, nx=True, px=LOCK_TTL_MS):
             if time.monotonic() >= deadline:

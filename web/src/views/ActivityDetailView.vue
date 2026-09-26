@@ -60,12 +60,12 @@
                   title="负责人正在调整本活动的安排，报名暂时关闭"
                   description="调整期间无法报名或退选，保存后会将变更通知已报名志愿者。" />
 
-        <!-- 还没到报名开始：倒计时归零时自己重拉一次，不必让人手动刷新页面。
+        <!-- 还没到报名开始：倒计时归零时就地开闸（unlock），不等重拉。
              按钮在这之前是灰的（enroll_open 由后端算，含 reg_start）。 -->
         <div v-if="opensAt" class="reg-countdown">
           <el-icon><Clock /></el-icon>
           <span>报名于 <b>{{ fmtDT(act.reg_start) }}</b> 开始，还有</span>
-          <el-countdown :value="opensAt" :format="openFormat" @finish="load" />
+          <el-countdown :value="opensAt" :format="openFormat" @finish="unlock" />
           <span class="dim">时间到自动开放，不用刷新页面</span>
         </div>
 
@@ -98,7 +98,8 @@
               <el-tag v-if="g.started" size="small" type="info" effect="plain">已开场</el-tag>
             </div>
             <div class="dim">{{ g.time_text }}</div>
-            <div v-if="act.status === 'published' && !g.enroll_open" class="dim">
+            <div v-if="act.status === 'published' && !act.opens_in && !g.enroll_open"
+                 class="dim">
               本场报名已于 {{ fmtDT(g.enroll_deadline) }} 结束
             </div>
             <div class="m-quota">
@@ -516,7 +517,8 @@
                   {{ row.mode_label }}
                 </el-tag>
                 <!-- 每个场次在自己开场时就停止收人，活动整体可能还在报名期 -->
-                <div v-if="act.status === 'published' && !row.enroll_open" class="dim">
+                <div v-if="act.status === 'published' && !act.opens_in && !row.enroll_open"
+                     class="dim">
                   本场报名已于 {{ fmtDT(row.enroll_deadline) }} 结束
                 </div>
               </template>
@@ -696,7 +698,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT } from '../api'
@@ -840,27 +842,60 @@ function showStationDetail(g, s) {
 
 /** 倒计时目标（本地时间戳）。
  *
- * 用后端给的「还剩多少秒」加上此刻，而不是直接 parse reg_start：客户端时钟
- * 偏几分钟，倒计时就会比服务端早到或晚到，按钮跟着错。归零时 load() 重拉，
- * 真没到点的话新的 opens_in 会把目标再往后推一点，自己纠回来。
+ * 用后端给的「还剩多少毫秒」加上收到响应的此刻，而不是直接 parse reg_start：
+ * 客户端时钟偏几分钟，倒计时就会比服务端早到或晚到，按钮跟着错。毫秒数是
+ * 服务端向上取整算的，再加上响应路上那点时间，归零时服务端一定已经到点——
+ * 只会晚一点，不会早。
  */
 const opensAt = ref(0)
 const openFormat = computed(
   () => (act.value?.opens_in > 86400 ? 'DD 天 HH:mm:ss' : 'HH:mm:ss'))
 
 async function load() {
+  let d
   try {
-    act.value = await api.get(`/api/activities/${route.params.id}`, { silent: true })
+    d = await api.get(`/api/activities/${route.params.id}`, { silent: true })
   } catch (e) {
     if (e.status === 403) { blocked.value = e.message; return }
     ElMessage.error(e.message)
     return
   }
-  opensAt.value = act.value.opens_in
-    ? Date.now() + act.value.opens_in * 1000
-    : 0
+  const at = Date.now()
+  // 每场的截止也换成本地时间戳，本地开闸时拿它判断这一场还收不收人
+  for (const g of d.shifts || []) g.closesAt = at + (g.closes_in_ms ?? Infinity)
+  act.value = d
+  const ms = d.opens_in_ms ?? d.opens_in * 1000
+  opensAt.value = ms ? at + ms : 0
 }
 onMounted(load)
+
+/** 倒计时归零：就地开闸，不等重拉。
+ *
+ * 从前归零时重拉一次、等后端说「开了」按钮才亮——谁的网快谁先亮，抢报拼的
+ * 成了刷新速度。现在每个人的按钮在同一刻亮起，规则与后端相同：报名已开始、
+ * 且没过本场截止（min(活动报名截止, 本场开场)）。点下去的报名请求由后端按
+ * 精确时间再判一次，谁报得上始终以数据库为准。
+ *
+ * 人数随后再拉，错开 0–3 秒：几百人同一毫秒重拉只会让服务端排队。重拉不影响
+ * 按钮——那时后端也已经说开了。
+ */
+let refreshTimer = null
+function unlock() {
+  const a = act.value
+  opensAt.value = 0
+  if (!a) return
+  const at = Date.now()
+  a.opens_in = 0
+  a.opens_in_ms = 0
+  if (a.display_status === 'upcoming') {
+    a.display_status = 'published'
+    a.display_label = '报名中'
+  }
+  for (const g of a.shifts || []) g.enroll_open = at <= g.closesAt
+  clearTimeout(refreshTimer)
+  refreshTimer = setTimeout(load, Math.random() * 3000)
+}
+onBeforeUnmount(() => clearTimeout(refreshTimer))
 
 function doEnroll(g, position) {
   if (g.mode === 'pick' && g.positions.length && !position) {
