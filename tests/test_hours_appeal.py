@@ -768,3 +768,69 @@ def test_多个岗位就是多句话(client, admin, db, served):
     ws = load_workbook(BytesIO(r.content)).active
     note = next(x for x in ws.values if x[0] == u.name)[4]
     assert note == (f"{g.span_text()} 引导；{g2.span_text()} 登记")
+
+
+# ======================= 扣减与删段：账不能凭空变多 =======================
+
+def _row(client, admin, act, user_id):
+    d = client.get(f"/api/staff/activities/{act.id}/hours", headers=admin).json()
+    return next((x for x in d["items"] if x["user"]["id"] == user_id), None)
+
+
+def test_删段不截到零_账不会凭空多出来(client, admin, db, served):
+    """加 2、扣 5、删掉加的那段：从前截成 0，再删扣的那段就多出 1 小时。"""
+    act, g, u = served            # 签到 4 小时
+    _confirm(client, admin, act, approve=False)
+    assert _add_manual(client, admin, act, u.student_id, 2, "场外搬运").status_code == 200
+    assert _add_manual(client, admin, act, u.student_id, -5, "中途离场").status_code == 200
+    m = _row(client, admin, act, u.id)
+    assert m["hours"] == 1.0
+    plus = next(p for p in m["parts"] if p.get("hours") == 2)
+    minus = next(p for p in m["parts"] if p.get("hours") == -5)
+    url = f"/api/staff/activities/{act.id}/hours/manual/{m['record_id']}/"
+
+    # 加的那段已经被扣减用掉了，不许单独删
+    assert client.delete(url + plus["id"], headers=admin).status_code == 409
+    # 按顺序删：先删扣减，再删加的，回到签到的 4 小时
+    assert client.delete(url + minus["id"], headers=admin).status_code == 200
+    assert client.delete(url + plus["id"], headers=admin).status_code == 200
+    db.expire_all()
+    assert db.get(HoursRecord, m["record_id"]).hours == 4.0
+    assert _row(client, admin, act, u.id)["hours"] == 4.0
+
+
+def test_扣到零的人仍在总表里(client, admin, db, served, take_student):
+    act, g, u = served
+    other = student_row(db, take_student())
+    _add_manual(client, admin, act, other.student_id, 2, "场外搬运")
+    assert _add_manual(client, admin, act, other.student_id, -2, "其实没去").status_code == 200
+    m = _row(client, admin, act, other.id)
+    assert m is not None and m["hours"] == 0 and len(m["parts"]) == 2
+
+
+def test_没确认过时扣签到时长会提示先确认(client, admin, served):
+    act, g, u = served
+    _add_manual(client, admin, act, u.student_id, 1, "场外搬运")
+    r = _add_manual(client, admin, act, u.student_id, -3, "中途离场")
+    assert r.status_code == 400 and "确认全部" in r.json()["detail"]
+
+
+def test_时长拒绝非有限数(client, admin, served):
+    act, g, u = served
+    for bad in ("nan", "inf", "-inf"):
+        assert _add_manual(client, admin, act, u.student_id, bad,
+                           "x").status_code == 400
+
+
+def test_同一批里同一人出现两次只有一笔(client, admin, db, served, take_student):
+    act, g, u = served
+    other = student_row(db, take_student())
+    r = client.post(f"/api/staff/activities/{act.id}/hours/manual", headers=admin,
+                    json={"items": [
+                        {"student_id": other.student_id, "hours": 2, "note": "搬运"},
+                        {"student_id": other.student_id, "hours": -1, "note": "早退"}]})
+    assert r.status_code == 200
+    db.expire_all()
+    recs = db.query(HoursRecord).filter(HoursRecord.activity_id == act.id,
+                                        HoursRecord.user_id == other.id).all()
+    assert len(recs) == 1 and recs[0].hours == 1.0

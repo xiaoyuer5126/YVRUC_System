@@ -72,6 +72,11 @@ def live_task_conflict(db: OrmSession, shift_id: str, position_id: str | None,
     return None
 
 
+def _hm(t: datetime | None) -> str:
+    """可签时段的一端；留空表示这一端不限。"""
+    return f"{t:%m-%d %H:%M}" if t else "不限"
+
+
 def _conflict_message(db: OrmSession, t: CheckinTask, g: Shift) -> str:
     st = db.get(Position, t.position_id) if t.position_id else None
     return (f"本场次已经有开启的签到码（"
@@ -92,6 +97,8 @@ def create_task(shift_id: str, body: TaskBody,
     if body.mode == "position":
         # 可多选：一个岗位一张码。只认本场次下的岗位
         wanted = body.position_ids or ([body.position_id] if body.position_id else [])
+        # 去重：同一个岗位勾两次会开出两张同时开着的码——冲突检查只比库里已有的
+        wanted = list(dict.fromkeys(wanted))
         if not wanted:
             raise HTTPException(400, "分岗位签到必须指定本场次下的岗位")
         for pid in wanted:
@@ -368,7 +375,10 @@ def toggle_task(task_id: str, body: dict,
         for key in ("valid_from", "valid_to"):
             if key in body:
                 raw = (body[key] or "").strip()
-                setattr(task, key, datetime.fromisoformat(raw) if raw else None)
+                try:
+                    setattr(task, key, datetime.fromisoformat(raw) if raw else None)
+                except ValueError:
+                    raise HTTPException(400, "时间格式不对") from None
         if task.valid_from and task.valid_to and task.valid_to <= task.valid_from:
             raise HTTPException(400, "结束时间要晚于开始时间")
         g = db.get(Shift, task.shift_id)
@@ -378,8 +388,7 @@ def toggle_task(task_id: str, body: dict,
                   target_label=f"{_act(db, task.activity_id).title}·"
                                f"{st.name if st else (g.name + '·统一签到')}",
                   activity_id=task.activity_id,
-                  summary=f"改可签时段：{task.valid_from:%m-%d %H:%M} ~ "
-                          f"{task.valid_to:%m-%d %H:%M}")
+                  summary=f"改可签时段：{_hm(task.valid_from)} ~ {_hm(task.valid_to)}")
 
     if "active" in body:
         want = bool(body["active"])
@@ -972,8 +981,10 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
         fl = flags.get(uid_, set())
         manual = extra.get(uid_, [])
         total = raw + sum(float(p.get("hours") or 0) for p in manual)
-        if total <= 0:
-            continue      # 只去了「不计时长」的场合（如线上培训）：出勤在签到那边看
+        if total <= 0 and not manual:
+            # 只去了「不计时长」的场合（如线上培训）：出勤在签到那边看。
+            # 有手动段的留着——扣到 0 的人也得在表里，不然那几段加减没处看、没处删
+            continue
         u = db.get(User, uid_)
         existing = mine.get(uid_)
         out.append({
@@ -1064,6 +1075,10 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
             hours = float(it.get("hours"))
         except (TypeError, ValueError):
             raise HTTPException(400, f"{u.name} 的时长不是数字")
+        if not math.isfinite(hours):
+            # NaN / inf 能过下面所有比较（NaN 跟谁比都是假），存进去之后
+            # 每个返回这笔账的接口都序列化不出 JSON
+            raise HTTPException(400, f"{u.name} 的时长不是有效数字")
         if hours == 0:
             raise HTTPException(400, f"{u.name} 的时长不能是 0")
         note = (it.get("note") or "").strip()
@@ -1076,10 +1091,15 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
                 raise HTTPException(400, f"{u.name} 这场活动还没有时长记录，"
                                          f"没有可扣的")
             if (rec.hours or 0) + hours < 0:
-                # 不偷偷扣到 0 了事：说清楚现在有多少，让管理者自己决定
+                # 不偷偷扣到 0 了事：说清楚现在有多少，让管理者自己决定。
+                # 还没「确认全部」时，这一笔里只有手动补录的那几段——签到算出来
+                # 的时长还没进账，扣不到它头上，得先确认
+                hint = ("（签到算出的时长还没核准进账，请先「确认全部」再扣）"
+                        if not any(p.get("kind") == "shift"
+                                   for p in (rec.parts or [])) else "")
                 raise HTTPException(
                     400, f"{u.name} 当前只有 {rec.hours:g} 小时，"
-                         f"扣不了 {-hours:g} 小时")
+                         f"扣不了 {-hours:g} 小时{hint}")
         # id 是这一段的编号，删除时按它找（见 hours_manual_delete）
         part = {"id": uid("seg"), "label": note, "time": "",
                 "position": "", "hours": round(hours, 2), "kind": "manual"}
@@ -1087,6 +1107,9 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
             db.add(HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id,
                                hours=part["hours"], source="manual", note=note,
                                parts=[part], confirmed_by=user.id))
+            # 会话不自动 flush：同一批里这个人再出现一次时，hours_record_of
+            # 查不到刚加的这条，会给他再建一笔
+            db.flush()
         else:
             rec.hours = round((rec.hours or 0) + part["hours"], 2)
             rec.parts = (rec.parts or []) + [part]
@@ -1127,7 +1150,14 @@ def hours_manual_delete(activity_id: str, record_id: str, part_id: str,
         raise HTTPException(404, "这一段不是手动添加的时长")
     gone = parts.pop(hit)
     hours = round(float(gone.get("hours") or 0), 2)
-    rec.hours = round(max(0.0, (rec.hours or 0) - hours), 2)
+    left = round((rec.hours or 0) - hours, 2)
+    if left < 0:
+        # 不能截到 0 了事：截掉的那一截会在删扣减段时被「加回来」，账凭空变多
+        # （加 2、扣 5、删掉加的那段 → 截成 0 → 再删扣的那段 → 多出 1 小时）
+        raise HTTPException(
+            409, f"删掉这段后合计会变成 {left:g} 小时：它已经被后面的扣减用掉了，"
+                 f"请先删掉扣减的那段")
+    rec.hours = left
     rec.parts = parts
     rec.confirmed_at = None          # 数值变了，本人得重新表个态
     u = db.get(User, rec.user_id)

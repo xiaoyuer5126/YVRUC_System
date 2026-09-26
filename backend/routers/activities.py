@@ -12,8 +12,9 @@ from ..database import db_session
 from ..deps import current_user
 from .. import notify
 from ..integrations import msgcenter
-from ..locks import (GATE_OK, reset_gate, return_gate, shift_lock,
-                     take_gate)
+from ..locks import (GATE_FULL, GATE_OK, invalidate_gates, may_recheck_gate,
+                     new_gate_ticket, settle_gate, shift_lock,
+                     sync_and_take_gate, take_gate)
 from ..models import (Activity, Application, Enrollment, Shift, Position,
                       User, like_pattern, now, uid)
 from ..perm import is_activity_manager, managed_activity_ids
@@ -258,51 +259,38 @@ def _waitlist_left(db, g, position) -> int:
     return position.waitlist_quota - len(queued)
 
 
-def _gate(db, g, position, kind, left_fn) -> bool | None:
-    """闸门放行吗。返回 True（号已扣在手里）/ False（确实没位子）/ None（闸门用不了）。
+def _gate(db, g, position, kind, left_fn, ticket) -> bool | None:
+    """闸门放行吗。返回 True（号已扣在手里）/ False（没位子）/ None（闸门用不了）。
 
-    闸门说「满了」或者「没预热」时一律以数据库为准：核一遍、把计数器覆盖成
-    实际剩余，还剩就再扣一次——所以计数器旧了最多多一次查库，不会超卖、也不会
-    冤枉人。**Redis 用不了时返回 None**：闸门只是加速用的，它不在就该退回
-    「每个请求都查库」那条老路，而不是反过来把人挡在外面。
+    闸门说「满了」时，限流地拿数据库核一遍（见 locks 的「名额闸门」）；没预热时
+    必核。核完按「数据库剩余 − 在途」对齐计数器再扣——不能直接写成数据库剩余，
+    那会把在途的号全还回去。**Redis 用不了时返回 None**：闸门只是加速用的，
+    它不在就该退回「每个请求都查库」那条老路，而不是反过来把人挡在外面。
     """
-    if take_gate(g.id, position.id, kind) == GATE_OK:
+    got = take_gate(g.id, position.id, kind, ticket)
+    if got == GATE_OK:
         return True
-    # 闸门说「没了」（或者没预热）→ 拿数据库核一遍。绝大多数请求走到这里就结束了，
-    # 所以这一段要瘦：只查一次，别做多余的写。
+    if got == GATE_FULL and not may_recheck_gate(g.id, position.id, kind):
+        return False        # 这一小会儿里已经有人核过了：满就是满
     left = left_fn(db, g, position)
-    if left <= 0:
-        # 确实满了。计数器不必再动——它本来就是 0
-        return False
-    # 数据库说还有位子：那是计数器旧了，覆盖成实际剩余再扣一次
-    reset_gate(g.id, position.id, kind, left)
-    # reset 成功了键就一定在，所以再扣不到就是 Redis 用不了——那就别拿闸门
-    # 拦人，交回数据库那条路（它才是账本）
-    return True if take_gate(g.id, position.id, kind) == GATE_OK else None
+    got = sync_and_take_gate(g.id, position.id, kind, ticket, max(0, left))
+    if got == GATE_OK:
+        return True
+    return False if got == GATE_FULL else None
 
 
-def _release_gates(g, position, seat_gate, wl_gate) -> None:
-    """报不上时把闸门的号原样还回去（拿过才还）。"""
-    if seat_gate:
-        return_gate(g.id, position.id, "seat")
-    if wl_gate:
-        return_gate(g.id, position.id, "waitlist")
+def _settle_gates(g, position, tickets: dict, status: str | None) -> None:
+    """给闸门结账。tickets：{kind: ticket}，只含扣到了号的那几种。
 
-
-def _settle_gate(db, g, position, status, seat_gate, wl_gate) -> None:
-    """按最终结果给闸门结账。
-
-    闸门是「先扣了再说」，可最终判定在数据库那边，两者可能对不上：
-      · 扣到号的却转去了候补 / 被拒 → 号还回去；
-      · 没扣到号的却报上了（计数器旧了，数据库其实有位子）→ 按实际剩余重新覆盖。
+    status 为 None 表示没报上：号原样还回去。报上了的话，用掉的那个只从在途里
+    划掉；扣了却没用上的（比如扣了候补号、结果数据库说有正式名额）还回去。
+    扣了正式号却进了候补——数据库说其实没位子，那个号不还，还了计数器只会
+    更虚高。
     """
-    if status == "enrolled":
-        if not seat_gate:
-            reset_gate(g.id, position.id, "seat", _room_left(db, g, position))
-        if wl_gate:
-            return_gate(g.id, position.id, "waitlist")
-    elif seat_gate:
-        return_gate(g.id, position.id, "seat")
+    used = {"enrolled": "seat", "waitlisted": "waitlist"}.get(status or "")
+    for kind, ticket in tickets.items():
+        restore = status is None or (kind == "waitlist" and kind != used)
+        settle_gate(g.id, position.id, kind, ticket, restore=restore)
 
 
 @router.post("/{activity_id}/shifts/{shift_id}/enroll")
@@ -340,11 +328,16 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
     # 查询、时段比较、场次锁根本不会执行。闸门只挡洪水、不判定名额——拿不到号
     # 也可能是计数器旧了（_gate 会拿数据库核一遍），拿到号也照样要走下面那条
     # 以数据库为准的老路，所以它旧了也不会超卖。
-    seat_gate = _gate(db, g, position, "seat", _room_left)
-    wl_gate = False
-    if seat_gate is False:
-        wl_gate = _gate(db, g, position, "waitlist", _waitlist_left)
-        if wl_gate is False:
+    ticket = new_gate_ticket()
+    tickets: dict[str, str] = {}      # 扣到了号的闸门
+    seat_gate = _gate(db, g, position, "seat", _room_left, ticket)
+    if seat_gate:
+        tickets["seat"] = ticket
+    elif seat_gate is False:
+        wl_gate = _gate(db, g, position, "waitlist", _waitlist_left, ticket)
+        if wl_gate:
+            tickets["waitlist"] = ticket
+        elif wl_gate is False:
             raise HTTPException(409, f"候补名额已满（上限{position.waitlist_quota}人）")
 
     enrolled = False          # 报名有没有真的落库
@@ -439,6 +432,11 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                 db.flush()
                 msgcenter.send_user(db, user, "waitlist_queued", activity=act.title,
                                 shift=g.name, pos=logic.waitlist_position(db, enr))
+            # 在 commit **之前**结算：commit 之后、结算之前那一瞬，这个号既在
+            # 数据库里占着名额、又挂在在途里，别的请求对齐闸门时会把它减两遍，
+            # 把有位子的人挡在外面。先结算的话最坏是 commit 失败时少还一个号
+            # （下面 finally 里再还是空操作），闸门偏紧，下次核库就对齐回来
+            _settle_gates(g, position, tickets, enr.status)
             try:
                 db.commit()
             except IntegrityError:  # 唯一索引兜底：锁失效时的并发重复报名
@@ -449,10 +447,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         if not enrolled:
             # 上面任何一步没走通（资格不符、时段冲突、名额没了、库出错），
             # 扣在手里的号都要还回去，否则一次失败的报名白占一个名额
-            _release_gates(g, position, seat_gate, wl_gate)
-        else:
-            # 落库成功了才结算：先结算再 commit 的话，commit 失败会重复还号
-            _settle_gate(db, g, position, enr.status, seat_gate, wl_gate)
+            _settle_gates(g, position, tickets, None)
 
     return {
         "status": enr.status,
@@ -561,6 +556,12 @@ def cancel_enroll(enrollment_id: str,
     db.commit()
 
     with shift_lock(g.id):
+        # 锁外读到的状态可能已经旧了（连点两下退选：第一下在锁里退掉、放出名额、
+        # 候补顶上；第二下拿到锁时手里的 enr 还是「已报名」）。会话是
+        # expire_on_commit=False，不重读就会照着旧状态再退一遍
+        db.refresh(enr)
+        if enr.status not in ("pending_confirm", "waitlisted", "enrolled"):
+            raise HTTPException(400, "该记录已退选")
         if enr.status == "pending_confirm":
             # 放弃候补转正：名额顺延下一位
             enr.status = "cancelled"
@@ -571,6 +572,7 @@ def cancel_enroll(enrollment_id: str,
             db.commit()
             logic.promote_all(db, g)
             db.commit()
+            invalidate_gates(g.id, enr.position_id)
             return {"ok": True, "effect": "abandoned",
                     "message": "已放弃候补转正，名额顺延下一位。"}
 
@@ -580,6 +582,7 @@ def cancel_enroll(enrollment_id: str,
             enr.cancelled_at = now()
             logic.record_change(db, user, enr, "quit_queue")
             db.commit()
+            invalidate_gates(g.id, enr.position_id)
             return {"ok": True, "effect": "quit_queue", "message": "已退出候补队列。"}
 
         # enrolled：活动开始后不可退
@@ -618,6 +621,9 @@ def cancel_enroll(enrollment_id: str,
         if was_leader:
             logic.on_leader_vacated(db, vacated)
         db.commit()
+        # 名额在闸门之外变了（放出一个正式名额，或候补顶上后空出一个排队位）：
+        # 作废计数器，下一个报名按数据库重新对齐，别让刚放出来的位子被挡住
+        invalidate_gates(g.id, vacated)
 
     if hold_seat:
         return {"ok": True, "effect": "held",

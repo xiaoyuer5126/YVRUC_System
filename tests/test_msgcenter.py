@@ -85,3 +85,47 @@ def test_Mock_下落库且标记送达(db, take_student):
     assert row.delivered is True
     # 通道名记的是「走的哪个通道」，不是「哪个模块发的」，所以仍是 wecom
     assert row.channel == "wecom"
+
+
+def test_真实推送在事务提交且场次锁放掉之后才发(client, open_group, take_student,
+                                    monkeypatch):
+    """锁 5 秒过期，一次推送最长等 8 秒：锁里推送会把锁拖过期、放第二个人进来超卖。"""
+    from backend import locks
+    from conftest import login
+    from test_enroll import enroll
+
+    act, g = open_group(2, waitlist_quota=0)
+    seen = []
+
+    def fake_send(student_id, title, content):
+        seen.append(locks._client.exists(f"rucva:lock:group:{g.id}"))
+        return True
+
+    monkeypatch.setattr(msgcenter, "real_mode", lambda: True)
+    monkeypatch.setattr(msgcenter, "_send", fake_send)
+    sid = take_student()
+    assert enroll(client, login(client, sid), act, g).status_code == 200
+    assert seen == [0]                       # 推了一次，且当时锁已经放掉
+
+    from backend.database import SessionLocal
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.student_id == sid).one()
+        row = (db.query(Notification)
+               .filter(Notification.user_id == user.id,
+                       Notification.template_key == "signup_success").one())
+        assert row.delivered is True         # 推成功后回写了送达
+    finally:
+        db.close()
+
+
+def test_业务回滚了就不推(db, take_student, monkeypatch):
+    sid = take_student()
+    user = db.query(User).filter(User.student_id == sid).one()
+    sent = []
+    monkeypatch.setattr(msgcenter, "real_mode", lambda: True)
+    monkeypatch.setattr(msgcenter, "_send", lambda *a: sent.append(a) or True)
+    msgcenter.send_user(db, user, "custom", title="标题", content="正文")
+    db.rollback()
+    db.commit()
+    assert sent == []
