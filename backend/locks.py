@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import logging
 import os
 import secrets
@@ -139,28 +140,64 @@ return 0
 # —— 名额闸门 ——
 #
 # 抢报时几百个请求同一瞬间到。每个请求都进数据库「数一遍还剩几个位子」的话，
-# 数据库连接和线程池会被一起拖垮（实测：几百个请求把整站拖住两分钟，50 个
-# 名额只发出去 5 个）。所以在 Redis 上放一个「还剩几个」的计数器，报名先来
-# 扣一个：扣不到就直接回「满了」，这一步完全不碰数据库。
+# 数据库连接和线程池会被一起拖垮。所以在 Redis 上放一个「还剩几个」的计数器，
+# 报名先来扣一个：扣不到就直接回「满了」，这一步完全不碰数据库。
 #
 # **闸门只挡洪水，不判定名额**：拿到闸门的请求照样走原来的锁 + 实际人数判定，
-# 数据库始终是账本。所以计数器旧了也不会超卖。反过来，闸门说「满了」时要拿
-# 数据库核一遍再回绝——不然计数器旧了会把本该报上的人冤枉掉。核的时候顺手
-# 把计数器覆盖成数据库的实际剩余（覆盖，不是加减）。
+# 数据库始终是账本。所以计数器旧了也不会超卖。
 #
-# 计数器会随时间漂移（退选、补招、扩容、候补顺延都不经过它）。漂移最多造成
-# 「暂时误拒」，一核就自愈；超卖不会发生，因为名额最终由数据库说了算。
+# 计数器要跟数据库对齐（预热、以及闸门说「满了」时核一遍），但**不能直接覆盖成
+# 数据库的剩余数**：已经扣到号、还在做资格校验没落库的那些请求，数据库里看不见。
+# 直接覆盖的话，在途的号全被「还」了回去——抢报高峰里计数器一次次被改回
+# 「还剩 N 个」，闸门等于没有。所以每个扣到的号都登记在一个在途集合里
+# （带时间戳，超过 GATE_INFLIGHT_SECONDS 的视为进程崩掉没还，不再算数），
+# 对齐时写的是「数据库剩余 − 在途」。
+#
+# 闸门说「满了」时核库也要限流：每个岗位每 GATE_RECHECK_MS 最多核一次，其余的
+# 直接回「满了」。不限的话，名额发完之后洪水里的每个请求仍各查一次库。代价是
+# 退选放出来的名额最多晚这么一小会儿才能被闸门看见——退选本身会把闸门作废
+# （invalidate_gates），所以通常连这一小会儿也没有。
 GATE_TTL_SECONDS = 300
+GATE_INFLIGHT_SECONDS = 60       # 比一次报名请求的最长耗时宽得多
+GATE_RECHECK_MS = 500
 GATE_NONE, GATE_FULL, GATE_OK = -1, 0, 1
 
 # 扣一个，但**不扣到负数**：负数会让后来的还号把计数顶回去，一个旧计数器
-# 就能凭空变出名额来。所以在 Lua 里判完再扣。
+# 就能凭空变出名额来。所以在 Lua 里判完再扣；扣到了就把号登记为在途。
 _TAKE_GATE = _client.register_script("""
 local n = redis.call('get', KEYS[1])
 if not n then return -1 end
 if tonumber(n) <= 0 then return 0 end
 redis.call('decr', KEYS[1])
+redis.call('zadd', KEYS[2], ARGV[2], ARGV[1])
+redis.call('expire', KEYS[2], ARGV[3])
 return 1
+""")
+
+# 按数据库剩余对齐，再扣一个。「剩余 − 在途」和扣号在一段 Lua 里做完，
+# 中间不会有别的请求插进来扣号或还号。
+_SYNC_GATE = _client.register_script("""
+redis.call('zremrangebyscore', KEYS[2], '-inf', ARGV[4])
+local left = tonumber(ARGV[5]) - redis.call('zcard', KEYS[2])
+if left < 0 then left = 0 end
+redis.call('set', KEYS[1], left, 'EX', ARGV[3])
+if left <= 0 then return 0 end
+redis.call('decr', KEYS[1])
+redis.call('zadd', KEYS[2], ARGV[2], ARGV[1])
+redis.call('expire', KEYS[2], ARGV[3])
+return 1
+""")
+
+# 结算一个号：从在途里划掉；restore=1 时把名额还给计数器。
+# 只有真从在途里划掉了才还——同一个号结算两次不会多还一个出来。
+_SETTLE_GATE = _client.register_script("""
+if redis.call('zrem', KEYS[2], ARGV[1]) == 1 and ARGV[2] == '1' then
+    if redis.call('exists', KEYS[1]) == 1 then
+        redis.call('incr', KEYS[1])
+    end
+    return 1
+end
+return 0
 """)
 
 
@@ -169,22 +206,64 @@ def gate_key(shift_id: str, position_id: str, kind: str) -> str:
     return f"rucva:gate:{kind}:{shift_id}:{position_id}"
 
 
-def take_gate(shift_id: str, position_id: str, kind: str) -> int:
+def _gate_keys(shift_id: str, position_id: str, kind: str) -> list[str]:
+    key = gate_key(shift_id, position_id, kind)
+    return [key, key + ":inflight"]
+
+
+def new_gate_ticket() -> str:
+    return secrets.token_hex(8)
+
+
+def take_gate(shift_id: str, position_id: str, kind: str, ticket: str) -> int:
     """扣一个名额。返回 GATE_OK（扣到了）/ GATE_FULL（说满了）/ GATE_NONE（没预热）。
 
     Redis 不可用时返回 GATE_NONE：闸门是加速用的，不该成为新的单点故障——
     退回到「每个请求都查库」那条老路，功能照旧，只是慢。
     """
     try:
-        return int(_TAKE_GATE(keys=[gate_key(shift_id, position_id, kind)]))
+        return int(_TAKE_GATE(keys=_gate_keys(shift_id, position_id, kind),
+                              args=[ticket, time.time(), GATE_TTL_SECONDS]))
     except redis.RedisError:
         return GATE_NONE
 
 
-def return_gate(shift_id: str, position_id: str, kind: str) -> None:
-    """把扣掉的那个还回去。只有拿到 GATE_OK、最后又没占上的才需要还。"""
+def sync_and_take_gate(shift_id: str, position_id: str, kind: str,
+                       ticket: str, db_left: int) -> int:
+    """按数据库剩余（减去在途）对齐计数器，再扣一个。Redis 不可用时 GATE_NONE。"""
+    t = time.time()
+    try:
+        return int(_SYNC_GATE(keys=_gate_keys(shift_id, position_id, kind),
+                              args=[ticket, t, GATE_TTL_SECONDS,
+                                    t - GATE_INFLIGHT_SECONDS, db_left]))
+    except redis.RedisError:
+        return GATE_NONE
+
+
+def may_recheck_gate(shift_id: str, position_id: str, kind: str) -> bool:
+    """闸门说满了，这一次要不要去数据库核一遍（每个岗位限流，见上）。"""
+    try:
+        return bool(_client.set(gate_key(shift_id, position_id, kind) + ":recheck",
+                                1, nx=True, px=GATE_RECHECK_MS))
+    except redis.RedisError:
+        return True
+
+
+def settle_gate(shift_id: str, position_id: str, kind: str, ticket: str,
+                *, restore: bool) -> None:
+    """结算扣到的号。restore=True：没用上，名额还回去；False：用掉了（或者
+    数据库说其实没位子，还回去只会让计数器更虚高），只从在途里划掉。"""
     with contextlib.suppress(redis.RedisError):
-        _client.incr(gate_key(shift_id, position_id, kind))
+        _SETTLE_GATE(keys=_gate_keys(shift_id, position_id, kind),
+                     args=[ticket, "1" if restore else "0"])
+
+
+def invalidate_gates(shift_id: str, position_id: str) -> None:
+    """名额在闸门之外变多了（退选）：作废计数器，下一个请求会按数据库重新对齐。
+    在途集合留着——对齐时还得靠它减掉在途的号。"""
+    with contextlib.suppress(redis.RedisError):
+        _client.delete(gate_key(shift_id, position_id, "seat"),
+                       gate_key(shift_id, position_id, "waitlist"))
 
 
 def gate_left(shift_id: str, position_id: str, kind: str) -> int | None:
@@ -197,7 +276,7 @@ def gate_left(shift_id: str, position_id: str, kind: str) -> int | None:
 
 
 def reset_gate(shift_id: str, position_id: str, kind: str, left: int) -> None:
-    """按数据库的实际剩余名额覆盖计数器（不是加减，是覆盖）。"""
+    """直接把计数器设成某个数。只给用例和排查用——业务路径走 sync_and_take_gate。"""
     with contextlib.suppress(redis.RedisError):
         _client.set(gate_key(shift_id, position_id, kind), max(0, left),
                     ex=GATE_TTL_SECONDS)
@@ -297,6 +376,32 @@ def redeem_checkin_code(code: str) -> str | None:
     return _client.get(f"rucva:ckcode:{code}")
 
 
+# —— 锁内不做外呼 ——
+#
+# 锁 LOCK_TTL_MS（5 秒）自动过期，而一次外部 HTTP（消息中心推送）最长要等 8 秒。
+# 锁里做外呼，锁就可能在「判完名额、还没落库」时过期，下一个人进来照样判
+# 「还有位子」——超卖。所以锁里产生的外呼一律排到锁放掉之后再做：
+# after_unlock(fn) 在锁里调用就排队，最外层的锁放掉时依次执行；不在锁里就立刻执行。
+_after_unlock: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    "rucva_after_unlock", default=None)
+
+
+def after_unlock(fn) -> None:
+    queued = _after_unlock.get()
+    if queued is None:
+        fn()
+    else:
+        queued.append(fn)
+
+
+def _run_after_unlock(queued: list) -> None:
+    for fn in queued:
+        try:
+            fn()
+        except Exception:  # noqa: BLE001  收尾动作失败不能把已经落库的业务变成 500
+            logger.exception("锁外收尾动作失败")
+
+
 @contextlib.contextmanager
 def shift_lock(shift_id: str):
     """锁住一个场次的名额账本。"""
@@ -310,8 +415,14 @@ def shift_lock(shift_id: str):
             time.sleep(RETRY_INTERVAL)
     except redis.RedisError as exc:
         raise HTTPException(503, "报名服务暂时不可用，请稍后重试") from exc
+    outer = _after_unlock.get() is None
+    reset = _after_unlock.set([]) if outer else None
     try:
         yield
     finally:
         with contextlib.suppress(redis.RedisError):
             _RELEASE(keys=[key], args=[token])
+        if outer:
+            queued = _after_unlock.get()
+            _after_unlock.reset(reset)
+            _run_after_unlock(queued)

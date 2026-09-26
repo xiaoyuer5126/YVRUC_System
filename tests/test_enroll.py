@@ -219,3 +219,32 @@ def test_候补名次按岗位算而不是按场次(client, db, open_group, take
     third = go(p2_id)                               # p2 的第一个候补
     assert third["status"] == "waitlisted"
     assert third["waitlist_position"] == 1
+
+
+def test_锁外读到的旧状态不会让退选做两遍(client, open_group, take_student):
+    """连点两下退选：第二下拿到锁时，手里的报名记录还是锁外读的「已报名」。
+
+    这里直接构造那一瞬：会话里先缓存住这条记录，再在别处把它退掉。
+    """
+    from backend.models import User
+    from backend.routers.activities import cancel_enroll
+    from fastapi import HTTPException
+
+    act, g = open_group(1)
+    sid = take_student()
+    h = login(client, sid)
+    assert enroll(client, h, act, g).status_code == 200
+
+    s = SessionLocal()
+    try:
+        enr = s.query(Enrollment).filter(Enrollment.shift_id == g.id).one()
+        user = s.get(User, enr.user_id)
+        assert enr.status == "enrolled"      # 缓存在 s 的身份映射里
+        # 第一下退选（另一个会话）已经完成
+        assert client.delete(f"/api/activities/enrollments/{enr.id}",
+                             headers=h).status_code == 200
+        with pytest.raises(HTTPException) as e:
+            cancel_enroll(enr.id, db=s, user=user)
+        assert e.value.status_code == 400
+    finally:
+        s.close()

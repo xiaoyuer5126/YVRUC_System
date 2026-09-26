@@ -132,3 +132,80 @@ def test_redis不可用时照常报名(client, open_group, take_student, monkeyp
     assert enroll(client, login(client, take_student()), act, g
                   ).json()["status"] == "enrolled"
     assert _enrolled(g) == 1
+
+
+# ======================= 在途的号与核库限流 =======================
+
+def _gate_with(db, g, kind="seat"):
+    from backend.models import Position, Shift
+    from backend.routers import activities as A
+    gg, pos = db.get(Shift, g.id), db.get(Position, g.test_position_id)
+    left_fn = A._room_left if kind == "seat" else A._waitlist_left
+    return lambda: A._gate(db, gg, pos, kind, left_fn, locks.new_gate_ticket())
+
+
+def test_在途的号不会被核库覆盖掉(open_group, db):
+    """5 个名额，5 个请求扣到号还在资格校验里（没落库）：再来的请求一个都不放。
+
+    从前闸门说「满了」就拿数据库剩余（此刻还是 5）覆盖计数器——在途的号被
+    一次次「还」回去，抢报高峰里闸门形同虚设。
+    """
+    act, g = open_group(5, waitlist_quota=0)
+    gate = _gate_with(db, g)
+    assert sum(1 for _ in range(5) if gate()) == 5
+    for _ in range(50):
+        locks._client.delete(locks.gate_key(g.id, g.test_position_id, "seat")
+                             + ":recheck")          # 每次都真去核库，最坏情形
+        assert gate() is False
+
+
+def test_没预热时并发对齐也不多放(open_group, db):
+    """抢报开始那一刻闸门是空的：每个请求都去核库、都拿「剩 5 个」对齐，
+    但对齐写的是「剩余 − 在途」，放进去的总数仍是 5。"""
+    act, g = open_group(5, waitlist_quota=0)
+    gate = _gate_with(db, g)
+    key = locks.gate_key(g.id, g.test_position_id, "seat")
+    passed = 0
+    for _ in range(20):
+        locks._client.delete(key)                   # 每次都当作没预热
+        passed += bool(gate())
+    assert passed == 5
+
+
+def test_满了之后核库限流(open_group, db, monkeypatch):
+    """名额发完后洪水里的请求绝大多数只碰 Redis，不再各查一次库。"""
+    from backend.routers import activities as A
+
+    act, g = open_group(1, waitlist_quota=0)
+    gate = _gate_with(db, g)
+    assert gate() is True
+    calls = []
+    real = A._room_left
+    monkeypatch.setattr(A, "_room_left", lambda *a: calls.append(1) or real(*a))
+    gate = _gate_with(db, g)
+    assert all(gate() is False for _ in range(100))
+    assert len(calls) <= 1
+
+
+def test_退选后立刻能报(client, open_group, take_student, db):
+    """退选放出名额时作废闸门：下一个人不用等核库限流过去。"""
+    act, g = open_group(1, waitlist_quota=0)
+    h1 = login(client, take_student())
+    assert enroll(client, h1, act, g).status_code == 200
+    # 满员后有人撞一下闸门，把核库的限流窗口占住
+    assert enroll(client, login(client, take_student()), act, g).status_code == 409
+    enr = db.query(Enrollment).filter(Enrollment.shift_id == g.id,
+                                      Enrollment.status == "enrolled").one()
+    assert client.delete(f"/api/activities/enrollments/{enr.id}",
+                         headers=h1).status_code == 200
+    assert enroll(client, login(client, take_student()), act, g
+                  ).json()["status"] == "enrolled"
+
+
+def test_报上之后在途清空(client, open_group, take_student):
+    act, g = open_group(3, waitlist_quota=0)
+    for _ in range(2):
+        assert enroll(client, login(client, take_student()), act, g).status_code == 200
+    key = locks.gate_key(g.id, g.test_position_id, "seat") + ":inflight"
+    assert locks._client.zcard(key) == 0
+    assert locks.gate_left(g.id, g.test_position_id, "seat") == 1

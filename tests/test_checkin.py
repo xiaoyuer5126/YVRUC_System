@@ -751,3 +751,24 @@ def test_非本场次的人不该被查出姓名(client, admin, db, live_group, 
     assert d["done"] == 0 and len(d["skipped"]) == 1
     assert sid in d["skipped"][0]
     assert u.name not in d["skipped"][0]
+
+
+def test_多选岗位里重复的只开一张码(client, admin, two_shift_act):
+    _act, am, _train = two_shift_act
+    pos_id = client.get(f"/api/staff/shifts/{am.id}/roster",
+                        headers=admin).json()["positions"][0]["id"]
+    r = client.post(f"/api/staff/shifts/{am.id}/checkin-tasks", headers=admin,
+                    json={"mode": "position", "position_ids": [pos_id, pos_id]})
+    assert r.status_code == 200 and len(r.json()["tasks"]) == 1
+
+
+def test_改时段留空一端不会500(client, admin, two_shift_act):
+    _act, am, _train = two_shift_act
+    tid = client.post(f"/api/staff/shifts/{am.id}/checkin-tasks", headers=admin,
+                      json={"mode": "shift"}).json()["id"]
+    r = client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                     json={"valid_from": None})
+    assert r.status_code == 200 and r.json()["valid_from"] is None
+    r = client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                     json={"valid_to": "明天"})
+    assert r.status_code == 400

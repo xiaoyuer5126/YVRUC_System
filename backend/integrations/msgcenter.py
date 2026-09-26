@@ -15,9 +15,11 @@ from __future__ import annotations
 import json
 import logging
 
+from sqlalchemy import event, update
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, sudy_sign
+from .. import config, locks, sudy_sign
+from ..database import SessionLocal
 from ..models import Notification, User, uid
 from . import get_config, is_mock
 
@@ -130,18 +132,59 @@ def send_user(db: OrmSession, user: User, template_key: str,
     need_ack=True 的消息要志愿者点一次「我已知悉」才算到人。
     """
     title, content = render(template_key, **fields)
-    delivered = True
-    if real_mode():
+    real = real_mode()
+    row = Notification(id=uid("ntf"), user_id=user.id,
+                       template_key=template_key, title=title,
+                       content=content, data=data or {},
+                       # 真实推送先记未送达，推成功了再改；进程在中间死掉的话，
+                       # 库里说的「没送到」至少不是假话
+                       delivered=not real,
+                       need_ack=need_ack, batch_id=batch_id)
+    db.add(row)
+    if real:
+        # 真正的推送等**这个事务提交之后**、而且**场次锁放掉之后**再做：
+        # 业务回滚了就不该发出去；锁里做外呼会把锁拖过期（见 locks.after_unlock）
+        db.info.setdefault(_OUTBOX, []).append(
+            (row.id, user.student_id, title, content))
+
+
+_OUTBOX = "msgcenter_outbox"
+
+
+@event.listens_for(SessionLocal, "after_commit")
+def _push_after_commit(session) -> None:
+    items = session.info.pop(_OUTBOX, None)
+    if items:
+        locks.after_unlock(lambda: _push(items))
+
+
+@event.listens_for(SessionLocal, "after_rollback")
+def _drop_after_rollback(session) -> None:
+    session.info.pop(_OUTBOX, None)
+
+
+def _push(items: list[tuple[str, str, str, str]]) -> None:
+    """把已提交的通知真正推出去，推成功的回写 delivered。
+
+    推送失败只留着 delivered=False，不打断业务。
+    """
+    ok: list[str] = []
+    for ntf_id, student_id, title, content in items:
         try:
-            delivered = _send(user.student_id, title, content)
+            if _send(student_id, title, content):
+                ok.append(ntf_id)
         except Exception:  # noqa: BLE001  外部接口不可用不能拖垮业务
-            log.warning("消息中心推送失败：%s → %s", user.student_id, title,
+            log.warning("消息中心推送失败：%s → %s", student_id, title,
                         exc_info=True)
-            delivered = False
-    db.add(Notification(id=uid("ntf"), user_id=user.id,
-                        template_key=template_key, title=title,
-                        content=content, data=data or {}, delivered=delivered,
-                        need_ack=need_ack, batch_id=batch_id))
+    if not ok:
+        return
+    db = SessionLocal()
+    try:
+        db.execute(update(Notification).where(Notification.id.in_(ok))
+                   .values(delivered=True))
+        db.commit()
+    finally:
+        db.close()
 
 
 def _channels(cfg: dict) -> str:
