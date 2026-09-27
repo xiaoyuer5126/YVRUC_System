@@ -35,7 +35,7 @@ from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
                       AttireRecord, AttireTask, AuditLog,
                       CheckinRecord, CheckinTask, Enrollment, FormQuestion,
                       Notification, Position, Shift, User, VbRegistration,
-                      iso, like_pattern, now, uid)
+                      iso, like_pattern, now, parse_local_dt, uid)
 from ..serializers import activity_brief, load_trees
 from .screening import answers_out
 
@@ -70,7 +70,7 @@ def _parse_dt(v) -> datetime | None:
     if not v:
         return None
     try:
-        return datetime.fromisoformat(str(v))
+        return parse_local_dt(v)
     except ValueError:
         raise HTTPException(400, f"时间格式不合法：{v}")
 
