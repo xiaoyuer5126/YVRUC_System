@@ -53,3 +53,15 @@ print(f"进锁 {len(st)} 次；持锁 p50 {q(hold,.5):.1f}ms p90 {q(hold,.9):.1f
 
 rl = sorted(read_lat)
 print(f"同时刷详情页 {len(rl)} 次：p50 {q(rl,.5)*1000:.0f}ms p99 {q(rl,.99)*1000:.0f}ms 最慢 {rl[-1]*1000:.0f}ms 失败 {read_err[0]}")
+
+# 持锁期间按步骤拆开：每一项的中位数与平均（毫秒），以及平均每次持锁执行几次
+pf = c.get(B + "/api/_bench_profile").json()
+if pf:
+    keys = sorted({k for r in pf for k in r if not k.endswith(" ·次数")},
+                  key=lambda k: -sum(r.get(k, 0) for r in pf))
+    print(f"\n持锁期间各步骤耗时（{len(pf)} 次持锁；有嵌套，各项不要相加）：")
+    print(f"{'步骤':52} {'p50':>7} {'平均':>7} {'次/锁':>6}")
+    for k in keys:
+        vals = sorted(r.get(k, 0) * 1000 for r in pf)
+        n = sum(r.get(k + " ·次数", 0) for r in pf) / len(pf)
+        print(f"{k[:52]:52} {q(vals,.5):6.1f}ms {sum(vals)/len(vals):6.1f}ms {n:6.1f}")

@@ -139,6 +139,11 @@ LOCK_SLOTS = int(os.environ.get("RUCVA_LOCK_SLOTS", "5"))
 # 已还回池子），多开的代价只是内存。
 THREADS = int(os.environ.get("RUCVA_THREADS", "100"))
 
+# 已经扣到名额闸门号的报名请求，最多等场次锁多少秒。拿到号的人数不超过名额，
+# 队伍不会无限长；等不到回 503 等于把名额让给后来重试的人，所以给得宽。
+# 8 核机器实测 300 人抢 200 个名额，最慢的人要排 12～15 秒。
+TICKET_WAIT_SECONDS = float(os.environ.get("RUCVA_TICKET_WAIT_SECONDS", "30"))
+
 # —— 业务规则常量 ——
 # 平台不对志愿者做任何限制：没有准入名单，也不拦任何人报名。临期退选只影响
 # 那个名额（报名已截止时扣留不释放），并记一次「临期退选」供青协查看。

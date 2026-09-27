@@ -626,7 +626,11 @@
     </el-dialog>
 
     <!-- 报名确认：确认时段 + 表态是否接受岗位调剂 -->
-    <el-dialog v-model="enrollDlg.visible" title="确认报名" width="480px">
+    <!-- 提交中不许关：抢报时要排队十几秒，关了窗口再点一次只会多排一轮 -->
+    <el-dialog v-model="enrollDlg.visible" title="确认报名" width="480px"
+               :close-on-click-modal="!enrollDlg.submitting"
+               :close-on-press-escape="!enrollDlg.submitting"
+               :show-close="!enrollDlg.submitting">
       <template v-if="enrollDlg.shift">
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="场次">
@@ -676,10 +680,16 @@
           </el-checkbox>
         </div>
       </template>
+      <!-- 抢报时按先后排队，最慢的人要等十几秒：说清楚在排队，别让人以为卡住了去刷新 -->
+      <el-alert v-if="enrollDlg.submitting" type="info" :closable="false" show-icon
+                title="正在按提交先后排队，请勿刷新或重复点击"
+                description="报名人多时可能需要十几秒，结果出来后会自动提示。" />
       <template #footer>
-        <el-button @click="enrollDlg.visible = false">再想想</el-button>
+        <el-button :disabled="enrollDlg.submitting" @click="enrollDlg.visible = false">
+          再想想
+        </el-button>
         <el-button type="primary" :loading="enrollDlg.submitting" @click="submitEnroll">
-          确认{{ willWaitlist ? '加入候补' : '报名' }}
+          {{ enrollDlg.submitting ? '排队中…' : `确认${willWaitlist ? '加入候补' : '报名'}` }}
         </el-button>
       </template>
     </el-dialog>
