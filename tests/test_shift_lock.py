@@ -111,7 +111,7 @@ def test_锁里报错_数据库锁和进程名额都还回来(client, open_group
     def boom(*_a, **_kw):
         raise RuntimeError("锁里出错")
 
-    monkeypatch.setattr(logic, "has_room", boom)
+    monkeypatch.setattr(logic, "enroll_ledger", boom)
     with TestClient(app, raise_server_exceptions=False) as c2:
         r = enroll(c2, login(c2, take_student()), act, g)
     assert r.status_code == 500

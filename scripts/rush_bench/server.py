@@ -75,7 +75,8 @@ from backend.integrations import msgcenter  # noqa: E402
 from backend.routers import activities  # noqa: E402
 
 for fn in ("has_room", "waitlist_rows", "record_change", "sync_attached",
-           "attached_shifts", "waitlist_position"):
+           "attached_shifts", "waitlist_position", "enroll_ledger",
+           "active_rows"):
     _wrap(enroll_logic, fn, f"fn {fn}")
 _wrap(msgcenter, "send_user", "fn msgcenter.send_user")
 _wrap(activities, "_settle_gates", "fn _settle_gates (Redis)")
