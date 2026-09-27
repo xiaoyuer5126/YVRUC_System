@@ -177,6 +177,10 @@
                     </template>
                   </template>
                   <span v-else-if="g.my_enrollment" class="dim">同场次只能选一个岗位</span>
+                  <el-button v-else-if="queuedShift(g)" size="small" disabled
+                             :loading="queuedHere(g, s)">
+                    {{ queuedHere(g, s) ? '排队中…' : (s.remaining > 0 ? '选中' : '候补') }}
+                  </el-button>
                   <el-button v-else-if="s.eligible === false" size="small" disabled>
                     不符合条件
                   </el-button>
@@ -191,6 +195,7 @@
                 <div v-if="s.eligible === false" class="m-pos-why">
                   {{ s.ineligible_reason }}
                 </div>
+                <div v-if="queuedHere(g, s)" class="queue-note">{{ QUEUE_NOTE }}</div>
               </div>
               <!-- 报了名却没有对应的岗位卡（补招时没指定岗位，或岗位被删） -->
               <div v-if="g.my_enrollment && !myStationId(g)" class="m-pos-act"
@@ -240,6 +245,10 @@
                              @click="cancelEnroll(g)">
                     {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
                   </el-button>
+                </template>
+                <template v-else-if="queuedShift(g)">
+                  <el-button size="small" disabled loading>排队中…</el-button>
+                  <span class="queue-note">{{ QUEUE_NOTE }}</span>
                 </template>
                 <el-button v-else-if="openFor(g) && g.mode === 'assign'"
                            type="primary" size="small" @click="doEnroll(g, null)">
@@ -368,6 +377,13 @@
                               {{ s.remaining > 0 ? '选中' : '候补' }}
                             </el-button>
                           </el-tooltip>
+                          <!-- 已提交、还在排队：结果回来之前不能再点，也不能改选同场次别的岗位 -->
+                          <template v-else-if="queuedShift(g)">
+                            <el-button size="small" disabled :loading="queuedHere(g, s)">
+                              {{ queuedHere(g, s) ? '排队中…' : (s.remaining > 0 ? '选中' : '候补') }}
+                            </el-button>
+                            <div v-if="queuedHere(g, s)" class="queue-note">{{ QUEUE_NOTE }}</div>
+                          </template>
                           <!-- 条件不满足：灰掉并说明为什么，别让人点了再被拒 -->
                           <el-tooltip v-else-if="s.eligible === false" placement="top"
                                       :content="`不符合报名条件：${s.ineligible_reason}`">
@@ -626,11 +642,7 @@
     </el-dialog>
 
     <!-- 报名确认：确认时段 + 表态是否接受岗位调剂 -->
-    <!-- 提交中不许关：抢报时要排队十几秒，关了窗口再点一次只会多排一轮 -->
-    <el-dialog v-model="enrollDlg.visible" title="确认报名" width="480px"
-               :close-on-click-modal="!enrollDlg.submitting"
-               :close-on-press-escape="!enrollDlg.submitting"
-               :show-close="!enrollDlg.submitting">
+    <el-dialog v-model="enrollDlg.visible" title="确认报名" width="480px">
       <template v-if="enrollDlg.shift">
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="场次">
@@ -680,16 +692,10 @@
           </el-checkbox>
         </div>
       </template>
-      <!-- 抢报时按先后排队，最慢的人要等十几秒：说清楚在排队，别让人以为卡住了去刷新 -->
-      <el-alert v-if="enrollDlg.submitting" type="info" :closable="false" show-icon
-                title="正在按提交先后排队，请勿刷新或重复点击"
-                description="报名人多时可能需要十几秒，结果出来后会自动提示。" />
       <template #footer>
-        <el-button :disabled="enrollDlg.submitting" @click="enrollDlg.visible = false">
-          再想想
-        </el-button>
-        <el-button type="primary" :loading="enrollDlg.submitting" @click="submitEnroll">
-          {{ enrollDlg.submitting ? '排队中…' : `确认${willWaitlist ? '加入候补' : '报名'}` }}
+        <el-button @click="enrollDlg.visible = false">再想想</el-button>
+        <el-button type="primary" @click="submitEnroll">
+          确认{{ willWaitlist ? '加入候补' : '报名' }}
         </el-button>
       </template>
     </el-dialog>
@@ -728,8 +734,18 @@ const act = ref(null)
 const blocked = ref('')
 const groupDetail = ref({ visible: false, data: null })
 const enrollDlg = ref({ visible: false, shift: null, position: null,
-                        leaderWilling: false,
-                        allowReassign: true, submitting: false })
+                        leaderWilling: false, allowReassign: true })
+/** 已提交、结果还没回来的报名：场次 id → 岗位 id（没有岗位记 ''）。
+ *
+ * 抢报时一个请求要按先后排十几秒。从前弹窗一直开着等结果，这段时间别的场次
+ * 也点不了；现在确认即关窗，按钮原地显示「排队中…」，可以接着报别的场次，
+ * 各自出结果各自提示。同一场次在结果回来之前不能再点——后端也会按重复报名
+ * 拒掉，但那是白排一轮队。
+ */
+const queued = ref({})       // vuecheck: script-only（模板经 queuedShift / queuedHere 读它）
+const QUEUE_NOTE = '排队中，请勿刷新'
+const queuedShift = g => g.id in queued.value
+const queuedHere = (g, s) => queued.value[g.id] === (s ? s.id : '')
 // 挂了适用岗位的题只问报这个岗位的人
 const enrollQuestions = computed(() => (act.value?.questions || []).filter(q => {
   const scope = q.applies_to_positions || []
@@ -912,33 +928,34 @@ function doEnroll(g, position) {
     return ElMessage.warning('请先展开该场次，选择一个岗位')
   }
   enrollDlg.value = { visible: true, shift: g, position, allowReassign: true,
-                      leaderWilling: false, answers: {},
-                      submitting: false }
+                      leaderWilling: false, answers: {} }
 }
 
 const enrollFields = ref(null)
 async function submitEnroll() {
   const { shift: g, position, allowReassign, leaderWilling } = enrollDlg.value
+  if (queuedShift(g)) return
   let answers = {}
   if (enrollFields.value) {
     const got = enrollFields.value.collect()
     if (got.error) return ElMessage.warning(got.error)
     answers = got.answers
   }
-  enrollDlg.value.submitting = true
+  // 确认即关窗、按钮转「排队中…」，结果回来再提示（见 queued）
+  enrollDlg.value.visible = false
+  queued.value = { ...queued.value, [g.id]: position ? position.id : '' }
   try {
+    // 错误自己提示：同时排着好几场时，得说清是哪一场没报上
     const d = await api.post(
       `/api/activities/${act.value.id}/shifts/${g.id}/enroll`,
       { position_id: position ? position.id : null,
-        allow_reassign: allowReassign, leader_willing: leaderWilling, answers })
-    enrollDlg.value.visible = false
-    ElMessage.success(d.message)
+        allow_reassign: allowReassign, leader_willing: leaderWilling, answers },
+      { skipErrorToast: true })
+    ElMessage.success(`「${g.name}」${d.message}`)
     groupQr.value.open({ qr: d.contact_group_qr, title: act.value.title })
-    load()
   } catch (e) {
     // 资料未完善被拦截：提示后弹出资料表单，补全后即可报名
     if (e?.message?.includes('完善个人信息')) {
-      enrollDlg.value.visible = false
       try {
         await ElMessageBox.alert(
           '报名前需先完善个人信息，便于后期联络与志愿时长录入。',
@@ -946,19 +963,22 @@ async function submitEnroll() {
           { type: 'warning', confirmButtonText: '去完善' })
       } catch { /* 关闭提示也照样打开表单 */ }
       openProfileDialog()
-      return
-    }
-    if (e.data && e.data.conflicts) {
-      enrollDlg.value.visible = false
+    } else if (e.data && e.data.conflicts) {
       // 纯文本，不拼 HTML：活动名是别人填的，当 HTML 渲染就等于把一段
       // 脚本塞进每个撞时间的志愿者的浏览器里
       const list = e.data.conflicts
         .map(c => `「${c.activity_title}」${c.shift_name}（${c.time}）`
                   + (c.waiting ? '（候补中）' : '')).join('\n')
-      ElMessageBox.alert(list, '与其他活动时间冲突', { type: 'error' })
+      ElMessageBox.alert(list, `「${g.name}」与其他活动时间冲突`, { type: 'error' })
+    } else if (e.status !== 401) {     // 401 已经统一提示并跳去登录了
+      ElMessage.error(`「${g.name}」${e.message}`)
     }
   } finally {
-    enrollDlg.value.submitting = false
+    // 先拉到新数据再撤「排队中」：反过来的话按钮会闪回「选中」，还能再点一次
+    await load()
+    const rest = { ...queued.value }
+    delete rest[g.id]
+    queued.value = rest
   }
 }
 
@@ -1035,6 +1055,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .m-pos-meta { margin-top: 4px; line-height: 1.6; }
 .m-pos-act { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .m-pos-why { margin-top: 8px; font-size: 12px; color: #e6a23c; }
+.queue-note { margin-top: 4px; font-size: 12px; color: #909399; }
 .m-reassign { margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .shift-bar { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .req-blocked { color: #e6a23c; }
