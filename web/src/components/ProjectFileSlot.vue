@@ -67,7 +67,7 @@ function sizeText(bytes) {
 </script>
 
 <style scoped>
-.pf-slot { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
+.pf-slot { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
 .pf-head { display: flex; align-items: center; gap: 8px; }
-.pf-file { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pf-file { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 </style>

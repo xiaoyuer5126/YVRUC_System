@@ -47,6 +47,10 @@ x-backend-env: &backend_env
   # 要明显小于上面「池子+溢出」，否则抢报时读请求拿不到连接
   RUCVA_LOCK_SLOTS: ${RUCVA_LOCK_SLOTS:-5}
   RUCVA_THREADS: ${RUCVA_THREADS:-100}
+  # 审批放着没人处理多少小时开始催（只催人，不自动通过）
+  RUCVA_APPROVAL_REMIND_HOURS: ${RUCVA_APPROVAL_REMIND_HOURS:-24}
+  # 设为 1 关掉后台定时任务（候补清扫、状态流转、提醒、日报）。生产别关
+  RUCVA_DISABLE_SWEEPER: ${RUCVA_DISABLE_SWEEPER:-}
   TZ: Asia/Shanghai
 
 services:
