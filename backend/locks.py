@@ -36,8 +36,8 @@ logger = logging.getLogger(__name__)
 _client = redis.Redis.from_url(config.REDIS_URL, decode_responses=True)
 
 WAIT_TIMEOUT = 3.0       # 等锁上限，超过就让用户重试而不是干等
-# 已经扣到闸门号的报名请求等得更久，见 shift_lock
-TICKET_WAIT_TIMEOUT = 15.0
+# 已经扣到闸门号的报名请求等得更久，见 shift_lock 与 config.TICKET_WAIT_SECONDS
+TICKET_WAIT_TIMEOUT = config.TICKET_WAIT_SECONDS
 
 # 只删自己那把：租期到了之后键可能已被别人持有，无条件 del 会误删。
 _RELEASE = _client.register_script("""
