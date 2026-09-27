@@ -27,7 +27,8 @@ from ..locks import current_checkin_code
 from ..notify import notify, notify_checkin
 from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
                       Department, Enrollment, HoursAppeal, HoursRecord,
-                      HoursRequest, Shift, Position, User, iso, new_checkin_token, now, span_text, uid)
+                      HoursRequest, Shift, Position, User, iso, new_checkin_token, now,
+                      parse_local_dt, span_text, uid)
 from ..serializers import iso_of, recruit_scope_text
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
@@ -106,6 +107,11 @@ def create_task(shift_id: str, body: TaskBody,
             if st is None or st.shift_id != g.id:
                 raise HTTPException(400, "分岗位签到必须指定本场次下的岗位")
             positions.append(st)
+    try:
+        valid_from = parse_local_dt(body.valid_from) if body.valid_from else None
+        valid_to = parse_local_dt(body.valid_to) if body.valid_to else None
+    except ValueError:
+        raise HTTPException(400, "时间格式不对") from None
     # 一次一张地查冲突：多选时只要有一个岗位撞上就整体拒绝，别做一半
     for st in (positions or [None]):
         live = live_task_conflict(db, g.id, st.id if st else None)
@@ -117,10 +123,8 @@ def create_task(shift_id: str, body: TaskBody,
         task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
                            position_id=st.id if st else None,
                            mode=body.mode, token=new_checkin_token(),
-                           valid_from=(datetime.fromisoformat(body.valid_from)
-                                       if body.valid_from else g.start_time - pad),
-                           valid_to=(datetime.fromisoformat(body.valid_to)
-                                     if body.valid_to else g.end_time + pad),
+                           valid_from=valid_from or g.start_time - pad,
+                           valid_to=valid_to or g.end_time + pad,
                            created_by=user.id)
         db.add(task)
         label = st.name if st else f"{g.name}·统一签到"
@@ -376,7 +380,7 @@ def toggle_task(task_id: str, body: dict,
             if key in body:
                 raw = (body[key] or "").strip()
                 try:
-                    setattr(task, key, datetime.fromisoformat(raw) if raw else None)
+                    setattr(task, key, parse_local_dt(raw) if raw else None)
                 except ValueError:
                     raise HTTPException(400, "时间格式不对") from None
         if task.valid_from and task.valid_to and task.valid_to <= task.valid_from:
@@ -832,7 +836,7 @@ def _parse_deadline(raw: str) -> datetime:
     if not raw.strip():
         return hours_flow.default_appeal_deadline()
     try:
-        deadline = datetime.fromisoformat(raw.strip().replace(" ", "T"))
+        deadline = parse_local_dt(raw)
     except ValueError:
         raise HTTPException(400, "申诉截止时间格式不对") from None
     if deadline <= now():
