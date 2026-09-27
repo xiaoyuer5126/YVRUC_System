@@ -403,8 +403,11 @@ def redeem_checkin_code(code: str) -> str | None:
 # 同一进程里最多这么多个请求带着连接去数据库排队，其余的在进程里等（不占连接、
 # 不占 CPU），轮到了再去。
 _SLOTS = threading.BoundedSemaphore(config.LOCK_SLOTS)
-# 双参数形式的第一个参数当命名空间：将来别处也用咨询锁时，不会跟场次锁撞号
+# 双参数形式的第一个参数当命名空间：场次锁 1、用户锁 2（见 user_lock），
+# 同一个 id 串哈希到同一个数也不会互相挡
 _LOCK_NS = 1
+_USER_NS = 2
+_USER_LOCKED = "rucva_user_locked"       # 会话上记着：本事务已经拿了用户锁
 _SLOT_DEPTH = "rucva_shift_lock_depth"     # 会话上记着：这一个请求已经占了名额
 
 # —— 锁内不做外呼 ——
@@ -438,18 +441,32 @@ def _busy() -> HTTPException:
     return HTTPException(503, "当前操作人数较多，请稍后重试")
 
 
-def _pg_lock(db: OrmSession, shift_id: str, seconds: float) -> None:
-    """在 db 当前的事务里拿一个场次的咨询锁，最多等 seconds 秒。
+def _pg_lock(db: OrmSession, shift_ids: list[str], deadline: float,
+             user_id: str | None = None) -> None:
+    """在 db 当前的事务里依次拿场次锁、再拿用户锁（给了 user_id 的话），
+    合计最多等到 deadline（time.monotonic() 的刻度）。
 
-    lock_timeout 只在拿锁这一句上生效，拿到后马上改回默认：SET LOCAL 管的是
+    lock_timeout 只在拿锁那几句上生效，拿完马上改回默认：SET LOCAL 管的是
     整个事务，不改回去的话，锁里后面的 SQL 等行锁时也会被这点剩余时间掐掉。
+    每把场次锁前按剩余时间重设一次；用户锁紧跟在场次锁后面，沿用最后那个
+    值，不再多一个往返（锁里每个往返都算在别人的排队时间上）。
     """
-    ms = max(1, int(seconds * 1000))
-    try:
+    def limit() -> None:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise _busy()
         db.execute(text("SELECT set_config('lock_timeout', :t, true)"),
-                   {"t": f"{ms}ms"})
-        db.execute(text("SELECT pg_advisory_xact_lock(:ns, hashtext(:k))"),
-                   {"ns": _LOCK_NS, "k": shift_id})
+                   {"t": f"{max(1, int(left * 1000))}ms"})
+
+    lock = text("SELECT pg_advisory_xact_lock(:ns, hashtext(:k))")
+    try:
+        for sid in shift_ids:
+            limit()
+            db.execute(lock, {"ns": _LOCK_NS, "k": sid})
+        if user_id is not None:
+            if not shift_ids:
+                limit()
+            db.execute(lock, {"ns": _USER_NS, "k": user_id})
     except OperationalError as exc:
         # 55P03 lock_not_available：等满了。事务已经废了，调用方抛出去之后
         # 会话回滚（请求里由 db_session 关掉），不会留半截
@@ -457,10 +474,13 @@ def _pg_lock(db: OrmSession, shift_id: str, seconds: float) -> None:
             raise _busy() from exc
         raise
     db.execute(text("SET LOCAL lock_timeout TO DEFAULT"))
+    if user_id is not None:
+        db.info[_USER_LOCKED] = db.get_transaction()
 
 
 @contextlib.contextmanager
-def shift_lock(db: OrmSession, *shift_ids: str, wait: float | None = None):
+def shift_lock(db: OrmSession, *shift_ids: str, wait: float | None = None,
+               user_id: str | None = None):
     """锁住场次的名额账本，直到 db 的**这个事务**结束（commit / rollback）。
 
     with 块只管「拿锁」和「还进程名额」；锁本身随事务走，所以块里 commit 过
@@ -468,6 +488,8 @@ def shift_lock(db: OrmSession, *shift_ids: str, wait: float | None = None):
 
     shift_ids 可以给多个：按 id 排序依次加锁，两个请求锁同一批场次时顺序一致，
     不会互相等成死锁。
+
+    user_id：场次锁拿到之后，接着拿这个人的用户锁（见下面「用户锁」一节）。
 
     wait：最多等多久（进程名额 + 数据库锁合计），默认 WAIT_TIMEOUT，等不到回 503。
     报名时**已经扣到闸门号**的请求传 TICKET_WAIT_TIMEOUT：它是前 N 个到的人之一，
@@ -477,6 +499,10 @@ def shift_lock(db: OrmSession, *shift_ids: str, wait: float | None = None):
     因此堆起来。等待期间号一直登记在途，GATE_INFLIGHT_SECONDS 比这宽得多，
     不会被当成崩掉的请求清走。
     """
+    # 用户锁之后再拿场次锁就可能和别人互相等成死锁，见 user_lock
+    held = db.info.get(_USER_LOCKED)
+    if held is not None and held is db.get_transaction():
+        raise RuntimeError("本事务已持有用户锁，不能再拿场次锁：顺序必须是先场次后用户")
     # 在调用时读模块变量而不是写成默认参数：用例会 monkeypatch 它
     budget = WAIT_TIMEOUT if wait is None else wait
     deadline = time.monotonic() + budget
@@ -488,11 +514,7 @@ def shift_lock(db: OrmSession, *shift_ids: str, wait: float | None = None):
     outer = _after_unlock.get() is None
     reset = _after_unlock.set([]) if outer else None
     try:
-        for sid in sorted(set(shift_ids)):
-            left = deadline - time.monotonic()
-            if left <= 0:
-                raise _busy()
-            _pg_lock(db, sid, left)
+        _pg_lock(db, sorted(set(shift_ids)), deadline, user_id)
         yield
     finally:
         if depth == 0:
@@ -504,3 +526,36 @@ def shift_lock(db: OrmSession, *shift_ids: str, wait: float | None = None):
             queued = _after_unlock.get()
             _after_unlock.reset(reset)
             _run_after_unlock(queued)
+
+
+# —— 用户锁 ——
+#
+# 场次锁只管「一个场次的名额」。时段冲突是**跨场次**的：同一个人几乎同时报
+# 两场时间重叠、却不在同一场次（甚至不在同一活动）的班，两个请求拿的是两把
+# 不同的场次锁，互不阻塞；各自在锁外查冲突时都还看不见对方，于是两条都落库，
+# 一个人同一时间被排在两个地方。
+#
+# 所以报名在拿到场次锁**之后**再按人拿一把事务级咨询锁（命名空间 2），在锁里
+# 重查一遍时段冲突。同一个人的请求在这里排队，后到的那个一定看得见先到的
+# 那条已提交的报名（读已提交：锁拿到之后发的每条 SQL 都是新快照）。
+#
+# ★ 顺序只能是「先场次锁、后用户锁」，拿了用户锁之后不再去等任何场次锁：
+#   同一个人报 A、B 两场，请求 1 持 A 等用户锁、请求 2 持 B 等用户锁——
+#   谁先拿到用户锁谁就一路做到提交，不会再回头等对方手里的场次锁，
+#   另一个随后拿到，环凑不起来。反过来（先用户后场次）就会出现：请求 1 持
+#   用户锁等 A，而 A 被请求 3 持着、请求 3 又在等同一个人的用户锁……
+#   shift_lock 会检查这条，违反了直接抛错，而不是等数据库报死锁。
+#
+# 不另占进程名额：它总是在场次锁里面拿，名额已经占着了；等它的只有同一个人
+# 的其他请求，队伍长度以「一个人同时点了几下」为限。
+
+
+def user_lock(db: OrmSession, user_id: str, wait: float | None = None) -> None:
+    """在 db 当前事务里锁住这个人的时段账本，直到事务结束。
+
+    必须在 shift_lock 块**里面**调（或者这个事务根本不拿场次锁），之后不能再
+    进新的 shift_lock。等不到回 503（默认 WAIT_TIMEOUT）。
+    报名这种一进锁就要拿的，用 shift_lock(..., user_id=) 省一个往返。
+    """
+    budget = WAIT_TIMEOUT if wait is None else wait
+    _pg_lock(db, [], time.monotonic() + budget, user_id)

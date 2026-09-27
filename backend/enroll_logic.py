@@ -14,8 +14,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta
+from typing import NamedTuple
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session as OrmSession
 
 from . import config
@@ -87,22 +88,33 @@ def attached_shifts(db: OrmSession, shift_id: str,
     """某服务场次下的培训/彩排场次；给了岗位就只留对该岗位生效的。"""
     rows = (db.query(Shift).filter(Shift.parent_id == shift_id)
             .order_by(Shift.start_time).all())
+    return for_position(rows, position_id)
+
+
+def for_position(attached: list[Shift], position_id: str | None) -> list[Shift]:
+    """在 attached_shifts(db, shift_id) 查回来的全集里挑出对这个岗位生效的，不再查库。"""
     if position_id is None:
-        return rows
-    return [s for s in rows
+        return attached
+    return [s for s in attached
             if not s.applies_to_positions
             or position_id in s.applies_to_positions]
 
 
-def sync_attached(db: OrmSession, enr: Enrollment) -> None:
+def sync_attached(db: OrmSession, enr: Enrollment,
+                  attached: list[Shift] | None = None) -> None:
     """按主报名的状态与岗位，同步培训/彩排的报名。
 
     一个入口管所有变化——报名、候补转正、退选、改岗——省得每处各写一遍
     然后漏掉一处。改岗尤其要紧：东门组周五彩排，人被调去检录组之后，
     那场彩排就不该再叫他。
     已经签到过的不删：人确实来了，记录不能凭空消失。
+
+    attached：调用方已经查过的 attached_shifts(db, enr.shift_id)（不按岗位
+    过滤的全集）。报名在锁外为比时段查过一遍，锁里直接用，省一条 SQL。
     """
-    for s in attached_shifts(db, enr.shift_id):
+    if attached is None:
+        attached = attached_shifts(db, enr.shift_id)
+    for s in attached:
         want = (enr.status == "enrolled"
                 and (not s.applies_to_positions
                      or enr.position_id in s.applies_to_positions))
@@ -281,6 +293,66 @@ def has_room(db: OrmSession, shift: Shift, position=None) -> bool:
     return position_occupied_count(db, position.id) < position.quota
 
 
+class EnrollLedger(NamedTuple):
+    """报名锁里要的全部账目，见 enroll_ledger。"""
+    mine: str | None     # 本人在这一场的有效记录的状态（没有为 None）
+    mine_held: bool      # 本人在这一场有一条临期退选占位
+    occupied: int        # 岗位已消耗的名额，口径同 position_occupied_count
+    queued: int          # 岗位候补队列人数，口径同 waitlist_rows 按岗位过滤
+    editing: bool        # 活动此刻是否处于编辑态
+    clash: bool          # 本人已有的有效报名与 targets 里某一场时段重叠
+
+
+def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
+                  position_id: str, user_id: str,
+                  targets: list[Shift]) -> EnrollLedger:
+    """报名锁里的「查重 + 数名额 + 数候补 + 看编辑态 + 有没有时段冲突」，**一条 SQL**。
+
+    从前是四五条：查重一条、has_room 一条、没位子时把整场候补行全捞回来
+    在内存里按岗位筛一遍。锁里每多一个往返，排在后面的几百人就多等一个
+    往返，所以合成一次：只扫「本人这一场」和「这个岗位」两小撮行，用带
+    FILTER 的聚合各数各的。
+
+    口径与原来的几个函数逐条对齐（改其中一边要同时改另一边）：
+      · 查重：status ∈ ACTIVE 或 seat_held（唯一索引 uq_enrollment_live 的口径，
+        所以最多一行，max/bool_or 取到的就是那一行）；
+      · 名额：position_occupied_count——正式 + 待确认 + 临期退选占位；
+      · 候补：waitlist_rows——waitlisted + pending_confirm，限本场次本岗位。
+        待确认既占名额又在队列里，两边都算，与原来一致；
+      · 冲突：time_conflicts——本人 ACTIVE 的报名，场次与 targets 里任一场
+        （主场次和它的培训/彩排）区间重叠，比某一场时不算那一场自己。
+        这里只要「有没有」；真有的话调用方再走 active_rows 拼出详细的提示，
+        那是少见的路径，常见路径省下一个往返。
+    """
+    live = or_(Enrollment.status.in_(ACTIVE), Enrollment.seat_held.is_(True))
+    mine = (Enrollment.shift_id == shift_id) & (Enrollment.user_id == user_id)
+    at_pos = Enrollment.position_id == position_id
+    editing = (select(Activity.editing_since.isnot(None))
+               .where(Activity.id == activity_id).scalar_subquery())
+    clash = (select(Enrollment.id)
+             .join(Shift, Enrollment.shift_id == Shift.id)
+             .where(Enrollment.user_id == user_id,
+                    Enrollment.status.in_(ACTIVE),
+                    or_(*[(Enrollment.shift_id != t.id)
+                          & (Shift.start_time < t.end_time)
+                          & (Shift.end_time > t.start_time)
+                          for t in targets]))
+             .exists())
+    row = db.execute(
+        select(func.max(Enrollment.status).filter(mine & live),
+               func.coalesce(func.bool_or(mine & Enrollment.seat_held), False),
+               func.count().filter(at_pos & or_(
+                   Enrollment.status.in_(("enrolled", "pending_confirm")),
+                   Enrollment.seat_held.is_(True))),
+               func.count().filter(
+                   at_pos & (Enrollment.shift_id == shift_id)
+                   & Enrollment.status.in_(("waitlisted", "pending_confirm"))),
+               editing, clash)
+        .where(or_(mine, at_pos))).one()
+    return EnrollLedger(row[0], bool(row[1]), row[2], row[3], bool(row[4]),
+                        bool(row[5]))
+
+
 # ======================= 硬性条件（场次与岗位共用） =======================
 
 def profile_fields(user: User) -> dict[str, str]:
@@ -433,6 +505,15 @@ def waitlist_rows(db: OrmSession, shift_id: str) -> list[Enrollment]:
             .filter(Enrollment.shift_id == shift_id,
                     Enrollment.status.in_(("waitlisted", "pending_confirm")))
             .order_by(Enrollment.joined_at).all())
+
+
+def position_waitlist_count(db: OrmSession, shift_id: str,
+                            position_id: str) -> int:
+    """岗位候补队列的人数：waitlist_rows 按岗位筛出来的条数，只数不取行。"""
+    return db.query(Enrollment).filter(
+        Enrollment.shift_id == shift_id,
+        Enrollment.position_id == position_id,
+        Enrollment.status.in_(("waitlisted", "pending_confirm"))).count()
 
 
 def waitlist_position(db: OrmSession, enr: Enrollment) -> int:
