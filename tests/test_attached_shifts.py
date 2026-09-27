@@ -331,3 +331,73 @@ def test_开始后不能再改请假(client, admin, db, act_with_positions, take
     r = client.post(f"/api/activities/enrollments/{enr.id}/excuse", headers=h,
                     json={"excused": True, "reason": "临时有事"})
     assert r.status_code == 409 and "已经开始" in r.json()["detail"]
+
+
+# ======================= 补招：培训/彩排由负责人勾选 =======================
+
+def _walkin(client, admin, g, sid, **body):
+    return client.post(f"/api/staff/shifts/{g.id}/add-walkin", headers=admin,
+                       json={"student_id": sid, **body})
+
+
+def test_补招默认不连带培训彩排(client, admin, db, act_with_positions, take_student):
+    act, g, east, _check = act_with_positions
+    rehearsal = _add_attached(client, admin, act, g)
+    sid = take_student()
+    r = _walkin(client, admin, g, sid, position_id=east.id)
+    assert r.status_code == 200 and r.json()["attached"] == []
+    assert sid in _roster(client, admin, g.id)
+    assert sid not in _roster(client, admin, rehearsal)
+
+
+def test_补招勾选的培训彩排一并报上(client, admin, db, act_with_positions, take_student):
+    act, g, east, _check = act_with_positions
+    rehearsal = _add_attached(client, admin, act, g)
+    training = _add_attached(client, admin, act, g, kind="training", days=6)
+    sid = take_student()
+    r = _walkin(client, admin, g, sid, position_id=east.id, attached_ids=[rehearsal])
+    assert r.status_code == 200 and r.json()["attached"] == [rehearsal]
+    assert sid in _roster(client, admin, rehearsal)
+    assert sid not in _roster(client, admin, training)       # 没勾的不报
+    db.expire_all()
+    from backend.models import AuditLog, Notification
+    assert (db.query(AuditLog).filter(AuditLog.activity_id == act.id,
+                                      AuditLog.summary.like("%并报上彩排%")).count() == 1)
+    u = student_row(db, sid)
+    note = (db.query(Notification).filter(Notification.user_id == u.id,
+                                          Notification.title.like("您已被补招%")).one())
+    assert "排练厅" in note.content
+
+
+def test_补招只能勾对这个岗位生效的彩排(client, admin, db, act_with_positions, take_student):
+    act, g, east, check = act_with_positions
+    east_only = _add_attached(client, admin, act, g, positions=[east.id])
+    r = _walkin(client, admin, g, take_student(), position_id=check.id,
+                attached_ids=[east_only])
+    assert r.status_code == 400 and "不生效" in r.json()["detail"]
+
+
+def test_彩排时段冲突要强制(client, admin, db, act_with_positions, take_student):
+    act, g, east, _check = act_with_positions
+    rehearsal = _add_attached(client, admin, act, g, days=5)
+    sid = take_student()
+    # 这个人在彩排那段时间已经报了别的活动
+    other_act = Activity(id=uid("act"), title=f"撞车活动 {uid('t')}", intro="x",
+                         location="x", status="published",
+                         created_by=student_row(db, ADMIN).id)
+    db.add(other_act)
+    db.flush()
+    rs = db.get(Shift, rehearsal)
+    other = Shift(id=uid("g"), activity_id=other_act.id, name="撞车场",
+                  start_time=rs.start_time, end_time=rs.end_time, mode="pick", sort=0)
+    db.add(other)
+    db.flush()                  # 会话不自动 flush：先让场次落库，报名的外键才对得上
+    db.add(Enrollment(id=uid("enr"), activity_id=other_act.id, shift_id=other.id,
+                      user_id=student_row(db, sid).id, status="enrolled",
+                      joined_at=now()))
+    db.commit()
+    r = _walkin(client, admin, g, sid, position_id=east.id, attached_ids=[rehearsal])
+    assert r.status_code == 409 and "彩排" in r.json()["detail"]
+    r = _walkin(client, admin, g, sid, position_id=east.id, attached_ids=[rehearsal],
+                force=True)
+    assert r.status_code == 200 and r.json()["attached"] == [rehearsal]

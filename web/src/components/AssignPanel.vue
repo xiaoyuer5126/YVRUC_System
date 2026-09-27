@@ -147,6 +147,16 @@
         <el-form-item label="调剂意愿">
           <el-checkbox v-model="walkin.allowReassign">本人接受岗位调剂</el-checkbox>
         </el-form-item>
+        <!-- 补招不自动连带培训/彩排：赶不赶得上、要不要去，由负责人勾 -->
+        <el-form-item v-if="walkinAttached.length" label="培训/彩排">
+          <el-checkbox-group v-model="walkin.attached">
+            <el-checkbox v-for="a in walkinAttached" :key="a.id" :value="a.id"
+                         style="display:block">
+              {{ a.kind_label }}「{{ a.name }}」<span class="dim">{{ a.time_text }}</span>
+            </el-checkbox>
+          </el-checkbox-group>
+          <div class="dim">默认不报；勾上的一并报上</div>
+        </el-form-item>
         <el-form-item label="">
           <el-checkbox v-model="walkin.force">
             时段冲突或名额已满时强制加入，计入留痕
@@ -184,7 +194,12 @@ const rows = ref([])
 function openWalkin() { walkinVisible.value = true }
 defineExpose({ runPreview, openWalkin, solving })
 const walkinVisible = ref(false)
-const walkin = ref({ sid: '', position: '', force: false, allowReassign: true })
+const walkin = ref({ sid: '', position: '', force: false, allowReassign: true,
+                     attached: [] })
+// 本场次下对所选岗位生效的培训/彩排（没选岗位就全列），口径同后端 attached_shifts
+const walkinAttached = computed(() => (props.shift.attached || []).filter(a =>
+  !walkin.value.position || !a.applies_to_positions?.length
+  || a.applies_to_positions.includes(walkin.value.position)))
 
 // 报名即选岗位且人人有岗 → 提示即可，不禁止试算
 const pickModeAllAssigned = computed(() =>
@@ -255,10 +270,13 @@ async function addWalkin() {
     await api.post(`/api/staff/shifts/${props.shift.id}/add-walkin`, {
       student_id: walkin.value.sid, position_id: walkin.value.position || '',
       allow_reassign: walkin.value.allowReassign,
+      attached_ids: walkin.value.attached.filter(
+        id => walkinAttached.value.some(a => a.id === id)),
       force: walkin.value.force })
     ElMessage.success('补招成功')
     walkinVisible.value = false
-    walkin.value = { sid: '', position: '', force: false, allowReassign: true }
+    walkin.value = { sid: '', position: '', force: false, allowReassign: true,
+                     attached: [] }
     emit('reload')
   } catch (e) {
     // 冲突/超额都需要显式勾选强制，替用户把勾打上并提示重试
