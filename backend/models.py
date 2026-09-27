@@ -43,6 +43,25 @@ def now() -> datetime:
     return datetime.now()
 
 
+def parse_local_dt(raw) -> datetime:
+    """把客户端传来的时间串解析成**本地裸时间**（与 now() 和库里的时间同一口径）。
+
+    全平台的时间都是不带时区的本地时间（容器 TZ=Asia/Shanghai）。客户端要是传了
+    带时区的串（2026-09-27T09:00Z、+08:00），fromisoformat 会解出带时区的时间，
+    跟库里的裸时间一比较就是 TypeError，接口直接 500。这里先按它自带的时区换算成
+    本地时间，再去掉时区；不带时区的原样当本地时间。
+
+    格式不对抛 ValueError，由调用方翻成 400。
+    """
+    text = str(raw).strip().replace(" ", "T")
+    if text.endswith(("Z", "z")):       # Python 3.10 的 fromisoformat 不认 Z
+        text = text[:-1] + "+00:00"
+    dt = datetime.fromisoformat(text)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
 def like_pattern(text: str) -> str:
     """把搜索框里的一串字变成 LIKE 的匹配串。
 
