@@ -1903,6 +1903,10 @@ def add_walkin(shift_id: str, body: dict,
 
     时段冲突、名额超出都拦一道，勾选强制才放行——补招是常规操作，
     不该顺手把场次搞超员；真要超也得是明确按下去的，且留痕。
+
+    attached_ids：一并报上的培训/彩排（本场次下、对这个岗位生效的）。
+    补招**不自动**连带：现场临时加进来的人，赶不赶得上培训、要不要去彩排，
+    得负责人自己判断，所以只报勾上的那几场。它们的时段冲突同样要强制才放行。
     """
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
@@ -1942,6 +1946,25 @@ def add_walkin(shift_id: str, body: dict,
         clashes = logic.time_conflicts(db, u, g)
         if clashes:
             reasons.append(f"时段与{logic.conflict_message(clashes)}冲突")
+
+        wanted = list(dict.fromkeys(body.get("attached_ids") or []))
+        allowed = {s.id: s for s in logic.attached_shifts(
+            db, g.id, position.id if position else None)}
+        extra: list[Shift] = []
+        for aid in wanted:
+            s = allowed.get(aid)
+            if s is None:
+                raise HTTPException(400, "所选培训/彩排不属于该场次，或对这个岗位不生效")
+            if (db.query(Enrollment)
+                    .filter(Enrollment.shift_id == s.id, Enrollment.user_id == u.id)
+                    .first()) is not None:
+                continue            # 已经在那场里了（比如之前连带报过），不重复加
+            hit = logic.time_conflicts(db, u, s)
+            if hit:
+                reasons.append(f"{s.kind_label()}「{s.name}」时段与"
+                               f"{logic.conflict_message(hit)}冲突")
+            extra.append(s)
+
         if not logic.has_room(db, g, position):
             reasons.append(f"「{position.name}」名额已满（上限{position.quota}人）"
                            if position else
@@ -1959,10 +1982,17 @@ def add_walkin(shift_id: str, body: dict,
             enr.assigned_at = now()
             enr.assign_forced = bool(reasons)
         db.add(enr)
+        for s in extra:
+            # 与 sync_attached 连带报上的行同形：附属场次不设岗位
+            db.add(Enrollment(id=uid("enr"), activity_id=g.activity_id,
+                              shift_id=s.id, user_id=u.id, source="admin",
+                              status="enrolled", joined_at=now()))
+        also = "、".join(f"{s.kind_label()}「{s.name}」" for s in extra)
         audit_log(db, actor=user, action="force_assign" if reasons else "create",
                   target_type="enrollment", target_id=enr.id,
                   target_label=f"{u.name}", activity_id=g.activity_id,
                   summary=f"补招 {u.name}（{sid}）至场次「{g.name}」"
+                          + (f"，并报上{also}" if extra else "")
                           + (f"（强制：{'；'.join(reasons)}）" if reasons else ""))
         # 补招是管理者单方面加进来的：不通知的话，本人那边一点动静都没有——
         # 不知道自己报了名，更不知道哪天要去哪儿。跟候补转正一样得告诉他
@@ -1974,9 +2004,13 @@ def add_walkin(shift_id: str, body: dict,
                      f"时间：{g.span_text()}\n"
                      f"地点：{g.location or act.location or '待定'}\n"
                      f"岗位：{position.name if position else '待分配'}\n"
-                     f"如无法参加，请尽快联系负责人。"))
+                     + "".join(f"{s.kind_label()}：{s.span_text()}"
+                               f"（{s.location or act.location or '地点待定'}）\n"
+                               for s in extra)
+                     + "如无法参加，请尽快联系负责人。"))
         db.commit()
-    return {"ok": True, "enrollment_id": enr.id, "forced_reasons": reasons}
+    return {"ok": True, "enrollment_id": enr.id, "forced_reasons": reasons,
+            "attached": [s.id for s in extra]}
 
 
 # ======================= 图片上传 / 媒体访问 =======================
