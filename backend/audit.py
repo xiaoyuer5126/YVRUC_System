@@ -58,6 +58,7 @@ ACTION_LABELS = {
     "excuse": "请假", "unexcuse": "销假",
     "material": "学习材料",
     "submit": "提交审批", "approve": "审批", "view_team": "查看组员",
+    "duty": "值班交接", "vb_register": "志愿北京登记",
 }
 
 

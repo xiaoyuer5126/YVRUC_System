@@ -1,4 +1,5 @@
-"""定时任务：候补清扫、活动状态自动流转、签到提醒、人员变动日报、编辑解冻。
+"""定时任务：候补清扫、活动状态自动流转、签到提醒、人员变动日报、编辑解冻、
+值班日报。
 
 由 main.py 的协程每分钟驱动一次。几件事互不依赖，一件出错不影响其余——
 任何一件长期不跑都没有外部表现，直到有人发现名额空转或提醒没发出去。
@@ -14,7 +15,8 @@ from . import config
 from .audit import log as audit_log
 from .enroll_logic import expire_stale_promotions
 from .integrations import msgcenter
-from .models import Activity, Shift, User, now
+from .models import (Activity, ApprovalEvent, Department, HoursRequest, Shift,
+                     User, VbRegistration, now)
 from .notify import notify_checkin, notify_enrolled, notify_managers
 from .perm import activity_manager_ids
 
@@ -31,6 +33,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("reminders", send_checkin_reminders),
                       ("digests", send_roster_digests),
                       ("approvals", remind_stale_approvals),
+                      ("duty_digests", send_duty_digests),
                       ("hours_lock_requests", submit_lock_when_due),
                       ("unlocked", release_stale_edit_locks),
                       ("sessions", purge_expired_sessions),
@@ -93,7 +96,9 @@ def submit_lock_when_due(db: OrmSession) -> int:
     管理者收到过通知了，处理完再核准一次。
     被驳回的不会再自动送一次：重新核准（hours_approved_at 往后走）之后才算
     新一轮，否则驳回的下一分钟又提交，等于没驳。
+    对外活动缺盖章立项书的不送，提醒管理者一次；补传之后下一轮照常送。
     """
+    from . import liaison
     from .hours import submit_lock
     from .models import HoursAppeal, HoursRequest
     from .routers.staff_ops import _notify_lock_approvers
@@ -103,7 +108,7 @@ def submit_lock_when_due(db: OrmSession) -> int:
             .filter(Activity.hours_locked_at.is_(None),
                     Activity.appeal_deadline.isnot(None),
                     Activity.appeal_deadline < t).all())
-    sent = 0
+    sent = reminded = 0
     for act in rows:
         pending = (db.query(HoursAppeal)
                    .filter(HoursAppeal.activity_id == act.id,
@@ -116,13 +121,27 @@ def submit_lock_when_due(db: OrmSession) -> int:
                         HoursRequest.kind == "lock",
                         HoursRequest.created_at >= since).first()):
             continue
+        if liaison.is_external(db, act) \
+                and liaison.project_file(db, act.id, "stamped") is None:
+            # 每一轮自动报批提醒一次：时长每核准一次算新的一轮（since 往后走）。
+            # 定时任务每分钟一趟，不记下来就是每分钟一条
+            if act.stamped_reminded_at is None or act.stamped_reminded_at < since:
+                act.stamped_reminded_at = t
+                notify_managers(
+                    db, act.id, f"请上传盖章立项书｜{act.title}",
+                    f"「{act.title}」的确认/申诉期已满，本该自动提交时长审核，"
+                    f"但这是对外联络部归口的活动，还没有上传盖章立项书。\n"
+                    f"请到活动管理的「审核」页签上传，上传后系统会自动提交。",
+                    duty="hours")
+                reminded += 1
+            continue
         reason = (f"确认/申诉截止（{act.appeal_deadline:%m-%d %H:%M}）无人申诉，"
                   f"系统自动提交；未确认的按志愿时长记")
         if submit_lock(db, act, None, reason) is None:
             continue
         _notify_lock_approvers(db, act, "系统", reason)
         sent += 1
-    if sent:
+    if sent or reminded:
         db.commit()
     return sent
 
@@ -189,9 +208,13 @@ def remind_stale_approvals(db: OrmSession) -> int:
                     Activity.submitted_at.isnot(None),
                     Activity.submitted_at < deadline,
                     Activity.approval_reminded_at.is_(None)).all())
+    from . import liaison
     for act in rows:
         who = (db.get(User, act.approval_assignee_id)
                if act.approval_assignee_id else None)
+        # 挂在部长名下的、启用值班的部门：催值班的人（没人值班还是部长）
+        if who is not None and liaison.is_dept_handler(db, who, act.approval_dept_id):
+            who = liaison.approval_contact(db, act.approval_dept_id) or who
         waited = int((now() - act.submitted_at).total_seconds() // 3600)
         text = (f"「{act.title}」（{act.organizer}）已提交 {waited} 小时未处理。\n"
                 f"请到「活动审批」通过或驳回，如不该由您审批可以转交。")
@@ -210,6 +233,124 @@ def remind_stale_approvals(db: OrmSession) -> int:
     if rows:
         db.commit()
     return len(rows)
+
+
+# ======================= 值班日报 =======================
+
+def send_duty_digests(db: OrmSession) -> int:
+    """每晚 DUTY_DIGEST_HOUR 点给启用值班的部门的部长发一份当天的审批日报。
+
+    值班之后部长不再收逐条的审批通知，但部门的事还是他的事：一天一条，
+    今天进来了什么、谁处理了什么、还压着什么。三样都是空的就不发。
+    一天只发一次：先用一条条件更新把「今天发过了」占下来，占到了才发——
+    清扫每分钟一轮，进程重启或换了主也不会发第二遍。
+    """
+    from sqlalchemy import or_, update
+    from . import liaison
+
+    t = now()
+    if t.hour < config.DUTY_DIGEST_HOUR:
+        return 0
+    today = t.date()
+    day_start = t.replace(hour=0, minute=0, second=0, microsecond=0)
+    sent = 0
+    for dept in (db.query(Department)
+                 .filter(Department.name.in_(liaison.DUTY_DEPTS)).all()):
+        head = liaison.dept_head(db, dept.id)
+        if head is None:
+            continue
+        claimed = db.execute(
+            update(Department)
+            .where(Department.id == dept.id,
+                   or_(Department.duty_digest_on.is_(None),
+                       Department.duty_digest_on < today))
+            .values(duty_digest_on=today)).rowcount
+        db.commit()
+        if not claimed:
+            continue
+        new, done, waiting = _duty_digest_lines(db, dept, day_start)
+        if not (new or done or waiting):
+            continue          # 今天什么都没发生，不打扰
+        duty = liaison.on_duty(db, dept)
+
+        def block(title: str, lines: list[str]) -> str:
+            return f"【{title}】{len(lines)} 条\n" + (
+                "\n".join(f"· {x}" for x in lines) if lines else "· 无")
+
+        msgcenter.send_user(
+            db, head, "custom", data={"route": "approvals"},
+            title=f"值班日报｜{dept.name} {t:%m-%d}",
+            content=(f"今日值班：{duty.name if duty else '无人值班（通知发给了您）'}\n"
+                     + "\n".join((block("今日新增", new), block("今日处理", done),
+                                  block("尚未处理", waiting)))))
+        db.commit()
+        sent += 1
+        logger.info("值班日报已发给 %s（%s）", head.name, dept.name)
+    return sent
+
+
+def _duty_digest_lines(db: OrmSession, dept: Department, since
+                       ) -> tuple[list[str], list[str], list[str]]:
+    """日报的三栏：今日新增 / 今日处理 / 尚未处理，各是一串人话。
+
+    这个部门的审批 = 归口它的活动审批与时长锁定/解锁，加上志愿北京登记
+    （登记不分部门，都由对外联络部核对）。
+    """
+    def name(uid_: str | None) -> str:
+        u = db.get(User, uid_) if uid_ else None
+        return u.name if u else "系统"
+
+    new: list[str] = []
+    done: list[str] = []
+    waiting: list[str] = []
+    acts = {a.id: a for a in db.query(Activity)
+            .filter(Activity.approval_dept_id == dept.id).all()}
+
+    # 活动审批：提交与转入算新增，通过/驳回算处理
+    for e in (db.query(ApprovalEvent)
+              .filter(ApprovalEvent.activity_id.in_(list(acts)),
+                      ApprovalEvent.created_at >= since)
+              .order_by(ApprovalEvent.created_at).all()):
+        title = acts[e.activity_id].title
+        if e.kind in ("submit", "transfer") and e.dept_id == dept.id:
+            new.append(f"活动审批「{title}」（{name(e.actor_id)} {e.kind_label()}）")
+        elif e.kind in ("approve", "reject"):
+            done.append(f"活动审批「{title}」{e.kind_label()}（{name(e.actor_id)}）")
+    for a in acts.values():
+        if a.status == "pending":
+            waiting.append(f"活动审批「{a.title}」（{a.submitted_at:%m-%d %H:%M} 提交）"
+                           if a.submitted_at else f"活动审批「{a.title}」")
+
+    # 时长锁定/解锁
+    for r in (db.query(HoursRequest)
+              .filter(HoursRequest.activity_id.in_(list(acts)))
+              .filter((HoursRequest.created_at >= since)
+                      | (HoursRequest.handled_at >= since)
+                      | (HoursRequest.status == "pending"))
+              .order_by(HoursRequest.created_at).all()):
+        what = f"时长{r.kind_label()}「{acts[r.activity_id].title}」"
+        if r.created_at >= since:
+            new.append(f"{what}（{name(r.requested_by)} 提交）")
+        if r.handled_at and r.handled_at >= since:
+            done.append(f"{what}{r.status_label()}（{name(r.handled_by)}）")
+        if r.status == "pending":
+            waiting.append(f"{what}（{r.created_at:%m-%d %H:%M} 提交）")
+
+    # 志愿北京登记
+    for v in (db.query(VbRegistration)
+              .filter((VbRegistration.submitted_at >= since)
+                      | (VbRegistration.handled_at >= since)
+                      | (VbRegistration.status == "submitted"))
+              .order_by(VbRegistration.submitted_at).all()):
+        act = db.get(Activity, v.activity_id)
+        what = f"志愿北京登记「{v.vb_name}」（{act.title if act else '?'}）"
+        if v.submitted_at >= since:
+            new.append(f"{what} {name(v.submitted_by)} 提交")
+        if v.handled_at and v.handled_at >= since and v.status in ("approved", "rejected"):
+            done.append(f"{what} {v.status_label()}（{name(v.handled_by)}）")
+        if v.status == "submitted":
+            waiting.append(f"{what} {v.submitted_at:%m-%d %H:%M} 提交")
+    return new, done, waiting
 
 
 # ======================= 编辑冻结兜底 =======================

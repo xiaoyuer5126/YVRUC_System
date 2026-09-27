@@ -136,6 +136,8 @@ def main() -> None:
             users[sid].qingxie_post = post
         # 成员跟着骨干：苏昀看到的活动与林骁一模一样
         users["2025006"].supervisor_id = users["2025005"].id
+        # 对外联络部启用值班（见 liaison.py），但种子里不预设值班人：没人值班时
+        # 审批通知回落给部长，演示时由周砚在「活动审批」页指定林骁值班，两种情形都看得到
         db.commit()
 
         colleges = ["明理书院", "新闻学院", "法学院", "财政金融学院", "经济学院",

@@ -14,7 +14,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from ..audit import log as audit_log
-from .. import config, hours as hours_flow
+from .. import config, hours as hours_flow, liaison
 from ..stage import ensure_hours_editable, ensure_not_finished
 from ..database import db_session
 from ..deps import require_manager, require_manager_download
@@ -25,9 +25,9 @@ from ..perm import ensure_activity_manager
 from ..integrations import msgcenter
 from ..locks import current_checkin_code
 from ..notify import notify, notify_checkin
-from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask, Enrollment,
-                      HoursAppeal, HoursRecord, HoursRequest, Shift,
-                      Position, User, iso, new_checkin_token, now, span_text, uid)
+from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
+                      Department, Enrollment, HoursAppeal, HoursRecord,
+                      HoursRequest, Shift, Position, User, iso, new_checkin_token, now, span_text, uid)
 from ..serializers import iso_of, recruit_scope_text
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
@@ -841,12 +841,16 @@ def _parse_deadline(raw: str) -> datetime:
 
 
 def _hours_approvers(db: OrmSession, act: Activity) -> list[User]:
-    """谁能拍锁定与解锁：归口部门的部长，加上会长团与平台管理员。"""
+    """谁能拍锁定与解锁：归口部门的部长（启用值班的部门加上值班人），
+    加上会长团与平台管理员。"""
     out = []
     if act.approval_dept_id:
         out += (db.query(User)
                 .filter(User.department_id == act.approval_dept_id,
                         User.qingxie_post == "head").all())
+        duty = liaison.on_duty(db, db.get(Department, act.approval_dept_id))
+        if duty is not None:
+            out.append(duty)
     out += [u for u in db.query(User).all() if u.has_full_access()]
     seen, uniq = set(), []
     for u in out:
@@ -854,6 +858,18 @@ def _hours_approvers(db: OrmSession, act: Activity) -> list[User]:
             seen.add(u.id)
             uniq.append(u)
     return uniq
+
+
+def _hours_notify_targets(db: OrmSession, act: Activity) -> list[User]:
+    """时长审批通知谁：归口部门的对接人（有值班人就只发值班人，不发部长），
+    加上会长团与平台管理员。能拍板的人比收通知的人多——部长照样能在审批页处理。"""
+    out = []
+    contact = liaison.approval_contact(db, act.approval_dept_id)
+    if contact is not None:
+        out.append(contact)
+    out += [u for u in db.query(User).all()
+            if u.has_full_access() and (contact is None or u.id != contact.id)]
+    return out
 
 
 CHECKOUT_GRACE = timedelta(hours=config.CHECKOUT_GRACE_HOURS)
@@ -1034,6 +1050,9 @@ def hours_preview(activity_id: str, db: OrmSession = Depends(db_session),
             "default_deadline": iso(hours_flow.default_appeal_deadline()),
             # 锁定审批挂着的时候整页冻结：部长看的和最终封的得是同一份账
             "lock_pending": hours_flow.pending_lock(db, act.id) is not None,
+            # 对外活动还缺盖章立项书：报批按钮前先提示，别点了才被拦
+            "stamped_missing": (liaison.is_external(db, act) and liaison.project_file(
+                db, act.id, "stamped") is None),
             "request": ({"id": req.id, "kind": req.kind,
                          "kind_label": req.kind_label(), "status": req.status,
                          "status_label": req.status_label(),
@@ -1431,6 +1450,10 @@ def hours_lock_request(activity_id: str, body: LockHoursBody | None = None,
     ensure_hours_editable(db, act)
     if act.hours_approved_at is None:
         raise HTTPException(409, "请先核准时长")
+    # 对外活动的时长要凭盖章立项书报批，没有就不往上送
+    if liaison.is_external(db, act) \
+            and liaison.project_file(db, act.id, "stamped") is None:
+        raise HTTPException(400, "对外活动须先上传盖章立项书，才能提交时长审核")
     pending = (db.query(HoursAppeal)
                .filter(HoursAppeal.activity_id == act.id,
                        HoursAppeal.status == "pending").count())
@@ -1446,7 +1469,7 @@ def hours_lock_request(activity_id: str, body: LockHoursBody | None = None,
 
 def _notify_lock_approvers(db: OrmSession, act: Activity, who: str,
                            reason: str) -> None:
-    for approver in _hours_approvers(db, act):
+    for approver in _hours_notify_targets(db, act):
         notify(db, approver, f"时长锁定审批｜{act.title}",
                f"{who}提交了「{act.title}」的志愿时长，等待校青协审核。\n"
                f"说明：{reason}\n通过后时长锁定、活动标记为已完成；"
@@ -1481,7 +1504,7 @@ def request_unlock(activity_id: str, body: UnlockRequestBody,
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"申请解锁时长：{reason}")
-    for approver in _hours_approvers(db, act):
+    for approver in _hours_notify_targets(db, act):
         notify(db, approver, f"时长解锁申请｜{act.title}",
                f"{user.name} 申请解锁「{act.title}」已锁定的志愿时长。\n"
                f"理由：{reason}\n请到「活动审批」处理。",
@@ -1546,6 +1569,44 @@ def _decide_text(act: Activity, req, approve: bool, reply: str) -> str:
     if req.kind == "lock":
         return f"「{act.title}」的志愿时长已通过校青协审核并锁定，活动已完成。{tail}"
     return f"「{act.title}」的时长已解锁，修改后请重新核准。{tail}"
+
+
+@router.get("/activities/{activity_id}/hours-requests")
+def activity_hours_requests(activity_id: str, db: OrmSession = Depends(db_session),
+                            user: User = Depends(require_manager)):
+    """这场活动所有的时长审核（锁定与解锁），新的在前。给活动管理页「审核」
+    页签看：提交在「时长管理」里点，审到哪一步、谁批的、意见是什么在这里看。
+    管理者与这场活动的时长审批人都能看。"""
+    act = _act(db, activity_id)
+    approvers = _hours_approvers(db, act)
+    if user.id not in {u.id for u in approvers}:
+        ensure_activity_manager(db, user, activity_id)
+    rows = (db.query(HoursRequest)
+            .filter(HoursRequest.activity_id == act.id)
+            .order_by(HoursRequest.created_at.desc()).all())
+
+    def name(uid_):
+        u = db.get(User, uid_) if uid_ else None
+        return u.name if u else ""
+    dept = db.get(Department, act.approval_dept_id) if act.approval_dept_id else None
+    head = liaison.dept_head(db, dept.id) if dept else None
+    duty = liaison.on_duty(db, dept)
+    return {
+        "department": dept.name if dept else "",
+        # 等谁处理：启用值班的部门是值班人，否则是部长（会长团、管理员也能批）
+        "handler": (f"{duty.name}（值班）" if duty
+                    else (f"{head.name}（部长）" if head else "")),
+        "locked_at": iso_of(act.hours_locked_at),
+        "items": [{
+            "id": r.id, "kind": r.kind, "kind_label": r.kind_label(),
+            "status": r.status, "status_label": r.status_label(),
+            "reason": r.reason, "reply": r.reply,
+            "requested_by": name(r.requested_by) or "系统",
+            "created_at": iso(r.created_at),
+            "handled_by": name(r.handled_by),
+            "handled_at": iso_of(r.handled_at),
+        } for r in rows],
+    }
 
 
 @router.get("/hours-requests")

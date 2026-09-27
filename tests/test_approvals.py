@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from backend.models import Activity, Department, User, now, uid
-from conftest import POSITION_TEXT, login
+from conftest import POSITION_TEXT, login, upload_proposal
 
 QINGXIE_HEAD = "2025004"        # 周砚，对外联络部部长
 COUNCIL = "2025003"             # 张远航，会长团
@@ -31,6 +31,8 @@ def _make_draft(client, admin, *, reg_start_in=timedelta(days=-1)) -> str:
     r = client.post(f"/api/staff/shifts/{r.json()['id']}/positions", headers=admin,
                     json={"name": "引导", "quota": 3, **POSITION_TEXT})
     assert r.status_code == 200, r.text
+    # 这里的用例大多交给对外联络部（种子里唯一有部长的部门），它要立项书
+    upload_proposal(client, admin, aid)
     return aid
 
 
@@ -149,7 +151,8 @@ def test_驳回必须写理由并退回草稿(client, admin, db, draft):
     act = db.get(Activity, draft)
     assert act.status == "draft" and "笼统" in act.approval_comment
 
-    # 改完可以重新提交
+    # 改完可以重新提交（驳回时立项书作废了，要传一份新的）
+    upload_proposal(client, admin, draft)
     assert client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
                        json={"department_id": dept.id}).status_code == 200
 

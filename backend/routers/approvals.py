@@ -8,6 +8,9 @@
 当前审批人挂在 Activity 上（一条活动只有一条正在进行的审批），转交、通过、
 驳回各留一条 ApprovalEvent。审批**永不自动通过**：没人看就一直等着，
 超时只催人，不放行。
+
+对外联络部启用值班（见 liaison.py）：审批人仍挂部长，但通知发给值班的人，
+值班人与部长都能拍这个部门的审批；没人值班就回落给部长。
 """
 from __future__ import annotations
 
@@ -15,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as OrmSession
 
+from .. import liaison
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import (current_user, require_approver, require_council,
@@ -48,15 +52,23 @@ def ensure_departments(db: OrmSession) -> None:
     db.commit()
 
 
-def _dept_head(db: OrmSession, dept_id: str) -> User | None:
-    return (db.query(User)
-            .filter(User.department_id == dept_id,
-                    User.qingxie_post == "head").first())
+_dept_head = liaison.dept_head
+
+
+def _in_dept(db: OrmSession, act: Activity) -> bool:
+    """这条审批眼下还在归口部门手里：审批人是本部门的人。
+    转给会长团（没有部门）时归口不动，但事情已经交出去了，部门不再插手。"""
+    who = db.get(User, act.approval_assignee_id) if act.approval_assignee_id else None
+    return who is not None and who.department_id == act.approval_dept_id
 
 
 def _can_decide(db: OrmSession, user: User, act: Activity) -> bool:
-    """能不能拍这一条：当前审批人、会长团、或平台管理员。"""
-    return act.approval_assignee_id == user.id or user.has_full_access()
+    """能不能拍这一条：当前审批人、会长团、或平台管理员；启用值班的部门
+    另加值班人与部长（转给部门里某个人的也一样，部长随时能直接拍）。"""
+    if act.approval_assignee_id == user.id or user.has_full_access():
+        return True
+    return (liaison.is_dept_handler(db, user, act.approval_dept_id)
+            and _in_dept(db, act))
 
 
 def can_review(db: OrmSession, user: User, act: Activity) -> bool:
@@ -244,6 +256,13 @@ def submit(activity_id: str, body: SubmitBody,
     head = _dept_head(db, dept.id)
     if head is None:
         raise HTTPException(400, f"「{dept.name}」还没有指定部长，请联系管理员")
+    # 对外活动要带立项书：审批人看的就是这份东西，没有它批不了
+    if dept.name == liaison.LIAISON_DEPT \
+            and liaison.project_file(db, act.id, "proposal") is None:
+        raise HTTPException(400, f"提交「{dept.name}」审批须先上传立项书")
+    # 审批人仍挂部长（部门的责任人），通知发给值班的人
+    contact = liaison.approval_contact(db, dept.id) or head
+    via = f"，值班 {contact.name}" if contact.id != head.id else ""
 
     act.status = "pending"
     act.auto_publish = body.auto_publish
@@ -256,14 +275,14 @@ def submit(activity_id: str, body: SubmitBody,
            comment=body.note.strip())
     audit_log(db, actor=user, action="submit", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"提交「{dept.name}」审批（审批人 {head.name}）")
-    _notify(db, head, f"待审批｜{act.title}",
+              summary=f"提交「{dept.name}」审批（审批人 {head.name}{via}）")
+    _notify(db, contact, f"待审批｜{act.title}",
             f"{user.name} 提交了「{act.title}」，组织单位：{act.organizer}。\n"
             f"归口部门：{dept.name}。\n"
             + (f"备注：{body.note.strip()}\n" if body.note.strip() else "")
             + "请到「活动审批」处理。", act, need_ack=True, route="approvals")
     db.commit()
-    return {"ok": True, "assignee": head.name}
+    return {"ok": True, "assignee": contact.name}
 
 
 class DecideBody(BaseModel):
@@ -291,6 +310,10 @@ def decide(activity_id: str, body: DecideBody,
     comment = body.comment.strip()
     if not body.approve and len(comment) < 2:
         raise HTTPException(400, "驳回必须写明理由，会发给发起方")
+    # 转交进对外联络部的活动可能还没传立项书：批之前得有
+    if body.approve and liaison.is_external(db, act) \
+            and liaison.project_file(db, act.id, "proposal") is None:
+        raise HTTPException(400, "这场对外活动还没有上传立项书，请驳回让发起方补传")
 
     # 部长自己发起的活动归口自己部门、由自己审——允许，但流水里标明是本人
     submit = (db.query(ApprovalEvent)
@@ -325,10 +348,16 @@ def decide(activity_id: str, body: DecideBody,
         act.approval_assignee_id = None
         _event(db, act, "reject", user, comment=comment)
         summary = f"审批驳回（{who}）：{comment}"
+        # 驳回即作废立项书：改完重交要带新的一份，免得旧版本混过去
+        dropped = liaison.drop_project_file(db, act.id, "proposal")
+        if dropped is not None:
+            summary += f"；立项书《{dropped.title}》作废"
         title, body_text = (
             f"审批未通过｜{act.title}",
             f"「{act.title}」未通过校青协审批。\n意见：{comment}\n"
-            f"修改后可以重新提交。")
+            f"修改后可以重新提交。"
+            + ("\n原立项书已作废，重新提交时请上传新的立项书。"
+               if dropped is not None else ""))
     audit_log(db, actor=user, action="approve" if body.approve else "reject",
               target_type="activity", target_id=act.id, target_label=act.title,
               activity_id=act.id, summary=summary)
@@ -402,7 +431,11 @@ def transfer(activity_id: str, body: TransferBody,
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"审批转交：{before.name if before else '—'} → {target.name}"
                       f"（{dept.name if dept else '未归口'}）；理由：{reason}")
-    _notify(db, target, f"转来一条待审批｜{act.title}",
+    # 转给部门的（审批人落在部长身上）通知该部门的值班人；点名转给某人的就是他
+    contact = target
+    if not body.student_id.strip() and dept is not None:
+        contact = liaison.approval_contact(db, dept.id) or target
+    _notify(db, contact, f"转来一条待审批｜{act.title}",
             f"{user.name} 把「{act.title}」的审批转交给您。\n理由：{reason}",
             act, need_ack=True, route="approvals")
     _notify(db, before, f"审批已转出｜{act.title}",
@@ -415,18 +448,24 @@ def transfer(activity_id: str, body: TransferBody,
                 f"「{act.title}」的审批已转交给 {target.name}"
                 f"（{dept.name if dept else '未归口'}）。", act)
     db.commit()
-    return {"ok": True, "assignee": target.name}
+    return {"ok": True, "assignee": contact.name}
 
 
 @router.get("/approvals")
 def my_approvals(db: OrmSession = Depends(db_session),
                  user: User = Depends(require_approver)):
-    """待我审批的活动。会长团与管理员看全部待审批，部长看自己名下的。"""
+    """待我审批的活动。会长团与管理员看全部待审批，部长看自己名下的；
+    启用值班的部门，值班人与部长看这个部门的全部。"""
+    from sqlalchemy import or_
     q = db.query(Activity).filter(Activity.status == "pending")
     if not user.has_full_access():
-        q = q.filter(Activity.approval_assignee_id == user.id)
+        depts = liaison.handler_dept_ids(db, user)
+        q = q.filter(or_(Activity.approval_assignee_id == user.id,
+                         Activity.approval_dept_id.in_(depts)))
     out = []
     for act in q.order_by(Activity.submitted_at).all():
+        if not _can_decide(db, user, act):
+            continue
         dept = db.get(Department, act.approval_dept_id) if act.approval_dept_id else None
         who = db.get(User, act.approval_assignee_id) if act.approval_assignee_id else None
         creator = db.get(User, act.created_by)
@@ -437,6 +476,8 @@ def my_approvals(db: OrmSession = Depends(db_session),
                   .filter(ApprovalEvent.activity_id == act.id,
                           ApprovalEvent.kind == "submit")
                   .order_by(ApprovalEvent.created_at.desc()).first())
+        duty = liaison.on_duty(db, dept) if dept else None
+        proposal = liaison.project_file(db, act.id, "proposal")
         out.append({
             "id": act.id, "title": act.title, "organizer": act.organizer,
             "recruit_label": act.recruit_label(), "location": act.location,
@@ -446,9 +487,17 @@ def my_approvals(db: OrmSession = Depends(db_session),
             "submitted_at": iso(act.submitted_at),
             "department": dept.name if dept else "",
             "assignee": who.name if who else "",
-            "mine": act.approval_assignee_id == user.id,
+            # 在我名下（会长团接管别人名下的那种不算）：前端据此标「当前审批人」
+            "mine": (act.approval_assignee_id == user.id
+                     or (liaison.is_dept_handler(db, user, act.approval_dept_id)
+                         and _in_dept(db, act))),
+            "on_duty": duty.name if duty else "",
             "creator": creator.name if creator else "",
             "submit_note": submit.comment if submit else "",
+            # 对外活动的立项书：审批人就在这一屏拍板，有没有、点开看都在这儿
+            "external": bool(dept and dept.name == liaison.LIAISON_DEPT),
+            "proposal": ({"id": proposal.id, "title": proposal.title}
+                         if proposal else None),
         })
     return out
 
@@ -471,6 +520,8 @@ def approval_detail(activity_id: str, db: OrmSession = Depends(db_session),
         "status": act.status, "status_label": act.label_status(),
         "department": dept.name if dept else "",
         "assignee": who.name if who else "",
+        # 启用值班的部门：通知实际发给了谁（管理者看「等谁处理」要看这个）
+        "on_duty": (d.name if (d := liaison.on_duty(db, dept)) else ""),
         "can_decide": _can_decide(db, user, act) and act.status == "pending",
         "comment": act.approval_comment,
         "events": [{

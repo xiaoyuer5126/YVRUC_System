@@ -74,7 +74,8 @@
 
     <!-- 审批状态：待审批看到审批人，被驳回看到意见 -->
     <el-alert v-if="act.status === 'pending'" type="warning" show-icon :closable="false"
-              :title="`已提交${approval?.department || ''}审批，等待 ${approval?.assignee || ''} 处理`"
+              :title="`已提交${approval?.department || ''}审批，等待 ${approval?.on_duty
+                ? approval.on_duty + '（值班）' : (approval?.assignee || '')} 处理`"
               :description="act.auto_publish
                 ? '审批期间可以继续调整安排，审批通过后活动立即公开发布，到点准时开始报名。'
                 : '审批期间可以继续调整安排，审批通过后由你点「发布」。'" />
@@ -647,6 +648,10 @@
           </el-tooltip>
           <el-button v-if="hoursState.approved_at && !hoursFrozen"
                      type="warning" plain @click="submitLockNow">提交时长审核</el-button>
+          <!-- 对外活动凭盖章立项书报批：缺了先说，别等点了才被拦 -->
+          <el-alert v-if="hoursState.stamped_missing && !hoursState.locked_at"
+                    type="warning" :closable="false" show-icon style="flex:1 1 100%"
+                    title="对外联络部归口的活动须先在「审核」页签上传盖章立项书，才能提交时长审核（到点也不会自动提交）" />
           <el-button v-if="hoursState.locked_at" type="warning" plain
                      @click="openUnlock">申请解锁</el-button>
         </div>
@@ -670,6 +675,7 @@
                   title="时长已提交校青协审核，审核期间本页只读">
           <div style="line-height:1.8">
             通过即锁定并把活动标记为「已完成」；驳回会退回给你，改完重新核准再提交一次。
+            审核进度与历史见 <el-link type="primary" @click="tab = 'review'">「审核」页签</el-link>。
             <template v-if="hoursState.request">
               <br />提交说明：{{ hoursState.request.reason }}
             </template>
@@ -849,6 +855,11 @@
             </el-tag>
           </div>
         </el-card>
+      </el-tab-pane>
+
+      <!-- ============ 审核：立项、时长、志愿北京三道审核的进度与材料 ============ -->
+      <el-tab-pane label="审核" name="review" lazy>
+        <ReviewPanel :activity-id="activityId" :act="act" />
       </el-tab-pane>
 
       <el-tab-pane label="管理者" name="managers" lazy>
@@ -1119,6 +1130,14 @@
               </div>
             </el-option>
           </el-select>
+        </el-form-item>
+        <!-- 交对外联络部（二级团体的活动）要带立项书，在这里就能传 -->
+        <el-form-item v-if="submitToLiaison" label="立项书" required>
+          <ProjectFileSlot v-if="submitFiles" :activity-id="activityId" kind="proposal"
+                           label="立项书" :file="submitFiles.proposal"
+                           :can-upload="submitFiles.can_upload_proposal"
+                           :block="submitFiles.proposal_block"
+                           :required="!submitFiles.proposal" @changed="loadSubmitFiles" />
         </el-form-item>
         <el-form-item label="补充说明">
           <el-input v-model="submitDlg.note" type="textarea" :rows="2"
@@ -1410,6 +1429,8 @@ import FormBuilder from '../components/FormBuilder.vue'
 import AnswerList from '../components/AnswerList.vue'
 import HoursParts from '../components/HoursParts.vue'
 import ApplicationList from '../components/ApplicationList.vue'
+import ReviewPanel from '../components/ReviewPanel.vue'
+import ProjectFileSlot from '../components/ProjectFileSlot.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'
 import { DAY_END, DAY_START, auth, canSee } from '../store'
@@ -2171,14 +2192,27 @@ async function openSubmit() {
     await api.get(`/api/staff/activities/${activityId}/submit-check`)
   } catch { return }        // 错误提示由 api 层统一弹出
   depts.value = await api.get('/api/staff/departments')
+  await loadSubmitFiles()
   // 青协的人建的活动已经按所在部门预填了归口，这里带出来，可以改
   submitDlg.value = { visible: true, deptId: act.value?.approval_dept_id || '',
                       note: '', autoPublish: true, busy: false }
 }
 
+// 对外联络部要立项书：选中它时在对话框里就地上传
+const LIAISON_DEPT = '对外联络部'
+const submitFiles = ref(null)
+const submitToLiaison = computed(() =>
+  depts.value.find(x => x.id === submitDlg.value.deptId)?.name === LIAISON_DEPT)
+async function loadSubmitFiles() {
+  submitFiles.value = await api.get(`/api/staff/activities/${activityId}/project-files`)
+}
+
 async function doSubmit() {
   const d = submitDlg.value
   if (!d.deptId) return ElMessage.warning('请选择审批部门')
+  if (submitToLiaison.value && !submitFiles.value?.proposal) {
+    return ElMessage.warning('提交对外联络部审批须先上传立项书')
+  }
   d.busy = true
   try {
     const r = await api.post(`/api/staff/activities/${activityId}/submit`,
