@@ -81,6 +81,8 @@ jobs:
           python-version: "3.12"
       - name: vuecheck（模板里用了没定义的标识符、把数据当 HTML 渲染）
         run: python scripts/vuecheck.py
+      - name: spacecheck（上下间距只走 0/4/8/12/16/24 这一套尺度）
+        run: python scripts/spacecheck.py
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

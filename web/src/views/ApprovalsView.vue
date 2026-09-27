@@ -21,7 +21,7 @@
           {{ d.showHistory ? '收起交接记录' : `交接记录（${d.history.length}）` }}
         </el-link>
       </div>
-      <div class="dim" style="margin-top:6px">
+      <div class="dim" style="margin-top:8px">
         本部门的活动审批、时长锁定/解锁与志愿北京登记由值班人处理，部长随时可以直接处理；
         部长每晚 21 点收到当天的汇总。
       </div>
