@@ -24,7 +24,7 @@ from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import current_user, require_manager
 from ..integrations import msgcenter
-from ..locks import shift_lock
+from ..locks import shift_lock, user_lock
 from ..models import (Activity, Application, Attachment, Enrollment, FormQuestion, Position, Shift, User, now, uid)
 from ..perm import ensure_activity_manager, is_activity_manager
 from ..serializers import application_out
@@ -279,7 +279,11 @@ def apply(activity_id: str, body: ApplyBody,
         raise HTTPException(409, "您已经申请过本活动")
     picked = _wanted_positions(db, act, body.position_ids)
 
-    # 每个意向场次都要过一遍资格、岗位条件与时段冲突：申请就拦，不等录取
+    # 每个意向场次都要过一遍资格、岗位条件与时段冲突：申请就拦，不等录取。
+    # 先拿本人的用户锁再比时段：同一个人可能正同时在别的活动报名，不锁的话
+    # 两边都看不见对方、各自落库（见 locks 的「用户锁」）。这条路不拿场次锁，
+    # 锁顺序无从违反
+    user_lock(db, user.id)
     for g, plist in picked.items():
         _check_eligibility(db, user, act, g)
         for p in plist:

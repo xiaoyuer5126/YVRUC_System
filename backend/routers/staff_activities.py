@@ -1919,7 +1919,9 @@ def add_walkin(shift_id: str, body: dict,
     force = bool(body.get("force"))
     reasons: list[str] = []
     db.commit()          # 还连接再抢锁，理由同 enroll（routers/activities.py）
-    with shift_lock(db, g.id):
+    # 连同这个人的用户锁：下面要判时段冲突，本人可能正同时在别的场次报名
+    # （见 locks 的「用户锁」；先场次后用户，不会死锁）
+    with shift_lock(db, g.id, user_id=u.id):
         live = (db.query(Enrollment)
                 .filter(Enrollment.shift_id == g.id, Enrollment.user_id == u.id)
                 .filter((Enrollment.status.in_(logic.ACTIVE))
