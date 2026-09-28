@@ -83,11 +83,13 @@ def test_管理员兼骨干在管理员身份下看得到全部(client, make_use
     assert {ADMIN, HEAD, CORE} <= _sids(r.json())
 
 
-def test_学生身份下进不了工作台(client, admin):
-    assert client.get("/api/staff/roles", headers=_as(admin, "student")).status_code == 403
+def test_学生身份下进不了工作台(client, make_user):
+    h = login(client, make_user(["admin", "student"]))
+    assert client.get("/api/staff/roles", headers=_as(h, "student")).status_code == 403
     assert client.get("/api/staff/activities",
-                      headers=_as(admin, "student")).status_code == 403
-    assert client.get("/api/staff/roles", headers=_as(admin, "admin")).status_code == 200
+                      headers=_as(h, "student")).status_code == 403
+    assert client.get("/api/staff/roles", headers=_as(h, "admin")).status_code == 200
+    assert client.get("/api/staff/roles", headers=h).status_code == 200
 
 
 # ---------- b. 骨干名单按部门裁剪 ----------

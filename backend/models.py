@@ -88,6 +88,8 @@ ROLE_LABELS = {"admin": "管理员", "qingxie": "青协",
                "initiator": "活动发起方", "student": "学生"}
 # 可被设为活动管理者的身份（发起方 / 青协；管理员天然全权）
 MANAGER_ROLES = ("initiator", "qingxie")
+# 审计里记「以哪个身份操作」的那条 changes 的字段名（见 audit.log）
+IDENTITY_FIELD = "_identity"
 
 
 class User(Base):
@@ -134,45 +136,67 @@ class User(Base):
     POST_LABELS = {"council": "会长团", "head": "部长",
                    "core": "部门骨干", "member": "部门成员"}
 
+    # 当前身份视角：本次请求以哪个身份在操作（前端的 X-Identity 头，见
+    # deps.current_user）。**普通实例属性，不是列**，不进库、不跨请求。
+    # 设了它，下面这组判权方法就只认这一个身份——只会收窄，不会放宽；
+    # 没设（定时任务、从库里查出来的别人）就是全部身份的并集。
+    # 绝不能为了收窄去改 roles：那是列，改了会随下一次 commit 写进库。
+    #
+    # 每个判权方法都有 real=True：绕开视角、按真实身份。用在「身份事实」上
+    # ——/me 下发的身份、「不能移除自己的管理员身份」、别人能不能值班/当
+    # 管理者。注意同一个请求里从库里查到的「本人」就是当前用户这个实例
+    # （会话的身份映射），也带着视角，所以判断「目标」的地方一律 real=True。
+    _view = None
+
     def post_label(self) -> str:
         return self.POST_LABELS.get(self.qingxie_post, self.qingxie_post)
 
-    def post(self) -> str | None:
+    def post(self, *, real: bool = False) -> str | None:
         """青协层级；不是青协身份就没有层级。"""
-        return self.qingxie_post if self.has_role("qingxie") else None
+        return self.qingxie_post if self.has_role("qingxie", real=real) else None
 
-    def is_council(self) -> bool:
-        return self.post() == "council"
+    def is_council(self, *, real: bool = False) -> bool:
+        return self.post(real=real) == "council"
 
-    def is_head(self) -> bool:
-        return self.post() == "head"
+    def is_head(self, *, real: bool = False) -> bool:
+        return self.post(real=real) == "head"
 
-    def is_trainee(self) -> bool:
+    def is_trainee(self, *, real: bool = False) -> bool:
         """部门成员：学习权限，任何写操作都会被拦。
 
         同时持有管理员或活动发起方身份的人不算——那两种身份本身就能写，
-        青协层级只描述他在青协里的位置。
+        青协层级只描述他在青协里的位置。以青协身份操作时就只是部门成员。
         """
-        return (self.post() == "member" and not self.is_admin()
-                and not self.has_role("initiator"))
+        return (self.post(real=real) == "member" and not self.is_admin(real=real)
+                and not self.has_role("initiator", real=real))
 
-    def can_write(self) -> bool:
+    def can_write(self, *, real: bool = False) -> bool:
         """能不能真正改数据。部门成员之外都能。"""
-        return not self.is_trainee()
+        return not self.is_trainee(real=real)
 
-    def has_full_access(self) -> bool:
+    def has_full_access(self, *, real: bool = False) -> bool:
         """看得到全部活动、能管全部审批：管理员与会长团。"""
-        return self.is_admin() or self.is_council()
+        return self.is_admin(real=real) or self.is_council(real=real)
 
-    def has_role(self, *roles: str) -> bool:
-        return bool(set(roles) & set(self.roles or []))
+    def has_role(self, *roles: str, real: bool = False) -> bool:
+        held = set(self.roles or [])
+        if self._view and not real:
+            held &= {self._view}
+        return bool(set(roles) & held)
 
-    def is_admin(self) -> bool:
-        return self.has_role("admin")
+    def is_admin(self, *, real: bool = False) -> bool:
+        return self.has_role("admin", real=real)
 
-    def is_manager_identity(self) -> bool:
+    def is_manager_identity(self, *, real: bool = False) -> bool:
         """能否进入工作台/被设为活动管理者：发起方 / 青协（管理员天然可以）。"""
-        return self.is_admin() or self.has_role(*MANAGER_ROLES)
+        return self.is_admin(real=real) or self.has_role(*MANAGER_ROLES, real=real)
+
+    def set_view(self, identity: str) -> None:
+        """采用前端声明的当前身份；自己没有这个身份就忽略（按并集）。"""
+        self._view = identity if identity in (self.roles or []) else None
+
+    def view(self) -> str | None:
+        return self._view
 
     def profile_complete(self) -> bool:
         """资料完善度：手机号 + 微信号 + 校区 + 身份证号（老师类型不要求）。
@@ -210,10 +234,11 @@ class User(Base):
             "campus": self.campus, "stage": self.stage,
             "user_type": self.user_type, "roles": self.roles or [],
             "role_label": self.active_role_label(),
-            "qingxie_post": self.post(),
-            "post_label": self.post_label() if self.post() else "",
+            # 下发的是身份事实，不跟当前视角：前端切身份时要用到全部层级
+            "qingxie_post": self.post(real=True),
+            "post_label": self.post_label() if self.post(real=True) else "",
             "department_id": self.department_id or "",
-            "is_trainee": self.is_trainee(),
+            "is_trainee": self.is_trainee(real=True),
         }
 
     def full(self) -> dict:
@@ -1081,11 +1106,16 @@ class AuditLog(Base):
         # 动作的中文名跟着记录一起发：前端各写一份映射，早晚漏掉某个动作，
         # 那一条就在页面上露出英文
         from .audit import ACTION_LABELS
+        changes = [c for c in (self.changes or [])
+                   if c.get("field") != IDENTITY_FIELD]
+        identity = next((c.get("new", "") for c in (self.changes or [])
+                         if c.get("field") == IDENTITY_FIELD), "")
         return {
             "id": self.id, "actor_name": self.actor_name, "action": self.action,
             "action_label": ACTION_LABELS.get(self.action, self.action),
+            "actor_identity": identity,
             "target_type": self.target_type, "target_label": self.target_label,
-            "summary": self.summary, "changes": self.changes or [],
+            "summary": self.summary, "changes": changes,
             "created_at": iso(self.created_at), "visible": self.visible,
         }
 

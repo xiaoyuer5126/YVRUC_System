@@ -196,7 +196,7 @@ def update_department(dept_id: str, body: DeptBody,
             who = db.query(User).filter(User.student_id == sid).first()
             if who is None:
                 raise HTTPException(404, f"学号 {sid} 不存在")
-            if not who.has_role("qingxie"):
+            if not who.has_role("qingxie", real=True):
                 raise HTTPException(400, f"{who.name} 不是青协身份，不能当部长")
             who.department_id = d.id
             who.qingxie_post = "head"
@@ -403,9 +403,10 @@ def transfer(activity_id: str, body: TransferBody,
             User.student_id == body.student_id.strip()).first()
         if target is None:
             raise HTTPException(404, "该学号不存在")
-        if not target.has_role("qingxie"):
+        # 转给谁：看对方的真实身份（可能是当前用户本人）
+        if not target.has_role("qingxie", real=True):
             raise HTTPException(400, f"{target.name} 不是青协身份，不能审批")
-        if not target.can_write():
+        if not target.can_write(real=True):
             raise HTTPException(400, f"{target.name} 是部门成员（学习权限），不能审批")
         if target.department_id:
             dept = db.get(Department, target.department_id)

@@ -855,7 +855,8 @@ def _hours_approvers(db: OrmSession, act: Activity) -> list[User]:
         duty = liaison.on_duty(db, db.get(Department, act.approval_dept_id))
         if duty is not None:
             out.append(duty)
-    out += [u for u in db.query(User).all() if u.has_full_access()]
+    # 全库查人：当前用户本人也在里面、带着身份视角，按真实身份算
+    out += [u for u in db.query(User).all() if u.has_full_access(real=True)]
     seen, uniq = set(), []
     for u in out:
         if u.id not in seen:
@@ -872,7 +873,8 @@ def _hours_notify_targets(db: OrmSession, act: Activity) -> list[User]:
     if contact is not None:
         out.append(contact)
     out += [u for u in db.query(User).all()
-            if u.has_full_access() and (contact is None or u.id != contact.id)]
+            if u.has_full_access(real=True)
+            and (contact is None or u.id != contact.id)]
     return out
 
 

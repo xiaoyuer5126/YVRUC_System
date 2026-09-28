@@ -1308,9 +1308,10 @@ def list_managers(activity_id: str, db: OrmSession = Depends(db_session),
         "id": u.id, "name": u.name, "student_id": u.student_id,
         "college": u.college, "roles": u.roles or [],
         "role_label": u.active_role_label(),
-        "post_label": u.post_label() if u.post() else "",
+        # 名单上的人（可能含当前用户本人）按真实身份标
+        "post_label": u.post_label() if u.post(real=True) else "",
         # 部门成员在名单里只能看：界面上要标出来，别让人以为多了个能干活的
-        "is_trainee": u.is_trainee(),
+        "is_trainee": u.is_trainee(real=True),
         "is_creator": u.id == act.created_by,
         # 管理员天然是管理者，名单里没有他那一行，也就没有分工可言
         "duties": duties.get(u.id, []),
@@ -1333,15 +1334,16 @@ def manager_candidates(activity_id: str, db: OrmSession = Depends(db_session),
 
     def add(label: str, rows: list[User]) -> None:
         picked = [u for u in rows
-                  if u.id not in already and u.is_manager_identity()]
+                  if u.id not in already and u.is_manager_identity(real=True)]
         if picked:
             groups.append({"label": label, "users": [{
                 "id": u.id, "name": u.name, "student_id": u.student_id,
                 "college": u.college,
-                "post_label": u.post_label() if u.post() else "",
+                "post_label": u.post_label() if u.post(real=True) else "",
             } for u in sorted(picked, key=lambda x: x.student_id)]})
 
-    qingxie = [u for u in db.query(User).all() if u.has_role("qingxie")]
+    # 候选人按真实身份；「我是部长还是骨干」（下面的 user.post()）跟当前身份
+    qingxie = [u for u in db.query(User).all() if u.has_role("qingxie", real=True)]
     add("会长团", [u for u in qingxie if u.qingxie_post == "council"])
     add("各部门部长", [u for u in qingxie if u.qingxie_post == "head"])
     if user.post() in ("head", "core") and user.department_id:
