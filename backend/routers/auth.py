@@ -102,9 +102,10 @@ def demo_accounts(db: OrmSession = Depends(db_session)):
     if not demo_login_enabled():
         return []
     all_users = db.query(User).order_by(User.student_id).all()
-    staff = [u for u in all_users if u.is_manager_identity()][:4]
+    staff = [u for u in all_users if u.is_manager_identity(real=True)][:4]
     students = [u for u in all_users
-                if u.user_type == "student" and not u.is_manager_identity()][:8]
+                if u.user_type == "student"
+                and not u.is_manager_identity(real=True)][:8]
 
     def label(u: User) -> str:
         kind = "老师" if u.user_type == "teacher" else "学生"
@@ -240,10 +241,13 @@ def download_ticket(body: TicketBody, user: User = Depends(current_user)):
     权限仍由目标接口自己把关，这张票只证明「是谁」。
     """
     path = body.path.strip()
-    if not path.startswith("/api/"):
+    # 「|」是票据内容的分隔符（见 locks.issue_ticket），合法网址里不会有
+    if not path.startswith("/api/") or "|" in path:
         raise HTTPException(400, "下载地址不合法")
+    # 票记下换票时的身份视角：下载时按同一个身份判权（见 deps.current_user_download）
     return {"ticket": issue_ticket(user.id, path.split("?")[0],
-                                   config.DOWNLOAD_TICKET_SECONDS)}
+                                   config.DOWNLOAD_TICKET_SECONDS,
+                                   user.view() or "")}
 
 
 # —— 前端需要的常量 ——

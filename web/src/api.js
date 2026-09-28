@@ -22,9 +22,21 @@ function sessionExpired() {
   }
 }
 
-async function request(method, url, body, opts = {}) {
-  const headers = { 'Content-Type': 'application/json' }
+/** 鉴权请求头：令牌 + 当前身份视角。
+ *
+ *  后端的权限跟着 X-Identity 走（只会收窄：自己没有的身份它不认）。每次请求
+ *  现读 store，切了身份之后下一个请求就带新的，不必刷新页面。
+ *  绕开 request() 自己 fetch 的地方（表单上传）也要用它，别只带令牌。
+ */
+export function authHeaders() {
+  const headers = {}
   if (auth.token) headers.Authorization = `Bearer ${auth.token}`
+  if (auth.activeIdentity) headers['X-Identity'] = auth.activeIdentity
+  return headers
+}
+
+async function request(method, url, body, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...authHeaders() }
   const resp = await fetch(url, {
     method,
     headers,
@@ -92,7 +104,7 @@ export function qrBase() {
 /** 直链下载（导出、学习材料）。
  *
  * <a> 发不出 Authorization 头，所以先用带头的请求换一张一次性票据，
- * 再把票据挂在地址上。票只对这一个网址有效、一分钟、用一次即作废——
+ * 再把票据挂在地址上。换票请求带着当前身份，票上记着它，下载时照此判权。票只对这一个网址有效、一分钟、用一次即作废——
  * 会话令牌不会再出现在地址栏、浏览器历史和服务器访问日志里。
  */
 export async function download(url) {
@@ -114,7 +126,7 @@ export async function uploadFile(url, file) {
   form.append('file', file)
   const resp = await fetch(url, {
     method: 'POST', body: form,
-    headers: auth.token ? { Authorization: `Bearer ${auth.token}` } : {},
+    headers: authHeaders(),
   })
   const data = await resp.json().catch(() => ({}))
   if (resp.status === 401) sessionExpired()

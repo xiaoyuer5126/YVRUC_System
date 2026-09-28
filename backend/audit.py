@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .models import Activity, AuditLog, uid
+from .models import IDENTITY_FIELD, Activity, AuditLog, uid
 
 
 def log(db: OrmSession, *, actor, action: str, target_type: str,
@@ -31,13 +31,21 @@ def log(db: OrmSession, *, actor, action: str, target_type: str,
         act = db.get(Activity, activity_id)
         if act is not None and act.status in ("draft", "pending", "approved"):
             visible = False
+    # 以哪个身份操作的（前端的 X-Identity）。没有专门的列——线上没有迁移，
+    # 加列要手工 ALTER——就挂在 changes 末尾一条带下划线字段名的记录上，
+    # AuditLog.out() 把它摘出来单独给，不会混进变更明细
+    changes = list(changes or [])
+    view = getattr(actor, "view", lambda: None)()
+    if view:
+        changes.append({"field": IDENTITY_FIELD, "label": "操作身份",
+                        "old": "", "new": view})
     entry = AuditLog(
         id=uid("aud"),
         actor_id=getattr(actor, "id", None),
         actor_name=getattr(actor, "name", "系统") or "系统",
         action=action, target_type=target_type, target_id=target_id,
         target_label=target_label[:150], activity_id=activity_id,
-        summary=summary[:500], changes=changes or [], visible=visible,
+        summary=summary[:500], changes=changes, visible=visible,
     )
     db.add(entry)
     # 不在这里 commit：与业务写入同一事务，保证留痕和变更原子生效。

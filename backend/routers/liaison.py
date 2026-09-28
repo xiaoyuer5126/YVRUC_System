@@ -48,7 +48,7 @@ def _duty_out(db: OrmSession, dept: Department, user: User) -> dict:
         "eligible": [_person(u) for u in liaison.eligible_users(db, dept)],
         # 部长（与会长团、管理员）指定；在班的人自己交班
         "can_assign": user.has_full_access() or liaison.is_head_of(user, dept),
-        "can_handover": cur is not None and cur.id == user.id,
+        "can_handover": liaison.is_on_duty(cur, user),
         "history": [{"from": name(h.from_user_id), "to": name(h.to_user_id),
                      "actor": name(h.actor_id), "note": h.note,
                      "created_at": iso(h.created_at)} for h in rows],
@@ -64,7 +64,7 @@ def duty_status(db: OrmSession = Depends(db_session),
     for dept in (db.query(Department)
                  .filter(Department.name.in_(liaison.DUTY_DEPTS))
                  .order_by(Department.sort).all()):
-        if user.has_full_access() or liaison.eligible(user, dept):
+        if user.has_full_access() or liaison.eligible(user, dept, real=False):
             out.append(_duty_out(db, dept, user))
     return out
 
@@ -84,7 +84,7 @@ def set_duty(dept_id: str, body: DutyBody, db: OrmSession = Depends(db_session),
         raise HTTPException(404, "该部门没有启用值班")
     cur = liaison.on_duty(db, dept)
     boss = user.has_full_access() or liaison.is_head_of(user, dept)
-    handing = cur is not None and cur.id == user.id
+    handing = liaison.is_on_duty(cur, user)
     if not (boss or handing):
         raise HTTPException(403, "只有部长或当前值班人可以安排值班")
     target = None

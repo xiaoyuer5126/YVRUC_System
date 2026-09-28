@@ -64,7 +64,9 @@ def writing_manager_ids(db: OrmSession, activity_id: str) -> list[str]:
     rows = (db.query(User)
             .join(ActivityManager, ActivityManager.user_id == User.id)
             .filter(ActivityManager.activity_id == activity_id).all())
-    return [u.id for u in rows if u.can_write()]
+    # 别人的事实，按真实身份（名单里可能正好有当前用户本人，别让他此刻的
+    # 身份视角算进来）
+    return [u.id for u in rows if u.can_write(real=True)]
 
 
 def ensure_activity_manager(db: OrmSession, user: User, activity_id: str) -> None:
@@ -80,7 +82,8 @@ def activity_manager_ids(db: OrmSession, activity_id: str) -> list[str]:
 
 def add_manager(db: OrmSession, activity_id: str, user: User,
                 added_by: User) -> ActivityManager:
-    if not user.is_manager_identity():
+    # 被添加的人持有什么身份是事实，按真实身份（可能是当前用户本人）
+    if not user.is_manager_identity(real=True):
         raise HTTPException(400, f"活动管理者仅限 活动发起方/青协 身份，"
                                  f"{user.name} 当前身份不符")
     exists = db.query(ActivityManager).filter_by(

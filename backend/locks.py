@@ -86,21 +86,25 @@ def note_failure(key: str, window_seconds: int) -> None:
 # 一个 24 小时有效的会话。改发票据：绑定这一个网址、一分钟有效、用一次就
 # 作废，进了日志也换不出任何东西。
 
-def issue_ticket(user_id: str, path: str, ttl: int) -> str:
+def issue_ticket(user_id: str, path: str, ttl: int, identity: str = "") -> str:
+    """identity：换票时的身份视角（X-Identity），兑换时照样套上；没有就留空。"""
     token = secrets.token_urlsafe(24)
-    _client.setex(f"rucva:dl:{token}", ttl, f"{user_id}|{path}")
+    _client.setex(f"rucva:dl:{token}", ttl, f"{user_id}|{path}|{identity}")
     return token
 
 
-def redeem_ticket(token: str, path: str) -> str | None:
-    """核销票据，返回用户 id；票据不存在、已用过或对不上这个网址都返回 None。"""
+def redeem_ticket(token: str, path: str) -> tuple[str, str] | None:
+    """核销票据，返回 (用户 id, 身份视角)；票据不存在、已用过或对不上这个
+    网址都返回 None。旧票只有两段（没有视角），按空视角处理。"""
     if not token:
         return None
     raw = _client.getdel(f"rucva:dl:{token}")
     if not raw or "|" not in raw:
         return None
-    user_id, want = raw.split("|", 1)
-    return user_id if want == path else None
+    # 网址以 /api/ 开头、不含查询串，里面不会有「|」；视角在最后一段
+    user_id, rest = raw.split("|", 1)
+    want, _, identity = rest.partition("|")
+    return (user_id, identity) if want == path else None
 
 
 def clear_failures(key: str) -> None:

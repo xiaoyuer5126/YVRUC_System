@@ -44,8 +44,7 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Document, Link } from '@element-plus/icons-vue'
-import { api } from '../api'
-import { auth } from '../store'
+import { api, authHeaders } from '../api'
 
 const props = defineProps({
   ownerType: { type: String, required: true },   // position
@@ -86,7 +85,7 @@ async function send(file, ownerId = props.ownerId) {
     // FormData 不能走 api 的 JSON 封装，这里直接发
     const resp = await fetch('/api/staff/materials', {
       method: 'POST', body: form,
-      headers: { Authorization: `Bearer ${auth.token}` },
+      headers: authHeaders(),
     })
     const data = await resp.json()
     if (!resp.ok) throw new Error(data.detail || '上传失败')

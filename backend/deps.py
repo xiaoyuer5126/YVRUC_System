@@ -13,6 +13,12 @@
       - 活动审批、志愿者档案：管理员、会长团、部长
       - 部门成员：能进工作台、能看，**任何写请求都在这里被拦**（学习权限）
   · 活动级（activity_managers，见 perm.py）：谁能看、能操作哪个活动
+
+权限跟随当前身份：前端每个请求带 X-Identity（当前切到的身份视角），这里
+套到 User 上（User.set_view），之后所有判权只认这一个身份。只有确实持有的
+身份才采用，所以这个头只能收窄权限；没带、乱写、伪造的一律忽略，按全部
+身份的并集——与从前一样。身份事实（/me 下发的身份、不能移除自己的管理员
+身份、别人能否值班）按真实身份，见 models.User 的 real=True。
 """
 from __future__ import annotations
 
@@ -66,9 +72,19 @@ def _release(db: OrmSession, user: User) -> User:
     return user
 
 
+def _identity(request: Request) -> str:
+    return request.headers.get("X-Identity", "").strip()
+
+
+def _viewed(user: User, identity: str) -> User:
+    user.set_view(identity)
+    return user
+
+
 def current_user(request: Request,
                  db: OrmSession = Depends(db_session)) -> User:
-    return _release(db, _authorize(db, _bearer(request)))
+    return _release(db, _viewed(_authorize(db, _bearer(request)),
+                                _identity(request)))
 
 
 def current_user_download(request: Request,
@@ -76,15 +92,17 @@ def current_user_download(request: Request,
     """浏览器直链下载：认 Authorization 头，或一次性票据 ?ticket=。"""
     token = _bearer(request)
     if token:
-        return _release(db, _authorize(db, token))
+        return _release(db, _viewed(_authorize(db, token), _identity(request)))
     ticket = request.query_params.get("ticket", "").strip()
-    user_id = locks.redeem_ticket(ticket, request.url.path)
-    if user_id is None:
+    redeemed = locks.redeem_ticket(ticket, request.url.path)
+    if redeemed is None:
         raise HTTPException(401, "下载链接已失效，请回到页面重新点一次")
+    # 票上记着换票时的身份：<a> 直链带不了头，就用签发那一刻的视角
+    user_id, identity = redeemed
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(401, "用户不存在")
-    return _release(db, user)
+    return _release(db, _viewed(user, identity))
 
 
 # 部门成员的学习权限：非 GET 一律拦，下面两张表是例外。

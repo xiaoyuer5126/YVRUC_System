@@ -9,6 +9,10 @@
   · 用户类型（老师/学生）由统一身份认证下发，平台不改。
   · 管理员不能移除自己的管理员身份（见 _guard_self_demotion）；会长团改自己
     的层级不设护栏。
+
+操作者（user/actor）的权限跟当前身份（X-Identity，见 deps）；被操作的人
+（target、boss、列表里的每一行）一律按真实身份——改的是自己时，库里查出来
+的 target 就是当前用户这个实例，带着身份视角，不能让视角遮住身份事实。
 """
 from __future__ import annotations
 
@@ -47,7 +51,9 @@ def _guard_self_demotion(actor: User, target: User, roles: list[str]) -> None:
     得移除自己。所以不必再算「是不是最后一个管理员」那种复杂条件。
     必须拦在后端——前端不显示按钮挡不住直接调接口。
     """
-    if actor.id == target.id and actor.is_admin() and "admin" not in roles:
+    # 按真实身份：以青协身份操作时，照样不能顺手把自己的管理员身份去掉
+    if (actor.id == target.id and actor.is_admin(real=True)
+            and "admin" not in roles):
         raise HTTPException(400, "不能移除自己的管理员身份；"
                                  "如需交接，请先由另一位管理员操作")
 
@@ -62,7 +68,7 @@ def _guard_head_scope(actor: User, target: User, roles: list[str],
     """
     if actor.has_full_access():
         return
-    if target.is_admin() or target.post() in ("council", "head"):
+    if target.is_admin(real=True) or target.post(real=True) in ("council", "head"):
         raise HTTPException(403, "部长只能调整本部门的骨干与成员")
     if target.department_id not in (None, actor.department_id):
         raise HTTPException(403, "这位同学属于别的部门")
@@ -77,9 +83,10 @@ def _guard_head_scope(actor: User, target: User, roles: list[str],
 
 def _guard_core_scope(actor: User, target: User, body: "RoleBody") -> None:
     """骨干只做一件事：把本部门的成员归到自己名下。身份、层级、部门都不能动。"""
-    if actor.post() != "core":
+    if actor.has_full_access() or actor.post() != "core":
         return
-    if (target.post() != "member" or target.department_id != actor.department_id):
+    if (target.post(real=True) != "member"
+            or target.department_id != actor.department_id):
         raise HTTPException(403, "骨干只能认领本部门的成员")
     if (set(body.roles) != set(target.roles or []) or body.qingxie_post != "member"
             or (body.department_id.strip() or None) != actor.department_id):
@@ -121,7 +128,7 @@ def _check_supervisor(db: OrmSession, target: User, body: "RoleBody",
         raise HTTPException(400, "部门成员必须指定归属的部门骨干")
     if boss.id == target.id:
         raise HTTPException(400, "不能归属自己")
-    if boss.post() != "core" or boss.department_id != dept_id:
+    if boss.post(real=True) != "core" or boss.department_id != dept_id:
         raise HTTPException(400, f"{boss.name} 不是这个部门的骨干")
     return boss.id
 
@@ -131,8 +138,8 @@ def _row(u: User, me: User, depts: dict[str, str]) -> dict:
         "id": u.id, "student_id": u.student_id, "name": u.name,
         "college": u.college, "user_type": u.user_type,
         "roles": u.roles or [], "role_label": u.active_role_label(),
-        "qingxie_post": u.post() or "",
-        "post_label": u.post_label() if u.post() else "",
+        "qingxie_post": u.post(real=True) or "",
+        "post_label": u.post_label() if u.post(real=True) else "",
         "department_id": u.department_id or "",
         "department": depts.get(u.department_id, ""),
         "supervisor_id": u.supervisor_id or "",
@@ -144,14 +151,21 @@ def _row(u: User, me: User, depts: dict[str, str]) -> dict:
 @router.get("/roles/cores")
 def list_cores(department_id: str = "", db: OrmSession = Depends(db_session),
                user: User = Depends(require_role_manager)):
-    """某部门的骨干名单，给「部门成员归属谁」这个选择框用。"""
-    dept_id = department_id.strip() or user.department_id
+    """某部门的骨干名单，给「部门成员归属谁」这个选择框用。
+
+    管理员与会长团查哪个部门都行；部长与骨干只认本部门，传了别的部门也
+    按本部门给——和 list_role_users 一样静默收窄，不报错。
+    """
+    if user.has_full_access():
+        dept_id = department_id.strip() or user.department_id
+    else:
+        dept_id = user.department_id
     rows = (db.query(User)
             .filter(User.department_id == dept_id,
                     User.qingxie_post == "core")
             .order_by(User.name).all())
     return [{"id": u.id, "name": u.name, "student_id": u.student_id}
-            for u in rows if u.has_role("qingxie")]
+            for u in rows if u.has_role("qingxie", real=True)]
 
 
 @router.get("/roles")
@@ -165,14 +179,18 @@ def list_role_users(q: str = "", role: str = "",
     全校学生里挑人进部门。骨干只看本部门的成员，搜也只在这里面搜。
     """
     query = db.query(User)
-    if user.post() == "core":
+    # 先看是不是管理员/会长团，再看部门层级：管理员兼骨干（以并集判权时）
+    # 不该被骨干的范围卡住
+    full = user.has_full_access()
+    core = not full and user.post() == "core"
+    if core:
         query = query.filter(User.department_id == user.department_id,
                              User.qingxie_post == "member")
     if q:
         like = like_pattern(q.strip())
         query = query.filter((User.name.ilike(like, escape="\\")) |
                              (User.student_id.ilike(like, escape="\\")))
-    elif not user.has_full_access() and user.post() != "core":
+    elif not full and not core:
         query = query.filter(User.department_id == user.department_id)
     else:
         # roles 是 JSON 而不是 JSONB，没有包含运算符可用；按序列化后的文本

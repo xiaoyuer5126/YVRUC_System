@@ -44,13 +44,20 @@ def dept_head(db: OrmSession, dept_id: str) -> User | None:
 
 
 def is_head_of(user: User, dept: Department | None) -> bool:
+    """当前操作者是不是这个部门的部长（跟当前身份：切到别的身份就不算）。"""
     return dept is not None and user.department_id == dept.id and user.is_head()
 
 
-def eligible(user: User | None, dept: Department) -> bool:
-    """能不能在这个部门值班：本部门的骨干或部长。"""
+def eligible(user: User | None, dept: Department, *, real: bool = True) -> bool:
+    """能不能在这个部门值班：本部门的骨干或部长。
+
+    默认按真实身份：这是这个人的资格，值班人是谁、能交班给谁都看它。
+    同一个请求里查出来的值班人可能正是当前用户本人（带着身份视角），按视角
+    算的话，他切到管理员身份去操作，自己的值班就「失效」了、通知改发给部长。
+    问的是「当前操作者此刻能不能以值班人身份办事」时传 real=False。
+    """
     return (user is not None and user.department_id == dept.id
-            and user.post() in ELIGIBLE_POSTS)
+            and user.post(real=real) in ELIGIBLE_POSTS)
 
 
 def eligible_users(db: OrmSession, dept: Department) -> list[User]:
@@ -88,8 +95,13 @@ def is_dept_handler(db: OrmSession, user: User, dept_id: str | None) -> bool:
         return False
     if is_head_of(user, dept):
         return True
-    cur = on_duty(db, dept)
-    return cur is not None and cur.id == user.id
+    return is_on_duty(on_duty(db, dept), user)
+
+
+def is_on_duty(cur: User | None, user: User) -> bool:
+    """当前操作者就是在班的人，且此刻以青协身份在操作。"""
+    return (cur is not None and cur.id == user.id
+            and user.post() in ELIGIBLE_POSTS)
 
 
 def handler_dept_ids(db: OrmSession, user: User) -> list[str]:
@@ -99,9 +111,12 @@ def handler_dept_ids(db: OrmSession, user: User) -> list[str]:
             if is_dept_handler(db, user, d.id)]
 
 
-def duty_eligible(db: OrmSession, user: User) -> bool:
-    """在某个启用值班的部门里有值班资格。前端据此露出「活动审批」入口。"""
-    if not user.department_id or user.post() not in ELIGIBLE_POSTS:
+def duty_eligible(db: OrmSession, user: User, *, real: bool = False) -> bool:
+    """在某个启用值班的部门里有值班资格。前端据此露出「活动审批」入口。
+
+    判当前操作者能不能进审批页时跟当前身份；下发给前端的是身份事实，
+    session_user 传 real=True。"""
+    if not user.department_id or user.post(real=real) not in ELIGIBLE_POSTS:
         return False
     return duty_enabled(db.get(Department, user.department_id))
 
@@ -112,7 +127,7 @@ def session_user(db: OrmSession, user: User) -> dict:
     值班资格要查部门，放不进 User.full()——那个方法在名册列表里逐行调用，
     多一次查询就是多几百次。
     """
-    return {**user.full(), "duty_eligible": duty_eligible(db, user)}
+    return {**user.full(), "duty_eligible": duty_eligible(db, user, real=True)}
 
 
 # ======================= 对外活动与立项书 =======================
