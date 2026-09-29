@@ -1417,7 +1417,7 @@
 import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
-import { api, download as dl, fmtDT, pageUrl, qrBase } from '../api'
+import { api, download as dl, downloadExport, fmtDT, pageUrl, qrBase } from '../api'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
 import RefreshBar from '../components/RefreshBar.vue'
@@ -2175,8 +2175,9 @@ async function transition(action) {
 }
 
 // —— 导出 ——
-// 排班表：按场次分 Sheet，含签到状态，交付现场；报名问卷有文件答案时是 zip
-function doExport() { dl(`/api/staff/activities/${activityId}/export.xlsx`) }
+// 排班表：按场次分 Sheet，含签到状态，交付现场。只下 Excel；
+// 报名问卷里有上传的文件时再问要不要一起下附件包
+function doExport() { downloadExport(`/api/staff/activities/${activityId}/export`) }
 // 时长记录：姓名、身份证号、岗位、时长、备注
 function doExportHours() { dl(`/api/staff/activities/${activityId}/hours.xlsx`) }
 
