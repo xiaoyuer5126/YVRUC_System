@@ -164,7 +164,12 @@ VIOLATION_WEIGHTS = {       # 一次违规扣多少，最重一档 20
     "passive": 10,    # 消极志愿
     "other": 5,       # 其他
 }
-PROMOTE_CONFIRM_HOURS = 2  # 候补转正确认窗口（小时）
+PROMOTE_CONFIRM_HOURS = 2  # 候补转正确认窗口（小时），只算白天，见下
+# 确认窗夜间不计时：[23:00, 次日 8:00) 这段不算进那 2 小时——半夜转正的人
+# 睡一觉起来窗口就过了，记一次放弃不公平。起止是整点，要求 START > END（跨午夜）。
+# 算法见 enroll_logic.confirm_deadline_from
+PROMOTE_QUIET_START = 23
+PROMOTE_QUIET_END = 8
 
 # 同一个码扫两遍就是签到→签退，方便，但也意味着手滑扫两遍人就当场被签退了，
 # 时长按 0 分钟算。所以签到后这么久之内，第二次扫码一律当作「重复操作」挡回去

@@ -1754,7 +1754,8 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
 
     自动转正在「报名截止」与「活动开始前 24 小时」的较晚者之后就停了——
     那之后转正的人只剩不到一天准备，且他再退选还要扣分。要不要补人由
-    负责人判断，但来不来仍由本人定：和自动递补一样开 2 小时确认窗。
+    负责人判断，但来不来仍由本人定：和自动递补一样开确认窗
+    （2 小时、夜间不计时，不晚于场次开始，见 enroll_logic.promote_confirm_deadline）。
     """
     enr = db.get(Enrollment, enrollment_id)
     if enr is None:
@@ -1786,7 +1787,8 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
         db.commit()
     return {"ok": True, "status": enr.status,
             "confirm_deadline": iso(enr.confirm_deadline),
-            "confirm_hours": config.PROMOTE_CONFIRM_HOURS}
+            "confirm_hours": config.PROMOTE_CONFIRM_HOURS,
+            "confirm_quiet": [config.PROMOTE_QUIET_START, config.PROMOTE_QUIET_END]}
 
 
 class LeaderBody(BaseModel):
