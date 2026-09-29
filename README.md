@@ -33,6 +33,9 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
 | `RUCVA_DEMO_PASSWORD` | 内测登录共享口令。**留空则整个演示登录接口不存在**；SSO 接通后必须留空 |
 | `RUCVA_PUBLIC_BASE_URL` | 平台对外网址（多个用逗号分隔）。二维码里写的就是它，只有列在这里的域名才允许出现在码里 |
 | `RUCVA_EXPOSE_DOCS` | 设为 `1` 才暴露 `/docs` 与 `/openapi.json`，默认关闭 |
+| `RUCVA_TIANDITU_TK_SERVER` | 天地图**服务端** tk：管理端地图瓦片转发 + 地名搜索。要在天地图后台登记服务器公网出口 IP；只在后端用，不进前端 |
+| `RUCVA_TIANDITU_TK` | 天地图浏览器端 tk，仅作瓦片转发的兜底（服务端 tk 没配时，后端带 `RUCVA_PUBLIC_BASE_URL` 当 Referer 去取）。两把都空 = 地图只显示坐标 |
+| `RUCVA_TIANDITU_DAILY_LIMIT` | 每天向天地图取瓦片的上限，默认 10000（天地图给的额度），到上限直接 503 |
 | `CLOUDFLARE_TOKEN` | 隧道令牌，勿提交/外传 |
 | `WEB_/BACKEND_/POSTGRES_/REDIS_HOST_PORT` | 宿主机端口，被别的项目占用时改这里 |
 
@@ -190,6 +193,18 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
   审批期间时长冻结，部长看到的和最终封的必须是同一份账。
 - 岗位可以勾「可选劳务」：志愿者在确认时选劳务，平台就不给这个人记时长，导出到志愿北京
   的时长表里也不含他。
+- 定位签到的管理端小地图用天地图瓦片，**由本站服务器转发**（`backend/routers/geo.py`）：
+  浏览器直连时浏览器端 tk 靠 Referer 域名白名单，AdGuard 隐身模式之类的插件会改掉
+  第三方 Referer，天地图一律 403、地图整块灰掉。现在浏览器只请求
+  `/api/geo/tiles/{vec|cva}/{z}/{x}/{y}?t=令牌`，拿不到任何 tk。
+  - tk：主路径是服务端 tk（`RUCVA_TIANDITU_TK_SERVER`），**部署时要在天地图后台把服务器
+    公网出口 IP 登记进白名单**；没配时兜底用浏览器端 tk，由服务器带本站地址当 Referer。
+  - 额度（每个 tk 每天 10000 次）：同一张瓦片只向天地图取一次，磁盘缓存 30 天
+    （`rucva_tiles` 卷）；Redis 按天数真正打到天地图的请求（缓存命中不算），到九成记
+    警告日志，到上限直接 503 不再请求上游；过期缓存在取不到新图时照旧拿出来用。
+  - 防滥用：`<img>` 带不上登录令牌，所以管理者打开地图时先领一张瓦片令牌
+    （`GET /api/geo/tile-token`，HMAC 签名、约 6 小时过期、不落库），前端快过期时自己
+    重新领；瓦片接口先验令牌（缓存命中也验），无效或过期 401。
 
 ## 六、服装与学习材料
 

@@ -79,7 +79,7 @@ TIANDITU_TK = os.environ.get("RUCVA_TIANDITU_TK", "").strip()
 # 真正打到天地图的请求，到 TIANDITU_WARN_AT 记警告日志；到上限直接 503，
 # 不再打上游——超了天地图也是拒，还可能按违规封 tk（地名搜索用的是同一把），
 # 不如自己先停。
-TIANDITU_DAILY_LIMIT = int(os.environ.get("RUCVA_TIANDITU_DAILY_LIMIT", "10000"))
+TIANDITU_DAILY_LIMIT = int(os.environ.get("RUCVA_TIANDITU_DAILY_LIMIT", "").strip() or "10000")
 TIANDITU_WARN_AT = TIANDITU_DAILY_LIMIT * 9 // 10
 TILE_CACHE_DIR = DATA_DIR / "tiles"
 TILE_CACHE_DAYS = 30
