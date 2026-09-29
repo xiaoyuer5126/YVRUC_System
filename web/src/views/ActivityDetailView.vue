@@ -60,16 +60,19 @@
                   title="负责人正在调整本活动的安排，报名暂时关闭"
                   description="调整期间无法报名或退选，保存后会将变更通知已报名志愿者。" />
 
+        <el-alert v-if="isTeacher" type="info" show-icon :closable="false"
+                  title="老师不参与志愿报名" />
+
         <!-- 还没到报名开始：倒计时归零时就地开闸（unlock），不等重拉。
              按钮在这之前是灰的（enroll_open 由后端算，含 reg_start）。 -->
-        <div v-if="opensAt" class="reg-countdown">
+        <div v-if="opensAt && !isTeacher" class="reg-countdown">
           <el-icon><Clock /></el-icon>
           <span>报名于 <b>{{ fmtDT(act.reg_start) }}</b> 开始，还有</span>
           <el-countdown :value="opensAt" :format="openFormat" @finish="unlock" />
           <span class="dim">时间到自动开放，不用刷新页面</span>
         </div>
 
-        <div v-if="screenedApplying" class="section-title">报名申请<span class="dim">
+        <div v-if="screenedApplying && !isTeacher" class="section-title">报名申请<span class="dim">
           勾选意向场次并填写报名问卷，截止后由负责人筛选录取；
           场次与岗位见下方安排</span></div>
         <!-- 名额是抢的：刷新按钮就放在名额上方，别让人翻回页头去找 -->
@@ -79,9 +82,9 @@
 
         <!-- 报名后筛选：先是申请入口，下面照旧列场次与岗位——
              审批人要在同一页看完整安排，学生也要先知道自己在报什么 -->
-        <ApplicationPanel v-if="screenedApplying" :act="act" @changed="load"
+        <ApplicationPanel v-if="screenedApplying && !isTeacher" :act="act" @changed="load"
                           style="margin-bottom:12px" />
-        <div v-if="screenedApplying" class="section-title">场次与岗位<span class="dim">
+        <div v-if="screenedApplying && !isTeacher" class="section-title">场次与岗位<span class="dim">
           仅供了解；录取后由负责人安排到具体岗位</span>
           <RefreshBar :load="load" style="margin-left:auto" /></div>
 
@@ -153,7 +156,7 @@
                   <template v-if="s.pay_optional"> · 报酬可选劳务</template>
                   <template v-if="s.material_count"> · 材料 {{ s.material_count }}</template>
                 </div>
-                <div class="m-pos-act">
+                <div v-if="!isTeacher" class="m-pos-act">
                   <!-- 我选中的岗位：原地退选／确认 -->
                   <template v-if="g.my_enrollment && myStationId(g) === s.id">
                     <template v-if="g.my_enrollment.status === 'pending_confirm'">
@@ -192,7 +195,7 @@
                   </el-button>
                   <el-button v-else size="small" disabled>{{ closedText(g) }}</el-button>
                 </div>
-                <div v-if="s.eligible === false" class="m-pos-why">
+                <div v-if="s.eligible === false && !isTeacher" class="m-pos-why">
                   {{ s.ineligible_reason }}
                 </div>
                 <div v-if="queuedHere(g, s)" class="queue-note">{{ QUEUE_NOTE }}</div>
@@ -227,7 +230,7 @@
               <p class="dim" style="margin:8px 0 0">
                 本场次尚未设置岗位，请联系负责人。
               </p>
-              <div class="m-pos-act" style="margin-top:8px">
+              <div v-if="!isTeacher" class="m-pos-act" style="margin-top:8px">
                 <template v-if="g.my_enrollment">
                   <el-tag v-if="g.my_enrollment.status === 'enrolled'" type="success" size="small">
                     已报名（岗位待分配）
@@ -352,7 +355,7 @@
                           </el-tooltip>
                         </template>
                       </el-table-column>
-                      <el-table-column label="操作" width="170" align="center">
+                      <el-table-column v-if="!isTeacher" label="操作" width="170" align="center">
                         <template #default="{ row: s }">
                           <!-- 我选中的岗位：原地退选/确认 -->
                           <template v-if="g.my_enrollment && myStationId(g) === s.id">
@@ -405,7 +408,7 @@
                         </template>
                       </el-table-column>
                     </el-table>
-                    <div class="dim" style="margin-top:8px">
+                    <div v-if="!isTeacher" class="dim" style="margin-top:8px">
                       同场次只能选一个岗位，候补将在名额释放后转正，转正后需在确认窗口内确认（2 小时，夜间 23:00–8:00 不计时）。
                     </div>
                   </template>
@@ -718,7 +721,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT } from '../api'
-import { MODE_COLORS } from '../store'
+import { auth, MODE_COLORS } from '../store'
 import ProfileDialog from '../components/ProfileDialog.vue'
 import GroupQrDialog from '../components/GroupQrDialog.vue'
 import ApplicationPanel from '../components/ApplicationPanel.vue'
@@ -774,6 +777,8 @@ const STATUS_TYPES = {
 const statusType = computed(() => STATUS_TYPES[act.value?.display_status] || 'info')
 // 负责人正在改安排：报名、退选、确认转正后端一律拦，按钮跟着灰掉
 const paused = computed(() => !!act.value?.editing)
+// 老师不参与志愿报名：安排照看，报名、申请入口都不给
+const isTeacher = computed(() => auth.user?.user_type === 'teacher')
 
 function pct(g) {
   return Math.min(100, Math.round((g.enrolled / Math.max(1, g.capacity)) * 100))

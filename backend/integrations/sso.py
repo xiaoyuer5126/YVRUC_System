@@ -1,7 +1,7 @@
 """统一身份认证（微人大 SSO）适配。
 
-《设计方案》五写的是「OAuth2.0 或 CAS」。学校实际提供的是 **CAS 服务器上的
-OAuth2.0 接口**（`cas.ruc.edu.cn/cas/oauth2.0/*`），2026-09-21 实测跑通；
+学校提供的是 **CAS 服务器上的 OAuth2.0 接口**
+（`cas.ruc.edu.cn/cas/oauth2.0/*`），2026-09-21 实测跑通；
 CAS 原生的 `serviceValidate` 那条路**不接**——两者能拿到的身份字段是同一套，
 CAS 只多一个全局登出，代价却是属性要管理员在应用接入里单独开、service 还得
 与登记地址一字不差（错一个字符就 INVALID_SERVICE）。留着半条路只会让人以为能选。
