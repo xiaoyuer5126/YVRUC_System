@@ -36,7 +36,7 @@
         </el-button>
       </div>
     </el-form-item>
-    <!-- 招募范围：两个都留空 = 面向全校。更细的差别走场次/岗位的条件要求 -->
+    <!-- 招募范围：全都留空 = 面向全校。更细的差别走场次/岗位的条件要求 -->
     <el-form-item label="招募范围">
       <div class="two-col">
         <el-select v-model="f.recruit_campuses" multiple clearable collapse-tags
@@ -46,6 +46,11 @@
         <el-select v-model="f.recruit_stages" multiple clearable collapse-tags
                    placeholder="学段（不限）">
           <el-option v-for="s in stages" :key="s" :value="s" :label="s" />
+        </el-select>
+        <!-- 学院选项从已有用户档案汇总（统一身份认证原文），要逐字匹配 -->
+        <el-select v-model="f.recruit_colleges" multiple clearable collapse-tags
+                   filterable placeholder="学院（不限）">
+          <el-option v-for="c in colleges" :key="c" :value="c" :label="c" />
         </el-select>
       </div>
       <div class="dim">留空即不限</div>
@@ -128,11 +133,16 @@ const regEnd = computed({ get: () => props.range?.[1] || '',
 const qrUploading = ref(false)
 const campuses = ref([])
 const stages = ref([])
+const colleges = ref([])
 
 onMounted(async () => {
-  const c = await api.get('/api/auth/constants', { silent: true })
+  const [c, cl] = await Promise.all([
+    api.get('/api/auth/constants', { silent: true }),
+    api.get('/api/staff/colleges', { silent: true }),
+  ])
   campuses.value = c.campuses || []
   stages.value = c.stages || []
+  colleges.value = cl.colleges || []
 })
 
 async function uploadQr({ file }) {
