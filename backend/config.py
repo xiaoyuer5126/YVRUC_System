@@ -151,12 +151,13 @@ LATE_CANCEL_HOURS = 24     # 「临近」阈值（小时）
 
 # 内部提示分（backend/scoring.py）。只给青协工作人员看，作用仅限于在名单上
 # 挂一个感叹号。权重先按这套跑，回头由部长们定夺再改这里就行——分数是现算的，
-# 改了立刻全平台生效，不会留下对不上的历史值。
+# 改了立刻全平台生效，不会留下对不上的历史值。三项都按活动计，按时间顺序
+# 逐条加减，每一步都夹在 [SCORE_MIN, SCORE_BASE]，满分时加的分不会存起来。
 SCORE_BASE = 100            # 起始分，也是上限
 SCORE_MIN = 0
 SCORE_ALERT_BELOW = 60      # 低于它，名单上姓名旁挂感叹号
-SCORE_PER_ACTIVITY = 5      # 顺利参与一次活动加回来的分
-LATE_CANCEL_WEIGHT = 5      # 一次临期退选扣多少
+SCORE_PER_ACTIVITY = 5      # 每顺利参与一个活动（签到过、无违规、无临期退选）加的分
+LATE_CANCEL_WEIGHT = 5      # 一个活动有临期退选扣多少（退几个场次都只扣一次）
 VIOLATION_WEIGHTS = {       # 一次违规扣多少，最重一档 20
     "late": 10,       # 迟到早退
     "leave": 15,      # 无故请假
