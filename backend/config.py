@@ -64,15 +64,11 @@ SSO_REDIRECT_URI = os.environ.get("RUCVA_SSO_REDIRECT_URI", "").strip()
 #
 # 天地图的**服务端** tk：瓦片转发和地名搜索都用它。天地图按**服务器出口 IP
 # 白名单**校验它，所以要在天地图后台把服务器的公网 IP 登记上。它只在后端用，
-# 绝不能进前端——会被抄走、额度算我们的。
-TIANDITU_TK_SERVER = os.environ.get("RUCVA_TIANDITU_TK_SERVER", "").strip()
-
-# 天地图的**浏览器端** tk，现在只是瓦片转发的**兜底**：服务端 tk 没配时，
-# 由服务器带着它、并把 Referer 设成本站地址（PUBLIC_BASE_URLS 的第一个）去取。
-# 天地图的密钥分类型、不能混用，这把按域名白名单校验，所以兜底要求
-# RUCVA_PUBLIC_BASE_URL 也配了。两把都没配 = 管理端不画地图，只显示坐标，
+# 绝不能进前端——会被抄走、额度算我们的。没配 = 管理端不画地图，只画点和圈，
 # 定位签到功能照旧（那个本来就不依赖地图）。
-TIANDITU_TK = os.environ.get("RUCVA_TIANDITU_TK", "").strip()
+# 浏览器端 tk 用不上：天地图对它只认真浏览器，服务器发出去的请求带什么
+# Referer 都被拒（403 / 301012），所以不设浏览器端 tk 的配置。
+TIANDITU_TK_SERVER = os.environ.get("RUCVA_TIANDITU_TK_SERVER", "").strip()
 
 # 天地图每个 tk 每天 10000 次瓦片请求。保护有三层（见 routers/geo.py）：
 # 同一张瓦片只向天地图取一次、在磁盘上存 TILE_CACHE_DAYS 天；Redis 按天数
