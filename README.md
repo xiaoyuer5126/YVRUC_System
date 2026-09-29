@@ -15,7 +15,7 @@ docker compose --profile seed run --rm seed     # 重置演示数据
 docker compose --profile test run --rm tests    # 跑回归测试（独立的 rucva_test 库）
 ```
 
-- 入口 **http://127.0.0.1:8080**（nginx 托管前端并同源反代 `/api`，无跨域）。
+- 入口 **http://127.0.0.1:8080** （nginx 托管前端并同源反代 `/api`，无跨域）。
 - 数据库 5433 / Redis 6380 / 后端 8000 都只绑 `127.0.0.1`，调试用得上、公网碰不到；
   对外只有 web 的 8080 与 cloudflared 隧道。
 - cloudflared 固定域名隧道：token 存 `.env` 的 `CLOUDFLARE_TOKEN`，公网域名在
