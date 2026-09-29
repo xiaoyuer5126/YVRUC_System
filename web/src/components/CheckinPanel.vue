@@ -426,7 +426,7 @@
              坐办公室把点位挪到任何地方，那道判定就白设了。leaflet 只在打开
              这个弹窗时才去加载（异步组件），大多数管理者不会开这一页 -->
         <GeoMap v-if="geoForm.lat" :lat="geoForm.lat" :lng="geoForm.lng"
-                :radius="geoForm.radius_m" :tk="mapTk" pickable
+                :radius="geoForm.radius_m" pickable
                 @pick="onPick" />
         <div class="dim" style="line-height:1.8">
           图上可以直接点一下、或者拖着图钉挪位置。
@@ -795,23 +795,21 @@ const geoLocating = ref(false)
 // 'campus' 校区预设点。后端按它写审计，别让几种来源在记录里分不出来
 const geoForm = ref({ lat: 0, lng: 0, accuracy: 0, radius_m: 200, source: '' })
 
-// 天地图的 tk：从后端取，不是构建时写死——换 key 不用重新构建前端。
-// 取不到（没配）就只是不画底图，点位和范围照样有
-const mapTk = ref('')
-let mapTkLoaded = false
+// 地图瓦片走本站转发，前端不拿任何天地图 tk（GeoMap 自己去领瓦片令牌）。
+// 这里只取校区预设点
+let mapCfgLoaded = false
 
 // 校区快捷选点的坐标也来自后端（config.CAMPUS_PRESETS）：改一个校区的位置
 // 不该要重新构建前端
 const campuses = ref([])
 
-async function loadMapTk() {
-  if (mapTkLoaded) return
-  mapTkLoaded = true
+async function loadMapConfig() {
+  if (mapCfgLoaded) return
+  mapCfgLoaded = true
   try {
     const d = await api.get('/api/staff/map-config', { silent: true })
-    mapTk.value = d.tk || ''
     campuses.value = d.campuses || []
-  } catch { /* 没配就没有地图，不影响定位签到本身 */ }
+  } catch { /* 取不到就没有快捷选点，不影响定位签到本身 */ }
 }
 
 /** 按校区把地图挪过去。**这是起点不是终点**：校区中心跟具体岗位（东门、
@@ -860,7 +858,7 @@ function pickResult(r) {
 
 function openGeo(row) {
   geoTask.value = row
-  loadMapTk()
+  loadMapConfig()
   // 已经有锚点的，先把旧的填进去：多数时候只是改个半径，
   // 不该逼着人再站到太阳底下量一次
   geoForm.value = {
