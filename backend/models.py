@@ -334,7 +334,8 @@ class Activity(Base):
 
     status: Mapped[str] = mapped_column(String(16), default="draft")
     # draft 草稿 / pending 待审批 / approved 待发布 / published 报名中 /
-    # closed 已截止 / finished 已结束 / completed 已完成（时长已锁定）
+    # closed 已截止 / finished 已结束 / vb_pending 待录入志愿北京（时长已锁定，
+    # 等管理者把时长录进志愿北京并上传截图）/ completed 已完成
 
     # —— 审批 ——
     # 所有活动发布前都要过校青协。默认通过即发布；提交时可以关掉这一项，
@@ -360,8 +361,9 @@ class Activity(Base):
 
     # —— 志愿时长 ——
     # 核准 = 把这场活动的时长定下来，通知每个人查看，并给一段申诉时间。
-    # 截止时没人申诉就自动锁定，活动同时落「已完成」；有人申诉就通知管理者，
-    # 改完再核准一次，来回几次都行，也可以不理会申诉直接锁定。
+    # 截止时没人申诉就自动报校青协审批，通过即锁定，活动落「待录入志愿北京」；
+    # 有人申诉就通知管理者，改完再核准一次，来回几次都行，也可以不理会申诉
+    # 直接提交审批。
     hours_approved_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
     appeal_deadline: Mapped[datetime | None] = mapped_column(
@@ -372,6 +374,9 @@ class Activity(Base):
     # 自动报批就停下来提醒管理者一次；记下时间，别每分钟提醒一遍。
     stamped_reminded_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
+    # 时长锁定后停在「待录入志愿北京」太久，每天提醒管理者一次；记的是哪天
+    # 提醒过（按天去重，条件更新占位，见 scheduled.remind_vb_hours）
+    vb_reminded_on: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
@@ -389,7 +394,8 @@ class Activity(Base):
 
     STATUS_LABELS = {"draft": "草稿", "pending": "待审批", "approved": "待发布",
                      "published": "报名中", "closed": "已截止",
-                     "finished": "已结束", "completed": "已完成"}
+                     "finished": "已结束", "vb_pending": "待录入志愿北京",
+                     "completed": "已完成"}
 
     def label_status(self) -> str:
         return self.STATUS_LABELS.get(self.status, self.status)
@@ -661,7 +667,8 @@ class Attachment(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     # shift / position：学习材料；application：报名问卷里志愿者上传的文件；
-    # proposal / stamped：立项书与盖章立项书（owner_id = 活动 id，各留一份）
+    # proposal / stamped：立项书与盖章立项书；vb_hours：志愿北京时长录入截图
+    # （owner_id = 活动 id，各留一份）
     owner_type: Mapped[str] = mapped_column(String(12))
     owner_id: Mapped[str] = mapped_column(String(32), index=True)
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
@@ -992,6 +999,8 @@ class HoursRequest(Base):
     reply: Mapped[str] = mapped_column(String(512), default="")
     handled_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
     handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 放太久没人处理就催一次（抄送会长团），催过记下时间，只催这一次
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     def status_label(self) -> str:
         return self.STATUS_LABELS.get(self.status, self.status)

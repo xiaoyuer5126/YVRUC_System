@@ -1,4 +1,5 @@
-"""志愿时长的结账：核准 → 本人确认或申诉 → 报校青协审批 → 锁定。
+"""志愿时长的结账：核准 → 本人确认或申诉 → 报校青协审批 → 锁定 →
+管理者把时长录进志愿北京、上传截图 → 活动完成。
 
 一场活动的账一起结，状态记在活动上（hours_approved_at / appeal_deadline /
 hours_locked_at）；每个人的表态记在自己那条 HoursRecord 上（confirmed_at /
@@ -71,10 +72,13 @@ def result_text(rec: HoursRecord) -> str:
 
 def lock_hours(db: OrmSession, act: Activity, actor: User | None,
                reason: str) -> int:
-    """锁定这场活动的时长，活动落「已完成」，逐个通知本人。不提交事务。
+    """锁定这场活动的时长，活动落「待录入志愿北京」，逐个通知本人。不提交事务。
 
     没表态的人按「没问题 + 志愿时长」处理，锁定时补上确认时间；
     这样锁定之后每条记录都有本人（或视同本人）的确认。
+    锁定还不是终点：时长要由管理者录进志愿北京、在「审核」页签上传录入截图
+    并确认，活动才算「已完成」（见 routers/liaison.confirm_vb_hours）。
+    内部、外部活动一样走这一步。
     """
     t = now()
     rows = db.query(HoursRecord).filter(HoursRecord.activity_id == act.id).all()
@@ -83,10 +87,10 @@ def lock_hours(db: OrmSession, act: Activity, actor: User | None,
             r.confirmed_at = t
             r.reward = "hours"
     act.hours_locked_at = t
-    act.status = "completed"
+    act.status = "vb_pending"
     audit_log(db, actor=actor, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"锁定志愿时长，活动标记为已完成（{reason}）")
+              summary=f"锁定志愿时长，活动待录入志愿北京（{reason}）")
     for r in rows:
         u = db.get(User, r.user_id)
         if u is not None:

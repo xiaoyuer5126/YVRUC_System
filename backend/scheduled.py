@@ -1,5 +1,5 @@
 """定时任务：候补清扫、活动状态自动流转、签到提醒、人员变动日报、编辑解冻、
-值班日报。
+值班日报、审批超时催办、志愿北京录入提醒。
 
 由 main.py 的协程每分钟驱动一次。几件事互不依赖，一件出错不影响其余——
 任何一件长期不跑都没有外部表现，直到有人发现名额空转或提醒没发出去。
@@ -33,6 +33,8 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("reminders", send_checkin_reminders),
                       ("digests", send_roster_digests),
                       ("approvals", remind_stale_approvals),
+                      ("hours_approvals", remind_stale_hours_requests),
+                      ("vb_hours", remind_vb_hours),
                       ("duty_digests", send_duty_digests),
                       ("hours_lock_requests", submit_lock_when_due),
                       ("unlocked", release_stale_edit_locks),
@@ -233,6 +235,104 @@ def remind_stale_approvals(db: OrmSession) -> int:
     if rows:
         db.commit()
     return len(rows)
+
+
+def remind_stale_hours_requests(db: OrmSession) -> int:
+    """时长锁定/解锁审批放太久没人处理：催归口部门的对接人，抄送会长团。
+    每条只催一次，**永不自动通过**。
+
+    时长审批平时只通知对接人（见 staff_ops._hours_notify_targets），会长团
+    不逐条收；催办这一下才把会长团带上——没人处理的那几条才值得他们看。
+    先用条件更新把 reminded_at 占下来再发：清扫每分钟一轮，换了主或多进程
+    也只发一遍。
+    """
+    from sqlalchemy import update
+    from . import liaison
+    from .routers.staff_ops import council_members
+
+    t = now()
+    deadline = t - timedelta(hours=config.APPROVAL_REMIND_HOURS)
+    rows = (db.query(HoursRequest)
+            .filter(HoursRequest.status == "pending",
+                    HoursRequest.created_at < deadline,
+                    HoursRequest.reminded_at.is_(None)).all())
+    sent = 0
+    for req in rows:
+        claimed = db.execute(
+            update(HoursRequest)
+            .where(HoursRequest.id == req.id,
+                   HoursRequest.status == "pending",
+                   HoursRequest.reminded_at.is_(None))
+            .values(reminded_at=t)).rowcount
+        db.commit()
+        if not claimed:
+            continue
+        act = db.get(Activity, req.activity_id)
+        if act is None:
+            continue
+        contact = liaison.approval_contact(db, act.approval_dept_id)
+        targets = ([contact] if contact else []) + [
+            p for p in council_members(db) if contact is None or p.id != contact.id]
+        waited = int((t - req.created_at).total_seconds() // 3600)
+        text = (f"「{act.title}」的时长{req.kind_label()}申请已提交 {waited} 小时未处理。\n"
+                f"说明：{req.reason}\n请到「活动审批」通过或驳回。")
+        for u in targets:
+            msgcenter.send_user(db, u, "custom",
+                                data={"activity_id": act.id, "route": "approvals"},
+                                title=f"时长{req.kind_label()}审批已等待 {waited} 小时"
+                                      f"｜{act.title}",
+                                content=text)
+        db.commit()
+        sent += 1
+        logger.info("活动「%s」时长%s审批超时未处理，已提醒",
+                    act.title, req.kind_label())
+    return sent
+
+
+# ======================= 志愿北京录入提醒 =======================
+
+def remind_vb_hours(db: OrmSession) -> int:
+    """时长锁定满 VB_REMIND_DAYS 天还停在「待录入志愿北京」：每天提醒一次
+    本活动的管理者去录入、上传截图并确认。
+
+    按天去重：先用条件更新把「今天提醒过了」（vb_reminded_on）占下来，
+    占到了才发——清扫每分钟一轮，进程重启或多进程也不会一天发两遍。
+    """
+    from sqlalchemy import or_, update
+
+    t = now()
+    if t.hour < config.VB_REMIND_HOUR:
+        return 0
+    today = t.date()
+    cutoff = t - timedelta(days=config.VB_REMIND_DAYS)
+    rows = (db.query(Activity)
+            .filter(Activity.status == "vb_pending",
+                    Activity.hours_locked_at.isnot(None),
+                    Activity.hours_locked_at <= cutoff,
+                    or_(Activity.vb_reminded_on.is_(None),
+                        Activity.vb_reminded_on < today)).all())
+    sent = 0
+    for act in rows:
+        claimed = db.execute(
+            update(Activity)
+            .where(Activity.id == act.id,
+                   Activity.status == "vb_pending",
+                   or_(Activity.vb_reminded_on.is_(None),
+                       Activity.vb_reminded_on < today))
+            .values(vb_reminded_on=today)).rowcount
+        db.commit()
+        if not claimed:
+            continue
+        days = (t - act.hours_locked_at).days
+        notify_managers(
+            db, act.id, f"请录入志愿北京｜{act.title}",
+            f"「{act.title}」的志愿时长已锁定 {days} 天，还没有确认录入志愿北京。\n"
+            f"请把时长录入志愿北京，到活动管理的「审核」页签上传录入截图并点"
+            f"「已录入」，活动才会标记为已完成。", duty="hours")
+        db.commit()
+        sent += 1
+        logger.info("活动「%s」待录入志愿北京 %d 天，已提醒管理者", act.title, days)
+    return sent
 
 
 # ======================= 值班日报 =======================

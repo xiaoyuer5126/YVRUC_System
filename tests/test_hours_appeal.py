@@ -234,7 +234,7 @@ def test_到点无人申诉自动提交审批_通过后才锁定(client, admin, 
     _approve_lock(client, admin, act)
     db.expire_all()
     row = db.get(Activity, act.id)
-    assert row.hours_locked_at is not None and row.status == "completed"
+    assert row.hours_locked_at is not None and row.status == "vb_pending"
     assert (db.query(Notification)
             .filter(Notification.user_id == u.id,
                     Notification.title.like("志愿时长已锁定%")).count() == 1)
@@ -273,7 +273,7 @@ def test_有人申诉就不自动提交审批(client, admin, db, served):
     assert r.status_code == 200, r.text
     _approve_lock(client, admin, act)
     db.expire_all()
-    assert db.get(Activity, act.id).status == "completed"
+    assert db.get(Activity, act.id).status == "vb_pending"
 
 
 def test_锁定审批被驳回后解冻重改(client, admin, db, served):
@@ -296,7 +296,7 @@ def test_锁定审批被驳回后解冻重改(client, admin, db, served):
                        headers=admin, json={}).status_code == 200
     _approve_lock(client, admin, act)
     db.expire_all()
-    assert db.get(Activity, act.id).status == "completed"
+    assert db.get(Activity, act.id).status == "vb_pending"
 
 
 def test_锁定后改时长要报审批(client, admin, db, served):
@@ -340,7 +340,7 @@ def test_没有时长记录的活动核准即锁定(client, admin, db, served):
                     headers=admin, json={})
     assert r.status_code == 200 and r.json()["locked"] is True
     db.expire_all()
-    assert db.get(Activity, act.id).status == "completed"
+    assert db.get(Activity, act.id).status == "vb_pending"
 
 
 def test_非本活动管理者不能处理申诉(client, admin, initiator, db, served):

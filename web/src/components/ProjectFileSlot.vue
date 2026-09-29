@@ -1,4 +1,4 @@
-<!-- 立项书 / 盖章立项书的一格：一格只留一份，传新的就替换。
+<!-- 立项书 / 盖章立项书 / 志愿北京时长录入截图的一格：一格只留一份，传新的就替换。
      能不能换由后端说了算（block 是不能换的原因），这里只照着显示。 -->
 <template>
   <div class="pf-slot">
@@ -17,7 +17,7 @@
     </div>
     <div v-if="hint" class="dim">{{ hint }}</div>
     <el-upload v-if="canUpload" :show-file-list="false" :before-upload="upload"
-               accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.txt">
+               :accept="accept">
       <el-button size="small" :loading="busy">{{ file ? '更换' : '上传' }}{{ label }}</el-button>
     </el-upload>
     <div v-else-if="block" class="dim">{{ block }}</div>
@@ -32,13 +32,14 @@ import { download, fmtDT, uploadFile } from '../api'
 
 const props = defineProps({
   activityId: { type: String, required: true },
-  kind: { type: String, required: true },        // proposal / stamped
+  kind: { type: String, required: true },        // proposal / stamped / vb_hours
   label: { type: String, required: true },
   file: { type: Object, default: null },
   canUpload: { type: Boolean, default: false },
   block: { type: String, default: '' },
   required: { type: Boolean, default: false },
   hint: { type: String, default: '' },
+  accept: { type: String, default: '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.txt' },
 })
 const emit = defineEmits(['changed'])
 const busy = ref(false)

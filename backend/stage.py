@@ -2,7 +2,7 @@
 
 两条线，各管一段：
 
-  · 活动结束（finished/completed）——安排定死了。时长是按结束那一刻的岗位与
+  · 活动结束（finished/vb_pending/completed）——安排定死了。时长是按结束那一刻的岗位与
     名单算出来的，事后再改岗位、改名额、改基本信息，改的是一份已经生效的
     记录，跟结出来的账对不上。
   · 时长封账——核准之后一旦提交校青协审核就冻结，锁定之后更不许动。审核期间
@@ -22,7 +22,7 @@ from .models import Activity
 
 def ensure_not_finished(act: Activity) -> None:
     """活动还没结束才让改。"""
-    if act.status in ("finished", "completed"):
+    if act.status in ("finished", "vb_pending", "completed"):
         raise HTTPException(
             409, f"活动{act.label_status()}，不能再修改；如确需更正请联系管理员")
 

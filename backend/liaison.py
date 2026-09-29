@@ -12,6 +12,9 @@
 「对外活动」= 归口对外联络部的活动：提交审批要带立项书，时长报批要带盖章立项书。
 两份文件都挂在 Attachment 上（owner_type = proposal / stamped，owner_id = 活动 id），
 存储与一次性票据下载沿用学习材料那一套。
+
+志愿北京时长录入截图（vb_hours）也按同一套格子放：它不分内外，所有活动锁定
+时长之后都要交，交了并确认，活动才算「已完成」。
 """
 from __future__ import annotations
 
@@ -24,7 +27,11 @@ DUTY_DEPTS = (LIAISON_DEPT,)
 # 能值班的：部门骨干与部长。部门成员是学习权限，拍不了板。
 ELIGIBLE_POSTS = ("core", "head")
 
-SLOTS = {"proposal": "立项书", "stamped": "盖章立项书"}
+SLOTS = {"proposal": "立项书", "stamped": "盖章立项书",
+         "vb_hours": "志愿北京时长录入截图"}
+# 各格能传的文件类型；没列的格子沿用学习材料的全部类型。截图就是截图：
+# 图片，或者打印成的 PDF
+SLOT_EXTS = {"vb_hours": ("png", "jpg", "jpeg", "pdf")}
 
 
 # ======================= 部门与值班 =======================
@@ -134,7 +141,7 @@ def session_user(db: OrmSession, user: User) -> dict:
 
 # 活动正式发布之后的状态。先立项再结项：志愿北京登记、盖章立项书都是
 # 活动发布之后才交的材料，草稿和审批中的活动交不了
-PUBLISHED_STATES = ("published", "closed", "finished", "completed")
+PUBLISHED_STATES = ("published", "closed", "finished", "vb_pending", "completed")
 
 
 def is_published(act: Activity) -> bool:
