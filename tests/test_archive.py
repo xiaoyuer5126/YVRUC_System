@@ -78,6 +78,36 @@ def test_没报名本活动的人登记不了(client, admin, db, enrolled_activi
     assert r.status_code == 400 and "没有报名本活动" in r.json()["detail"]
 
 
+def test_同一活动重复登记先回409带已有记录确认后照登(client, admin, db,
+                                             enrolled_activity):
+    """两个管理者各登一遍是常事：第二条先把已有的摆出来问一句，确认了才记。"""
+    act, _shift, u = enrolled_activity
+    url = "/api/staff/violations"
+    first = {"user_id": u.id, "activity_id": act.id,
+             "kind": "late", "detail": "迟到 20 分钟"}
+    assert client.post(url, headers=admin, json=first).status_code == 200
+    listing = f"/api/staff/activities/{act.id}/volunteers/{u.id}/violations"
+    items = client.get(listing, headers=admin).json()["items"]
+    assert [v["kind"] for v in items] == ["late"]
+
+    again = {**first, "kind": "passive", "detail": "全程玩手机"}
+    r = client.post(url, headers=admin, json=again)
+    assert r.status_code == 409, r.text
+    d = r.json()["detail"]
+    assert d["code"] == "VIOLATION_DUPLICATE"
+    assert len(d["items"]) == 1
+    v = d["items"][0]
+    assert v["kind_label"] == "迟到早退" and v["detail"] == "迟到 20 分钟"
+    assert v["created_at"] and v["operator_name"]
+    # 没记进去
+    assert len(client.get(listing, headers=admin).json()["items"]) == 1
+
+    r = client.post(url, headers=admin, json={**again, "confirm_duplicate": True})
+    assert r.status_code == 200, r.text
+    kinds = [v["kind"] for v in client.get(listing, headers=admin).json()["items"]]
+    assert sorted(kinds) == ["late", "passive"]
+
+
 def test_撤销违规登记(client, admin, db, enrolled_activity):
     act, _shift, u = enrolled_activity
     vid = client.post("/api/staff/violations", headers=admin,
@@ -139,7 +169,8 @@ def test_提示分按违规与参与现算(client, admin, db, enrolled_activity)
     for kind in ("contact", "leave", "late", "passive"):
         r = client.post("/api/staff/violations", headers=admin,
                         json={"user_id": u.id, "activity_id": _act.id,
-                              "kind": kind, "detail": "演示"})
+                              "kind": kind, "detail": "演示",
+                              "confirm_duplicate": True})
         assert r.status_code == 200, r.text
         ids.append(r.json()["id"])
     d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
