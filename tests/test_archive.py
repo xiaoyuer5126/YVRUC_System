@@ -108,6 +108,19 @@ def test_同一活动重复登记先回409带已有记录确认后照登(client,
     assert sorted(kinds) == ["late", "passive"]
 
 
+def test_提示线是80且无法取得联系不再是违规类型(client, admin, enrolled_activity):
+    act, _shift, u = enrolled_activity
+    assert config.SCORE_ALERT_BELOW == 80
+    assert "contact" not in config.VIOLATION_WEIGHTS
+    consts = client.get("/api/auth/constants", headers=admin).json()
+    kinds = consts["violation_kinds"]
+    assert set(kinds) == {"late", "leave", "passive", "other"}
+    r = client.post("/api/staff/violations", headers=admin,
+                    json={"user_id": u.id, "activity_id": act.id,
+                          "kind": "contact", "detail": "联系不上"})
+    assert r.status_code == 400 and "违规类型不合法" in r.json()["detail"]
+
+
 def test_撤销违规登记(client, admin, db, enrolled_activity):
     act, _shift, u = enrolled_activity
     vid = client.post("/api/staff/violations", headers=admin,
@@ -166,7 +179,7 @@ def test_提示分按违规与参与现算(client, admin, db, enrolled_activity)
     assert base["score"]["score_alert"] is False
 
     ids = []
-    for kind in ("contact", "leave", "late", "passive"):
+    for kind in ("leave", "late"):
         r = client.post("/api/staff/violations", headers=admin,
                         json={"user_id": u.id, "activity_id": _act.id,
                               "kind": kind, "detail": "演示",
@@ -174,21 +187,21 @@ def test_提示分按违规与参与现算(client, admin, db, enrolled_activity)
         assert r.status_code == 200, r.text
         ids.append(r.json()["id"])
     d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
-    four = config.SCORE_BASE - sum(W[k] for k in ("contact", "leave", "late", "passive"))
-    assert d["score"]["score"] == four
+    low = config.SCORE_BASE - W["leave"] - W["late"]
+    assert d["score"]["score"] == low
     # 下面两处「挂/不挂感叹号」依赖分数落在阈值两侧；权重改了这里先报出来
-    assert four < config.SCORE_ALERT_BELOW <= four + W["contact"]
+    assert low < config.SCORE_ALERT_BELOW <= low + W["leave"]
     assert d["score"]["score_alert"] is True
 
     # 名单上这个人要挂感叹号
     roster = client.get(f"/api/staff/shifts/{_shift.id}/roster", headers=admin).json()
     me = next(r for r in roster["enrolled"] if r["user"]["id"] == u.id)
-    assert me["user"]["score_alert"] is True and me["user"]["score"] == four
+    assert me["user"]["score_alert"] is True and me["user"]["score"] == low
 
     assert client.delete(f"/api/staff/violations/{ids[0]}",
                          headers=admin).status_code == 200
     d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
-    assert d["score"]["score"] == four + W["contact"]
+    assert d["score"]["score"] == low + W["leave"]
     assert d["score"]["score_alert"] is False
 
 

@@ -175,13 +175,12 @@ LATE_CANCEL_HOURS = 24     # 「临近」阈值（小时）
 # 逐条加减，每一步都夹在 [SCORE_MIN, SCORE_BASE]，满分时加的分不会存起来。
 SCORE_BASE = 100            # 起始分，也是上限
 SCORE_MIN = 0
-SCORE_ALERT_BELOW = 60      # 低于它，名单上姓名旁挂感叹号
+SCORE_ALERT_BELOW = 80      # 低于它，名单上姓名旁挂感叹号
 SCORE_PER_ACTIVITY = 5      # 每顺利参与一个活动（签到过、无违规、无临期退选）加的分
 LATE_CANCEL_WEIGHT = 5      # 一个活动有临期退选扣多少（退几个场次都只扣一次）
-VIOLATION_WEIGHTS = {       # 一次违规扣多少，最重一档 20
+VIOLATION_WEIGHTS = {       # 一次违规扣多少，最重一档 15
     "late": 10,       # 迟到早退
     "leave": 15,      # 无故请假
-    "contact": 20,    # 无法取得联系
     "passive": 10,    # 消极志愿
     "other": 5,       # 其他
 }
