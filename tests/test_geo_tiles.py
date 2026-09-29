@@ -143,19 +143,28 @@ def test_优先用服务端tk且不带Referer(client, admin, upstream):
     assert "referer" not in req.headers
 
 
-def test_没有服务端tk时用浏览器tk并带本站Referer(client, admin, upstream, monkeypatch):
+def test_没有服务端tk就不画地图_浏览器端那把不能兜底(client, admin, upstream, monkeypatch):
+    """浏览器端 tk 只认真浏览器（403 / 301012，带什么 Referer 都一样），
+    由服务器发出去必然被拒。所以它不能当兜底：没配服务端 tk 就如实说没配，
+    前端退化成只画点和圈——留着兜底只会把「没配」伪装成 502。"""
+    t = _token(client, admin)          # 先领令牌（要判「没配置」得先过验签那一关）
     monkeypatch.setattr(config, "TIANDITU_TK_SERVER", "")
+    assert client.get("/api/geo/tile-token", headers=admin).json() == {"configured": False}
+    assert client.get(TILE, params={"t": t}).status_code == 404
+    assert upstream["calls"] == []
+
+
+def test_上游请求不冒充浏览器(client, admin, upstream):
+    """发出去的上游请求不许带浏览器样的 User-Agent。
+
+    天地图靠 UA 判断来的是浏览器还是服务器，再要求「浏览器用浏览器端 tk、
+    服务器用服务端 tk」。带着服务端 tk 却用 Mozilla 开头的 UA，会被判成
+    「请使用服务器端访问」（403 / 301013）——2026-09-30 生产上就是这么
+    502 的（地图整块不出来），所以钉住这条。
+    """
     client.get(TILE, params={"t": _token(client, admin)})
     (req,) = upstream["calls"]
-    assert req.url.params["tk"] == "browser-tk"
-    # 用例环境的对外域名见 conftest（RUCVA_PUBLIC_BASE_URL）
-    assert req.headers["referer"] == "https://v.ruc.edu.cn/"
-
-
-def test_浏览器tk兜底缺本站地址就算没配(client, admin, upstream, monkeypatch):
-    monkeypatch.setattr(config, "TIANDITU_TK_SERVER", "")
-    monkeypatch.setattr(config, "PUBLIC_BASE_URLS", [])
-    assert client.get("/api/geo/tile-token", headers=admin).json() == {"configured": False}
+    assert "mozilla" not in req.headers.get("user-agent", "").lower()
 
 
 def test_两把tk都没配就不画地图(client, admin, upstream, monkeypatch):

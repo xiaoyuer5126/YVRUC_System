@@ -35,7 +35,6 @@ import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -60,10 +59,13 @@ UPSTREAM = "https://t{n}.tianditu.gov.cn/{layer}_w/wmts"
 CACHE_CONTROL = f"public, max-age={config.TILE_CACHE_DAYS * 86400}"
 
 # 同步客户端、进程内复用：瓦片一次来十几张，每张都重新握一遍 TLS 太浪费。
-# User-Agent 要像个浏览器：天地图对脚本默认的 UA 会直接拒掉（418）。
+#
+# **别给上游设浏览器样的 User-Agent。** 天地图靠 UA 判断来的是浏览器还是服务器，
+# 再要求「浏览器就用浏览器端 tk、服务器就用服务端 tk」：带服务端 tk 却用
+# Mozilla 开头的 UA → 403 `301013「Key权限类型为:服务器端，请使用服务器端访问」`
+# （2026-09-30 生产上就是这么 502 的，换成 httpx 默认 UA 立刻 200）。
 _http = httpx.Client(
     timeout=config.TILE_UPSTREAM_TIMEOUT,
-    headers={"User-Agent": "Mozilla/5.0 (compatible; RUCVA-System/1.0)"},
     limits=httpx.Limits(max_connections=16, max_keepalive_connections=8))
 # httpx 在 INFO 级别会把完整网址写进日志，tk 就在查询串里
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -71,24 +73,17 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # ======================= tk =======================
 
-def _public_origin() -> str:
-    """本站对外地址（协议 + 域名），兜底路径拿它当 Referer。"""
-    for raw in config.PUBLIC_BASE_URLS:
-        u = urlparse(raw)
-        if u.scheme and u.netloc:
-            return f"{u.scheme}://{u.netloc}"
-    return ""
-
-
 def _upstream_key() -> tuple[str, dict[str, str]] | None:
-    """(tk, 额外请求头)；两把都用不了返回 None。"""
+    """(tk, 额外请求头)；没配可用的 tk 返回 None。
+
+    **只用服务端 tk，不拿浏览器端那把兜底。** 浏览器端 tk 认的是「真浏览器 +
+    来源域名白名单」，由服务器发出去的请求必然被拒（403 `301012
+    「Key权限类型为:浏览器端，请使用浏览器访问」`，带什么 Referer 都一样，
+    2026-09-30 实测三种 Referer 全拒）。留着这条兜底只会把「没配」伪装成
+    502，不如如实说没配——前端会退化成只画点和圈，功能照旧。
+    """
     if config.TIANDITU_TK_SERVER:
         return config.TIANDITU_TK_SERVER, {}
-    # 兜底：浏览器端 tk 按 Referer 域名白名单校验，由服务器替浏览器带上本站地址。
-    # 没有本站地址就带不了，那这把也用不了
-    origin = _public_origin()
-    if config.TIANDITU_TK and origin:
-        return config.TIANDITU_TK, {"Referer": origin + "/"}
     return None
 
 
