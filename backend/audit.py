@@ -67,6 +67,7 @@ ACTION_LABELS = {
     "material": "学习材料",
     "submit": "提交审批", "approve": "审批", "view_team": "查看组员",
     "duty": "值班交接", "vb_register": "志愿北京登记",
+    "feedback": "意见反馈",
 }
 
 
