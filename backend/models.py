@@ -327,10 +327,12 @@ class Activity(Base):
     # 特有的事，这两条讲的是整个活动共通的：着装、集合、餐食、时长、纪念品。
     volunteer_requirement: Mapped[str] = mapped_column(Text, default="")
     volunteer_benefit: Mapped[str] = mapped_column(Text, default="")
-    # 招募范围：限定校区与学段，空列表 = 不限。整个活动一刀切，
+    # 招募范围：限定校区、学段与学院，空列表 = 不限。整个活动一刀切，
     # 更细的差别（这一场只要研究生）走场次/岗位各自的条件要求。
     recruit_campuses: Mapped[list] = mapped_column(JSON, default=list)
     recruit_stages: Mapped[list] = mapped_column(JSON, default=list)
+    # 学院取值是统一身份认证给的 orgName 原文，要跟 User.college 逐字相等
+    recruit_colleges: Mapped[list] = mapped_column(JSON, default=list)
 
     status: Mapped[str] = mapped_column(String(16), default="draft")
     # draft 草稿 / pending 待审批 / approved 待发布 / published 报名中 /
@@ -1089,8 +1091,8 @@ class ViolationRecord(Base):
     """
     __tablename__ = "violation_records"
 
-    KINDS = {"late": "迟到早退", "leave": "无故请假", "contact": "无法取得联系",
-             "passive": "消极志愿", "other": "其他"}
+    KINDS = {"late": "迟到早退", "leave": "无故请假", "passive": "消极志愿",
+             "other": "其他"}
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)

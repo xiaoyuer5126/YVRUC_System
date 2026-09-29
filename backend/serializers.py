@@ -96,9 +96,10 @@ def tags_desc(tags: dict | None) -> str:
 
 
 def recruit_scope_text(act) -> str:
-    """招募范围的一句话说明；两项都没限就是「面向全校」。"""
+    """招募范围的一句话说明；三项都没限就是「面向全校」。"""
     text = tags_desc({"校区": act.recruit_campuses or [],
-                      "学段": act.recruit_stages or []})
+                      "学段": act.recruit_stages or [],
+                      "学院": act.recruit_colleges or []})
     return text or "面向全校"
 
 
@@ -501,6 +502,7 @@ def _detail_public(db: OrmSession, act: Activity) -> dict:
         "volunteer_requirement": act.volunteer_requirement,
         "recruit_campuses": act.recruit_campuses or [],
         "recruit_stages": act.recruit_stages or [],
+        "recruit_colleges": act.recruit_colleges or [],
         "recruit_scope_text": recruit_scope_text(act),
         "approval_dept_id": act.approval_dept_id or "",
         "auto_publish": act.auto_publish,
