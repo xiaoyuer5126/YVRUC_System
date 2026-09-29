@@ -26,6 +26,7 @@ const routes = [
       { path: 'users', component: () => import('./views/VolunteerArchiveView.vue'), meta: { page: 'users' } },
       { path: 'roles', component: () => import('./views/RolesView.vue'), meta: { page: 'roles' } },
       { path: 'integrations', component: () => import('./views/IntegrationsView.vue'), meta: { page: 'integrations' } },
+      { path: 'feedback', component: () => import('./views/FeedbackAdminView.vue'), meta: { page: 'feedback' } },
     ],
   },
   { path: '/checkin/:token', component: () => import('./views/CheckinLanding.vue'), meta: { public: true } },
@@ -75,7 +76,7 @@ router.beforeEach((to) => {
   // 当前视角不够 → 若持有对应身份则自动切换视角放行
   const adminOr = hasIdentity('admin') ? 'admin' : 'qingxie'
   const wanted = {
-    integrations: 'admin',
+    integrations: 'admin', feedback: 'admin',
     dashboard: adminOr, roles: adminOr, users: adminOr, approvals: adminOr,
     manage: hasIdentity('admin') ? 'admin' : hasIdentity('initiator') ? 'initiator' : 'qingxie',
     audit: hasIdentity('admin') ? 'admin' : hasIdentity('initiator') ? 'initiator' : 'qingxie',

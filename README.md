@@ -247,6 +247,18 @@ SSO 模拟「认证已通过」。
 
 志愿时长记在本平台、不对外回传。
 
+### 意见反馈（`backend/routers/feedback.py`）
+
+任何身份都能从右上角用户菜单（窄屏在抽屉底部）打开「意见反馈」，先选类型：
+
+- **反馈平台问题**：正文必填、≤2000 字，可附 ≤3 张截图（png/jpg/webp，按文件头校验，
+  单张 ≤5MB），一次表单提交落 `feedbacks` 表，截图挂 `Attachment`（`owner_type=feedback`）。
+  每人每小时最多 5 条（Redis 固定窗口，超了 429）。弹窗「我的反馈」页签看自己提交的和回复。
+- **反馈志愿问题**：平台不收，弹窗里给出「校青协志愿工作反馈平台」的链接，新窗口打开。
+
+管理员身份在工作台「意见反馈」页按状态筛选、处理并回复，回复即发站内消息给提交人；
+截图只有提交人本人与管理员看得到。提交与处理都记审计。
+
 ## 九、目录结构
 
 ```
@@ -283,7 +295,7 @@ rucva_system/
 │   ├── seed.py                 演示数据种子（python -m backend.seed）
 │   ├── routers/                auth / activities / me / checkin / attire / materials /
 │   │                           approvals / liaison / roles / screening / staff_activities /
-│   │                           staff_ops / staff_admin
+│   │                           staff_ops / staff_admin / feedback
 │   │                           （staff_* 共用 /api/staff 前缀：activities 管活动结构与
 │   │                             名单调配，ops 管签到、导出与时长，admin 管总览、
 │   │                             档案、违规与集成配置）

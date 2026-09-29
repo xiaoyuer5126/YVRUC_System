@@ -112,6 +112,27 @@ def clear_failures(key: str) -> None:
         _client.delete(_fail_key(key))
 
 
+# —— 按人限频（意见反馈等） ——
+#
+# 固定窗口：第一次记数时起算，到点整个清零。跟失败计数不同，这里每记一次
+# 都不续期——否则一个人隔一会儿交一条，窗口永远过不去。
+# Redis 不可用时同样放行。
+
+def rate_count(key: str) -> int:
+    try:
+        return int(_client.get(f"rucva:rate:{key}") or 0)
+    except redis.RedisError:
+        return 0
+
+
+def note_rate(key: str, window_seconds: int) -> None:
+    try:
+        if _client.incr(f"rucva:rate:{key}") == 1:
+            _client.expire(f"rucva:rate:{key}", window_seconds)
+    except redis.RedisError:
+        pass
+
+
 # —— OAuth state ——
 #
 # 授权回调是「带着 ?code=..&state=.. 从外部跳回来」的入口。不校验 state，

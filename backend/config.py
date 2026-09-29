@@ -243,6 +243,13 @@ VB_REMIND_HOUR = 9
 # 断点续传和对象存储，代价远超收益。
 MAX_MATERIAL_BYTES = 50 * 1024 * 1024
 
+# 意见反馈：正文字数、每条截图张数与单张大小、每人每小时条数。
+# 截图比答疑群二维码（2MB）大：手机原图截屏动辄两三兆，卡在 2MB 大半传不上
+FEEDBACK_MAX_CHARS = 2000
+FEEDBACK_MAX_IMAGES = 3
+FEEDBACK_MAX_IMAGE_BYTES = 5 * 1024 * 1024
+FEEDBACK_PER_HOUR = 5
+
 # 报名问卷的文件题：一个人在一个活动里最多存着几份没提交的附件、总共多大。
 # 传了不提交的文件不会自己消失，不设上限就是一条把磁盘写满的路。
 MAX_PENDING_ATTACHMENTS = 5
