@@ -32,15 +32,19 @@
 
       <!-- 提示分只给青协内部看：不公开给志愿者，也不拦任何人报名 -->
       <div class="section-title">提示分明细</div>
+      <!-- 按时间逐条累计，每一步夹在 0～满分之间：满分时加的分不存起来 -->
       <div class="score-items">
-        <span v-for="(it, i) in d.score.items" :key="i" class="score-item">
-          {{ it.label }}<template v-if="it.count > 1"> ×{{ it.count }}</template>
+        <div class="score-item dim">起始 <b class="val">{{ d.score.base }}</b></div>
+        <div v-for="(it, i) in d.score.items" :key="i" class="score-item">
+          <span class="dim">{{ fmtDT(it.at) }}</span>
+          <span class="what">{{ it.label }} · {{ it.activity_title }}</span>
           <b :class="{ minus: it.delta < 0 }">{{ it.delta > 0 ? '+' : '' }}{{ it.delta }}</b>
-        </span>
+          <b class="val">{{ it.score }}</b>
+        </div>
       </div>
       <p class="dim" style="margin:4px 0 0">
-        低于 {{ d.score.alert_below }} 分时名单上会标出提示，每顺利参与一次活动加
-        {{ d.score.per_activity }} 分。不对志愿者公开，也不影响报名。
+        低于 {{ d.score.alert_below }} 分时名单上会标出提示。每个签到过、无违规也无临期退选的活动，
+        结束后加 {{ d.score.per_activity }} 分，满分封顶不累积。不对志愿者公开，也不影响报名。
       </p>
 
       <!-- 退选画像：次数与「报了多久才退」，判断是临时有事还是占了就退 -->
@@ -160,9 +164,12 @@ function tagType(h) {
 </script>
 
 <style scoped>
-.score-items { display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 13px; }
-.score-item b { margin-left: 4px; color: var(--el-color-success); }
+.score-items { font-size: 13px; }
+.score-item { display: flex; gap: 8px; padding: 4px 0; align-items: baseline; }
+.score-item .what { flex: 1; min-width: 0; }
+.score-item b { color: var(--el-color-success); }
 .score-item b.minus { color: var(--el-color-danger); }
+.score-item b.val { color: inherit; min-width: 28px; text-align: right; }
 .stats { display: flex; gap: 12px; margin: 12px 0; }
 .stat { flex: 1; text-align: center; padding: 10px 6px; border-radius: 10px;
         background: var(--el-fill-color-light); }
