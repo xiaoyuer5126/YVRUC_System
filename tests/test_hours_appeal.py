@@ -479,11 +479,12 @@ def test_时长带明细且导出时长记录(client, admin, db, served, take_st
     assert r.status_code == 200
     ws = load_workbook(BytesIO(r.content)).active
     rows = list(ws.values)
-    assert rows[0] == ("姓名", "身份证号", "岗位", "时长", "备注")
+    assert rows[0] == ("姓名", "学号", "身份证号", "时长", "备注")
     by_name = {r_[0]: r_ for r_ in rows[1:]}
-    # 「岗位」列是产品确认故意留空的（岗位写在备注的明细里），别去「修」它
-    assert by_name[u.name] == (u.name, "110101200001011234", None, 4.0,
+    # 没有「岗位」列：岗位写在备注的明细里
+    assert by_name[u.name] == (u.name, u.student_id, "110101200001011234", 4.0,
                                f"{g.span_text()} 引导")
+    assert by_name[other.name][1] == other.student_id
     assert by_name[other.name][3] == 2 and by_name[other.name][4] == "场外搬运"
 
     # 选了劳务的不导
