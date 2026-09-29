@@ -563,3 +563,26 @@ def user_lock(db: OrmSession, user_id: str, wait: float | None = None) -> None:
     """
     budget = WAIT_TIMEOUT if wait is None else wait
     _pg_lock(db, [], time.monotonic() + budget, user_id)
+
+
+# —— 天地图瓦片的每日额度 ——
+#
+# 只数**真正打到天地图**的请求（缓存命中不算），键上带日期、两天后自己消失。
+# 按天地图的口径是自然日，所以日期用本地时间（容器 TZ=Asia/Shanghai）。
+# 多个进程共用这一个数，所以放 Redis 而不是进程内存。
+
+TILE_QUOTA_TTL = 2 * 24 * 3600
+
+
+def tile_fetches(day: str) -> int:
+    """这一天已经向天地图取了多少张瓦片。"""
+    return int(_client.get(f"rucva:tiles:{day}") or 0)
+
+
+def count_tile_fetch(day: str) -> int:
+    """记一次向天地图取瓦片，返回记完之后的数。"""
+    key = f"rucva:tiles:{day}"
+    pipe = _client.pipeline()
+    pipe.incr(key)
+    pipe.expire(key, TILE_QUOTA_TTL)
+    return int(pipe.execute()[0])

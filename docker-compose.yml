@@ -30,13 +30,15 @@ x-backend-env: &backend_env
   RUCVA_OPENPLATFORM_GATEWAY: ${RUCVA_OPENPLATFORM_GATEWAY:-}
   RUCVA_CAS_BASE_URL: ${RUCVA_CAS_BASE_URL:-}
   RUCVA_SSO_REDIRECT_URI: ${RUCVA_SSO_REDIRECT_URI:-}
-  # 天地图的浏览器端 tk（管理端画签到点用）。它本身会进前端，不是机密，
-  # 但**得从后端转一手**：管理员在页面里换 key 时不用重新构建前端。
+  # 天地图（管理端画签到点用）。瓦片由后端转发，两把 tk 都只在后端用、不进前端。
+  # 服务端 tk 是主路径（瓦片 + 地名搜索，按服务器 IP 白名单校验）；浏览器端 tk
+  # 只在服务端 tk 没配时兜底（后端带 RUCVA_PUBLIC_BASE_URL 当 Referer）。
   # 注意这一份是逐个变量列出来的——往 .env 加了新变量，忘了在这儿加一行，
   # 容器里就当它不存在（表现为「地图不出来、也不报错」）。
-  RUCVA_TIANDITU_TK: ${RUCVA_TIANDITU_TK:-}
-  # 地名搜索用的**服务端** tk，与上面那把不是同一个应用，不能混用
   RUCVA_TIANDITU_TK_SERVER: ${RUCVA_TIANDITU_TK_SERVER:-}
+  RUCVA_TIANDITU_TK: ${RUCVA_TIANDITU_TK:-}
+  # 每个 tk 每天的瓦片额度，到上限后端直接 503、不再请求天地图
+  RUCVA_TIANDITU_DAILY_LIMIT: ${RUCVA_TIANDITU_DAILY_LIMIT:-10000}
   # 进程数与连接池。加进程是为了吃满多核（一个进程一个核，压测见
   # tests/perf_probe.py），但 Postgres 的连接是**按进程各开一个池**再相加的：
   # 进程数 ×(池子+溢出) 不能顶到 max_connections（默认 100），所以两个一起调。
@@ -98,6 +100,8 @@ services:
       - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"   # 本机直连 API 调试用，公网只走 web 反代
     volumes:
       - rucva_uploads:/app/data/uploads   # 活动二维码等上传件持久化
+      # 天地图瓦片的磁盘缓存：重建容器不丢，免得重新花每天 10000 次的额度
+      - rucva_tiles:/app/data/tiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -178,3 +182,4 @@ services:
 volumes:
   rucva_pgdata:
   rucva_uploads:
+  rucva_tiles:

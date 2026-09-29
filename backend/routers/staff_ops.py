@@ -31,6 +31,7 @@ from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
                       parse_local_dt, span_text, uid)
 from ..serializers import iso_of, recruit_scope_text
 from .checkin import checkout_open
+from .geo import tiles_configured
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
 
@@ -238,11 +239,10 @@ def geo_search(q: str, lat: float | None = None, lng: float | None = None,
 def map_config(user: User = Depends(require_manager)):
     """管理端画地图要的参数。
 
-    tk 是**浏览器端**的密钥，会原样进前端（瓦片地址得在浏览器里拼），所以它
-    本来就公开，真正的保护是天地图后台的域名白名单。走这个接口而不是构建时
-    写死，是为了换 key 不用重新构建前端。留空 = 前端不画地图，功能照旧。
+    不给任何 tk：瓦片由本站转发（见 routers/geo.py），画图的令牌由 GeoMap 自己去
+    /api/geo/tile-token 领。tiles 只说「配没配」，没配前端就只显示坐标。
     """
-    return {"provider": "tianditu", "tk": config.TIANDITU_TK,
+    return {"provider": "tianditu", "tiles": tiles_configured(),
             "campuses": config.CAMPUS_PRESETS}
 
 

@@ -57,15 +57,39 @@ CAS_BASE_URL = os.environ.get("RUCVA_CAS_BASE_URL", "").strip()
 SSO_REDIRECT_URI = os.environ.get("RUCVA_SSO_REDIRECT_URI", "").strip()
 
 # —— 地图（管理端看签到点与范围）——
-# 天地图的浏览器端 tk。它是给**前端**用的：瓦片地址在浏览器里拼，所以这个值
-# 必然公开，靠天地图后台的域名白名单保护，别当机密。留空 = 管理端不画地图，
+# 瓦片由**我们自己的服务器**向天地图取、再转给浏览器（见 routers/geo.py），
+# 前端拿不到任何 tk。原先是浏览器直连天地图、靠 Referer 域名白名单保护浏览器端
+# tk，结果 AdGuard 隐身模式之类的插件会改写或去掉第三方 Referer，天地图一律 403，
+# 地图整块灰掉——这不是用户能自己排查出来的。
+#
+# 天地图的**服务端** tk：瓦片转发和地名搜索都用它。天地图按**服务器出口 IP
+# 白名单**校验它，所以要在天地图后台把服务器的公网 IP 登记上。它只在后端用，
+# 绝不能进前端——会被抄走、额度算我们的。
+TIANDITU_TK_SERVER = os.environ.get("RUCVA_TIANDITU_TK_SERVER", "").strip()
+
+# 天地图的**浏览器端** tk，现在只是瓦片转发的**兜底**：服务端 tk 没配时，
+# 由服务器带着它、并把 Referer 设成本站地址（PUBLIC_BASE_URLS 的第一个）去取。
+# 天地图的密钥分类型、不能混用，这把按域名白名单校验，所以兜底要求
+# RUCVA_PUBLIC_BASE_URL 也配了。两把都没配 = 管理端不画地图，只显示坐标，
 # 定位签到功能照旧（那个本来就不依赖地图）。
 TIANDITU_TK = os.environ.get("RUCVA_TIANDITU_TK", "").strip()
 
-# 同一家的**服务端** tk，用于地名搜索（管理端输个地名找坐标）。
-# 天地图的密钥分类型、**不能混用**：上面那把是浏览器端（拼瓦片地址用），
-# 这把是服务端（后端请求用）。服务端这把绝不能进前端——会被抄走。
-TIANDITU_TK_SERVER = os.environ.get("RUCVA_TIANDITU_TK_SERVER", "").strip()
+# 天地图每个 tk 每天 10000 次瓦片请求。保护有三层（见 routers/geo.py）：
+# 同一张瓦片只向天地图取一次、在磁盘上存 TILE_CACHE_DAYS 天；Redis 按天数
+# 真正打到天地图的请求，到 TIANDITU_WARN_AT 记警告日志；到上限直接 503，
+# 不再打上游——超了天地图也是拒，还可能按违规封 tk（地名搜索用的是同一把），
+# 不如自己先停。
+TIANDITU_DAILY_LIMIT = int(os.environ.get("RUCVA_TIANDITU_DAILY_LIMIT", "").strip() or "10000")
+TIANDITU_WARN_AT = TIANDITU_DAILY_LIMIT * 9 // 10
+TILE_CACHE_DIR = DATA_DIR / "tiles"
+TILE_CACHE_DAYS = 30
+# 服务器向天地图取一张瓦片最多等几秒。给短：地图是锦上添花，一张瓦片卡住
+# 就让它灰着，别占着线程池的线程。
+TILE_UPSTREAM_TIMEOUT = 5
+# 瓦片令牌的有效期（小时）。瓦片是 <img> 拉的，带不上登录令牌，所以管理端打开
+# 地图时先领一张签名令牌挂在瓦片地址上；只防「拿我们的接口当免费瓦片源」，
+# 不落库、不绑人。前端快过期时自己重新领。
+TILE_TOKEN_HOURS = 6
 
 # 校区的大致中心点：管理端「快捷选点」按它把地图挪过去、给个起点。
 # 数值由用户提供（比网上查的可靠——不同来源能差四百米，比我们默认的 200 米
