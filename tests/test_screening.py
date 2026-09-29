@@ -685,3 +685,133 @@ def test_报名问卷没有附件时附件包404(client, admin, db, take_student
                               "reg_end": (now() + timedelta(days=1)).isoformat()}).json()["id"]
     assert client.get(f"/api/staff/activities/{other}/applications/attachments",
                       headers=admin).status_code == 409
+
+
+# ======================= 开场仍未处理的申请自动落选 =======================
+
+def _start_now(db, shift_id):
+    """让场次一分钟前已经开始（结束时间照旧在后面）。"""
+    from backend.models import Shift
+    db.get(Shift, shift_id).start_time = now() - timedelta(minutes=1)
+    db.commit()
+
+
+def _rejected_notes(db, user_id):
+    return (db.query(Notification)
+            .filter(Notification.user_id == user_id,
+                    Notification.title.like("报名结果｜%")).count())
+
+
+def _apply(client, db, act_id, q, sid, shift_ids):
+    r = client.post(f"/api/activities/{act_id}/apply", headers=login(client, sid),
+                    json={"position_ids": _holders(db, shift_ids), "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+    u = db.query(User).filter(User.student_id == sid).one()
+    return u, db.query(Application).filter(Application.activity_id == act_id,
+                                           Application.user_id == u.id).one()
+
+
+def test_单场次开场仍未处理自动落选_只通知一次(client, admin, db, take_student):
+    from backend import scheduled
+    from backend.models import AuditLog
+    act_id, ids, q = _create_screened(client, admin, db, shifts=1)
+    sid = take_student()
+    u, app = _apply(client, db, act_id, q, sid, ids)
+
+    # 没开场：什么都不动
+    assert scheduled.run_once(db)["undecided"] == 0
+    db.refresh(app)
+    assert app.status == "applied"
+
+    _start_now(db, ids[0])
+    assert scheduled.run_once(db)["undecided"] == 1
+    db.refresh(app)
+    assert app.status == "rejected" and app.decided_by is None
+    assert _rejected_notes(db, u.id) == 1
+    n = (db.query(Notification).filter(Notification.user_id == u.id,
+                                       Notification.title.like("报名结果｜%")).one())
+    assert "暂未能" in n.content
+    e = db.query(Enrollment).filter(Enrollment.activity_id == act_id,
+                                    Enrollment.user_id == u.id).one()
+    assert (e.status, e.cancel_type) == ("cancelled", "rejected")
+    log = (db.query(AuditLog).filter(AuditLog.activity_id == act_id,
+                                     AuditLog.summary.like("%自动落选%")).one())
+    assert log.actor_id is None and u.name in log.summary
+
+    # 再跑不重复
+    assert scheduled.run_once(db)["undecided"] == 0
+    assert _rejected_notes(db, u.id) == 1
+
+    # 管理端看到的就是未录取；再点处理会被拦
+    lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
+    assert lst["applications"][0]["status"] == "rejected"
+    r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
+                    json={"application_ids": [app.id], "accept": True})
+    assert r.status_code == 409
+
+    # 不算本人退出：档案不留经历、退选画像为空，提示分不扣
+    archive = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
+    assert act_id not in [h["activity_id"] for h in archive["history"]]
+    assert archive["cancels"]["items"] == []
+    assert archive["score"]["items"] == []
+
+
+def test_多场次先开场的只作废那一场_晚的还能录取(client, admin, db, take_student):
+    from backend import scheduled
+    act_id, ids, q = _create_screened(client, admin, db, shifts=2)
+    ua, app_a = _apply(client, db, act_id, q, take_student(), ids)
+    ub, app_b = _apply(client, db, act_id, q, take_student(), ids)
+
+    _start_now(db, ids[0])
+    assert scheduled.run_once(db)["undecided"] == 0
+    for app, u in ((app_a, ua), (app_b, ub)):
+        db.refresh(app)
+        assert app.status == "applied"
+        assert _rejected_notes(db, u.id) == 0
+        by_shift = {e.shift_id: e for e in db.query(Enrollment)
+                    .filter(Enrollment.activity_id == act_id,
+                            Enrollment.user_id == u.id)}
+        assert (by_shift[ids[0]].status, by_shift[ids[0]].cancel_type) \
+            == ("cancelled", "rejected")
+        assert by_shift[ids[1]].status == "applied"
+
+    # 已开场那一场录不进去了；晚的那一场照样能录
+    r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
+                    json={"application_ids": [app_a.id], "accept": True,
+                          "shift_id": ids[0]})
+    assert r.status_code == 400
+    r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
+                    json={"application_ids": [app_a.id], "accept": True})
+    assert r.status_code == 200, r.text
+    assert _placed(client, admin, act_id)[app_a.id] != []
+
+    # 第二场也开了：录取的不受影响，没处理的这时才落选
+    _start_now(db, ids[1])
+    assert scheduled.run_once(db)["undecided"] == 1
+    db.refresh(app_a)
+    db.refresh(app_b)
+    assert app_a.status == "accepted" and app_b.status == "rejected"
+    assert _rejected_notes(db, ua.id) == 0 and _rejected_notes(db, ub.id) == 1
+    enr = (db.query(Enrollment).filter(Enrollment.shift_id == ids[1],
+                                       Enrollment.user_id == ua.id).one())
+    assert enr.status == "enrolled"
+
+
+def test_已处理的申请开场时不受影响(client, admin, db, take_student):
+    from backend import scheduled
+    act_id, ids, q = _create_screened(client, admin, db, shifts=1)
+    ua, app_a = _apply(client, db, act_id, q, take_student(), ids)
+    ub, app_b = _apply(client, db, act_id, q, take_student(), ids)
+    for app, accept in ((app_a, True), (app_b, False)):
+        r = client.post(f"/api/staff/activities/{act_id}/applications/decide",
+                        headers=admin, json={"application_ids": [app.id],
+                                             "accept": accept})
+        assert r.status_code == 200, r.text
+
+    _start_now(db, ids[0])
+    assert scheduled.run_once(db)["undecided"] == 0
+    db.refresh(app_a)
+    db.refresh(app_b)
+    assert app_a.status == "accepted" and app_b.status == "rejected"
+    # 手动不录取那一条只有当初那一次通知
+    assert _rejected_notes(db, ua.id) == 0 and _rejected_notes(db, ub.id) == 1

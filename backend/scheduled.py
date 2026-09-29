@@ -29,6 +29,8 @@ def run_once(db: OrmSession) -> dict[str, int]:
     """跑一轮。每件事单独兜异常，返回各自处理的条数。"""
     result = {}
     for name, job in (("promotions", expire_stale_promotions),
+                      # 排在状态流转之前：停机再起来时，先给没处理的申请收口
+                      ("undecided", expire_undecided_applications),
                       ("advanced", auto_advance_activities),
                       ("reminders", send_checkin_reminders),
                       ("digests", send_roster_digests),
@@ -47,6 +49,14 @@ def run_once(db: OrmSession) -> dict[str, int]:
             logger.exception("定时任务 %s 出错", name)
             result[name] = 0
     return result
+
+
+# ======================= 报名后筛选：开场自动落选 =======================
+
+def expire_undecided_applications(db: OrmSession) -> int:
+    """意向场次开始时仍没处理的申请自动落选，逻辑见 screening.expire_undecided。"""
+    from .routers.screening import expire_undecided
+    return expire_undecided(db)
 
 
 # ======================= 活动状态自动流转 =======================
