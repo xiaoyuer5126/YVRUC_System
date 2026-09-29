@@ -1,5 +1,6 @@
 <!-- 活动管理「审核」页签：这场活动要过的三道审核放在一处看。
      立项审核（发布前）→ 时长审核（结项）→ 志愿北京项目审核。
+     时长锁定之后还有一步收尾：上传志愿北京时长录入截图并确认，活动才算已完成。
      提交动作各在原处（提交审批在页头、提交时长审核在「时长管理」），这里看进度、
      意见与历史，并管理各自要附的材料。 -->
 <template>
@@ -83,6 +84,21 @@
           </template>
         </el-table-column>
       </el-table>
+      <template v-if="files">
+        <el-divider style="margin:8px 0" />
+        <ProjectFileSlot :activity-id="activityId" kind="vb_hours" label="志愿北京时长录入截图"
+                         :file="files.vb_hours" :can-upload="files.can_upload_vb_hours"
+                         :block="files.manager ? files.vb_hours_block : ''"
+                         :required="files.status === 'vb_pending' && !files.vb_hours"
+                         accept=".png,.jpg,.jpeg,.pdf"
+                         hint="时长锁定后，把时长录入志愿北京并上传录入截图（图片或 PDF），点「已录入」活动即标记为已完成"
+                         @changed="load" />
+        <div v-if="files.manager && files.status === 'vb_pending'">
+          <el-button type="primary" size="small" :disabled="!files.can_confirm_vb_hours"
+                     :loading="vbHoursBusy" @click="confirmVbHours">已录入，标记活动已完成</el-button>
+          <span v-if="!files.vb_hours" class="dim" style="margin-left:8px">先上传截图才能确认</span>
+        </div>
+      </template>
     </el-card>
 
     <!-- ③ 志愿北京项目审核 -->
@@ -151,7 +167,7 @@ import ProjectFileSlot from './ProjectFileSlot.vue'
 
 const props = defineProps({ activityId: { type: String, required: true },
                             act: { type: Object, default: null } })
-const emit = defineEmits(['changed'])
+const emit = defineEmits(['changed', 'status-changed'])
 
 const VB_TAG = { submitted: 'warning', approved: 'success', rejected: 'danger', void: 'info' }
 const REQ_TAG = { pending: 'warning', approved: 'success', rejected: 'danger' }
@@ -164,6 +180,7 @@ const vb = ref({ items: [], can_submit: false, can_decide: false,
                  manager: false, published: false })
 const vbName = ref('')
 const vbBusy = ref(false)
+const vbHoursBusy = ref(false)
 
 async function load() {
   loading.value = true
@@ -188,6 +205,18 @@ async function submitVb() {
     vbName.value = ''
     load()
   } finally { vbBusy.value = false }
+}
+
+async function confirmVbHours() {
+  await ElMessageBox.confirm('确认时长已经录入志愿北京？确认后活动标记为「已完成」，截图不能再更换。',
+                             '已录入志愿北京', { type: 'warning' })
+  vbHoursBusy.value = true
+  try {
+    await api.post(`/api/staff/activities/${props.activityId}/vb-hours/confirm`)
+    ElMessage.success('活动已标记为已完成')
+    emit('status-changed')
+    load()
+  } finally { vbHoursBusy.value = false }
 }
 
 async function voidVb(row) {

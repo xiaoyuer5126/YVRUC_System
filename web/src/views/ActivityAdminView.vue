@@ -26,7 +26,7 @@
       <template #content>
         <div class="hd-title">
           <b>{{ act.title }}</b>
-          <el-tag size="small" :type="{published:'success',closed:'info',draft:'info',pending:'warning',approved:'primary',finished:'info',completed:'success'}[act.status]">
+          <el-tag size="small" :type="{published:'success',closed:'info',draft:'info',pending:'warning',approved:'primary',finished:'info',vb_pending:'warning',completed:'success'}[act.status]">
             {{ act.status_label }}
           </el-tag>
           <el-tag v-if="act.urgent" size="small" type="danger" effect="dark">急招</el-tag>
@@ -658,9 +658,13 @@
 
         <!-- 核准之后这一段就是这场活动的账本状态 -->
         <el-alert v-if="hoursState.locked_at" type="success" show-icon :closable="false"
-                  :title="`时长已于 ${fmtDT(hoursState.locked_at)} 锁定，活动已完成`">
+                  :title="`时长已于 ${fmtDT(hoursState.locked_at)} 锁定，${act.status === 'vb_pending' ? '待录入志愿北京' : '活动已完成'}`">
           <div style="line-height:1.8">
             已通过校青协审核，时长不再改动。确需更正请点「申请解锁」，同样由校青协审批
+            <template v-if="act.status === 'vb_pending'">
+              <br />请把时长录入志愿北京，在 <el-link type="primary" @click="tab = 'review'">「审核」页签</el-link>
+              上传录入截图并点「已录入」，活动才标记为「已完成」。
+            </template>
             <template v-if="hoursState.request">
               <br />最近一条{{ hoursState.request.kind_label }}申请：
               {{ hoursState.request.status_label }} · {{ hoursState.request.reason }}
@@ -674,7 +678,7 @@
                   :closable="false"
                   title="时长已提交校青协审核，审核期间本页只读">
           <div style="line-height:1.8">
-            通过即锁定并把活动标记为「已完成」；驳回会退回给你，改完重新核准再提交一次。
+            通过即锁定时长，上传志愿北京录入截图后活动标记为「已完成」；驳回会退回给你，改完重新核准再提交一次。
             审核进度与历史见 <el-link type="primary" @click="tab = 'review'">「审核」页签</el-link>。
             <template v-if="hoursState.request">
               <br />提交说明：{{ hoursState.request.reason }}
@@ -859,7 +863,7 @@
 
       <!-- ============ 审核：立项、时长、志愿北京三道审核的进度与材料 ============ -->
       <el-tab-pane label="审核" name="review" lazy>
-        <ReviewPanel :activity-id="activityId" :act="act" />
+        <ReviewPanel :activity-id="activityId" :act="act" @status-changed="loadAll" />
       </el-tab-pane>
 
       <el-tab-pane label="管理者" name="managers" lazy>
@@ -1085,7 +1089,7 @@
     <!-- 核准时长：定下账、通知本人，并给一段申诉时间 -->
     <el-dialog v-model="approveDlg.visible" title="确认核准时长" width="480">
       <p class="dim" style="line-height:1.8">
-        核准之后，志愿者将会收到确认通知，截止前确认无误或提出申诉。截止后若无申诉，系统自动锁定并把活动标记为「已完成」。
+        核准之后，志愿者将会收到确认通知，截止前确认无误或提出申诉。截止后若无申诉，系统自动提交校青协审核；通过即锁定时长，上传志愿北京录入截图后活动标记为「已完成」。
       </p>
       <el-form label-width="100px">
         <el-form-item label="申诉截止" required>
@@ -1442,7 +1446,7 @@ const tab = ref(String(route.query.tab || 'tree'))   // 支持 ?tab=roster 直�
 // 未发布（草稿/待审批/待发布）只留 岗位设置 / 管理者 / 变更记录：那时一个报名的人
 // 都没有，名单、签到、服装、导出、签收全是空页
 const isPublic = computed(() =>
-  ['published', 'closed', 'finished', 'completed'].includes(act.value?.status))
+  ['published', 'closed', 'finished', 'vb_pending', 'completed'].includes(act.value?.status))
 const formDlg = ref(false)
 const formCount = ref(0)
 const formLabel = computed(() => (isPublic.value ? '查看报名问卷'
@@ -1597,10 +1601,10 @@ const structureLocked = computed(
 
 // 报名是否已经截止：截止后还有人没岗位，就不再是「等着分」而是漏排了
 const regClosed = computed(
-  () => ['closed', 'finished', 'completed'].includes(act.value?.status))
+  () => ['closed', 'finished', 'vb_pending', 'completed'].includes(act.value?.status))
 // 活动办完了：结构与基本信息都是只读
 const isOver = computed(
-  () => ['finished', 'completed'].includes(act.value?.status))
+  () => ['finished', 'vb_pending', 'completed'].includes(act.value?.status))
 
 function unassignedHint(g) {
   if (g.mode === 'pick') {
@@ -2373,7 +2377,8 @@ async function submitLockNow() {
              + '现在提交，还没确认时长的志愿者就没机会提申诉了；'
              + '到点没有申诉的话系统会自动提交，不必手动来这一下。\n\n' : '')
     + (s.pending_appeals ? `还有 ${s.pending_appeals} 条申诉没处理。` : '')
-    + '提交后时长冻结、不能再改，等校青协审核；通过即锁定并把活动标记为「已完成」，'
+    + '提交后时长冻结、不能再改，等校青协审核；通过即锁定时长，'
+    + '上传志愿北京录入截图后活动标记为「已完成」，'
     + '驳回则退回你修改。确定提交吗？',
     '提交时长审核',
     { type: 'warning', confirmButtonText: early ? '仍然提交' : '确定',

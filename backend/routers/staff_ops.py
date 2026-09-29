@@ -865,17 +865,25 @@ def _hours_approvers(db: OrmSession, act: Activity) -> list[User]:
     return uniq
 
 
+def council_members(db: OrmSession) -> list[User]:
+    """会长团。按真实身份：问的是这些人是谁，不是当前操作者此刻的视角。"""
+    return [u for u in db.query(User).filter(User.qingxie_post == "council").all()
+            if u.is_council(real=True)]
+
+
 def _hours_notify_targets(db: OrmSession, act: Activity) -> list[User]:
-    """时长审批通知谁：归口部门的对接人（有值班人就只发值班人，不发部长），
-    加上会长团与平台管理员。能拍板的人比收通知的人多——部长照样能在审批页处理。"""
-    out = []
+    """时长审批（锁定与解锁）逐条通知谁：只发归口部门的对接人——有值班人发
+    值班人，否则发部长。会长团与管理员照样能在审批页拍板，但不再逐条收通知：
+    时长审批量大，逐条抄送的结果是他们把通知关掉；放太久没人处理，另有
+    scheduled.remind_stale_hours_requests 催对接人并抄送会长团。
+
+    对接人找不到（没有归口部门、部门没设部长）就兜底发会长团：这时候没有
+    别人会收到这条审批，不发就只能等超时催办才有人知道。
+    """
     contact = liaison.approval_contact(db, act.approval_dept_id)
     if contact is not None:
-        out.append(contact)
-    out += [u for u in db.query(User).all()
-            if u.has_full_access(real=True)
-            and (contact is None or u.id != contact.id)]
-    return out
+        return [contact]
+    return council_members(db)
 
 
 CHECKOUT_GRACE = timedelta(hours=config.CHECKOUT_GRACE_HOURS)
@@ -1387,8 +1395,9 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
     """确认核准时长：把账定下来，逐个通知本人，并给一段确认/申诉时间。
 
     截止之前志愿者要么确认无误（顺带选志愿时长还是劳务），要么提申诉；
-    到点没表态的按「没问题 + 志愿时长」处理，定时任务自动锁定并把活动落
-    「已完成」。有人申诉就通知管理者，改完再核准一次：这一次只惊动数值
+    到点没表态的按「没问题 + 志愿时长」处理，定时任务自动提交校青协审批，
+    通过即锁定，活动落「待录入志愿北京」。
+    有人申诉就通知管理者，改完再核准一次：这一次只惊动数值
     变过、或者申诉过的人，别人的确认照旧有效。
     """
     ensure_activity_manager(db, user, activity_id)
@@ -1402,7 +1411,8 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
         hours_flow.lock_hours(db, act, user, "没有任何时长记录，核准时直接锁定")
         db.commit()
         return {"ok": True, "locked": True, "count": 0,
-                "message": "本活动没有时长记录，已直接锁定并标记为已完成"}
+                "message": "本活动没有时长记录，已直接锁定；请录入志愿北京并在"
+                           "「审核」页签上传截图后确认完成"}
 
     since = act.hours_approved_at
     appealed = set()
@@ -1478,7 +1488,7 @@ def _notify_lock_approvers(db: OrmSession, act: Activity, who: str,
     for approver in _hours_notify_targets(db, act):
         notify(db, approver, f"时长锁定审批｜{act.title}",
                f"{who}提交了「{act.title}」的志愿时长，等待校青协审核。\n"
-               f"说明：{reason}\n通过后时长锁定、活动标记为已完成；"
+               f"说明：{reason}\n通过后时长锁定，管理者录入志愿北京后活动完成；"
                f"驳回则退回管理者修改。\n请到「活动审批」处理。",
                data={"activity_id": act.id, "route": "approvals"}, need_ack=True)
 
@@ -1530,8 +1540,12 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
                          user: User = Depends(require_manager)):
     """归口部长（或会长团/管理员）拍板锁不锁、解不解。
 
-    锁定通过 = 这场活动的时长经校青协审核，就此封账、活动标记已完成；
-    驳回则解冻，管理者改完重新核准，再提交一次。
+    锁定通过 = 这场活动的时长经校青协审核，就此封账、活动落「待录入志愿北京」
+    （管理者上传录入截图并确认后才算已完成）；驳回则解冻，管理者改完重新核准，
+    再提交一次。
+    解锁通过 = 回到「已结束」：不管此前停在待录入志愿北京还是已完成，账重新
+    打开就回到结账之前。之前传的志愿北京录入截图随之作废（截的是改之前的
+    时长），重新锁定后再录一遍、传新的截图。
     """
     req = db.get(HoursRequest, request_id)
     if req is None:
@@ -1551,6 +1565,12 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
     elif body.approve:
         act.hours_locked_at = None
         act.status = "finished"
+        dropped = liaison.drop_project_file(db, act.id, "vb_hours")
+        if dropped is not None:
+            audit_log(db, actor=user, action="material", target_type="activity",
+                      target_id=act.id, target_label=act.title,
+                      activity_id=act.id,
+                      summary=f"时长解锁，志愿北京时长录入截图《{dropped.title}》作废")
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=(f"同意{req.kind_label()}时长（{req.reason}）" if body.approve
@@ -1573,7 +1593,9 @@ def _decide_text(act: Activity, req, approve: bool, reply: str) -> str:
                    else "如仍需修改，请补充说明后重新申请。"))
     tail = f"\n审批意见：{reply}" if reply else ""
     if req.kind == "lock":
-        return f"「{act.title}」的志愿时长已通过校青协审核并锁定，活动已完成。{tail}"
+        return (f"「{act.title}」的志愿时长已通过校青协审核并锁定。\n"
+                f"请把时长录入志愿北京，在活动管理「审核」页签上传录入截图并确认，"
+                f"活动即标记为已完成。{tail}")
     return f"「{act.title}」的时长已解锁，修改后请重新核准。{tail}"
 
 

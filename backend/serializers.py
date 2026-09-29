@@ -63,7 +63,7 @@ def display_status_of(status: str, reg_start, reg_end,
         return "draft", "待审批"
     if status == "approved":
         return "draft", "待发布"
-    if status in ("finished", "completed"):
+    if status in ("finished", "vb_pending", "completed"):
         return "finished", Activity.STATUS_LABELS[status]
 
     if span and t > span[1]:

@@ -1,4 +1,5 @@
-"""对外联络部的三件事：值班交接、志愿北京登记、立项书与盖章立项书。
+"""对外联络部的三件事：值班交接、志愿北京登记、立项书与盖章立项书；
+外加所有活动收尾都要过的一步：上传志愿北京时长录入截图并确认完成。
 
 规则本身在 backend/liaison.py，这里只是接口。
 """
@@ -315,6 +316,15 @@ def _slot_block(db: OrmSession, act: Activity, slot: str) -> str:
         if act.status not in ("draft", "pending"):
             return "审批已通过，立项书不能再更换"
         return ""
+    if slot == "vb_hours":
+        # 跟盖章立项书同一个道理：它是某一步的凭据，那一步过了就定下来。
+        # 确认完成之后再换，换掉的就是「已完成」所依据的那份；真录错了，
+        # 走时长解锁（截图随之作废），重新锁定后再传
+        if act.status == "completed":
+            return "活动已完成，截图不能再更换；如需更正请先申请解锁时长"
+        if act.status != "vb_pending":
+            return "时长锁定之后才能上传志愿北京时长录入截图"
+        return ""
     if not liaison.is_external(db, act):
         return "盖章立项书只用于对外联络部归口的活动"
     if not liaison.is_published(act):
@@ -333,12 +343,16 @@ def project_files(activity_id: str, db: OrmSession = Depends(db_session),
     if not liaison.can_see_project_files(db, user, act):
         raise HTTPException(403, "您无权查看该活动的立项材料")
     manager = is_activity_manager(db, user, act.id) and user.can_write()
-    out = {"external": liaison.is_external(db, act), "manager": manager}
+    out = {"external": liaison.is_external(db, act), "manager": manager,
+           "status": act.status}
     for slot in liaison.SLOTS:
         block = _slot_block(db, act, slot)
         out[slot] = _file_out(liaison.project_file(db, act.id, slot))
         out[f"{slot}_block"] = block
         out[f"can_upload_{slot}"] = manager and not block
+    # 传了截图、还停在待录入：管理者可以点「已录入」
+    out["can_confirm_vb_hours"] = (manager and act.status == "vb_pending"
+                                   and out["vb_hours"] is not None)
     return out
 
 
@@ -356,8 +370,9 @@ async def upload_project_file(activity_id: str, slot: str,
     if block:
         raise HTTPException(409, block)
     ext = Path(file.filename or "").suffix.lower().lstrip(".")
-    if ext not in EXT_TYPES:
-        raise HTTPException(400, f"不支持的文件类型（可上传 {'/'.join(sorted(EXT_TYPES))}）")
+    allowed = liaison.SLOT_EXTS.get(slot, tuple(EXT_TYPES))
+    if ext not in allowed:
+        raise HTTPException(400, f"不支持的文件类型（可上传 {'/'.join(sorted(allowed))}）")
     data = await file.read()
     if not data:
         raise HTTPException(400, "文件是空的")
@@ -380,3 +395,28 @@ async def upload_project_file(activity_id: str, slot: str,
     # 缺盖章立项书而停下的自动报批，补上之后下一轮清扫照常提交，不另行通知
     db.commit()
     return _file_out(row)
+
+
+@router.post("/activities/{activity_id}/vb-hours/confirm")
+def confirm_vb_hours(activity_id: str, db: OrmSession = Depends(db_session),
+                     user: User = Depends(require_manager)):
+    """管理者确认「时长已录入志愿北京」：活动落「已完成」。
+
+    时长锁定之后活动停在「待录入志愿北京」，录没录进去平台看不见，只能凭截图。
+    截图必传；传了、确认了就算完，不再另找人审核——截图留在「审核」页签里，
+    谁有疑问随时能翻出来看。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    if act.status != "vb_pending":
+        raise HTTPException(409, f"当前状态为「{act.label_status()}」，"
+                                 f"不需要确认志愿北京录入")
+    shot = liaison.project_file(db, act.id, "vb_hours")
+    if shot is None:
+        raise HTTPException(400, "请先上传志愿北京时长录入截图")
+    act.status = "completed"
+    audit_log(db, actor=user, action="hours_confirm", target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=f"确认时长已录入志愿北京（截图《{shot.title}》），活动标记为已完成")
+    db.commit()
+    return {"ok": True, "status": act.status}
