@@ -28,6 +28,7 @@
     </template>
     <p class="dim" style="margin:0 0 8px">
       录取的人先落在所选场次的「待分配」，再分配岗位；不录取只发送通知，不留记录。
+      场次开始时仍未处理的申请会自动落选并通知志愿者。
     </p>
     <el-table :data="apps" size="small" row-key="id" @selection-change="onSelect">
       <el-table-column type="selection" width="36" :selectable="selectable" />
@@ -68,7 +69,8 @@
             <el-select :model-value="pickOf(row).shift_id" size="small"
                        style="width:150px" placeholder="场次"
                        @update:model-value="v => setShift(row, v)">
-              <el-option v-for="w in row.wanted" :key="w.shift_id" :value="w.shift_id"
+              <el-option v-for="w in row.wanted.filter(x => x.status === 'applied')"
+                         :key="w.shift_id" :value="w.shift_id"
                          :label="shiftName(w.shift_id)" />
             </el-select>
             <el-select :model-value="pickOf(row).position_id" size="small" clearable
