@@ -272,22 +272,26 @@ def test_时长审批超时催对接人抄送会长团_只催一次(client, admi
     db.commit()
 
     def reminded(a) -> list[str]:
-        """收到催办的人（学号），一条一个，重复收到就会重复出现。"""
+        """收到催办的人（用户 id），一条一个，重复收到就会重复出现。"""
         db.expire_all()
-        ids = {student_row(db, sid).id: sid for sid in (ADMIN, COUNCIL, LIAISON_HEAD)}
-        rows = (db.query(Notification)
-                .filter(Notification.title.like("时长锁定审批已等待%"),
-                        Notification.title.endswith(a.title)).all())
-        return sorted(ids.get(n.user_id, n.user_id) for n in rows)
+        return sorted(n.user_id for n in db.query(Notification)
+                      .filter(Notification.title.like("时长锁定审批已等待%"),
+                              Notification.title.endswith(a.title)).all())
+
+    # 会长团按库里此刻的人算：别的用例可能新任命过会长团成员
+    from backend.routers.staff_ops import council_members
+    expected = sorted({student_row(db, LIAISON_HEAD).id}
+                      | {u.id for u in council_members(db)})
+    assert student_row(db, COUNCIL).id in expected
 
     scheduled.remind_stale_hours_requests(db)
-    assert reminded(act) == sorted([LIAISON_HEAD, ADMIN, COUNCIL])
+    assert reminded(act) == expected
     assert reminded(fresh_act) == [], "没满 24 小时不催"
     db.expire_all()
     assert db.get(HoursRequest, stale.id).reminded_at is not None
 
     scheduled.remind_stale_hours_requests(db)
-    assert reminded(act) == sorted([LIAISON_HEAD, ADMIN, COUNCIL]), "每条只催一次"
+    assert reminded(act) == expected, "每条只催一次"
 
 
 def test_新的定时任务都接进了每轮(db):
