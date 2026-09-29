@@ -224,7 +224,8 @@ class User(Base):
 
     def active_role_label(self) -> str:
         if not self.roles:
-            return "学生"
+            # 没有任何身份时按身份类型显示，别把老师叫成「学生」
+            return "教职工" if self.user_type == "teacher" else "学生"
         return "、".join(ROLE_LABELS.get(r, r) for r in self.roles)
 
     def brief(self) -> dict:
@@ -1170,8 +1171,6 @@ class IntegrationConfig(Base):
 
     固定两个 key：
       msgcenter / sso
-    签到不在这里：它整个是自建的（学校那套的 typecode 等参数始终没拿到，
-    2026-09-22 定下自己做），没有可切换的外部实现。
     enabled=false 时走内置 Mock 实现（演示模式），true 时走真实 HTTP 实现。
     """
     __tablename__ = "integration_configs"

@@ -180,8 +180,9 @@ def _provision(db: OrmSession, ident: dict) -> User:
     校区学校没有，由本人到「个人资料」补全——缺任一项都会拦住报名并弹完善
     表单，这条路径早就有了。
 
-    **不预置任何身份**：学生给 student，教师留空。权限必须由管理员在「角色」
-    页显式授予，不能因为「他是老师」就自动拿到管理入口。
+    按身份类型预置角色：学生给 student，老师给 initiator——老师自动是活动
+    发起方，能直接发起活动；管理类权限仍由管理员在「角色」页显式授予。
+    老师不参与志愿报名，也就不需要补充手机号等个人信息。
     """
     sid = ident["student_id"]
     # _identity 通常已经把学校没给的部分按学号补好了（见 integrations/sso.py）。
@@ -195,7 +196,7 @@ def _provision(db: OrmSession, ident: dict) -> User:
                 stage=ident.get("stage") or fallback_stage,
                 college=ident.get("college") or "",
                 gender=ident.get("gender") or "",
-                roles=["student"] if user_type == "student" else [])
+                roles=["student"] if user_type == "student" else ["initiator"])
     db.add(user)
     try:
         db.commit()
