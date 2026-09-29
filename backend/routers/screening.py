@@ -606,3 +606,72 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                   summary=("录取 " if body.accept else "未录取 ") + "、".join(done))
         db.commit()
     return {"ok": True, "count": len(done)}
+
+
+# ======================= 定时：开场仍未处理的申请自动落选 =======================
+
+def expire_undecided(db: OrmSession) -> int:
+    """意向场次开始了还没处理的申请，按场次自动落选。
+
+    管理者一直不点，志愿者就永远等不到结果。所以按场次收口：某个意向场次
+    开始时，这个人在该场次仍挂着的意向记录作废（跟手动不录取同一种
+    cancel_type=rejected，档案、退选画像、提示分都已经把它排除在「本人退出」
+    之外）；他在本活动的意向场次全部作废、申请也还没处理的，申请置为未录取，
+    发一条跟手动不录取一样的通知。晚开始的场次还在的，管理者照样能录。
+
+    每个场次在自己的场次锁里重读再改、同一个事务提交：跟管理者同时点
+    「录取」只会一先一后——先录取的，这里重读时已不是 applied；先作废的，
+    录取那边锁里重读只剩还没开始的场次。只认 applied，重跑不会重复通知。
+    只看报名中/已截止的活动：定时任务排在状态流转之前，停机一段时间再起来
+    也会先在这里收口，再轮到活动结束。
+    """
+    t = now()
+    shift_ids = [sid for (sid,) in (
+        db.query(Enrollment.shift_id)
+        .join(Shift, Enrollment.shift_id == Shift.id)
+        .join(Activity, Enrollment.activity_id == Activity.id)
+        .filter(Enrollment.status == "applied", Shift.start_time <= t,
+                Activity.status.in_(("published", "closed")))
+        .distinct())]
+    db.commit()          # 还连接再排锁，理由同 enroll
+    rejected = 0
+    for sid in shift_ids:
+        with shift_lock(db, sid):
+            g = db.get(Shift, sid)
+            act = db.get(Activity, g.activity_id)
+            enrs = (db.query(Enrollment)
+                    .filter(Enrollment.shift_id == sid,
+                            Enrollment.status == "applied").all())
+            if not enrs:
+                db.rollback()
+                continue
+            voided, dropped = [], []
+            for e in enrs:
+                e.status, e.cancel_type, e.cancelled_at = "cancelled", "rejected", t
+                u = db.get(User, e.user_id)
+                voided.append(u.name)
+                db.flush()
+                left = (db.query(Enrollment)
+                        .filter(Enrollment.activity_id == act.id,
+                                Enrollment.user_id == u.id,
+                                Enrollment.status == "applied").count())
+                app = (db.query(Application)
+                       .filter(Application.activity_id == act.id,
+                               Application.user_id == u.id).first())
+                if left or app is None or app.status != "applied":
+                    continue
+                app.status = "rejected"
+                app.decided_by, app.decided_at = None, t
+                msgcenter.send_user(db, u, "application_rejected",
+                                    data={"activity_id": act.id}, activity=act.title)
+                dropped.append(u.name)
+            summary = (f"场次「{g.name}」已开始，未处理的意向自动作废："
+                       + "、".join(voided))
+            if dropped:
+                summary += "；意向场次均已开始，申请自动落选并通知：" + "、".join(dropped)
+            audit_log(db, actor=None, action="assign", target_type="activity",
+                      target_id=act.id, target_label=act.title, activity_id=act.id,
+                      summary=summary)
+            db.commit()
+            rejected += len(dropped)
+    return rejected

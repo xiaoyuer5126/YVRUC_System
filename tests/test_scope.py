@@ -121,6 +121,143 @@ def test_缩小范围时已报名的范围外志愿者要先过管理者的眼(c
     assert client.get(f"/api/activities/{act.id}", headers=h).status_code == 200
 
 
+# ======================= 活动级：招募学院 =======================
+# 学院是统一身份认证给的原文，不在 config.COLLEGES 那份演示清单里也得能用
+
+REAL_COLLEGE = "统计与大数据学院"
+
+
+def _square_ids(client, h, act):
+    r = client.get("/api/activities", headers=h, params={"q": act.title})
+    return {a["id"] for a in r.json()["items"]}
+
+
+def _set_colleges(client, admin, act, colleges, **extra):
+    return client.patch(f"/api/staff/activities/{act.id}", headers=admin,
+                        json={"recruit_colleges": colleges, **extra})
+
+
+def test_不在招募学院的人广场看不到详情进不去也报不了(client, admin, db, scoped):
+    act, g, u, h = scoped
+    assert REAL_COLLEGE not in config.COLLEGES
+    assert _set_colleges(client, admin, act, [REAL_COLLEGE]).status_code == 200
+    assert act.id not in _square_ids(client, h, act)
+    r = client.get(f"/api/activities/{act.id}", headers=h)
+    assert r.status_code == 403
+    assert REAL_COLLEGE in r.json()["detail"] and u.college in r.json()["detail"]
+    r = _enroll(client, act, g, h)
+    assert r.status_code == 403 and "招募范围" in r.json()["detail"]
+
+
+def test_在招募学院内照常报名(client, admin, db, scoped):
+    act, g, u, h = scoped
+    u.college = REAL_COLLEGE
+    db.commit()
+    assert _set_colleges(client, admin, act,
+                         [REAL_COLLEGE, "新闻学院"]).status_code == 200
+    assert act.id in _square_ids(client, h, act)
+    d = client.get(f"/api/activities/{act.id}", headers=h).json()
+    assert d["recruit_colleges"] == [REAL_COLLEGE, "新闻学院"]
+    assert d["recruit_scope_text"] == f"学院：{REAL_COLLEGE}/新闻学院"
+    assert _enroll(client, act, g, h).status_code == 200
+
+
+def test_学院留空即不限(client, admin, db, scoped):
+    act, g, _u, h = scoped
+    assert _set_colleges(client, admin, act, []).status_code == 200
+    d = client.get(f"/api/activities/{act.id}", headers=h).json()
+    assert d["recruit_colleges"] == [] and d["recruit_scope_text"] == "面向全校"
+    assert _enroll(client, act, g, h).status_code == 200
+
+
+def test_三个维度一起写进范围文案(client, admin, db, scoped):
+    act, _g, _u, h = scoped
+    r = client.patch(f"/api/staff/activities/{act.id}", headers=admin,
+                     json={"recruit_campuses": [CAMPUS_A],
+                           "recruit_stages": [STAGE_A],
+                           "recruit_colleges": ["明理书院"]})
+    assert r.status_code == 200, r.text
+    d = client.get(f"/api/activities/{act.id}", headers=h).json()
+    assert d["recruit_scope_text"] == \
+        f"校区：{CAMPUS_A}；学段：{STAGE_A}；学院：明理书院"
+
+
+def test_按学院缩小范围时已报名的人要先过管理者的眼且保留后仍看得见(
+        client, admin, db, scoped):
+    act, g, u, h = scoped
+    assert _enroll(client, act, g, h).status_code == 200
+    r = _set_colleges(client, admin, act, [REAL_COLLEGE])
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "OUTSIDERS_ENROLLED"
+    assert [o["student_id"] for o in detail["outsiders"]] == [u.student_id]
+    assert "学院" in detail["outsiders"][0]["reason"]
+    db.expire_all()
+    assert db.get(Activity, act.id).recruit_colleges == []
+
+    r = _set_colleges(client, admin, act, [REAL_COLLEGE], keep_outsiders=True)
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/activities/{act.id}", headers=h).status_code == 200
+    assert act.id in _square_ids(client, h, act)
+
+
+def test_学院取值去空白去重且限长(client, admin, db, scoped):
+    act, _g, _u, _h = scoped
+    r = _set_colleges(client, admin, act,
+                      [f" {REAL_COLLEGE} ", REAL_COLLEGE, "", "  "])
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(Activity, act.id).recruit_colleges == [REAL_COLLEGE]
+    r = _set_colleges(client, admin, act, ["学" * 65])
+    assert r.status_code == 400 and "过长" in r.json()["detail"]
+
+
+def test_创建活动时就能带上学院(client, admin, db):
+    r = client.post("/api/staff/activities", headers=admin,
+                    json={"contact_group_qr": "x", "title": f"学院活动 {uid('t')}",
+                          "organizer": "青协", "intro": "x", "location": "世纪馆",
+                          "contacts": [{"name": "王", "phone": "13900000000"}],
+                          "recruit_colleges": [REAL_COLLEGE, REAL_COLLEGE],
+                          "reg_start": (now() - timedelta(days=1)).isoformat(),
+                          "reg_end": (now() + timedelta(days=5)).isoformat()})
+    assert r.status_code == 200, r.text
+    assert db.get(Activity, r.json()["id"]).recruit_colleges == [REAL_COLLEGE]
+
+
+def test_复制活动带上招募学院(client, admin, db, scoped):
+    act, _g, _u, _h = scoped
+    assert _set_colleges(client, admin, act, [REAL_COLLEGE]).status_code == 200
+    r = client.post(f"/api/staff/activities/{act.id}/copy", headers=admin,
+                    json={"shift_days": 7, "title": f"学院副本 {uid('t')}",
+                          "contact_group_qr": "data:new"})
+    assert r.status_code == 200, r.text
+    d = client.get(f"/api/activities/{r.json()['id']}", headers=admin).json()
+    assert d["recruit_colleges"] == [REAL_COLLEGE]
+
+
+def test_学院选项汇总已有用户的学院并上兜底清单(client, admin, db, scoped):
+    _act, _g, u, h = scoped
+    u.college = REAL_COLLEGE
+    db.commit()
+    r = client.get("/api/staff/colleges", headers=admin)
+    assert r.status_code == 200
+    got = r.json()["colleges"]
+    assert REAL_COLLEGE in got and set(config.COLLEGES) <= set(got)
+    assert "" not in got and len(got) == len(set(got))
+    assert got == sorted(got)
+    # 学生用不着这份选项
+    assert client.get("/api/staff/colleges", headers=h).status_code == 403
+
+
+def test_岗位条件的学院也不卡演示清单(client, admin, db, scoped):
+    act, g, _u, _h = scoped
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
+                    json={"name": "新岗", "quota": 2, **POSITION_TEXT,
+                          "requirement_tags": {"学院": [REAL_COLLEGE]}})
+    assert r.status_code == 200, r.text
+
+
 # ======================= 场次级：条件要求 =======================
 
 def test_场次条件拦人(client, db, scoped):

@@ -255,6 +255,37 @@ class ViolationBody(BaseModel):
     activity_id: str
     kind: str
     detail: str = ""
+    # 这个人在这场活动已经登记过违规时，前端先把已有的几条摆出来问一句，
+    # 确认了再带上它重提——多半是两个管理者各登了一遍，偶尔确实是两回事
+    confirm_duplicate: bool = False
+
+
+def _same_activity_violations(db: OrmSession, activity_id: str,
+                              user_id: str) -> list[dict]:
+    """这个人在这场活动已有的违规记录，早的在前，带登记人姓名。"""
+    rows = (db.query(ViolationRecord)
+            .filter(ViolationRecord.activity_id == activity_id,
+                    ViolationRecord.user_id == user_id)
+            .order_by(ViolationRecord.created_at).all())
+    ops = {o.id: o.name for o in db.query(User).filter(
+        User.id.in_({v.operator_id for v in rows if v.operator_id}))} if rows else {}
+    return [{
+        "id": v.id, "kind": v.kind, "kind_label": v.kind_label(),
+        "detail": v.detail, "created_at": iso(v.created_at),
+        "operator_name": ops.get(v.operator_id, ""),
+    } for v in rows]
+
+
+@router.get("/activities/{activity_id}/volunteers/{user_id}/violations")
+def activity_volunteer_violations(activity_id: str, user_id: str,
+                                  db: OrmSession = Depends(db_session),
+                                  operator: User = Depends(require_manager)):
+    """登记违规的对话框一打开就能看到「本活动已登记 N 条」。
+    部门成员看不了档案，这里的明细同样不给。"""
+    if operator.is_trainee():
+        raise HTTPException(403, "部门成员为学习权限，不能查看违规记录")
+    ensure_activity_manager(db, operator, activity_id)
+    return {"items": _same_activity_violations(db, activity_id, user_id)}
 
 
 @router.post("/violations")
@@ -277,6 +308,14 @@ def create_violation(body: ViolationBody,
             .filter(Enrollment.activity_id == act.id,
                     Enrollment.user_id == u.id).first()):
         raise HTTPException(400, f"{u.name} 没有报名本活动")
+    if not body.confirm_duplicate:
+        existing = _same_activity_violations(db, act.id, u.id)
+        if existing:
+            raise HTTPException(409, {
+                "code": "VIOLATION_DUPLICATE",
+                "message": f"{u.name} 在本活动已登记过 {len(existing)} 条违规",
+                "items": existing,
+            })
 
     record = ViolationRecord(
         id=uid("vio"), user_id=u.id, activity_id=act.id,

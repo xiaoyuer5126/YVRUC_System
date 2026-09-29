@@ -45,16 +45,6 @@ def _editing_paused() -> HTTPException:
     return HTTPException(409, "负责人正在调整本活动的安排，报名暂停中，请稍后再试")
 
 
-def _scope_tags(campuses, stages) -> dict:
-    """招募范围 → 条件标签。空 = 不限。"""
-    tags = {}
-    if campuses:
-        tags["校区"] = campuses
-    if stages:
-        tags["学段"] = stages
-    return tags
-
-
 def _involved_activity_ids(db: OrmSession, user: User) -> set[str]:
     """这个人报过名或投过申请的活动。列表里用它一次性豁免，不逐条查。"""
     ids = {a for (a,) in db.query(Enrollment.activity_id)
@@ -120,7 +110,7 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
     """
     rows = db.query(Activity.id, Activity.status, Activity.reg_start,
                     Activity.reg_end, Activity.recruit_campuses,
-                    Activity.recruit_stages)
+                    Activity.recruit_stages, Activity.recruit_colleges)
     rows = rows.filter(Activity.status.in_(PUBLIC_STATUSES))
     if q.strip():
         rows = rows.filter(Activity.title.ilike(like_pattern(q.strip()),
@@ -148,12 +138,13 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
     involved = _involved_activity_ids(db, user)
 
     ids = []
-    for aid, st, reg_start, reg_end, campuses, stages in rows:
+    for aid, st, reg_start, reg_end, campuses, stages, colleges in rows:
         code, _label = display_status_of(st, reg_start, reg_end, spans.get(aid))
         if status and code != status:
             continue
         if (managed is None or aid in managed or aid in involved
-                or not logic.unmet_for_tags(user, _scope_tags(campuses, stages))):
+                or not logic.unmet_for_tags(
+                    user, logic.recruit_scope_tags(campuses, stages, colleges))):
             ids.append(aid)
 
     size = max(1, min(size, 50))

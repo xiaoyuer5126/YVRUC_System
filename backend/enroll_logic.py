@@ -391,14 +391,26 @@ def unmet_shift_requirements(user: User, shift) -> list[str]:
     return unmet_for_tags(user, shift.requirement_tags)
 
 
-def unmet_recruit_scope(user: User, act) -> list[str]:
-    """招募范围：活动一刀切限定校区/学段，空 = 不限。"""
+def recruit_scope_tags(campuses, stages, colleges) -> dict:
+    """招募范围 → 条件标签。哪一项空就是那一项不限。
+
+    活动详情、广场列表（只取了这几列，没有 Activity 对象）都走这里，
+    免得加一个维度时漏改一处——漏了就是广场上看得见、点进去被拦。
+    """
     tags = {}
-    if act.recruit_campuses:
-        tags["校区"] = act.recruit_campuses
-    if act.recruit_stages:
-        tags["学段"] = act.recruit_stages
-    return unmet_for_tags(user, tags)
+    if campuses:
+        tags["校区"] = campuses
+    if stages:
+        tags["学段"] = stages
+    if colleges:
+        tags["学院"] = colleges
+    return tags
+
+
+def unmet_recruit_scope(user: User, act) -> list[str]:
+    """招募范围：活动一刀切限定校区/学段/学院，空 = 不限。"""
+    return unmet_for_tags(user, recruit_scope_tags(
+        act.recruit_campuses, act.recruit_stages, act.recruit_colleges))
 
 
 # ======================= 组长 =======================

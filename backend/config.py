@@ -95,6 +95,7 @@ TILE_TOKEN_HOURS = 6
 CAMPUS_PRESETS = [
     {"name": "中关村校区", "lat": 39.96900, "lng": 116.30741},
     {"name": "通州校区", "lat": 39.90511, "lng": 116.73993},
+    {"name": "苏州校区", "lat": 31.27872, "lng": 120.72849},
 ]
 
 # 平台对外网址（多个用逗号分隔），二维码里写的就是它。列在这里的域名才允许
@@ -175,13 +176,12 @@ LATE_CANCEL_HOURS = 24     # 「临近」阈值（小时）
 # 逐条加减，每一步都夹在 [SCORE_MIN, SCORE_BASE]，满分时加的分不会存起来。
 SCORE_BASE = 100            # 起始分，也是上限
 SCORE_MIN = 0
-SCORE_ALERT_BELOW = 60      # 低于它，名单上姓名旁挂感叹号
+SCORE_ALERT_BELOW = 80      # 低于它，名单上姓名旁挂感叹号
 SCORE_PER_ACTIVITY = 5      # 每顺利参与一个活动（签到过、无违规、无临期退选）加的分
 LATE_CANCEL_WEIGHT = 5      # 一个活动有临期退选扣多少（退几个场次都只扣一次）
-VIOLATION_WEIGHTS = {       # 一次违规扣多少，最重一档 20
+VIOLATION_WEIGHTS = {       # 一次违规扣多少，最重一档 15
     "late": 10,       # 迟到早退
     "leave": 15,      # 无故请假
-    "contact": 20,    # 无法取得联系
     "passive": 10,    # 消极志愿
     "other": 5,       # 其他
 }
@@ -242,6 +242,13 @@ VB_REMIND_HOUR = 9
 # 学习材料单文件上限。文档自己存，视频走链接——自托管大视频要分片上传、
 # 断点续传和对象存储，代价远超收益。
 MAX_MATERIAL_BYTES = 50 * 1024 * 1024
+
+# 意见反馈：正文字数、每条截图张数与单张大小、每人每小时条数。
+# 截图比答疑群二维码（2MB）大：手机原图截屏动辄两三兆，卡在 2MB 大半传不上
+FEEDBACK_MAX_CHARS = 2000
+FEEDBACK_MAX_IMAGES = 3
+FEEDBACK_MAX_IMAGE_BYTES = 5 * 1024 * 1024
+FEEDBACK_PER_HOUR = 5
 
 # 报名问卷的文件题：一个人在一个活动里最多存着几份没提交的附件、总共多大。
 # 传了不提交的文件不会自己消失，不设上限就是一条把磁盘写满的路。

@@ -83,20 +83,20 @@ def _day(n):
 
 
 def test_按时间顺序逐条累计(db, take_student):
-    """100 −10 +5 +5 +5 +5 −20 = 80：到顶之后的加分不存起来。
-    旧算法先加总再夹：100 − 10 + 20 − 20 = 90。"""
+    """100 −10 +5 +5 +5 +5 −15 = 85：到顶之后的加分不存起来。
+    旧算法先加总再夹：100 − 10 + 20 − 15 = 95。"""
     u = student_row(db, take_student())
     _violate(db, u, _day(60), "late")
     for n in (50, 40, 30, 20):
         _served(db, u, _day(n))
-    _violate(db, u, _day(10), "contact")
+    _violate(db, u, _day(10), "leave")
     db.commit()
 
     d = scoring.detail(db, u)
     assert [it["delta"] for it in d["items"]] == [-W["late"], PLUS, PLUS, PLUS, PLUS,
-                                                  -W["contact"]]
-    assert [it["score"] for it in d["items"]] == [90, 95, 100, 100, 100, 80]
-    assert d["score"] == 80 == scoring.score_of(db, u.id)
+                                                  -W["leave"]]
+    assert [it["score"] for it in d["items"]] == [90, 95, 100, 100, 100, 85]
+    assert d["score"] == 85 == scoring.score_of(db, u.id)
     assert [it["label"] for it in d["items"]][:2] == ["迟到早退", "顺利参与"]
     assert all(it["at"] and it["activity_title"] for it in d["items"])
 
@@ -106,16 +106,16 @@ def test_满分时加分不累积(db, take_student):
     for n in range(20):
         _served(db, u, _day(100 - n))
     for n in range(5):
-        _violate(db, u, _day(50 - n), "contact")
+        _violate(db, u, _day(50 - n), "leave")
     db.commit()
     assert scoring.score_of(db, u.id) == max(config.SCORE_MIN,
-                                            config.SCORE_BASE - 5 * W["contact"])
+                                            config.SCORE_BASE - 5 * W["leave"])
     assert scoring.brief(db, u.id)["score_alert"] is True
 
 
 def test_有违规或临期退选的活动不加分(db, take_student):
     u = student_row(db, take_student())
-    _violate(db, u, _day(60), "contact")                  # 先压到 80，看得出加没加
+    _violate(db, u, _day(60), "leave")                  # 先压到 85，看得出加没加
     # 签过到但登记了违规：只扣不加
     act = _served(db, u, _day(40))
     _violate(db, u, _day(39), "other", act)
@@ -127,13 +127,13 @@ def test_有违规或临期退选的活动不加分(db, take_student):
     db.commit()
 
     d = scoring.detail(db, u)
-    assert [it["label"] for it in d["items"]] == ["无法取得联系", "其他", "临期退选"]
-    assert d["score"] == config.SCORE_BASE - W["contact"] - W["other"] - LATE
+    assert [it["label"] for it in d["items"]] == ["无故请假", "其他", "临期退选"]
+    assert d["score"] == config.SCORE_BASE - W["leave"] - W["other"] - LATE
 
 
 def test_多场次只加一次也只扣一次(db, take_student):
     u = student_row(db, take_student())
-    _violate(db, u, _day(60), "contact")
+    _violate(db, u, _day(60), "leave")
     # 两场都报了、都签到：加一次，时间是后一场结束
     act, (g1, g2) = _activity(db, _day(41), _day(40))
     for g in (g1, g2):
@@ -147,15 +147,15 @@ def test_多场次只加一次也只扣一次(db, take_student):
     db.commit()
 
     items = scoring.detail(db, u)["items"]
-    assert [it["delta"] for it in items] == [-W["contact"], PLUS, -LATE]
+    assert [it["delta"] for it in items] == [-W["leave"], PLUS, -LATE]
     assert items[1]["at"] == iso(g2.end_time)
     assert items[2]["at"] == iso(cancels[1])
-    assert scoring.score_of(db, u.id) == config.SCORE_BASE - W["contact"] + PLUS - LATE
+    assert scoring.score_of(db, u.id) == config.SCORE_BASE - W["leave"] + PLUS - LATE
 
 
 def test_没签到或活动没结束不加分(db, take_student):
     u = student_row(db, take_student())
-    _violate(db, u, _day(60), "contact")
+    _violate(db, u, _day(60), "leave")
     # 报了、结束了，没签到
     act, (g,) = _activity(db, _day(40))
     _enroll(db, u, act, g)
@@ -165,22 +165,22 @@ def test_没签到或活动没结束不加分(db, take_student):
         _enroll(db, u, act2, x)
     _checkin(db, u, act2, g1)
     db.commit()
-    assert scoring.score_of(db, u.id) == config.SCORE_BASE - W["contact"]
+    assert scoring.score_of(db, u.id) == config.SCORE_BASE - W["leave"]
 
     # 管理者补签也算到岗
     _checkin(db, u, act, g, method="manual")
     db.commit()
-    assert scoring.score_of(db, u.id) == config.SCORE_BASE - W["contact"] + PLUS
+    assert scoring.score_of(db, u.id) == config.SCORE_BASE - W["leave"] + PLUS
 
 
 def test_撤销违规后分数恢复(client, admin, db, take_student):
     u = student_row(db, take_student())
-    _violate(db, u, _day(60), "contact")
+    _violate(db, u, _day(60), "leave")
     act = _served(db, u, _day(30))
     db.commit()
     url = f"/api/staff/users/{u.id}/archive"
     before = client.get(url, headers=admin).json()["score"]["score"]
-    assert before == config.SCORE_BASE - W["contact"] + PLUS
+    assert before == config.SCORE_BASE - W["leave"] + PLUS
 
     r = client.post("/api/staff/violations", headers=admin,
                     json={"user_id": u.id, "activity_id": act.id,
@@ -188,8 +188,8 @@ def test_撤销违规后分数恢复(client, admin, db, take_student):
     assert r.status_code == 200, r.text
     # 登记在这个活动上：扣一条，这个活动的加分也没了
     d = client.get(url, headers=admin).json()["score"]
-    assert d["score"] == config.SCORE_BASE - W["contact"] - W["late"]
-    assert [it["label"] for it in d["items"]] == ["无法取得联系", "迟到早退"]
+    assert d["score"] == config.SCORE_BASE - W["leave"] - W["late"]
+    assert [it["label"] for it in d["items"]] == ["无故请假", "迟到早退"]
 
     assert client.delete(f"/api/staff/violations/{r.json()['id']}",
                          headers=admin).status_code == 200
@@ -215,7 +215,7 @@ def test_批量算分条数固定且与逐个算一致(db, take_student):
         for n in range(i + 1):
             _served(db, u, _day(40 - n))
         _violate(db, u, _day(50), "leave")
-        _violate(db, u, _day(10), "contact")
+        _violate(db, u, _day(10), "late")
     db.commit()
     ids = [u.id for u in users]
     with _counting() as n:
