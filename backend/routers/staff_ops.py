@@ -730,7 +730,7 @@ def export(activity_id: str, db: OrmSession = Depends(db_session),
     act, ex, name = _roster_export(db, user, activity_id)
     stamp = now().strftime("%Y%m%d_%H%M")
     filename = f"{name}_{stamp}.xlsx"
-    # 下载留痕（《设计方案》：后台记录每一次下载操作）
+    # 下载留痕：后台记录每一次下载操作
     audit_log(db, actor=user, action="export", target_type="export",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"导出排班表《{filename}》")

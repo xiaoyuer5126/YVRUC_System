@@ -1,6 +1,6 @@
 """教师/青协端：活动筹备（活动与岗位树 CRUD）、报名名单、二次分配。
 
-岗位树校验（《设计方案》二）：
+岗位树校验：
   · 岗位时间必须被包裹在场次时间范围内；
   · 场次总人数需大于等于下属岗位人数之和。
 所有增删改走审计留痕；影响志愿者的时间/地点类修改会推送「活动变更警告」，
@@ -321,7 +321,7 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
     if not changes:
         return {"ok": True, "changes": []}
 
-    # 活动变更警告（带前后对比摘要），对已报名志愿者推送 —— 《设计方案》四.3
+    # 活动变更警告（带前后对比摘要），对已报名志愿者推送
     if act.status != "draft":
         summary = "；".join(f"{c['label']}：{c['old']}→{c['new']}"
                             for c in changes[:6])
@@ -1754,7 +1754,8 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
 
     自动转正在「报名截止」与「活动开始前 24 小时」的较晚者之后就停了——
     那之后转正的人只剩不到一天准备，且他再退选还要扣分。要不要补人由
-    负责人判断，但来不来仍由本人定：和自动递补一样开 2 小时确认窗。
+    负责人判断，但来不来仍由本人定：和自动递补一样开确认窗
+    （2 小时、夜间不计时，不晚于场次开始，见 enroll_logic.promote_confirm_deadline）。
     """
     enr = db.get(Enrollment, enrollment_id)
     if enr is None:
@@ -1786,7 +1787,8 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
         db.commit()
     return {"ok": True, "status": enr.status,
             "confirm_deadline": iso(enr.confirm_deadline),
-            "confirm_hours": config.PROMOTE_CONFIRM_HOURS}
+            "confirm_hours": config.PROMOTE_CONFIRM_HOURS,
+            "confirm_quiet": [config.PROMOTE_QUIET_START, config.PROMOTE_QUIET_END]}
 
 
 class LeaderBody(BaseModel):

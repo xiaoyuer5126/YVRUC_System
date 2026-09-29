@@ -4,7 +4,7 @@
 后端连容器内的 PostgreSQL 与 Redis，两者都是硬依赖，连不上直接启动失败——
 半可用的服务比起不来更难排查。
 
-与外部系统（消息中心 / 签到系统 / 统一身份认证）的对接参数不写死在这里，
+与外部系统（消息中心 / 统一身份认证）的对接参数不写死在这里，
 存数据库 integration_configs 表，管理员可在「集成设置」页在线修改。
 """
 from __future__ import annotations
@@ -164,7 +164,12 @@ VIOLATION_WEIGHTS = {       # 一次违规扣多少，最重一档 20
     "passive": 10,    # 消极志愿
     "other": 5,       # 其他
 }
-PROMOTE_CONFIRM_HOURS = 2  # 候补转正确认窗口（小时）
+PROMOTE_CONFIRM_HOURS = 2  # 候补转正确认窗口（小时），只算白天，见下
+# 确认窗夜间不计时：[23:00, 次日 8:00) 这段不算进那 2 小时——半夜转正的人
+# 睡一觉起来窗口就过了，记一次放弃不公平。起止是整点，要求 START > END（跨午夜）。
+# 算法见 enroll_logic.confirm_deadline_from
+PROMOTE_QUIET_START = 23
+PROMOTE_QUIET_END = 8
 
 # 签退宽限：场次结束后这么久内仍可自行签退，超时按场次结束时间兜底并标记待核
 CHECKOUT_GRACE_HOURS = 2

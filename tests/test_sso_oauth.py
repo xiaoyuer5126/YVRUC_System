@@ -162,16 +162,13 @@ def test_再次登录复用同一份档案(db):
         _drop_users(TEST_SID)
 
 
-def test_教师账号不预置任何身份(db):
-    """权限必须由管理员在「角色」页显式授予。
-
-    因为「他是老师」就自动给管理入口，等于把管理端开给了全校教职工。
-    """
+def test_教师账号首次登录即是活动发起方(db):
+    """老师自动是活动发起方，能直接发起活动；管理类权限仍由管理员授予。"""
     from backend.routers.auth import _provision
     try:
         user = _provision(db, ident_of("20200001", name="某老师"))
         assert user.user_type == "teacher"
-        assert user.roles == []
+        assert user.roles == ["initiator"]
         assert school_id.parse("20200001")[0] == "teacher"
     finally:
         _drop_users("20200001")
