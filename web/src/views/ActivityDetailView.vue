@@ -409,7 +409,7 @@
                       </el-table-column>
                     </el-table>
                     <div v-if="!isTeacher" class="dim" style="margin-top:8px">
-                      同场次只能选一个岗位，候补将在名额释放后转正，转正需 2 小时内确认。
+                      同场次只能选一个岗位，候补将在名额释放后转正，转正后需在确认窗口内确认（2 小时，夜间 23:00–8:00 不计时）。
                     </div>
                   </template>
                   <p v-else class="dim" style="margin:4px 0">本场次尚未设置岗位，请联系负责人。</p>

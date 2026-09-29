@@ -265,6 +265,8 @@ def constants(user: User = Depends(current_user)):
         "rules": {
             "late_cancel_hours": config.LATE_CANCEL_HOURS,
             "confirm_hours": config.PROMOTE_CONFIRM_HOURS,
+            # 确认窗夜间不计时的起止整点，[23, 8] 即 23:00–次日 8:00
+            "confirm_quiet": [config.PROMOTE_QUIET_START, config.PROMOTE_QUIET_END],
         },
         "integration_labels": {k: v["label"] for k, v in DEFAULTS.items()},
     }

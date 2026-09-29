@@ -5,7 +5,8 @@
     排了队就等于预留了这段时间）；
   · 名额账本：已报名 + 候补转正待确认（确认窗内位子给他留着）+ 临期退选占位
     （seat_held，不释放给任何人）；
-  · 候补按 joined_at 排队，正常退选释放名额 → 队首转正，2 小时确认窗口。
+  · 候补按 joined_at 排队，正常退选释放名额 → 队首转正，2 小时确认窗口
+    （夜间 23:00–8:00 不计时，且不晚于场次开始，见 promote_confirm_deadline）。
 
 调用容量相关函数前必须持有 locks.shift_lock(db, shift_id)，且判定与落库在同一个
 事务里（锁随事务结束而放，见 locks.py）。
@@ -548,7 +549,7 @@ def auto_promote_deadline(db: OrmSession, shift: Shift) -> datetime:
 
 def promote_head(db: OrmSession, shift: Shift,
                  position: Position | None = None) -> Enrollment | None:
-    """有名额释放时，把候补队首转为「待确认」，开 2 小时确认窗并通知。
+    """有名额释放时，把候补队首转为「待确认」，开确认窗（2 小时，夜间不计时）并通知。
 
     只在确实空出名额时才提升：临期退选是占位不释放的，队列原地不动。
     pick 模式下队列是按岗位分的，只提升该岗位的队首。
@@ -567,15 +568,61 @@ def promote_head(db: OrmSession, shift: Shift,
     return start_confirm(db, head, shift)
 
 
+def confirm_deadline_from(start: datetime) -> datetime:
+    """从 start 起只累计白天（PROMOTE_QUIET_END 点到 PROMOTE_QUIET_START 点）的时间，
+    累计满 PROMOTE_CONFIRM_HOURS 小时的那一刻就是截止。纯函数，不看场次。
+
+    例（2 小时，夜间 23:00–8:00）：14:00 → 16:00；22:30 → 次日 9:30；
+    1:00 → 10:00；7:00 → 10:00；恰好 23:00 → 次日 10:00；21:00 → 23:00
+    （刚好在夜间开始那一刻用满，不再拖到第二天）。
+    """
+    remaining = timedelta(hours=config.PROMOTE_CONFIRM_HOURS)
+    t = start
+    while True:
+        if t.hour >= config.PROMOTE_QUIET_START:        # 深夜：跳到次日早上
+            t = (t + timedelta(days=1)).replace(
+                hour=config.PROMOTE_QUIET_END, minute=0, second=0, microsecond=0)
+        elif t.hour < config.PROMOTE_QUIET_END:         # 凌晨：跳到当天早上
+            t = t.replace(hour=config.PROMOTE_QUIET_END, minute=0, second=0,
+                          microsecond=0)
+        day_end = t.replace(hour=config.PROMOTE_QUIET_START, minute=0, second=0,
+                            microsecond=0)
+        if t + remaining <= day_end:
+            return t + remaining
+        remaining -= day_end - t
+        t = day_end
+
+
+def promote_confirm_deadline(start: datetime, shift: Shift) -> datetime:
+    """转正确认窗的截止时间：夜间不计时（confirm_deadline_from），再按场次封顶。
+
+    封顶规则：
+      · 场次还没开始 → 截止不晚于场次开始。手动转正可能贴着开场（比如开场前
+        1 小时、或前一晚 23 点后转正），过了开场还在等确认没有意义——人要么
+        来了，要么位子该让负责人另想办法。窗口因此可能短于 2 小时，这是负责人
+        选择贴近开场转正的代价，通知里写的是封顶后的时间，本人看得到。
+      · 场次已经开始（活动进行中手动补人）→ 不晚于场次结束；
+      · 场次也已结束 → 不封顶，照常给满窗口（封到过去就等于一转正就超时，
+        白白记本人一次放弃）。
+    """
+    deadline = confirm_deadline_from(start)
+    if shift.start_time > start:
+        return min(deadline, shift.start_time)
+    if shift.end_time and shift.end_time > start:
+        return min(deadline, shift.end_time)
+    return deadline
+
+
 def start_confirm(db: OrmSession, enr: Enrollment, shift: Shift) -> Enrollment:
     """把一条候补转为「待确认」，开确认窗并通知本人。
 
     名额从这一刻起就占住了：本人在窗口内确认才成为正式报名，超时按放弃处理、
     名额顺延下一位。自动递补与管理者手动转正走的是同一条路。
     """
+    t = now()
     enr.status = "pending_confirm"
-    enr.promoted_at = now()
-    enr.confirm_deadline = now() + timedelta(hours=config.PROMOTE_CONFIRM_HOURS)
+    enr.promoted_at = t
+    enr.confirm_deadline = promote_confirm_deadline(t, shift)
     user = db.get(User, enr.user_id)
     activity = db.get(Activity, enr.activity_id)
     # 带上 activity_id：这条通知看完就要去活动页确认，消息卡片据此可点击跳转
