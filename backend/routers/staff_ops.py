@@ -896,6 +896,14 @@ def poster(activity_id: str, db: OrmSession = Depends(db_session),
 
 # ======================= 时长核准与锁定 =======================
 
+def _vb_brief(row) -> dict | None:
+    """最近一次外联确认，时长管理页顶上的一句话用。"""
+    if row is None:
+        return None
+    return {"id": row.id, "status": row.status, "status_label": row.status_label(),
+            "names": row.names, "reply": row.reply}
+
+
 class ApproveHoursBody(BaseModel):
     appeal_deadline: str = ""     # 留空 = 明天中午
 
@@ -1140,6 +1148,9 @@ def hours_preview(activity_id: str, db: OrmSession = Depends(db_session),
             # 对外活动还缺盖章立项书：报批按钮前先提示，别点了才被拦
             "stamped_missing": (liaison.is_external(db, act) and liaison.project_file(
                 db, act.id, "stamped") is None),
+            # 志愿北京活动名称：提交时长审核时一并填，提交框里预先填上已存的
+            "vb_names": list(act.vb_names or []),
+            "vb_confirm": _vb_brief(liaison.latest_vb_confirm(db, act.id)),
             "request": ({"id": req.id, "kind": req.kind,
                          "kind_label": req.kind_label(), "status": req.status,
                          "status_label": req.status_label(),
@@ -1469,7 +1480,7 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
 
     截止之前志愿者要么确认无误（顺带选志愿时长还是劳务），要么提申诉；
     到点没表态的按「没问题 + 志愿时长」处理，定时任务自动提交校青协审批，
-    通过即锁定，活动落「待录入志愿北京」。
+    通过即锁定，活动落「待外联确认」。
     有人申诉就通知管理者，改完再核准一次：这一次只惊动数值
     变过、或者申诉过的人，别人的确认照旧有效。
     """
@@ -1480,12 +1491,13 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
     rows = (db.query(HoursRecord)
             .filter(HoursRecord.activity_id == act.id).all())
     if not rows:
-        # 一条时长都没有的活动没什么可申诉的，直接结账
-        hours_flow.lock_hours(db, act, user, "没有任何时长记录，核准时直接锁定")
+        # 一条时长都没有的活动没什么可申诉的，直接结账；志愿北京那边也没有
+        # 可录的，不必推外联确认，活动直接完成
+        hours_flow.lock_hours(db, act, user, "没有任何时长记录，核准时直接锁定",
+                              to_liaison=False)
         db.commit()
         return {"ok": True, "locked": True, "count": 0,
-                "message": "本活动没有时长记录，已直接锁定；请录入志愿北京并在"
-                           "「审核」页签上传截图后确认完成"}
+                "message": "本活动没有时长记录，已直接锁定，活动已完成"}
 
     since = act.hours_approved_at
     appealed = set()
@@ -1527,6 +1539,33 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
 
 class LockHoursBody(BaseModel):
     note: str = ""
+    # 志愿北京上的活动名称，至少一个；不传就用之前存过的（审核页签里可以先填）
+    vb_names: list[str] | None = None
+
+
+def save_vb_names(db: OrmSession, act: Activity, user: User, raw) -> list[str]:
+    """校验并存下志愿北京活动名称，有变化才记审计。不提交事务。"""
+    try:
+        names = liaison.clean_vb_names(raw)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    if names != list(act.vb_names or []):
+        before = liaison.names_text(act.vb_names) or "（未填）"
+        act.vb_names = names
+        audit_log(db, actor=user, action="vb_confirm", target_type="activity",
+                  target_id=act.id, target_label=act.title, activity_id=act.id,
+                  summary=f"志愿北京活动名称：{before} → {liaison.names_text(names)}")
+    return names
+
+
+def vb_names_block(db: OrmSession, act: Activity) -> str:
+    """志愿北京名称现在能不能改（提交时长审核之前随时改）；空串 = 能改。
+    锁定之后被外联退回，走「重提」，不走这里。"""
+    if act.hours_locked():
+        return "时长已锁定，志愿北京活动名称只能在外联退回后重新提交"
+    if hours_flow.pending_lock(db, act.id) is not None:
+        return "时长正在等待审核，审核期间不能修改志愿北京活动名称"
+    return ""
 
 
 @router.post("/activities/{activity_id}/hours/lock-request")
@@ -1543,6 +1582,10 @@ def hours_lock_request(activity_id: str, body: LockHoursBody | None = None,
     if liaison.is_external(db, act) \
             and liaison.project_file(db, act.id, "stamped") is None:
         raise HTTPException(400, "对外活动须先上传盖章立项书，才能提交时长审核")
+    # 志愿北京活动名称随时长一起报：审的人看得到，锁定后推给对外联络部
+    save_vb_names(db, act, user,
+                   body.vb_names if body and body.vb_names is not None
+                   else act.vb_names)
     pending = (db.query(HoursAppeal)
                .filter(HoursAppeal.activity_id == act.id,
                        HoursAppeal.status == "pending").count())
@@ -1561,7 +1604,8 @@ def _notify_lock_approvers(db: OrmSession, act: Activity, who: str,
     for approver in _hours_notify_targets(db, act):
         notify(db, approver, f"时长锁定审批｜{act.title}",
                f"{who}提交了「{act.title}」的志愿时长，等待校青协审核。\n"
-               f"说明：{reason}\n通过后时长锁定，管理者录入志愿北京后活动完成；"
+               f"说明：{reason}\n志愿北京活动名称：{liaison.names_text(act.vb_names)}\n"
+               f"通过后时长锁定，名称推给对外联络部确认；"
                f"驳回则退回管理者修改。\n请到「活动审批」处理。",
                data={"activity_id": act.id, "route": "approvals"}, need_ack=True)
 
@@ -1613,12 +1657,13 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
                          user: User = Depends(require_manager)):
     """归口部长（或会长团/管理员）拍板锁不锁、解不解。
 
-    锁定通过 = 这场活动的时长经校青协审核，就此封账、活动落「待录入志愿北京」
-    （管理者上传录入截图并确认后才算已完成）；驳回则解冻，管理者改完重新核准，
-    再提交一次。
-    解锁通过 = 回到「已结束」：不管此前停在待录入志愿北京还是已完成，账重新
-    打开就回到结账之前。之前传的志愿北京录入截图随之作废（截的是改之前的
-    时长），重新锁定后再录一遍、传新的截图。
+    锁定通过 = 这场活动的时长经校青协审核，就此封账、活动落「待外联确认」，
+    志愿北京活动名称推给对外联络部（外联确认后才算已完成）；驳回则解冻，
+    管理者改完重新核准，再提交一次。
+    解锁通过 = 回到「已结束」：不管此前停在待外联确认还是已完成，账重新
+    打开就回到结账之前。外联确认随之作废（确认的是改之前的时长），重新锁定
+    时再推一次。
+    通过可以附意见（选填），驳回必须写理由；意见随通知发给申请人。
     """
     req = db.get(HoursRequest, request_id)
     if req is None:
@@ -1628,7 +1673,7 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
     act = _act(db, req.activity_id)
     if user.id not in {u.id for u in _hours_approvers(db, act)}:
         raise HTTPException(403, f"只有归口部门的部长可以处理时长{req.kind_label()}申请")
-    reply = body.reply.strip()
+    reply = body.reply.strip()[:512]
     if not body.approve and len(reply) < 2:
         raise HTTPException(400, "驳回必须写明理由")
     req.status = "approved" if body.approve else "rejected"
@@ -1638,15 +1683,15 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
     elif body.approve:
         act.hours_locked_at = None
         act.status = "finished"
-        dropped = liaison.drop_project_file(db, act.id, "vb_hours")
-        if dropped is not None:
-            audit_log(db, actor=user, action="material", target_type="activity",
+        if liaison.void_vb_confirms(db, act):
+            audit_log(db, actor=user, action="vb_confirm", target_type="activity",
                       target_id=act.id, target_label=act.title,
                       activity_id=act.id,
-                      summary=f"时长解锁，志愿北京时长录入截图《{dropped.title}》作废")
+                      summary="时长解锁，志愿北京外联确认作废，重新锁定后再推送")
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=(f"同意{req.kind_label()}时长（{req.reason}）" if body.approve
+              summary=(f"同意{req.kind_label()}时长（{req.reason}）"
+                       + (f"；意见：{reply}" if reply else "") if body.approve
                        else f"驳回时长{req.kind_label()}申请：{reply}"))
     requester = db.get(User, req.requested_by)
     if requester is not None:
@@ -1666,9 +1711,11 @@ def _decide_text(act: Activity, req, approve: bool, reply: str) -> str:
                    else "如仍需修改，请补充说明后重新申请。"))
     tail = f"\n审批意见：{reply}" if reply else ""
     if req.kind == "lock":
+        if act.status == "completed":
+            return f"「{act.title}」的志愿时长已通过校青协审核并锁定，活动已完成。{tail}"
         return (f"「{act.title}」的志愿时长已通过校青协审核并锁定。\n"
-                f"请把时长录入志愿北京，在活动管理「审核」页签上传录入截图并确认，"
-                f"活动即标记为已完成。{tail}")
+                f"志愿北京活动名称{liaison.names_text(act.vb_names)}已推给对外联络部，"
+                f"外联在志愿北京核对确认后活动即标记为已完成。{tail}")
     return f"「{act.title}」的时长已解锁，修改后请重新核准。{tail}"
 
 
@@ -1726,6 +1773,8 @@ def my_hours_requests(db: OrmSession = Depends(db_session),
         out.append({"id": req.id, "kind": req.kind,
                     "kind_label": req.kind_label(), "activity_id": act.id,
                     "activity_title": act.title, "reason": req.reason,
+                    "vb_names": (list(act.vb_names or []) if req.kind == "lock"
+                                 else []),
                     "requested_by": who.name if who else "系统",
                     "created_at": iso(req.created_at)})
     return out

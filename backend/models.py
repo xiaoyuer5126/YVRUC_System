@@ -334,8 +334,8 @@ class Activity(Base):
 
     status: Mapped[str] = mapped_column(String(16), default="draft")
     # draft 草稿 / pending 待审批 / approved 待发布 / published 报名中 /
-    # closed 已截止 / finished 已结束 / vb_pending 待录入志愿北京（时长已锁定，
-    # 等管理者把时长录进志愿北京并上传截图）/ completed 已完成
+    # closed 已截止 / finished 已结束 / vb_pending 待外联确认（时长已锁定，
+    # 等对外联络部在志愿北京上核对管理者填的活动名称）/ completed 已完成
 
     # —— 审批 ——
     # 所有活动发布前都要过校青协。默认通过即发布；提交时可以关掉这一项，
@@ -361,7 +361,7 @@ class Activity(Base):
 
     # —— 志愿时长 ——
     # 核准 = 把这场活动的时长定下来，通知每个人查看，并给一段申诉时间。
-    # 截止时没人申诉就自动报校青协审批，通过即锁定，活动落「待录入志愿北京」；
+    # 截止时没人申诉就自动报校青协审批，通过即锁定，活动落「待外联确认」；
     # 有人申诉就通知管理者，改完再核准一次，来回几次都行，也可以不理会申诉
     # 直接提交审批。
     hours_approved_at: Mapped[datetime | None] = mapped_column(
@@ -374,8 +374,16 @@ class Activity(Base):
     # 自动报批就停下来提醒管理者一次；记下时间，别每分钟提醒一遍。
     stamped_reminded_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
-    # 时长锁定后停在「待录入志愿北京」太久，每天提醒管理者一次；记的是哪天
-    # 提醒过（按天去重，条件更新占位，见 scheduled.remind_vb_hours）
+    # 志愿北京上对应的活动名称（可以有好几个：分几场建的就填几个）。管理者
+    # 提交时长审核时一并填写，时长锁定后推给对外联络部核对。存的是当前这一版，
+    # 每次推送的快照与核对结果记在 VbConfirm 上。
+    vb_names: Mapped[list] = mapped_column(JSON, default=list)
+    # 申诉期满本该自动提交时长审核、却还没填志愿北京活动名称：不提交，提醒
+    # 管理者一次（每轮核准一次，同盖章立项书）；记下时间，别每分钟提醒一遍
+    vb_names_reminded_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True)
+    # 志愿北京名称被外联退回、管理者迟迟不重提：每天提醒一次；记的是哪天
+    # 提醒过（按天去重，条件更新占位，见 scheduled.remind_vb_resubmit）
     vb_reminded_on: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
@@ -394,7 +402,7 @@ class Activity(Base):
 
     STATUS_LABELS = {"draft": "草稿", "pending": "待审批", "approved": "待发布",
                      "published": "报名中", "closed": "已截止",
-                     "finished": "已结束", "vb_pending": "待录入志愿北京",
+                     "finished": "已结束", "vb_pending": "待外联确认",
                      "completed": "已完成"}
 
     def label_status(self) -> str:
@@ -667,8 +675,7 @@ class Attachment(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     # shift / position：学习材料；application：报名问卷里志愿者上传的文件；
-    # proposal / stamped：立项书与盖章立项书；vb_hours：志愿北京时长录入截图
-    # （owner_id = 活动 id，各留一份）
+    # proposal / stamped：立项书与盖章立项书（owner_id = 活动 id，各留一份）
     owner_type: Mapped[str] = mapped_column(String(12))
     owner_id: Mapped[str] = mapped_column(String(32), index=True)
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
@@ -682,30 +689,40 @@ class Attachment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
-class VbRegistration(Base):
-    """志愿北京登记：管理者在志愿北京建好活动后来报一声，对外联络部核对。
+class VbConfirm(Base):
+    """志愿北京名称的外联确认：时长锁定后，把管理者填的志愿北京活动名称推给
+    对外联络部，值班人（没人值班是部长）上志愿北京核对。
 
-    志愿时长最终要录进志愿北京，平台上的活动得在那边有一个对应的活动。
-    一个活动可以登记多次（建错了就作废重报，分几场建的就报几条），
-    不设上限；作废的留着，谁报错过什么事后查得到。
+    一次推送一条：时长审核通过时推一次（kind=lock）；外联退回、管理者改了
+    名称重提再推一次（kind=resubmit，时长保持锁定，不重走时长审核）。
+    确认 = 活动落「已完成」；退回必须写理由，发给管理者。时长解锁时没处理完
+    的和已确认的一并作废（void）——改过的时长要重新锁定、重新推送。
+    记录都留着，审核页签里就是这场活动的全部往来。
     """
-    __tablename__ = "vb_registrations"
+    __tablename__ = "vb_confirms"
 
-    STATUS_LABELS = {"submitted": "已提交", "approved": "已通过",
-                     "rejected": "已驳回", "void": "作废"}
+    STATUS_LABELS = {"pending": "待外联确认", "confirmed": "已确认",
+                     "returned": "已退回", "void": "已作废"}
+    KIND_LABELS = {"lock": "时长锁定后推送", "resubmit": "管理者重提"}
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
-    vb_name: Mapped[str] = mapped_column(String(200))     # 志愿北京上的活动名称
-    status: Mapped[str] = mapped_column(String(12), default="submitted", index=True)
-    submitted_by: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(12), default="lock")
+    names: Mapped[list] = mapped_column(JSON, default=list)   # 这一次推送的名称快照
+    status: Mapped[str] = mapped_column(String(12), default="pending", index=True)
+    submitted_by: Mapped[str] = mapped_column(String(32))   # 推送时拍板的人 / 重提的管理者
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     handled_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
     handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reply: Mapped[str] = mapped_column(String(512), default="")
+    # 放太久没人确认就催外联一次，催过记下时间，只催这一次
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     def status_label(self) -> str:
         return self.STATUS_LABELS.get(self.status, self.status)
+
+    def kind_label(self) -> str:
+        return self.KIND_LABELS.get(self.kind, self.kind)
 
 
 # ======================= 报名后筛选：报名问卷与申请 =======================

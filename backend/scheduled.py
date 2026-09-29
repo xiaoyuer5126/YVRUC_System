@@ -1,5 +1,5 @@
 """定时任务：候补清扫、活动状态自动流转、签到提醒、人员变动日报、编辑解冻、
-值班日报、审批超时催办、志愿北京录入提醒。
+值班日报、审批超时催办、志愿北京外联确认催办与重提提醒。
 
 由 main.py 的协程每分钟驱动一次。几件事互不依赖，一件出错不影响其余——
 任何一件长期不跑都没有外部表现，直到有人发现名额空转或提醒没发出去。
@@ -16,7 +16,7 @@ from .audit import log as audit_log
 from .enroll_logic import expire_stale_promotions
 from .integrations import msgcenter
 from .models import (Activity, ApprovalEvent, Department, HoursRequest, Shift,
-                     User, VbRegistration, now)
+                     User, VbConfirm, now)
 from .notify import notify_checkin, notify_enrolled, notify_managers
 from .perm import activity_manager_ids
 
@@ -34,7 +34,8 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("digests", send_roster_digests),
                       ("approvals", remind_stale_approvals),
                       ("hours_approvals", remind_stale_hours_requests),
-                      ("vb_hours", remind_vb_hours),
+                      ("vb_confirms", remind_stale_vb_confirms),
+                      ("vb_resubmit", remind_vb_resubmit),
                       ("duty_digests", send_duty_digests),
                       ("hours_lock_requests", submit_lock_when_due),
                       ("unlocked", release_stale_edit_locks),
@@ -99,6 +100,8 @@ def submit_lock_when_due(db: OrmSession) -> int:
     被驳回的不会再自动送一次：重新核准（hours_approved_at 往后走）之后才算
     新一轮，否则驳回的下一分钟又提交，等于没驳。
     对外活动缺盖章立项书的不送，提醒管理者一次；补传之后下一轮照常送。
+    还没填志愿北京活动名称的也不送（锁定后要推给外联核对，没有名称就推不出去），
+    同样每轮提醒管理者一次；填上之后下一轮照常送。
     """
     from . import liaison
     from .hours import submit_lock
@@ -134,6 +137,18 @@ def submit_lock_when_due(db: OrmSession) -> int:
                     f"「{act.title}」的确认/申诉期已满，本该自动提交时长审核，"
                     f"但这是对外联络部归口的活动，还没有上传盖章立项书。\n"
                     f"请到活动管理的「审核」页签上传，上传后系统会自动提交。",
+                    duty="hours")
+                reminded += 1
+            continue
+        if not act.vb_names:
+            if act.vb_names_reminded_at is None or act.vb_names_reminded_at < since:
+                act.vb_names_reminded_at = t
+                notify_managers(
+                    db, act.id, f"请填写志愿北京活动名称｜{act.title}",
+                    f"「{act.title}」的确认/申诉期已满，本该自动提交时长审核，"
+                    f"但还没有填写志愿北京上的活动名称。\n"
+                    f"请到活动管理的「审核」页签填写（可填多个），"
+                    f"保存后系统会自动提交；也可以在「时长管理」直接提交时长审核。",
                     duty="hours")
                 reminded += 1
             continue
@@ -289,16 +304,62 @@ def remind_stale_hours_requests(db: OrmSession) -> int:
     return sent
 
 
-# ======================= 志愿北京录入提醒 =======================
+# ======================= 志愿北京外联确认 =======================
 
-def remind_vb_hours(db: OrmSession) -> int:
-    """时长锁定满 VB_REMIND_DAYS 天还停在「待录入志愿北京」：每天提醒一次
-    本活动的管理者去录入、上传截图并确认。
+def remind_stale_vb_confirms(db: OrmSession) -> int:
+    """志愿北京名称推给外联超过 APPROVAL_REMIND_HOURS 小时还没确认：催一次
+    对外联络部的对接人（值班人，没人值班是部长），每条只催这一次，同时长审批。
+
+    只催一次而不是每天催：外联的待确认列表就挂在「活动审批」页上，第一条
+    通知要了回执，催一次是兜「通知被淹了」的底；每天催会让人把通知关掉。
+    先用条件更新把 reminded_at 占下来再发，多进程也只发一遍。
+    """
+    from sqlalchemy import update
+    from . import liaison
+
+    t = now()
+    deadline = t - timedelta(hours=config.APPROVAL_REMIND_HOURS)
+    rows = (db.query(VbConfirm)
+            .filter(VbConfirm.status == "pending",
+                    VbConfirm.submitted_at < deadline,
+                    VbConfirm.reminded_at.is_(None)).all())
+    sent = 0
+    for r in rows:
+        claimed = db.execute(
+            update(VbConfirm)
+            .where(VbConfirm.id == r.id, VbConfirm.status == "pending",
+                   VbConfirm.reminded_at.is_(None))
+            .values(reminded_at=t)).rowcount
+        db.commit()
+        if not claimed:
+            continue
+        act = db.get(Activity, r.activity_id)
+        if act is None:
+            continue
+        waited = int((t - r.submitted_at).total_seconds() // 3600)
+        for u in liaison.vb_contacts(db):
+            msgcenter.send_user(
+                db, u, "custom", data={"activity_id": act.id, "route": "approvals"},
+                title=f"志愿北京待确认已等待 {waited} 小时｜{act.title}",
+                content=(f"「{act.title}」的志愿北京活动名称{liaison.names_text(r.names)}"
+                         f"已推送 {waited} 小时未确认。\n"
+                         f"请到志愿北京核对后，在「活动审批」确认或退回。"))
+        db.commit()
+        sent += 1
+        logger.info("活动「%s」志愿北京外联确认超时，已提醒", act.title)
+    return sent
+
+
+def remind_vb_resubmit(db: OrmSession) -> int:
+    """志愿北京名称被外联退回满 VB_REMIND_DAYS 天，管理者还没重提：每天
+    VB_REMIND_HOUR 点起提醒一次本活动的管理者。
 
     按天去重：先用条件更新把「今天提醒过了」（vb_reminded_on）占下来，
     占到了才发——清扫每分钟一轮，进程重启或多进程也不会一天发两遍。
+    重提（push_vb_confirm）会把 vb_reminded_on 清掉，下次退回从头算。
     """
     from sqlalchemy import or_, update
+    from . import liaison
 
     t = now()
     if t.hour < config.VB_REMIND_HOUR:
@@ -307,12 +368,14 @@ def remind_vb_hours(db: OrmSession) -> int:
     cutoff = t - timedelta(days=config.VB_REMIND_DAYS)
     rows = (db.query(Activity)
             .filter(Activity.status == "vb_pending",
-                    Activity.hours_locked_at.isnot(None),
-                    Activity.hours_locked_at <= cutoff,
                     or_(Activity.vb_reminded_on.is_(None),
                         Activity.vb_reminded_on < today)).all())
     sent = 0
     for act in rows:
+        last = liaison.latest_vb_confirm(db, act.id)
+        if last is None or last.status != "returned" \
+                or last.handled_at is None or last.handled_at > cutoff:
+            continue
         claimed = db.execute(
             update(Activity)
             .where(Activity.id == act.id,
@@ -323,15 +386,16 @@ def remind_vb_hours(db: OrmSession) -> int:
         db.commit()
         if not claimed:
             continue
-        days = (t - act.hours_locked_at).days
+        days = (t - last.handled_at).days
         notify_managers(
-            db, act.id, f"请录入志愿北京｜{act.title}",
-            f"「{act.title}」的志愿时长已锁定 {days} 天，还没有确认录入志愿北京。\n"
-            f"请把时长录入志愿北京，到活动管理的「审核」页签上传录入截图并点"
-            f"「已录入」，活动才会标记为已完成。", duty="hours")
+            db, act.id, f"请重新提交志愿北京活动名称｜{act.title}",
+            f"「{act.title}」的志愿北京活动名称已被对外联络部退回 {days} 天，还没有重新提交。\n"
+            f"退回理由：{last.reply}\n"
+            f"请到活动管理的「审核」页签修改名称后重新提交，活动才会标记为已完成。",
+            duty="hours")
         db.commit()
         sent += 1
-        logger.info("活动「%s」待录入志愿北京 %d 天，已提醒管理者", act.title, days)
+        logger.info("活动「%s」志愿北京名称退回 %d 天未重提，已提醒管理者", act.title, days)
     return sent
 
 
@@ -393,9 +457,11 @@ def _duty_digest_lines(db: OrmSession, dept: Department, since
                        ) -> tuple[list[str], list[str], list[str]]:
     """日报的三栏：今日新增 / 今日处理 / 尚未处理，各是一串人话。
 
-    这个部门的审批 = 归口它的活动审批与时长锁定/解锁，加上志愿北京登记
-    （登记不分部门，都由对外联络部核对）。
+    这个部门的审批 = 归口它的活动审批与时长锁定/解锁；对外联络部另加志愿北京
+    外联确认（不分活动归口哪个部门，都由对外联络部确认）。
     """
+    from . import liaison
+
     def name(uid_: str | None) -> str:
         u = db.get(User, uid_) if uid_ else None
         return u.name if u else "系统"
@@ -436,20 +502,23 @@ def _duty_digest_lines(db: OrmSession, dept: Department, since
         if r.status == "pending":
             waiting.append(f"{what}（{r.created_at:%m-%d %H:%M} 提交）")
 
-    # 志愿北京登记
-    for v in (db.query(VbRegistration)
-              .filter((VbRegistration.submitted_at >= since)
-                      | (VbRegistration.handled_at >= since)
-                      | (VbRegistration.status == "submitted"))
-              .order_by(VbRegistration.submitted_at).all()):
+    # 志愿北京外联确认：只算在对外联络部头上
+    if dept.name != liaison.LIAISON_DEPT:
+        return new, done, waiting
+    for v in (db.query(VbConfirm)
+              .filter((VbConfirm.submitted_at >= since)
+                      | (VbConfirm.handled_at >= since)
+                      | (VbConfirm.status == "pending"))
+              .order_by(VbConfirm.submitted_at).all()):
         act = db.get(Activity, v.activity_id)
-        what = f"志愿北京登记「{v.vb_name}」（{act.title if act else '?'}）"
+        what = f"志愿北京确认「{act.title if act else '?'}」"
         if v.submitted_at >= since:
-            new.append(f"{what} {name(v.submitted_by)} 提交")
-        if v.handled_at and v.handled_at >= since and v.status in ("approved", "rejected"):
-            done.append(f"{what} {v.status_label()}（{name(v.handled_by)}）")
-        if v.status == "submitted":
-            waiting.append(f"{what} {v.submitted_at:%m-%d %H:%M} 提交")
+            new.append(f"{what}（{v.kind_label()}）")
+        if v.handled_at and v.handled_at >= since \
+                and v.status in ("confirmed", "returned"):
+            done.append(f"{what}{v.status_label()}（{name(v.handled_by)}）")
+        if v.status == "pending":
+            waiting.append(f"{what}（{v.submitted_at:%m-%d %H:%M} 推送）")
     return new, done, waiting
 
 
