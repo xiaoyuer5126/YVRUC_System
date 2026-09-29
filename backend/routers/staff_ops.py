@@ -701,7 +701,7 @@ def export(activity_id: str, db: OrmSession = Depends(db_session),
     stamp = now().strftime("%Y%m%d_%H%M")
     base = f"{act.title}_排班表_{stamp}"
     buf, ext = ex.bundle(f"{base}.xlsx")
-    # 下载留痕（《设计方案》：后台记录每一次下载操作）
+    # 下载留痕：后台记录每一次下载操作
     audit_log(db, actor=user, action="export", target_type="export",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"导出排班表《{base}.{ext}》")

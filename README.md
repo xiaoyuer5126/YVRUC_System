@@ -55,7 +55,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
 | 层 | 载体 | 说明 |
 |---|---|---|
 | 身份 | `User.roles`，可多个 | `admin` 管理员 / `qingxie` 青协 / `initiator` 活动发起方 / `student` 学生。顶栏切换视角；路由守卫在视角不够但持有对应身份时自动切换放行 |
-| 类型 | `User.user_type`，二选一 | `teacher` / `student`。**老师类型不参与志愿报名**（自主报名与管理员补录均拦截） |
+| 类型 | `User.user_type`，二选一 | `teacher` / `student`。**老师类型不参与志愿报名**（自主报名与管理员补录均拦截），也不用补充个人信息；老师首次登录即自动获得 `initiator` 活动发起方身份，学生获得 `student` |
 | 青协层级 | `User.qingxie_post` | `council` 会长团（除集成设置外与管理员同权）/ `head` 部长 / `core` 部门骨干 / `member` 部门成员 |
 | 活动级 | `activity_managers` | 谁能看、能操作哪个活动（见下） |
 
@@ -201,12 +201,6 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
 参数存 `integration_configs` 表，「集成设置」页在线切换 `enabled=true`
 即启用真实 HTTP 调用，改完生效、无需重启；**开关已开但必填参数为空时自动回落演示模式**。
 
-签到不在适配层里——**它是自建的**，没有可切换的外部实现：学校签到中台的
-`typecode` 等参数始终没拿到，2026-09-22 定下自己做（动态码 + 固定码，见
-`locks.py` 的「动态签到码」一节）。原来那个 `checkin_gateway` 适配器连同
-「集成设置」里的卡片一起删掉了：它的真实分支是 `NotImplementedError`，
-开关一旦被打开，每次扫码都会 500。
-
 演示模式行为：消息中心把模板消息落 `notifications` 表
 （消息中心即收件箱，模板库 13 类场景），发送失败只标 `delivered=False`，不打断业务；
 SSO 模拟「认证已通过」。
@@ -255,7 +249,7 @@ rucva_system/
 │   │                           （staff_* 共用 /api/staff 前缀：activities 管活动结构与
 │   │                             名单调配，ops 管签到、导出与时长，admin 管总览、
 │   │                             档案、违规与集成配置）
-│   └── integrations/           msgcenter / sso（签到自建，不走适配层）
+│   └── integrations/           msgcenter / sso
 └── web/                        Vue3 + Element Plus + ECharts（Vite，无 Pinia）
     ├── Dockerfile / nginx.conf Node 构建 → nginx 托管并反代 /api
     └── src/

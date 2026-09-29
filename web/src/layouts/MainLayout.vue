@@ -34,7 +34,7 @@
                 <span>{{ auth.user.name }}</span>
                 <el-tag size="small" effect="light"
                         style="color:#fff;background:rgba(255,255,255,.2);border:none">
-                  {{ ROLE_LABELS[auth.activeIdentity] || '学生' }}视角
+                  {{ identityLabel }}视角
                 </el-tag>
               </template>
               <el-icon><ArrowDown /></el-icon>
@@ -83,7 +83,7 @@
         <div>
           <div class="name">志愿服务平台</div>
           <div class="drawer-sub">
-            {{ auth.user?.name }} · {{ ROLE_LABELS[auth.activeIdentity] || '学生' }}视角
+            {{ auth.user?.name }} · {{ identityLabel }}视角
           </div>
         </div>
       </div>
@@ -96,7 +96,7 @@
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, Bell, Check, Fold } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -111,6 +111,14 @@ const narrow = useNarrow()
 const drawer = ref(false)
 const unread = ref(0)
 let timer = null
+
+// 当前视角的称呼：没有对应身份时（比如还没被授予任何身份的老师，默认视角是
+// student）按身份类型说，别把老师叫成「学生」
+const identityLabel = computed(() => {
+  const roles = auth.user?.roles || []
+  if (roles.includes(auth.activeIdentity)) return ROLE_LABELS[auth.activeIdentity]
+  return auth.user?.user_type === 'teacher' ? '教职工' : '学生'
+})
 
 // 抽屉里点的若是当前页，el-menu 不触发 select，这里兜住
 watch(() => route.path, () => { drawer.value = false })
