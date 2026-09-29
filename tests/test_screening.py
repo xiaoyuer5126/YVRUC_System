@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from urllib.parse import unquote
 
 from backend.models import (Activity, Application, Enrollment, Notification,
                             User, now)
-from conftest import login, student_row
+from conftest import dl_url, login, student_row
 
 
 def _create_screened(client, admin, db, *, status="published", shifts=2):
@@ -596,33 +597,91 @@ def test_即选即得的报名问卷在报名时答(client, admin, db, open_grou
     assert [a["value"] for a in row["answers"]] == ["会", "张三 13800000000"]
 
 
-def test_有文件答案的报名问卷导出成zip(client, admin, db, take_student):
-    """Excel 里写相对路径并加超链接，附件按「姓名_学号_题目」放在附件目录里。"""
+def _apply_with_file(client, db, act_id, ids, q, sid, data=b"%PDF-1.4 fake"):
+    h = login(client, sid)
+    r = client.post(f"/api/activities/{act_id}/apply/upload", headers=h,
+                    files={"file": ("证明.pdf", data, "application/pdf")})
+    assert r.status_code == 200, r.text
+    att_id = r.json()["id"]
+    r = client.post(f"/api/activities/{act_id}/apply", headers=h,
+                    json={"position_ids": _holders(db, ids[:1]),
+                          "answers": _answers(q, 证明材料=att_id)})
+    assert r.status_code == 200, r.text
+    return att_id
+
+
+def test_报名问卷导出只给excel附件另外打包(client, admin, db, take_student):
+    """导出只有 .xlsx，附件列写附件包里的文件名（不加超链接）；
+    附件数走 JSON 接口，附件包里按「姓名_学号_题目」命名，与表里一字不差。"""
     import zipfile
     from io import BytesIO
     from openpyxl import load_workbook
 
     act_id, ids, q = _create_screened(client, admin, db)
-    sid = take_student()
-    h = login(client, sid)
-    r = client.post(f"/api/activities/{act_id}/apply/upload", headers=h,
-                    files={"file": ("证明.pdf", b"%PDF-1.4 fake", "application/pdf")})
-    assert r.status_code == 200, r.text
-    r = client.post(f"/api/activities/{act_id}/apply", headers=h,
-                    json={"position_ids": _holders(db, ids[:1]),
-                          "answers": _answers(q, 证明材料=r.json()["id"])})
-    assert r.status_code == 200, r.text
+    sid, sid2 = take_student(), take_student()
+    _apply_with_file(client, db, act_id, ids, q, sid, b"%PDF-1.4 one")
+    _apply_with_file(client, db, act_id, ids, q, sid2, b"%PDF-1.4 two")
+    base = f"/api/staff/activities/{act_id}"
 
-    r = client.get(f"/api/staff/activities/{act_id}/applications.xlsx", headers=admin)
-    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
-    z = zipfile.ZipFile(BytesIO(r.content))
-    names = z.namelist()
-    xlsx = next(n for n in names if n.endswith(".xlsx"))
-    att = next(n for n in names if n.startswith("附件/"))
-    u = student_row(db, sid)
-    assert att == f"附件/{u.name}_{u.student_id}_证明材料.pdf"
-    assert z.read(att) == b"%PDF-1.4 fake"
-    ws = load_workbook(BytesIO(z.read(xlsx))).active
+    r = client.get(dl_url(client, admin, f"{base}/applications.xlsx"))
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    assert ".xlsx" in r.headers["content-disposition"]
+    ws = load_workbook(BytesIO(r.content)).active
     header = list(ws.values)[0]
-    cell = ws.cell(row=2, column=header.index("证明材料") + 1)
-    assert cell.value == att and cell.hyperlink.target == att
+    col = header.index("证明材料") + 1
+    cells = {ws.cell(row=i, column=2).value: ws.cell(row=i, column=col)
+             for i in (2, 3)}
+    u, u2 = student_row(db, sid), student_row(db, sid2)
+    name = f"{u.name}_{u.student_id}_证明材料.pdf"
+    name2 = f"{u2.name}_{u2.student_id}_证明材料.pdf"
+    assert cells[u.student_id].value == name and cells[u.student_id].hyperlink is None
+    assert cells[u2.student_id].value == name2
+
+    r = client.get(f"{base}/applications/attachments", headers=admin)
+    assert r.status_code == 200 and r.json() == {"count": 2}
+
+    r = client.get(dl_url(client, admin, f"{base}/applications/attachments.zip"))
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    assert "_附件_" in unquote(r.headers["content-disposition"])
+    z = zipfile.ZipFile(BytesIO(r.content))
+    assert sorted(z.namelist()) == sorted([name, name2])
+    assert z.read(name) == b"%PDF-1.4 one" and z.read(name2) == b"%PDF-1.4 two"
+
+
+def test_报名问卷没有附件时附件包404(client, admin, db, take_student):
+    """没有文件答案、或文件在磁盘上已经不在了：数目为 0，附件包 404，表照常导出。"""
+    from backend.exporter import MATERIAL_DIR
+    from backend.models import Attachment
+
+    act_id, ids, q = _create_screened(client, admin, db)
+    base = f"/api/staff/activities/{act_id}"
+    h = login(client, take_student())
+    r = client.post(f"/api/activities/{act_id}/apply", headers=h,
+                    json={"position_ids": _holders(db, ids[:1]), "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+    assert client.get(f"{base}/applications/attachments",
+                      headers=admin).json() == {"count": 0}
+    r = client.get(dl_url(client, admin, f"{base}/applications/attachments.zip"))
+    assert r.status_code == 404
+
+    # 文件被删了：跳过，不报错
+    att_id = _apply_with_file(client, db, act_id, ids, q, take_student())
+    (MATERIAL_DIR / db.get(Attachment, att_id).stored_name).unlink()
+    assert client.get(f"{base}/applications/attachments",
+                      headers=admin).json() == {"count": 0}
+    assert client.get(dl_url(client, admin, f"{base}/applications/attachments.zip")
+                      ).status_code == 404
+    assert client.get(dl_url(client, admin, f"{base}/applications.xlsx")
+                      ).status_code == 200
+
+    # 即选即得的活动没有报名问卷
+    other = client.post("/api/staff/activities", headers=admin,
+                        json={"title": f"即选即得 {now():%H%M%S%f}", "organizer": "校青协",
+                              "intro": "x", "location": "东门", "contact_group_qr": "q",
+                              "contacts": [{"name": "王", "phone": "13900000000"}],
+                              "reg_start": now().isoformat(),
+                              "reg_end": (now() + timedelta(days=1)).isoformat()}).json()["id"]
+    assert client.get(f"/api/staff/activities/{other}/applications/attachments",
+                      headers=admin).status_code == 409
