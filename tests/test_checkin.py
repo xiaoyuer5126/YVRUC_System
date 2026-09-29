@@ -518,6 +518,13 @@ def test_地图配置只给管理者(client, admin, live_group, take_student):
                       headers=login(client, take_student())).status_code == 403
 
 
+def test_校区快捷选点含苏州校区(client, admin):
+    campuses = client.get("/api/staff/map-config", headers=admin).json()["campuses"]
+    assert [c["name"] for c in campuses] == ["中关村校区", "通州校区", "苏州校区"]
+    sz = campuses[2]
+    assert (sz["lat"], sz["lng"]) == (31.27872, 120.72849)
+
+
 def test_坐标的来源会写进审计(client, admin, db, live_group):
     """现场量的 vs 图上点的，在记录里必须分得出来：前者是「人到过现场」的证据，
     后者不是。将来复盘或追责，这一句话就是全部区别。"""
