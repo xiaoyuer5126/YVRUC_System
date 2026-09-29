@@ -1091,8 +1091,8 @@ class ViolationRecord(Base):
     """
     __tablename__ = "violation_records"
 
-    KINDS = {"late": "迟到早退", "leave": "无故请假", "contact": "无法取得联系",
-             "passive": "消极志愿", "other": "其他"}
+    KINDS = {"late": "迟到早退", "leave": "无故请假", "passive": "消极志愿",
+             "other": "其他"}
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)

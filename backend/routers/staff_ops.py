@@ -779,7 +779,7 @@ def _download(buf, filename: str) -> StreamingResponse:
 @router.get("/activities/{activity_id}/hours.xlsx")
 def export_hours(activity_id: str, db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager_download)):
-    """时长记录导出：姓名、身份证号、岗位（留空）、时长、备注（明细拼一行）。
+    """时长记录导出：姓名、学号、身份证号、时长、备注（明细拼一行）。
     选了劳务的不在其中——平台不给他们记时长。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)

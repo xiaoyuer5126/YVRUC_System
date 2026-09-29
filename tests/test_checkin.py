@@ -559,9 +559,11 @@ def test_地图配置带上校区预设点(client, admin):
     """坐标放后端：改一个校区的位置不该要重新构建前端。"""
     d = client.get("/api/staff/map-config", headers=admin).json()
     names = [c["name"] for c in d["campuses"]]
-    assert names == ["中关村校区", "通州校区"]
+    assert names == ["中关村校区", "通州校区", "苏州校区"]
     assert all(isinstance(c["lat"], float) and isinstance(c["lng"], float)
                for c in d["campuses"])
+    sz = d["campuses"][2]
+    assert (sz["lat"], sz["lng"]) == (31.27872, 120.72849)     # 天地图坐标
 
 
 # ======================= 地名搜索 =======================
