@@ -30,13 +30,11 @@ x-backend-env: &backend_env
   RUCVA_OPENPLATFORM_GATEWAY: ${RUCVA_OPENPLATFORM_GATEWAY:-}
   RUCVA_CAS_BASE_URL: ${RUCVA_CAS_BASE_URL:-}
   RUCVA_SSO_REDIRECT_URI: ${RUCVA_SSO_REDIRECT_URI:-}
-  # 天地图（管理端画签到点用）。瓦片由后端转发，两把 tk 都只在后端用、不进前端。
-  # 服务端 tk 是主路径（瓦片 + 地名搜索，按服务器 IP 白名单校验）；浏览器端 tk
-  # 只在服务端 tk 没配时兜底（后端带 RUCVA_PUBLIC_BASE_URL 当 Referer）。
+  # 天地图（管理端画签到点用）。瓦片由后端转发，只用服务端 tk（瓦片 + 地名搜索，
+  # 按服务器 IP 白名单校验），只在后端用、不进前端；没配则地图只画点和圈。
   # 注意这一份是逐个变量列出来的——往 .env 加了新变量，忘了在这儿加一行，
   # 容器里就当它不存在（表现为「地图不出来、也不报错」）。
   RUCVA_TIANDITU_TK_SERVER: ${RUCVA_TIANDITU_TK_SERVER:-}
-  RUCVA_TIANDITU_TK: ${RUCVA_TIANDITU_TK:-}
   # 每个 tk 每天的瓦片额度，到上限后端直接 503、不再请求天地图
   RUCVA_TIANDITU_DAILY_LIMIT: ${RUCVA_TIANDITU_DAILY_LIMIT:-10000}
   # 进程数与连接池。加进程是为了吃满多核（一个进程一个核，压测见

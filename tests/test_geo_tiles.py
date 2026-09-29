@@ -1,7 +1,7 @@
 """天地图瓦片转发（backend/routers/geo.py）。
 
 **绝不访问外网**：上游一律换成 httpx.MockTransport，由用例决定它回什么、
-并记下服务器实际发出去的请求（带的哪把 tk、Referer 是什么）。
+并记下服务器实际发出去的请求（带的什么 tk、请求头是什么）。
 """
 from __future__ import annotations
 
@@ -34,7 +34,6 @@ def upstream(monkeypatch, tmp_path):
     monkeypatch.setattr(geo, "_http", httpx.Client(transport=httpx.MockTransport(handler)))
     monkeypatch.setattr(config, "TILE_CACHE_DIR", tmp_path / "tiles")
     monkeypatch.setattr(config, "TIANDITU_TK_SERVER", "server-tk")
-    monkeypatch.setattr(config, "TIANDITU_TK", "browser-tk")
     locks._client.delete(f"rucva:tiles:{now().date().isoformat()}")
     yield state
     locks._client.delete(f"rucva:tiles:{now().date().isoformat()}")
@@ -150,6 +149,7 @@ def test_没有服务端tk就不画地图_浏览器端那把不能兜底(client,
     t = _token(client, admin)          # 先领令牌（要判「没配置」得先过验签那一关）
     monkeypatch.setattr(config, "TIANDITU_TK_SERVER", "")
     assert client.get("/api/geo/tile-token", headers=admin).json() == {"configured": False}
+    assert client.get("/api/staff/map-config", headers=admin).json()["tiles"] is False
     assert client.get(TILE, params={"t": t}).status_code == 404
     assert upstream["calls"] == []
 
@@ -165,16 +165,6 @@ def test_上游请求不冒充浏览器(client, admin, upstream):
     client.get(TILE, params={"t": _token(client, admin)})
     (req,) = upstream["calls"]
     assert "mozilla" not in req.headers.get("user-agent", "").lower()
-
-
-def test_两把tk都没配就不画地图(client, admin, upstream, monkeypatch):
-    t = _token(client, admin)
-    monkeypatch.setattr(config, "TIANDITU_TK_SERVER", "")
-    monkeypatch.setattr(config, "TIANDITU_TK", "")
-    assert client.get("/api/geo/tile-token", headers=admin).json() == {"configured": False}
-    assert client.get("/api/staff/map-config", headers=admin).json()["tiles"] is False
-    assert client.get(TILE, params={"t": t}).status_code == 404
-    assert upstream["calls"] == []
 
 
 # ======================= 上游出错 =======================
@@ -279,6 +269,6 @@ def test_接近额度记警告(client, admin, upstream, monkeypatch, caplog):
 def test_前端拿不到任何tk(client, admin, upstream):
     for url in ("/api/staff/map-config", "/api/geo/tile-token"):
         body = client.get(url, headers=admin).text
-        assert "server-tk" not in body and "browser-tk" not in body, url
+        assert "server-tk" not in body, url
     d = client.get("/api/staff/map-config", headers=admin).json()
     assert "tk" not in d and d["tiles"] is True
