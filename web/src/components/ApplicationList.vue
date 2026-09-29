@@ -97,7 +97,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api, download as dl, fmtDT } from '../api'
+import { api, downloadExport, fmtDT } from '../api'
 import ScoreAlert from './ScoreAlert.vue'
 import AnswerList from './AnswerList.vue'
 
@@ -142,8 +142,9 @@ const pendingCount = computed(() => apps.value.filter(a => a.status === 'applied
 const selectable = row => row.status === 'applied'
 const onSelect = rows => { selected.value = rows }
 
+// 只下 Excel；有上传的文件时再问要不要一起下附件包
 function exportXlsx() {
-  dl(`/api/staff/activities/${props.activityId}/applications.xlsx`)
+  downloadExport(`/api/staff/activities/${props.activityId}/applications`)
 }
 
 async function load() {

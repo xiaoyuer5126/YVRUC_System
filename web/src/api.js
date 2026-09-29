@@ -1,5 +1,5 @@
 /** 极简 fetch 封装：自动带 token、统一错误提示。 */
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { auth, clearAuth } from './store'
 
 /** 令牌失效了：清掉本地登录态，把人送回登录页，登完再回到刚才那一页。
@@ -118,6 +118,33 @@ export async function download(url) {
   const a = document.createElement('a')
   a.href = url + (url.includes('?') ? '&' : '?') + 'ticket=' + encodeURIComponent(ticket)
   a.click()
+}
+
+/** 导出表格；本次导出带问卷里上传的文件时，再问要不要把附件包一起下。
+ *
+ * base 形如 /api/staff/activities/<id>/export：表是 base.xlsx，附件数是
+ * base/attachments，附件包是 base/attachments.zip。表和附件分开下——多数
+ * 时候只要表，不必每次拖着几十兆的附件。
+ * 附件数单独问一次 JSON 接口，而不是放在表的响应头里：直链下载是 <a> 点出去的，
+ * 前端读不到响应头。先问数目再下表，没权限之类的错在这一步就能提示出来。
+ */
+export async function downloadExport(base) {
+  let count
+  try {
+    ({ count } = await api.get(`${base}/attachments`))
+  } catch {
+    return          // api 层已经提示过
+  }
+  await download(`${base}.xlsx`)
+  if (!count) return
+  try {
+    await ElMessageBox.confirm(`本次导出含 ${count} 个附件，是否同时打包下载？`, '附件', {
+      confirmButtonText: '打包下载', cancelButtonText: '不用了', type: 'info',
+    })
+  } catch {
+    return
+  }
+  await download(`${base}/attachments.zip`)
 }
 
 /** 上传一个文件（multipart）。FormData 不能走 api 的 JSON 封装，错误提示照旧。 */

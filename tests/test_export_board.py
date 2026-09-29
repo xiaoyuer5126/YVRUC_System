@@ -315,3 +315,85 @@ def test_排班表的页签只有概览和名单(client, admin, db,
     names = load_workbook(BytesIO(r.content)).sheetnames
     assert "活动概览" in names
     assert "志愿时长" not in names
+
+
+# ======================= 排班表与附件分开下 =======================
+
+def test_排班表只给excel附件另外打包且重名加序号(client, admin, db, open_group,
+                                          take_student):
+    """即选即得活动的报名问卷答案挂在排班表上：表里写附件包内的文件名，
+    同名的加序号、题目里的非法字符换成下划线，与附件包里一字不差。"""
+    import zipfile
+    from backend.models import Activity
+    from conftest import student_row
+
+    act, g = open_group(3)
+    db.get(Activity, act.id).status = "draft"
+    db.commit()
+    r = client.put(f"/api/staff/activities/{act.id}/form", headers=admin,
+                   json={"questions": [
+                       {"kind": "file", "title": "证明材料", "required": False},
+                       {"kind": "file", "title": "证明材料", "required": False},
+                       {"kind": "file", "title": "学生证/校园卡", "required": False},
+                   ]})
+    assert r.status_code == 200, r.text
+    qs = [q["id"] for q in r.json()["questions"]]
+    db.get(Activity, act.id).status = "published"
+    db.commit()
+
+    base = f"/api/staff/activities/{act.id}"
+    # 还没人报名：附件数 0，附件包 404
+    assert client.get(f"{base}/export/attachments", headers=admin).json() == {"count": 0}
+    assert client.get(dl_url(client, admin, f"{base}/export/attachments.zip")
+                      ).status_code == 404
+
+    sid = take_student()
+    h = login(client, sid)
+    ids = []
+    for i, ext in enumerate(("pdf", "pdf", "jpg")):
+        r = client.post(f"/api/activities/{act.id}/apply/upload", headers=h,
+                        files={"file": (f"f.{ext}", f"data{i}".encode(), "application/octet-stream")})
+        assert r.status_code == 200, r.text
+        ids.append(r.json()["id"])
+    r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll", headers=h,
+                    json={"position_id": g.test_position_id,
+                          "answers": dict(zip(qs, ids))})
+    assert r.status_code == 200, r.text
+
+    u = student_row(db, sid)
+    stem = f"{u.name}_{u.student_id}"
+    names = [f"{stem}_证明材料.pdf", f"{stem}_证明材料(2).pdf", f"{stem}_学生证_校园卡.jpg"]
+
+    r = client.get(dl_url(client, admin, f"{base}/export.xlsx"))
+    assert r.status_code == 200
+    assert "spreadsheetml" in r.headers["content-type"]
+    wb = load_workbook(BytesIO(r.content))
+    ws = wb[[s for s in wb.sheetnames if s != "活动概览"][0]]
+    row = [c for c in ws[2]][-3:]
+    assert [c.value for c in row] == names
+    assert all(c.hyperlink is None for c in row)
+
+    assert client.get(f"{base}/export/attachments", headers=admin).json() == {"count": 3}
+    r = client.get(dl_url(client, admin, f"{base}/export/attachments.zip"))
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    z = zipfile.ZipFile(BytesIO(r.content))
+    assert z.namelist() == names
+    assert [z.read(n) for n in names] == [b"data0", b"data1", b"data2"]
+
+
+def test_打包时文件刚被删掉也跳过不报错(db):
+    """登记时还在、打包前没了（清理任务刚好跑过）：跳过这一份，其余照打。"""
+    import zipfile
+    from backend.exporter import MATERIAL_DIR, Export
+
+    MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
+    here = MATERIAL_DIR / f"{uid('t')}.pdf"
+    here.write_bytes(b"ok")
+    ex = Export(db)
+    ex.files = [("在.pdf", here), ("不在.pdf", MATERIAL_DIR / f"{uid('t')}.pdf")]
+    try:
+        z = zipfile.ZipFile(ex.attachments_zip())
+        assert z.namelist() == ["在.pdf"] and z.read("在.pdf") == b"ok"
+    finally:
+        here.unlink()
+    assert Export(db).attachments_zip() is None
