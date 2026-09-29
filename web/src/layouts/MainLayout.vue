@@ -53,7 +53,8 @@
                 <el-dropdown-item divided command="profile"
                                   v-if="auth.user.user_type === 'student'">完善个人信息</el-dropdown-item>
                 <el-dropdown-item :divided="auth.user.user_type !== 'student'"
-                                  command="logout">退出登录</el-dropdown-item>
+                                  command="feedback">意见反馈</el-dropdown-item>
+                <el-dropdown-item command="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -88,20 +89,28 @@
         </div>
       </div>
       <SideMenu :active="$route.path" @navigate="drawer = false" />
+      <div class="drawer-foot">
+        <el-button text @click="openFeedback">
+          <el-icon><ChatDotRound /></el-icon>&nbsp;意见反馈
+        </el-button>
+      </div>
     </el-drawer>
 
     <!-- 资料完善对话框：未完善的学生登录时强制弹出；也可从右上角菜单进入修改 -->
     <ProfileDialog ref="profileDialog" />
+    <!-- 意见反馈：任何身份都能提，入口在右上角菜单与窄屏抽屉 -->
+    <FeedbackDialog ref="feedbackDialog" />
   </el-container>
 </template>
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, Bell, Check, Fold } from '@element-plus/icons-vue'
+import { ArrowDown, Bell, ChatDotRound, Check, Fold } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { auth, canSee, clearAuth, isTrainee, setActiveIdentity, ROLE_LABELS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
+import FeedbackDialog from '../components/FeedbackDialog.vue'
 import ProfileDialog from '../components/ProfileDialog.vue'
 import SideMenu from '../components/SideMenu.vue'
 
@@ -135,6 +144,11 @@ async function poll() {
 
 const profileDialog = ref(null)
 const openProfileDialog = (forced = false) => profileDialog.value.open(forced)
+const feedbackDialog = ref(null)
+function openFeedback() {
+  drawer.value = false
+  feedbackDialog.value.open()
+}
 
 // 本地存的用户信息是登录那一刻的：部门、层级、值班资格事后可能被调过，
 // 打开页面时刷一次，菜单（比如「活动审批」）才跟得上
@@ -165,6 +179,10 @@ async function onCommand(cmd) {
   }
   if (cmd === 'profile') {
     openProfileDialog(false)
+    return
+  }
+  if (cmd === 'feedback') {
+    openFeedback()
     return
   }
   if (cmd.startsWith('identity:')) {
@@ -219,6 +237,7 @@ async function onCommand(cmd) {
   background: linear-gradient(90deg, #7e1b2a, var(--ruc-red)); color: #fff;
 }
 .drawer-sub { font-size: 12px; opacity: .8; margin-top: 4px; }
+.drawer-foot { padding: 8px 12px; border-top: 1px dashed #eceef1; }
 
 @media (max-width: 860px) {
   .topbar { padding: 0 10px; }

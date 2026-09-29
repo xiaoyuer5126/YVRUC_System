@@ -280,7 +280,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
 
 
 def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
-    """时长记录：一人一行，姓名、身份证号、岗位（留空）、时长、备注。
+    """时长记录：一人一行，姓名、学号、身份证号、时长、备注。
 
     备注是明细拼成的一行（时段 + 岗位名，分号隔开，不换行）。
     选了劳务的人不导：平台不给他们记时长。
@@ -293,12 +293,13 @@ def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
     wb = Workbook()
     ws = wb.active
     ws.title = "时长记录"
-    header = ["姓名", "身份证号", "岗位", "时长", "备注"]
+    header = ["姓名", "学号", "身份证号", "时长", "备注"]
     ws.append(header)
     _style_header(ws, len(header))
     for rec, u in rows:
-        ws.append([u.name, u.id_card or "", "", rec.hours, rec.parts_text()])
-    for col, w in zip("ABCDE", (12, 22, 12, 8, 48)):
+        ws.append([u.name, u.student_id, u.id_card or "", rec.hours,
+                   rec.parts_text()])
+    for col, w in zip("ABCDE", (12, 14, 22, 8, 48)):
         ws.column_dimensions[col].width = w
     disarm_formulas(wb)
     buf = BytesIO()

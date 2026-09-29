@@ -65,7 +65,7 @@ def _staff_write_routes():
 # 这些接口的门槛比「管理身份」更高（管理员/会长团/部长/骨干），部门成员在
 # 那一道就被拦下，轮不到学习权限出场。点名列出：新接口不在表里就必须是学习权限拦的。
 STRICTER_GATE = {"create_department", "update_department", "delete_department",
-                 "pin", "put_integration", "set_roles"}
+                 "pin", "put_integration", "set_roles", "handle_feedback"}
 
 
 def test_部门成员对每一个写接口都被拦在写库之前(client):

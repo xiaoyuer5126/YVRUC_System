@@ -1091,8 +1091,8 @@ class ViolationRecord(Base):
     """
     __tablename__ = "violation_records"
 
-    KINDS = {"late": "迟到早退", "leave": "无故请假", "contact": "无法取得联系",
-             "passive": "消极志愿", "other": "其他"}
+    KINDS = {"late": "迟到早退", "leave": "无故请假", "passive": "消极志愿",
+             "other": "其他"}
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
@@ -1193,3 +1193,29 @@ class IntegrationConfig(Base):
     key: Mapped[str] = mapped_column(String(32), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
+# ======================= 意见反馈 =======================
+
+class Feedback(Base):
+    """用户对**平台本身**的意见反馈（bug、用不顺手的地方）。
+
+    志愿工作上的问题（活动安排、时长、组织）不在这里收，前端把人引到校青协的
+    志愿工作反馈平台去——两件事归不同的人管，混在一起两边都处理不好。
+    截图挂在 Attachment 上（owner_type="feedback"，owner_id = 本条 id）。
+    """
+    __tablename__ = "feedbacks"
+
+    STATUS_LABELS = {"open": "待处理", "handled": "已处理"}
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    content: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(12), default="open", index=True)
+    reply: Mapped[str] = mapped_column(Text, default="")
+    handled_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+
+    def status_label(self) -> str:
+        return self.STATUS_LABELS.get(self.status, self.status)
