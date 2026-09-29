@@ -48,6 +48,7 @@ ACTIVITY_FIELDS = {
     "contact_group_qr": "志愿者联络群二维码",
     "volunteer_requirement": "志愿者要求", "volunteer_benefit": "志愿者保障",
     "recruit_campuses": "招募校区", "recruit_stages": "招募学段",
+    "recruit_colleges": "招募学院",
     "reg_start": "报名开始", "reg_end": "报名截止",
 }
 
@@ -141,9 +142,10 @@ class ActivityBody(BaseModel):
     # 都选填：整体要求（着装、集合）与保障（餐食、时长、纪念品）
     volunteer_requirement: str = ""
     volunteer_benefit: str = ""
-    # 招募范围：限定校区/学段，空 = 不限
+    # 招募范围：限定校区/学段/学院，空 = 不限
     recruit_campuses: list[str] = []
     recruit_stages: list[str] = []
+    recruit_colleges: list[str] = []
     reg_start: str | None = None
     reg_end: str | None = None
 
@@ -166,16 +168,59 @@ def _clean_scope(raw: list[str], allowed: list[str], label: str) -> list[str]:
     return out
 
 
+COLLEGE_MAX_LEN = 64      # 与 User.college 的列宽一致，更长的不可能匹配上谁
+COLLEGE_MAX_COUNT = 100
+
+
+def _clean_colleges(raw: list[str]) -> list[str]:
+    """学院条件：去空白、去重、限长度与个数，但**不**限定在固定清单里。
+
+    学院取值来自统一身份认证（orgName），全校有哪些学院是从已有用户里汇总的
+    （见 college_options），config.COLLEGES 只是兜底——拿它卡人，真实学院名
+    一个都选不进来。前端只给汇总出来的选项，打错字的风险在那一层就挡住了。
+    """
+    out = []
+    for v in raw or []:
+        v = str(v).strip()
+        if not v:
+            continue
+        if len(v) > COLLEGE_MAX_LEN:
+            raise HTTPException(400, f"学院「{v[:20]}…」名称过长")
+        if v not in out:
+            out.append(v)
+    if len(out) > COLLEGE_MAX_COUNT:
+        raise HTTPException(400, f"学院最多选 {COLLEGE_MAX_COUNT} 个")
+    return out
+
+
+def college_options(db: OrmSession) -> list[str]:
+    """学院可选项：已有用户档案里出现过的学院 ∪ config.COLLEGES，排好序。
+
+    条件是拿去跟 User.college 逐字比对的，所以选项就从 User.college 里来——
+    统一身份认证写进来的是什么，这里就是什么，一字不差。
+    """
+    seen = {c for (c,) in db.query(User.college).distinct() if (c or "").strip()}
+    return sorted(seen | set(config.COLLEGES))
+
+
+@router.get("/colleges")
+def list_colleges(db: OrmSession = Depends(db_session),
+                  user: User = Depends(require_manager)):
+    """招募范围与岗位条件里「学院」多选的选项。"""
+    return {"colleges": college_options(db)}
+
+
 def _clean_requirement_tags(raw: dict) -> dict:
     """场次/岗位的条件要求。只认识的标签留下，值按各自的可选集合校验。"""
     known = {"校区": config.CAMPUSES, "学段": config.STAGES,
-             "学院": config.COLLEGES, "性别": ["男", "女"]}
+             "学院": None, "性别": ["男", "女"]}
     out = {}
     for tag, value in (raw or {}).items():
         if tag not in known:
             raise HTTPException(400, f"未知的条件标签「{tag}」")
         vals = value if isinstance(value, list) else [value]
-        vals = _clean_scope(vals, known[tag], tag)
+        vals = (_clean_colleges(vals) if known[tag] is None
+                else _clean_scope(vals, known[tag], tag))
         if vals:
             out[tag] = vals
     return out
@@ -259,6 +304,7 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                                                  config.CAMPUSES, "校区"),
                    recruit_stages=_clean_scope(body.recruit_stages,
                                                config.STAGES, "学段"),
+                   recruit_colleges=_clean_colleges(body.recruit_colleges),
                    reg_start=reg_start, reg_end=reg_end,
                    # 归口部门：青协的人建的活动归自己部门，部长从草稿期就看得到；
                    # 会长团与发起方建的留空，提交审批时再选
@@ -300,6 +346,8 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
             act.recruit_campuses = _clean_scope(value, config.CAMPUSES, "校区")
         elif key == "recruit_stages":
             act.recruit_stages = _clean_scope(value, config.STAGES, "学段")
+        elif key == "recruit_colleges":
+            act.recruit_colleges = _clean_colleges(value)
         elif key == "recruit_mode":
             _apply_recruit_mode(db, act, value)
         elif key == "contact_group_qr":
@@ -310,7 +358,8 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
             setattr(act, key, value)
     if "reg_end" in body:
         ensure_reg_end_in_range(act)
-    if ("recruit_campuses" in body or "recruit_stages" in body) \
+    if any(k in body for k in ("recruit_campuses", "recruit_stages",
+                               "recruit_colleges")) \
             and not body.get("keep_outsiders"):
         _refuse_if_enrolled_outside_scope(db, act)
     changes = diff_changes(

@@ -1280,7 +1280,7 @@
               <el-option value="女" label="限女生" /><el-option value="男" label="限男生" />
             </el-select>
             <el-select v-model="stationForm.collegeReq" multiple clearable collapse-tags
-                       placeholder="学院（不限）">
+                       filterable placeholder="学院（不限）">
               <el-option v-for="c in colleges" :key="c" :value="c" :label="c" />
             </el-select>
           </div>
@@ -2075,9 +2075,11 @@ async function delStation(st) {
 // —— 基本信息 ——
 onMounted(async () => {
   activityId = route.params.id
-  const c = await api.get('/api/auth/constants')
+  // 学院选项与招募范围同源：从已有用户档案汇总，不用 constants 里的演示清单
+  const [c, cl] = await Promise.all([api.get('/api/auth/constants'),
+                                     api.get('/api/staff/colleges')])
   modes.value = c.recruit_modes
-  colleges.value = c.colleges
+  colleges.value = cl.colleges || []
   campuses.value = c.campuses || []
   stages.value = c.stages || []
   loadAll()

@@ -9,7 +9,7 @@ export function emptyActivity() {
     title: '', organizer: '', recruit_mode: 'instant', location: '',
     contacts: [{ name: '', phone: '' }], intro: '',
     volunteer_requirement: '', volunteer_benefit: '', contact_group_qr: '',
-    recruit_campuses: [], recruit_stages: [],
+    recruit_campuses: [], recruit_stages: [], recruit_colleges: [],
   }
 }
 
@@ -26,6 +26,7 @@ export function activityToForm(act) {
     contact_group_qr: act.contact_group_qr || '',
     recruit_campuses: act.recruit_campuses || [],
     recruit_stages: act.recruit_stages || [],
+    recruit_colleges: act.recruit_colleges || [],
   }
 }
 
