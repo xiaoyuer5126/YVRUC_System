@@ -54,14 +54,17 @@ def _checkin_state(db: OrmSession, enr: Enrollment, g: Shift) -> dict:
         return {"state": "none", "method": "scan", "open": False}
     method = "geo" if geo_anchor(db, task) else "scan"
     t = now()
-    if task.valid_from and t < task.valid_from:
+    # 和扫码那边同一个时段（老数据留空的一端按默认补上），按钮亮不亮才跟
+    # 扫了能不能成对得上。签退也在这段里：过了「to」就不能自己签退了
+    start, end = task.window(g)
+    if t < start:
         state = "early"
-    elif task.valid_to and t > task.valid_to:
+    elif t > end:
         state = "expired"
     else:
         state = "active"
     return {"state": state, "method": method, "open": state == "active",
-            "from": iso_of(task.valid_from), "to": iso_of(task.valid_to)}
+            "from": iso_of(start), "to": iso_of(end)}
 
 
 def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:

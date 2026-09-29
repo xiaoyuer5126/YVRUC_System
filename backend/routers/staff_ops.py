@@ -30,6 +30,7 @@ from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
                       HoursRequest, Shift, Position, User, iso, new_checkin_token, now,
                       parse_local_dt, span_text, uid)
 from ..serializers import iso_of, recruit_scope_text
+from .checkin import checkout_open
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
 
@@ -163,6 +164,9 @@ def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
                     # shift_id 前端要用：一个活动多场次时，码表要按场次分辨，
                     # 手动补签也只能打到当前这块大屏对应的那一场上
                     "shift_id": t.shift_id, "shift_name": g.name,
+                    # 截止早于场次结束、或场次没完就关码，前端要先提醒：
+                    # 那之后没签退的人都按场次结束兜底、进待核
+                    "shift_end": iso(g.end_time),
                     "shift_kind": g.kind, "shift_kind_label": g.kind_label(),
                     "position_name": st.name if st else "",
                     "valid_from": iso(t.valid_from), "valid_to": iso(t.valid_to),
@@ -379,8 +383,15 @@ def toggle_task(task_id: str, body: dict,
         for key in ("valid_from", "valid_to"):
             if key in body:
                 raw = (body[key] or "").strip()
+                # 起止都不许留空：截止同时是签退截止，过了它没签退的人按场次
+                # 结束兜底——「不限」就永远判不出来。开始也一并要求，和生成时
+                # 总会填上起止保持一致，不留一种「一端不限」的特例
+                if not raw:
+                    raise HTTPException(
+                        400, "开放和停止签到的时间都要填" if key == "valid_from"
+                        else "停止签到时间必填：过了它还没签退的人按场次结束时间记时长")
                 try:
-                    setattr(task, key, parse_local_dt(raw) if raw else None)
+                    setattr(task, key, parse_local_dt(raw))
                 except ValueError:
                     raise HTTPException(400, "时间格式不对") from None
         if task.valid_from and task.valid_to and task.valid_to <= task.valid_from:
@@ -943,35 +954,37 @@ def _hours_notify_targets(db: OrmSession, act: Activity) -> list[User]:
     return council_members(db)
 
 
-CHECKOUT_GRACE = timedelta(hours=config.CHECKOUT_GRACE_HOURS)
-
-
 def _round_half_up(hours: float) -> float:
     """向上取整至 0.5 的倍数：2h13m → 2.5h。"""
     return math.ceil(max(0.0, hours) * 2) / 2
 
 
-def effective_checkout(rec: CheckinRecord, g: Shift):
+def effective_checkout(rec: CheckinRecord, g: Shift, still_open: bool):
     """签退时间判定：
        · 已签退 → 实际签退时间；
-       · 未签退但已超过「场次结束+2小时」→ 按场次结束时间兜底；
-       · 宽限期内未签退 → None（时长待定）。"""
+       · 未签退、这一场已经没有能签退的码了（码过了截止，或被关掉/删掉）
+         → 按场次结束时间兜底（auto，待核）；
+       · 未签退、码还开着没过截止 → None（时长待定，pending）。
+
+    still_open 由调用方用 checkin.checkout_open 算好传进来（一场算一次）。
+    签退没有另外的宽限：自己能签退的时段就是码的可签时段，两边必须说同一件事。
+    关掉的码再开、或把截止往后改，只要人还没被补签，这里就回到 pending——
+    判定是每次现算的，不落库。"""
     if rec.checkout_at:
         return rec.checkout_at, "actual"
-    deadline = g.end_time + CHECKOUT_GRACE
-    if now() > deadline:
+    if not still_open:
         return g.end_time, "auto"
     return None, "pending"
 
 
-def shift_hours(rec: CheckinRecord, g: Shift, t: datetime):
+def shift_hours(rec: CheckinRecord, g: Shift, t: datetime, still_open: bool):
     """一条签到记录在该场次记多少小时、要不要人工过目，**以及按哪段时间算的**。
 
     时长认定方式是建场次时定下的一次决定，不是事后逐条判断：
       fixed  到场即按场次时长计——两小时的彩排人就在那儿，不值得卡分钟，
              顺带消灭了「忘记签退」这类麻烦的一大半；
       none   只记出勤，不产生时长（线上培训）；
-      checkin 签退 − 签到，未签退按宽限期规则兜底并标记待核。
+      checkin 签退 − 签到，码关了/过了截止还没签退的按场次结束兜底并标记待核。
 
     返回 (小时数, 待核标记, 计时起点, 计时终点)。时段跟着一起给：备注里写的
     就是它，只回小时数的话，明细和数字会各说各的。
@@ -982,7 +995,7 @@ def shift_hours(rec: CheckinRecord, g: Shift, t: datetime):
         # 到场即按场次时长：写场次的起止，不写他实际几点到的
         return ((g.end_time - g.start_time).total_seconds() / 3600, "",
                 g.start_time, g.end_time)
-    checkout, kind = effective_checkout(rec, g)
+    checkout, kind = effective_checkout(rec, g, still_open)
     if checkout is None:
         end = min(t, g.end_time)
         return ((end - rec.checkin_at).total_seconds() / 3600, "pending",
@@ -1014,8 +1027,8 @@ def manual_parts(rec: HoursRecord | None) -> list:
 def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
     """基于签到/签退记录计算时长：签退 - 签到，向上取整至 0.5 小时。
 
-    未签退且在宽限期内 → 标记 pending（暂按当前时间估算展示）；
-    超过宽限未签退 → 按场次结束时间兜底，并标记 auto_checkout **待核**：
+    未签退、签到码还开着没过截止 → 标记 pending（暂按当前时间估算展示）；
+    码已过截止或被关掉仍未签退 → 按场次结束时间兜底，并标记 auto_checkout **待核**：
     到场扫个码就走的人和全程服务的人算出来一样多，这类记录必须由管理者
     过目——「确认全部」会跳过它们，见 hours_confirm。
 
@@ -1032,11 +1045,14 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
     per_user: dict[str, float] = {}
     flags: dict[str, set] = {}
     parts: dict[str, list] = {}
+    open_by_shift: dict[str, bool] = {}   # 这一场还能不能自己签退，一场查一次
     for rec in records:
         g = db.get(Shift, rec.shift_id)
         if g is None:
             continue
-        hours, flag, start, end = shift_hours(rec, g, t)
+        if g.id not in open_by_shift:
+            open_by_shift[g.id] = checkout_open(db, g, t)
+        hours, flag, start, end = shift_hours(rec, g, t, open_by_shift[g.id])
         if flag:
             flags.setdefault(rec.user_id, set()).add(flag)
         per_user[rec.user_id] = per_user.get(rec.user_id, 0.0) + max(0.0, hours)
@@ -1078,8 +1094,8 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
             "user": {"id": u.id, "name": u.name,
                      "student_id": u.student_id, "college": u.college},
             "hours": _round_half_up(total),
-            "pending": "pending" in fl,      # 未签退（宽限期内）
-            "auto_checkout": "auto" in fl,   # 超时自动按场次结束时间
+            "pending": "pending" in fl,      # 未签退（码还开着）
+            "auto_checkout": "auto" in fl,   # 码关了/过期仍未签退，按场次结束时间
             "confirmed": existing is not None,
             # 手动加的那几段要能删，得让前端拿到这一笔的 id（还没确认过的人
             # 没有记录，也就没有可删的段）
@@ -1336,7 +1352,7 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
     else:
         if not items:
             raise HTTPException(400, "暂无签到数据，无法确认时长")
-        # 未签退（宽限期内）与超时自动兜底的记录不在此列：时长存疑，
+        # 未签退（码还开着）与码关了/过期后自动兜底的记录不在此列：时长存疑，
         # 需要管理者在表格里逐条核对数值后单独确认
         clear = [it for it in items
                  if not it["pending"] and not it["auto_checkout"]]
