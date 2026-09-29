@@ -1,7 +1,7 @@
-"""对外联络部：值班、志愿北京登记、立项书。
+"""对外联络部：值班、立项书、志愿北京名称的外联确认。
 
 二级志愿团体的活动都归口对外联络部，审批量远超其他部门，部长一个人盯不过来：
-由部门骨干轮流值班，这个部门的审批（活动发布、时长锁定/解锁、志愿北京登记）
+由部门骨干轮流值班，这个部门的审批（活动发布、时长锁定/解锁、志愿北京确认）
 通知只发给值班的人，值班的人和部长一样能拍板；部长每晚收一份日报。
 没人值班就回落给部长——审批不能因为排班空档没人收。
 
@@ -13,25 +13,24 @@
 两份文件都挂在 Attachment 上（owner_type = proposal / stamped，owner_id = 活动 id），
 存储与一次性票据下载沿用学习材料那一套。
 
-志愿北京时长录入截图（vb_hours）也按同一套格子放：它不分内外，所有活动锁定
-时长之后都要交，交了并确认，活动才算「已完成」。
+志愿北京确认不分内外：所有活动提交时长审核时都要填志愿北京上的活动名称，
+时长审核通过（锁定）后名称推给对外联络部核对，确认了活动才算「已完成」。
+活动本身归口哪个部门都一样——志愿北京那边的账只有对外联络部对。
 """
 from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .models import Activity, Attachment, Department, User
+from .models import Activity, Attachment, Department, User, VbConfirm, now, uid
 
 LIAISON_DEPT = "对外联络部"
 DUTY_DEPTS = (LIAISON_DEPT,)
 # 能值班的：部门骨干与部长。部门成员是学习权限，拍不了板。
 ELIGIBLE_POSTS = ("core", "head")
 
-SLOTS = {"proposal": "立项书", "stamped": "盖章立项书",
-         "vb_hours": "志愿北京时长录入截图"}
-# 各格能传的文件类型；没列的格子沿用学习材料的全部类型。截图就是截图：
-# 图片，或者打印成的 PDF
-SLOT_EXTS = {"vb_hours": ("png", "jpg", "jpeg", "pdf")}
+SLOTS = {"proposal": "立项书", "stamped": "盖章立项书"}
+# 各格能传的文件类型；没列的格子沿用学习材料的全部类型
+SLOT_EXTS: dict[str, tuple[str, ...]] = {}
 
 
 # ======================= 部门与值班 =======================
@@ -139,8 +138,8 @@ def session_user(db: OrmSession, user: User) -> dict:
 
 # ======================= 对外活动与立项书 =======================
 
-# 活动正式发布之后的状态。先立项再结项：志愿北京登记、盖章立项书都是
-# 活动发布之后才交的材料，草稿和审批中的活动交不了
+# 活动正式发布之后的状态。先立项再结项：盖章立项书是活动发布之后才交的
+# 材料，草稿和审批中的活动交不了
 PUBLISHED_STATES = ("published", "closed", "finished", "vb_pending", "completed")
 
 
@@ -184,3 +183,95 @@ def can_see_project_files(db: OrmSession, user: User, act: Activity) -> bool:
     return (is_activity_manager(db, user, act.id)
             or is_dept_handler(db, user, act.approval_dept_id)
             or can_review(db, user, act))
+
+
+# ======================= 志愿北京名称与外联确认 =======================
+
+VB_NAME_MAX = 20        # 一场活动最多填几个志愿北京名称
+
+
+def clean_vb_names(raw) -> list[str]:
+    """管理者填的志愿北京活动名称：去掉首尾空白与空行、去重（保留顺序）。
+    每个 2~200 字，至少一个、至多 VB_NAME_MAX 个；不合格抛 ValueError，
+    消息直接给人看。"""
+    out: list[str] = []
+    for x in raw or []:
+        name = str(x or "").strip()
+        if not name or name in out:
+            continue
+        if len(name) < 2:
+            raise ValueError(f"志愿北京活动名称「{name}」太短，请写全称")
+        if len(name) > 200:
+            raise ValueError("志愿北京活动名称不能超过 200 字")
+        out.append(name)
+    if not out:
+        raise ValueError("请填写志愿北京上的活动名称（至少一个）")
+    if len(out) > VB_NAME_MAX:
+        raise ValueError(f"志愿北京活动名称最多 {VB_NAME_MAX} 个")
+    return out
+
+
+def vb_decider(db: OrmSession, user: User) -> bool:
+    """谁来确认志愿北京：对外联络部的值班人与部长（跟当前身份），会长团、管理员。"""
+    if user.has_full_access():
+        return True
+    dept = liaison_dept(db)
+    return dept is not None and is_dept_handler(db, user, dept.id)
+
+
+def vb_contacts(db: OrmSession) -> list[User]:
+    """外联确认逐条通知谁：对外联络部的值班人，没人值班发部长——不看活动本身
+    归口哪个部门。部门没了、也没设部长就兜底发会长团（按真实身份），
+    不然这一条没人知道。"""
+    dept = liaison_dept(db)
+    contact = approval_contact(db, dept.id) if dept else None
+    if contact is not None:
+        return [contact]
+    return [u for u in db.query(User).filter(User.qingxie_post == "council").all()
+            if u.is_council(real=True)]
+
+
+def latest_vb_confirm(db: OrmSession, activity_id: str) -> VbConfirm | None:
+    return (db.query(VbConfirm).filter(VbConfirm.activity_id == activity_id)
+            .order_by(VbConfirm.submitted_at.desc()).first())
+
+
+def names_text(names: list[str]) -> str:
+    return "、".join(f"「{n}」" for n in names or [])
+
+
+def push_vb_confirm(db: OrmSession, act: Activity, actor: User | None,
+                    kind: str) -> VbConfirm:
+    """把活动当前的志愿北京名称推给对外联络部核对。不提交事务。
+
+    kind=lock：时长审核通过、刚锁定；kind=resubmit：被退回后管理者改了名称重提。
+    """
+    from .notify import notify
+
+    row = VbConfirm(id=uid("vbc"), activity_id=act.id, kind=kind,
+                    names=list(act.vb_names or []),
+                    submitted_by=actor.id if actor else "system",
+                    submitted_at=now())
+    db.add(row)
+    act.vb_reminded_on = None           # 重提了，「迟迟不重提」的提醒从头算
+    again = kind == "resubmit"
+    for u in vb_contacts(db):
+        notify(db, u, f"志愿北京待确认｜{act.title}",
+               f"「{act.title}」（{act.organizer}）的志愿时长已锁定"
+               + ("，管理者按退回意见改了志愿北京活动名称，重新提交。" if again else "。")
+               + f"\n志愿北京活动名称：{names_text(row.names)}\n"
+               f"请到志愿北京核对后，在「活动审批」确认或退回。",
+               data={"activity_id": act.id, "route": "approvals"}, need_ack=True)
+    return row
+
+
+def void_vb_confirms(db: OrmSession, act: Activity) -> int:
+    """时长解锁：这场活动还算数的外联确认（待确认、已退回、已确认）一并作废。
+    改过的时长重新锁定时再推一次。不提交事务。"""
+    rows = (db.query(VbConfirm)
+            .filter(VbConfirm.activity_id == act.id,
+                    VbConfirm.status != "void").all())
+    for r in rows:
+        r.status = "void"
+    act.vb_reminded_on = None
+    return len(rows)

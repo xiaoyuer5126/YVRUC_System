@@ -2,7 +2,7 @@
   <div class="page">
     <h2>活动审批</h2>
     <el-alert type="info" :closable="false">
-      驳回与转交均须写明理由，相关各方都会收到通知。
+      通过可以附意见（选填），驳回、退回与转交须写明理由；意见随通知发给申请人，审核页签里也看得到。
     </el-alert>
 
     <!-- 值班：对外联络部的审批通知只发给值班的人，没人值班才发部长。
@@ -22,7 +22,7 @@
         </el-link>
       </div>
       <div class="dim" style="margin-top:8px">
-        本部门的活动审批、时长锁定/解锁与志愿北京登记由值班人处理，部长随时可以直接处理；
+        本部门的活动审批、时长锁定/解锁与志愿北京外联确认由值班人处理，部长随时可以直接处理；
         部长每晚 21 点收到当天的汇总。
       </div>
       <div v-if="d.can_assign || d.can_handover" class="toolbar" style="margin:8px 0 0">
@@ -53,24 +53,34 @@
       </el-table>
     </el-card>
 
-    <!-- 志愿北京登记：管理者说「我在志愿北京建好了」，这边上志愿北京核对 -->
-    <template v-if="vbRegs.length">
-      <div class="section-title">志愿北京登记待核对</div>
-      <el-card v-for="v in vbRegs" :key="v.id" shadow="never" class="item">
+    <!-- 志愿北京外联确认：时长锁定后管理者填的名称推到这里（不论活动归口哪个部门），
+         外联上志愿北京核对，确认即活动完成；退回写理由，管理者改好名称重提 -->
+    <template v-if="vbConfirms.length">
+      <div class="section-title">志愿北京待确认</div>
+      <el-card v-for="v in vbConfirms" :key="v.id" shadow="never" class="item">
         <div class="head">
-          <b class="title" @click="$router.push('/activity/' + v.activity_id)">
+          <b class="title" @click="$router.push('/manage/' + v.activity_id + '?tab=review')">
             {{ v.activity_title }}
           </b>
+          <el-tag v-if="v.kind === 'resubmit'" size="small" type="warning" effect="plain">
+            退回后重提
+          </el-tag>
           <span style="margin-left:auto">
-            <el-button size="small" type="success" @click="decideVb(v, true)">通过</el-button>
-            <el-button size="small" type="danger" plain @click="decideVb(v, false)">驳回</el-button>
+            <el-button size="small" type="success" @click="openVb(v, true)">确认</el-button>
+            <el-button size="small" type="danger" plain @click="openVb(v, false)">退回</el-button>
           </span>
         </div>
         <div class="submit-note">
-          <b>志愿北京活动名称</b><span>{{ v.vb_name }}</span>
+          <b>志愿北京活动名称</b>
+          <div v-for="n in v.names" :key="n">{{ n }}</div>
+        </div>
+        <div v-if="v.last_return" class="submit-note">
+          <b>上次退回理由</b><span>{{ v.last_return }}</span>
         </div>
         <div class="dim" style="margin-top:8px">
-          {{ v.organizer }} · {{ v.submitted_by }} 登记于 {{ fmtDT(v.submitted_at) }}
+          {{ v.organizer }} · 时长锁定于 {{ fmtDT(v.locked_at) }} ·
+          {{ v.submitted_by }} {{ v.kind === 'resubmit' ? '重提' : '推送' }}于 {{ fmtDT(v.submitted_at) }}
+          · 在志愿北京核对后确认，活动即标记为已完成
         </div>
       </el-card>
     </template>
@@ -97,14 +107,18 @@
         <div class="submit-note">
           <b>说明</b><span>{{ u.reason }}</span>
         </div>
+        <div v-if="u.vb_names?.length" class="submit-note">
+          <b>志愿北京活动名称</b>
+          <div v-for="n in u.vb_names" :key="n">{{ n }}</div>
+        </div>
         <div class="dim" style="margin-top:8px">
           {{ u.requested_by }} 提交于 {{ fmtDT(u.created_at) }} ·
-          {{ u.kind === 'lock' ? '通过即锁定时长，上传志愿北京录入截图后活动标记为已完成；驳回退回管理者修改'
-                               : '通过后解锁，管理者改完须重新核准' }}
+          {{ u.kind === 'lock' ? '通过即锁定时长，志愿北京名称推给对外联络部确认；驳回退回管理者修改'
+                               : '通过后解锁，外联确认作废，管理者改完须重新核准' }}
         </div>
       </el-card>
     </template>
-    <div v-if="hoursReqs.length || vbRegs.length" class="section-title">待审批活动</div>
+    <div v-if="hoursReqs.length || vbConfirms.length" class="section-title">待审批活动</div>
 
     <el-empty v-if="!rows.length && !loading" :image-size="70"
               :description="duties.length && !duties.some(d => d.can_handover || d.can_assign)
@@ -209,21 +223,11 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="dlg.visible" :title="dlg.approve ? '通过审批' : '驳回'"
-               width="480">
-      <p class="dim">{{ dlg.row?.title }}</p>
-      <el-input v-model="dlg.comment" type="textarea" :rows="3" maxlength="500"
-                show-word-limit
-                :placeholder="dlg.approve ? '审批意见（选填），会发给发起方'
-                                          : '请写明驳回理由，会发给发起方'" />
-      <template #footer>
-        <el-button @click="dlg.visible = false">取消</el-button>
-        <el-button :type="dlg.approve ? 'success' : 'danger'" :loading="dlg.busy"
-                   @click="submitDecision">
-          确认{{ dlg.approve ? '通过' : '驳回' }}
-        </el-button>
-      </template>
-    </el-dialog>
+    <!-- 三种审批共用一个意见对话框：通过选填、驳回/退回必填 -->
+    <ApprovalCommentDialog v-model="cd.visible" :approve="cd.approve" :title="cd.title"
+                           :subject="cd.subject" :audience="cd.audience"
+                           :approve-label="cd.approveLabel" :reject-label="cd.rejectLabel"
+                           :templates="[]" :submit="submitDecision" />
 
     <el-dialog v-model="tr.visible" title="转交审批" width="480">
       <p class="dim">{{ tr.row?.title }}</p>
@@ -268,17 +272,20 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
+import ApprovalCommentDialog from '../components/ApprovalCommentDialog.vue'
 import { useNarrow } from '../composables/useNarrow'
 import { auth } from '../store'
 
 const narrow = useNarrow()
 const rows = ref([])
 const hoursReqs = ref([])
-const vbRegs = ref([])
+const vbConfirms = ref([])
 const duties = ref([])
 const depts = ref([])
 const loading = ref(false)
-const dlg = ref({ visible: false, row: null, approve: true, comment: '', busy: false })
+// 审批意见对话框：kind = activity 活动立项 / hours 时长锁定解锁 / vb 外联确认志愿北京
+const cd = ref({ visible: false, kind: '', row: null, approve: true, title: '', subject: '',
+                 audience: '', approveLabel: '通过', rejectLabel: '驳回' })
 // 部门的维护：管理员或会长团
 const dd = ref({ visible: false, row: null, name: '', note: '', studentId: '', busy: false })
 const isAdmin = computed(() =>
@@ -326,7 +333,7 @@ async function load() {
   try {
     rows.value = await api.get('/api/staff/approvals')
     hoursReqs.value = await api.get('/api/staff/hours-requests')
-    vbRegs.value = await api.get('/api/staff/vb-registrations')
+    vbConfirms.value = await api.get('/api/staff/vb-confirms')
     depts.value = await api.get('/api/staff/departments')
     duties.value = (await api.get('/api/staff/duty')).map(withForm)
   } finally { loading.value = false }
@@ -348,55 +355,43 @@ async function setDuty(d, clear = false) {
   } finally { d.busy = false }
 }
 
-async function decideVb(row, approve) {
-  let reply = ''
-  if (!approve) {
-    const r = await ElMessageBox.prompt('写明为什么没通过（如志愿北京上查不到这个名称），会发给登记人。',
-                                        '驳回登记',
-                                        { inputValidator: v => (v || '').trim().length >= 2
-                                                               || '至少 2 个字' })
-    reply = r.value.trim()
-  }
-  await api.post(`/api/staff/vb-registrations/${row.id}/decide`, { approve, reply })
-  ElMessage.success(approve ? '已通过' : '已驳回并通知登记人')
-  load()
+/** 外联确认志愿北京：确认即活动完成；退回通知管理者改名称重提（时长保持锁定）。 */
+function openVb(row, approve) {
+  cd.value = { visible: true, kind: 'vb', row, approve, subject: row.activity_title,
+               title: approve ? '确认志愿北京' : '退回志愿北京名称',
+               audience: '活动管理者', approveLabel: '确认', rejectLabel: '退回' }
 }
 
-/** 锁定：同意即封账，管理者上传志愿北京录入截图后活动才标记已完成；驳回退回管理者改。
- *  解锁：同意即允许改已经封了的账，改完他要重新核准。 */
-async function decideHours(row, approve) {
-  let reply = ''
+/** 锁定：同意即封账，志愿北京名称推给对外联络部确认；驳回退回管理者改。
+ *  解锁：同意即允许改已经封了的账，外联确认作废，改完他要重新核准。 */
+function decideHours(row, approve) {
   const what = row.kind === 'lock' ? '时长审核' : '解锁申请'
-  if (!approve) {
-    const r = await ElMessageBox.prompt('请写明驳回理由，会发给申请人。', `驳回${what}`,
-                                        { inputValidator: v => (v || '').trim().length >= 2
-                                                               || '至少 2 个字' })
-    reply = r.value.trim()
-  }
-  await api.post(`/api/staff/hours-requests/${row.id}/decide`, { approve, reply })
-  ElMessage.success(approve
-    ? (row.kind === 'lock' ? '已通过，时长已锁定' : '已同意解锁')
-    : '已驳回')
-  load()
+  cd.value = { visible: true, kind: 'hours', row, approve, subject: row.activity_title,
+               title: `${approve ? '同意' : '驳回'}${what}`, audience: '申请人',
+               approveLabel: '同意', rejectLabel: '驳回' }
 }
 
 function decide(row, approve) {
-  dlg.value = { visible: true, row, approve, comment: '', busy: false }
+  cd.value = { visible: true, kind: 'activity', row, approve, subject: row.title,
+               title: approve ? '通过审批' : '驳回', audience: '发起方',
+               approveLabel: '通过', rejectLabel: '驳回' }
 }
 
-async function submitDecision() {
-  const d = dlg.value
-  if (!d.approve && d.comment.trim().length < 2) {
-    return ElMessage.warning('驳回必须写明理由')
+async function submitDecision(comment) {
+  const { kind, row, approve } = cd.value
+  if (kind === 'activity') {
+    await api.post(`/api/staff/activities/${row.id}/decide`, { approve, comment })
+    ElMessage.success(approve ? '已通过，发起方可以自行发布' : '已驳回并通知发起方')
+  } else if (kind === 'hours') {
+    await api.post(`/api/staff/hours-requests/${row.id}/decide`, { approve, reply: comment })
+    ElMessage.success(approve
+      ? (row.kind === 'lock' ? '已通过，时长已锁定，名称已推给对外联络部' : '已同意解锁')
+      : '已驳回')
+  } else {
+    await api.post(`/api/staff/vb-confirms/${row.id}/decide`, { approve, reply: comment })
+    ElMessage.success(approve ? '已确认，活动已完成' : '已退回并通知管理者')
   }
-  d.busy = true
-  try {
-    await api.post(`/api/staff/activities/${d.row.id}/decide`,
-                   { approve: d.approve, comment: d.comment })
-    ElMessage.success(d.approve ? '已通过，发起方可以自行发布' : '已驳回并通知发起方')
-    d.visible = false
-    load()
-  } finally { d.busy = false }
+  load()
 }
 
 function openTransfer(row) {

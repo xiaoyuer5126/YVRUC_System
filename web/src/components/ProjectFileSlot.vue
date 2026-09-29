@@ -1,4 +1,4 @@
-<!-- 立项书 / 盖章立项书 / 志愿北京时长录入截图的一格：一格只留一份，传新的就替换。
+<!-- 立项书 / 盖章立项书的一格：一格只留一份，传新的就替换。
      能不能换由后端说了算（block 是不能换的原因），这里只照着显示。 -->
 <template>
   <div class="pf-slot">
@@ -32,7 +32,7 @@ import { download, fmtDT, uploadFile } from '../api'
 
 const props = defineProps({
   activityId: { type: String, required: true },
-  kind: { type: String, required: true },        // proposal / stamped / vb_hours
+  kind: { type: String, required: true },        // proposal / stamped
   label: { type: String, required: true },
   file: { type: Object, default: null },
   canUpload: { type: Boolean, default: false },

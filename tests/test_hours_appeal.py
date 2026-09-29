@@ -20,7 +20,8 @@ def served(db, take_student):
                    intro="x", location="世纪馆",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
                    status="finished", reg_start=now() - timedelta(days=10),
-                   reg_end=now() - timedelta(days=5), created_by=admin.id)
+                   reg_end=now() - timedelta(days=5), vb_names=["申诉测试志愿服务"],
+                   created_by=admin.id)
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin.id, added_by=admin.id))
@@ -332,7 +333,8 @@ def test_锁定后改时长要报审批(client, admin, db, served):
 
 
 def test_没有时长记录的活动核准即锁定(client, admin, db, served):
-    """一条时长都没有的活动没什么可申诉的，直接结账。"""
+    """一条时长都没有的活动没什么可申诉的，直接结账；志愿北京也没什么可录的，
+    不推外联，直接完成。"""
     act, _g, _u = served
     db.query(HoursRecord).filter(HoursRecord.activity_id == act.id).delete()
     db.commit()
@@ -340,7 +342,7 @@ def test_没有时长记录的活动核准即锁定(client, admin, db, served):
                     headers=admin, json={})
     assert r.status_code == 200 and r.json()["locked"] is True
     db.expire_all()
-    assert db.get(Activity, act.id).status == "vb_pending"
+    assert db.get(Activity, act.id).status == "completed"
 
 
 def test_非本活动管理者不能处理申诉(client, admin, initiator, db, served):

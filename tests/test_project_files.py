@@ -151,7 +151,7 @@ def _external_due(db, liaison) -> Activity:
                    status="finished", approval_dept_id=liaison.id,
                    hours_approved_at=now() - timedelta(hours=2),
                    appeal_deadline=now() - timedelta(minutes=5),
-                   created_by=admin_user.id)
+                   vb_names=["对外结账志愿服务"], created_by=admin_user.id)
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin_user.id, added_by=admin_user.id))
@@ -244,8 +244,8 @@ def test_删草稿连立项书一起删(client, admin, db, liaison):
     aid = make_draft(client, admin)
     stored = db.query(Attachment).filter(Attachment.owner_type == "proposal",
                                          Attachment.owner_id == aid).one().stored_name
-    client.post(f"/api/staff/activities/{aid}/vb-registrations", headers=admin,
-                json={"vb_name": "建错了"})
+    assert client.put(f"/api/staff/activities/{aid}/vb-names", headers=admin,
+                      json={"names": ["先存的名称"]}).status_code == 200
     assert client.delete(f"/api/staff/activities/{aid}", headers=admin).status_code == 200
     db.expire_all()
     assert not db.query(Attachment).filter(Attachment.owner_id == aid).count()

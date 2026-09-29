@@ -1,5 +1,5 @@
-"""对外联络部的三件事：值班交接、志愿北京登记、立项书与盖章立项书；
-外加所有活动收尾都要过的一步：上传志愿北京时长录入截图并确认完成。
+"""对外联络部的三件事：值班交接、立项书与盖章立项书、志愿北京名称的外联确认
+（所有活动收尾都要过的一步：时长锁定后外联在志愿北京核对名称，确认即完成）。
 
 规则本身在 backend/liaison.py，这里只是接口。
 """
@@ -17,9 +17,10 @@ from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import require_manager
 from ..models import (Activity, Attachment, Department, DutyHandover, HoursRequest,
-                      User, VbRegistration, iso, now, uid)
-from ..notify import notify
+                      User, VbConfirm, iso, now, uid)
+from ..notify import notify, notify_managers
 from ..perm import ensure_activity_manager, is_activity_manager
+from .staff_ops import save_vb_names, vb_names_block
 from .materials import EXT_TYPES, MATERIAL_DIR
 
 router = APIRouter(prefix="/api/staff", tags=["liaison"])
@@ -144,30 +145,27 @@ def _dept_pending_count(db: OrmSession, dept: Department) -> int:
               .filter(HoursRequest.activity_id.in_(acts),
                       HoursRequest.status == "pending").count())
     if dept.name == liaison.LIAISON_DEPT:
-        n += (db.query(VbRegistration)
-              .filter(VbRegistration.status == "submitted").count())
+        n += (db.query(VbConfirm)
+              .filter(VbConfirm.status == "pending").count())
     return n
 
 
-# ======================= 志愿北京登记 =======================
+# ======================= 志愿北京名称与外联确认 =======================
 
-def _vb_decider(db: OrmSession, user: User) -> bool:
-    """谁来核对志愿北京：对外联络部的值班人与部长，会长团、管理员。"""
-    if user.has_full_access():
-        return True
-    dept = liaison.liaison_dept(db)
-    return dept is not None and liaison.is_dept_handler(db, user, dept.id)
+def _name(db: OrmSession, uid_: str | None) -> str:
+    if uid_ == "system":
+        return "系统"
+    u = db.get(User, uid_) if uid_ else None
+    return u.name if u else ""
 
 
-def _vb_out(db: OrmSession, r: VbRegistration) -> dict:
-    def name(uid_):
-        u = db.get(User, uid_) if uid_ else None
-        return u.name if u else ""
-    return {"id": r.id, "activity_id": r.activity_id, "vb_name": r.vb_name,
+def _vbc_out(db: OrmSession, r: VbConfirm) -> dict:
+    return {"id": r.id, "activity_id": r.activity_id, "names": r.names,
+            "kind": r.kind, "kind_label": r.kind_label(),
             "status": r.status, "status_label": r.status_label(),
-            "submitted_by": name(r.submitted_by),
+            "submitted_by": _name(db, r.submitted_by),
             "submitted_at": iso(r.submitted_at),
-            "handled_by": name(r.handled_by), "handled_at": iso(r.handled_at),
+            "handled_by": _name(db, r.handled_by), "handled_at": iso(r.handled_at),
             "reply": r.reply}
 
 
@@ -178,72 +176,83 @@ def _act(db: OrmSession, activity_id: str) -> Activity:
     return act
 
 
-@router.get("/activities/{activity_id}/vb-registrations")
-def list_vb(activity_id: str, db: OrmSession = Depends(db_session),
-            user: User = Depends(require_manager)):
+def _can_resubmit(db: OrmSession, act: Activity) -> bool:
+    """被外联退回、还没重提：管理者可以改名称重新提交。"""
+    last = liaison.latest_vb_confirm(db, act.id)
+    return (act.status == "vb_pending" and last is not None
+            and last.status == "returned")
+
+
+@router.get("/activities/{activity_id}/vb-confirms")
+def activity_vb_confirms(activity_id: str, db: OrmSession = Depends(db_session),
+                         user: User = Depends(require_manager)):
+    """这场活动的志愿北京名称与外联确认的全部往来，新的在前。审核页签用：
+    管理者、外联值班人/部长、审批线上的人都能看。"""
     act = _act(db, activity_id)
     manager = is_activity_manager(db, user, act.id)
-    decider = _vb_decider(db, user)
-    if not (manager or decider):
-        raise HTTPException(403, "您不是该活动的管理者，无法查看")
-    rows = (db.query(VbRegistration)
-            .filter(VbRegistration.activity_id == act.id)
-            .order_by(VbRegistration.submitted_at.desc()).all())
-    return {"items": [_vb_out(db, r) for r in rows],
-            "can_submit": manager and user.can_write() and liaison.is_published(act),
-            "can_decide": decider, "manager": manager,
-            "published": liaison.is_published(act)}
+    decider = liaison.vb_decider(db, user)
+    if not (manager or decider or liaison.can_see_project_files(db, user, act)):
+        raise HTTPException(403, "您无权查看该活动的志愿北京确认")
+    rows = (db.query(VbConfirm).filter(VbConfirm.activity_id == act.id)
+            .order_by(VbConfirm.submitted_at.desc()).all())
+    writer = manager and user.can_write()
+    block = vb_names_block(db, act)
+    contacts = liaison.vb_contacts(db)
+    dept = liaison.liaison_dept(db)
+    duty = liaison.on_duty(db, dept) if dept else None
+    return {"names": list(act.vb_names or []), "status": act.status,
+            "items": [_vbc_out(db, r) for r in rows],
+            "manager": manager, "can_decide": decider,
+            # 提交时长审核之前随时可以先存；锁定后只能在被退回时重提
+            "can_edit": writer and not block, "edit_block": block if manager else "",
+            "can_resubmit": writer and _can_resubmit(db, act),
+            "handler": (f"{duty.name}（值班）" if duty
+                        else "、".join(u.name for u in contacts))}
 
 
-class VbBody(BaseModel):
-    vb_name: str
+class VbNamesBody(BaseModel):
+    names: list[str]
 
 
-@router.post("/activities/{activity_id}/vb-registrations")
-def submit_vb(activity_id: str, body: VbBody, db: OrmSession = Depends(db_session),
-              user: User = Depends(require_manager)):
-    """「我在志愿北京建好了活动，名称是 X」。条数不限，建错了作废再报。"""
+@router.put("/activities/{activity_id}/vb-names")
+def save_names(activity_id: str, body: VbNamesBody,
+               db: OrmSession = Depends(db_session),
+               user: User = Depends(require_manager)):
+    """提交时长审核之前先把志愿北京活动名称存下来（申诉期满自动提交要用）。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    if not liaison.is_published(act):
-        raise HTTPException(409, "活动正式发布之后才能登记志愿北京")
-    name = body.vb_name.strip()
-    if len(name) < 2:
-        raise HTTPException(400, "请填写志愿北京上的活动名称")
-    r = VbRegistration(id=uid("vbr"), activity_id=act.id, vb_name=name[:200],
-                       submitted_by=user.id)
-    db.add(r)
-    audit_log(db, actor=user, action="vb_register", target_type="activity",
-              target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"登记志愿北京活动「{r.vb_name}」")
-    dept = liaison.liaison_dept(db)
-    contact = liaison.approval_contact(db, dept.id) if dept else None
-    if contact is not None:
-        notify(db, contact, f"志愿北京待核对｜{act.title}",
-               f"{user.name} 登记：「{act.title}」已在志愿北京建好活动，"
-               f"名称「{r.vb_name}」。\n请到志愿北京核对后，在「活动审批」通过或驳回。",
-               data={"activity_id": act.id, "route": "approvals"}, need_ack=True)
+    block = vb_names_block(db, act)
+    if block:
+        raise HTTPException(409, block)
+    names = save_vb_names(db, act, user, body.names)
     db.commit()
-    return _vb_out(db, r)
+    return {"ok": True, "names": names}
 
 
-@router.post("/vb-registrations/{reg_id}/void")
-def void_vb(reg_id: str, db: OrmSession = Depends(db_session),
-            user: User = Depends(require_manager)):
-    """作废一条登记（报错了名称、建重了）。记录留着，只是不再算数。"""
-    r = db.get(VbRegistration, reg_id)
-    if r is None:
-        raise HTTPException(404, "登记不存在")
-    ensure_activity_manager(db, user, r.activity_id)
-    if r.status not in ("submitted", "approved"):
-        raise HTTPException(409, f"该登记{r.status_label()}，无需作废")
-    r.status, r.handled_by, r.handled_at = "void", user.id, now()
-    act = _act(db, r.activity_id)
-    audit_log(db, actor=user, action="vb_register", target_type="activity",
+@router.post("/activities/{activity_id}/vb-confirms/resubmit")
+def resubmit_vb(activity_id: str, body: VbNamesBody,
+                db: OrmSession = Depends(db_session),
+                user: User = Depends(require_manager)):
+    """外联退回之后，管理者改好名称重新提交给外联。只重提名称：时长保持锁定，
+    不重走时长审核。"""
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    if not _can_resubmit(db, act):
+        raise HTTPException(409, "只有被对外联络部退回的志愿北京名称才需要重新提交")
+    try:
+        names = liaison.clean_vb_names(body.names)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    before = liaison.names_text(act.vb_names)
+    act.vb_names = names
+    row = liaison.push_vb_confirm(db, act, user, "resubmit")
+    audit_log(db, actor=user, action="vb_confirm", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"作废志愿北京登记「{r.vb_name}」")
+              summary=(f"重新提交志愿北京活动名称给对外联络部：{liaison.names_text(names)}"
+                       + (f"（原为 {before}）" if before != liaison.names_text(names)
+                          else "（名称未改）")))
     db.commit()
-    return _vb_out(db, r)
+    return _vbc_out(db, row)
 
 
 class VbDecideBody(BaseModel):
@@ -251,53 +260,67 @@ class VbDecideBody(BaseModel):
     reply: str = ""
 
 
-@router.post("/vb-registrations/{reg_id}/decide")
-def decide_vb(reg_id: str, body: VbDecideBody, db: OrmSession = Depends(db_session),
-              user: User = Depends(require_manager)):
-    """在志愿北京上核对过了：通过或驳回（驳回写明原因，发给登记人）。"""
-    r = db.get(VbRegistration, reg_id)
+@router.post("/vb-confirms/{confirm_id}/decide")
+def decide_vb_confirm(confirm_id: str, body: VbDecideBody,
+                      db: OrmSession = Depends(db_session),
+                      user: User = Depends(require_manager)):
+    """外联在志愿北京上核对过了：确认（活动落「已完成」，意见选填）或退回
+    （必须写理由，通知管理者改名称重提）。"""
+    r = db.get(VbConfirm, confirm_id)
     if r is None:
-        raise HTTPException(404, "登记不存在")
-    if not _vb_decider(db, user):
-        raise HTTPException(403, "只有对外联络部的值班人或部长可以核对志愿北京登记")
-    if r.status != "submitted":
-        raise HTTPException(409, f"该登记{r.status_label()}")
+        raise HTTPException(404, "记录不存在")
+    if not liaison.vb_decider(db, user):
+        raise HTTPException(403, "只有对外联络部的值班人或部长可以确认志愿北京")
+    if r.status != "pending":
+        raise HTTPException(409, f"该条{r.status_label()}")
     reply = body.reply.strip()[:512]
     if not body.approve and len(reply) < 2:
-        raise HTTPException(400, "驳回必须写明理由")
-    r.status = "approved" if body.approve else "rejected"
-    r.handled_by, r.handled_at, r.reply = user.id, now(), reply
+        raise HTTPException(400, "退回必须写明理由，会发给活动管理者")
     act = _act(db, r.activity_id)
-    audit_log(db, actor=user, action="vb_register", target_type="activity",
+    r.status = "confirmed" if body.approve else "returned"
+    r.handled_by, r.handled_at, r.reply = user.id, now(), reply
+    names = liaison.names_text(r.names)
+    if body.approve:
+        act.status = "completed"
+    audit_log(db, actor=user, action="vb_confirm", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=(f"{'通过' if body.approve else '驳回'}志愿北京登记「{r.vb_name}」"
+              summary=((f"外联确认志愿北京活动名称 {names}，活动已完成"
+                        if body.approve else f"外联退回志愿北京活动名称 {names}")
                        + (f"：{reply}" if reply else "")))
-    who = db.get(User, r.submitted_by)
-    if who is not None:
-        notify(db, who, f"志愿北京登记{'已通过' if body.approve else '未通过'}"
-                        f"｜{act.title}",
-               f"「{r.vb_name}」" + ("已核对通过。" if body.approve
-                                    else "未通过核对，可作废后重新登记。")
-               + (f"\n意见：{reply}" if reply else ""),
-               data={"activity_id": act.id})
+    notify_managers(
+        db, act.id,
+        f"志愿北京{'已确认' if body.approve else '被退回'}｜{act.title}",
+        (f"对外联络部已在志愿北京核对 {names}，「{act.title}」已完成。"
+         if body.approve else
+         f"对外联络部退回了 {names}。\n请到活动管理的「审核」页签修改志愿北京"
+         f"活动名称后重新提交（时长保持锁定，不用重新审核）。")
+        + (f"\n{'意见' if body.approve else '理由'}：{reply}" if reply else ""),
+        duty="hours")
     db.commit()
-    return _vb_out(db, r)
+    return _vbc_out(db, r)
 
 
-@router.get("/vb-registrations")
-def pending_vb(db: OrmSession = Depends(db_session),
-               user: User = Depends(require_manager)):
-    """待核对的志愿北京登记，挂在「活动审批」页上。"""
-    if not _vb_decider(db, user):
+@router.get("/vb-confirms")
+def pending_vb_confirms(db: OrmSession = Depends(db_session),
+                        user: User = Depends(require_manager)):
+    """待外联确认的志愿北京名称，挂在「活动审批」页上。"""
+    if not liaison.vb_decider(db, user):
         return []
-    rows = (db.query(VbRegistration)
-            .filter(VbRegistration.status == "submitted")
-            .order_by(VbRegistration.submitted_at).all())
+    rows = (db.query(VbConfirm).filter(VbConfirm.status == "pending")
+            .order_by(VbConfirm.submitted_at).all())
     out = []
     for r in rows:
         act = db.get(Activity, r.activity_id)
-        out.append({**_vb_out(db, r), "activity_title": act.title if act else "",
-                    "organizer": act.organizer if act else ""})
+        # 上一次退回的理由：重提的那条，外联要看改没改到点子上
+        prev = (db.query(VbConfirm)
+                .filter(VbConfirm.activity_id == r.activity_id,
+                        VbConfirm.status == "returned",
+                        VbConfirm.submitted_at < r.submitted_at)
+                .order_by(VbConfirm.submitted_at.desc()).first())
+        out.append({**_vbc_out(db, r), "activity_title": act.title if act else "",
+                    "organizer": act.organizer if act else "",
+                    "locked_at": iso(act.hours_locked_at) if act else "",
+                    "last_return": prev.reply if prev else ""})
     return out
 
 
@@ -315,15 +338,6 @@ def _slot_block(db: OrmSession, act: Activity, slot: str) -> str:
     if slot == "proposal":
         if act.status not in ("draft", "pending"):
             return "审批已通过，立项书不能再更换"
-        return ""
-    if slot == "vb_hours":
-        # 跟盖章立项书同一个道理：它是某一步的凭据，那一步过了就定下来。
-        # 确认完成之后再换，换掉的就是「已完成」所依据的那份；真录错了，
-        # 走时长解锁（截图随之作废），重新锁定后再传
-        if act.status == "completed":
-            return "活动已完成，截图不能再更换；如需更正请先申请解锁时长"
-        if act.status != "vb_pending":
-            return "时长锁定之后才能上传志愿北京时长录入截图"
         return ""
     if not liaison.is_external(db, act):
         return "盖章立项书只用于对外联络部归口的活动"
@@ -350,9 +364,6 @@ def project_files(activity_id: str, db: OrmSession = Depends(db_session),
         out[slot] = _file_out(liaison.project_file(db, act.id, slot))
         out[f"{slot}_block"] = block
         out[f"can_upload_{slot}"] = manager and not block
-    # 传了截图、还停在待录入：管理者可以点「已录入」
-    out["can_confirm_vb_hours"] = (manager and act.status == "vb_pending"
-                                   and out["vb_hours"] is not None)
     return out
 
 
@@ -395,28 +406,3 @@ async def upload_project_file(activity_id: str, slot: str,
     # 缺盖章立项书而停下的自动报批，补上之后下一轮清扫照常提交，不另行通知
     db.commit()
     return _file_out(row)
-
-
-@router.post("/activities/{activity_id}/vb-hours/confirm")
-def confirm_vb_hours(activity_id: str, db: OrmSession = Depends(db_session),
-                     user: User = Depends(require_manager)):
-    """管理者确认「时长已录入志愿北京」：活动落「已完成」。
-
-    时长锁定之后活动停在「待录入志愿北京」，录没录进去平台看不见，只能凭截图。
-    截图必传；传了、确认了就算完，不再另找人审核——截图留在「审核」页签里，
-    谁有疑问随时能翻出来看。
-    """
-    ensure_activity_manager(db, user, activity_id)
-    act = _act(db, activity_id)
-    if act.status != "vb_pending":
-        raise HTTPException(409, f"当前状态为「{act.label_status()}」，"
-                                 f"不需要确认志愿北京录入")
-    shot = liaison.project_file(db, act.id, "vb_hours")
-    if shot is None:
-        raise HTTPException(400, "请先上传志愿北京时长录入截图")
-    act.status = "completed"
-    audit_log(db, actor=user, action="hours_confirm", target_type="activity",
-              target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"确认时长已录入志愿北京（截图《{shot.title}》），活动标记为已完成")
-    db.commit()
-    return {"ok": True, "status": act.status}

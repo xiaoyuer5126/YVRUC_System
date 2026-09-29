@@ -172,7 +172,7 @@ const total = ref(0)
 const f = reactive({ q: '', status: '', page: 1, size: 20 })
 const STATUS_LABELS = {
   draft: '草稿', pending: '待审批', approved: '待发布', published: '报名中',
-  closed: '已截止', finished: '已结束', vb_pending: '待录入志愿北京', completed: '已完成',
+  closed: '已截止', finished: '已结束', vb_pending: '待外联确认', completed: '已完成',
 }
 const loading = ref(false)
 const creating = ref(false)

@@ -1,5 +1,5 @@
 """对外联络部值班：谁能值班、指定与交班、审批通知发给值班人、值班人能拍板、
-部长的每晚日报；以及志愿北京登记。"""
+部长的每晚日报。志愿北京外联确认见 test_vb_confirm.py。"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -218,7 +218,7 @@ def _finished_external(db, liaison) -> Activity:
                    status="finished", approval_dept_id=liaison.id,
                    hours_approved_at=now() - timedelta(hours=2),
                    appeal_deadline=now() - timedelta(minutes=5),
-                   created_by=admin_user.id)
+                   vb_names=["对外时长志愿服务"], created_by=admin_user.id)
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin_user.id, added_by=admin_user.id))
@@ -357,103 +357,3 @@ def test_日报_什么都没有就不发(client, db, monkeypatch, take_student):
         db.commit()
         db.delete(db.get(Department, dept.id))
         db.commit()
-
-
-# ======================= 志愿北京登记 =======================
-
-def test_志愿北京登记_提交核对作废(client, admin, db, liaison, take_student):
-    lin = student_row(db, LIAISON_CORE)
-    head = login(client, LIAISON_HEAD)
-    core = login(client, LIAISON_CORE)
-    assert _set_duty(client, head, liaison.id, lin.id).status_code == 200
-    aid = make_draft(client, admin)
-    title = db.get(Activity, aid).title
-    url = f"/api/staff/activities/{aid}/vb-registrations"
-    # 先立项再结项：没发布的活动不能登记
-    r = client.post(url, headers=admin, json={"vb_name": "校运会志愿服务"})
-    assert r.status_code == 409 and "发布" in r.json()["detail"]
-    assert client.get(url, headers=admin).json()["can_submit"] is False
-    approve(client, admin, aid)
-    db.expire_all()
-    assert db.get(Activity, aid).status == "published"
-
-    # 不是这场活动的管理者：不能登记
-    initiator = login(client, INITIATOR)
-    assert client.post(url, headers=initiator,
-                       json={"vb_name": "别人的活动"}).status_code == 403
-    assert client.post(url, headers=admin, json={"vb_name": " "}).status_code == 400
-
-    r = client.post(url, headers=admin, json={"vb_name": "校运会志愿服务（上午）"})
-    assert r.status_code == 200 and r.json()["status"] == "submitted"
-    first = r.json()["id"]
-    assert inbox(db, LIAISON_CORE, f"志愿北京待核对｜{title}")
-    assert not inbox(db, LIAISON_HEAD, f"志愿北京待核对｜{title}")
-    assert first in [x["id"] for x in
-                     client.get("/api/staff/vb-registrations", headers=core).json()]
-
-    # 管理者、不相干的人都拍不了
-    assert client.post(f"/api/staff/vb-registrations/{first}/decide",
-                       headers=initiator, json={"approve": True}).status_code == 403
-    # 驳回要写理由
-    assert client.post(f"/api/staff/vb-registrations/{first}/decide", headers=core,
-                       json={"approve": False}).status_code == 400
-    r = client.post(f"/api/staff/vb-registrations/{first}/decide", headers=core,
-                    json={"approve": False, "reply": "志愿北京上查不到这个名称"})
-    assert r.status_code == 200 and r.json()["status"] == "rejected"
-    assert r.json()["handled_by"] == "林骁"
-    assert inbox(db, ADMIN, f"志愿北京登记未通过｜{title}")
-    # 处理过的不能再拍
-    assert client.post(f"/api/staff/vb-registrations/{first}/decide", headers=core,
-                       json={"approve": True}).status_code == 409
-
-    # 再报一条，部长直接通过；再报一条报错了，自己作废
-    second = client.post(url, headers=admin, json={"vb_name": "校运会志愿服务"}).json()["id"]
-    r = client.post(f"/api/staff/vb-registrations/{second}/decide", headers=head,
-                    json={"approve": True})
-    assert r.status_code == 200 and r.json()["status"] == "approved"
-    assert inbox(db, ADMIN, f"志愿北京登记已通过｜{title}")
-    third = client.post(url, headers=admin, json={"vb_name": "写错了"}).json()["id"]
-    assert client.post(f"/api/staff/vb-registrations/{third}/void",
-                       headers=initiator).status_code == 403
-    r = client.post(f"/api/staff/vb-registrations/{third}/void", headers=admin)
-    assert r.status_code == 200 and r.json()["status"] == "void"
-    assert client.post(f"/api/staff/vb-registrations/{third}/void",
-                       headers=admin).status_code == 409
-    assert client.post(f"/api/staff/vb-registrations/{third}/decide", headers=core,
-                       json={"approve": True}).status_code == 409
-
-    d = client.get(url, headers=admin).json()
-    assert [x["status"] for x in d["items"]] == ["void", "approved", "rejected"]
-    assert d["can_submit"] is True
-    # 值班人看得到这场活动的登记（哪怕他不是管理者）
-    assert client.get(url, headers=core).json()["can_decide"] is True
-    assert client.get(url, headers=initiator).status_code == 403
-
-
-def _published(client, admin) -> str:
-    """一个已发布的活动：志愿北京登记要等活动发布之后才能交。"""
-    aid = make_draft(client, admin)
-    approve(client, admin, aid)
-    return aid
-
-
-def test_志愿北京_没人值班通知部长_不在班的骨干拍不了(client, admin, db, liaison):
-    aid = _published(client, admin)
-    title = db.get(Activity, aid).title
-    r = client.post(f"/api/staff/activities/{aid}/vb-registrations", headers=admin,
-                    json={"vb_name": "某某活动"})
-    assert inbox(db, LIAISON_HEAD, f"志愿北京待核对｜{title}")
-    core = login(client, LIAISON_CORE)
-    assert client.get("/api/staff/vb-registrations", headers=core).json() == []
-    assert client.post(f"/api/staff/vb-registrations/{r.json()['id']}/decide",
-                       headers=core, json={"approve": True}).status_code == 403
-
-
-@pytest.mark.parametrize("who", [ADMIN, "2025003"])
-def test_志愿北京_会长团管理员也能核对(client, admin, db, liaison, who):
-    aid = _published(client, admin)
-    rid = client.post(f"/api/staff/activities/{aid}/vb-registrations", headers=admin,
-                      json={"vb_name": "某某活动"}).json()["id"]
-    r = client.post(f"/api/staff/vb-registrations/{rid}/decide",
-                    headers=login(client, who), json={"approve": True})
-    assert r.status_code == 200
