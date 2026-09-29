@@ -1,6 +1,7 @@
 <!-- 活动管理「审核」页签：这场活动要过的三道审核放在一处看。
-     立项审核（发布前）→ 时长审核（结项）→ 志愿北京项目审核。
-     时长锁定之后还有一步收尾：上传志愿北京时长录入截图并确认，活动才算已完成。
+     立项审核（发布前）→ 时长审核（结项，一并填志愿北京活动名称）→ 志愿北京外联确认。
+     时长锁定后名称推给对外联络部，外联在志愿北京核对确认，活动才算已完成；
+     退回的话在这里改名称重提（时长保持锁定）。
      提交动作各在原处（提交审批在页头、提交时长审核在「时长管理」），这里看进度、
      意见与历史，并管理各自要附的材料。 -->
 <template>
@@ -84,159 +85,166 @@
           </template>
         </el-table-column>
       </el-table>
-      <template v-if="files">
-        <el-divider style="margin:8px 0" />
-        <ProjectFileSlot :activity-id="activityId" kind="vb_hours" label="志愿北京时长录入截图"
-                         :file="files.vb_hours" :can-upload="files.can_upload_vb_hours"
-                         :block="files.manager ? files.vb_hours_block : ''"
-                         :required="files.status === 'vb_pending' && !files.vb_hours"
-                         accept=".png,.jpg,.jpeg,.pdf"
-                         hint="时长锁定后，把时长录入志愿北京并上传录入截图（图片或 PDF），点「已录入」活动即标记为已完成"
-                         @changed="load" />
-        <div v-if="files.manager && files.status === 'vb_pending'">
-          <el-button type="primary" size="small" :disabled="!files.can_confirm_vb_hours"
-                     :loading="vbHoursBusy" @click="confirmVbHours">已录入，标记活动已完成</el-button>
-          <span v-if="!files.vb_hours" class="dim" style="margin-left:8px">先上传截图才能确认</span>
-        </div>
-      </template>
     </el-card>
 
-    <!-- ③ 志愿北京项目审核 -->
+    <!-- ③ 志愿北京外联确认 -->
     <el-card shadow="never" style="margin-top:12px">
       <template #header>
-        <b>志愿北京项目审核</b>
+        <b>志愿北京外联确认</b>
+        <el-tag v-if="act?.status === 'vb_pending'" size="small" type="warning" effect="plain"
+                style="margin-left:8px">待外联确认</el-tag>
         <span class="dim" style="margin-left:8px">
-          在志愿北京建好对应活动后在这里登记名称，由对外联络部核对
+          时长锁定后，志愿北京活动名称推给对外联络部
+          <template v-if="vbc.handler">（{{ vbc.handler }}）</template>核对，确认即完成
         </span>
       </template>
-      <div v-if="vb.manager && !vb.published" class="dim">
-        活动正式发布之后才能登记（先立项、再结项）。
+      <!-- 提交时长审核之前：先把名称存下来，申诉期满自动提交要用 -->
+      <template v-if="vbc.can_edit">
+        <VbNamesInput v-model="draftNames" />
+        <div class="toolbar" style="margin-top:8px">
+          <el-button type="primary" size="small" :loading="vbBusy" @click="saveNames">保存名称</el-button>
+          <span class="dim">提交时长审核时须至少填一个；申诉期满系统自动提交时也用这里存的名称</span>
+        </div>
+      </template>
+      <template v-else-if="vbc.can_resubmit">
+        <el-alert type="error" show-icon :closable="false" style="margin-bottom:8px"
+                  :title="`对外联络部退回：${vbc.items[0]?.reply || ''}`"
+                  description="改好志愿北京活动名称后重新提交给外联；时长保持锁定，不用重新审核。" />
+        <VbNamesInput v-model="draftNames" />
+        <div class="toolbar" style="margin-top:8px">
+          <el-button type="primary" size="small" :loading="vbBusy" @click="resubmit">重新提交给外联</el-button>
+        </div>
+      </template>
+      <div v-else class="submit-names">
+        <b>志愿北京活动名称</b>
+        <template v-if="vbc.names.length">
+          <el-tag v-for="n in vbc.names" :key="n" effect="plain">{{ n }}</el-tag>
+        </template>
+        <span v-else class="dim">未填写</span>
+        <div v-if="vbc.edit_block" class="dim" style="flex-basis:100%">{{ vbc.edit_block }}</div>
       </div>
-      <div v-if="vb.can_submit" class="toolbar">
-        <el-input v-model="vbName" maxlength="200" style="flex:1 1 260px"
-                  placeholder="志愿北京上的活动名称" @keyup.enter="submitVb" />
-        <el-button type="primary" :loading="vbBusy" @click="submitVb">登记</el-button>
-      </div>
-      <el-table :data="vb.items" size="small" empty-text="还没有登记" style="margin-top:8px">
-        <el-table-column prop="vb_name" label="志愿北京活动名称" min-width="200" />
-        <el-table-column label="状态" width="90">
+      <el-table :data="vbc.items" size="small" empty-text="时长锁定后才推给外联"
+                style="margin-top:8px">
+        <el-table-column label="推送" width="160">
           <template #default="{ row }">
-            <el-tag size="small" effect="plain" :type="VB_TAG[row.status]">
+            {{ row.kind_label }}
+            <div class="dim">{{ row.submitted_by }} · {{ fmtDT(row.submitted_at) }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="志愿北京活动名称" min-width="200">
+          <template #default="{ row }">
+            <div v-for="n in row.names" :key="n">{{ n }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain" :type="VBC_TAG[row.status]">
               {{ row.status_label }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="登记" width="150">
-          <template #default="{ row }">
-            {{ row.submitted_by }}<div class="dim">{{ fmtDT(row.submitted_at) }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column label="处理" min-width="170">
+        <el-table-column label="外联" min-width="180">
           <template #default="{ row }">
             <template v-if="row.handled_by">
               {{ row.handled_by }} · {{ fmtDT(row.handled_at) }}
-              <div v-if="row.reply" class="dim">{{ row.reply }}</div>
+              <div v-if="row.reply" class="dim">
+                {{ row.status === 'returned' ? '理由' : '意见' }}：{{ row.reply }}
+              </div>
             </template>
-            <span v-else class="dim">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="150">
-          <template #default="{ row }">
-            <template v-if="row.status === 'submitted' && vb.can_decide">
-              <el-button size="small" link type="success" @click="decide(row, true)">通过</el-button>
-              <el-button size="small" link type="danger" @click="decide(row, false)">驳回</el-button>
+            <template v-else-if="row.status === 'pending' && vbc.can_decide">
+              <el-button size="small" link type="success" @click="openDecide(row, true)">确认</el-button>
+              <el-button size="small" link type="danger" @click="openDecide(row, false)">退回</el-button>
             </template>
-            <el-popconfirm v-if="vb.can_submit && ['submitted', 'approved'].includes(row.status)"
-                           title="作废这条登记？作废后可以重新登记" @confirm="voidVb(row)">
-              <template #reference>
-                <el-button size="small" link>作废</el-button>
-              </template>
-            </el-popconfirm>
+            <span v-else class="dim">{{ row.status === 'pending' ? '等待确认' : '—' }}</span>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
+
+    <ApprovalCommentDialog v-model="dc.visible" :approve="dc.approve"
+                           :title="dc.approve ? '确认志愿北京' : '退回志愿北京名称'"
+                           :subject="act?.title || ''" audience="活动管理者"
+                           approve-label="确认" reject-label="退回" :templates="[]"
+                           :submit="submitDecide" />
   </div>
 </template>
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
+import ApprovalCommentDialog from './ApprovalCommentDialog.vue'
 import ProjectFileSlot from './ProjectFileSlot.vue'
+import VbNamesInput from './VbNamesInput.vue'
 
 const props = defineProps({ activityId: { type: String, required: true },
                             act: { type: Object, default: null } })
 const emit = defineEmits(['changed', 'status-changed'])
 
-const VB_TAG = { submitted: 'warning', approved: 'success', rejected: 'danger', void: 'info' }
+const VBC_TAG = { pending: 'warning', confirmed: 'success', returned: 'danger', void: 'info' }
 const REQ_TAG = { pending: 'warning', approved: 'success', rejected: 'danger' }
 const EVENT_TYPE = { approve: 'success', reject: 'danger', submit: 'primary' }
 const approval = ref(null)
 const hours = ref(null)
 const loading = ref(false)
 const files = ref(null)
-const vb = ref({ items: [], can_submit: false, can_decide: false,
-                 manager: false, published: false })
-const vbName = ref('')
+const vbc = ref({ names: [], items: [], can_edit: false, can_resubmit: false,
+                  can_decide: false, edit_block: '', handler: '' })
+const draftNames = ref([])
 const vbBusy = ref(false)
-const vbHoursBusy = ref(false)
+const dc = ref({ visible: false, approve: true, row: null })
 
 async function load() {
   loading.value = true
   try {
     const base = `/api/staff/activities/${props.activityId}`
-    ;[files.value, vb.value, approval.value, hours.value] = await Promise.all([
-      api.get(`${base}/project-files`), api.get(`${base}/vb-registrations`),
+    ;[files.value, vbc.value, approval.value, hours.value] = await Promise.all([
+      api.get(`${base}/project-files`), api.get(`${base}/vb-confirms`),
       api.get(`${base}/approval`, { silent: true }).catch(() => null),
       api.get(`${base}/hours-requests`, { silent: true }).catch(() => null)])
+    draftNames.value = [...vbc.value.names]
     emit('changed', files.value)
   } finally { loading.value = false }
 }
 onMounted(load)
 
-async function submitVb() {
-  if (vbName.value.trim().length < 2) return ElMessage.warning('请填写志愿北京上的活动名称')
+async function saveNames() {
+  if (!draftNames.value.length) return ElMessage.warning('请填写志愿北京上的活动名称')
   vbBusy.value = true
   try {
-    await api.post(`/api/staff/activities/${props.activityId}/vb-registrations`,
-                   { vb_name: vbName.value.trim() })
-    ElMessage.success('已登记，等对外联络部核对')
-    vbName.value = ''
+    await api.put(`/api/staff/activities/${props.activityId}/vb-names`,
+                  { names: draftNames.value })
+    ElMessage.success('已保存')
     load()
   } finally { vbBusy.value = false }
 }
 
-async function confirmVbHours() {
-  await ElMessageBox.confirm('确认时长已经录入志愿北京？确认后活动标记为「已完成」，截图不能再更换。',
-                             '已录入志愿北京', { type: 'warning' })
-  vbHoursBusy.value = true
+async function resubmit() {
+  if (!draftNames.value.length) return ElMessage.warning('请填写志愿北京上的活动名称')
+  vbBusy.value = true
   try {
-    await api.post(`/api/staff/activities/${props.activityId}/vb-hours/confirm`)
-    ElMessage.success('活动已标记为已完成')
-    emit('status-changed')
+    await api.post(`/api/staff/activities/${props.activityId}/vb-confirms/resubmit`,
+                   { names: draftNames.value })
+    ElMessage.success('已重新提交，等对外联络部确认')
     load()
-  } finally { vbHoursBusy.value = false }
+  } finally { vbBusy.value = false }
 }
 
-async function voidVb(row) {
-  await api.post(`/api/staff/vb-registrations/${row.id}/void`)
-  ElMessage.success('已作废')
-  load()
+function openDecide(row, approve) {
+  dc.value = { visible: true, approve, row }
 }
 
-async function decide(row, approve) {
-  let reply = ''
-  if (!approve) {
-    const r = await ElMessageBox.prompt('写明为什么没通过，会发给登记人。', '驳回登记',
-                                        { inputValidator: v => (v || '').trim().length >= 2
-                                                               || '至少 2 个字' })
-    reply = r.value.trim()
-  }
-  await api.post(`/api/staff/vb-registrations/${row.id}/decide`, { approve, reply })
-  ElMessage.success(approve ? '已通过' : '已驳回')
+async function submitDecide(reply) {
+  const { row, approve } = dc.value
+  await api.post(`/api/staff/vb-confirms/${row.id}/decide`, { approve, reply })
+  ElMessage.success(approve ? '已确认，活动已完成' : '已退回并通知管理者')
+  emit('status-changed')
   load()
 }
 
 defineExpose({ load })
 </script>
+
+<style scoped>
+.submit-names { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+</style>

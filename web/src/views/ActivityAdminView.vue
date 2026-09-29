@@ -658,12 +658,18 @@
 
         <!-- 核准之后这一段就是这场活动的账本状态 -->
         <el-alert v-if="hoursState.locked_at" type="success" show-icon :closable="false"
-                  :title="`时长已于 ${fmtDT(hoursState.locked_at)} 锁定，${act.status === 'vb_pending' ? '待录入志愿北京' : '活动已完成'}`">
+                  :title="`时长已于 ${fmtDT(hoursState.locked_at)} 锁定，${act.status === 'vb_pending' ? '待外联确认' : '活动已完成'}`">
           <div style="line-height:1.8">
             已通过校青协审核，时长不再改动。确需更正请点「申请解锁」，同样由校青协审批
             <template v-if="act.status === 'vb_pending'">
-              <br />请把时长录入志愿北京，在 <el-link type="primary" @click="tab = 'review'">「审核」页签</el-link>
-              上传录入截图并点「已录入」，活动才标记为「已完成」。
+              <br />志愿北京活动名称已推给对外联络部，外联在志愿北京核对确认后活动标记为「已完成」。
+              <template v-if="hoursState.vb_confirm?.status === 'returned'">
+                <br /><b>外联退回了名称：{{ hoursState.vb_confirm.reply }}</b>——请到
+                <el-link type="primary" @click="tab = 'review'">「审核」页签</el-link>修改后重新提交。
+              </template>
+              <template v-else>
+                进度见 <el-link type="primary" @click="tab = 'review'">「审核」页签</el-link>。
+              </template>
             </template>
             <template v-if="hoursState.request">
               <br />最近一条{{ hoursState.request.kind_label }}申请：
@@ -678,7 +684,7 @@
                   :closable="false"
                   title="时长已提交校青协审核，审核期间本页只读">
           <div style="line-height:1.8">
-            通过即锁定时长，上传志愿北京录入截图后活动标记为「已完成」；驳回会退回给你，改完重新核准再提交一次。
+            通过即锁定时长，志愿北京活动名称推给对外联络部，外联确认后活动标记为「已完成」；驳回会退回给你，改完重新核准再提交一次。
             审核进度与历史见 <el-link type="primary" @click="tab = 'review'">「审核」页签</el-link>。
             <template v-if="hoursState.request">
               <br />提交说明：{{ hoursState.request.reason }}
@@ -861,7 +867,7 @@
         </el-card>
       </el-tab-pane>
 
-      <!-- ============ 审核：立项、时长、志愿北京三道审核的进度与材料 ============ -->
+      <!-- ============ 审核：立项、时长、志愿北京外联确认三道审核的进度与材料 ============ -->
       <el-tab-pane label="审核" name="review" lazy>
         <ReviewPanel :activity-id="activityId" :act="act" @status-changed="loadAll" />
       </el-tab-pane>
@@ -1089,7 +1095,7 @@
     <!-- 核准时长：定下账、通知本人，并给一段申诉时间 -->
     <el-dialog v-model="approveDlg.visible" title="确认核准时长" width="480">
       <p class="dim" style="line-height:1.8">
-        核准之后，志愿者将会收到确认通知，截止前确认无误或提出申诉。截止后若无申诉，系统自动提交校青协审核；通过即锁定时长，上传志愿北京录入截图后活动标记为「已完成」。
+        核准之后，志愿者将会收到确认通知，截止前确认无误或提出申诉。截止后若无申诉，系统自动提交校青协审核（须先在「审核」页签填好志愿北京活动名称）；通过即锁定时长，对外联络部确认志愿北京后活动标记为「已完成」。
       </p>
       <el-form label-width="100px">
         <el-form-item label="申诉截止" required>
@@ -1101,6 +1107,33 @@
         <el-button @click="approveDlg.visible = false">取消</el-button>
         <el-button type="primary" :loading="approveDlg.busy" @click="doApprove">
           核准并通知
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 提交时长审核：一并填志愿北京活动名称，锁定后推给对外联络部核对 -->
+    <el-dialog v-model="lockDlg.visible" title="提交时长审核" width="520">
+      <p v-if="lockDlg.early" class="dim" style="line-height:1.8">
+        申诉期还没结束（截止 {{ fmtDT(hoursState.appeal_deadline) }}）。现在提交，还没确认时长的志愿者就没机会提申诉了；
+        到点没有申诉的话系统会自动提交，不必手动来这一下。
+      </p>
+      <p v-if="hoursState.pending_appeals" class="dim">还有 {{ hoursState.pending_appeals }} 条申诉没处理。</p>
+      <p class="dim" style="line-height:1.8">
+        提交后时长冻结、不能再改，等校青协审核；通过即锁定时长，志愿北京活动名称推给对外联络部，
+        外联确认后活动标记为「已完成」；驳回则退回你修改。
+      </p>
+      <el-form label-position="top">
+        <el-form-item label="志愿北京上的活动名称（至少一个）" required>
+          <VbNamesInput v-model="lockDlg.names" />
+        </el-form-item>
+        <el-form-item label="说明（选填）">
+          <el-input v-model="lockDlg.note" maxlength="200" placeholder="给审核人看的一句话" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="lockDlg.visible = false">取消</el-button>
+        <el-button type="warning" :loading="lockDlg.busy" @click="doSubmitLock">
+          {{ lockDlg.early ? '仍然提交' : '提交' }}
         </el-button>
       </template>
     </el-dialog>
@@ -1434,6 +1467,7 @@ import AnswerList from '../components/AnswerList.vue'
 import HoursParts from '../components/HoursParts.vue'
 import ApplicationList from '../components/ApplicationList.vue'
 import ReviewPanel from '../components/ReviewPanel.vue'
+import VbNamesInput from '../components/VbNamesInput.vue'
 import ProjectFileSlot from '../components/ProjectFileSlot.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'
@@ -1586,6 +1620,7 @@ const hoursLoading = ref(false)
 const hoursSel = ref([])                       // 时长表勾选行
 const hoursState = ref({})                     // 核准/锁定状态，这一页按它决定给哪些按钮
 const approveDlg = ref({ visible: false, deadline: '', busy: false })
+const lockDlg = ref({ visible: false, early: false, names: [], note: '', busy: false })
 // sign：add 加 / deduct 扣。扣减传负数（见后端 hours_manual），备注两边都必填
 const mh = ref({ userIds: [], sign: 'add', hours: 0.5, note: '' })
 
@@ -2368,26 +2403,29 @@ async function doApprove() {
   } finally { d.busy = false }
 }
 
-// 时长要由校青协审核过才算数：提交给归口部长，通过之后才锁定
-async function submitLockNow() {
+// 时长要由校青协审核过才算数：提交给归口部长，通过之后才锁定。
+// 志愿北京活动名称一并填（预先填上之前存过的），锁定后推给对外联络部核对
+function submitLockNow() {
   const s = hoursState.value
-  const early = s.appeal_deadline && new Date(s.appeal_deadline) > new Date()
-  // 申诉期没过就提交，等于把还没表态的人的申诉机会一起交掉了：说清楚再让他点
-  await ElMessageBox.confirm(
-    (early ? `申诉期还没结束（截止 ${fmtDT(s.appeal_deadline)}）。`
-             + '现在提交，还没确认时长的志愿者就没机会提申诉了；'
-             + '到点没有申诉的话系统会自动提交，不必手动来这一下。\n\n' : '')
-    + (s.pending_appeals ? `还有 ${s.pending_appeals} 条申诉没处理。` : '')
-    + '提交后时长冻结、不能再改，等校青协审核；通过即锁定时长，'
-    + '上传志愿北京录入截图后活动标记为「已完成」，'
-    + '驳回则退回你修改。确定提交吗？',
-    '提交时长审核',
-    { type: 'warning', confirmButtonText: early ? '仍然提交' : '确定',
-      dangerouslyUseHTMLString: false })
-  await api.post(`/api/staff/activities/${activityId}/hours/lock-request`, {})
-  ElMessage.success('已提交，等校青协审核')
-  hoursPreview(true)
-  loadAll()
+  lockDlg.value = {
+    visible: true, busy: false, note: '',
+    // 申诉期没过就提交，等于把还没表态的人的申诉机会一起交掉了：说清楚再让他点
+    early: !!s.appeal_deadline && new Date(s.appeal_deadline) > new Date(),
+    names: [...(s.vb_names || [])],
+  }
+}
+async function doSubmitLock() {
+  const d = lockDlg.value
+  if (!d.names.length) return ElMessage.warning('请填写志愿北京上的活动名称（至少一个）')
+  d.busy = true
+  try {
+    await api.post(`/api/staff/activities/${activityId}/hours/lock-request`,
+                   { vb_names: d.names, note: d.note.trim() })
+    ElMessage.success('已提交，等校青协审核')
+    d.visible = false
+    hoursPreview(true)
+    loadAll()
+  } finally { d.busy = false }
 }
 
 // 锁定之后要改，报归口部长审批
