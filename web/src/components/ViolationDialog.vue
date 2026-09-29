@@ -92,7 +92,7 @@ async function submit(confirmDuplicate) {
       await ElMessageBox.confirm(
         h('div', [
           h('p', `${e.data.message}：`),
-          h('ul', { style: 'padding-left:18px;margin:6px 0' }, e.data.items.map(v =>
+          h('ul', { style: 'padding-left:16px;margin:8px 0' }, e.data.items.map(v =>
             h('li', { key: v.id }, `${v.kind_label} · ${fmtDT(v.created_at)} · ` +
               `${v.operator_name || '—'}：${v.detail}`))),
           h('p', '仍要再登记一条吗？'),
