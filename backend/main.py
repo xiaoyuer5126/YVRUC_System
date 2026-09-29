@@ -61,13 +61,15 @@ async def _sweeper(token: str):
 
 
 class _NoHealthAccess(logging.Filter):
-    """健康探针不进访问日志。
+    """健康探针与地图瓦片不进访问日志。
 
     容器编排每隔几十秒探一次 /api/health，日志里全是它，真正要看的请求被冲走。
+    地图瓦片一开就是几十张，而且查询串里带着瓦片令牌（见 routers/geo.py）。
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        return "/api/health" not in record.getMessage()
+        msg = record.getMessage()
+        return "/api/health" not in msg and "/api/geo/tiles/" not in msg
 
 
 @contextlib.asynccontextmanager
