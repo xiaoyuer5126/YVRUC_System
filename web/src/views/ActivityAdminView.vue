@@ -529,7 +529,7 @@
                   {{ w.position_name }}
                 </el-tag>
                 <el-tag v-if="w.status === 'pending_confirm'" size="small" type="danger">
-                  待确认 {{ w.confirm_deadline?.slice(11,16) }} 前
+                  待确认 {{ fmtDT(w.confirm_deadline) }} 前
                 </el-tag>
                 <el-popconfirm v-if="w.status === 'waitlisted'"
                     :title="`通知 ${w.user.name} 确认转正？超时未确认名额将顺延`"
