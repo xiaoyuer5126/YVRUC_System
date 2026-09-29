@@ -183,7 +183,8 @@ def student_form(activity_id: str, positions: str = "",
     第一步勾完岗位才知道要问什么。不带就是整份表。
     """
     act = _act(db, activity_id)
-    if act.status not in ("published", "closed", "finished", "completed") \
+    if act.status not in ("published", "closed", "finished", "vb_pending",
+                          "completed") \
             and not is_activity_manager(db, user, act.id):
         raise HTTPException(404, "活动不存在")
     out = application_out(db, act, user)

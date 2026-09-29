@@ -45,7 +45,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "之后修改需报审批。{pay_line}"),
     "hours_locked": (
         "志愿时长已锁定｜{activity}",
-        "「{activity}」的志愿时长已锁定，{result}，活动已完成。"
+        "「{activity}」的志愿时长已锁定，{result}。"
         "\n感谢您的参与！"),
     "application_accepted": (
         "录取通知｜{activity}",

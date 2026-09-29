@@ -28,7 +28,7 @@ from .approvals import can_review
 router = APIRouter(prefix="/api/activities", tags=["activities"])
 
 # 学生可见的活动状态：筹备中的活动尚未定稿，只有管理者看得到
-PUBLIC_STATUSES = ("published", "closed", "finished", "completed")
+PUBLIC_STATUSES = ("published", "closed", "finished", "vb_pending", "completed")
 
 
 def _ensure_not_editing(act: Activity) -> None:

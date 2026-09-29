@@ -99,7 +99,7 @@
         </div>
         <div class="dim" style="margin-top:8px">
           {{ u.requested_by }} 提交于 {{ fmtDT(u.created_at) }} ·
-          {{ u.kind === 'lock' ? '通过后锁定时长、活动标记已完成；驳回退回管理者修改'
+          {{ u.kind === 'lock' ? '通过即锁定时长，上传志愿北京录入截图后活动标记为已完成；驳回退回管理者修改'
                                : '通过后解锁，管理者改完须重新核准' }}
         </div>
       </el-card>
@@ -362,7 +362,7 @@ async function decideVb(row, approve) {
   load()
 }
 
-/** 锁定：同意即封账、活动标记已完成；驳回退回管理者改。
+/** 锁定：同意即封账，管理者上传志愿北京录入截图后活动才标记已完成；驳回退回管理者改。
  *  解锁：同意即允许改已经封了的账，改完他要重新核准。 */
 async function decideHours(row, approve) {
   let reply = ''
