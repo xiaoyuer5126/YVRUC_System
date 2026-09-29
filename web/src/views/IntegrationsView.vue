@@ -2,7 +2,7 @@
   <div class="page page-wide">
     <h2>集成设置（外部系统对接）</h2>
     <el-alert type="info" :closable="false">
-      三个外部系统均已完成<b>接口层</b>对接：关闭开关时使用内置演示实现，
+      两个外部系统均已完成<b>接口层</b>对接：关闭开关时使用内置演示实现，
       填入学校信息化部门提供的地址与密钥并打开开关，即可切换到真实接口。
     </el-alert>
 
@@ -48,7 +48,7 @@
       </el-col>
     </el-row>
 
-    <h3>对接要点备忘（《设计方案》第五节）</h3>
+    <h3>对接要点备忘</h3>
     <el-table :data="notes" size="small" border>
       <el-table-column prop="sys" label="系统" width="150" />
       <el-table-column prop="use" label="用途" min-width="260" />
@@ -126,8 +126,6 @@ onMounted(load)
 const notes = [
   { sys: '消息中心（企业微信）', use: '向特定学号的学生发送模板消息（报名成功/候补转正/岗位分配/变更警告/信用提醒）',
     how: '经学校开放平台的统一消息接口下发，收件人用学号指定；模板库已在平台内建好，只走企业微信通道（不发短信）' },
-  { sys: '现有签到码系统', use: '生成签到任务、核验签到码、回调签到状态',
-    how: 'API 对接（由对方提供 SDK 或 RESTful 接口）；平台侧任务模型已就绪' },
   { sys: '微人大统一身份认证', use: '师生登录平台（SSO），首次登录自动建档',
     how: 'CAS 的 OAuth2.0 三端点（authorize / accessToken / user·profiles）；登录页、回调页与路由守卫已接通' },
 ]
