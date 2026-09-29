@@ -98,7 +98,7 @@ def test_截止后管理者手动转正仍要本人确认(client, admin, db, ope
     r = client.post(f"/api/staff/enrollments/{wl_id}/promote", headers=admin)
     assert r.status_code == 200
     db.expire_all()
-    # 补不补人由管理者定，来不来由本人定：和自动递补一样开 2 小时确认窗
+    # 补不补人由管理者定，来不来由本人定：和自动递补一样开确认窗
     row = db.get(Enrollment, wl_id)
     assert row.status == "pending_confirm"
     assert row.confirm_deadline is not None
