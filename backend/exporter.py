@@ -28,7 +28,6 @@ from .models import (Activity, Attachment, CheckinRecord, Enrollment,
                      FormQuestion, HoursRecord, Shift, User, now)
 
 MATERIAL_DIR = config.DATA_DIR / "materials"
-ATTACH_DIR = "附件"
 
 
 def disarm_formulas(wb) -> None:
@@ -49,18 +48,22 @@ def disarm_formulas(wb) -> None:
 class Export:
     """一次导出的产物：工作簿，加上答案里引用到的上传文件。
 
-    有文件就打成 zip（Excel + 附件目录），单元格里写相对路径并加超链接，
-    解压后在 Excel 里点得开。不用平台的下载链接——那要登录，发给别人打不开。
+    Excel 与附件分开下：导出永远只给 .xlsx，附件另走一个接口打成 zip。
+    多数人只要表格，不必每次都拖着几十兆的附件走一趟。
+    单元格里写附件在 zip 里的文件名（一字不差，便于对照），不加超链接：
+    表和包是分两次下的，解压工具各有各的放法（有的按包名再套一层目录），
+    相对链接十有八九点不开，还不如一个能直接拿去搜的文件名。
+    也不用平台的下载链接——那要登录，发给别人打不开。
     """
 
     def __init__(self, db: OrmSession) -> None:
         self.db = db
         self.wb = Workbook()
-        self.files: list[tuple[str, Path]] = []      # (包内路径, 磁盘路径)
+        self.files: list[tuple[str, Path]] = []      # (包内文件名, 磁盘路径)
         self._used: set[str] = set()
 
     def attach(self, u: User, q: FormQuestion, attachment_id) -> str:
-        """把一份文件答案登记进包里，返回单元格该写的相对路径；文件不在了给空。"""
+        """把一份文件答案登记进附件包，返回单元格该写的文件名；文件不在了给空。"""
         att = self.db.get(Attachment, str(attachment_id))
         if att is None:
             return ""
@@ -69,54 +72,52 @@ class Export:
             return ""
         ext = Path(att.stored_name).suffix
         base = re.sub(r'[\\/:*?"<>|]', "_", f"{u.name}_{u.student_id}_{q.title}")
-        arc = f"{ATTACH_DIR}/{base}{ext}"
+        arc = f"{base}{ext}"
         n = 2
         while arc in self._used:
-            arc = f"{ATTACH_DIR}/{base}({n}){ext}"
+            arc = f"{base}({n}){ext}"
             n += 1
         self._used.add(arc)
         self.files.append((arc, path))
         return arc
 
-    def link(self, cell, arc: str) -> None:
-        cell.value = arc
-        cell.hyperlink = arc
-        cell.font = Font(color="0563C1", underline="single")
-
-    def bundle(self, xlsx_name: str) -> tuple[BytesIO, str]:
-        """(内容, 扩展名)：没有文件就是 .xlsx，有就是 .zip。"""
+    def xlsx(self) -> BytesIO:
+        """工作簿本身，不含附件。"""
         disarm_formulas(self.wb)
         buf = BytesIO()
         self.wb.save(buf)
         buf.seek(0)
+        return buf
+
+    def attachments_zip(self) -> BytesIO | None:
+        """附件包，文件名与 Excel 里写的一致；没有附件给 None。
+
+        登记之后、打包之前文件没了（被清理）的也跳过，不让整包失败。
+        """
         if not self.files:
-            return buf, "xlsx"
+            return None
         out = BytesIO()
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-            z.writestr(xlsx_name, buf.getvalue())
             for arc, path in self.files:
-                z.write(path, arc)
+                try:
+                    z.write(path, arc)
+                except FileNotFoundError:
+                    continue
         out.seek(0)
-        return out, "zip"
+        return out
 
     def write_answers(self, ws, u: User, questions: list[FormQuestion],
                       answers: dict | None, line: list) -> None:
-        """在 line 后面接上一题一列的答案并写入；文件题写包内路径并加超链接。"""
-        links = []
+        """在 line 后面接上一题一列的答案并写入；文件题写附件包内的文件名。"""
         for q in questions:
             v = (answers or {}).get(q.id)
             if q.kind == "file" and v:
-                arc = self.attach(u, q, v)
-                links.append((len(line) + 1, arc))
-                line.append(arc)
+                line.append(self.attach(u, q, v))
             elif isinstance(v, list):
                 line.append("、".join(str(x) for x in v))
             else:
                 line.append("" if v is None else str(v))
         ws.append(line)
-        for col, arc in links:
-            if arc:
-                self.link(ws.cell(row=ws.max_row, column=col), arc)
 
 HEADER_FILL = PatternFill("solid", fgColor="9E2235")   # 人大红
 HEADER_FONT = Font(name="微软雅黑", bold=True, color="FFFFFF")

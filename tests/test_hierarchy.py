@@ -137,6 +137,31 @@ def test_部门成员不能导出也不能查档案(client, db, dept_activity):
     assert client.get("/api/staff/users", headers=member).status_code == 403
 
 
+def test_部门成员的导出一个都下不到(client, db, dept_activity):
+    """回归：原先只拦了排班表，时长记录（带身份证号）和报名问卷结果漏了。
+    以后新加的导出（.xlsx/.zip 下载或附件数）也得点名拦，这里按路由表查一遍。"""
+    from backend.deps import TRAINEE_DENIED_READS
+    exports = set()
+    for router in all_routers:
+        for r in router.routes:
+            path = getattr(r, "path", "")
+            if (path.startswith("/api/staff") and "GET" in (getattr(r, "methods", None) or ())
+                    and (path.endswith((".xlsx", ".zip")) or path.endswith("/attachments"))):
+                exports.add(r.endpoint.__name__)
+    assert exports and exports <= TRAINEE_DENIED_READS, exports - TRAINEE_DENIED_READS
+
+    aid, _g = dept_activity
+    _add_core_manager(db, aid)
+    member = login(client, MEMBER)
+    for tail in ("hours.xlsx", "applications.xlsx", "export/attachments.zip",
+                 "applications/attachments.zip"):
+        r = client.get(dl_url(client, member, f"/api/staff/activities/{aid}/{tail}"))
+        assert r.status_code == 403, tail
+    for tail in ("export/attachments", "applications/attachments"):
+        r = client.get(f"/api/staff/activities/{aid}/{tail}", headers=member)
+        assert r.status_code == 403 and r.json()["detail"]["code"] == "TRAINEE_READONLY"
+
+
 def test_试算不被学习权限拦(client, db, dept_activity):
     aid, g = dept_activity
     _add_core_manager(db, aid)

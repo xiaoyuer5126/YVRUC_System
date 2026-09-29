@@ -692,25 +692,70 @@ def batch_op(task_id: str, body: dict,
 
 # ======================= 导出 =======================
 
+# 排班表与报名问卷结果都可能带问卷里上传的文件。表格和附件分开下：
+# 「导出」只给 .xlsx；附件包另有接口，前端先问一句附件数（<a> 直链下载
+# 拿不到响应头，所以数目走一个单独的 JSON 接口），有附件才询问要不要一起下。
+
+def _roster_export(db: OrmSession, user: User, activity_id: str):
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    return act, build_activity_workbook(db, act), f"{act.title}_排班表"
+
+
+def _applications_export(db: OrmSession, user: User, activity_id: str):
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    if not act.is_screened():
+        raise HTTPException(409, "只有「报名后筛选」的活动有报名问卷")
+    return act, build_application_workbook(db, act), f"{act.title}_报名问卷"
+
+
+def _attachments_download(db: OrmSession, user: User, act: Activity, ex,
+                          name: str, what: str) -> StreamingResponse:
+    buf = ex.attachments_zip()
+    if buf is None:
+        raise HTTPException(404, "本次导出没有附件")
+    stamp = now().strftime("%Y%m%d_%H%M")
+    filename = f"{name}_附件_{stamp}.zip"
+    audit_log(db, actor=user, action="export", target_type="export",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=f"导出{what}附件《{filename}》，{len(ex.files)} 个文件")
+    db.commit()
+    return _download(buf, filename)
+
+
 @router.get("/activities/{activity_id}/export.xlsx")
 def export(activity_id: str, db: OrmSession = Depends(db_session),
            user: User = Depends(require_manager_download)):
-    ensure_activity_manager(db, user, activity_id)
-    act = _act(db, activity_id)
-    ex = build_activity_workbook(db, act)
+    act, ex, name = _roster_export(db, user, activity_id)
     stamp = now().strftime("%Y%m%d_%H%M")
-    base = f"{act.title}_排班表_{stamp}"
-    buf, ext = ex.bundle(f"{base}.xlsx")
+    filename = f"{name}_{stamp}.xlsx"
     # 下载留痕（《设计方案》：后台记录每一次下载操作）
     audit_log(db, actor=user, action="export", target_type="export",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"导出排班表《{base}.{ext}》")
+              summary=f"导出排班表《{filename}》")
     db.commit()
-    return _download(buf, f"{base}.{ext}")
+    return _download(ex.xlsx(), filename)
+
+
+@router.get("/activities/{activity_id}/export/attachments")
+def export_attachment_count(activity_id: str, db: OrmSession = Depends(db_session),
+                            user: User = Depends(require_manager)):
+    """排班表附件数：前端据此决定要不要问「是否同时打包下载」。"""
+    _, ex, _ = _roster_export(db, user, activity_id)
+    return {"count": len(ex.files)}
+
+
+@router.get("/activities/{activity_id}/export/attachments.zip")
+def export_attachments(activity_id: str, db: OrmSession = Depends(db_session),
+                       user: User = Depends(require_manager_download)):
+    """排班表里文件题的附件包；没有附件时 404。"""
+    act, ex, name = _roster_export(db, user, activity_id)
+    return _attachments_download(db, user, act, ex, name, "排班表")
 
 
 def _download(buf, filename: str) -> StreamingResponse:
-    """带中文文件名的下载响应；.zip 是 Excel 加报名问卷里上传的文件。"""
+    """带中文文件名的下载响应：.xlsx 表格，或 .zip 附件包。"""
     from urllib.parse import quote
     media = ("application/zip" if filename.endswith(".zip") else
              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -741,20 +786,32 @@ def export_hours(activity_id: str, db: OrmSession = Depends(db_session),
 def export_applications(activity_id: str, db: OrmSession = Depends(db_session),
                         user: User = Depends(require_manager_download)):
     """报名问卷结果导出。筛选是在表格里做的事，答案摊平成一人一行。"""
-    ensure_activity_manager(db, user, activity_id)
-    act = _act(db, activity_id)
-    if not act.is_screened():
-        raise HTTPException(409, "只有「报名后筛选」的活动有报名问卷")
-    ex = build_application_workbook(db, act)
+    act, ex, name = _applications_export(db, user, activity_id)
     stamp = now().strftime("%Y%m%d_%H%M")
-    base = f"{act.title}_报名问卷_{stamp}"
-    buf, ext = ex.bundle(f"{base}.xlsx")
+    filename = f"{name}_{stamp}.xlsx"
     audit_log(db, actor=user, action="export", target_type="export",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"导出报名问卷结果《{base}.{ext}》"
-                      + ("，含上传的附件" if ext == "zip" else ""))
+              summary=f"导出报名问卷结果《{filename}》")
     db.commit()
-    return _download(buf, f"{base}.{ext}")
+    return _download(ex.xlsx(), filename)
+
+
+@router.get("/activities/{activity_id}/applications/attachments")
+def export_application_attachment_count(activity_id: str,
+                                        db: OrmSession = Depends(db_session),
+                                        user: User = Depends(require_manager)):
+    """报名问卷附件数，用法同排班表那个。"""
+    _, ex, _ = _applications_export(db, user, activity_id)
+    return {"count": len(ex.files)}
+
+
+@router.get("/activities/{activity_id}/applications/attachments.zip")
+def export_application_attachments(activity_id: str,
+                                   db: OrmSession = Depends(db_session),
+                                   user: User = Depends(require_manager_download)):
+    """报名问卷里上传的文件打成的包；没有附件时 404。"""
+    act, ex, name = _applications_export(db, user, activity_id)
+    return _attachments_download(db, user, act, ex, name, "报名问卷")
 
 
 def _indent(text: str, pad: str = "      ") -> str:
