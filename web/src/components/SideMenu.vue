@@ -20,6 +20,9 @@
       <el-menu-item v-if="canSee.integrations()" index="/integrations">
         <el-icon><Link /></el-icon>集成设置
       </el-menu-item>
+      <el-menu-item v-if="canSee.feedback()" index="/feedback">
+        <el-icon><ChatDotRound /></el-icon>意见反馈
+      </el-menu-item>
     </template>
     <template v-else>
       <div class="menu-cap">志愿服务</div>
@@ -33,7 +36,7 @@
 
 <script setup>
 import {
-  Bell, Calendar, Clock, Compass, Document, Key, Link, Odometer, Stamp,
+  Bell, Calendar, ChatDotRound, Clock, Compass, Document, Key, Link, Odometer, Stamp,
   Tickets, UserFilled,
 } from '@element-plus/icons-vue'
 import { auth, canSee, ROLE_LABELS } from '../store'
