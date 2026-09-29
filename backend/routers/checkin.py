@@ -2,8 +2,9 @@
 
 同一个签到码：第一次扫 = 签到，第二次扫 = 签退——但刚签完就再扫一遍不算数，
 按「重复操作」挡回去（见 _apply_checkin 里的最短间隔）。
-签退宽限：场次结束后 2 小时内可自行签退；超时未签退由系统按场次结束时间
-兜底（见 staff_ops.compute_hours 的 effective_checkout）。
+签到、签退都只在签到码的可签时段内（且任务开着）才能自己扫，签退没有另外的
+宽限：码过了截止或被关掉时还没签退的人，时长按场次结束时间兜底并标记待核
+（见 staff_ops.effective_checkout）。管理者手动补签/签退不受这个限制。
 
 **两类签到码都从这个入口进**：
   · 动态码——管理端每 30 秒换一张，只活在 Redis 里（见 locks.py）。默认用这个，
@@ -18,7 +19,7 @@ _apply_checkin，不另写一份。
 from __future__ import annotations
 
 import math
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -33,9 +34,6 @@ from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
 from ..qrcodes import page_qr
 
 router = APIRouter(prefix="/api/checkin", tags=["checkin"])
-
-# 场次结束后可自行签退的宽限时长
-CHECKOUT_GRACE = timedelta(hours=config.CHECKOUT_GRACE_HOURS)
 
 
 def _task_by_code(db: OrmSession, code: str) -> CheckinTask | None:
@@ -72,6 +70,20 @@ def resolve_task(db: OrmSession, shift_id: str, position_id: str | None
             or next((t for t in tasks if not t.position_id), None) or tasks[0])
 
 
+def checkout_open(db: OrmSession, g: Shift, t: datetime) -> bool:
+    """这一场此刻还能不能自己签退：场次下有任一张签到码开着、且没过截止。
+
+    看的是**整场**的码而不只是签到时扫的那张：_apply_checkin 按「人 + 场次」
+    找记录，签到用 A 码、A 关了再开 B 码，扫 B 照样能签退。只看 A 的话，
+    人明明还能签退，时长这边却已经按场次结束兜底了，两边说的不是一回事。
+    签到时那张码被删了也一样，只看这一场现在还有没有能用的码。
+    """
+    tasks = (db.query(CheckinTask)
+             .filter(CheckinTask.shift_id == g.id,
+                     CheckinTask.active.is_(True)).all())
+    return any(t <= task.window(g)[1] for task in tasks)
+
+
 def geo_anchor(db: OrmSession, task: CheckinTask) -> CheckinGeo | None:
     """这个任务是不是定位签到：有锚点就是（见 CheckinGeo 的说明）。"""
     return (db.query(CheckinGeo)
@@ -102,12 +114,15 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
     扫码那一侧，定位签到就悄悄成了「当场签退」的后门。
     """
     t = now()
+    # 签到和签退一样卡在可签时段里：签退没有另外的宽限。过了截止还没签退的，
+    # 时长由系统按场次结束时间兜底、标记待核，不是让人事后再补扫
     if not task.active:
         raise HTTPException(409, "该签到任务已关闭")
-    if task.valid_from and t < task.valid_from:
-        raise HTTPException(409, f"签到未开始（{task.valid_from:%H:%M} 起）")
-    if task.valid_to and t > task.valid_to:
-        raise HTTPException(409, f"签到已截止（{task.valid_to:%H:%M} 止）")
+    start, end = task.window(g)
+    if t < start:
+        raise HTTPException(409, f"签到未开始（{start:%H:%M} 起）")
+    if t > end:
+        raise HTTPException(409, f"签到已截止（{end:%H:%M} 止）")
 
     # 岗位模式只用于按摊位分别核验；岗位无独立时间，可签时段 = 场次时段
     position = db.get(Position, task.position_id) if task.position_id else None
@@ -169,12 +184,13 @@ def task_info(token: str, db: OrmSession = Depends(db_session),
     rec = (db.query(CheckinRecord)
            .filter(CheckinRecord.user_id == user.id,
                    CheckinRecord.shift_id == g.id).first())
+    start, end = task.window(g)
     state = "active"
     if not task.active:
         state = "closed"
-    elif task.valid_from and t < task.valid_from:
+    elif t < start:
         state = "early"
-    elif task.valid_to and t > task.valid_to:
+    elif t > end:
         state = "expired"
     mine = (db.query(Enrollment)
             .filter(Enrollment.shift_id == g.id, Enrollment.user_id == user.id,
@@ -194,9 +210,9 @@ def task_info(token: str, db: OrmSession = Depends(db_session),
         "my_checkin_at": rec.checkin_at.isoformat(timespec="minutes") if rec else None,
         "my_checkout_at": (rec.checkout_at.isoformat(timespec="minutes")
                            if rec and rec.checkout_at else None),
-        # 签退宽限截止：场次结束 + 2 小时
-        "checkout_deadline": ((g.end_time + CHECKOUT_GRACE)
-                              .isoformat(timespec="minutes")),
+        # 签退截止就是这张码的截止：签退没有另外的宽限（码被提前关掉的话
+        # 更早，那时 state 已是 closed）
+        "checkout_deadline": end.isoformat(timespec="minutes"),
         "server_time": now().isoformat(timespec="seconds"),
     }
 

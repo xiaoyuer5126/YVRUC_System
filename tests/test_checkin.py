@@ -731,13 +731,147 @@ def test_多选岗位里重复的只开一张码(client, admin, two_shift_act):
     assert r.status_code == 200 and len(r.json()["tasks"]) == 1
 
 
-def test_改时段留空一端不会500(client, admin, two_shift_act):
+def test_改时段不能留空(client, admin, two_shift_act):
+    """截止同时是签退截止：过了它没签退的人按场次结束兜底，「不限」就判不出来。
+    开始也一并必填，和生成时总会填上起止一致。以前允许置空，这里改成 400。"""
     _act, am, _train = two_shift_act
     tid = client.post(f"/api/staff/shifts/{am.id}/checkin-tasks", headers=admin,
                       json={"mode": "shift"}).json()["id"]
-    r = client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
-                     json={"valid_from": None})
-    assert r.status_code == 200 and r.json()["valid_from"] is None
+    for body in ({"valid_to": None}, {"valid_to": ""}, {"valid_from": None},
+                 {"valid_from": "  "}):
+        r = client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                         json=body)
+        assert r.status_code == 400, body
+    row = client.get(f"/api/staff/activities/{_act.id}/checkin-tasks",
+                     headers=admin).json()[0]
+    assert row["valid_from"] and row["valid_to"]          # 没被改掉
     r = client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
                      json={"valid_to": "明天"})
     assert r.status_code == 400
+
+
+# ---------- 签退只在码的可签时段内；过了/关了按场次结束兜底 ----------
+
+def _vol(db, g) -> User:
+    """live_group 里那名志愿者。"""
+    enr = db.query(Enrollment).filter(Enrollment.shift_id == g.id).one()
+    return db.get(User, enr.user_id)
+
+
+def _hours_row(client, admin, act, user_id):
+    items = client.get(f"/api/staff/activities/{act.id}/hours",
+                       headers=admin).json()["items"]
+    return next(i for i in items if i["user"]["id"] == user_id)
+
+
+def _expire(client, admin, tid):
+    """用改时段的接口把码的截止拨到刚刚过去。"""
+    r = client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                     json={"valid_from": (now() - timedelta(hours=2)).isoformat(),
+                           "valid_to": (now() - timedelta(minutes=1)).isoformat()})
+    assert r.status_code == 200, r.text
+
+
+def test_码还开着时没签退时长待定(client, admin, db, live_group):
+    act, g, h, token = live_group
+    assert client.post(f"/api/checkin/task/{token}",
+                       headers=h).json()["action"] == "checkin"
+    me = _vol(db, g).id
+    row = _hours_row(client, admin, act, me)
+    assert row["pending"] is True and row["auto_checkout"] is False
+
+
+def test_码过期后没签退按场次结束记并待核(client, admin, db, live_group):
+    """截止早于场次结束也是这样：码一过期，人就签不了退了，按场次结束记。"""
+    act, g, h, token = live_group
+    client.post(f"/api/checkin/task/{token}", headers=h)
+    me = _vol(db, g).id
+    _expire(client, admin, task_id_of(client, admin, act))
+
+    row = _hours_row(client, admin, act, me)
+    assert row["auto_checkout"] is True and row["pending"] is False
+    # 明细的时段终点就是场次结束
+    assert row["parts"][0]["time"].endswith(f"{g.end_time:%H:%M}")
+
+    # 待核的不进「确认全部」
+    r = client.post(f"/api/staff/activities/{act.id}/hours/confirm",
+                    json={}, headers=admin)
+    assert r.status_code == 400 and "待核" in r.json()["detail"]
+
+
+def test_码过期后不能自己签退(client, admin, db, live_group):
+    act, g, h, token = live_group
+    client.post(f"/api/checkin/task/{token}", headers=h)
+    _past_checkout_gap(db, g)
+    tid = task_id_of(client, admin, act)
+    _expire(client, admin, tid)
+
+    r = client.post(f"/api/checkin/task/{token}", headers=h)
+    assert r.status_code == 409 and "已截止" in r.json()["detail"]
+    info = client.get(f"/api/checkin/task/{token}", headers=h).json()
+    assert info["state"] == "expired" and info["checked_out"] is False
+    # 页面上的签退截止就是码的截止，不再是「场次结束 + 宽限」
+    row = client.get(f"/api/staff/activities/{act.id}/checkin-tasks",
+                     headers=admin).json()[0]
+    assert info["checkout_deadline"] == row["valid_to"]
+
+    # 管理者手动签退不受码的时段限制
+    vol = _vol(db, g)
+    d = client.post(f"/api/staff/checkin-tasks/{tid}/batch", headers=admin,
+                    json={"action": "checkout",
+                          "student_ids": [vol.student_id]}).json()
+    assert d["done"] == 1
+    row = _hours_row(client, admin, act, vol.id)
+    assert row["pending"] is False and row["auto_checkout"] is False
+
+
+def test_码没过期时的签退截止就是码的截止(client, admin, live_group):
+    act, g, h, token = live_group
+    info = client.get(f"/api/checkin/task/{token}", headers=h).json()
+    pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
+    assert info["checkout_deadline"] == (g.end_time + pad).isoformat(
+        timespec="minutes")
+
+
+def test_场次中途关码也按场次结束兜底_重开又回到待定(client, admin, db, live_group):
+    act, g, h, token = live_group
+    client.post(f"/api/checkin/task/{token}", headers=h)
+    _past_checkout_gap(db, g)
+    me = _vol(db, g).id
+    tid = task_id_of(client, admin, act)
+
+    r = client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                     json={"active": False})
+    assert r.status_code == 200
+    row = _hours_row(client, admin, act, me)
+    assert row["auto_checkout"] is True and row["pending"] is False
+    assert client.post(f"/api/checkin/task/{token}",
+                       headers=h).status_code == 409
+
+    # 关了还能再开（没过截止）：人又能自己签退了，时长回到待定
+    r = client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                     json={"active": True})
+    assert r.status_code == 200
+    row = _hours_row(client, admin, act, me)
+    assert row["pending"] is True and row["auto_checkout"] is False
+    assert client.post(f"/api/checkin/task/{token}",
+                       headers=h).json()["action"] == "checkout"
+
+
+def test_签到那张码关了但同场另开了新码仍算待定(client, admin, db, live_group):
+    """签退按「人 + 场次」找记录，扫新码照样能签退——这时不该先兜底。"""
+    act, g, h, token = live_group
+    client.post(f"/api/checkin/task/{token}", headers=h)
+    me = _vol(db, g).id
+    tid = task_id_of(client, admin, act)
+    client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                 json={"active": False})
+    new = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks", headers=admin,
+                      json={"mode": "shift"})
+    assert new.status_code == 200, new.text
+    row = _hours_row(client, admin, act, me)
+    assert row["pending"] is True and row["auto_checkout"] is False
+
+    _past_checkout_gap(db, g)
+    assert client.post(f"/api/checkin/task/{new.json()['token']}",
+                       headers=h).json()["action"] == "checkout"

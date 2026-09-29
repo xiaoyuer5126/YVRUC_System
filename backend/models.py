@@ -14,7 +14,7 @@ from __future__ import annotations
 import secrets
 import string
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Index,
                         Integer, String, Text, text)
@@ -860,6 +860,19 @@ class CheckinTask(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    def window(self, shift: Shift) -> tuple[datetime, datetime]:
+        """实际生效的可签时段 (起, 止)。签到、签退都只在这段时间里、且任务开着时能做。
+
+        起止在库里都该有值：生成时默认取场次起止各外扩
+        CHECKIN_WINDOW_PAD_MINUTES，改时段也不许留空。但以前改时段允许把一端
+        置空表示「不限」，老数据里可能还有——按生成时的默认值补上。签退截止
+        必须是个确定的时刻：过了它还没签退的人按场次结束时间兜底（见
+        routers/staff_ops.effective_checkout），「不限」就永远判不出来。
+        """
+        pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
+        return (self.valid_from or shift.start_time - pad,
+                self.valid_to or shift.end_time + pad)
 
 
 class CheckinGeo(Base):

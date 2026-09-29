@@ -762,11 +762,11 @@
           </el-table-column>
           <el-table-column label="标记" width="150">
             <template #default="{row}">
-              <el-tooltip v-if="row.pending" content="未签退，暂按当前时间估算">
+              <el-tooltip v-if="row.pending" content="未签退，签到码还开着，暂按当前时间估算">
                 <el-tag size="small" type="warning" effect="plain">待签退</el-tag>
               </el-tooltip>
               <el-tooltip v-else-if="row.auto_checkout"
-                          content="超时未签退，已按场次结束时间兜底">
+                          content="签到码已过期或关闭时仍未签退，已按场次结束时间兜底">
                 <el-tag size="small" type="danger" effect="plain">待核·自动兜底</el-tag>
               </el-tooltip>
               <span v-else class="dim">正常签退</span>

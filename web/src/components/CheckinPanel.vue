@@ -88,15 +88,12 @@
           <!-- 现场最常见的意外是场次提前或拖堂：以前只能关掉重建，而重建会让
                已经扫过的那张码作废 -->
           <el-button size="small" :disabled="over" @click="openWindow(row)">改时段</el-button>
-          <el-popconfirm :title="row.active ? '关闭后无法继续扫码' : '重新开启？'"
-                         :disabled="over" @confirm="toggle(row)">
-            <template #reference>
-              <el-button size="small" :type="row.active ? 'danger' : 'success'" link
-                         :disabled="over">
-                {{ row.active ? '关闭' : '开启' }}
-              </el-button>
-            </template>
-          </el-popconfirm>
+          <!-- 确认放在 toggle 里：关码的后果要写清楚（没签退的人按场次结束
+               兜底），窄屏卡片那边也走同一个确认 -->
+          <el-button size="small" :type="row.active ? 'danger' : 'success'" link
+                     :disabled="over" @click="toggle(row)">
+            {{ row.active ? '关闭' : '开启' }}
+          </el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -707,11 +704,45 @@ async function createTask() {
   const [f1, f2] = form.value.range || []
   if (f1) body.valid_from = toISO(f1)
   if (f2) body.valid_to = toISO(f2)
+  if (f2 && !await confirmEarlyDeadline(f2, formShift.value?.end_time)) return
   const d = await api.post(`/api/staff/shifts/${form.value.shift_id}/checkin-tasks`,
                            body)
   ElMessage.success(`已生成 ${d.tasks?.length || 1} 张签到码`)
   creating.value = false
   await loadTasks()
+}
+
+// ======================= 截止与场次结束 =======================
+// 签退没有另外的宽限：码的截止就是签退截止。码过期或被关掉时还没签退的人，
+// 时长按场次结束时间兜底、标记待核（见后端 staff_ops.effective_checkout）。
+// 所以截止早于场次结束、或场次没完就关码，都得先让管理者知道这个后果。
+
+function parseLocal(v) {
+  if (!v) return null
+  const d = v instanceof Date ? v : new Date(String(v).replace(' ', 'T'))
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+function hm(d) {
+  const p = n => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/** 码表一行对应场次的结束时间：列表接口带了 shift_end，没有就去场次列表里找。 */
+function shiftEndOf(row) {
+  return row?.shift_end
+    || shiftOptions.value.find(g => g.id === row?.shift_id)?.end_time || ''
+}
+
+/** 截止早于场次结束时要确认；不早于（或取不到场次时间）直接放行。 */
+async function confirmEarlyDeadline(deadline, shiftEnd) {
+  const d = parseLocal(deadline)
+  const e = parseLocal(shiftEnd)
+  if (!d || !e || d >= e) return true
+  return ElMessageBox.confirm(
+    `截止时间 ${hm(d)} 早于场次结束（${hm(e)}）。码过期后志愿者无法再签到、签退，`
+    + '届时尚未签退的人将按场次结束时间记时长，并标记待核。确定吗？',
+    '截止早于场次结束', { type: 'warning' }).then(() => true).catch(() => false)
 }
 
 function toISO(v) {
@@ -738,6 +769,7 @@ async function saveWindow() {
   const [f1, f2] = winDlg.value.range || []
   if (!f1 || !f2) return ElMessage.warning('起止时间都要填')
   if (f2 <= f1) return ElMessage.warning('结束时间要晚于开始时间')
+  if (!await confirmEarlyDeadline(f2, shiftEndOf(winDlg.value.task))) return
   winDlg.value.busy = true
   try {
     await api.patch(`/api/staff/checkin-tasks/${winDlg.value.task.id}`,
@@ -944,6 +976,17 @@ async function sendReminder() {
 }
 
 async function toggle(row) {
+  const e = parseLocal(shiftEndOf(row))
+  const early = row.active && e && new Date() < e
+  const msg = !row.active ? '重新开启这张签到码？'
+    : early
+      ? `场次还没结束（${hm(e)} 结束）。关闭后志愿者无法再用这张码签到、签退，`
+        + '尚未签退的人将按场次结束时间记时长，并标记待核。确定关闭吗？'
+      : '关闭后无法继续扫码签到、签退；尚未签退的人按场次结束时间记时长并标记待核。确定吗？'
+  const ok = await ElMessageBox.confirm(
+    msg, row.active ? '关闭签到码' : '开启签到码',
+    { type: row.active ? 'warning' : 'info' }).then(() => true).catch(() => false)
+  if (!ok) return
   await api.patch(`/api/staff/checkin-tasks/${row.id}`, { active: !row.active })
   loadTasks(); loadBoard()
 }
