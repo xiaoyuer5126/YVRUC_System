@@ -220,6 +220,7 @@ def test_批量算分条数固定且与逐个算一致(db, take_student):
     ids = [u.id for u in users]
     with _counting() as n:
         got = scoring.briefs(db, ids)
-    assert n["sql"] == 3, n
+    # 违规、主场次报名、签到、补记录名单各一条，与人数无关
+    assert n["sql"] == 4, n
     assert got == {uid_: scoring.brief(db, uid_) for uid_ in ids}
     assert scoring.briefs(db, []) == {}
