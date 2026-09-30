@@ -383,6 +383,14 @@ def inbox(db, student_id: str, title_prefix: str) -> list:
                     Notification.title.startswith(title_prefix)).all())
 
 
+def is_approval_todo(notes: list) -> bool:
+    """审批待办的通知：发到了、不要签收、点开进审批页（审批人只在那儿办得了）。"""
+    from backend.integrations import msgcenter
+    return bool(notes) and all(
+        not n.need_ack and msgcenter.page_for(n.template_key, n.data) == "/approvals"
+        for n in notes)
+
+
 def make_draft(client, headers, *, proposal: bool = True) -> str:
     """一个结构完整、可以提交审批的草稿；proposal=True 顺手传好立项书。"""
     from datetime import timedelta

@@ -13,6 +13,7 @@ from .. import config
 from .. import hours as hours_flow
 from ..database import db_session
 from ..deps import current_user
+from ..integrations import msgcenter
 from ..models import (Activity, CheckinRecord, Enrollment,
                       HoursAppeal, HoursRecord, Notification, Shift, Position,
                       User, iso, now, uid)
@@ -201,8 +202,11 @@ def my_notifications(db: OrmSession = Depends(db_session),
                    .filter(Notification.user_id == user.id,
                            Notification.need_ack.is_(True),
                            Notification.acked_at.is_(None)).scalar() or 0)
+    # page：点开去哪一页。由后端按通知算，企业微信卡片的跳转链接出自同一份
+    # 规则（msgcenter.page_for），站内和企业微信里点同一条不会各去各的
     return {"unread": unread, "pending_ack": pending_ack,
-            "items": [n.out() for n in rows]}
+            "items": [{**n.out(), "page": msgcenter.page_for(n.template_key, n.data)}
+                      for n in rows]}
 
 
 @router.get("/notifications/unread")

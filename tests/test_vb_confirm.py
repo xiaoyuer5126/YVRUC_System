@@ -14,8 +14,9 @@ import pytest
 from backend import scheduled
 from backend.models import (Activity, ActivityManager, AuditLog, Department,
                             HoursRequest, Notification, VbConfirm, now, uid)
-from conftest import (ADMIN, INITIATOR, LIAISON_CORE, LIAISON_HEAD, inbox, login,
-                      make_draft, student_row, upload_proposal)
+from conftest import (ADMIN, INITIATOR, LIAISON_CORE, LIAISON_HEAD, inbox,
+                      is_approval_todo, login, make_draft, student_row,
+                      upload_proposal)
 
 COUNCIL = "2025003"         # 张，会长团（不是管理员）
 NAMES = ["校运会志愿服务（上午）", "校运会志愿服务（下午）"]
@@ -146,6 +147,7 @@ def test_时长通过后推给外联值班人_不论归口部门_确认即完成
     title = f"志愿北京待确认｜{act.title}"
     note = inbox(db, LIAISON_CORE, title)
     assert len(note) == 1 and NAMES[0] in note[0].content and NAMES[1] in note[0].content
+    assert is_approval_todo(note)
     assert not inbox(db, LIAISON_HEAD, title)
 
     core = login(client, LIAISON_CORE)

@@ -59,10 +59,15 @@ router.beforeEach((to) => {
     return manageView ? '/manage' : '/square'
   }
 
-  // 工作台视角不显示个人板块：个人页仅学生视角可进
+  // 工作台视角不显示个人板块，个人页只在学生视角下进。直接打开个人页（多半是
+  // 点了通知，比如企业微信里「时长已核准」的卡片）时，持有学生身份就切过去
+  // 放行——不然人被弹到活动管理，还得自己切视角再把页面找回来。没有学生
+  // 身份的（老师）才回活动管理
   const personalPages = ['square', 'my', 'hours']
   if (manageView && personalPages.includes(to.path.slice(1))) {
-    return '/manage'
+    if (!hasIdentity('student')) return '/manage'
+    setActiveIdentity('student')
+    return true
   }
 
   const page = to.meta.page

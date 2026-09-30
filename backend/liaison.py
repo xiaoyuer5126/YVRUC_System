@@ -261,7 +261,7 @@ def push_vb_confirm(db: OrmSession, act: Activity, actor: User | None,
                + ("，管理者按退回意见改了志愿北京活动名称，重新提交。" if again else "。")
                + f"\n志愿北京活动名称：{names_text(row.names)}\n"
                f"请到志愿北京核对后，在「活动审批」确认或退回。",
-               data={"activity_id": act.id, "route": "approvals"}, need_ack=True)
+               data={"activity_id": act.id, "route": "approvals"})
     return row
 
 

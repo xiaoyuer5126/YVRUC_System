@@ -33,6 +33,8 @@ def test_签收全流程(client, admin, db, enrolled_activity):
     assert inbox["pending_ack"] == 1
     item = next(n for n in inbox["items"] if n["need_ack"])
     assert item["acked_at"] is None
+    # 站内签收按钮就在卡片上，点卡片照样进活动页（企业微信里才落在消息中心）
+    assert item["page"] == f"/activity/{act.id}"
 
     # 管理端：未签收名单里有这个人
     batches = client.get(f"/api/staff/activities/{act.id}/notify-batches",

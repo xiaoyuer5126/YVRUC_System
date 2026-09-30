@@ -90,9 +90,9 @@ def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
 
 
 def notify(db: OrmSession, user: User, title: str, content: str, *,
-           data: dict | None = None, need_ack: bool = False) -> None:
+           data: dict | None = None) -> None:
     """给一个人发一条通知。用在没必要做成模板的一次性事务上。"""
-    msgcenter.send_user(db, user, "custom", data=data, need_ack=need_ack,
+    msgcenter.send_user(db, user, "custom", data=data,
                     title=title, content=content)
 
 

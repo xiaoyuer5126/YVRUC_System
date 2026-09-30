@@ -90,8 +90,7 @@ def _event(db: OrmSession, act: Activity, kind: str, actor: User, **kw) -> None:
 
 
 def _notify(db: OrmSession, who: User | None, title: str, content: str,
-            act: Activity, *, need_ack: bool = False,
-            route: str = "") -> None:
+            act: Activity, *, route: str = "") -> None:
     """route 指明这条消息点开该去哪儿：待办的审批要进审批页，
     不是进活动详情——审批人在那儿看不到通过/驳回的按钮。"""
     if who is None:
@@ -100,8 +99,7 @@ def _notify(db: OrmSession, who: User | None, title: str, content: str,
     if route:
         data["route"] = route
     msgcenter.send_user(db, who, "custom", data=data,
-                    title=title, content=content, need_ack=need_ack,
-                    batch_id=uid("bat") if need_ack else None)
+                    title=title, content=content)
 
 
 # ======================= 部门维护 =======================
@@ -280,7 +278,7 @@ def submit(activity_id: str, body: SubmitBody,
             f"{user.name} 提交了「{act.title}」，组织单位：{act.organizer}。\n"
             f"归口部门：{dept.name}。\n"
             + (f"备注：{body.note.strip()}\n" if body.note.strip() else "")
-            + "请到「活动审批」处理。", act, need_ack=True, route="approvals")
+            + "请到「活动审批」处理。", act, route="approvals")
     db.commit()
     return {"ok": True, "assignee": contact.name}
 
@@ -451,7 +449,7 @@ def transfer(activity_id: str, body: TransferBody,
         contact = liaison.approval_contact(db, dept.id) or target
     _notify(db, contact, f"转来一条待审批｜{act.title}",
             f"{user.name} 把「{act.title}」的审批转交给您。\n理由：{reason}",
-            act, need_ack=True, route="approvals")
+            act, route="approvals")
     _notify(db, before, f"审批已转出｜{act.title}",
             f"您名下的「{act.title}」已由 {user.name} 转交给 {target.name}。\n"
             f"理由：{reason}", act)

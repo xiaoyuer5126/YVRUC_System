@@ -119,7 +119,7 @@ def set_duty(dept_id: str, body: DutyBody, db: OrmSession = Depends(db_session),
                + (f"\n目前有 {pending} 条待处理，请到「活动审批」查看。" if pending
                   else "")
                + (f"\n备注：{note}" if note else ""),
-               data={"route": "approvals"}, need_ack=True)
+               data={"route": "approvals"})
     if cur is not None and cur.id != user.id:
         notify(db, cur, f"您的值班已结束｜{dept.name}",
                f"{user.name} 把{dept.name}的值班改为："

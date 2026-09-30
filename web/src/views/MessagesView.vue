@@ -8,7 +8,7 @@
               :title="`有 ${pendingAck} 条通知需要您签收`" />
     <el-card v-for="n in items" :key="n.id" shadow="never" class="msg"
              :class="{ unread: !n.read, ack: n.need_ack && !n.acked_at,
-                       clickable: n.data?.activity_id || n.data?.route }"
+                       clickable: n.page }"
              @click="openMessage(n)">
       <div class="row">
         <el-tag size="small" effect="plain" :type="tagType(n.template_key)">{{ tagLabel(n.template_key) }}</el-tag>
@@ -45,8 +45,8 @@ const router = useRouter()
 
 /** 点开一条：先标已读，再去它该去的地方。
  *
- * 待办的审批要进审批页——审批人在活动详情页看不到通过/驳回的按钮；
- * 其余带了活动的就进活动页，候补转正、签到提醒这类看完总要去那儿操作。
+ * 去哪一页由后端按通知算好（n.page，规则见 msgcenter.page_for）。企业微信
+ * 卡片的点击链接出自同一份规则，站内和企业微信里点同一条不会各去各的。
  */
 async function openMessage(n) {
   if (!n.read) {
@@ -55,11 +55,7 @@ async function openMessage(n) {
     api.post(`/api/me/notifications/${n.id}/read`, {}, { silent: true })
       .catch(() => { n.read = false })
   }
-  if (n.data?.route === 'approvals') return router.push('/approvals')
-  // 时长核准、申诉答复去「我的志愿时长」：确认/申诉的按钮在那儿，活动详情页
-  // 上没有，跳过去等于让人自己再找一遍
-  if (n.data?.route === 'hours') return router.push('/hours')
-  if (n.data?.activity_id) router.push('/activity/' + n.data.activity_id)
+  if (n.page) router.push(n.page)
 }
 
 const items = ref([])

@@ -408,14 +408,16 @@ def test_没写说明就给空串而不是缺字段(client, admin, db, draft):
     assert row["submit_note"] == ""
 
 
-def test_待审批的通知指向审批页(client, admin, db, draft):
-    """审批人在活动详情页看不到通过/驳回，消息点开要进审批页。"""
+def test_待审批的通知指向审批页_不要签收(client, admin, db, draft):
+    """审批人在活动详情页看不到通过/驳回，消息点开要进审批页。
+    办没办看审批状态就知道，不另要一次签收。"""
     dept = _liaison(db)
     r = client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
                     json={"department_id": dept.id})
     assert r.status_code == 200, r.text
     notes = _my_notes(client, login(client, QINGXIE_HEAD), draft, "待审批")
-    assert len(notes) == 1 and notes[0]["data"]["route"] == "approvals"
+    assert len(notes) == 1 and notes[0]["page"] == "/approvals"
+    assert notes[0]["need_ack"] is False
 
 
 def test_部门可以新增和删除(client, admin, db):

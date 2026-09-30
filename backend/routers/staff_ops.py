@@ -1645,7 +1645,7 @@ def _notify_lock_approvers(db: OrmSession, act: Activity, who: str,
                f"说明：{reason}\n志愿北京活动名称：{liaison.names_text(act.vb_names)}\n"
                f"通过后时长锁定，名称推给对外联络部确认；"
                f"驳回则退回管理者修改。\n请到「活动审批」处理。",
-               data={"activity_id": act.id, "route": "approvals"}, need_ack=True)
+               data={"activity_id": act.id, "route": "approvals"})
 
 
 class UnlockRequestBody(BaseModel):
@@ -1679,7 +1679,7 @@ def request_unlock(activity_id: str, body: UnlockRequestBody,
         notify(db, approver, f"时长解锁申请｜{act.title}",
                f"{user.name} 申请解锁「{act.title}」已锁定的志愿时长。\n"
                f"理由：{reason}\n请到「活动审批」处理。",
-               data={"activity_id": act.id, "route": "approvals"}, need_ack=True)
+               data={"activity_id": act.id, "route": "approvals"})
     db.commit()
     return {"ok": True, "id": req.id}
 

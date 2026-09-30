@@ -4,8 +4,10 @@
   报名成功 / 候补转正 / 岗位分配 / 活动变更警告
 
 Mock 模式：把消息落库（notifications 表），前端「消息中心」即收件箱。
-真实模式：经学校开放平台的消息中心（opengw）下发；通知卡片可点击跳转，
-落哪一页见 _link_for（链接不写进正文，走 extras 的 im_linkUrl）。
+真实模式：经学校开放平台的消息中心（opengw）下发。
+
+点开一条通知去哪一页，只有 page_for 这一份规则：站内消息中心按它跳，企业微信
+卡片的点击链接也由它拼出来（_link_for，走 extras 的 im_linkUrl）。
 
 **本平台只发企业微信通道（channels=4）**。学校未同意本平台发短信，而短信是按条
 计费的真金白银——所以 `_channels()` 里对通道 1 做了硬拦截，管理员在「集成设置」
@@ -90,10 +92,9 @@ TEMPLATES: dict[str, tuple[str, str]] = {
 }
 
 
-# 各模板点开后落在哪一页（站内 hash 路由的路径）。模板配了就以它为准——
-# 每条通知都有唯一一个「该去的地方」：报名/录取去「我的报名」看自己的状态和
-# 联络群，时长去「我的志愿时长」（确认与申诉按钮只在那儿），催签收去
-# 「消息中心」（「我已知悉」按钮只在那儿）。
+# 各模板点开后落在哪一页（站内 hash 路由的路径），配了就以它为准：报名/录取
+# 去「我的报名」看自己的状态和联络群，时长去「我的志愿时长」——确认与申诉的
+# 按钮只在那儿，带去活动页等于让人自己再找一遍。
 TEMPLATE_PAGE: dict[str, str] = {
     "signup_success": "/my",
     "waitlist_queued": "/my",
@@ -104,32 +105,46 @@ TEMPLATE_PAGE: dict[str, str] = {
     "leader_appointed": "/my",
     "hours_approved": "/hours",
     "hours_locked": "/hours",
-    "ack_reminder": "/messages",
 }
 
-# data.route 能直接当页面路径的取值。名单与前端 MessagesView 认的一致——
-# 名单外的不猜，认错页面比不跳更糟。
+# data.route 能直接当页面路径的取值。名单外的不猜，认错页面比不跳更糟。
 ROUTE_PAGES = ("hours", "approvals")
 
 
-def _link_for(template_key: str, data: dict | None) -> str:
-    """这条通知点开要去的完整网址；没有合适页面、或站点根没配，返回空串。
+def page_for(template_key: str, data: dict | None) -> str:
+    """点开这条通知该去哪一页（站内路由路径）；没有合适的页返回空串。
 
-    模板没配落点的，按 data 走——与站内消息中心同一条规则（见 MessagesView
-    的 clickable）：有活动 id 就进活动页，有 route 就进对应页。两处跳转
-    指向同一页，不会各说各话。
+    站内消息中心（/api/me/notifications 里的 page）和企业微信卡片（_link_for）
+    都按它跳。依次看：
+    1. 模板配了落点（TEMPLATE_PAGE）；
+    2. data.route 指的页。它排在活动 id 前面：待办的审批也带着活动 id，
+       可审批人在活动详情页看不到通过/驳回的按钮；
+    3. data.activity_id：进活动页；
+    4. 都没有：不跳。
+    """
+    data = data or {}
+    if template_key in TEMPLATE_PAGE:
+        return TEMPLATE_PAGE[template_key]
+    if data.get("route") in ROUTE_PAGES:
+        return "/" + data["route"]
+    if data.get("activity_id"):
+        return f"/activity/{data['activity_id']}"
+    return ""
+
+
+def _link_for(template_key: str, data: dict | None, need_ack: bool) -> str:
+    """企业微信卡片点开的完整网址；没有合适的页、或站点根没配，返回空串。
+
+    要签收的和催签收的一律落在消息中心：「我已知悉」按钮只在那儿，带去别的
+    页就签不了；签完再点这条，照样去 page_for 那一页。站内不必这样——签收
+    按钮就在消息卡片上。
     站点根（config.SITE_URL）不配就不发链接：带半截路径的 im_linkUrl
     打开是白屏，不如不点。
     """
-    data = data or {}
-    page = TEMPLATE_PAGE.get(template_key, "")
-    if not page:
-        activity_id = data.get("activity_id")
-        route = data.get("route")
-        if activity_id:
-            page = f"/activity/{activity_id}"
-        elif route in ROUTE_PAGES:
-            page = "/" + route
+    if need_ack or template_key == "ack_reminder":
+        page = "/messages"
+    else:
+        page = page_for(template_key, data)
     if not page or not config.SITE_URL:
         return ""
     return config.SITE_URL.rstrip("/") + "/#" + page
@@ -175,11 +190,13 @@ def send_user(db: OrmSession, user: User, template_key: str,
 
     消息与触发它的业务变更同生共死：业务回滚了，通知也不该留下。
     真实推送失败只标记 delivered=False，不打断业务。
-    need_ack=True 的消息要志愿者点一次「我已知悉」才算到人。
+    need_ack=True 的消息要志愿者点一次「我已知悉」才算到人，用在管理者要逐人
+    看签收情况的群发上（活动管理页「签收情况」）。审批待办不要签收：办没办，
+    审批页上的状态就说明了，再要一次签收只是多一条要点的待办。
     """
     title, content = render(template_key, **fields)
     real = real_mode(db)    # 用调用方的会话读配置，别另占一条连接
-    url = _link_for(template_key, data)
+    url = _link_for(template_key, data, need_ack)
     row = Notification(id=uid("ntf"), user_id=user.id,
                        template_key=template_key, title=title,
                        content=content, data=data or {},

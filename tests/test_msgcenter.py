@@ -56,28 +56,41 @@ def test_报文里收件人是真数组不是字符串(db, monkeypatch):
     assert "extras" in p
 
 
-def test_模板链接按落点规则拼(db, monkeypatch):
-    """模板配了落点就用它；没配才看 data（与站内 MessagesView 同一套规则）。"""
+def test_点开去哪页只有一份规则():
+    """站内消息中心与企业微信卡片共用 page_for：模板落点 → data.route → 活动页。"""
+    page = msgcenter.page_for
+    assert page("signup_success", None) == "/my"
+    # 模板落点优先于活动 id：时长的确认/申诉按钮不在活动页上
+    assert page("hours_approved", {"activity_id": "a1"}) == "/hours"
+    assert page("hours_locked", {"activity_id": "a1"}) == "/hours"
+    # route 优先于活动 id：待办的审批也带着活动 id，但通过/驳回只在审批页
+    assert page("custom", {"activity_id": "a1", "route": "approvals"}) == "/approvals"
+    assert page("custom", {"route": "hours"}) == "/hours"
+    assert page("activity_changed", {"activity_id": "a1"}) == "/activity/a1"
+    # 名单外的 route 不猜，退回看活动 id；什么都没有就不跳
+    assert page("custom", {"activity_id": "a1", "route": "unknown"}) == "/activity/a1"
+    assert page("custom", {"route": "unknown"}) == ""
+    assert page("checkin_reminder", {}) == ""
+
+
+def test_企业微信链接_要签收的落在消息中心(monkeypatch):
+    """「我已知悉」只在消息中心：要签收的、催签收的卡片都得带人去那儿，
+    其余跟站内去同一页。"""
     monkeypatch.setattr(config, "SITE_URL", "https://p.cn/")
-    assert msgcenter._link_for("signup_success", None) == "https://p.cn/#/my"
-    assert msgcenter._link_for("hours_approved", None) == "https://p.cn/#/hours"
-    # 模板的落点优先于 data.activity_id：催签收的按钮和时长的确认按钮
-    # 都不在活动页上，带过去等于白跑
-    assert (msgcenter._link_for("ack_reminder", {"activity_id": "a1"})
+    link = msgcenter._link_for
+    assert link("signup_success", None, False) == "https://p.cn/#/my"
+    assert (link("custom", {"activity_id": "a1", "route": "approvals"}, False)
+            == "https://p.cn/#/approvals")
+    assert link("custom", {"activity_id": "a1"}, True) == "https://p.cn/#/messages"
+    assert (link("checkin_reminder", {"activity_id": "a1"}, True)
             == "https://p.cn/#/messages")
-    assert (msgcenter._link_for("hours_approved", {"activity_id": "a1"})
-            == "https://p.cn/#/hours")
-    # 模板没配落点的（活动变更/签到提醒/自定义）看 data
-    assert (msgcenter._link_for("activity_changed", {"activity_id": "a1"})
-            == "https://p.cn/#/activity/a1")
-    assert (msgcenter._link_for("custom", {"route": "hours"})
-            == "https://p.cn/#/hours")
-    # 名单外 route / 没有落点的模板 / 站点根为空——都不带链接，
-    # 免得发出「打开是白屏」或跳错页的地址
-    assert msgcenter._link_for("custom", {"route": "unknown"}) == ""
-    assert msgcenter._link_for("checkin_reminder", {}) == ""
+    assert (link("ack_reminder", {"activity_id": "a1"}, False)
+            == "https://p.cn/#/messages")
+    # 没有落点、或站点根为空：不带链接，免得发出打开是白屏的地址
+    assert link("custom", {}, False) == ""
     monkeypatch.setattr(config, "SITE_URL", "")
-    assert msgcenter._link_for("signup_success", None) == ""
+    assert link("signup_success", None, False) == ""
+    assert link("custom", {"activity_id": "a1"}, True) == ""
 
 
 def test_带链接的通知把链接放extras(db, monkeypatch):

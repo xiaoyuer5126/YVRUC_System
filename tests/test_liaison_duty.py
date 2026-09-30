@@ -10,7 +10,8 @@ from backend import scheduled
 from backend.models import (Activity, ActivityManager, AuditLog, Department,
                             DutyHandover, HoursRequest, Notification, User, now, uid)
 from conftest import (ADMIN, INITIATOR, LIAISON_CORE, LIAISON_HEAD, LIAISON_MEMBER,
-                      approve, inbox, login, make_draft, student_row)
+                      approve, inbox, is_approval_todo, login, make_draft,
+                      student_row)
 
 
 def _set_duty(client, headers, dept_id, user_id, note=""):
@@ -73,7 +74,7 @@ def test_骨干不能自己上岗_在班的人才能交班(client, db, liaison, 
     assert (last.from_user_id, last.to_user_id, last.actor_id) == \
         (lin.id, extra_core.id, lin.id)
     # 接班的人收到通知，部长也知道换了人
-    assert inbox(db, extra_core.student_id, "您开始值班")
+    assert is_approval_todo(inbox(db, extra_core.student_id, "您开始值班"))
     assert inbox(db, LIAISON_HEAD, "值班交接")
 
     # 在班的人也可以把班交回给部长
@@ -145,7 +146,7 @@ def test_转交给部门也通知值班人(client, admin, db, liaison):
     r = client.post(f"/api/staff/activities/{aid}/transfer-approval", headers=admin,
                     json={"department_id": liaison.id, "reason": "二级团体的活动"})
     assert r.status_code == 200 and r.json()["assignee"] == "林骁"
-    assert inbox(db, LIAISON_CORE, f"转来一条待审批｜{act.title}")
+    assert is_approval_todo(inbox(db, LIAISON_CORE, f"转来一条待审批｜{act.title}"))
     assert not inbox(db, LIAISON_HEAD, f"转来一条待审批｜{act.title}")
 
 
@@ -242,7 +243,7 @@ def test_时长审批通知值班人_值班人能拍(client, admin, db, liaison)
     r = client.post(f"/api/staff/activities/{act.id}/hours/lock-request",
                     headers=admin, json={})
     assert r.status_code == 200, r.text
-    assert inbox(db, LIAISON_CORE, f"时长锁定审批｜{act.title}")
+    assert is_approval_todo(inbox(db, LIAISON_CORE, f"时长锁定审批｜{act.title}"))
     assert not inbox(db, LIAISON_HEAD, f"时长锁定审批｜{act.title}")
 
     # 部长照样看得到
@@ -260,7 +261,7 @@ def test_时长审批通知值班人_值班人能拍(client, admin, db, liaison)
     r = client.post(f"/api/staff/activities/{act.id}/hours/unlock-request",
                     headers=admin, json={"reason": "漏记了两个人的时长"})
     assert r.status_code == 200
-    assert inbox(db, LIAISON_CORE, f"时长解锁申请｜{act.title}")
+    assert is_approval_todo(inbox(db, LIAISON_CORE, f"时长解锁申请｜{act.title}"))
     assert not inbox(db, LIAISON_HEAD, f"时长解锁申请｜{act.title}")
     r = client.post(f"/api/staff/hours-requests/{r.json()['id']}/decide",
                     headers=head, json={"approve": False, "reply": "先别动"})

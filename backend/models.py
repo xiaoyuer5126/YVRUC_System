@@ -1187,8 +1187,7 @@ class Notification(Base):
     user_id: Mapped[str] = mapped_column(String(32), index=True)
     template_key: Mapped[str] = mapped_column(String(32), default="")   # 见 integrations/msgcenter.py 模板库
     # 通道名，固定 "wecom"。它记的是「走的哪个通道」（企业微信＝开放平台的通道 4），
-    # 不是「哪个模块发的」——发送模块改叫 msgcenter 了，这里不跟着改：改了会跟
-    # 老数据对不上，而语义本来就没变。
+    # 不是「哪个模块发的」，所以不跟发送模块 msgcenter 同名。
     channel: Mapped[str] = mapped_column(String(16), default="wecom")
     title: Mapped[str] = mapped_column(String(128))
     content: Mapped[str] = mapped_column(Text, default="")
