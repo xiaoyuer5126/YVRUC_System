@@ -149,29 +149,32 @@ def test_导入名单_成功与跳过清单(client, admin, db, approved, take_st
         f"{c} abc",                   # 不是数字
         f"{c2} 0.3",                  # 不是 0.5 的倍数
         f"{c3} 0",
-        f"{c4} {config.RECORD_MAX_HOURS + 1}",
         f"{TEACHER} 2",               # 老师不参与志愿
+        f"{c4} 36.5",                 # 不设上限：照导，但标出来请核对
     ])
     r = _import(client, admin, approved, text)
     assert r.status_code == 200, r.text
     d = r.json()
-    assert {(x["student_id"], x["hours"]) for x in d["added"]} == {(a, 2.5), (b, 3.0)}
+    assert {(x["student_id"], x["hours"]) for x in d["added"]} == \
+        {(a, 2.5), (b, 3.0), (c4, 36.5)}
+    warned = {x["student_id"]: x["warning"] for x in d["added"]}
+    assert "超过 24 小时" in warned[c4] and not warned[a]
+    assert "超过 24 小时请核对" in d["message"]
     assert d["not_found"] == [{"line": 5, "student_id": "9999999999"}]
     reasons = {(x["line"], x["student_id"]): x["reason"] for x in d["skipped"]}
     assert "重复" in reasons[(6, a)] and "第 2 行" in reasons[(6, a)]
     assert "不是数字" in reasons[(7, c)]
     assert "0.5" in reasons[(8, c2)]
     assert "大于 0" in reasons[(9, c3)]
-    assert "不能超过" in reasons[(10, c4)]
-    assert "老师" in reasons[(11, TEACHER)]
-    assert len(d["skipped"]) == 6
+    assert "老师" in reasons[(10, TEACHER)]
+    assert len(d["skipped"]) == 5
     # 找不到的学号不建档
     from backend.models import User
     assert db.query(User).filter(User.student_id == "9999999999").first() is None
 
     rows = client.get(f"/api/staff/activities/{approved}/record-roster",
                       headers=admin).json()
-    assert rows["editable"] and rows["total_hours"] == 5.5
+    assert rows["editable"] and rows["total_hours"] == 42
     by_sid = {x["user"]["student_id"]: x for x in rows["items"]}
     assert by_sid[b]["note"] == "场外支援 半天"
     db.expire_all()
@@ -179,16 +182,23 @@ def test_导入名单_成功与跳过清单(client, admin, db, approved, take_st
                                        HoursRecord.user_id == student_row(db, b).id).one()
     assert rec.source == "import" and rec.parts[0]["kind"] == "import"
 
-    # 追加导入：已在名单的跳过，新人照导
-    r = _import(client, admin, approved, f"{a} 5\n{c} 1.5")
+    # 再导一次：新人追加，已在名单的按新时长覆盖（列出旧值→新值），没变的不动
+    r = _import(client, admin, approved, f"{a} 5\n{c} 1.5\n{b} 3")
     d = r.json()
     assert [x["student_id"] for x in d["added"]] == [c]
-    assert "已在名单中" in d["skipped"][0]["reason"]
+    assert [(x["student_id"], x["old_hours"], x["hours"]) for x in d["overwritten"]] \
+        == [(a, 2.5, 5.0)]
+    assert d["unchanged"] == 1 and not d["skipped"]
+    db.expire_all()
+    rec = db.query(HoursRecord).filter(HoursRecord.activity_id == approved,
+                                       HoursRecord.user_id == student_row(db, a).id).one()
+    assert rec.hours == 5 and rec.parts[0]["hours"] == 5 and len(rec.parts) == 1
 
     # 留痕
     logs = db.query(AuditLog).filter(AuditLog.activity_id == approved,
                                      AuditLog.action == "roster_import").all()
     assert len(logs) == 2 and "找不到" in logs[0].summary + logs[1].summary
+    assert any("覆盖 1 人" in l.summary and "2.5h→5h" in l.summary for l in logs)
 
 
 def test_上传xlsx与csv(client, admin, approved, take_student):
@@ -303,6 +313,12 @@ def test_核准_申诉_提交审核_外联确认_完成(client, admin, db, appro
     r = client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu,
                     json={"claimed_hours": 3, "reason": "实际服务了三个小时"})
     assert r.status_code == 200, r.text
+    # 申诉没处理完：再导一次不覆盖他，列出来提醒；别人照常覆盖
+    r = _import(client, admin, approved, f"{a} 6\n{b} 3.5 引导")
+    d = r.json()
+    assert [x["student_id"] for x in d["overwritten"]] == [b]
+    assert d["skipped"][0]["student_id"] == a and "申诉" in d["skipped"][0]["reason"]
+    assert _import(client, admin, approved, f"{b} 3 引导").json()["overwritten"]
     # 有申诉的记录不能删
     assert client.delete(f"/api/staff/activities/{approved}/record-roster/{rec['id']}",
                          headers=admin).status_code == 409
@@ -331,6 +347,8 @@ def test_核准_申诉_提交审核_外联确认_完成(client, admin, db, appro
     assert r.status_code == 200, r.text
     # 审核期间名单冻结
     assert _import(client, admin, approved, f"{take_student()} 1").status_code == 409
+    r = _import(client, admin, approved, f"{b} 4")          # 覆盖同样被拒
+    assert r.status_code == 409 and "审批" in r.json()["detail"]
     req = next(x for x in client.get("/api/staff/hours-requests", headers=admin).json()
                if x["activity_id"] == approved)
     r = client.post(f"/api/staff/hours-requests/{req['id']}/decide", headers=admin,
@@ -345,7 +363,9 @@ def test_核准_申诉_提交审核_外联确认_完成(client, admin, db, appro
     assert r.status_code == 200, r.text
     db.expire_all()
     assert db.get(Activity, approved).status == "completed"
-    # 锁定之后不能再改名单
+    # 锁定之后整批导入被拒，也不能单独改
+    r = _import(client, admin, approved, f"{a} 8")
+    assert r.status_code == 409 and "锁定" in r.json()["detail"]
     r = client.patch(f"/api/staff/activities/{approved}/record-roster/{rec['id']}",
                      headers=admin, json={"hours": 1})
     assert r.status_code == 409

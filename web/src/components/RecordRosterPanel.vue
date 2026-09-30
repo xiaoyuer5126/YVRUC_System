@@ -6,9 +6,10 @@
               :title="state.block_reason" />
     <el-alert v-else type="info" :closable="false">
       每行一个人：<b>学号 时长 [备注]</b>，空格、制表符或逗号分隔；时长以小时计，
-      支持 0.5 小时，最多 {{ state.max_hours }} 小时。可直接从 Excel 复制三列粘贴，
-      也可上传 .xlsx / .csv（前三列依次为学号、时长、备注，表头行自动跳过）。
-      平台里找不到的学号只会列出来提醒，不会建档。可以多次追加导入。
+      支持 0.5 小时，超过 {{ state.warn_hours }} 小时的会标出来请你核对。可直接从 Excel
+      复制三列粘贴，也可上传 .xlsx / .csv（前三列依次为学号、时长、备注，表头行自动跳过）。
+      平台里找不到的学号只会列出来提醒，不会建档。可以多次导入：新的人追加，
+      <b>已在名单里的人按这次的时长覆盖</b>（有待处理申诉的除外）。
     </el-alert>
 
     <el-card v-if="state.editable" shadow="never" style="margin-top:12px">
@@ -33,6 +34,25 @@
         <b>{{ result.message }}</b>
         <el-button link style="margin-left:auto" @click="result = null">收起</el-button>
       </div>
+      <!-- 超过 24 小时的照导，但要人再看一眼 -->
+      <div v-if="flagged.length" style="margin-top:8px">
+        <span class="dim">请核对（时长偏大）：</span>
+        <el-tag v-for="x in flagged" :key="x.student_id" type="warning" effect="plain"
+                size="small" style="margin:4px 4px 0 0">
+          {{ x.name }} {{ x.student_id }} {{ x.hours }}h · {{ x.warning }}
+        </el-tag>
+      </div>
+      <el-table v-if="result.overwritten?.length" :data="result.overwritten" size="small"
+                style="margin-top:8px">
+        <el-table-column label="覆盖" width="60">
+          <template #default><el-tag size="small" type="primary">覆盖</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="name" label="姓名" width="100" />
+        <el-table-column prop="student_id" label="学号" width="130" />
+        <el-table-column label="旧时长 → 新时长" min-width="160">
+          <template #default="{ row }">{{ row.old_hours }}h → <b>{{ row.hours }}h</b></template>
+        </el-table-column>
+      </el-table>
       <div v-if="result.not_found.length" style="margin-top:8px">
         <span class="dim">平台里找不到这些学号（未建档，请核对后重新导入）：</span>
         <el-tag v-for="x in result.not_found" :key="x.line" type="danger" effect="plain"
@@ -95,8 +115,7 @@
                width="420">
       <el-form label-width="70px">
         <el-form-item label="时长">
-          <el-input-number v-model="edit.hours" :min="0.5" :max="state.max_hours"
-                           :step="0.5" :precision="1" />
+          <el-input-number v-model="edit.hours" :min="0.5" :step="0.5" :precision="1" />
           <span class="dim" style="margin-left:8px">小时</span>
         </el-form-item>
         <el-form-item label="备注">
@@ -113,7 +132,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -125,10 +144,13 @@ const props = defineProps({
 const emit = defineEmits(['changed'])
 
 const state = ref({ items: [], total_hours: 0, editable: false, block_reason: '',
-                    max_hours: 24, held_text: '' })
+                    warn_hours: 24, held_text: '' })
 const text = ref('')
 const busy = ref(false)
 const result = ref(null)
+// 这次导入里新增或覆盖后时长偏大、要人核对的
+const flagged = computed(() => [...(result.value?.added || []),
+                                ...(result.value?.overwritten || [])].filter(x => x.warning))
 const edit = ref({ visible: false, row: null, hours: 1, note: '', busy: false })
 const base = () => `/api/staff/activities/${props.activityId}/record-roster`
 
@@ -139,6 +161,7 @@ async function load() {
 function done(d) {
   result.value = d
   const warn = d.skipped.length || d.not_found.length
+    || [...d.added, ...(d.overwritten || [])].some(x => x.warning)
   ElMessage[warn ? 'warning' : 'success'](d.message)
   load()
   emit('changed')
