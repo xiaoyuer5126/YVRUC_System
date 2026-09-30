@@ -10,6 +10,7 @@
       复制三列粘贴，也可上传 .xlsx / .csv（前三列依次为学号、时长、备注，表头行自动跳过）。
       平台里找不到的学号只会列出来提醒，不会建档。可以多次导入：新的人追加，
       <b>已在名单里的人按这次的时长覆盖</b>（有待处理申诉的除外）。
+      时长核准后再改名单会撤销本轮核准，须到「时长管理」重新核准并通知志愿者。
     </el-alert>
 
     <el-card v-if="state.editable" shadow="never" style="margin-top:12px">
@@ -122,7 +123,7 @@
           <el-input v-model="edit.note" maxlength="120" placeholder="选填" />
         </el-form-item>
       </el-form>
-      <div class="dim">改了时长，本人之前的确认作废；已核准的话，再核准一次才会通知他。</div>
+      <div class="dim">核准后改名单会撤销本轮核准；请到「时长管理」重新核准并通知志愿者。</div>
       <template #footer>
         <el-button @click="edit.visible = false">取消</el-button>
         <el-button type="primary" :loading="edit.busy" @click="saveEdit">保存</el-button>
@@ -160,7 +161,7 @@ async function load() {
 
 function done(d) {
   result.value = d
-  const warn = d.skipped.length || d.not_found.length
+  const warn = d.reapproval_required || d.skipped.length || d.not_found.length
     || [...d.added, ...(d.overwritten || [])].some(x => x.warning)
   ElMessage[warn ? 'warning' : 'success'](d.message)
   load()
@@ -191,9 +192,10 @@ function openEdit(row) {
 async function saveEdit() {
   edit.value.busy = true
   try {
-    await api.patch(`${base()}/${edit.value.row.id}`,
-                    { hours: edit.value.hours, note: edit.value.note })
-    ElMessage.success('已修改')
+    const d = await api.patch(`${base()}/${edit.value.row.id}`,
+                              { hours: edit.value.hours, note: edit.value.note })
+    ElMessage[d.reapproval_required ? 'warning' : 'success'](
+      d.reapproval_required ? '已修改，原时长核准已撤销，请重新核准' : '已修改')
     edit.value.visible = false
     load()
     emit('changed')
@@ -201,8 +203,9 @@ async function saveEdit() {
 }
 
 async function remove(row) {
-  await api.del(`${base()}/${row.id}`)
-  ElMessage.success('已从名单删除')
+  const d = await api.del(`${base()}/${row.id}`)
+  ElMessage[d.reapproval_required ? 'warning' : 'success'](
+    d.reapproval_required ? '已删除，原时长核准已撤销，请重新核准' : '已从名单删除')
   load()
   emit('changed')
 }

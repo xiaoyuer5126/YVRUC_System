@@ -266,17 +266,22 @@ def decide_vb_confirm(confirm_id: str, body: VbDecideBody,
                       user: User = Depends(require_manager)):
     """外联在志愿北京上核对过了：确认（活动落「已完成」，意见选填）或退回
     （必须写理由，通知管理者改名称重提）。"""
-    r = db.get(VbConfirm, confirm_id)
-    if r is None:
-        raise HTTPException(404, "记录不存在")
     if not liaison.vb_decider(db, user):
         raise HTTPException(403, "只有对外联络部的值班人或部长可以确认志愿北京")
+    # 两位审批人可能同时打开同一条待办。锁住记录再判状态：后一位等前一位
+    # 提交后会读到最终状态，不能把「已确认」盖成「已退回」。
+    r = (db.query(VbConfirm).filter(VbConfirm.id == confirm_id)
+         .with_for_update().one_or_none())
+    if r is None:
+        raise HTTPException(404, "记录不存在")
     if r.status != "pending":
         raise HTTPException(409, f"该条{r.status_label()}")
     reply = body.reply.strip()[:512]
     if not body.approve and len(reply) < 2:
         raise HTTPException(400, "退回必须写明理由，会发给活动管理者")
     act = _act(db, r.activity_id)
+    if act.status != "vb_pending" or not act.hours_locked():
+        raise HTTPException(409, "活动已不在待外联确认阶段，请刷新后重试")
     r.status = "confirmed" if body.approve else "returned"
     r.handled_by, r.handled_at, r.reply = user.id, now(), reply
     names = liaison.names_text(r.names)

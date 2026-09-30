@@ -98,6 +98,7 @@ services:
       - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"   # 本机直连 API 调试用，公网只走 web 反代
     volumes:
       - rucva_uploads:/app/data/uploads   # 活动二维码等上传件持久化
+      - rucva_materials:/app/data/materials # 学习材料、立项书与反馈截图持久化
       # 天地图瓦片的磁盘缓存：重建容器不丢，免得重新花每天 10000 次的额度
       - rucva_tiles:/app/data/tiles
     depends_on:
@@ -180,4 +181,5 @@ services:
 volumes:
   rucva_pgdata:
   rucva_uploads:
+  rucva_materials:
   rucva_tiles:

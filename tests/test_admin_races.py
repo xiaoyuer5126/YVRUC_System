@@ -17,12 +17,13 @@ from fastapi.testclient import TestClient
 
 from backend import enroll_logic as logic
 from backend.main import app
-from backend.models import Application, Enrollment
-from backend.routers import screening, staff_activities
+from backend.models import Activity, Application, Enrollment, VbConfirm
+from backend.routers import liaison as liaison_router, screening, staff_activities
 from conftest import login
 from test_promote_cutoff import _fill_and_queue, _raise_quota
 from test_screening import _create_screened, _answers, _holders
 from test_seat_hold import _cancel, _one_seat
+from test_vb_confirm import _approved_act, _lock, _office, _pending_confirm
 
 HOLD = 0.6        # 先到的请求在锁里多待这么久
 GAP = 0.15        # 后到的请求晚这么久出发：够它读到旧状态，又一定在先到的提交之前
@@ -136,3 +137,22 @@ def test_一位录取一位不录取_结论不会被后提交的盖掉(client, a
     statuses = {e.status for e in db.query(Enrollment)
                 .filter(Enrollment.activity_id == act_id)}
     assert "enrolled" in statuses and "applied" not in statuses
+
+
+def test_外联同时确认和退回只保留先提交的结论(client, admin, db, liaison,
+                                      monkeypatch):
+    act = _approved_act(db, _office(db).id)
+    _lock(client, admin, act)
+    row = _pending_confirm(client, admin, act)
+    url = f"/api/staff/vb-confirms/{row['id']}/decide"
+    _slow_once(monkeypatch, liaison_router, "audit_log")
+
+    first, second = _race(
+        lambda c: c.post(url, headers=admin, json={"approve": True}),
+        lambda c: c.post(url, headers=admin,
+                         json={"approve": False, "reply": "志愿北京未查到"}))
+    assert first.status_code == 200 and first.json()["status"] == "confirmed", first.text
+    assert second.status_code == 409, second.text
+    db.expire_all()
+    assert db.get(VbConfirm, row["id"]).status == "confirmed"
+    assert db.get(Activity, act.id).status == "completed"

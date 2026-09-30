@@ -20,7 +20,8 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
   对外只有 web 的 8080 与 cloudflared 隧道。
 - cloudflared 固定域名隧道：token 存 `.env` 的 `CLOUDFLARE_TOKEN`，公网域名在
   Cloudflare Zero Trust 控制台绑定，`docker logs rucva-cloudflared` 看连接状态。
-- 上传的活动二维码存命名卷 `rucva_uploads`，数据库存 `rucva_pgdata`。
+- 上传的活动二维码存命名卷 `rucva_uploads`，学习材料、立项书和反馈截图存
+  `rucva_materials`，数据库存 `rucva_pgdata`。
 - 启动时 Redis 与身份证加密密钥都是**硬依赖**：连不上、密钥不对直接起不来——
   半可用的服务比起不来更难排查。
 
@@ -241,6 +242,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
   - 平台里**找不到的学号只列出来提醒，不建档**；
   - 同一批里重复的学号（取第一行并提示）、非法时长、老师类型，逐条给原因并跳过，
     其余照常导入；
+  - 核准后新增、覆盖、改单人或删除名单，会撤销原核准和申诉截止时间；请到「时长管理」重新核准，重新通知名单中的志愿者；
   - **再导一次即覆盖**（方便整批改）：新的人追加，已在名单里的人按这次的时长覆盖
     （记录与导入明细段一起改，本人之前的确认作废），结果单独列出「覆盖：姓名 学号
     旧时长→新时长」；这次没写备注的保留原备注，数值和备注都没变的不动。本人有**待处理的

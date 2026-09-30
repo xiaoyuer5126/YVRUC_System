@@ -13,8 +13,8 @@ from io import BytesIO
 import pytest
 from openpyxl import Workbook, load_workbook
 
-from backend import config, scoring
-from backend.models import Activity, AuditLog, HoursRecord, now, uid
+from backend import config, scoring, scheduled
+from backend.models import Activity, AuditLog, HoursRecord, HoursRequest, Notification, User, now, uid
 from conftest import (ADMIN, INITIATOR, dl_url, login, student_row,
                       upload_proposal)
 
@@ -317,7 +317,11 @@ def test_核准_申诉_提交审核_外联确认_完成(client, admin, db, appro
     r = _import(client, admin, approved, f"{a} 6\n{b} 3.5 引导")
     d = r.json()
     assert [x["student_id"] for x in d["overwritten"]] == [b]
+    assert d["reapproval_required"]
     assert d["skipped"][0]["student_id"] == a and "申诉" in d["skipped"][0]["reason"]
+    db.expire_all()
+    assert db.get(Activity, approved).hours_approved_at is None
+    assert db.get(Activity, approved).appeal_deadline is None
     assert _import(client, admin, approved, f"{b} 3 引导").json()["overwritten"]
     # 有申诉的记录不能删
     assert client.delete(f"/api/staff/activities/{approved}/record-roster/{rec['id']}",
@@ -338,6 +342,12 @@ def test_核准_申诉_提交审核_外联确认_完成(client, admin, db, appro
     url = f"/api/staff/activities/{approved}/hours/lock-request"
     names = {"vb_names": ["补记录志愿服务"]}
     from backend import liaison
+    r = client.post(url, headers=admin, json=names)
+    assert r.status_code == 409 and "先核准" in r.json()["detail"]
+    r = client.post(f"/api/staff/activities/{approved}/hours/approve",
+                    headers=admin, json={"appeal_deadline": (
+                        now() + timedelta(days=1)).isoformat()})
+    assert r.status_code == 200 and r.json()["count"] == 2, r.text
     if liaison.is_external(db, act):
         assert client.post(url, headers=admin, json=names).status_code == 400
         assert client.post(f"/api/staff/activities/{approved}/project-files/stamped",
@@ -381,6 +391,51 @@ def test_核准_申诉_提交审核_外联确认_完成(client, admin, db, appro
     by_sid = {x[1]: x for x in rows[1:]}
     assert by_sid[a][3] == 3 and by_sid[a][2]
     assert by_sid[b][3] == 3 and "引导" in by_sid[b][4]
+
+
+@pytest.mark.parametrize("change", ["import", "edit", "delete"])
+def test_核准后改名单撤销旧申诉截止时间(client, admin, db, approved,
+                               take_student, change):
+    a, b = take_student(), take_student()
+    assert _import(client, admin, approved, f"{a} 2\n{b} 3").status_code == 200
+    url = f"/api/staff/activities/{approved}"
+    r = client.post(f"{url}/hours/approve", headers=admin, json={
+        "appeal_deadline": (now() + timedelta(days=1)).isoformat()})
+    assert r.status_code == 200 and r.json()["count"] == 2, r.text
+    rows = client.get(f"{url}/record-roster", headers=admin).json()["items"]
+    by_sid = {x["user"]["student_id"]: x["id"] for x in rows}
+    # 模拟截止时间已到，而定时任务尚未扫到这场活动。
+    db.expire_all()
+    db.get(Activity, approved).appeal_deadline = now() - timedelta(minutes=1)
+    db.commit()
+    if change == "import":
+        c = take_student()
+        r = _import(client, admin, approved, f"{c} 1")
+    elif change == "edit":
+        r = client.patch(f"{url}/record-roster/{by_sid[a]}", headers=admin,
+                         json={"hours": 2.5, "note": "更正"})
+    else:
+        r = client.delete(f"{url}/record-roster/{by_sid[a]}", headers=admin)
+    assert r.status_code == 200 and r.json()["reapproval_required"], r.text
+    db.expire_all()
+    act = db.get(Activity, approved)
+    assert act.hours_approved_at is None and act.appeal_deadline is None
+    assert all(x.approved_hours is None and x.confirmed_at is None
+               for x in db.query(HoursRecord).filter_by(activity_id=approved))
+    scheduled.submit_lock_when_due(db)
+    assert db.query(HoursRequest).filter_by(activity_id=approved).count() == 0
+    r = client.post(f"{url}/hours/lock-request", headers=admin,
+                    json={"vb_names": ["补记录志愿服务"]})
+    assert r.status_code == 409 and "先核准" in r.json()["detail"]
+    if change == "delete":
+        user = db.query(User).filter_by(student_id=a).one()
+        assert db.query(Notification).filter(
+            Notification.user_id == user.id,
+            Notification.title.like("志愿时长核准已撤销%")).count() == 1
+    r = client.post(f"{url}/hours/approve", headers=admin, json={
+        "appeal_deadline": (now() + timedelta(days=1)).isoformat()})
+    expected = 1 if change == "delete" else 3 if change == "import" else 2
+    assert r.status_code == 200 and r.json()["count"] == expected, r.text
 
 
 # ======================= 提示分 / 档案 / 违规 =======================

@@ -36,8 +36,11 @@ from .geo import tiles_configured
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
 
 
-def _act(db: OrmSession, activity_id: str) -> Activity:
-    act = db.get(Activity, activity_id)
+def _act(db: OrmSession, activity_id: str, *,
+         for_update: bool = False) -> Activity:
+    act = ((db.query(Activity).filter(Activity.id == activity_id)
+            .populate_existing().with_for_update().one_or_none())
+           if for_update else db.get(Activity, activity_id))
     if act is None:
         raise HTTPException(404, "活动不存在")
     return act
@@ -1515,7 +1518,7 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
     变过、或者申诉过的人，别人的确认照旧有效。
     """
     ensure_activity_manager(db, user, activity_id)
-    act = _act(db, activity_id)
+    act = _act(db, activity_id, for_update=True)
     ensure_hours_editable(db, act)
     deadline = _parse_deadline(body.appeal_deadline)
     rows = (db.query(HoursRecord)
@@ -1604,7 +1607,7 @@ def hours_lock_request(activity_id: str, body: LockHoursBody | None = None,
                        user: User = Depends(require_manager)):
     """提前提交锁定审批。不等申诉期满、有申诉没处理，都由管理者判断。"""
     ensure_activity_manager(db, user, activity_id)
-    act = _act(db, activity_id)
+    act = _act(db, activity_id, for_update=True)
     ensure_hours_editable(db, act)
     if act.hours_approved_at is None:
         raise HTTPException(409, "请先核准时长")

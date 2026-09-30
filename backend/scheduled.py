@@ -124,7 +124,14 @@ def submit_lock_when_due(db: OrmSession) -> int:
                     Activity.appeal_deadline.isnot(None),
                     Activity.appeal_deadline < t).all())
     sent = reminded = 0
-    for act in rows:
+    for row in rows:
+        # 与补记录名单写入、人工核准和人工报批串行；排锁后重读，
+        # 名单刚变更并撤销核准的活动不能再按旧截止时间自动报批。
+        act = (db.query(Activity).filter(Activity.id == row.id)
+               .populate_existing().with_for_update().one())
+        if (act.hours_locked_at is not None or act.hours_approved_at is None
+                or act.appeal_deadline is None or act.appeal_deadline >= t):
+            continue
         pending = (db.query(HoursAppeal)
                    .filter(HoursAppeal.activity_id == act.id,
                            HoursAppeal.status == "pending").count())
@@ -168,8 +175,8 @@ def submit_lock_when_due(db: OrmSession) -> int:
             continue
         _notify_lock_approvers(db, act, "系统", reason)
         sent += 1
-    if sent or reminded:
-        db.commit()
+    # 即使这一轮没有报批，也要释放上面拿到的活动行锁。
+    db.commit()
     return sent
 
 
