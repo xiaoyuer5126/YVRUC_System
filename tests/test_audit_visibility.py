@@ -17,7 +17,7 @@ def _visible_summaries(client, headers, activity_id):
 
 def test_签到码不出现在志愿者可见的留痕里(client, admin, db, enrolled_activity,
                                         take_student):
-    """曾经整串写进变更记录，学生不到现场就能签到。"""
+    """签到码整串进了志愿者可见的变更记录，学生不到现场就能签到。"""
     act, shift, _u = enrolled_activity
     r = client.post(f"/api/staff/shifts/{shift.id}/checkin-tasks",
                     headers=admin, json={"mode": "group"})

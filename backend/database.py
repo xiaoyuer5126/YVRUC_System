@@ -42,9 +42,8 @@ def schema_gaps(metadata=None, inspector=None) -> list[str]:
     """模型声明了、库里却没有的表和列。空列表 = 一致。
 
     这个项目**没有迁移工具**，`create_all` 只建缺失的表、从不给已有的表加列。
-    所以「模型加了列、库里没有」不会在启动时暴露，而是跑到某个页面才 500——
-    前端把 500 渲染成空列表，看着像数据丢了。2026-09-27、09-29、09-30 各出过
-    一次（`departments.*`、`activities.vb_reminded_on`、`activities.held_*`）。
+    所以少了这一步，「模型加了列、库里没有」就不在启动时暴露，而是跑到某个
+    页面才 500——前端把 500 渲染成空列表，看着像数据丢了。
     """
     metadata = _model_metadata(metadata)
     insp = inspect(engine) if inspector is None else inspector
