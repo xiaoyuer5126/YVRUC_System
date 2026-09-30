@@ -12,7 +12,6 @@ Mock 模式：把消息落库（notifications 表），前端「消息中心」�
 """
 from __future__ import annotations
 
-import json
 import logging
 
 from sqlalchemy import event, update
@@ -216,11 +215,12 @@ def _send(student_id: str, title: str, content: str) -> bool:
     payload = {
         "title": title,
         "content": content,
-        # 文档参数表把 receivers 标成 string，但请求示例给的是 json 数组——
-        # 以示例为准。真机第一次调用时留意这里，若报参数格式错就改回字符串。
-        "receivers": json.dumps([{"type": "uc_ux", "address": f"({student_id})"}]),
+        # receivers 用请求示例里的**真数组**。参数表把它标成 string 是文档笔误：
+        # 换成 json.dumps 的字符串，网关会回 code=11「参数格式有误」。
+        "receivers": [{"type": "uc_ux", "address": f"({student_id})"}],
         "channels": _channels(cfg),
         "plannedTime": "",     # 空串 = 立即发送（文档示例即如此）
+        "extras": {},          # 文档标「否」；照请求示例带上
     }
     return _delivered(sudy_sign.post_json(SEND_PATH, payload), student_id, title)
 

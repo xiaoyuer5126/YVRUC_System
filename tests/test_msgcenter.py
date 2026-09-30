@@ -35,6 +35,26 @@ def test_邮件通道照样放行():
     assert msgcenter._channels({"channels": "2,4"}) == "2,4"
 
 
+def test_报文里收件人是真数组不是字符串(db, monkeypatch):
+    """参数表把 receivers 标成 string，但网关只认请求示例里那种真数组：
+    json.dumps 出来的字符串换回的是 code=11「参数格式有误」。"""
+    seen: dict = {}
+
+    def fake_post(path, payload, **kw):
+        seen["path"], seen["payload"] = path, payload
+        return {"successed": True}
+
+    monkeypatch.setattr(msgcenter.sudy_sign, "post_json", fake_post)
+    assert msgcenter._send("2025201717", "标题", "正文") is True
+    assert seen["path"] == msgcenter.SEND_PATH
+    p = seen["payload"]
+    assert p["receivers"] == [{"type": "uc_ux", "address": "(2025201717)"}]
+    assert isinstance(p["receivers"], list)
+    assert p["channels"] == "4"
+    assert p["plannedTime"] == ""
+    assert "extras" in p
+
+
 def test_成功返回才算送达():
     assert msgcenter._delivered({"successed": True}, "2025201717", "t") is True
 
