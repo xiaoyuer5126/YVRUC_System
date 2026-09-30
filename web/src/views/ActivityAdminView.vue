@@ -30,12 +30,13 @@
             {{ act.status_label }}
           </el-tag>
           <el-tag v-if="act.urgent" size="small" type="danger" effect="dark">急招</el-tag>
+          <el-tag v-if="isRecord" size="small" type="info" effect="plain">不公开·补记录</el-tag>
         </div>
         <div class="hd-meta dim">{{ act.time_text }} · {{ act.location }}</div>
       </template>
       <template #extra>
         <!-- 「调整岗位」只在岗位设置那一页出现一次，页头不重复放 -->
-        <el-button @click="openPoster">活动招募</el-button>
+        <el-button v-if="!isRecord" @click="openPoster">活动招募</el-button>
         <!-- 急招置顶：全校层面的调度，只给会长团/管理员 -->
         <el-button v-if="canSee.pin() && act.status === 'published'"
                    :type="act.pinned ? 'danger' : 'default'" :plain="act.pinned"
@@ -76,9 +77,11 @@
     <el-alert v-if="act.status === 'pending'" type="warning" show-icon :closable="false"
               :title="`已提交${approval?.department || ''}审批，等待 ${approval?.on_duty
                 ? approval.on_duty + '（值班）' : (approval?.assignee || '')} 处理`"
-              :description="act.auto_publish
-                ? '审批期间可以继续调整安排，审批通过后活动立即公开发布，到点准时开始报名。'
-                : '审批期间可以继续调整安排，审批通过后由你点「发布」。'" />
+              :description="isRecord
+                ? '补记录活动不公开发布：审批通过后在「名单导入」里导入学号与时长。'
+                : act.auto_publish
+                  ? '审批期间可以继续调整安排，审批通过后活动立即公开发布，到点准时开始报名。'
+                  : '审批期间可以继续调整安排，审批通过后由你点「发布」。'" />
     <el-alert v-else-if="act.status === 'approved'" type="success" show-icon :closable="false" title="审批已通过，可以发布了"
               :description="approval?.comment ? ('审批意见：' + approval.comment) : ''" />
     <el-alert v-else-if="act.status === 'draft' && approval?.comment" type="error" show-icon
@@ -91,7 +94,7 @@
 
     <el-tabs v-model="tab" style="margin-top:8px">
       <!-- ============ 岗位设置 ============ -->
-      <el-tab-pane name="tree">
+      <el-tab-pane v-if="!isRecord" name="tree">
         <template #label>岗位设置
           <el-badge v-if="treeAlerts.length" value="!" type="danger" />
         </template>
@@ -300,8 +303,14 @@
         </el-button>
       </el-tab-pane>
 
+      <!-- ============ 名单导入（补记录活动）============ -->
+      <!-- 补记录活动没有场次与报名：志愿者名单由管理者导进来，每行就是一笔时长 -->
+      <el-tab-pane v-if="isRecord" label="名单导入" name="records">
+        <RecordRosterPanel :activity-id="activityId" @changed="onRecordChanged" />
+      </el-tab-pane>
+
       <!-- ============ 报名与调配 ============ -->
-      <el-tab-pane v-if="isPublic" name="roster">
+      <el-tab-pane v-if="isPublic && !isRecord" name="roster">
         <template #label>志愿者管理
           <el-badge v-if="pendingPromo" value="!" type="danger" />
         </template>
@@ -556,7 +565,7 @@
       </el-tab-pane>
 
       <!-- ============ 签到管理 ============ -->
-      <el-tab-pane v-if="isPublic" label="签到管理" name="checkin" lazy>
+      <el-tab-pane v-if="isPublic && !isRecord" label="签到管理" name="checkin" lazy>
         <!-- 场次由面板自己选：这一页在盯现场，跟「报名与调配」那边排人是两件事 -->
         <CheckinPanel v-if="allShifts.length" :activity-id="act.id"
                       :all-shifts="allShifts" :over="isOver"
@@ -565,7 +574,7 @@
       </el-tab-pane>
 
       <!-- ============ 志愿服装 ============ -->
-      <el-tab-pane v-if="isPublic && act.attire_issued" label="志愿服装" name="attire" lazy>
+      <el-tab-pane v-if="isPublic && !isRecord && act.attire_issued" label="志愿服装" name="attire" lazy>
         <AttirePanel :activity-id="act.id" :title="act.title"
                      :all-shifts="allShifts" />
       </el-tab-pane>
@@ -627,11 +636,15 @@
         </template>
         <el-divider />
         <div class="toolbar">
-          <el-button type="primary" plain :disabled="hoursFrozen || !hoursSel.length"
+          <span v-if="isRecord" class="dim" style="margin-left:auto">
+            时长以「名单导入」为准，改人改数请到那一页
+          </span>
+          <el-button v-if="!isRecord" type="primary" plain
+                     :disabled="hoursFrozen || !hoursSel.length"
                      @click="confirmSelectedHours" style="margin-left:auto">
             {{ hoursSel.length ? `确认选中时长（${hoursSel.length} 人）` : '确认选中时长' }}
           </el-button>
-          <el-tooltip content="确认正常签退的记录；未签退/自动兜底请逐条核对后手动确认" placement="top">
+          <el-tooltip v-if="!isRecord" content="确认正常签退的记录；未签退/自动兜底请逐条核对后手动确认" placement="top">
             <el-button type="primary" :disabled="hoursFrozen || !hours.length"
                        @click="confirmAllHours">
               确认正常签退的
@@ -794,11 +807,11 @@
         </el-table>
         </div>
 
-        <!-- 手动添加时长 -->
-        <div class="section-title" style="margin-top:16px">
+        <!-- 手动添加时长（补记录活动的名单与时长都在「名单导入」里改） -->
+        <div v-if="!isRecord" class="section-title" style="margin-top:16px">
           手动加 / 扣时长（场外支援、补录、中途离场等情况）
         </div>
-        <el-card shadow="never">
+        <el-card v-if="!isRecord" shadow="never">
           <div class="toolbar" style="align-items:flex-start">
             <el-select v-model="mh.userIds" multiple filterable collapse-tags
                        collapse-tags-tooltip placeholder="选择志愿者（可多选）"
@@ -829,7 +842,7 @@
       </el-tab-pane>
 
       <!-- ============ 管理者 ============ -->
-      <el-tab-pane v-if="isPublic" label="签收情况" name="acks" lazy>
+      <el-tab-pane v-if="isPublic && !isRecord" label="签收情况" name="acks" lazy>
         <div class="toolbar">
           <RefreshBar ref="ackRefresh" :load="loadBatches" />
         </div>
@@ -1437,7 +1450,8 @@
 
     <!-- 基本信息编辑 -->
     <el-dialog v-model="editBase" title="编辑活动基本信息" width="620">
-      <ActivityForm v-model="baseForm" v-model:range="baseRange" :modes="modes" />
+      <ActivityForm v-model="baseForm" v-model:range="baseRange" :modes="modes"
+                    :status="act.status" />
       <template #footer>
         <el-button @click="editBase = false">取消</el-button>
         <el-button type="primary" :loading="savingBase" @click="saveBase()">保存并通知变更</el-button>
@@ -1467,6 +1481,7 @@ import AnswerList from '../components/AnswerList.vue'
 import HoursParts from '../components/HoursParts.vue'
 import ApplicationList from '../components/ApplicationList.vue'
 import ReviewPanel from '../components/ReviewPanel.vue'
+import RecordRosterPanel from '../components/RecordRosterPanel.vue'
 import VbNamesInput from '../components/VbNamesInput.vue'
 import ProjectFileSlot from '../components/ProjectFileSlot.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
@@ -1481,6 +1496,8 @@ const tab = ref(String(route.query.tab || 'tree'))   // 支持 ?tab=roster 直�
 // 都没有，名单、签到、服装、导出、签收全是空页
 const isPublic = computed(() =>
   ['published', 'closed', 'finished', 'vb_pending', 'completed'].includes(act.value?.status))
+// 不公开招募（补记录）：没有场次、报名、签到，只有名单导入与时长结账
+const isRecord = computed(() => act.value?.recruit_mode === 'record')
 const formDlg = ref(false)
 const formCount = ref(0)
 const formLabel = computed(() => (isPublic.value ? '查看报名问卷'
@@ -1721,6 +1738,10 @@ async function loadAll() {
       return
     }
     act.value = d
+    // 补记录活动没有「岗位设置」页签：默认落在名单导入
+    if (d.recruit_mode === 'record' && ['tree', 'roster', 'checkin'].includes(tab.value)) {
+      tab.value = 'records'
+    }
     const rosters = await Promise.all(d.shifts.map(g => api.get(`/api/staff/shifts/${g.id}/roster`)))
     d.shifts.forEach((g, i) => {
       g._roster = rosters[i]
@@ -2312,6 +2333,11 @@ async function doResolve() {
     loadAppeals()
     hoursPreview(true)
   } finally { d.busy = false }
+}
+
+/** 名单导入改了人或数：时长页的总账跟着变，已经打开过的话刷一下。 */
+function onRecordChanged() {
+  if (hoursState.value?.items) hoursPreview(true)
 }
 
 /** 刷新这一页：时长本身与申诉列表一起拉，两边都会随志愿者的动作变。 */

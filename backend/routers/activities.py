@@ -31,6 +31,13 @@ router = APIRouter(prefix="/api/activities", tags=["activities"])
 PUBLIC_STATUSES = ("published", "closed", "finished", "vb_pending", "completed")
 
 
+def is_public(act: Activity) -> bool:
+    """学生看得到这个活动吗。补记录活动（不公开招募）任何状态都不公开：
+    它只是把线下办过的活动补记进来，志愿者在「我的志愿时长」里看到自己那笔账，
+    不需要、也不该从广场或转发的链接点进一个报不了名的活动页。"""
+    return act.status in PUBLIC_STATUSES and not act.is_record()
+
+
 def _ensure_not_editing(act: Activity) -> None:
     """编辑冻结期间不接受报名与退选。
 
@@ -77,7 +84,7 @@ def _get_activity(db: OrmSession, activity_id: str, user: User) -> Activity:
         raise HTTPException(404, "活动不存在")
     if is_activity_manager(db, user, act.id):
         return act
-    if act.status in PUBLIC_STATUSES:
+    if is_public(act):
         # 招募范围外的人打开转发来的链接：不给 404，说清楚为什么看不了
         if _outside_scope(db, user, act):
             raise HTTPException(
@@ -111,7 +118,8 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
     rows = db.query(Activity.id, Activity.status, Activity.reg_start,
                     Activity.reg_end, Activity.recruit_campuses,
                     Activity.recruit_stages, Activity.recruit_colleges)
-    rows = rows.filter(Activity.status.in_(PUBLIC_STATUSES))
+    rows = rows.filter(Activity.status.in_(PUBLIC_STATUSES),
+                       Activity.recruit_mode != config.RECORD_MODE)
     if q.strip():
         rows = rows.filter(Activity.title.ilike(like_pattern(q.strip()),
                                                 escape="\\"))
@@ -162,6 +170,7 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
         "organizers": [o for (o,) in
                        db.query(Activity.organizer)
                        .filter(Activity.status.in_(PUBLIC_STATUSES),
+                               Activity.recruit_mode != config.RECORD_MODE,
                                Activity.organizer != "")
                        .distinct().order_by(Activity.organizer).all()],
     }
@@ -176,7 +185,7 @@ def get_activity(activity_id: str,
     # 审批人也按管理者视角渲染：培训内容、学习材料这些是判断活动办得成不成的
     # 依据，看不到就批不下去。只在活动**还没公开**时给——那时一个报名的人都
     # 没有，不存在暴露联系方式的问题；一旦公开，他和其他人看到的就该是同一页。
-    review = (not manager and act.status not in PUBLIC_STATUSES
+    review = (not manager and not is_public(act)
               and can_review(db, user, act))
     # 管理者要能在同一个页面核对培训内容与组长，不必先去后台
     # 管理视角不走缓存：刚改完的东西必须立刻看到原样
@@ -320,6 +329,8 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
     g = _get_group(db, shift_id)
     if g.activity_id != act.id:
         raise HTTPException(400, "场次不属于该活动")
+    if act.is_record():
+        raise HTTPException(409, "本活动为补记录活动，不接受报名")
     if act.is_screened():
         raise HTTPException(409, "本活动需填写报名问卷申请，由负责人筛选后录取")
 

@@ -21,7 +21,7 @@ from ..deps import current_user_download, require_manager
 from ..liaison import SLOTS as PROJECT_SLOTS
 from ..models import Activity, Attachment, Position, User, uid
 from ..perm import ensure_activity_manager, is_activity_manager
-from .activities import PUBLIC_STATUSES
+from .activities import is_public
 from ..stage import ensure_not_finished
 
 router = APIRouter(prefix="/api", tags=["materials"])
@@ -162,7 +162,7 @@ def download_material(material_id: str, db: OrmSession = Depends(db_session),
         from ..liaison import can_see_project_files
         if act is None or not can_see_project_files(db, user, act):
             raise HTTPException(404, "材料不存在")
-    elif act is not None and act.status not in PUBLIC_STATUSES \
+    elif act is not None and not is_public(act) \
             and not is_activity_manager(db, user, act.id):
         raise HTTPException(404, "材料不存在")
     # 报名问卷里志愿者交的文件是个人材料：只有本人和这场活动的管理者能看

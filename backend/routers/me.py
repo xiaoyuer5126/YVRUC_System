@@ -291,6 +291,9 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
             and (act.appeal_deadline is None or now() < act.appeal_deadline))
         pay_pos = hours_flow.pay_position(db, r.activity_id, user.id)
         out.append({"id": r.id, "activity_title": act.title if act else "",
+                    "activity_id": r.activity_id,
+                    # 补记录活动不公开：前端别给它挂活动详情的链接
+                    "record_only": bool(act and act.is_record()),
                     "hours": r.hours, "parts": r.parts or [],
                     "reward": r.reward, "reward_label": r.reward_label(),
                     "confirmed_at": iso_of(r.confirmed_at),

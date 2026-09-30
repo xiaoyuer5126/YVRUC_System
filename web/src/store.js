@@ -83,6 +83,7 @@ export const canSee = {
 export const MODE_COLORS = {
   instant: { color: '#67c23a' },     // 即选即得
   screened: { color: '#409eff' },    // 报名后筛选
+  record: { color: '#909399' },      // 不公开招募（补记录）
 }
 
 // 只点了日期没点时刻时补的默认时刻：开始给上班点，截止给当天最后一分钟，

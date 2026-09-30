@@ -24,9 +24,12 @@
         </template>
         <template #body="{ row }">
           <div class="dim" style="line-height:1.8">
-            {{ row.recruit_label }} · 场次 {{ row.shifts_count }} ·
-            已报名 {{ row.total_enrolled }}/{{ row.total_capacity }}
-            <span v-if="row.waitlist_count">· 候补 {{ row.waitlist_count }}</span>
+            <template v-if="row.record_only">{{ row.recruit_label }} · {{ row.time_text }}</template>
+            <template v-else>
+              {{ row.recruit_label }} · 场次 {{ row.shifts_count }} ·
+              已报名 {{ row.total_enrolled }}/{{ row.total_capacity }}
+              <span v-if="row.waitlist_count">· 候补 {{ row.waitlist_count }}</span>
+            </template>
           </div>
         </template>
         <template #actions="{ row }">
@@ -67,9 +70,13 @@
         <el-table-column label="场次/时间" min-width="170" prop="time_text" />
         <el-table-column label="报名" width="150">
           <template #default="{row}">
-            {{ row.total_enrolled }}/{{ row.total_capacity }}
-            <span v-if="row.waitlist_count" class="dim">+候补{{ row.waitlist_count }}</span>
-            <el-progress :percentage="pct(row)" :stroke-width="4" :show-text="false" />
+            <!-- 补记录活动不收报名，人数在「名单导入」里 -->
+            <span v-if="row.record_only" class="dim">不公开 · 补记录</span>
+            <template v-else>
+              {{ row.total_enrolled }}/{{ row.total_capacity }}
+              <span v-if="row.waitlist_count" class="dim">+候补{{ row.waitlist_count }}</span>
+              <el-progress :percentage="pct(row)" :stroke-width="4" :show-text="false" />
+            </template>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="250" fixed="right">

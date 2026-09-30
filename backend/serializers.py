@@ -250,6 +250,9 @@ def _brief_public(act: Activity, counts: dict) -> dict:
         "time_text": (f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}"
                       if span else "待定"),
         "reg_start": iso_of(act.reg_start), "reg_end": iso_of(act.reg_end),
+        # 补记录活动（不公开招募）：没有场次，活动时间直接填在这两项上
+        "record_only": act.is_record(),
+        "held_start": iso_of(act.held_start), "held_end": iso_of(act.held_end),
         "contacts": act.contacts or [],
         "editing": act.editing_since is not None,
         "pinned": act.pinned_at is not None,

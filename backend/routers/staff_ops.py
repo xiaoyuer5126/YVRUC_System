@@ -1027,9 +1027,12 @@ def hours_record_of(db: OrmSession, activity_id: str, user_id: str
 
 
 def manual_parts(rec: HoursRecord | None) -> list:
-    """这一笔里手动补录的那几段。"""
+    """这一笔里不是签到算出来的那几段：手动补录的，和补记录活动导入名单的。
+
+    两种都是人交进来的账，compute_hours 原样读出来拼进合计；删除只认手动那种
+    （见 hours_manual_delete），导入的在「名单导入」里改。"""
     return [p for p in ((rec.parts if rec else None) or [])
-            if p.get("kind") == "manual"]
+            if p.get("kind") in ("manual", "import")]
 
 
 def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
@@ -1043,6 +1046,8 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
     手动补录的时长也算进合计、并按其原样列进明细：管理者看到的这张表就是
     这场活动的总账，漏了手动那部分，这个数就是错的。
     """
+    if act.is_record():
+        return _record_hours(db, act)
     t = now()
     records = (db.query(CheckinRecord)
                .filter(CheckinRecord.activity_id == act.id)
@@ -1115,6 +1120,21 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
     return out
 
 
+def _record_hours(db: OrmSession, act: Activity) -> list[dict]:
+    """补记录活动的总账：就是导进来的那些记录，数值以记录为准（申诉采纳改过
+    的也在里面），没有签到可算、也没有待核的标记。"""
+    rows = (db.query(HoursRecord, User)
+            .join(User, HoursRecord.user_id == User.id)
+            .filter(HoursRecord.activity_id == act.id)
+            .order_by(HoursRecord.created_at).all())
+    return [{"user": {"id": u.id, "name": u.name, "student_id": u.student_id,
+                      "college": u.college},
+             "hours": rec.hours, "pending": False, "auto_checkout": False,
+             "confirmed": True, "record_id": rec.id,
+             "parts": list(rec.parts or []), **_volunteer_side(rec)}
+            for rec, u in rows]
+
+
 def _volunteer_side(rec: HoursRecord | None) -> dict:
     """志愿者本人那一边的表态：报酬方式与确认时间。"""
     if rec is None:
@@ -1179,6 +1199,8 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
+    if act.is_record():
+        raise HTTPException(409, "补记录活动的时长请在「名单导入」里改")
     ensure_hours_editable(db, act)
     if not body.items:
         raise HTTPException(400, "空列表")
@@ -1306,6 +1328,10 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
+    if act.is_record():
+        # 没有签到可依据：导进来的就是确认过的账，改数在「名单导入」里改
+        raise HTTPException(409, "补记录活动的时长以导入的名单为准，无需确认；"
+                                 "如需修改请到「名单导入」里改")
     ensure_hours_editable(db, act)
 
     kept: list[str] = []
@@ -1445,6 +1471,10 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
         before = rec.hours
         rec.hours = hours
         rec.confirmed_by = user.id
+        if act.is_record():
+            # 补记录的一笔只有导入那一段：段上的数跟着改，名单里看到的才是新值
+            rec.parts = [{**p, "hours": hours} if p.get("kind") == "import" else p
+                         for p in (rec.parts or [])]
         a.final_hours = hours
         a.status = "accepted"
         summary = (f"采纳 {who.name if who else ''} 的时长申诉："

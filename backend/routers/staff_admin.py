@@ -15,14 +15,14 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import scoring
+from .. import config, scoring
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import (require_admin, require_archive_page, require_council, require_manager)
 from ..integrations import all_configs, save_config
 from ..models import (Activity, AuditLog, CheckinRecord, Enrollment,
                       HoursRecord, Shift, User, ViolationRecord, iso,
-                      like_pattern, now, uid)
+                      like_pattern, now, span_text, uid)
 from ..perm import ensure_activity_manager, managed_activity_ids
 
 router = APIRouter(prefix="/api/staff", tags=["staff-admin"])
@@ -158,12 +158,27 @@ def _archive(db: OrmSession, u: User) -> dict:
             .order_by(Shift.start_time.desc()).all())
     checked = {r[0] for r in db.query(CheckinRecord.shift_id)
                .filter(CheckinRecord.user_id == u.id).all()}
-    history = [{
+    dated = [(g.start_time, {
         "enrollment_id": e.id, "activity_id": a.id, "activity_title": a.title,
         "shift_name": g.name, "time_text": g.span_text(),
         "status": e.status, "cancel_type": e.cancel_type,
         "checked_in": g.id in checked,
-    } for e, a, g in rows]
+    }) for e, a, g in rows]
+    # 补记录活动没有报名：名单里有他就是参与过，照样进档案（口径同提示分）
+    for rec, a in (db.query(HoursRecord, Activity)
+                   .join(Activity, HoursRecord.activity_id == Activity.id)
+                   .filter(HoursRecord.user_id == u.id,
+                           Activity.recruit_mode == config.RECORD_MODE).all()):
+        start = a.held_start or rec.created_at
+        dated.append((start, {
+            "enrollment_id": f"rec_{rec.id}", "activity_id": a.id,
+            "activity_title": a.title, "shift_name": "补记录",
+            "time_text": (span_text(a.held_start, a.held_end)
+                          if a.held_start and a.held_end else ""),
+            "status": "recorded", "cancel_type": "", "checked_in": True,
+        }))
+    dated.sort(key=lambda x: x[0], reverse=True)
+    history = [item for _at, item in dated]
     cancels = _cancel_profile(db, u, rows)
     violations = (db.query(ViolationRecord)
                   .filter(ViolationRecord.user_id == u.id)
@@ -216,6 +231,20 @@ def _cancel_profile(db: OrmSession, u: User, rows) -> dict:
     }
 
 
+def took_part(db: OrmSession, activity_id: str, user_id: str) -> bool:
+    """这个人跟这场活动有关系：报过名，或者在补记录活动的名单里。"""
+    if (db.query(Enrollment.id)
+            .filter(Enrollment.activity_id == activity_id,
+                    Enrollment.user_id == user_id).first()):
+        return True
+    return (db.query(HoursRecord.id)
+            .join(Activity, HoursRecord.activity_id == Activity.id)
+            .filter(HoursRecord.activity_id == activity_id,
+                    HoursRecord.user_id == user_id,
+                    Activity.recruit_mode == config.RECORD_MODE).first()
+            is not None)
+
+
 @router.get("/users/{user_id}/archive")
 def user_archive(user_id: str, db: OrmSession = Depends(db_session),
                  user: User = Depends(require_archive_page)):
@@ -240,10 +269,7 @@ def activity_volunteer_archive(activity_id: str, user_id: str,
     u = db.get(User, user_id)
     if u is None:
         raise HTTPException(404, "用户不存在")
-    enrolled = (db.query(Enrollment)
-                .filter(Enrollment.activity_id == activity_id,
-                        Enrollment.user_id == user_id).first())
-    if enrolled is None:
+    if not took_part(db, activity_id, user_id):
         raise HTTPException(403, "只能查看报了本活动的志愿者")
     return _archive(db, u)
 
@@ -304,9 +330,7 @@ def create_violation(body: ViolationBody,
         raise HTTPException(400, "违规类型不合法")
     if not body.detail.strip():
         raise HTTPException(400, "请填写情况简述")
-    if not (db.query(Enrollment)
-            .filter(Enrollment.activity_id == act.id,
-                    Enrollment.user_id == u.id).first()):
+    if not took_part(db, act.id, u.id):
         raise HTTPException(400, f"{u.name} 没有报名本活动")
     if not body.confirm_duplicate:
         existing = _same_activity_violations(db, act.id, u.id)
