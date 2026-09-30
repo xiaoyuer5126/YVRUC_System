@@ -19,6 +19,11 @@
 
       <div class="right">
         <template v-if="auth.user">
+          <!-- 反馈入口放在最前面：它是「找人说话」的入口，和消息一样属于常驻的
+               两件事。姓名不写在按钮上——头像就是姓名首字，名字去菜单里看 -->
+          <el-button text title="意见反馈" @click="openFeedback">
+            <el-icon><ChatDotRound /></el-icon>
+          </el-button>
           <el-badge :value="unread" :hidden="!unread" class="msg-badge">
             <el-button text @click="$router.push('/messages')">
               <el-icon><Bell /></el-icon>
@@ -31,7 +36,6 @@
                 {{ auth.user.name?.[0] }}
               </el-avatar>
               <template v-if="!narrow">
-                <span>{{ auth.user.name }}</span>
                 <el-tag size="small" effect="light"
                         style="color:#fff;background:rgba(255,255,255,.2);border:none">
                   {{ identityLabel }}视角
@@ -52,8 +56,6 @@
                                   v-if="auth.user.user_type === 'student'">我的志愿时长</el-dropdown-item>
                 <el-dropdown-item divided command="profile"
                                   v-if="auth.user.user_type === 'student'">完善个人信息</el-dropdown-item>
-                <el-dropdown-item :divided="auth.user.user_type !== 'student'"
-                                  command="feedback">意见反馈</el-dropdown-item>
                 <el-dropdown-item command="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -89,11 +91,6 @@
         </div>
       </div>
       <SideMenu :active="$route.path" @navigate="drawer = false" />
-      <div class="drawer-foot">
-        <el-button text @click="openFeedback">
-          <el-icon><ChatDotRound /></el-icon>&nbsp;意见反馈
-        </el-button>
-      </div>
     </el-drawer>
 
     <!-- 资料完善对话框：未完善的学生登录时强制弹出；也可从右上角菜单进入修改 -->
@@ -179,10 +176,6 @@ async function onCommand(cmd) {
   }
   if (cmd === 'profile') {
     openProfileDialog(false)
-    return
-  }
-  if (cmd === 'feedback') {
-    openFeedback()
     return
   }
   if (cmd.startsWith('identity:')) {
