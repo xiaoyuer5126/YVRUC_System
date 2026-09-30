@@ -30,11 +30,11 @@
               </template>
               <span v-else>{{ act.contact_info || '—' }}</span>
             </el-descriptions-item>
-            <el-descriptions-item label="报名时间">
+            <el-descriptions-item v-if="!act.record_only" label="报名时间">
               {{ fmtDT(act.reg_start) }} ~ {{ fmtDT(act.reg_end) }}
             </el-descriptions-item>
             <!-- 招募范围写在明处：不在范围内的人不该报到一半才被拦下 -->
-            <el-descriptions-item label="招募范围">
+            <el-descriptions-item v-if="!act.record_only" label="招募范围">
               {{ act.recruit_scope_text }}
             </el-descriptions-item>
           </el-descriptions>
@@ -50,6 +50,11 @@
             </div>
           </div>
         </el-card>
+
+        <!-- 补记录活动只有管理者和审批线上的人看得到这一页：没有场次可报 -->
+        <el-alert v-if="act.record_only" type="info" show-icon :closable="false"
+                  title="不公开招募（补记录）"
+                  description="线下已组织过的活动，不在广场展示、不接受报名，没有场次与岗位；审批通过后由管理者导入名单补记时长。" />
 
         <!-- 审批人看的是同一个页面，只是活动还没公开；不另做一套只读页 -->
         <el-alert v-if="act.review_preview" type="info" show-icon :closable="false"

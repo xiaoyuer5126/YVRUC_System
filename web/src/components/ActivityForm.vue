@@ -9,7 +9,7 @@
     </el-form-item>
     <el-form-item label="活动类型" required>
       <el-radio-group v-model="f.recruit_mode">
-        <el-radio-button v-for="(m, key) in modes" :key="key" :value="key">
+        <el-radio-button v-for="(m, key) in shownModes" :key="key" :value="key">
           {{ m.name }}
         </el-radio-button>
       </el-radio-group>
@@ -17,6 +17,9 @@
         {{ modes[f.recruit_mode]?.desc }}
         <template v-if="f.recruit_mode === 'screened'">
           ；报名问卷在「岗位设置」中设计，由管理者统一分配
+        </template>
+        <template v-else-if="isRecord">
+          。不在广场展示、不接受报名；照常提交校青协审批，通过后在「名单导入」里导入学号与时长
         </template>
       </div>
     </el-form-item>
@@ -36,8 +39,18 @@
         </el-button>
       </div>
     </el-form-item>
+    <!-- 补记录活动没有场次：线下哪天办的直接填 -->
+    <el-form-item v-if="isRecord" label="活动时间" required>
+      <div class="two-col">
+        <DateTimeField v-model="f.held_start" placeholder="活动开始时间"
+                       :default-time="DAY_START" />
+        <DateTimeField v-model="f.held_end" placeholder="活动结束时间"
+                       :default-time="DAY_END" />
+      </div>
+      <div class="dim">线下实际开展的时间，会写进时长明细与导出备注。</div>
+    </el-form-item>
     <!-- 招募范围：全都留空 = 面向全校。更细的差别走场次/岗位的条件要求 -->
-    <el-form-item label="招募范围">
+    <el-form-item v-if="!isRecord" label="招募范围">
       <div class="two-col">
         <el-select v-model="f.recruit_campuses" multiple clearable collapse-tags
                    placeholder="校区（不限）">
@@ -55,7 +68,7 @@
       </div>
       <div class="dim">留空即不限</div>
     </el-form-item>
-    <el-form-item label="报名时间" required>
+    <el-form-item v-if="!isRecord" label="报名时间" required>
       <div class="two-col">
         <DateTimeField v-model="regStart" placeholder="报名开始时间"
                        :default-time="DAY_START" />
@@ -69,15 +82,15 @@
                 placeholder="介绍活动背景、服务对象等" />
     </el-form-item>
     <!-- 活动级的整体要求与保障；岗位上的「要求原文」讲的是那个岗位特有的事 -->
-    <el-form-item label="志愿者要求">
+    <el-form-item v-if="!isRecord" label="志愿者要求">
       <el-input v-model="f.volunteer_requirement" type="textarea" :rows="2"
                 placeholder="选填。整个活动共通的要求，如：着深色衣裤、提前 20 分钟集合" />
     </el-form-item>
-    <el-form-item label="志愿者保障">
+    <el-form-item v-if="!isRecord" label="志愿者保障">
       <el-input v-model="f.volunteer_benefit" type="textarea" :rows="2"
                 placeholder="选填。提供什么，如：午餐与饮水、志愿时长、纪念证书、意外险" />
     </el-form-item>
-    <el-form-item label="志愿者联络群二维码" required>
+    <el-form-item v-if="!isRecord" label="志愿者联络群二维码" required>
       <div class="contacts-box">
         <el-upload :show-file-list="false" :http-request="uploadQr"
                    accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
@@ -110,16 +123,26 @@ import { Plus, Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { DAY_END, DAY_START } from '../store'
 import { uploadImage } from '../composables/uploadImage'
+import { RECORD_MODE } from '../composables/activityForm'
 import DateTimeField from './DateTimeField.vue'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },   // 表单数据
   range: { type: Array, default: () => [] },      // 报名时间 [开始, 结束]
   modes: { type: Object, default: () => ({}) },
+  // 活动当前状态：补记录与招募活动之间只在草稿里切换（后端同样拦）
+  status: { type: String, default: 'draft' },
 })
 const emit = defineEmits(['update:modelValue', 'update:range'])
 
 const f = computed(() => props.modelValue)
+const isRecord = computed(() => f.value.recruit_mode === RECORD_MODE)
+// 草稿之后：补记录活动只剩它自己，招募活动里不再出现补记录
+const shownModes = computed(() => {
+  if (props.status === 'draft') return props.modes
+  return Object.fromEntries(Object.entries(props.modes)
+    .filter(([key]) => (key === RECORD_MODE) === isRecord.value))
+})
 // 起止各自成一个字段，拼回调用方拿的 [开始, 截止]
 function setRange(i, v) {
   const next = [props.range?.[0] || '', props.range?.[1] || '']

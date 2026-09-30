@@ -148,7 +148,10 @@
         <el-descriptions-item label="提交人">{{ a.creator }}</el-descriptions-item>
         <el-descriptions-item label="活动时间">{{ a.time_text }}</el-descriptions-item>
         <el-descriptions-item label="地点">{{ a.location || '待定' }}</el-descriptions-item>
-        <el-descriptions-item label="场次数">{{ a.shifts_count }}</el-descriptions-item>
+        <el-descriptions-item v-if="a.record_only" label="说明">
+          线下已办的补记录活动：不公开、不报名，通过后由发起方导入名单补记时长
+        </el-descriptions-item>
+        <el-descriptions-item v-else label="场次数">{{ a.shifts_count }}</el-descriptions-item>
       </el-descriptions>
       <!-- 提交人写的说明。审批人就是在这一屏点通过/驳回的，这句话必须在这里 -->
       <div class="submit-note">
