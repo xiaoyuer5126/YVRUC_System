@@ -14,6 +14,8 @@
 - 顺利参与：该活动至少签到过一次（扫码或管理者补签都算）、没有违规记录、
   没有临期退选，加一次 SCORE_PER_ACTIVITY；时间 = 他报的主场次里最后
   一个的结束时间，还没到就先不加。
+  补记录活动（不公开招募）没有报名和签到：**导入名单即视为参与**，没有违规
+  记录就加一次；时间 = 活动结束时间（held_end）。它不可能有临期退选。
 
 分数自己能长回来——不能让人因为一次失误就永远挂着感叹号。
 """
@@ -25,8 +27,8 @@ from datetime import datetime
 from sqlalchemy.orm import Session as OrmSession
 
 from . import config
-from .models import (Activity, CheckinRecord, Enrollment, Shift, User,
-                     ViolationRecord, iso, now)
+from .models import (Activity, CheckinRecord, Enrollment, HoursRecord, Shift,
+                     User, ViolationRecord, iso, now)
 
 
 @dataclass(frozen=True)
@@ -47,7 +49,8 @@ def _events_many(db: OrmSession, user_ids: list[str]) -> dict[str, list[_Event]]
     """一次查一批人的加扣分事件，{user_id: 按时间排好的事件}。
 
     名单上几十个人，一个一个查就是几十条 SQL（实测：29 人的名单 88 条，
-    其中三分之二是这儿发的）。这里固定三条：违规、主场次报名、签到。
+    其中三分之二是这儿发的）。这里固定四条：违规、主场次报名、签到、
+    补记录名单。
     """
     ids = list(dict.fromkeys(user_ids))       # 去重，别让同一批 id 撑大 IN
     out: dict[str, list[_Event]] = {uid: [] for uid in ids}
@@ -92,6 +95,16 @@ def _events_many(db: OrmSession, user_ids: list[str]) -> dict[str, list[_Event]]
         if end < t and key in checked and key not in violated and key not in late:
             out[key[0]].append(_Event(end, config.SCORE_PER_ACTIVITY, "顺利参与",
                                       titles[key], key[1]))
+    # 补记录活动：签到这一条对它不适用，名单里有他就算参与过（导入即参与）
+    for user_id, aid, title, end in (
+            db.query(HoursRecord.user_id, Activity.id, Activity.title,
+                     Activity.held_end)
+            .join(Activity, HoursRecord.activity_id == Activity.id)
+            .filter(HoursRecord.user_id.in_(ids),
+                    Activity.recruit_mode == config.RECORD_MODE).distinct().all()):
+        if end is not None and end < t and (user_id, aid) not in violated:
+            out[user_id].append(_Event(end, config.SCORE_PER_ACTIVITY, "顺利参与",
+                                       title, aid))
     for evs in out.values():
         evs.sort(key=_Event.sort_key)
     return out
