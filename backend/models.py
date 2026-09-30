@@ -360,6 +360,11 @@ class Activity(Base):
 
     reg_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reg_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 补记录活动（recruit_mode="record"）自己的活动时间：它没有场次，线下哪天
+    # 办的只能直接填。广场不展示它，这两项用在管理端、审批页、时长明细与
+    # 提示分（导入即视为参与，加分时间记在活动结束这一刻）。别的活动留空。
+    held_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    held_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # —— 志愿时长 ——
     # 核准 = 把这场活动的时长定下来，通知每个人查看，并给一段申诉时间。
@@ -416,6 +421,10 @@ class Activity(Base):
     def is_screened(self) -> bool:
         return self.recruit_mode == "screened"
 
+    def is_record(self) -> bool:
+        """不公开招募（补记录）：没有场次、不收报名，时长靠导入名单。"""
+        return self.recruit_mode == config.RECORD_MODE
+
     def recruit_label(self) -> str:
         return config.recruit_name(self.recruit_mode)
 
@@ -429,6 +438,11 @@ class Activity(Base):
         培训与彩排常常排在正式服务前一周，算进来的话广场上的活动时间会
         从彩排那天开始，学生以为要连着来好几天。
         """
+        if self.is_record():
+            # 补记录活动没有场次，活动时间是建活动时直接填的
+            if self.held_start and self.held_end:
+                return self.held_start, self.held_end
+            return None
         rows = self.main_shifts()
         if not rows:
             return None
@@ -962,7 +976,8 @@ class HoursRecord(Base):
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
     hours: Mapped[float] = mapped_column(Float)
-    source: Mapped[str] = mapped_column(String(12), default="checkin")    # checkin 签到统计 / manual 手动添加
+    # checkin 签到统计 / manual 手动添加 / import 补记录活动导入名单
+    source: Mapped[str] = mapped_column(String(12), default="checkin")
     note: Mapped[str] = mapped_column(String(256), default="")            # 手动添加时的备注
     confirmed_by: Mapped[str] = mapped_column(String(32), default="")
     # 志愿者本人的确认：核准后到申诉截止之间，本人看过说没问题，并选定报酬方式
@@ -974,6 +989,7 @@ class HoursRecord(Base):
     approved_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 这笔时长由哪几段组成：[{label 场次, time 时段, position 岗位, hours}]。
     # 签到统计的按场次一段一段记，手动添加的就一段（备注当 label）。
+    # 补记录活动导入的也是一段（kind="import"），时段写活动时间。
     # 志愿者看得到自己的明细；导出时长记录的备注也从这里拼。
     parts: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)

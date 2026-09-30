@@ -178,6 +178,7 @@ SCORE_BASE = 100            # 起始分，也是上限
 SCORE_MIN = 0
 SCORE_ALERT_BELOW = 80      # 低于它，名单上姓名旁挂感叹号
 SCORE_PER_ACTIVITY = 5      # 每顺利参与一个活动（签到过、无违规、无临期退选）加的分
+                            # 补记录活动没有签到：导入名单即视为参与（见 scoring）
 LATE_CANCEL_WEIGHT = 5      # 一个活动有临期退选扣多少（退几个场次都只扣一次）
 VIOLATION_WEIGHTS = {       # 一次违规扣多少，最重一档 15
     "late": 10,       # 迟到早退
@@ -262,12 +263,21 @@ ORPHAN_ATTACHMENT_DAYS = 7
 #   instant  即选即得——报名即生效（或按名额进候补），场次自己决定选不选岗位；
 #   screened 报名后筛选——志愿者填一份报名问卷并勾意向场次，报名截止后由管理者
 #            挑人、定场次与岗位；申请不限人数，未录取会收到通知。
+#   record   不公开招募（补记录）——线下已经办完的活动，只在平台上补记时长：
+#            不上广场、不收报名、不建场次与岗位，照常过青协立项审批，通过后
+#            由管理者导入「学号 + 时长」名单，之后走同一套时长结账流程。
 RECRUIT_MODES = {
     "instant": {"name": "即选即得",
                 "desc": "报名即生效，名额已满自动进入候补"},
     "screened": {"name": "报名后筛选",
                  "desc": "志愿者填写报名问卷，报名截止后由管理者筛选并安排岗位"},
+    "record": {"name": "不公开招募（补记录）",
+               "desc": "线下已组织过的活动，不公开、不报名、不建场次岗位；"
+                       "审批通过后导入名单补记时长"},
 }
+RECORD_MODE = "record"
+# 补记录名单里一个人最多记多少小时。与时长申诉的上限同一口径（见 me.appeal_hours）
+RECORD_MAX_HOURS = 24
 
 
 def recruit_name(code: str) -> str:
