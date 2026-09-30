@@ -48,7 +48,7 @@ def _setup(client, db, admin, enrolled_activity, take_student, n=3):
         assert r.status_code == 200, r.text
         from conftest import student_row
         people.append(student_row(db, sid))
-    # 组长不再自动产生：由管理者指定第一个报名的人
+    # 组长不自动产生：由管理者指定第一个报名的人
     head = _roster_rows(client, admin, shift, pos)[0]["enrollment_id"]
     assert client.post(f"/api/staff/enrollments/{head}/leader", headers=admin,
                        json={"is_leader": True}).status_code == 200

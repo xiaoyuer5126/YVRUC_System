@@ -14,7 +14,7 @@
       </span>
     </div>
 
-    <!-- 场次与岗位放到 #body 里一起讲（要带培训/彩排标记），不再单列字段 -->
+    <!-- 场次与岗位放到 #body 里一起讲（要带培训/彩排标记），不单列字段 -->
     <DataCards v-if="narrow" :rows="tasks" title-key="shift_name"
                style="margin-bottom:16px" :fields="[]" empty="还没有签到码">
       <template #extra="{ row }">
@@ -85,8 +85,8 @@
             {{ row.geo ? '大屏' : '二维码 / 大屏' }}
           </el-button>
           <el-button size="small" :disabled="over" @click="openGeo(row)">定位</el-button>
-          <!-- 现场最常见的意外是场次提前或拖堂：以前只能关掉重建，而重建会让
-               已经扫过的那张码作废 -->
+          <!-- 现场最常见的意外是场次提前或拖堂：关掉重建会让已经扫过的那张码
+               作废，所以给「改时段」 -->
           <el-button size="small" :disabled="over" @click="openWindow(row)">改时段</el-button>
           <!-- 确认放在 toggle 里：关码的后果要写清楚（没签退的人按场次结束
                兜底），窄屏卡片那边也走同一个确认 -->

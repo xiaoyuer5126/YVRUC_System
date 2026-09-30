@@ -511,7 +511,7 @@ def test_只能给自己的报名记录定位签到(client, admin, live_group, t
 
 def test_地图配置只给管理者(client, admin, live_group, take_student):
     """管理端画签到点用的配置，只给管理者——学生端根本没有要看地图的地方。
-    瓦片由本站转发，这里不再下发任何 tk（见 test_geo_tiles.py）。"""
+    瓦片由本站转发，这里不下发任何 tk（见 test_geo_tiles.py）。"""
     d = client.get("/api/staff/map-config", headers=admin)
     assert d.status_code == 200 and "tiles" in d.json() and "tk" not in d.json()
     assert client.get("/api/staff/map-config",
@@ -735,7 +735,7 @@ def test_多选岗位里重复的只开一张码(client, admin, two_shift_act):
 
 def test_改时段不能留空(client, admin, two_shift_act):
     """截止同时是签退截止：过了它没签退的人按场次结束兜底，「不限」就判不出来。
-    开始也一并必填，和生成时总会填上起止一致。以前允许置空，这里改成 400。"""
+    开始也一并必填，和生成时总会填上起止一致。留空回 400。"""
     _act, am, _train = two_shift_act
     tid = client.post(f"/api/staff/shifts/{am.id}/checkin-tasks", headers=admin,
                       json={"mode": "shift"}).json()["id"]
@@ -812,7 +812,7 @@ def test_码过期后不能自己签退(client, admin, db, live_group):
     assert r.status_code == 409 and "已截止" in r.json()["detail"]
     info = client.get(f"/api/checkin/task/{token}", headers=h).json()
     assert info["state"] == "expired" and info["checked_out"] is False
-    # 页面上的签退截止就是码的截止，不再是「场次结束 + 宽限」
+    # 页面上的签退截止就是码的截止，没有「场次结束 + 宽限」
     row = client.get(f"/api/staff/activities/{act.id}/checkin-tasks",
                      headers=admin).json()[0]
     assert info["checkout_deadline"] == row["valid_to"]

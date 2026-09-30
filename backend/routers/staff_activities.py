@@ -215,9 +215,8 @@ def college_options(db: OrmSession) -> list[str]:
     条件是拿去跟 User.college 逐字比对的，所以选项**只能**从 User.college 里来
     ——统一身份认证写进来的是什么，这里就是什么，一字不差。
 
-    从前还并上一份写死的演示清单（config.COLLEGES），那是误导：清单里的学院档案里
-    一个都没有，选了筛不出人；档案里真实出现的（比如「校团委」）反倒不在清单里。
-    2026-09-30 把那份清单删了。
+    不并任何写死的清单：写死的学院名档案里未必有，选了筛不出人；档案里真实
+    出现的（比如「校团委」）又未必在清单里。
     """
     seen = {c for (c,) in db.query(User.college).distinct() if (c or "").strip()}
     return sorted(seen)
@@ -1252,7 +1251,7 @@ def _require_position_text(s: Position) -> None:
 
 
 def _validate_position(db: OrmSession, g: Shift, s: Position):
-    """岗位自带名额，不再受场次总数约束——场次只管时间。
+    """岗位自带名额，不受场次总数约束——场次只管时间。
 
     assign 模式例外：切过模式的场次可能留着一批岗位，那时名额记在场次上，
     各岗位之和不能超过它，否则一键分配会分出比报名人数更多的坑位。

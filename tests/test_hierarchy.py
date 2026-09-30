@@ -138,7 +138,7 @@ def test_部门成员不能导出也不能查档案(client, db, dept_activity):
 
 
 def test_部门成员的导出一个都下不到(client, db, dept_activity):
-    """回归：原先只拦了排班表，时长记录（带身份证号）和报名问卷结果漏了。
+    """不只排班表：时长记录（带身份证号）和报名问卷结果也得拦。
     以后新加的导出（.xlsx/.zip 下载或附件数）也得点名拦，这里按路由表查一遍。"""
     from backend.deps import TRAINEE_DENIED_READS
     exports = set()

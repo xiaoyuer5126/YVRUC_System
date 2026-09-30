@@ -29,7 +29,7 @@ body {
 
 /* ===== 间距 =====
    只有三档：区块之间 16px，块内的元素之间 12px，一行里并排的东西 8px。
-   下面几条是这些间距的唯一出处，模板里不再一个一个写 margin——同一种
+   下面几条是这些间距的唯一出处，模板里不一个一个写 margin——同一种
    东西在不同页面差着两三个像素，看的人说不清哪里不对，但就是觉得乱。 */
 
 /* 工具条：搜索框、筛选、按钮并排的那一行 */
@@ -148,7 +148,7 @@ h3 { margin: 12px 0 8px; }
                       flex: 0 0 100% !important; }
   .el-row > .el-col + .el-col { margin-top: 12px; }
 
-  /* 描述列表标签不再固定宽度，长标签自己换行 */
+  /* 描述列表标签不固定宽度，长标签自己换行 */
   .el-descriptions__label { width: auto !important; }
   .el-descriptions__cell { display: block !important; }
 

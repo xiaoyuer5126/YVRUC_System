@@ -29,7 +29,7 @@ def _group_of(client, admin, db, enrolled_activity, take_student, *,
 
 
 def _make_leader(client, admin, db, *positions):
-    """组长不再自动产生：测试里由管理者指定第一个有意愿的人。"""
+    """组长不自动产生：测试里由管理者指定第一个有意愿的人。"""
     head = next(r for r in _enrolled(db, *positions) if r.leader_willing)
     assert _appoint(client, admin, head.id).status_code == 200
     db.expire_all()

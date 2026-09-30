@@ -277,7 +277,7 @@ def _gate(db, g, position, kind, left_fn, ticket) -> bool | None:
     闸门说「满了」时，限流地拿数据库核一遍（见 locks 的「名额闸门」）；没预热时
     必核。核完按「数据库剩余 − 在途」对齐计数器再扣——不能直接写成数据库剩余，
     那会把在途的号全还回去。**Redis 用不了时返回 None**：闸门只是加速用的，
-    它不在就该退回「每个请求都查库」那条老路，而不是反过来把人挡在外面。
+    它不在就该退回「每个请求都查库」，而不是反过来把人挡在外面。
     """
     got = take_gate(g.id, position.id, kind, ticket)
     if got == GATE_OK:
@@ -308,7 +308,7 @@ def _settle_gates(g, position, tickets: dict, status: str | None) -> None:
 def _check_time_conflicts(rows, g: Shift, attached: list[Shift]) -> None:
     """拿 logic.active_rows 查回来的有效报名，和主场次及其培训/彩排逐个比时段。
 
-    一次查、在内存里比：从前每个目标场次各查一遍全部报名。
+    一次查、在内存里比，不必每个目标场次各查一遍全部报名。
     """
     for target in [g] + attached:
         clashes = logic.conflicts_among(rows, target.id, target.start_time,
@@ -357,7 +357,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
     # 到的时候，抢不到的那些只花一次 Redis 往返就被挡回去，下面那十来条资格
     # 查询、时段比较、场次锁根本不会执行。闸门只挡洪水、不判定名额——拿不到号
     # 也可能是计数器旧了（_gate 会拿数据库核一遍），拿到号也照样要走下面那条
-    # 以数据库为准的老路，所以它旧了也不会超卖。
+    # 以数据库为准的判定，所以它旧了也不会超卖。
     ticket = new_gate_ticket()
     tickets: dict[str, str] = {}      # 扣到了号的闸门
     seat_gate = _gate(db, g, position, "seat", _room_left, ticket)
@@ -388,8 +388,8 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         # 锁外查到的会不会过时？改培训/彩排（增删、改时间、改适用岗位）必须
         # 先进编辑态，而锁里第一条 SQL（enroll_ledger）会再看一眼编辑态：
         # 从这里到进锁之间谁开始改了，锁里就按「报名暂停」拒掉，不会拿一份
-        # 旧名单去落库。进锁之后才开始的编辑，与从前一样只剩「锁里那几毫秒」
-        # 的窗口（编辑接口不拿场次锁，从前锁里现查也挡不住）。
+        # 旧名单去落库。进锁之后才开始的编辑只剩「锁里那几毫秒」的窗口
+        # （编辑接口不拿场次锁，锁里再查一遍也挡不住它）。
         attached_all = logic.attached_shifts(db, g.id)
         attached = logic.for_position(attached_all, position.id)
         _check_time_conflicts(logic.active_rows(db, user), g, attached)
@@ -403,8 +403,8 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         db.commit()
 
         # ★ 名额判断与落库整段串行化到场次粒度，防止超卖与重复报名。
-        # 走完闸门的请求最多只剩「名额数」这么多个，所以等锁的队伍很短——
-        # 从前是几百个一起排队，大半等到超时。
+        # 走完闸门的请求最多只剩「名额数」这么多个，所以等锁的队伍很短，
+        # 不会几百个一起排队、大半等到超时。
         # 扣到号的人是先到的那批，多给它们等一会儿，别让 503 把名额送给后来者
         # 锁随事务走：下面判定、落库、结算闸门都在这一个事务里，最后那次
         # commit 同时就是放锁
@@ -603,8 +603,8 @@ def cancel_enroll(enrollment_id: str,
     # 把连接还回池子再去抢锁，理由同 enroll
     db.commit()
 
-    # 退选、递补、通知在同一个事务里：场次锁在 commit 时就放了，从前「先提交
-    # 退选、再递补」的中间那一瞬，别人能看到放出来的位子、抢在候补队首前面报上
+    # 退选、递补、通知在同一个事务里：场次锁在 commit 时就放了，要是「先提交
+    # 退选、再递补」，中间那一瞬别人能看到放出来的位子、抢在候补队首前面报上
     with shift_lock(db, g.id):
         # 锁外读到的状态可能已经旧了（连点两下退选：第一下在锁里退掉、放出名额、
         # 候补顶上；第二下拿到锁时手里的 enr 还是「已报名」）。会话是

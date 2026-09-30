@@ -642,7 +642,7 @@ class Position(Base):
     pay_optional: Mapped[bool] = mapped_column(Boolean, default=False)
     pay_note: Mapped[str] = mapped_column(String(256), default="")
     # 岗位组：同一场次内组名相同的岗位共用一名组长（如「东门片区」下的
-    # 引导/检录/医疗点）。留空 = 该岗位自成一组，行为与从前一致。
+    # 引导/检录/医疗点）。留空 = 该岗位自成一组。
     group_name: Mapped[str] = mapped_column(String(64), default="")
     # 占位岗位：「截止后统一分配」场次自动建的那一个，见 Shift.placeholder()
     is_placeholder: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -906,8 +906,8 @@ class CheckinTask(Base):
         """实际生效的可签时段 (起, 止)。签到、签退都只在这段时间里、且任务开着时能做。
 
         起止在库里都该有值：生成时默认取场次起止各外扩
-        CHECKIN_WINDOW_PAD_MINUTES，改时段也不许留空。但以前改时段允许把一端
-        置空表示「不限」，老数据里可能还有——按生成时的默认值补上。签退截止
+        CHECKIN_WINDOW_PAD_MINUTES，改时段也不许留空。列本身允许为空，万一碰上
+        空值就按生成时的默认值补上。签退截止
         必须是个确定的时刻：过了它还没签退的人按场次结束时间兜底（见
         routers/staff_ops.effective_checkout），「不限」就永远判不出来。
         """

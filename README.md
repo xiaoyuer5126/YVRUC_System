@@ -6,7 +6,7 @@ FastAPI + SQLAlchemy（PostgreSQL）+ Redis + Vue3 / Element Plus / ECharts（Vi
 
 ## 一、快速启动
 
-统一用 Docker 跑（后端依赖 PostgreSQL 与 Redis 两个服务，不再支持本机直跑）。
+统一用 Docker 跑（后端依赖 PostgreSQL 与 Redis 两个服务，不支持本机直跑）。
 
 ```bash
 cp .env.example .env          # 填 POSTGRES_PASSWORD、RUCVA_ID_CARD_KEY
@@ -94,7 +94,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
   （没人值班才发部长）。审批人仍挂部长，值班人与部长都能处理本部门
   的活动审批（通过/驳回/转交）与时长审批；转给会长团之后部门不再插手。
 - **时长审批通知**（所有部门）：锁定与解锁申请逐条**只发归口部门的对接人**（有值班人发值班人，
-  否则部长），不再逐条抄送会长团与管理员——他们照样能在「活动审批」处理。找不到对接人（部门没设
+  否则部长），不逐条抄送会长团与管理员——他们照样能在「活动审批」处理。找不到对接人（部门没设
   部长）才兜底发会长团。提交后 24 小时（`APPROVAL_REMIND_HOURS`）仍未处理，催对接人并抄送会长团，
   每条只催一次（`HoursRequest.reminded_at`）；永不自动通过。
 - **值班日报**：每晚 21:00 给部长一条当天汇总（今日新增 / 今日处理 / 尚未处理，含志愿北京外联确认），

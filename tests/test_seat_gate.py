@@ -136,7 +136,7 @@ def _take(g, left_in_db):
 
 def test_在途的号不会被核库覆盖掉(open_group):
     """5 个名额，5 个请求扣到号还没落库（数据库里仍是「剩 5 个」）：
-    再来的请求一个都不放。从前核库直接覆盖计数器，在途的号被一次次还回去。"""
+    再来的请求一个都不放。核库要是直接覆盖计数器，在途的号会被一次次还回去。"""
     act, g = open_group(5)
     assert sum(_take(g, 5) for _ in range(5)) == 5
     assert not any(_take(g, 5) for _ in range(50))

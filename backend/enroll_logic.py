@@ -284,7 +284,7 @@ def shift_counts(db: OrmSession,
 
 
 def has_room(db: OrmSession, shift: Shift, position=None) -> bool:
-    """还有没有正式名额。名额只记在岗位上，场次不再自己存一份。
+    """还有没有正式名额。名额只记在岗位上，场次不另存一份。
 
     assign 模式下报名时看似「没有岗位可选」，其实落在占位岗位上——
     调用方（报名接口）负责把它解析成 shift.placeholder()。
@@ -309,17 +309,17 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
                   targets: list[Shift]) -> EnrollLedger:
     """报名锁里的「查重 + 数名额 + 数候补 + 看编辑态 + 有没有时段冲突」，**一条 SQL**。
 
-    从前是四五条：查重一条、has_room 一条、没位子时把整场候补行全捞回来
+    分开查要四五条：查重一条、has_room 一条、没位子时把整场候补行全捞回来
     在内存里按岗位筛一遍。锁里每多一个往返，排在后面的几百人就多等一个
     往返，所以合成一次：只扫「本人这一场」和「这个岗位」两小撮行，用带
     FILTER 的聚合各数各的。
 
-    口径与原来的几个函数逐条对齐（改其中一边要同时改另一边）：
+    口径与下列函数逐条对齐（改其中一边要同时改另一边）：
       · 查重：status ∈ ACTIVE 或 seat_held（唯一索引 uq_enrollment_live 的口径，
         所以最多一行，max/bool_or 取到的就是那一行）；
       · 名额：position_occupied_count——正式 + 待确认 + 临期退选占位；
       · 候补：waitlist_rows——waitlisted + pending_confirm，限本场次本岗位。
-        待确认既占名额又在队列里，两边都算，与原来一致；
+        待确认既占名额又在队列里，两边都算；
       · 冲突：time_conflicts——本人 ACTIVE 的报名，场次与 targets 里任一场
         （主场次和它的培训/彩排）区间重叠，比某一场时不算那一场自己。
         这里只要「有没有」；真有的话调用方再走 active_rows 拼出详细的提示，
@@ -696,8 +696,8 @@ def expire_stale_promotions(db: OrmSession) -> int:
         by_shift[enr.shift_id].append(enr.id)
     db.commit()      # 读完先还连接，别占着连接排锁（理由同报名）
 
-    # 一个场次一个事务：放弃与顺延一起提交。场次锁随事务结束而放，从前
-    # 「先提交放弃、再另拿一次锁递补」的中间那一瞬，别人能看到空出来的位子
+    # 一个场次一个事务：放弃与顺延一起提交。场次锁随事务结束而放，要是
+    # 「先提交放弃、再另拿一次锁递补」，中间那一瞬，别人能看到空出来的位子
     # 抢在队首前面报上；合成一个事务就没有这个窗口
     n = 0
     for sid, ids in by_shift.items():

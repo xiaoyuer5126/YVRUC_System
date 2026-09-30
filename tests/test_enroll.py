@@ -135,7 +135,7 @@ def test_allow_reassign_recorded(client, open_group, take_student):
 
 
 def test_quota_zero_is_rejected(client, admin, open_group):
-    """0 人的岗位没有意义：以前会被当成「不限人数」。"""
+    """0 人的岗位没有意义，也不能被当成「不限人数」。"""
     act, g = open_group(5)
     with editing(client, admin, act.id):
         r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,

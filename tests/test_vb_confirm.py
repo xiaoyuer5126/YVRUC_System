@@ -454,7 +454,7 @@ def _who_got(db, prefix):
     return {sid for sid in (ADMIN, COUNCIL, LIAISON_HEAD) if inbox(db, sid, prefix)}
 
 
-def test_时长审批只通知对接人_不再抄送会长团与管理员(client, admin, db, liaison):
+def test_时长审批只通知对接人_不抄送会长团与管理员(client, admin, db, liaison):
     act = _approved_act(db, liaison.id, names=NAMES)
     assert client.post(f"/api/staff/activities/{act.id}/project-files/stamped",
                        headers=admin,

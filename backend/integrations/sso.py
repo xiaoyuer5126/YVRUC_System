@@ -214,8 +214,8 @@ def _fetch_profile(cfg: dict, token: str) -> dict:
     """取用户信息。
 
     `access_token` 走**查询参数**，不是 `Authorization: Bearer` 头——文档给的
-    调用示例就是查询参数。这里原先按 OAuth 惯例写成了 Bearer 头，真机上
-    必然取不到用户，而且报错看起来会像是「没登录」。
+    调用示例就是查询参数。按 OAuth 惯例写成 Bearer 头的话，真机上必然
+    取不到用户，而且报错看起来会像是「没登录」。
     """
     url = _endpoint(cfg, "user_info_url")
     if not url:

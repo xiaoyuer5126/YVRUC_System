@@ -108,7 +108,7 @@ def test_同一活动重复登记先回409带已有记录确认后照登(client,
     assert sorted(kinds) == ["late", "passive"]
 
 
-def test_提示线是80且无法取得联系不再是违规类型(client, admin, enrolled_activity):
+def test_提示线是80且无法取得联系不是违规类型(client, admin, enrolled_activity):
     act, _shift, u = enrolled_activity
     assert config.SCORE_ALERT_BELOW == 80
     assert "contact" not in config.VIOLATION_WEIGHTS

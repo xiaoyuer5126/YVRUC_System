@@ -500,8 +500,8 @@ def test_时长带明细且导出时长记录(client, admin, db, served, take_st
 
 # ======================= 手动补录：并进本人那一笔 =======================
 #
-# 从前手动加的时长另起一条记录：合计分成两处、核准发两条通知、本人得确认两回，
-# 管理者那张总表里还看不见这笔账。现在并进这个人这场活动的那一笔，
+# 手动加的时长要是另起一条记录：合计分成两处、核准发两条通知、本人得确认两回，
+# 管理者那张总表里还看不见这笔账。所以并进这个人这场活动的那一笔，
 # 手动的部分作为明细里的一段存在（kind="manual"）。
 
 def _add_manual(client, admin, act, sid, hours, note=""):
@@ -527,7 +527,7 @@ def test_手动时长并进本人那一笔(client, admin, db, served):
     # 本人那边只有一笔账，不是同一个活动列两行
     assert len(client.get("/api/me/hours", headers=stu).json()["records"]) == 1
 
-    # 管理者那张总表也合起来了，不再另有一块「手动添加时长」
+    # 管理者那张总表也是合起来的，没有另外一块「手动添加时长」
     d = client.get(f"/api/staff/activities/{act.id}/hours", headers=admin).json()
     assert "manual" not in d
     m = next(x for x in d["items"] if x["user"]["id"] == u.id)
@@ -563,7 +563,7 @@ def test_确认全部不会抹掉手动加的那几段(client, admin, db, served
 
 
 def test_只补录过的人也在总表里(client, admin, db, served, take_student):
-    """没签到、只被手动补录的人，从前根本不出现在这张表里——这笔账就没人核。"""
+    """没签到、只被手动补录的人也得出现在这张表里，不然这笔账就没人核。"""
     act, g, u = served
     other = student_row(db, take_student())
     _add_manual(client, admin, act, other.student_id, 1.5, "场外搬运")
@@ -781,7 +781,7 @@ def _row(client, admin, act, user_id):
 
 
 def test_删段不截到零_账不会凭空多出来(client, admin, db, served):
-    """加 2、扣 5、删掉加的那段：从前截成 0，再删扣的那段就多出 1 小时。"""
+    """加 2、扣 5、删掉加的那段：要是截成 0，再删扣的那段就多出 1 小时。"""
     act, g, u = served            # 签到 4 小时
     _confirm(client, admin, act, approve=False)
     assert _add_manual(client, admin, act, u.student_id, 2, "场外搬运").status_code == 200

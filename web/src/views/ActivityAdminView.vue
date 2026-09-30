@@ -2018,7 +2018,7 @@ async function copyPoster() {
 }
 
 // assign 场次不能建岗位。点按钮的当下就说清楚，并给一步到位的切换——
-// 让人填完一整个表单再被后端 409 拦下，是这里以前最招骂的地方。
+// 别让人填完一整个表单再被后端 409 拦下。
 async function addPosition(g) {
   if (g.mode === 'assign') {
     const enrolled = g.enrolled || 0
@@ -2350,7 +2350,7 @@ async function hoursPreview(silent = false) {
   hoursLoading.value = true
   try {
     const d = await api.get(`/api/staff/activities/${activityId}/hours`)
-    // 时长不再就地编辑（见模板里的说明），勾选确认时按后端算出来的值提交
+    // 时长只读（见模板里的说明），勾选确认时按后端算出来的值提交
     hours.value = d.items || []
     hoursState.value = d
     hoursSel.value = []
@@ -2360,10 +2360,10 @@ async function hoursPreview(silent = false) {
 
 function onHoursSelect(rows) { hoursSel.value = rows }
 
-// 确认选中志愿者的时长（可先在表格里修改数值）
+// 确认选中志愿者的时长
 async function confirmSelectedHours() {
   if (!hoursSel.value.length) return ElMessage.warning('请先勾选志愿者')
-  // 按后端算出来的数值确认（不再有可就地改的输入框）：勾选的意义是
+  // 按后端算出来的数值确认：勾选的意义是
   // 「只确认这几个人」，比如把未签退的几条留着逐条核对
   const items = hoursSel.value.map(r => ({
     student_id: r.user.student_id, hours: Number(r.hours),

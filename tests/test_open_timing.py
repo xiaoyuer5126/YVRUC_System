@@ -1,8 +1,8 @@
 """抢报那一刻的公平：毫秒级对时。
 
-从前详情页的「开没开」用的是截断成整秒的 opens_in：离 reg_start 还差 0.3 秒
+详情页的「开没开」要是用截断成整秒的 opens_in：离 reg_start 还差 0.3 秒
 时它已经是 0，按钮亮了；报名接口却按精确时间判，手最快的那批人点下去全是
-「报名尚未开始」。现在全站只有一处比较（serializers.reg_started）。
+「报名尚未开始」。所以全站只有一处比较（serializers.reg_started）。
 """
 from __future__ import annotations
 

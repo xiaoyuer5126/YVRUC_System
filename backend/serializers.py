@@ -35,9 +35,9 @@ def reg_started(reg_start, t) -> bool:
     """报名开始了没有。
 
     **全站「开没开始报名」只有这一处比较**：展示状态、各场次的 enroll_open、
-    倒计时毫秒数、报名接口的拦截都走它。从前详情页用的是截断成整秒的
-    opens_in，比报名接口认的 reg_start 早了不到一秒——手最快的那批人倒计时
-    归零、按钮亮了，点下去却是「报名尚未开始」。
+    倒计时毫秒数、报名接口的拦截都走它。各算各的就会差出零点几秒：比如用截断
+    成整秒的 opens_in，会比报名接口认的 reg_start 早不到一秒——手最快的那批人
+    倒计时归零、按钮亮了，点下去却是「报名尚未开始」。
     """
     return reg_start is None or t >= reg_start
 
@@ -48,7 +48,7 @@ def display_status_of(status: str, reg_start, reg_end,
 
     状态流转由定时任务每分钟推进，中间那一分钟里 status 还没跟上；报名开始
     时间更是完全不体现在 status 上——「已发布但还没到报名时间」的活动，
-    以前一律显示「报名中」，学生点进去才发现报不了。
+    只看 status 就会显示「报名中」，学生点进去才发现报不了。
 
         筹备中 → 未开始报名 → 报名中 → 已截止 → 进行中 → 已结束
 
@@ -301,7 +301,7 @@ def _unassigned_count(db: OrmSession, g: Shift) -> int:
 
 def _group_of(p: Position, positions: list[Position]) -> list[Position]:
     """同组岗位（含自己）。口径同 enroll_logic.group_positions，只是在本场次
-    已加载的岗位里找，不再一个岗位查一次。"""
+    已加载的岗位里找，不必一个岗位查一次。"""
     if not (p.group_name or "").strip():
         return [p]
     return [x for x in positions if x.group_name == p.group_name]

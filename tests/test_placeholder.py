@@ -65,7 +65,7 @@ def test_建assign场次自动带占位岗位(client, admin, assign_shift):
     sh = _shift_view(client, admin, aid)
     [holder] = sh["positions"]
     assert holder["is_placeholder"] and holder["name"] == "待分配"
-    # 名额记在它头上，场次不再自己存一份
+    # 名额记在它头上，场次不另存一份
     assert holder["quota"] == 3 and holder["waitlist_quota"] == 2
     assert sh["capacity"] == 3
     assert sh["position_quota_sum"] == 0         # 没有真实岗位

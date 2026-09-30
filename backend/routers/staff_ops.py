@@ -381,8 +381,8 @@ def toggle_task(task_id: str, body: dict,
     ensure_not_finished(_act(db, task.activity_id))
 
     if "valid_from" in body or "valid_to" in body:
-        # 现场最常见的意外是场次提前或拖堂：以前只能关掉重建，而重建会让
-        # 已经扫过的那张码作废（记录还挂在老任务下）。时段本来就该能改
+        # 现场最常见的意外是场次提前或拖堂。关掉重建会让已经扫过的那张码
+        # 作废（记录还挂在老任务下），所以时段要能直接改
         for key in ("valid_from", "valid_to"):
             if key in body:
                 raw = (body[key] or "").strip()
@@ -952,7 +952,7 @@ def council_members(db: OrmSession) -> list[User]:
 
 def _hours_notify_targets(db: OrmSession, act: Activity) -> list[User]:
     """时长审批（锁定与解锁）逐条通知谁：只发归口部门的对接人——有值班人发
-    值班人，否则发部长。会长团与管理员照样能在审批页拍板，但不再逐条收通知：
+    值班人，否则发部长。会长团与管理员照样能在审批页拍板，但不逐条收通知：
     时长审批量大，逐条抄送的结果是他们把通知关掉；放太久没人处理，另有
     scheduled.remind_stale_hours_requests 催对接人并抄送会长团。
 

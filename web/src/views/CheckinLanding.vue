@@ -133,7 +133,7 @@ async function doCheckin() {
     const d = await api.post(`/api/checkin/task/${route.params.token}`)
     done.value = true
     doneAction.value = d.action === 'checkout' ? '签退' : '签到'
-    // 不再从 message 里截后半句：那句话是写给「别人」的（「张三 已到岗。」），
+    // 不从 message 里截后半句：那句话是写给「别人」的（「张三 已到岗。」），
     // 放在自己的成功页上既啰嗦又像在念别人的名字。按动作自己说一句。
     doneAt.value = `${d.time.replace('T', ' ')} · ${d.action === 'checkout'
       ? '本次服务时长将按签到签退计算' : '已到岗'}`

@@ -484,8 +484,8 @@ def my_approvals(db: OrmSession = Depends(db_session),
         who = db.get(User, act.approval_assignee_id) if act.approval_assignee_id else None
         creator = db.get(User, act.created_by)
         span = act.time_span()
-        # 提交时写的说明。以前只存进流水、发进通知，审批人做决定的这个页面
-        # 反而看不到——最该看到那句话的地方。
+        # 提交时写的说明。审批人做决定的这个页面是最该看到那句话的地方，
+        # 光存进流水、发进通知是不够的。
         submit = (db.query(ApprovalEvent)
                   .filter(ApprovalEvent.activity_id == act.id,
                           ApprovalEvent.kind == "submit")
