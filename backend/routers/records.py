@@ -73,17 +73,26 @@ def _ensure_importable(db: OrmSession, act: Activity) -> None:
 
 
 def _invalidate_hours_approval(db: OrmSession, act: Activity) -> bool:
-    """核准后的名单发生变化：撤销旧核准与截止时间，要求管理者重新核准。
+    """核准后的名单发生变化：撤销活动的核准与截止时间，要求管理者重新核准。
 
     自动报批只看活动级截止时间；不撤销就可能把新增或改过的
     时长按旧截止时间直接送审，志愿者没有完整的确认/申诉机会。
+
+    只撤销活动这一级。没改到的人，上次通知过的数值（approved_hours）和本人
+    的确认都留着：重新核准时只通知新增的、时长变了的人（见
+    staff_ops.hours_approve），改一个人不该惊动整份名单。这一轮提过申诉的人
+    例外，清掉他的 approved_hours，重新核准时照样通知到他。
     """
     if act.hours_approved_at is None:
         return False
+    appealed = {a.record_id for a in db.query(HoursAppeal).filter(
+        HoursAppeal.activity_id == act.id,
+        HoursAppeal.created_at >= act.hours_approved_at)}
     act.hours_approved_at = None
     act.appeal_deadline = None
     for rec in (db.query(HoursRecord)
-                .filter(HoursRecord.activity_id == act.id).all()):
+                .filter(HoursRecord.activity_id == act.id,
+                        HoursRecord.id.in_(appealed or [""])).all()):
         rec.confirmed_at = None
         rec.approved_hours = None
     return True

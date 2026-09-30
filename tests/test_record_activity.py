@@ -347,7 +347,8 @@ def test_核准_申诉_提交审核_外联确认_完成(client, admin, db, appro
     r = client.post(f"/api/staff/activities/{approved}/hours/approve",
                     headers=admin, json={"appeal_deadline": (
                         now() + timedelta(days=1)).isoformat()})
-    assert r.status_code == 200 and r.json()["count"] == 2, r.text
+    # 只通知申诉过的 a；b 被覆盖成 3.5 又改回 3，和上次通知他的数一样
+    assert r.status_code == 200 and r.json()["count"] == 1, r.text
     if liaison.is_external(db, act):
         assert client.post(url, headers=admin, json=names).status_code == 400
         assert client.post(f"/api/staff/activities/{approved}/project-files/stamped",
@@ -404,6 +405,9 @@ def test_核准后改名单撤销旧申诉截止时间(client, admin, db, approv
     assert r.status_code == 200 and r.json()["count"] == 2, r.text
     rows = client.get(f"{url}/record-roster", headers=admin).json()["items"]
     by_sid = {x["user"]["student_id"]: x["id"] for x in rows}
+    # b 在名单变动前就确认过：改的不是他，这句确认要留着
+    assert client.post(f"/api/me/hours/{by_sid[b]}/confirm",
+                       headers=login(client, b), json={}).status_code == 200
     # 模拟截止时间已到，而定时任务尚未扫到这场活动。
     db.expire_all()
     db.get(Activity, approved).appeal_deadline = now() - timedelta(minutes=1)
@@ -420,8 +424,8 @@ def test_核准后改名单撤销旧申诉截止时间(client, admin, db, approv
     db.expire_all()
     act = db.get(Activity, approved)
     assert act.hours_approved_at is None and act.appeal_deadline is None
-    assert all(x.approved_hours is None and x.confirmed_at is None
-               for x in db.query(HoursRecord).filter_by(activity_id=approved))
+    kept = db.get(HoursRecord, by_sid[b])
+    assert kept.approved_hours == 3 and kept.confirmed_at is not None
     scheduled.submit_lock_when_due(db)
     assert db.query(HoursRequest).filter_by(activity_id=approved).count() == 0
     r = client.post(f"{url}/hours/lock-request", headers=admin,
@@ -434,8 +438,33 @@ def test_核准后改名单撤销旧申诉截止时间(client, admin, db, approv
             Notification.title.like("志愿时长核准已撤销%")).count() == 1
     r = client.post(f"{url}/hours/approve", headers=admin, json={
         "appeal_deadline": (now() + timedelta(days=1)).isoformat()})
-    expected = 1 if change == "delete" else 3 if change == "import" else 2
+    # 只通知新增的 c / 改了时长的 a；删掉 a 时谁也不用再通知
+    expected = {"import": 1, "edit": 1, "delete": 0}[change]
     assert r.status_code == 200 and r.json()["count"] == expected, r.text
+    db.expire_all()
+    assert db.get(HoursRecord, by_sid[b]).confirmed_at is not None
+
+
+def test_改名单时这一轮申诉过的人_重新核准照样通知(client, admin, db, approved,
+                                          take_student):
+    a, b, c = take_student(), take_student(), take_student()
+    _import(client, admin, approved, f"{a} 2\n{b} 3")
+    url = f"/api/staff/activities/{approved}"
+    client.post(f"{url}/hours/approve", headers=admin, json={
+        "appeal_deadline": (now() + timedelta(days=1)).isoformat()})
+    stu = login(client, b)
+    rec = next(x for x in client.get("/api/me/hours", headers=stu).json()["records"]
+               if x["activity_id"] == approved)
+    assert client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu, json={
+        "claimed_hours": 4, "reason": "实际服务了四个小时"}).status_code == 200
+    appeal = client.get(f"{url}/hours-appeals", headers=admin).json()[0]
+    client.post(f"/api/staff/hours-appeals/{appeal['id']}/resolve", headers=admin,
+                json={"accept": False, "reply": "按签到记录核对无误"})
+    assert _import(client, admin, approved, f"{c} 1").json()["reapproval_required"]
+    r = client.post(f"{url}/hours/approve", headers=admin, json={
+        "appeal_deadline": (now() + timedelta(days=1)).isoformat()})
+    # 新增的 c + 申诉被驳回、数值没变的 b；a 没变也没申诉，不打扰
+    assert r.status_code == 200 and r.json()["count"] == 2, r.text
 
 
 # ======================= 提示分 / 档案 / 违规 =======================

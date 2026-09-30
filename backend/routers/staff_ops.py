@@ -1516,6 +1516,10 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
     通过即锁定，活动落「待外联确认」。
     有人申诉就通知管理者，改完再核准一次：这一次只惊动数值
     变过、或者申诉过的人，别人的确认照旧有效。
+
+    「通知过」看每条记录的 approved_hours（通知时记下的数值）：补记录活动
+    改名单会撤销活动级核准，但留着没改到的人的 approved_hours（见
+    records._invalidate_hours_approval），重新核准时同样只通知变了的人。
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id, for_update=True)
@@ -1541,10 +1545,11 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
     act.hours_approved_at = now()
     act.appeal_deadline = deadline
     notified = 0
+    again = since is not None or any(r.approved_hours is not None for r in rows)
     for r in rows:
         fresh = r.approved_hours is None or r.approved_hours != r.hours
-        if since is not None and not fresh and r.user_id not in appealed:
-            continue          # 上一轮通知过、数值没变、也没申诉：不再打扰
+        if not fresh and r.user_id not in appealed:
+            continue          # 通知过这个数值、没变、也没申诉：不打扰
         r.approved_hours = r.hours
         r.confirmed_at = None
         u = db.get(User, r.user_id)
@@ -1562,7 +1567,7 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
             deadline=f"{deadline:%Y-%m-%d %H:%M}", pay_line=pay_line)
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=(f"{'再次' if since else ''}核准志愿时长，通知 {notified} 人，"
+              summary=(f"{'再次' if again else ''}核准志愿时长，通知 {notified} 人，"
                        f"确认/申诉截止 {deadline:%Y-%m-%d %H:%M}"))
     db.commit()
     return {"ok": True, "locked": False, "count": notified,
