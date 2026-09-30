@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from backend import config
 from backend.integrations import msgcenter
 from backend.models import Notification, User
 
@@ -53,6 +54,47 @@ def test_报文里收件人是真数组不是字符串(db, monkeypatch):
     assert p["channels"] == "4"
     assert p["plannedTime"] == ""
     assert "extras" in p
+
+
+def test_模板链接按落点规则拼(db, monkeypatch):
+    """模板配了落点就用它；没配才看 data（与站内 MessagesView 同一套规则）。"""
+    monkeypatch.setattr(config, "SITE_URL", "https://p.cn/")
+    assert msgcenter._link_for("signup_success", None) == "https://p.cn/#/my"
+    assert msgcenter._link_for("hours_approved", None) == "https://p.cn/#/hours"
+    # 模板的落点优先于 data.activity_id：催签收的按钮和时长的确认按钮
+    # 都不在活动页上，带过去等于白跑
+    assert (msgcenter._link_for("ack_reminder", {"activity_id": "a1"})
+            == "https://p.cn/#/messages")
+    assert (msgcenter._link_for("hours_approved", {"activity_id": "a1"})
+            == "https://p.cn/#/hours")
+    # 模板没配落点的（活动变更/签到提醒/自定义）看 data
+    assert (msgcenter._link_for("activity_changed", {"activity_id": "a1"})
+            == "https://p.cn/#/activity/a1")
+    assert (msgcenter._link_for("custom", {"route": "hours"})
+            == "https://p.cn/#/hours")
+    # 名单外 route / 没有落点的模板 / 站点根为空——都不带链接，
+    # 免得发出「打开是白屏」或跳错页的地址
+    assert msgcenter._link_for("custom", {"route": "unknown"}) == ""
+    assert msgcenter._link_for("checkin_reminder", {}) == ""
+    monkeypatch.setattr(config, "SITE_URL", "")
+    assert msgcenter._link_for("signup_success", None) == ""
+
+
+def test_带链接的通知把链接放extras(db, monkeypatch):
+    """卡片点击跳转走 extras.im_linkUrl：正文里写 <a> 也行，但链接词
+    在卡片上根本看不出来可点（真机验证），只有这一个可靠的落点。"""
+    seen: dict = {}
+
+    def fake_post(path, payload, **kw):
+        seen["payload"] = payload
+        return {"successed": True}
+
+    monkeypatch.setattr(msgcenter.sudy_sign, "post_json", fake_post)
+    url = "https://p.cn/#/my"
+    assert msgcenter._send("2025201717", "标题", "正文", url) is True
+    assert seen["payload"]["extras"] == {"im_linkUrl": url}
+    assert msgcenter._send("2025201717", "标题", "正文") is True
+    assert seen["payload"]["extras"] == {}
 
 
 def test_成功返回才算送达():
@@ -121,7 +163,7 @@ def test_真实推送在事务提交且场次锁放掉之后才发(client, open_
     act, g = open_group(2, waitlist_quota=0)
     seen = []
 
-    def fake_send(student_id, title, content):
+    def fake_send(student_id, title, content, url=""):
         # 进程名额全都空着，才说明报名请求已经走出 with 块、把名额还了
         got = [locks._SLOTS.acquire(timeout=0) for _ in range(config.LOCK_SLOTS)]
         for ok in got:
@@ -145,15 +187,17 @@ def test_真实推送在事务提交且场次锁放掉之后才发(client, open_
                                  Enrollment.status == "enrolled").count())
         finally:
             fresh.close()
-        seen.append((slots_free, lock_free, committed))
+        seen.append((slots_free, lock_free, committed, url))
         return True
 
     monkeypatch.setattr(locks, "WAIT_TIMEOUT", 0.3)   # 锁被占着时别干等 3 秒
     monkeypatch.setattr(msgcenter, "real_mode", lambda *_: True)
     monkeypatch.setattr(msgcenter, "_send", fake_send)
+    monkeypatch.setattr(config, "SITE_URL", "https://p.cn")
     sid = take_student()
     assert enroll(client, login(client, sid), act, g).status_code == 200
-    assert seen == [(True, True, 1)]    # 推了一次：名额已还、锁已放掉、事务已提交
+    # 推了一次：名额已还、锁已放掉、事务已提交，且链接拼成了报名成功该去的页
+    assert seen == [(True, True, 1, "https://p.cn/#/my")]
 
     db = SessionLocal()
     try:

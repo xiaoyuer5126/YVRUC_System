@@ -22,6 +22,7 @@ x-backend-env: &backend_env
   RUCVA_DEMO_PASSWORD: ${RUCVA_DEMO_PASSWORD:-}
   RUCVA_EXPOSE_DOCS: ${RUCVA_EXPOSE_DOCS:-}
   RUCVA_PUBLIC_BASE_URL: ${RUCVA_PUBLIC_BASE_URL:-}
+  RUCVA_SITE_URL: ${RUCVA_SITE_URL:-}
   RUCVA_ID_CARD_KEY: ${RUCVA_ID_CARD_KEY:?请在 .env 设置 RUCVA_ID_CARD_KEY（见 .env.example）}
   # 学校开放平台（能力开放平台 / 统一认证）。留空 = 相关能力回落 Mock。
   # tests 服务**故意不注入**这几个变量：测试永远跑在 Mock 下，碰不到真实接口。

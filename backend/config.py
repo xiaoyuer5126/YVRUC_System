@@ -127,6 +127,11 @@ def _url_list(raw: str) -> list[str]:
 
 PUBLIC_BASE_URLS = _url_list(os.environ.get("RUCVA_PUBLIC_BASE_URL", ""))
 
+# 通知里「点击打开」的站点根地址，企业微信里的通知卡片点击后跳到它下面
+# （落哪一页见 integrations/msgcenter._link_for）。必须是手机上打得开的
+# 公网地址；留空则通知不带跳转——开发环境本来也没有公网入口。
+SITE_URL = os.environ.get("RUCVA_SITE_URL", "").strip()
+
 # 下载票据：导出与材料下载走 <a> 直链，带不了请求头，改用一次性票据。
 # 短到只够浏览器立刻发起这一次下载，进了日志也用不了第二次。
 DOWNLOAD_TICKET_SECONDS = 60

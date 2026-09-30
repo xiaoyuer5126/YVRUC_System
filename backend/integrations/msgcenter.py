@@ -4,7 +4,8 @@
   报名成功 / 候补转正 / 岗位分配 / 活动变更警告
 
 Mock 模式：把消息落库（notifications 表），前端「消息中心」即收件箱。
-真实模式：经学校开放平台的消息中心（opengw）下发。
+真实模式：经学校开放平台的消息中心（opengw）下发；通知卡片可点击跳转，
+落哪一页见 _link_for（链接不写进正文，走 extras 的 im_linkUrl）。
 
 **本平台只发企业微信通道（channels=4）**。学校未同意本平台发短信，而短信是按条
 计费的真金白银——所以 `_channels()` 里对通道 1 做了硬拦截，管理员在「集成设置」
@@ -89,6 +90,51 @@ TEMPLATES: dict[str, tuple[str, str]] = {
 }
 
 
+# 各模板点开后落在哪一页（站内 hash 路由的路径）。模板配了就以它为准——
+# 每条通知都有唯一一个「该去的地方」：报名/录取去「我的报名」看自己的状态和
+# 联络群，时长去「我的志愿时长」（确认与申诉按钮只在那儿），催签收去
+# 「消息中心」（「我已知悉」按钮只在那儿）。
+TEMPLATE_PAGE: dict[str, str] = {
+    "signup_success": "/my",
+    "waitlist_queued": "/my",
+    "waitlist_promoted": "/my",
+    "application_accepted": "/my",
+    "application_rejected": "/my",
+    "assignment": "/my",
+    "leader_appointed": "/my",
+    "hours_approved": "/hours",
+    "hours_locked": "/hours",
+    "ack_reminder": "/messages",
+}
+
+# data.route 能直接当页面路径的取值。名单与前端 MessagesView 认的一致——
+# 名单外的不猜，认错页面比不跳更糟。
+ROUTE_PAGES = ("hours", "approvals")
+
+
+def _link_for(template_key: str, data: dict | None) -> str:
+    """这条通知点开要去的完整网址；没有合适页面、或站点根没配，返回空串。
+
+    模板没配落点的，按 data 走——与站内消息中心同一条规则（见 MessagesView
+    的 clickable）：有活动 id 就进活动页，有 route 就进对应页。两处跳转
+    指向同一页，不会各说各话。
+    站点根（config.SITE_URL）不配就不发链接：带半截路径的 im_linkUrl
+    打开是白屏，不如不点。
+    """
+    data = data or {}
+    page = TEMPLATE_PAGE.get(template_key, "")
+    if not page:
+        activity_id = data.get("activity_id")
+        route = data.get("route")
+        if activity_id:
+            page = f"/activity/{activity_id}"
+        elif route in ROUTE_PAGES:
+            page = "/" + route
+    if not page or not config.SITE_URL:
+        return ""
+    return config.SITE_URL.rstrip("/") + "/#" + page
+
+
 def render(template_key: str, extra: str = "", **kw) -> tuple[str, str]:
     """按模板库渲染标题与正文；缺占位符时保留原样，不让通知发不出去。"""
     title_tpl, body_tpl = TEMPLATES.get(template_key, ("平台通知", "{extra}"))
@@ -133,6 +179,7 @@ def send_user(db: OrmSession, user: User, template_key: str,
     """
     title, content = render(template_key, **fields)
     real = real_mode(db)    # 用调用方的会话读配置，别另占一条连接
+    url = _link_for(template_key, data)
     row = Notification(id=uid("ntf"), user_id=user.id,
                        template_key=template_key, title=title,
                        content=content, data=data or {},
@@ -145,7 +192,7 @@ def send_user(db: OrmSession, user: User, template_key: str,
         # 真正的推送等**这个事务提交之后**、而且**场次锁的 with 块结束之后**再做：
         # 业务回滚了就不该发出去；锁里做外呼会占着进程名额干等（见 locks.after_unlock）
         db.info.setdefault(_OUTBOX, []).append(
-            (row.id, user.student_id, title, content))
+            (row.id, user.student_id, title, content, url))
 
 
 _OUTBOX = "msgcenter_outbox"
@@ -163,15 +210,15 @@ def _drop_after_rollback(session) -> None:
     session.info.pop(_OUTBOX, None)
 
 
-def _push(items: list[tuple[str, str, str, str]]) -> None:
+def _push(items: list[tuple[str, str, str, str, str]]) -> None:
     """把已提交的通知真正推出去，推成功的回写 delivered。
 
     推送失败只留着 delivered=False，不打断业务。
     """
     ok: list[str] = []
-    for ntf_id, student_id, title, content in items:
+    for ntf_id, student_id, title, content, url in items:
         try:
-            if _send(student_id, title, content):
+            if _send(student_id, title, content, url):
                 ok.append(ntf_id)
         except Exception:  # noqa: BLE001  外部接口不可用不能拖垮业务
             log.warning("消息中心推送失败：%s → %s", student_id, title,
@@ -205,7 +252,7 @@ def _channels(cfg: dict) -> str:
     return ",".join(keep) or "4"
 
 
-def _send(student_id: str, title: str, content: str) -> bool:
+def _send(student_id: str, title: str, content: str, url: str = "") -> bool:
     """经开放平台消息中心下发一条消息，返回是否真的送达。
 
     收件人用 `uc_ux` + `(学号)`：由消息中心按学号去查这个人的企业微信地址。
@@ -220,7 +267,10 @@ def _send(student_id: str, title: str, content: str) -> bool:
         "receivers": [{"type": "uc_ux", "address": f"({student_id})"}],
         "channels": _channels(cfg),
         "plannedTime": "",     # 空串 = 立即发送（文档示例即如此）
-        "extras": {},          # 文档标「否」；照请求示例带上
+        # extras 是消息中心的「扩展属性」。im_linkUrl = 消息外链，卡片点击后
+        # 打开它；写进正文是行不通的——链接词在卡片里看不出来可点，正文里
+        # 放多个 <a> 也只认第一个。没有链接的模板给空对象，跟请求示例一致。
+        "extras": {"im_linkUrl": url} if url else {},
     }
     return _delivered(sudy_sign.post_json(SEND_PATH, payload), student_id, title)
 

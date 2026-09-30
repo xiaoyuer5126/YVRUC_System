@@ -35,7 +35,9 @@ def notify_enrolled(db: OrmSession, act: Activity, template: str, **kw) -> int:
            .distinct().all())
     users = _users_of(db, ids)
     for u in users:
-        msgcenter.send_user(db, u, template, **kw)
+        # 带上活动 id：站内和企业微信里点这条通知都直接进活动页
+        # （前端按 data.activity_id 跳，外发链接见 msgcenter._link_for）
+        msgcenter.send_user(db, u, template, data={"activity_id": act.id}, **kw)
     return len(users)
 
 
