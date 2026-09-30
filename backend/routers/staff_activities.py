@@ -50,7 +50,12 @@ ACTIVITY_FIELDS = {
     "recruit_campuses": "招募校区", "recruit_stages": "招募学段",
     "recruit_colleges": "招募学院",
     "reg_start": "报名开始", "reg_end": "报名截止",
+    "held_start": "活动开始", "held_end": "活动结束",
 }
+# 补记录活动（config.RECORD_MODE）用不上的那些：不公开、不报名，就没有联络群、
+# 报名时间与招募范围。编辑时传了也不认，免得前端一个旧表单把它们又写回来
+RECORD_UNUSED_FIELDS = ("contact_group_qr", "reg_start", "reg_end",
+                        "recruit_campuses", "recruit_stages", "recruit_colleges")
 
 
 def _act(db: OrmSession, activity_id: str) -> Activity:
@@ -148,6 +153,17 @@ class ActivityBody(BaseModel):
     recruit_colleges: list[str] = []
     reg_start: str | None = None
     reg_end: str | None = None
+    # 补记录活动的活动时间（它没有场次，只能直接填）
+    held_start: str | None = None
+    held_end: str | None = None
+
+
+def _check_held_span(start: datetime | None, end: datetime | None) -> None:
+    """补记录活动的活动时间：起止都要有，结束晚于开始。"""
+    if start is None or end is None:
+        raise HTTPException(400, "请填写活动开始与结束时间")
+    if end <= start:
+        raise HTTPException(400, "活动结束时间要晚于开始时间")
 
 
 def _clean_scope(raw: list[str], allowed: list[str], label: str) -> list[str]:
@@ -286,10 +302,20 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
     contacts = _clean_contacts(body.contacts)
     if not body.intro.strip():
         raise HTTPException(400, "请填写活动简介")
-    if not body.contact_group_qr.strip():
+    record = body.recruit_mode == config.RECORD_MODE
+    held_start = held_end = None
+    if record:
+        # 补记录：线下已经办完，不公开、不报名——没有联络群、报名时间与招募
+        # 范围，传了也不收；要的是这场活动实际是什么时候办的
+        held_start, held_end = _parse_dt(body.held_start), _parse_dt(body.held_end)
+        _check_held_span(held_start, held_end)
+        body.contact_group_qr = ""
+        body.reg_start = body.reg_end = None
+        body.recruit_campuses, body.recruit_stages, body.recruit_colleges = [], [], []
+    elif not body.contact_group_qr.strip():
         raise HTTPException(400, "请上传志愿者联络群二维码")
     reg_start, reg_end = _parse_dt(body.reg_start), _parse_dt(body.reg_end)
-    if reg_start is None or reg_end is None:
+    if not record and (reg_start is None or reg_end is None):
         raise HTTPException(400, "请选择报名开始与截止时间")
     act = Activity(id=uid("act"), title=body.title.strip(),
                    recruit_mode=body.recruit_mode,
@@ -306,6 +332,7 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                                                config.STAGES, "学段"),
                    recruit_colleges=_clean_colleges(body.recruit_colleges),
                    reg_start=reg_start, reg_end=reg_end,
+                   held_start=held_start, held_end=held_end,
                    # 归口部门：青协的人建的活动归自己部门，部长从草稿期就看得到；
                    # 会长团与发起方建的留空，提交审批时再选
                    approval_dept_id=(user.department_id
@@ -332,13 +359,20 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
     act = _act(db, activity_id)
     ensure_not_finished(act)
     before = {k: getattr(act, k) for k in ACTIVITY_FIELDS}
+    # 类型先改：后面哪些字段算数要看改完之后是不是补记录
+    if "recruit_mode" in body:
+        _apply_recruit_mode(db, act, body["recruit_mode"])
     for key in ACTIVITY_FIELDS:
-        if key not in body:
+        if key not in body or key == "recruit_mode":
+            continue
+        if act.is_record() and key in RECORD_UNUSED_FIELDS:
+            continue
+        if not act.is_record() and key in ("held_start", "held_end"):
             continue
         value = body[key]
         if key == "title" and str(value).strip() != act.title:
             ensure_unique_title(db, str(value), exclude_id=act.id)
-        if key in ("reg_start", "reg_end"):
+        if key in ("reg_start", "reg_end", "held_start", "held_end"):
             setattr(act, key, _parse_dt(value))
         elif key == "contacts":
             act.contacts = _clean_contacts(value)
@@ -348,16 +382,17 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
             act.recruit_stages = _clean_scope(value, config.STAGES, "学段")
         elif key == "recruit_colleges":
             act.recruit_colleges = _clean_colleges(value)
-        elif key == "recruit_mode":
-            _apply_recruit_mode(db, act, value)
         elif key == "contact_group_qr":
             if not str(value).strip():
                 raise HTTPException(400, "志愿者联络群二维码不能为空")
             act.contact_group_qr = str(value).strip()
         else:
             setattr(act, key, value)
-    if "reg_end" in body:
+    if "reg_end" in body and not act.is_record():
         ensure_reg_end_in_range(act)
+    if act.is_record() and ("held_start" in body or "held_end" in body
+                            or "recruit_mode" in body):
+        _check_held_span(act.held_start, act.held_end)
     if any(k in body for k in ("recruit_campuses", "recruit_stages",
                                "recruit_colleges")) \
             and not body.get("keep_outsiders"):
@@ -426,6 +461,21 @@ def _apply_recruit_mode(db: OrmSession, act: Activity, value: str) -> None:
         return
     if act.status not in ("draft", "pending", "approved"):
         raise HTTPException(409, "活动已公开，不能再改活动类型")
+    # 补记录与招募活动之间只在草稿里切换：审批人批的是哪一种，就是哪一种
+    if config.RECORD_MODE in (value, act.recruit_mode) and act.status != "draft":
+        raise HTTPException(409, "「不公开招募（补记录）」只能在草稿阶段切换，"
+                                 "请等驳回回到草稿后再改")
+    if value == config.RECORD_MODE:
+        if act.shifts:
+            raise HTTPException(409, "补记录活动不设场次与岗位，请先删掉已建的场次")
+        if db.query(FormQuestion).filter(FormQuestion.activity_id == act.id).first():
+            raise HTTPException(409, "补记录活动不设报名问卷，请先删掉已建的题目")
+        # 不公开的活动用不上这些，留着只会在别处被当成真的
+        act.contact_group_qr = ""
+        act.reg_start = act.reg_end = None
+        act.recruit_campuses, act.recruit_stages, act.recruit_colleges = [], [], []
+    elif act.recruit_mode == config.RECORD_MODE:
+        act.held_start = act.held_end = None
     act.recruit_mode = value
 
 
@@ -459,6 +509,8 @@ def start_editing(activity_id: str, db: OrmSession = Depends(db_session),
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     ensure_not_finished(act)
+    if act.is_record():
+        raise HTTPException(409, "补记录活动没有场次与岗位可调整")
     if act.status == "draft":
         raise HTTPException(409, "筹备中的活动可直接编辑，无需暂停报名")
     if act.editing_since is not None:
@@ -544,7 +596,8 @@ def copy_activity_route(activity_id: str, body: CopyActivityBody,
         title = unique_copy_title(db, f"{src.title}（副本）")
     if len(title) > 128:
         raise HTTPException(400, "活动名称过长")
-    if not body.contact_group_qr.strip():
+    # 补记录活动不公开，没有联络群
+    if not src.is_record() and not body.contact_group_qr.strip():
         raise HTTPException(400, "请上传新活动的志愿者联络群二维码")
     act = copying.copy_activity(db, src, user, title=title,
                                 shift_days=body.shift_days,
@@ -610,6 +663,8 @@ def publish(activity_id: str, db: OrmSession = Depends(db_session),
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     # 所有活动发布前都要过校青协：草稿要先提交审批，通过后才轮到这一步
+    if act.is_record():
+        raise HTTPException(409, "补记录活动不公开发布，审批通过后直接导入名单")
     if act.status == "draft":
         raise HTTPException(409, "请先提交校青协审批，通过后再发布")
     if act.status != "approved":
@@ -633,7 +688,12 @@ def publish_approved(db: OrmSession, act: Activity, user: User) -> None:
 
 def ensure_ready_to_publish(act: Activity) -> None:
     """结构上够不够格公开。提交审批与发布都走这一道——审批期间发起方还能
-    继续改，真上线的那一刻不能带着窟窿出去。"""
+    继续改，真上线的那一刻不能带着窟窿出去。
+
+    补记录活动不上线，只看基本信息：活动时间得有。"""
+    if act.is_record():
+        _check_held_span(act.held_start, act.held_end)
+        return
     if not act.contact_group_qr:
         raise HTTPException(400, "请先在基本信息里上传志愿者联络群二维码")
     if not act.main_shifts():
@@ -949,6 +1009,8 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                  user: User = Depends(require_manager)):
     ensure_activity_manager(db, user, activity_id)
     act = _ensure_editing(db, activity_id)
+    if act.is_record():
+        raise HTTPException(409, "补记录活动不设场次与岗位，时长在审批通过后导入名单")
     start, end = _parse_dt(body.start_time), _parse_dt(body.end_time)
     _validate_shift_times(start, end)
     g = Shift(id=uid("g"), activity_id=act.id, name=body.name.strip(),

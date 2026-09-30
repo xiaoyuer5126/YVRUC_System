@@ -99,6 +99,8 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
                    status="draft",
                    reg_start=(src.reg_start + delta) if src.reg_start else None,
                    reg_end=(src.reg_end + delta) if src.reg_end else None,
+                   held_start=(src.held_start + delta) if src.held_start else None,
+                   held_end=(src.held_end + delta) if src.held_end else None,
                    created_by=operator.id)
     db.add(act)
     db.flush()

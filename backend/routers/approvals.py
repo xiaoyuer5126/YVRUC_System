@@ -326,7 +326,20 @@ def decide(activity_id: str, body: DecideBody,
         comment = f"【本人审批】{comment}" if comment else "【本人审批】"
 
     act.approval_comment = comment
-    if body.approve:
+    if body.approve and act.is_record():
+        # 补记录：活动线下已经办完，不发布、不招人，通过即「已结束」，
+        # 接下来就是导入名单、结时长——和别的活动结束之后走同一条路
+        act.status = "finished"
+        act.approved_at = now()
+        _event(db, act, "approve", user, comment=comment)
+        summary = f"审批通过（{who}），补记录活动可以导入名单" + (
+            f"：{comment}" if comment else "")
+        title, body_text = (
+            f"审批通过｜{act.title}",
+            f"「{act.title}」已通过校青协审批。请在活动管理页「名单导入」"
+            f"导入参与者的学号与时长，再按时长管理的流程核准、提交审核。"
+            + (f"\n审批意见：{comment}" if comment else ""))
+    elif body.approve:
         act.status = "approved"
         act.approved_at = now()
         _event(db, act, "approve", user, comment=comment)
@@ -485,6 +498,7 @@ def my_approvals(db: OrmSession = Depends(db_session),
             "time_text": (f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}"
                           if span else "待定"),
             "shifts_count": len(act.main_shifts()),
+            "record_only": act.is_record(),
             "submitted_at": iso(act.submitted_at),
             "department": dept.name if dept else "",
             "assignee": who.name if who else "",

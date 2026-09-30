@@ -88,6 +88,8 @@ def save_form(activity_id: str, body: FormBody,
     """整份表一次保存。发布之后锁定——已经有人按这份表填了，改题等于改答案。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id, screened=False)
+    if act.is_record():
+        raise HTTPException(409, "补记录活动不收报名，不设报名问卷")
     if act.status not in EDITABLE_FORM_STATUSES:
         raise HTTPException(409, "活动已公开，报名问卷不能再改")
     existing = {q.id: q for q in _questions(db, activity_id)}
