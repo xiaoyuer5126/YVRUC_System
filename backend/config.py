@@ -276,8 +276,9 @@ RECRUIT_MODES = {
                        "审批通过后导入名单补记时长"},
 }
 RECORD_MODE = "record"
-# 补记录名单里一个人最多记多少小时。与时长申诉的上限同一口径（见 me.appeal_hours）
-RECORD_MAX_HOURS = 24
+# 补记录名单的时长不设上限（多天的线下活动一个人可能记几十小时），超过这个数
+# 照常导入，只在导入结果里标一句「请核对」——多半是把分钟当小时、多打了个 0
+RECORD_WARN_HOURS = 24
 
 
 def recruit_name(code: str) -> str:

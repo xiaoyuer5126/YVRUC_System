@@ -12,9 +12,11 @@ kind="import" 的明细），之后的核准 → 确认/申诉 → 提交时长�
 导入规则：
   · 平台里找不到的学号只列出来提醒，不建档——建档是统一身份认证的事，
     这里补建的人没有学院、校区，也登不了录；
-  · 同一批里重复的学号、时长不合法、老师类型（不参与志愿）、已经在名单里的
-    都跳过并逐条说明原因，其余照常导入；
-  · 可以多次追加导入；单人的时长和备注可以改、整条可以删，都在时长锁定之前。
+  · 同一批里重复的学号（取第一行）、时长不合法、老师类型（不参与志愿）都跳过
+    并逐条说明原因，其余照常导入；时长不设上限，超过 24 小时的照导但标出来请核对；
+  · 可以多次导入：新的人追加，**已在名单里的人按这次的时长覆盖**（方便整批改），
+    结果里逐个列出旧值→新值；本人有申诉还没处理的不覆盖，列出来提醒；
+  · 单人的时长和备注也可以单独改、整条可以删；以上都在时长锁定（含提交审核）之前。
 """
 from __future__ import annotations
 
@@ -78,7 +80,7 @@ def _import_segment(rec: HoursRecord) -> dict | None:
 
 
 def parse_hours(raw) -> float:
-    """时长：大于 0、不超过上限、0.5 小时的整数倍。不合法抛 ValueError（带原因）。"""
+    """时长：大于 0、0.5 小时的整数倍，不设上限。不合法抛 ValueError（带原因）。"""
     text = _HOURS_UNIT.sub("", str(raw if raw is not None else "").strip())
     if not text:
         raise ValueError("缺少时长")
@@ -90,8 +92,6 @@ def parse_hours(raw) -> float:
         raise ValueError(f"时长「{raw}」不是有效数字")
     if hours <= 0:
         raise ValueError("时长必须大于 0")
-    if hours > config.RECORD_MAX_HOURS:
-        raise ValueError(f"时长不能超过 {config.RECORD_MAX_HOURS} 小时")
     if not (hours * 2).is_integer():
         raise ValueError(f"时长「{raw}」须为 0.5 小时的整数倍")
     return hours
@@ -175,7 +175,16 @@ def import_rows(db: OrmSession, act: Activity, user: User,
     users = {u.student_id: u for u in db.query(User)
              .filter(User.student_id.in_(sids or [""])).all()}
 
-    added, skipped, not_found = [], [], []
+    appealing = {a.record_id for a in db.query(HoursAppeal)
+                 .filter(HoursAppeal.activity_id == act.id,
+                         HoursAppeal.status == "pending").all()}
+
+    def warn_of(hours: float) -> str:
+        return (f"超过 {config.RECORD_WARN_HOURS} 小时，请核对"
+                if hours > config.RECORD_WARN_HOURS else "")
+
+    added, skipped, not_found, overwritten = [], [], [], []
+    unchanged = 0
     seen: dict[str, int] = {}
     for line, cells in rows:
         sid = (cells[0] if cells else "").strip()
@@ -208,8 +217,27 @@ def import_rows(db: OrmSession, act: Activity, user: User,
             continue
         rec = existing.get(u.id)
         if rec is not None:
-            skip(f"已在名单中（{rec.hours:g} 小时），如需修改请在名单里单独改",
-                 u.name)
+            # 已在名单里：按这次的时长覆盖。申诉没处理完的不动——管理者正对着
+            # 那个数判申诉，这边悄悄换掉，判的就不是同一笔账了
+            if rec.id in appealing:
+                skip(f"有待处理的时长申诉，未覆盖（仍为 {rec.hours:g} 小时），"
+                     f"请先处理申诉", u.name)
+                continue
+            seg = _import_segment(rec)
+            old_note = (seg or {}).get("label", rec.note)
+            new_note = note or old_note        # 这次没写备注就留着原来的
+            if rec.hours == hours and new_note == old_note:
+                unchanged += 1
+                continue
+            old = rec.hours
+            rec.parts = [{**(seg or _import_part(act, hours, new_note)),
+                          "hours": hours, "label": new_note}]
+            rec.hours, rec.note, rec.confirmed_by = hours, new_note, user.id
+            if old != hours:
+                rec.confirmed_at = None        # 本人之前是对着旧数字确认的
+            overwritten.append({"student_id": sid, "name": u.name,
+                                "old_hours": old, "hours": hours,
+                                "warning": warn_of(hours)})
             continue
         rec = HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id,
                           hours=hours, source="import", note=note,
@@ -217,12 +245,21 @@ def import_rows(db: OrmSession, act: Activity, user: User,
                           confirmed_by=user.id)
         db.add(rec)
         existing[u.id] = rec
-        added.append({"student_id": sid, "name": u.name, "hours": hours})
+        added.append({"student_id": sid, "name": u.name, "hours": hours,
+                      "warning": warn_of(hours)})
 
-    if added:
-        detail = "、".join(f"{a['name']}{a['hours']:g}h" for a in added[:8])
-        summary = (f"导入补记录名单 {len(added)} 人：{detail}"
-                   + ("…" if len(added) > 8 else ""))
+    if added or overwritten:
+        summary = "导入补记录名单"
+        if added:
+            detail = "、".join(f"{a['name']}{a['hours']:g}h" for a in added[:8])
+            summary += (f"，新增 {len(added)} 人：{detail}"
+                        + ("…" if len(added) > 8 else ""))
+        if overwritten:
+            detail = "、".join(f"{o['name']}（{o['student_id']}）"
+                              f"{o['old_hours']:g}h→{o['hours']:g}h"
+                              for o in overwritten[:8])
+            summary += (f"，覆盖 {len(overwritten)} 人：{detail}"
+                        + ("…" if len(overwritten) > 8 else ""))
         if skipped:
             summary += f"；跳过 {len(skipped)} 行"
         if not_found:
@@ -232,12 +269,20 @@ def import_rows(db: OrmSession, act: Activity, user: User,
         audit_log(db, actor=user, action="roster_import", target_type="hours",
                   target_id=act.id, target_label=act.title, activity_id=act.id,
                   summary=summary)
-    parts = [f"导入 {len(added)} 人"]
+    parts = [f"新增 {len(added)} 人"]
+    if overwritten:
+        parts.append(f"覆盖 {len(overwritten)} 人")
+    if unchanged:
+        parts.append(f"{unchanged} 人与名单一致未改动")
+    flagged = sum(1 for x in added + overwritten if x["warning"])
+    if flagged:
+        parts.append(f"{flagged} 人超过 {config.RECORD_WARN_HOURS} 小时请核对")
     if skipped:
         parts.append(f"跳过 {len(skipped)} 行")
     if not_found:
         parts.append(f"{len(not_found)} 个学号平台里找不到（未建档）")
-    return {"added": added, "skipped": skipped, "not_found": not_found,
+    return {"added": added, "overwritten": overwritten, "unchanged": unchanged,
+            "skipped": skipped, "not_found": not_found,
             "message": "，".join(parts)}
 
 
@@ -280,7 +325,7 @@ def record_roster(activity_id: str, db: OrmSession = Depends(db_session),
     return {"items": [_row_out(db, r, users, appeals) for r in rows],
             "total_hours": round(sum(r.hours for r in rows), 1),
             "editable": not block, "block_reason": block,
-            "max_hours": config.RECORD_MAX_HOURS,
+            "warn_hours": config.RECORD_WARN_HOURS,
             "held_text": (span_text(act.held_start, act.held_end)
                           if act.held_start and act.held_end else "")}
 
