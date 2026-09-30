@@ -192,7 +192,7 @@ def _clean_colleges(raw: list[str]) -> list[str]:
     """学院条件：去空白、去重、限长度与个数，但**不**限定在固定清单里。
 
     学院取值来自统一身份认证（orgName），全校有哪些学院是从已有用户里汇总的
-    （见 college_options），config.COLLEGES 只是兜底——拿它卡人，真实学院名
+    （见 college_options），不拿任何写死的清单卡人——真实学院名
     一个都选不进来。前端只给汇总出来的选项，打错字的风险在那一层就挡住了。
     """
     out = []
@@ -210,13 +210,17 @@ def _clean_colleges(raw: list[str]) -> list[str]:
 
 
 def college_options(db: OrmSession) -> list[str]:
-    """学院可选项：已有用户档案里出现过的学院 ∪ config.COLLEGES，排好序。
+    """学院可选项：已有用户档案里出现过的学院，排好序。
 
-    条件是拿去跟 User.college 逐字比对的，所以选项就从 User.college 里来——
-    统一身份认证写进来的是什么，这里就是什么，一字不差。
+    条件是拿去跟 User.college 逐字比对的，所以选项**只能**从 User.college 里来
+    ——统一身份认证写进来的是什么，这里就是什么，一字不差。
+
+    从前还并上一份写死的演示清单（config.COLLEGES），那是误导：清单里的学院档案里
+    一个都没有，选了筛不出人；档案里真实出现的（比如「校团委」）反倒不在清单里。
+    2026-09-30 把那份清单删了。
     """
     seen = {c for (c,) in db.query(User.college).distinct() if (c or "").strip()}
-    return sorted(seen | set(config.COLLEGES))
+    return sorted(seen)
 
 
 @router.get("/colleges")

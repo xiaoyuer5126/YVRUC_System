@@ -122,7 +122,7 @@ def test_缩小范围时已报名的范围外志愿者要先过管理者的眼(c
 
 
 # ======================= 活动级：招募学院 =======================
-# 学院是统一身份认证给的原文，不在 config.COLLEGES 那份演示清单里也得能用
+# 学院是统一身份认证给的原文，照原样用；选项也从档案里来，不并写死的清单
 
 REAL_COLLEGE = "统计与大数据学院"
 
@@ -139,7 +139,6 @@ def _set_colleges(client, admin, act, colleges, **extra):
 
 def test_不在招募学院的人广场看不到详情进不去也报不了(client, admin, db, scoped):
     act, g, u, h = scoped
-    assert REAL_COLLEGE not in config.COLLEGES
     assert _set_colleges(client, admin, act, [REAL_COLLEGE]).status_code == 200
     assert act.id not in _square_ids(client, h, act)
     r = client.get(f"/api/activities/{act.id}", headers=h)
@@ -242,7 +241,7 @@ def test_学院选项汇总已有用户的学院并上兜底清单(client, admin
     r = client.get("/api/staff/colleges", headers=admin)
     assert r.status_code == 200
     got = r.json()["colleges"]
-    assert REAL_COLLEGE in got and set(config.COLLEGES) <= set(got)
+    assert REAL_COLLEGE in got          # 档案里出现的学院就是选项，不管它在不在演示清单里
     assert "" not in got and len(got) == len(set(got))
     assert got == sorted(got)
     # 学生用不着这份选项

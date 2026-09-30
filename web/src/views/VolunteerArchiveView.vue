@@ -81,7 +81,8 @@ async function load() {
   } finally { loading.value = false }
 }
 onMounted(async () => {
-  colleges.value = (await api.get('/api/auth/constants')).colleges
+  // 学院选项从档案里汇总，不用写死的清单（与活动页的招募范围同源）
+  colleges.value = (await api.get('/api/staff/colleges')).colleges || []
   load()
 })
 

@@ -23,6 +23,7 @@
                两件事。姓名不写在按钮上——头像就是姓名首字，名字去菜单里看 -->
           <el-button text title="意见反馈" @click="openFeedback">
             <el-icon><ChatDotRound /></el-icon>
+            <span v-if="!narrow">&nbsp;反馈</span>
           </el-button>
           <el-badge :value="unread" :hidden="!unread" class="msg-badge">
             <el-button text @click="$router.push('/messages')">
@@ -213,6 +214,9 @@ async function onCommand(cmd) {
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub { font-size: 11px; opacity: .75; }
 .right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+/* 深红顶栏上的图标按钮：el-button 自己带一套文字色（默认深色），
+   在这儿压成白的，反馈和消息两个图标才是同一种颜色 */
+.right .el-button { color: #fff; }
 .who { display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer; outline: none; }
 .side {
   background: #fff; border-right: 1px solid #eceef1;

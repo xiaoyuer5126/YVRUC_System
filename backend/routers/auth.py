@@ -259,7 +259,6 @@ def constants(user: User = Depends(current_user)):
     return {
         "recruit_modes": config.RECRUIT_MODES,
         "violation_kinds": ViolationRecord.KINDS,
-        "colleges": config.COLLEGES,
         "campuses": config.CAMPUSES,
         "stages": config.STAGES,
         "rules": {
