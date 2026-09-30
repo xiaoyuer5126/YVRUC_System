@@ -56,6 +56,13 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from backend import seed  # noqa: E402
 from backend.database import SessionLocal  # noqa: E402
+
+# 先把测试库按模型重建，**再**导入 app。顺序不能颠倒：导入 backend.main 会跑
+# create_app() → init_db()，那里会拿模型跟库对一遍，对不上直接拒绝启动
+# （见 database.check_schema）。上一次跑剩下的旧结构正好是「对不上」的那种，
+# 先导 app 就会在这里撞上那句「先修库再启动」。
+seed.main()
+
 from backend.main import app  # noqa: E402
 
 DEMO_PASSWORD = os.environ["RUCVA_DEMO_PASSWORD"]
@@ -63,11 +70,6 @@ DEMO_PASSWORD = os.environ["RUCVA_DEMO_PASSWORD"]
 ADMIN = "2025001"        # 王砚秋，管理员
 INITIATOR = "2025002"    # 李慕清，活动发起方（只管自己的活动）
 QINGXIE = "2025003"      # 张远航，青协
-
-
-@pytest.fixture(scope="session", autouse=True)
-def seeded():
-    seed.main()
 
 
 @pytest.fixture
