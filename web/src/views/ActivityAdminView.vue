@@ -661,10 +661,10 @@
           </el-tooltip>
           <el-button v-if="hoursState.approved_at && !hoursFrozen"
                      type="warning" plain @click="submitLockNow">提交时长审核</el-button>
-          <!-- 对外活动凭盖章立项书报批：缺了先说，别等点了才被拦 -->
-          <el-alert v-if="hoursState.stamped_missing && !hoursState.locked_at"
+          <!-- 对外活动凭盖章材料报批：缺了先说，别等点了才被拦 -->
+          <el-alert v-if="hoursState.stamped_missing?.length && !hoursState.locked_at"
                     type="warning" :closable="false" show-icon style="flex:1 1 100%"
-                    title="对外联络部归口的活动须先在「审核」页签上传盖章立项书，才能提交时长审核（到点也不会自动提交）" />
+                    :title="`对外联络部归口的活动须先上传${hoursState.stamped_missing.join('和')}，才能提交时长审核（到点也不会自动提交）。点「提交时长审核」或到「审核」页签上传`" />
           <el-button v-if="hoursState.locked_at" type="warning" plain
                      @click="openUnlock">申请解锁</el-button>
         </div>
@@ -1136,6 +1136,19 @@
         外联确认后活动标记为「已完成」；驳回则退回你修改。
       </p>
       <el-form label-position="top">
+        <!-- 对外活动的盖章材料就地上传，不用再去「审核」页签找 -->
+        <el-form-item v-if="lockFiles?.external" label="盖章材料（PDF 或图片，多页的请合成一个 PDF）"
+                      required>
+          <div style="width:100%">
+            <ProjectFileSlot v-for="s in STAMPED_SLOTS" :key="s.kind" :activity-id="activityId"
+                             :kind="s.kind" :label="s.label" :file="lockFiles[s.kind]"
+                             :can-upload="lockFiles[`can_upload_${s.kind}`]"
+                             :block="lockFiles[`${s.kind}_block`]"
+                             :exts="lockFiles[`${s.kind}_exts`]"
+                             :template="templates[s.template]"
+                             :required="!lockFiles[s.kind]" @changed="onLockFileChanged" />
+          </div>
+        </el-form-item>
         <el-form-item label="志愿北京上的活动名称（至少一个）" required>
           <VbNamesInput v-model="lockDlg.names" />
         </el-form-item>
@@ -1187,6 +1200,7 @@
                            label="立项书" :file="submitFiles.proposal"
                            :can-upload="submitFiles.can_upload_proposal"
                            :block="submitFiles.proposal_block"
+                           :exts="submitFiles.proposal_exts" :template="templates.proposal"
                            :required="!submitFiles.proposal" @changed="loadSubmitFiles" />
         </el-form-item>
         <el-form-item label="补充说明">
@@ -2255,7 +2269,7 @@ async function openSubmit() {
     await api.get(`/api/staff/activities/${activityId}/submit-check`)
   } catch { return }        // 错误提示由 api 层统一弹出
   depts.value = await api.get('/api/staff/departments')
-  await loadSubmitFiles()
+  await Promise.all([loadSubmitFiles(), loadDocTemplates()])
   // 青协的人建的活动已经按所在部门预填了归口，这里带出来，可以改
   submitDlg.value = { visible: true, deptId: act.value?.approval_dept_id || '',
                       note: '', autoPublish: true, busy: false }
@@ -2268,6 +2282,15 @@ const submitToLiaison = computed(() =>
   depts.value.find(x => x.id === submitDlg.value.deptId)?.name === LIAISON_DEPT)
 async function loadSubmitFiles() {
   submitFiles.value = await api.get(`/api/staff/activities/${activityId}/project-files`)
+}
+
+// 立项书、结项书的空白模板（外联部长上传），在要传文件的地方给下载链接
+const docTemplates = ref(null)   // vuecheck: script-only，模板只通过 templates 读它
+const templates = computed(() => Object.fromEntries(
+  (docTemplates.value?.items || []).map(x => [x.slot, x.file])))
+async function loadDocTemplates() {
+  docTemplates.value = await api.get('/api/staff/doc-templates', { silent: true })
+    .catch(() => null)
 }
 
 async function doSubmit() {
@@ -2433,8 +2456,22 @@ async function doApprove() {
 
 // 时长要由校青协审核过才算数：提交给归口部长，通过之后才锁定。
 // 志愿北京活动名称一并填（预先填上之前存过的），锁定后推给对外联络部核对
-function submitLockNow() {
+// 时长审核要附的两份盖章材料；template 是对应空白模板的格子名
+const STAMPED_SLOTS = [{ kind: 'stamped', label: '盖章立项书', template: 'proposal' },
+                       { kind: 'closing', label: '盖章结项书', template: 'closing' }]
+const lockFiles = ref(null)
+async function loadLockFiles() {
+  lockFiles.value = await api.get(`/api/staff/activities/${activityId}/project-files`)
+}
+// 对话框里传了文件，页面上「还缺哪几份」的提示也跟着刷新
+function onLockFileChanged() {
+  loadLockFiles()
+  hoursPreview(true)
+}
+
+async function submitLockNow() {
   const s = hoursState.value
+  await Promise.all([loadLockFiles(), loadDocTemplates()])
   lockDlg.value = {
     visible: true, busy: false, note: '',
     // 申诉期没过就提交，等于把还没表态的人的申诉机会一起交掉了：说清楚再让他点
@@ -2444,6 +2481,9 @@ function submitLockNow() {
 }
 async function doSubmitLock() {
   const d = lockDlg.value
+  const missing = lockFiles.value?.external
+    ? STAMPED_SLOTS.filter(s => !lockFiles.value[s.kind]).map(s => s.label) : []
+  if (missing.length) return ElMessage.warning(`请先上传${missing.join('和')}`)
   if (!d.names.length) return ElMessage.warning('请填写志愿北京上的活动名称（至少一个）')
   d.busy = true
   try {

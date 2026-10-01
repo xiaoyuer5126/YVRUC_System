@@ -109,7 +109,7 @@ def submit_lock_when_due(db: OrmSession) -> int:
     管理者收到过通知了，处理完再核准一次。
     被驳回的不会再自动送一次：重新核准（hours_approved_at 往后走）之后才算
     新一轮，否则驳回的下一分钟又提交，等于没驳。
-    对外活动缺盖章立项书的不送，提醒管理者一次；补传之后下一轮照常送。
+    对外活动缺盖章立项书或盖章结项书的不送，提醒管理者一次；补传之后下一轮照常送。
     还没填志愿北京活动名称的也不送（锁定后要推给外联核对，没有名称就推不出去），
     同样每轮提醒管理者一次；填上之后下一轮照常送。
     """
@@ -143,16 +143,16 @@ def submit_lock_when_due(db: OrmSession) -> int:
                         HoursRequest.kind == "lock",
                         HoursRequest.created_at >= since).first()):
             continue
-        if liaison.is_external(db, act) \
-                and liaison.project_file(db, act.id, "stamped") is None:
+        missing = liaison.missing_stamped(db, act)
+        if missing:
             # 每一轮自动报批提醒一次：时长每核准一次算新的一轮（since 往后走）。
             # 定时任务每分钟一趟，不记下来就是每分钟一条
             if act.stamped_reminded_at is None or act.stamped_reminded_at < since:
                 act.stamped_reminded_at = t
                 notify_managers(
-                    db, act.id, f"请上传盖章立项书｜{act.title}",
+                    db, act.id, f"请上传盖章材料｜{act.title}",
                     f"「{act.title}」的确认/申诉期已满，本该自动提交时长审核，"
-                    f"但这是对外联络部归口的活动，还没有上传盖章立项书。\n"
+                    f"但这是对外联络部归口的活动，还没有上传{'、'.join(missing)}。\n"
                     f"请到活动管理的「审核」页签上传，上传后系统会自动提交。",
                     duty="hours", tab="review")
                 reminded += 1

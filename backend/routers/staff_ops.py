@@ -1168,9 +1168,8 @@ def hours_preview(activity_id: str, db: OrmSession = Depends(db_session),
             "default_deadline": iso(hours_flow.default_appeal_deadline()),
             # 锁定审批挂着的时候整页冻结：部长看的和最终封的得是同一份账
             "lock_pending": hours_flow.pending_lock(db, act.id) is not None,
-            # 对外活动还缺盖章立项书：报批按钮前先提示，别点了才被拦
-            "stamped_missing": (liaison.is_external(db, act) and liaison.project_file(
-                db, act.id, "stamped") is None),
+            # 对外活动还缺哪几份盖章材料：报批按钮前先提示，别点了才被拦
+            "stamped_missing": liaison.missing_stamped(db, act),
             # 志愿北京活动名称：提交时长审核时一并填，提交框里预先填上已存的
             "vb_names": list(act.vb_names or []),
             "vb_confirm": _vb_brief(liaison.latest_vb_confirm(db, act.id)),
@@ -1616,10 +1615,10 @@ def hours_lock_request(activity_id: str, body: LockHoursBody | None = None,
     ensure_hours_editable(db, act)
     if act.hours_approved_at is None:
         raise HTTPException(409, "请先核准时长")
-    # 对外活动的时长要凭盖章立项书报批，没有就不往上送
-    if liaison.is_external(db, act) \
-            and liaison.project_file(db, act.id, "stamped") is None:
-        raise HTTPException(400, "对外活动须先上传盖章立项书，才能提交时长审核")
+    # 对外活动的时长要凭盖章立项书和盖章结项书报批，缺一份都不往上送
+    missing = liaison.missing_stamped(db, act)
+    if missing:
+        raise HTTPException(400, f"对外活动须先上传{'和'.join(missing)}，才能提交时长审核")
     # 志愿北京活动名称随时长一起报：审的人看得到，锁定后推给对外联络部
     save_vb_names(db, act, user,
                    body.vb_names if body and body.vb_names is not None
@@ -1813,6 +1812,11 @@ def my_hours_requests(db: OrmSession = Depends(db_session),
                     "activity_title": act.title, "reason": req.reason,
                     "vb_names": (list(act.vb_names or []) if req.kind == "lock"
                                  else []),
+                    # 盖章材料就在这张卡片上给：审批人多半不是这场活动的管理者，
+                    # 进不了活动管理页，别处看不到要审的东西
+                    "files": [{"label": liaison.SLOTS[s], "id": f.id, "title": f.title}
+                              for s in liaison.STAMPED_SLOTS
+                              if (f := liaison.project_file(db, act.id, s))],
                     "requested_by": who.name if who else "系统",
                     "created_at": iso(req.created_at)})
     return out

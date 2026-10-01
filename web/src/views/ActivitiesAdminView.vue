@@ -2,7 +2,21 @@
   <div class="page page-wide">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h2 style="margin:0">活动管理</h2>
-      <el-button type="primary" @click="openCreate"><el-icon><Plus /></el-icon>&nbsp;新建活动</el-button>
+      <div style="display:flex;gap:8px">
+        <!-- 立项书、结项书的空白模板，外联部长在「活动审批」页上传 -->
+        <el-dropdown trigger="click" @command="t => download(`/api/materials/${t.file.id}`)">
+          <el-button>材料模板<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-for="t in docTemplates" :key="t.slot" :command="t"
+                                :disabled="!t.file">
+                {{ t.label }}{{ t.file ? '' : '（对外联络部还没上传）' }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-button type="primary" @click="openCreate"><el-icon><Plus /></el-icon>&nbsp;新建活动</el-button>
+      </div>
     </div>
 
     <el-card shadow="never">
@@ -164,7 +178,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { api } from '../api'
+import { api, download } from '../api'
 import { MODE_COLORS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import { activityBody, emptyActivity, validateActivity } from '../composables/activityForm'
@@ -245,6 +259,12 @@ async function load() {
   } finally { loading.value = false }
 }
 onMounted(load)
+
+const docTemplates = ref([])
+onMounted(async () => {
+  docTemplates.value = (await api.get('/api/staff/doc-templates', { silent: true })
+    .catch(() => null))?.items || []
+})
 
 // 换筛选条件就回第一页：留在第 3 页多半是空的
 function reload() {

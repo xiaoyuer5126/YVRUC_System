@@ -16,7 +16,7 @@ from backend.models import (Activity, ActivityManager, AuditLog, Department,
                             HoursRequest, Notification, VbConfirm, now, uid)
 from conftest import (ADMIN, INITIATOR, LIAISON_CORE, LIAISON_HEAD, inbox,
                       is_approval_todo, login, make_draft, student_row,
-                      upload_proposal)
+                      upload_proposal, upload_stamped)
 
 COUNCIL = "2025003"         # 张，会长团（不是管理员）
 NAMES = ["校运会志愿服务（上午）", "校运会志愿服务（下午）"]
@@ -175,10 +175,7 @@ def test_时长通过后推给外联值班人_不论归口部门_确认即完成
 
 def test_没人值班推给外联部长(client, admin, db, liaison):
     act = _approved_act(db, liaison.id)
-    assert client.post(f"/api/staff/activities/{act.id}/project-files/stamped",
-                       headers=admin,
-                       files={"file": ("盖章.pdf", b"%PDF", "application/pdf")}
-                       ).status_code == 200
+    assert upload_stamped(client, admin, act.id).status_code == 200
     _lock(client, admin, act)
     assert inbox(db, LIAISON_HEAD, f"志愿北京待确认｜{act.title}")
     assert not inbox(db, LIAISON_CORE, f"志愿北京待确认｜{act.title}")
@@ -458,10 +455,7 @@ def _who_got(db, prefix):
 
 def test_时长审批只通知对接人_不抄送会长团与管理员(client, admin, db, liaison):
     act = _approved_act(db, liaison.id, names=NAMES)
-    assert client.post(f"/api/staff/activities/{act.id}/project-files/stamped",
-                       headers=admin,
-                       files={"file": ("盖章.pdf", b"%PDF", "application/pdf")}
-                       ).status_code == 200
+    assert upload_stamped(client, admin, act.id).status_code == 200
     assert _submit(client, admin, act).status_code == 200
     assert _who_got(db, f"时长锁定审批｜{act.title}") == {LIAISON_HEAD}
     head = login(client, LIAISON_HEAD)

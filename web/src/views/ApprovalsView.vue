@@ -53,6 +53,18 @@
       </el-table>
     </el-card>
 
+    <!-- 立项书、结项书模板：外联部长在这里上传和更换，发起方在「活动管理」页下载 -->
+    <el-card v-if="docTemplates?.can_manage" shadow="never" class="item">
+      <div class="head"><b>立项书、结项书模板</b></div>
+      <div class="dim" style="margin-top:8px">
+        发起方在「活动管理」页右上角的「材料模板」下载，提交立项书、盖章材料时旁边也有下载链接。
+      </div>
+      <ProjectFileSlot v-for="t in docTemplates.items" :key="t.slot" :kind="t.slot"
+                       :label="t.label" :file="t.file" :can-upload="true"
+                       :exts="docTemplates.exts" :upload-url="`/api/staff/doc-templates/${t.slot}`"
+                       @changed="loadTemplates" />
+    </el-card>
+
     <!-- 志愿北京外联确认：时长锁定后管理者填的名称推到这里（不论活动归口哪个部门），
          外联上志愿北京核对，确认即活动完成；退回写理由，管理者改好名称重提 -->
     <template v-if="vbConfirms.length">
@@ -110,6 +122,14 @@
         <div v-if="u.vb_names?.length" class="submit-note">
           <b>志愿北京活动名称</b>
           <div v-for="n in u.vb_names" :key="n">{{ n }}</div>
+        </div>
+        <!-- 盖章材料就在这里看：审批人多半不是这场活动的管理者，进不了活动管理页 -->
+        <div v-if="u.files?.length" class="submit-note">
+          <b>盖章材料</b>
+          <div v-for="f in u.files" :key="f.id">
+            {{ f.label }}：<el-link type="primary" underline="never"
+                                   @click="download(`/api/materials/${f.id}`)">{{ f.title }}</el-link>
+          </div>
         </div>
         <div class="dim" style="margin-top:8px">
           {{ u.requested_by }} 提交于 {{ fmtDT(u.created_at) }} ·
@@ -230,7 +250,7 @@
     <ApprovalCommentDialog v-model="cd.visible" :approve="cd.approve" :title="cd.title"
                            :subject="cd.subject" :audience="cd.audience"
                            :approve-label="cd.approveLabel" :reject-label="cd.rejectLabel"
-                           :templates="[]" :submit="submitDecision" />
+                           :templates="cd.templates" :submit="submitDecision" />
 
     <el-dialog v-model="tr.visible" title="转交审批" width="480">
       <p class="dim">{{ tr.row?.title }}</p>
@@ -276,6 +296,8 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
 import ApprovalCommentDialog from '../components/ApprovalCommentDialog.vue'
+import ProjectFileSlot from '../components/ProjectFileSlot.vue'
+import { closingApproved, projectApproved, vbConfirmed } from '../approvalTemplates'
 import { useNarrow } from '../composables/useNarrow'
 import { auth } from '../store'
 
@@ -288,7 +310,7 @@ const depts = ref([])
 const loading = ref(false)
 // 审批意见对话框：kind = activity 活动立项 / hours 时长锁定解锁 / vb 外联确认志愿北京
 const cd = ref({ visible: false, kind: '', row: null, approve: true, title: '', subject: '',
-                 audience: '', approveLabel: '通过', rejectLabel: '驳回' })
+                 audience: '', approveLabel: '通过', rejectLabel: '驳回', templates: [] })
 // 部门的维护：管理员或会长团
 const dd = ref({ visible: false, row: null, name: '', note: '', studentId: '', busy: false })
 const isAdmin = computed(() =>
@@ -340,8 +362,15 @@ async function load() {
     depts.value = await api.get('/api/staff/departments')
     duties.value = (await api.get('/api/staff/duty')).map(withForm)
   } finally { loading.value = false }
+  loadTemplates()
 }
 onMounted(load)
+
+const docTemplates = ref(null)
+async function loadTemplates() {
+  docTemplates.value = await api.get('/api/staff/doc-templates', { silent: true })
+    .catch(() => null)
+}
 
 const withForm = d => ({ ...d, pick: '', note: '', busy: false, showHistory: false })
 
@@ -362,7 +391,8 @@ async function setDuty(d, clear = false) {
 function openVb(row, approve) {
   cd.value = { visible: true, kind: 'vb', row, approve, subject: row.activity_title,
                title: approve ? '确认志愿北京' : '退回志愿北京名称',
-               audience: '活动管理者', approveLabel: '确认', rejectLabel: '退回' }
+               audience: '活动管理者', approveLabel: '确认', rejectLabel: '退回',
+               templates: [vbConfirmed(row.names || [])] }
 }
 
 /** 锁定：同意即封账，志愿北京名称推给对外联络部确认；驳回退回管理者改。
@@ -371,13 +401,14 @@ function decideHours(row, approve) {
   const what = row.kind === 'lock' ? '时长审核' : '解锁申请'
   cd.value = { visible: true, kind: 'hours', row, approve, subject: row.activity_title,
                title: `${approve ? '同意' : '驳回'}${what}`, audience: '申请人',
-               approveLabel: '同意', rejectLabel: '驳回' }
+               approveLabel: '同意', rejectLabel: '驳回',
+               templates: row.kind === 'lock' ? [closingApproved(row.activity_title)] : [] }
 }
 
 function decide(row, approve) {
   cd.value = { visible: true, kind: 'activity', row, approve, subject: row.title,
                title: approve ? '通过审批' : '驳回', audience: '发起方',
-               approveLabel: '通过', rejectLabel: '驳回' }
+               approveLabel: '通过', rejectLabel: '驳回', templates: [projectApproved(row.title)] }
 }
 
 async function submitDecision(comment) {

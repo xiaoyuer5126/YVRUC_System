@@ -377,8 +377,8 @@ class Activity(Base):
         DateTime, nullable=True)
     hours_locked_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
-    # 对外联络部归口的活动，时长报批前要交盖章立项书。申诉期满时还没交，
-    # 自动报批就停下来提醒管理者一次；记下时间，别每分钟提醒一遍。
+    # 对外联络部归口的活动，时长报批前要交盖章立项书和盖章结项书。申诉期满时
+    # 还没交齐，自动报批就停下来提醒管理者一次；记下时间，别每分钟提醒一遍。
     stamped_reminded_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
     # 志愿北京上对应的活动名称（可以有好几个：分几场建的就填几个）。管理者
@@ -386,7 +386,7 @@ class Activity(Base):
     # 每次推送的快照与核对结果记在 VbConfirm 上。
     vb_names: Mapped[list] = mapped_column(JSON, default=list)
     # 申诉期满本该自动提交时长审核、却还没填志愿北京活动名称：不提交，提醒
-    # 管理者一次（每轮核准一次，同盖章立项书）；记下时间，别每分钟提醒一遍
+    # 管理者一次（每轮核准一次，同盖章材料）；记下时间，别每分钟提醒一遍
     vb_names_reminded_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
     # 志愿北京名称被外联退回、管理者迟迟不重提：每天提醒一次；记的是哪天

@@ -37,6 +37,7 @@
         <ProjectFileSlot :activity-id="activityId" kind="proposal" label="立项书"
                          :file="files.proposal" :can-upload="files.can_upload_proposal"
                          :block="files.manager ? files.proposal_block : ''"
+                         :exts="files.proposal_exts" :template="templates.proposal"
                          :required="files.external && !files.proposal" @changed="load" />
       </template>
     </el-card>
@@ -52,12 +53,16 @@
         </span>
       </template>
       <template v-if="files?.external">
-        <ProjectFileSlot :activity-id="activityId" kind="stamped" label="盖章立项书"
-                         :file="files.stamped" :can-upload="files.can_upload_stamped"
-                         :block="files.manager ? files.stamped_block : ''"
-                         :required="!files.stamped"
-                         hint="对外活动提交时长审核必须附盖章立项书；活动发布后、时长锁定前可随时更换"
-                         @changed="load" />
+        <div class="dim">
+          对外活动提交时长审核必须附盖章立项书和盖章结项书；活动发布后、时长锁定前可随时更换。
+          收 PDF 或图片，每份只留一个文件，多页的请合成一个 PDF。
+        </div>
+        <ProjectFileSlot v-for="s in STAMPED" :key="s.kind" :activity-id="activityId"
+                         :kind="s.kind" :label="s.label" :file="files[s.kind]"
+                         :can-upload="files[`can_upload_${s.kind}`]"
+                         :block="files.manager ? files[`${s.kind}_block`] : ''"
+                         :exts="files[`${s.kind}_exts`]" :template="templates[s.template]"
+                         :required="!files[s.kind]" @changed="load" />
         <el-divider style="margin:8px 0" />
       </template>
       <el-table :data="hours?.items || []" size="small" empty-text="还没有提交过时长审核">
@@ -164,16 +169,18 @@
     <ApprovalCommentDialog v-model="dc.visible" :approve="dc.approve"
                            :title="dc.approve ? '确认志愿北京' : '退回志愿北京名称'"
                            :subject="act?.title || ''" audience="活动管理者"
-                           approve-label="确认" reject-label="退回" :templates="[]"
+                           approve-label="确认" reject-label="退回"
+                           :templates="[vbConfirmed(dc.row?.names || [])]"
                            :submit="submitDecide" />
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
 import ApprovalCommentDialog from './ApprovalCommentDialog.vue'
+import { vbConfirmed } from '../approvalTemplates'
 import ProjectFileSlot from './ProjectFileSlot.vue'
 import VbNamesInput from './VbNamesInput.vue'
 
@@ -193,15 +200,22 @@ const vbc = ref({ names: [], items: [], can_edit: false, can_resubmit: false,
 const draftNames = ref([])
 const vbBusy = ref(false)
 const dc = ref({ visible: false, approve: true, row: null })
+// 时长审核要附的两份盖章材料；template 是对应空白模板的格子名（盖章立项书照立项书模板填）
+const STAMPED = [{ kind: 'stamped', label: '盖章立项书', template: 'proposal' },
+                 { kind: 'closing', label: '盖章结项书', template: 'closing' }]
+const docTemplates = ref(null)   // vuecheck: script-only，模板只通过 templates 读它
+const templates = computed(() => Object.fromEntries(
+  (docTemplates.value?.items || []).map(x => [x.slot, x.file])))
 
 async function load() {
   loading.value = true
   try {
     const base = `/api/staff/activities/${props.activityId}`
-    ;[files.value, vbc.value, approval.value, hours.value] = await Promise.all([
+    ;[files.value, vbc.value, approval.value, hours.value, docTemplates.value] = await Promise.all([
       api.get(`${base}/project-files`), api.get(`${base}/vb-confirms`),
       api.get(`${base}/approval`, { silent: true }).catch(() => null),
-      api.get(`${base}/hours-requests`, { silent: true }).catch(() => null)])
+      api.get(`${base}/hours-requests`, { silent: true }).catch(() => null),
+      api.get('/api/staff/doc-templates', { silent: true }).catch(() => null)])
     draftNames.value = [...vbc.value.names]
     emit('changed', files.value)
   } finally { loading.value = false }

@@ -16,7 +16,7 @@ from openpyxl import Workbook, load_workbook
 from backend import config, scoring, scheduled
 from backend.models import Activity, AuditLog, HoursRecord, HoursRequest, Notification, User, now, uid
 from conftest import (ADMIN, INITIATOR, dl_url, login, student_row,
-                      upload_proposal)
+                      upload_proposal, upload_stamped)
 
 TEACHER = INITIATOR          # 李慕清是老师类型
 
@@ -351,9 +351,7 @@ def test_核准_申诉_提交审核_外联确认_完成(client, admin, db, appro
     assert r.status_code == 200 and r.json()["count"] == 1, r.text
     if liaison.is_external(db, act):
         assert client.post(url, headers=admin, json=names).status_code == 400
-        assert client.post(f"/api/staff/activities/{approved}/project-files/stamped",
-                           headers=admin, files={"file": (
-                               "盖章.pdf", b"%PDF", "application/pdf")}).status_code == 200
+        assert upload_stamped(client, admin, approved).status_code == 200
     r = client.post(url, headers=admin, json=names)
     assert r.status_code == 200, r.text
     # 审核期间名单冻结

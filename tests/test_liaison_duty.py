@@ -11,7 +11,7 @@ from backend.models import (Activity, ActivityManager, AuditLog, Department,
                             DutyHandover, HoursRequest, Notification, User, now, uid)
 from conftest import (ADMIN, INITIATOR, LIAISON_CORE, LIAISON_HEAD, LIAISON_MEMBER,
                       approve, inbox, is_approval_todo, login, make_draft,
-                      student_row)
+                      student_row, upload_stamped)
 
 
 def _set_duty(client, headers, dept_id, user_id, note=""):
@@ -228,9 +228,7 @@ def _finished_external(db, liaison) -> Activity:
 
 
 def _upload_stamped(client, headers, aid):
-    return client.post(f"/api/staff/activities/{aid}/project-files/stamped",
-                       headers=headers,
-                       files={"file": ("盖章.pdf", b"%PDF stamped", "application/pdf")})
+    return upload_stamped(client, headers, aid)
 
 
 def test_时长审批通知值班人_值班人能拍(client, admin, db, liaison):

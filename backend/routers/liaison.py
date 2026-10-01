@@ -1,4 +1,4 @@
-"""对外联络部的三件事：值班交接、立项书与盖章立项书、志愿北京名称的外联确认
+"""对外联络部的几件事：值班交接、立项书与盖章材料、模板、志愿北京名称的外联确认
 （所有活动收尾都要过的一步：时长锁定后外联在志愿北京核对名称，确认即完成）。
 
 规则本身在 backend/liaison.py，这里只是接口。
@@ -21,7 +21,7 @@ from ..models import (Activity, Attachment, Department, DutyHandover, HoursReque
 from ..notify import notify, notify_managers
 from ..perm import ensure_activity_manager, is_activity_manager
 from .staff_ops import save_vb_names, vb_names_block
-from .materials import EXT_TYPES, MATERIAL_DIR
+from .materials import MATERIAL_DIR
 
 router = APIRouter(prefix="/api/staff", tags=["liaison"])
 
@@ -329,7 +329,7 @@ def pending_vb_confirms(db: OrmSession = Depends(db_session),
     return out
 
 
-# ======================= 立项书与盖章立项书 =======================
+# ======================= 立项书与盖章材料 =======================
 
 def _file_out(row: Attachment | None) -> dict | None:
     if row is None:
@@ -344,14 +344,15 @@ def _slot_block(db: OrmSession, act: Activity, slot: str) -> str:
         if act.status not in ("draft", "pending"):
             return "审批已通过，立项书不能再更换"
         return ""
+    label = liaison.SLOTS[slot]
     if not liaison.is_external(db, act):
-        return "盖章立项书只用于对外联络部归口的活动"
+        return f"{label}只用于对外联络部归口的活动"
     if not liaison.is_published(act):
-        return "活动正式发布之后才能上传盖章立项书"
+        return f"活动正式发布之后才能上传{label}"
     if act.hours_locked():
-        return "时长已锁定，盖章立项书不能再更换"
+        return f"时长已锁定，{label}不能再更换"
     if hours_flow.pending_lock(db, act.id) is not None:
-        return "时长正在等待审核，审核期间不能更换盖章立项书"
+        return f"时长正在等待审核，审核期间不能更换{label}"
     return ""
 
 
@@ -369,6 +370,7 @@ def project_files(activity_id: str, db: OrmSession = Depends(db_session),
         out[slot] = _file_out(liaison.project_file(db, act.id, slot))
         out[f"{slot}_block"] = block
         out[f"can_upload_{slot}"] = manager and not block
+        out[f"{slot}_exts"] = list(liaison.SLOT_EXTS[slot])
     return out
 
 
@@ -377,7 +379,7 @@ async def upload_project_file(activity_id: str, slot: str,
                               file: UploadFile = File(...),
                               db: OrmSession = Depends(db_session),
                               user: User = Depends(require_manager)):
-    """上传立项书 / 盖章立项书。每格只留一份，传新的就替换旧的。"""
+    """上传立项书 / 盖章立项书 / 盖章结项书。每格只留一份，传新的就替换旧的。"""
     if slot not in liaison.SLOTS:
         raise HTTPException(404, "没有这一项")
     ensure_activity_manager(db, user, activity_id)
@@ -385,20 +387,10 @@ async def upload_project_file(activity_id: str, slot: str,
     block = _slot_block(db, act, slot)
     if block:
         raise HTTPException(409, block)
-    ext = Path(file.filename or "").suffix.lower().lstrip(".")
-    allowed = liaison.SLOT_EXTS.get(slot, tuple(EXT_TYPES))
-    if ext not in allowed:
-        raise HTTPException(400, f"不支持的文件类型（可上传 {'/'.join(sorted(allowed))}）")
-    data = await file.read()
-    if not data:
-        raise HTTPException(400, "文件是空的")
-    if len(data) > config.MAX_MATERIAL_BYTES:
-        raise HTTPException(400, f"文件不能超过 {config.MAX_MATERIAL_BYTES // (1024 * 1024)}MB")
-    MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
-    stored = f"{uuid4().hex}.{ext}"
-    (MATERIAL_DIR / stored).write_bytes(data)
-    old = liaison.drop_project_file(db, act.id, slot)
     label = liaison.SLOTS[slot]
+    ext, data = await _read_upload(file, label, liaison.SLOT_EXTS[slot])
+    stored = _store(data, ext)
+    old = liaison.drop_project_file(db, act.id, slot)
     row = Attachment(id=uid("att"), owner_type=slot, owner_id=act.id,
                      activity_id=act.id, kind="file",
                      title=(file.filename or f"{label}.{ext}")[:160],
@@ -408,6 +400,66 @@ async def upload_project_file(activity_id: str, slot: str,
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=(f"{'更换' if old else '上传'}{label}《{row.title}》"
                        f"（{len(data) // 1024}KB）"))
-    # 缺盖章立项书而停下的自动报批，补上之后下一轮清扫照常提交，不另行通知
+    # 缺盖章材料而停下的自动报批，补上之后下一轮清扫照常提交，不另行通知
+    db.commit()
+    return _file_out(row)
+
+
+async def _read_upload(file: UploadFile, label: str,
+                       allowed: tuple[str, ...]) -> tuple[str, bytes]:
+    """校验上传的文件：类型、非空、大小。返回 (扩展名, 内容)。"""
+    ext = Path(file.filename or "").suffix.lower().lstrip(".")
+    if ext not in allowed:
+        raise HTTPException(400, f"{label}只能上传 {'/'.join(allowed)} 文件")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "文件是空的")
+    if len(data) > config.MAX_MATERIAL_BYTES:
+        raise HTTPException(400, f"文件不能超过 {config.MAX_MATERIAL_BYTES // (1024 * 1024)}MB")
+    return ext, data
+
+
+def _store(data: bytes, ext: str) -> str:
+    MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
+    stored = f"{uuid4().hex}.{ext}"
+    (MATERIAL_DIR / stored).write_bytes(data)
+    return stored
+
+
+# ======================= 立项书、结项书模板 =======================
+
+@router.get("/doc-templates")
+def doc_templates(db: OrmSession = Depends(db_session),
+                  user: User = Depends(require_manager)):
+    """模板清单。发起方下载了照着填；外联部长（会长团、管理员）能上传和更换。"""
+    return {"can_manage": liaison.can_manage_templates(db, user) and user.can_write(),
+            "exts": list(liaison.DOC_TEMPLATE_EXTS),
+            "items": [{"slot": slot, "label": label,
+                       "file": _file_out(liaison.doc_template(db, slot))}
+                      for slot, label in liaison.DOC_TEMPLATES.items()]}
+
+
+@router.post("/doc-templates/{slot}")
+async def upload_doc_template(slot: str, file: UploadFile = File(...),
+                              db: OrmSession = Depends(db_session),
+                              user: User = Depends(require_manager)):
+    """上传或更换一份模板。每种只留一份，传新的就替换旧的。"""
+    if slot not in liaison.DOC_TEMPLATES:
+        raise HTTPException(404, "没有这一项")
+    if not liaison.can_manage_templates(db, user):
+        raise HTTPException(403, "模板由对外联络部部长更换")
+    label = liaison.DOC_TEMPLATES[slot]
+    ext, data = await _read_upload(file, label, liaison.DOC_TEMPLATE_EXTS)
+    stored = _store(data, ext)
+    old = liaison.drop_attachment(db, liaison.doc_template(db, slot))
+    row = Attachment(id=uid("att"), owner_type="template", owner_id=slot,
+                     activity_id="", kind="file",
+                     title=(file.filename or f"{label}.{ext}")[:160],
+                     stored_name=stored, size=len(data), uploaded_by=user.id)
+    db.add(row)
+    audit_log(db, actor=user, action="material", target_type="template",
+              target_id=slot, target_label=label,
+              summary=f"{'更换' if old else '上传'}{label}《{row.title}》"
+                      f"（{len(data) // 1024}KB）")
     db.commit()
     return _file_out(row)

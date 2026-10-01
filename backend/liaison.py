@@ -1,4 +1,4 @@
-"""对外联络部：值班、立项书、志愿北京名称的外联确认。
+"""对外联络部：值班、立项书与结项书、志愿北京名称的外联确认。
 
 二级志愿团体的活动都归口对外联络部，审批量远超其他部门，部长一个人盯不过来：
 由部门骨干轮流值班，这个部门的审批（活动发布、时长锁定/解锁、志愿北京确认）
@@ -9,9 +9,11 @@
 启用；别的部门行为一概不变。部门按名字认：部门是页面上可以增删改的数据，
 没有别的稳定标识，改了名就等于关掉值班——宁可关掉，也别套到别的部门上。
 
-「对外活动」= 归口对外联络部的活动：提交审批要带立项书，时长报批要带盖章立项书。
-两份文件都挂在 Attachment 上（owner_type = proposal / stamped，owner_id = 活动 id），
-存储与一次性票据下载沿用学习材料那一套。
+「对外活动」= 归口对外联络部的活动：提交审批要带立项书，时长报批要带盖章立项书
+和盖章结项书。这几份文件都挂在 Attachment 上（owner_type = proposal / stamped /
+closing，owner_id = 活动 id），存储与一次性票据下载沿用学习材料那一套。
+立项书、结项书的空白模板由外联部长上传，发起方下载了照着填（owner_type =
+template，owner_id = 格子名，不挂活动）。
 
 志愿北京确认不分内外：所有活动提交时长审核时都要填志愿北京上的活动名称，
 时长审核通过（锁定）后名称推给对外联络部核对，确认了活动才算「已完成」。
@@ -28,9 +30,20 @@ DUTY_DEPTS = (LIAISON_DEPT,)
 # 能值班的：部门骨干与部长。部门成员是学习权限，拍不了板。
 ELIGIBLE_POSTS = ("core", "head")
 
-SLOTS = {"proposal": "立项书", "stamped": "盖章立项书"}
-# 各格能传的文件类型；没列的格子沿用学习材料的全部类型
-SLOT_EXTS: dict[str, tuple[str, ...]] = {}
+SLOTS = {"proposal": "立项书", "stamped": "盖章立项书", "closing": "盖章结项书"}
+# 时长审核要附的盖章材料：对外活动两份都齐了才能提交
+STAMPED_SLOTS = ("stamped", "closing")
+# 各格能传的文件类型。立项书是提交审批时交的电子稿；盖章件是扫描件或照片，
+# 一格只留一份，多页的要合成一个 PDF
+SLOT_EXTS: dict[str, tuple[str, ...]] = {
+    "proposal": ("docx", "pdf"),
+    "stamped": ("pdf", "png", "jpg", "jpeg"),
+    "closing": ("pdf", "png", "jpg", "jpeg"),
+}
+
+# 立项书、结项书的空白模板：发起方下载了照着填
+DOC_TEMPLATES = {"proposal": "立项书模板", "closing": "结项书模板"}
+DOC_TEMPLATE_EXTS = ("docx",)
 
 
 # ======================= 部门与值班 =======================
@@ -161,17 +174,38 @@ def project_file(db: OrmSession, activity_id: str, slot: str) -> Attachment | No
                     Attachment.owner_id == activity_id).first())
 
 
-def drop_project_file(db: OrmSession, activity_id: str, slot: str) -> Attachment | None:
-    """删掉某一格里的文件（记录与磁盘文件一起）。返回删掉的那条，没有就 None。
-    不提交事务。"""
+def drop_attachment(db: OrmSession, row: Attachment | None) -> Attachment | None:
+    """删掉一份文件（记录与磁盘文件一起），原样返回传进来的那条。不提交事务。"""
     from .routers.materials import MATERIAL_DIR
 
-    row = project_file(db, activity_id, slot)
     if row is None:
         return None
     (MATERIAL_DIR / row.stored_name).unlink(missing_ok=True)
     db.delete(row)
     return row
+
+
+def drop_project_file(db: OrmSession, activity_id: str, slot: str) -> Attachment | None:
+    """删掉某一格里的文件。返回删掉的那条，没有就 None。不提交事务。"""
+    return drop_attachment(db, project_file(db, activity_id, slot))
+
+
+def missing_stamped(db: OrmSession, act: Activity) -> list[str]:
+    """对外活动提交时长审核还缺哪几份盖章材料（名称）；不是对外活动就是空的。"""
+    if not is_external(db, act):
+        return []
+    return [SLOTS[s] for s in STAMPED_SLOTS if project_file(db, act.id, s) is None]
+
+
+def doc_template(db: OrmSession, slot: str) -> Attachment | None:
+    return (db.query(Attachment)
+            .filter(Attachment.owner_type == "template",
+                    Attachment.owner_id == slot).first())
+
+
+def can_manage_templates(db: OrmSession, user: User) -> bool:
+    """立项书、结项书模板由外联部长更换；会长团和管理员同样可以。"""
+    return user.has_full_access() or is_head_of(user, liaison_dept(db))
 
 
 def can_see_project_files(db: OrmSession, user: User, act: Activity) -> bool:

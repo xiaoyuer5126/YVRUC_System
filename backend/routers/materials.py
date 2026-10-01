@@ -156,14 +156,19 @@ def download_material(material_id: str, db: OrmSession = Depends(db_session),
     # 活动公开之前（草稿、审批中、待发布）它的材料也不对外：
     # 只按 draft 判断的话，交上去等审批的那一段时间材料就漏出去了
     act = db.get(Activity, row.activity_id) if row.activity_id else None
-    if row.owner_type in PROJECT_SLOTS:
+    if not row.activity_id:
+        # 不挂活动的只有两种：立项书/结项书模板，发给发起方照着填，登录即可下载；
+        # 意见反馈的截图有自己的接口（只给管理员和提交人），这里一律不给
+        if row.owner_type != "template":
+            raise HTTPException(404, "材料不存在")
+    elif row.owner_type in PROJECT_SLOTS:
         # 立项书是内部材料：不管活动公没公开，只给管理者与审批线上的人
         # （值班人审的正是还没公开的活动，下面那条公开判断会把他挡掉）
         from ..liaison import can_see_project_files
         if act is None or not can_see_project_files(db, user, act):
             raise HTTPException(404, "材料不存在")
-    elif act is not None and not is_public(act) \
-            and not is_activity_manager(db, user, act.id):
+    elif act is None or (not is_public(act)
+                         and not is_activity_manager(db, user, act.id)):
         raise HTTPException(404, "材料不存在")
     # 报名问卷里志愿者交的文件是个人材料：只有本人和这场活动的管理者能看
     if row.owner_type == "application" and row.uploaded_by != user.id \

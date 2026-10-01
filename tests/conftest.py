@@ -285,6 +285,18 @@ def upload_proposal(client, headers, activity_id, name="立项书.pdf"):
     return r.json()
 
 
+def upload_stamped(client, headers, activity_id):
+    """传齐时长审核要的盖章材料：对外活动提交时长审核，盖章立项书和盖章结项书
+    缺一份都不行。返回最后一次上传的响应。"""
+    for slot in ("stamped", "closing"):
+        r = client.post(f"/api/staff/activities/{activity_id}/project-files/{slot}",
+                        headers=headers,
+                        files={"file": (f"{slot}.pdf", b"%PDF stamped", "application/pdf")})
+        if r.status_code != 200:
+            return r
+    return r
+
+
 def approve(client, headers, activity_id, auto_publish=True):
     """走一遍审批：提交给一个有部长的部门 → 通过。要发布活动就得先过这关。
     默认「通过即发布」，回来活动就在报名中了。

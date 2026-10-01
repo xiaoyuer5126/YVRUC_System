@@ -122,6 +122,9 @@ def test_截图下载权限(client, take_student, admin, db):
     assert client.get(path, headers=other).status_code == 404
     assert client.get(path, headers=login(client, INITIATOR)).status_code == 404
     assert client.get(path).status_code == 401
+    # 通用的材料下载接口不给反馈截图：拿到 id 也绕不过上面这套权限
+    att_id = path.rsplit("/", 1)[-1]
+    assert client.get(dl_url(client, other, f"/api/materials/{att_id}")).status_code == 404
     # 下载接口只认反馈截图，别的附件 id 走不通
     att = db.query(Attachment).filter(Attachment.owner_type != "feedback").first()
     if att is not None:

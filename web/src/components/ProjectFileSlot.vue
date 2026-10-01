@@ -1,5 +1,7 @@
-<!-- 立项书 / 盖章立项书的一格：一格只留一份，传新的就替换。
-     能不能换由后端说了算（block 是不能换的原因），这里只照着显示。 -->
+<!-- 一格文件：立项书、盖章立项书、盖章结项书，以及它们的空白模板。
+     一格只留一份，传新的就替换。能不能换、收哪些类型都由后端说了算（block 是
+     不能换的原因，exts 是能传的扩展名），这里只照着显示。
+     template 是这一格对应的空白模板，有就在标题旁给个下载链接。 -->
 <template>
   <div class="pf-slot">
     <div class="pf-head">
@@ -8,6 +10,8 @@
       <el-tag v-else size="small" :type="required ? 'danger' : 'info'" effect="plain">
         {{ required ? '未上传（必需）' : '未上传' }}
       </el-tag>
+      <el-link v-if="template" type="primary" underline="never"
+               @click="download(`/api/materials/${template.id}`)">下载模板</el-link>
     </div>
     <div v-if="file" class="pf-file">
       <el-icon><Document /></el-icon>
@@ -17,7 +21,7 @@
     </div>
     <div v-if="hint" class="dim">{{ hint }}</div>
     <el-upload v-if="canUpload" :show-file-list="false" :before-upload="upload"
-               :accept="accept">
+               :accept="exts.map(e => '.' + e).join(',')">
       <el-button size="small" :loading="busy">{{ file ? '更换' : '上传' }}{{ label }}</el-button>
     </el-upload>
     <div v-else-if="block" class="dim">{{ block }}</div>
@@ -31,15 +35,18 @@ import { Document } from '@element-plus/icons-vue'
 import { download, fmtDT, uploadFile } from '../api'
 
 const props = defineProps({
-  activityId: { type: String, required: true },
-  kind: { type: String, required: true },        // proposal / stamped
+  activityId: { type: String, default: '' },
+  kind: { type: String, required: true },        // proposal / stamped / closing
   label: { type: String, required: true },
+  // 上传到哪；默认是活动的那几格，模板另有地址
+  uploadUrl: { type: String, default: '' },
+  template: { type: Object, default: null },
   file: { type: Object, default: null },
   canUpload: { type: Boolean, default: false },
   block: { type: String, default: '' },
   required: { type: Boolean, default: false },
   hint: { type: String, default: '' },
-  accept: { type: String, default: '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.txt' },
+  exts: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['changed'])
 const busy = ref(false)
@@ -50,9 +57,15 @@ async function upload(f) {
     ElMessage.error(`文件不能超过 ${LIMIT_MB}MB`)
     return false
   }
+  const ext = f.name.split('.').pop().toLowerCase()
+  if (props.exts.length && !props.exts.includes(ext)) {
+    ElMessage.error(`${props.label}只能上传 ${props.exts.join('/')} 文件`)
+    return false
+  }
   busy.value = true
   try {
-    await uploadFile(`/api/staff/activities/${props.activityId}/project-files/${props.kind}`, f)
+    await uploadFile(props.uploadUrl
+      || `/api/staff/activities/${props.activityId}/project-files/${props.kind}`, f)
     ElMessage.success(`${props.label}已${props.file ? '更换' : '上传'}`)
     emit('changed')
   } catch { /* 错误已提示 */ } finally { busy.value = false }
