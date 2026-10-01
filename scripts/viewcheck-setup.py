@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -42,6 +43,21 @@ def main(out_dir: str) -> None:
     (out / "auser.json").write_text(json.dumps(admin["user"], ensure_ascii=False))
     (out / "suser.json").write_text(json.dumps(student["user"], ensure_ascii=False))
     (out / "act.txt").write_text(activities[0]["id"])
+
+    # 只在特定活动里才有的页签与落地页：补记录活动的「名单导入」、统一发放
+    # 服装的「志愿服装」与服装码落地页、当天签到中的签到码落地页
+    def staff_act(title: str) -> str:
+        q = urllib.parse.quote(title)
+        return call("GET", f"/api/staff/activities?q={q}&size=5",
+                    token=admin["token"])["items"][0]["id"]
+
+    attire_act = staff_act("校运动会开幕式志愿服务")
+    attire = call("POST", f"/api/staff/activities/{attire_act}/attire-tasks",
+                  token=admin["token"])
+    (out / "record_act.txt").write_text(staff_act("学院读书会志愿服务"))
+    (out / "attire_act.txt").write_text(attire_act)
+    (out / "attire_token.txt").write_text(attire["take"]["token"])
+    (out / "checkin_token.txt").write_text("GALA01")   # 种子里晚会当天的统一签到码
     print(f"已写入 {out}（学生 {student['user']['name']}，活动 {activities[0]['title']}）")
 
 

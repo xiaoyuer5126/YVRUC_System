@@ -300,7 +300,7 @@ def decide_vb_confirm(confirm_id: str, body: VbDecideBody,
          f"对外联络部退回了 {names}。\n请到活动管理的「审核」页签修改志愿北京"
          f"活动名称后重新提交（时长保持锁定，不用重新审核）。")
         + (f"\n{'意见' if body.approve else '理由'}：{reply}" if reply else ""),
-        duty="hours")
+        duty="hours", tab="review")
     db.commit()
     return _vbc_out(db, r)
 

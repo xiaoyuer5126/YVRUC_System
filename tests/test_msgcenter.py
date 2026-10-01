@@ -67,25 +67,40 @@ def test_点开去哪页只有一份规则():
     assert page("custom", {"activity_id": "a1", "route": "approvals"}) == "/approvals"
     assert page("custom", {"route": "hours"}) == "/hours"
     assert page("activity_changed", {"activity_id": "a1"}) == "/activity/a1"
+    # 发给活动管理者的进活动管理页，页签只认名单里的
+    assert (page("custom", {"activity_id": "a1", "route": "manage", "tab": "review"})
+            == "/manage/a1?tab=review")
+    assert page("custom", {"activity_id": "a1", "route": "manage", "tab": "x"}) == "/manage/a1"
+    assert page("custom", {"route": "manage"}) == ""
     # 名单外的 route 不猜，退回看活动 id；什么都没有就不跳
     assert page("custom", {"activity_id": "a1", "route": "unknown"}) == "/activity/a1"
     assert page("custom", {"route": "unknown"}) == ""
     assert page("checkin_reminder", {}) == ""
 
 
+def test_站点根地址只留协议域名和路径():
+    """带着 #/、查询串或末尾斜杠的话，拼出来的通知链接点开只会落到首页。"""
+    assert config._site_root("https://v.ruc.edu.cn/#/") == "https://v.ruc.edu.cn"
+    assert config._site_root(" https://x.cn/app/?a=1 ") == "https://x.cn/app"
+    assert config._site_root("http://127.0.0.1:8080") == "http://127.0.0.1:8080"
+    # 不是 http(s) 网址的当作没配：发个打不开的链接不如不发
+    assert config._site_root("v.ruc.edu.cn") == ""
+    assert config._site_root("") == ""
+
+
 def test_企业微信链接_要签收的落在消息中心(monkeypatch):
     """「我已知悉」只在消息中心：要签收的、催签收的卡片都得带人去那儿，
     其余跟站内去同一页。"""
-    monkeypatch.setattr(config, "SITE_URL", "https://p.cn/")
+    monkeypatch.setattr(config, "SITE_URL", "https://p.cn")   # 已规范化：不带末尾斜杠
     link = msgcenter._link_for
-    assert link("signup_success", None, False) == "https://p.cn/#/my"
+    assert link("signup_success", None, False) == "https://p.cn/my"
     assert (link("custom", {"activity_id": "a1", "route": "approvals"}, False)
-            == "https://p.cn/#/approvals")
-    assert link("custom", {"activity_id": "a1"}, True) == "https://p.cn/#/messages"
+            == "https://p.cn/approvals")
+    assert link("custom", {"activity_id": "a1"}, True) == "https://p.cn/messages"
     assert (link("checkin_reminder", {"activity_id": "a1"}, True)
-            == "https://p.cn/#/messages")
+            == "https://p.cn/messages")
     assert (link("ack_reminder", {"activity_id": "a1"}, False)
-            == "https://p.cn/#/messages")
+            == "https://p.cn/messages")
     # 没有落点、或站点根为空：不带链接，免得发出打开是白屏的地址
     assert link("custom", {}, False) == ""
     monkeypatch.setattr(config, "SITE_URL", "")
@@ -103,7 +118,7 @@ def test_带链接的通知把链接放extras(db, monkeypatch):
         return {"successed": True}
 
     monkeypatch.setattr(msgcenter.sudy_sign, "post_json", fake_post)
-    url = "https://p.cn/#/my"
+    url = "https://p.cn/my"
     assert msgcenter._send("2025201717", "标题", "正文", url) is True
     assert seen["payload"]["extras"] == {"im_linkUrl": url}
     assert msgcenter._send("2025201717", "标题", "正文") is True
@@ -210,7 +225,7 @@ def test_真实推送在事务提交且场次锁放掉之后才发(client, open_
     sid = take_student()
     assert enroll(client, login(client, sid), act, g).status_code == 200
     # 推了一次：名额已还、锁已放掉、事务已提交，且链接拼成了报名成功该去的页
-    assert seen == [(True, True, 1, "https://p.cn/#/my")]
+    assert seen == [(True, True, 1, "https://p.cn/my")]
 
     db = SessionLocal()
     try:

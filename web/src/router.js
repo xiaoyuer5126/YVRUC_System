@@ -1,10 +1,10 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
+import { createRouter, createWebHistory } from 'vue-router'
 import { auth, canSee, setActiveIdentity, hasIdentity, isManager } from './store'
 
 const routes = [
   { path: '/login', component: () => import('./views/LoginView.vue'), meta: { public: true } },
   // 统一身份认证回调。CAS 把 ?code=..&state=.. 追加在平台**根地址**上，
-  // 所以这个页面从 window.location.search 取值，而不是路由 query。
+  // 由下面的守卫连同查询串一起转到这一页。
   { path: '/sso-callback', component: () => import('./views/SsoCallbackView.vue'), meta: { public: true } },
   {
     path: '/',
@@ -35,19 +35,17 @@ const routes = [
 ]
 
 export const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(),
   routes,
 })
 
 // 页面守卫：未登录去登录页；当前身份视角不够但持有对应身份时自动切换放行；
 // 确实不持有则回对应首页（工作台视角→活动管理，学生视角→活动广场）。
 router.beforeEach((to) => {
-  // 统一身份认证回调要**最先**拦下来。查询串在真正的 URL 上、不在 hash 里，
-  // vue-router 看不见它；不先放行的话，下面那条「没令牌就去登录页」会把人
-  // 直接踢走，授权码白回来一趟。
-  if (to.path !== '/sso-callback'
-      && new URLSearchParams(window.location.search).has('code')) {
-    return { path: '/sso-callback' }
+  // 统一身份认证回调要**最先**拦下来：CAS 回到的是根地址，不先转走的话，
+  // 下面那条「没令牌就去登录页」会把人直接踢走，授权码白回来一趟。
+  if (to.path !== '/sso-callback' && to.query.code) {
+    return { path: '/sso-callback', query: to.query }
   }
   if (!to.meta.public && !auth.token) {
     return { path: '/login', query: { next: to.fullPath } }

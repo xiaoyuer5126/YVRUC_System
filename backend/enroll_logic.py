@@ -451,7 +451,7 @@ def notify_leader_vacancy(db: OrmSession, position: Position) -> bool:
     scope = leader_scope_label(positions, position)
     notify_managers(db, activity.id, f"[组长空缺] {activity.title}",
                     f"「{position.shift.name}·{scope}」目前没有组长，"
-                    f"请在「志愿者管理」中指定。", duty="roster")
+                    f"请在「志愿者管理」中指定。", duty="roster", tab="roster")
     return True
 
 

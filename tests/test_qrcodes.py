@@ -1,7 +1,7 @@
 """二维码：签到码、服装领/还码、活动码，编的都得是**完整网址**。
 
-编相对路径（/#/checkin/AB12CD）时码本身是好的，但手机相机不会跳转，只把
-这行字显示出来——签到码与服装码此前就是这样，扫了进不了网站。
+编相对路径（/checkin/AB12CD）时码本身是好的，但手机相机不会跳转，只把
+这行字显示出来，扫了进不了网站。
 拿 qr_svg(期望网址) 跟接口输出比：一模一样才算编对了。
 """
 from __future__ import annotations
@@ -51,11 +51,11 @@ def test_签到码编的是完整网址(client, admin, qr_activity):
 
     r = client.get(f"/api/checkin/qr.svg?token={token}&base={PUBLIC}")
     assert r.status_code == 200
-    assert r.text == qr_svg(f"{PUBLIC}/#/checkin/{token}")
+    assert r.text == qr_svg(f"{PUBLIC}/checkin/{token}")
 
     # 前端漏传 base 也不能退化成相对路径
     r = client.get(f"/api/checkin/qr.svg?token={token}")
-    assert r.text == qr_svg(f"{FALLBACK}/#/checkin/{token}")
+    assert r.text == qr_svg(f"{FALLBACK}/checkin/{token}")
 
 
 def test_服装领还码编的是完整网址(client, admin, qr_activity):
@@ -68,24 +68,24 @@ def test_服装领还码编的是完整网址(client, admin, qr_activity):
     for token in (take, back):
         r = client.get(f"/api/attire/qr.svg?token={token}&base={PUBLIC}")
         assert r.status_code == 200
-        assert r.text == qr_svg(f"{PUBLIC}/#/attire/{token}")
+        assert r.text == qr_svg(f"{PUBLIC}/attire/{token}")
         r = client.get(f"/api/attire/qr.svg?token={token}")
-        assert r.text == qr_svg(f"{FALLBACK}/#/attire/{token}")
+        assert r.text == qr_svg(f"{FALLBACK}/attire/{token}")
 
 
 def test_活动码编的是完整网址(client, qr_activity):
     act, _g = qr_activity
     r = client.get(f"/api/activities/{act.id}/qr.svg?base={PUBLIC}")
     assert r.status_code == 200
-    assert r.text == qr_svg(f"{PUBLIC}/#/activity/{act.id}")
+    assert r.text == qr_svg(f"{PUBLIC}/activity/{act.id}")
     r = client.get(f"/api/activities/{act.id}/qr.svg")
-    assert r.text == qr_svg(f"{FALLBACK}/#/activity/{act.id}")
+    assert r.text == qr_svg(f"{FALLBACK}/activity/{act.id}")
 
 
 def test_base_末尾多个斜杠也不会拼出双斜杠(client, qr_activity):
     act, _g = qr_activity
     r = client.get(f"/api/activities/{act.id}/qr.svg?base={PUBLIC}/")
-    assert r.text == qr_svg(f"{PUBLIC}/#/activity/{act.id}")
+    assert r.text == qr_svg(f"{PUBLIC}/activity/{act.id}")
 
 
 def test_二维码不接受别人家的域名(client, admin, qr_activity):

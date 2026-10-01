@@ -22,26 +22,23 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { setAuth } from '../store'
 
+const route = useRoute()
 const router = useRouter()
 const error = ref('')
 
 onMounted(async () => {
-  // CAS 把 ?code=..&state=.. 追加在平台根地址上，所以查询串在**真正的 URL** 里，
-  // 不在 hash 里。必须从 window.location 取，读路由 query 会什么都拿不到。
-  const params = new URLSearchParams(window.location.search)
-  const code = params.get('code') || ''
-  const state = params.get('state') || ''
+  // CAS 把 ?code=..&state=.. 追加在平台根地址上，路由守卫原样转到本页
+  const code = String(route.query.code || '')
+  const state = String(route.query.state || '')
 
-  // 立刻把授权码从地址栏抹掉。两个原因：它会进浏览器历史和 Referer；而且
-  // 留着的话，之后每次路由跳转都会被守卫看见 search 里的 code、再弹回本页。
-  window.history.replaceState(
-    null, '', window.location.pathname + window.location.hash)
+  // 立刻把授权码从地址栏抹掉：它会进浏览器历史和 Referer
+  router.replace({ path: '/sso-callback' })
 
   if (!code || !state) {
     error.value = '回调地址里缺少 code 或 state，请从平台首页重新登录。'

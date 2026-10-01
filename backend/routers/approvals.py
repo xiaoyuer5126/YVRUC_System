@@ -90,14 +90,17 @@ def _event(db: OrmSession, act: Activity, kind: str, actor: User, **kw) -> None:
 
 
 def _notify(db: OrmSession, who: User | None, title: str, content: str,
-            act: Activity, *, route: str = "") -> None:
+            act: Activity, *, route: str = "", tab: str = "") -> None:
     """route 指明这条消息点开该去哪儿：待办的审批要进审批页，
-    不是进活动详情——审批人在那儿看不到通过/驳回的按钮。"""
+    不是进活动详情——审批人在那儿看不到通过/驳回的按钮；审批结果发给
+    活动管理者，进活动管理页（route="manage"，tab 指定页签）。"""
     if who is None:
         return
     data = {"activity_id": act.id}
     if route:
         data["route"] = route
+    if tab:
+        data["tab"] = tab
     msgcenter.send_user(db, who, "custom", data=data,
                     title=title, content=content)
 
@@ -376,7 +379,8 @@ def decide(activity_id: str, body: DecideBody,
     from ..models import ActivityManager
     for row in db.query(ActivityManager).filter(
             ActivityManager.activity_id == act.id).all():
-        _notify(db, db.get(User, row.user_id), title, body_text, act)
+        _notify(db, db.get(User, row.user_id), title, body_text, act,
+                route="manage", tab="review")
     db.commit()
     return {"ok": True, "status": act.status}
 
@@ -458,7 +462,8 @@ def transfer(activity_id: str, body: TransferBody,
             ActivityManager.activity_id == act.id).all():
         _notify(db, db.get(User, row.user_id), f"审批已转交｜{act.title}",
                 f"「{act.title}」的审批已转交给 {target.name}"
-                f"（{dept.name if dept else '未归口'}）。", act)
+                f"（{dept.name if dept else '未归口'}）。", act,
+                route="manage", tab="review")
     db.commit()
     return {"ok": True, "assignee": contact.name}
 

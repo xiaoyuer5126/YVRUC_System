@@ -1737,7 +1737,7 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
                f"时长{req.kind_label()}{'已通过' if body.approve else '未通过'}"
                f"｜{act.title}",
                _decide_text(act, req, body.approve, reply),
-               data={"activity_id": act.id})
+               data={"activity_id": act.id, "route": "manage", "tab": "hours"})
     db.commit()
     return {"ok": True, "status": req.status}
 

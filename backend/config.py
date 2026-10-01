@@ -14,6 +14,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
@@ -127,10 +128,30 @@ def _url_list(raw: str) -> list[str]:
 
 PUBLIC_BASE_URLS = _url_list(os.environ.get("RUCVA_PUBLIC_BASE_URL", ""))
 
+
+def _site_root(raw: str) -> str:
+    """站点根地址，只留「协议://域名[:端口][/路径]」。
+
+    带上 # 或查询串的话，拼出来的通知链接就成了 https://x/#/my/activity/…
+    这种认不出的地址，点开只会落到首页。不是 http(s) 网址的当作没配，
+    记一条警告：发出去一个打不开的链接，不如不发。
+    """
+    raw = raw.strip()
+    if not raw:
+        return ""
+    u = urlparse(raw)
+    if u.scheme not in ("http", "https") or not u.netloc:
+        logging.getLogger(__name__).warning("站点根地址不是 http(s) 网址，已忽略：%s", raw)
+        return ""
+    return f"{u.scheme}://{u.netloc}{u.path}".rstrip("/")
+
+
 # 通知里「点击打开」的站点根地址，企业微信里的通知卡片点击后跳到它下面
 # （落哪一页见 integrations/msgcenter._link_for）。必须是手机上打得开的
-# 公网地址；留空则通知不带跳转——开发环境本来也没有公网入口。
-SITE_URL = os.environ.get("RUCVA_SITE_URL", "").strip()
+# 公网地址；没单独配就用正式域名的第一个，两个都空则通知不带跳转——
+# 开发环境本来也没有公网入口。
+SITE_URL = _site_root(os.environ.get("RUCVA_SITE_URL", "")
+                      or (PUBLIC_BASE_URLS[0] if PUBLIC_BASE_URLS else ""))
 
 # 下载票据：导出与材料下载走 <a> 直链，带不了请求头，改用一次性票据。
 # 短到只够浏览器立刻发起这一次下载，进了日志也用不了第二次。

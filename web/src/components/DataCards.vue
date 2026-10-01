@@ -84,7 +84,14 @@ watch(() => props.rows, rows => {
   const kept = keys.value.filter(k => live.has(k))
   if (kept.length !== keys.value.length) keys.value = kept
 }, { immediate: true })
-watch(picked, rows => emit('selection-change', rows))
+// 勾选的行真变了才抛。调用方常写 :rows="data?.items || []"，数据没到之前每次
+// 渲染都是一个新的空数组；照数组身份抛的话，父组件收到后改状态、重渲染，又是
+// 一个新的空数组——在微任务里转不出来，接口的响应永远落不了地，页面直接卡死。
+// 刷新后行换成了新对象（勾的还是那几个人）要照抛：父组件手里得是新的行
+watch(picked, (rows, old) => {
+  if (old && rows.length === old.length && rows.every((r, i) => r === old[i])) return
+  emit('selection-change', rows)
+})
 
 function valueOf(row, key) {
   return key.split('.').reduce((o, k) => (o == null ? o : o[k]), row)

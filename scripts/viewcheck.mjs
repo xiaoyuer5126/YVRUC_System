@@ -19,6 +19,10 @@ import { readFileSync } from 'node:fs'
 const CHROME = '/home/xiaoyuer5126/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome'
 const S = process.argv[2], W = +process.argv[3], H = +process.argv[4]
 const ACT = readFileSync(`${S}/act.txt`, 'utf8')
+const REC = readFileSync(`${S}/record_act.txt`, 'utf8')
+const ATT = readFileSync(`${S}/attire_act.txt`, 'utf8')
+const ATT_TOKEN = readFileSync(`${S}/attire_token.txt`, 'utf8')
+const CHK_TOKEN = readFileSync(`${S}/checkin_token.txt`, 'utf8')
 // [身份, 路由, 名称, 这一页至少该渲染出多少字]
 // 最少字数不是凑数：活动管理页的「找不到活动」也是一屏内容，只看「有没有
 // 东西」分不出正常与出错——那次接口换了返回结构，五个页签全成了这张页，
@@ -29,17 +33,26 @@ const PAGES = [
   ['student', '/my', '我的报名', 100],
   ['student', '/hours', '志愿时长', 50],
   ['student', '/messages', '消息通知', 10],
+  ['student', `/checkin/${CHK_TOKEN}`, '签到落地', 20],
+  ['student', `/attire/${ATT_TOKEN}`, '服装落地', 20],
   ['admin', '/manage', '活动管理', 200],
   ['admin', `/manage/${ACT}?tab=tree`, '场次岗位', 200],
   ['admin', `/manage/${ACT}?tab=roster`, '志愿者管理', 200],
   ['admin', `/manage/${ACT}?tab=checkin`, '签到管理', 200],
   ['admin', `/manage/${ACT}?tab=hours`, '时长管理', 150],
   ['admin', `/manage/${ACT}?tab=acks`, '签收情况', 100],
+  ['admin', `/manage/${ACT}?tab=review`, '审核', 100],
+  ['admin', `/manage/${ACT}?tab=managers`, '管理者', 100],
+  ['admin', `/manage/${ACT}?tab=logs`, '变更记录', 100],
+  ['admin', `/manage/${ATT}?tab=attire`, '志愿服装', 100],
+  ['admin', `/manage/${REC}?tab=records`, '名单导入', 100],
   ['admin', '/users', '志愿者档案', 200],
   ['admin', '/approvals', '活动审批', 200],
   ['admin', '/audit', '审计日志', 200],
   ['admin', '/dashboard', '数据总览', 200],
   ['admin', '/roles', '角色管理', 200],
+  ['admin', '/integrations', '集成设置', 100],
+  ['admin', '/feedback', '意见反馈', 20],
 ]
 const TOK = { student: readFileSync(`${S}/tok.txt`,'utf8'), admin: readFileSync(`${S}/atok.txt`,'utf8') }
 const USR = { student: readFileSync(`${S}/suser.json`,'utf8'), admin: readFileSync(`${S}/auser.json`,'utf8') }
@@ -53,7 +66,12 @@ const ws = new WebSocket(t.webSocketDebuggerUrl)
 await new Promise(r => ws.addEventListener('open', r))
 let id=0; const pend=new Map()
 ws.addEventListener('message', e=>{ const m=JSON.parse(e.data); if(m.id&&pend.has(m.id)){pend.get(m.id)(m);pend.delete(m.id)} })
-const send=(method,params={})=>new Promise(res=>{const i=++id;pend.set(i,res);ws.send(JSON.stringify({id:i,method,params}))})
+// 每个调用限时：页面主线程卡死时浏览器不再应答，不限时的话脚本会一声不吭地
+// 一直挂着，看不出是哪一页出了事。超时就当这一页出错报出来，后面的页照常检查
+const TIMEOUT_MS = 10000
+const send=(method,params={})=>new Promise(res=>{const i=++id
+  const tm=setTimeout(()=>{pend.delete(i);res({timeout:true})},TIMEOUT_MS)
+  pend.set(i,m=>{clearTimeout(tm);res(m)});ws.send(JSON.stringify({id:i,method,params}))})
 await send('Page.enable')
 await send('Emulation.setDeviceMetricsOverride',{width:W,height:H,deviceScaleFactor:2,mobile:true})
 
@@ -68,8 +86,9 @@ const PROBE = `(() => {
        + ' →' + Math.round(el.getBoundingClientRect().right)))
     .filter((v,i,a) => a.indexOf(v) === i).slice(0, 6);
   return JSON.stringify({
-    // 崩掉的页面不会溢出，所以必须同时看「有没有渲染出东西」
-    textLen: (document.querySelector('.app-main')?.innerText || '').trim().length,
+    // 崩掉的页面不会溢出，所以必须同时看「有没有渲染出东西」。
+    // 签到/服装落地页不在主框架里，没有 .app-main，就看整页
+    textLen: ((document.querySelector('.app-main') || document.body).innerText || '').trim().length,
     errors: window.__errs || [],
     vw, scrollW: document.documentElement.scrollWidth,
     aside: !!document.querySelector('.side'),
@@ -103,10 +122,12 @@ for (const [who, route, name, min] of PAGES) {
     localStorage.setItem('rucva_token', ${JSON.stringify(TOK[who])});
     localStorage.setItem('rucva_user', ${JSON.stringify(USR[who])});
     localStorage.setItem('rucva_active_identity', ${JSON.stringify(who)});
-    location.hash = '#${route}'; location.reload();` })
+    location.assign(${JSON.stringify(route)});` })
   await sleep(2400)
   const r = await send('Runtime.evaluate', { expression: PROBE, returnByValue: true })
-  const d = JSON.parse(r.result.result.value)
+  const d = r.timeout
+    ? { textLen: 0, errors: ['页面没有响应（主线程卡死？）'], vw: 0, scrollW: 0, over: [] }
+    : JSON.parse(r.result.result.value)
   const bad = d.scrollW > d.vw + 1 || d.textLen < min || d.errors.length
   console.log(`${bad ? '✗' : '✓'} ${name.padEnd(6)} 视口${d.vw} 内容${d.scrollW}` +
     ` | 侧栏${d.aside?'在':'收'} 汉堡${d.burger?'有':'无'}` +

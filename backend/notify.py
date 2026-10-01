@@ -97,12 +97,13 @@ def notify(db: OrmSession, user: User, title: str, content: str, *,
 
 
 def notify_managers(db: OrmSession, activity_id: str, title: str,
-                    content: str, *, duty: str = "") -> int:
+                    content: str, *, duty: str = "", tab: str = "") -> int:
     """通知该活动的管理者。
 
     duty 指明这条消息属于哪一摊事（见 ActivityManager.DUTIES）：分了工的人
     只收自己那摊，没分工的人什么都收。一场大活动十几个管理者，每条变动都
     群发的结果就是所有人都把通知关掉。
+    tab 是点开后直接打开的活动管理页签（见 msgcenter.MANAGE_TABS）。
     """
     from .models import ActivityManager
 
@@ -114,8 +115,11 @@ def notify_managers(db: OrmSession, activity_id: str, title: str,
             continue
         u = db.get(User, row.user_id)
         if u is not None:
-            # 带上活动 id：这些消息说的都是某一场活动的事，点开就该进得去
-            msgcenter.send_user(db, u, "custom", data={"activity_id": activity_id},
+            # 点开进活动管理页：这些消息说的都是管理者要在那儿办的事
+            data = {"activity_id": activity_id, "route": "manage"}
+            if tab:
+                data["tab"] = tab
+            msgcenter.send_user(db, u, "custom", data=data,
                             title=title, content=content)
             n += 1
     return n
@@ -148,4 +152,4 @@ def notify_late_dropout(db: OrmSession, enr, user: User) -> None:
         f"距开始不足 {config.LATE_CANCEL_HOURS} 小时。\n"
         f"该场次当前 {enrolled}/{capacity} 人"
         + (f"，缺 {gap} 人。" if gap else "，人数已满。"),
-        duty="roster")
+        duty="roster", tab="roster")

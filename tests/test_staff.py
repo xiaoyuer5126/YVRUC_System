@@ -64,7 +64,7 @@ def test_non_manager_cannot_touch_others_activity(client, initiator,
 
 @pytest.fixture
 def assigned_group(db):
-    """一个二级待定的场次，两个岗位，两个已确认的人。"""
+    """一个截止后统一分配的场次，两个岗位，两个已确认的人。"""
     admin = db.query(User).filter(User.student_id == ADMIN).one()
     act = Activity(id=uid("act"), title=f"分配测试 {uid('t')}",
                    intro="x", location="x",

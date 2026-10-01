@@ -1,14 +1,16 @@
 """演示数据种子。
 
-覆盖活动流程五个阶段各一个活动，日期全部相对当前时间生成，
-保证任何一天跑起来都是"活的"。岗位模式三种都有演示：
-  · 校运动会开幕式（C类·报名中·直接定二级）——岗位满员→候补、
+活动流程的各个阶段、三种招募方式、两种场次模式都有演示，日期全部相对
+当前时间生成，保证任何一天跑起来都是"活的"：
+  · 校运动会开幕式（即选即得·报名中·报名即选岗位）——岗位满员→候补、
     候补转正确认窗口（2小时倒计时）
-  · 图书馆图书整理周（B类·报名中·二级待定）——调配期主角，
-    进后台建岗位后一键智能排班
-  · 校园开放日招生咨询（A类·报名中·仅一级）——简单活动无需岗位
-  · 校庆文艺晚会（D类·已截止·签到进行中）——统一+分岗位签到码、实时大屏
-  · 社区敬老院陪伴服务（仅一级·已完成）——时长已核准并锁定
+  · 图书馆图书整理周（即选即得·报名中·截止后统一分配）——报名都落在
+    「待分配」，进后台建岗位后一键分配
+  · 校园开放日招生咨询（即选即得·报名中）——一个场次一个岗位的简单活动
+  · 校庆文艺晚会（已截止·签到进行中）——统一+分岗位签到码、实时大屏
+  · 社区敬老院陪伴服务（已完成）——时长已核准并锁定
+  · 新生迎新周（报名后筛选·报名中）——报名问卷与意向场次
+  · 学院读书会志愿服务（补记录·已结束）——名单已导入，等待核准时长
 
 运行：python -m backend.seed   （重复执行会先清空重建）
 """
@@ -26,6 +28,7 @@ from .qrcodes import qr_svg
 from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, User, ViolationRecord, uid)
 # 已确认的时长要连明细一起种：明细不是另写的一段文字，是这套算法从签到记录
 # 里推出来的，所以直接借过来用，免得演示数据和线上算出来的两套口径
+from .routers.records import _import_part
 from .routers.staff_ops import compute_hours
 
 random.seed(42)
@@ -210,7 +213,7 @@ def main() -> None:
             db.add(e)
             return e
 
-        # ---------- 活动1：运动会（报名中·直接定二级） ----------
+        # ---------- 活动1：运动会（报名中·报名即选岗位） ----------
         sport = Activity(id=uid("act"), title="校运动会开幕式志愿服务", organizer="校青年志愿者协会",
                          recruit_mode="instant", cover_hue=350,
                          intro="全校秋季运动会开幕式需要大量志愿者支持，涉及引导、检录、礼仪、医疗辅助等岗位。"
@@ -303,7 +306,7 @@ def main() -> None:
         for _ in range(3):
             enr(take(), sport, m2, 1, position=o_final)
 
-        # ---------- 活动2：图书整理周（报名中·二级待定） ----------
+        # ---------- 活动2：图书整理周（报名中·截止后统一分配） ----------
         book = Activity(id=uid("act"), title="图书馆图书整理周·周六专场", organizer="图书馆",
                         recruit_mode="instant", cover_hue=210,
                         intro="图书馆馆藏调整需要大批志愿者参与图书下架、搬运与重新上架。"
@@ -345,7 +348,7 @@ def main() -> None:
                               joined_at=dt(days=-2, minutes=cnt * 7)))
             cnt += 1
 
-        # ---------- 活动3：招生咨询会（报名中·仅一级） ----------
+        # ---------- 活动3：招生咨询会（报名中·一个场次一个岗位） ----------
         fair = Activity(id=uid("act"), title="校园开放日·招生咨询志愿讲解", organizer="本科生招生办公室",
                         recruit_mode="instant", cover_hue=150,
                         intro="面向来访考生家长的咨询引导志愿服务。岗位简单，无需分岗位，"
@@ -437,7 +440,7 @@ def main() -> None:
                                 created_by=wang.id)
         db.add(task_back)
 
-        # ---------- 活动5：敬老院（仅一级·已完成·时长已锁定） ----------
+        # ---------- 活动5：敬老院（已完成·时长已锁定） ----------
         elder = Activity(id=uid("act"), title="社区敬老院陪伴服务（秋）", organizer="文学院青年志愿者协会",
                          recruit_mode="instant", cover_hue=30,
                          intro="每周定期前往附近社区敬老院陪伴老人，聊天读报、组织小活动。"
@@ -552,6 +555,33 @@ def main() -> None:
                                   joined_at=dt(days=-1, minutes=i * 40)))
         db.commit()
 
+        # ---------- 活动7：学院读书会（补记录·已结束·名单已导入） ----------
+        # 线下已经办完的活动：不招人、不签到，审批通过即「已结束」，
+        # 管理者导入名单后核准时长
+        club = Activity(id=uid("act"), title="学院读书会志愿服务",
+                        organizer="文学院青年志愿者协会",
+                        recruit_mode="record", cover_hue=60,
+                        intro="文学院读书会的场地布置与签到引导，活动已在线下办完，"
+                              "这里补登记参与名单与志愿时长。",
+                        location="人文楼报告厅",
+                        contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
+                        status="finished",
+                        held_start=dt(days=-10, base=t0.replace(hour=14)),
+                        held_end=dt(days=-10, base=t0.replace(hour=17)),
+                        approved_at=dt(days=-9),
+                        created_by=limu.id, created_at=dt(days=-12))
+        db.add(club)
+        db.flush()
+        # 导入的那一段明细与真导入同一个写法，不在这儿另写一份
+        for i, u in enumerate(students[40:46]):
+            hours = 3.0 if i % 3 else 2.5
+            note = "场地布置" if i % 2 else "签到引导"
+            db.add(HoursRecord(id=uid("hrs"), activity_id=club.id, user_id=u.id,
+                               hours=hours, source="import", note=note,
+                               parts=[_import_part(club, hours, note)],
+                               confirmed_by=limu.id))
+        db.commit()
+
         # ---------- 活动管理者（创建者自动成为管理者，另配多人共管） ----------
         acts_by_title = {a.title: a for a in db.query(Activity).all()}
         mgr_plan = [
@@ -561,6 +591,7 @@ def main() -> None:
             ("校庆文艺晚会·当日保障", [zhang]),
             ("社区敬老院陪伴服务（秋）", [limu]),
             ("新生迎新周·志愿者选拔", [limu, wang]),
+            ("学院读书会志愿服务", [limu]),
         ]
         for title, mgrs in mgr_plan:
             act = acts_by_title[title]
@@ -598,7 +629,7 @@ def main() -> None:
              {"field": "training_note", "label": "培训内容",
               "old": "", "new": "赛前一周 19:00 线上培训会议"}], visible=True)
         aud("create", "activity", book.id, book.title, book.id,
-            "创建活动「图书馆图书整理周·周六专场」（二级待定模式）",
+            "创建活动「图书馆图书整理周·周六专场」（截止后统一分配岗位）",
             dt(days=-3))
         aud("publish", "activity", book.id, book.title, book.id,
             "发布活动，开始报名", dt(days=-2), visible=True)
@@ -609,7 +640,7 @@ def main() -> None:
             "生成统一签到码 GALA01", dt(days=-1),
             actor=users["2025003"])
         aud("create", "activity", elder.id, elder.title, elder.id,
-            "创建活动「社区敬老院陪伴服务（秋）」（仅场次模式）",
+            "创建活动「社区敬老院陪伴服务（秋）」",
             dt(days=-22))
         aud("hours_confirm", "hours", elder.id, elder.title, elder.id,
             "锁定志愿时长，活动标记为已完成（申诉截止无人申诉，系统自动锁定）",

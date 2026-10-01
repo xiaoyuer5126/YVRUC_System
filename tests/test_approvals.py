@@ -97,6 +97,9 @@ def test_提交后由部长通过即发布(client, admin, db):
     r = client.post(f"/api/staff/activities/{draft}/decide", headers=head,
                     json={"approve": True, "comment": "同意"})
     assert r.status_code == 200 and r.json()["status"] == "published"
+    # 审批结果发给活动管理者，点开进活动管理页的「审核」页签
+    notes = _my_notes(client, admin, draft, "审批通过")
+    assert len(notes) == 1 and notes[0]["page"] == f"/manage/{draft}?tab=review"
     # 报名开始时间没到也照样发布，广场上显示倒计时
     d = client.get(f"/api/activities/{draft}", headers=admin).json()
     assert d["status"] == "published"

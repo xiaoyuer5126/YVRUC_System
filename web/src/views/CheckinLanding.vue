@@ -76,12 +76,13 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { auth } from '../store'
 
 const route = useRoute()
+const router = useRouter()
 const task = ref(null)
 const loading = ref(true)
 const done = ref(false)
@@ -116,7 +117,7 @@ onMounted(async () => {
   if (!auth.token) {
     // 未登录先去登录（模拟扫码后需身份核验）
     localStorage.setItem('rucva_after_checkin', route.params.token)
-    window.location.hash = '#/login?next=' + encodeURIComponent(`/checkin/${route.params.token}`)
+    router.replace({ path: '/login', query: { next: `/checkin/${route.params.token}` } })
     return
   }
   const pending = localStorage.getItem('rucva_after_checkin')

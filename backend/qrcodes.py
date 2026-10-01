@@ -33,9 +33,8 @@ def _trusted_root(request: Request, base: str) -> str:
 def page_qr(request: Request, path: str, base: str = "") -> Response:
     """站内页面的二维码。内容一定是**绝对网址**。
 
-    编相对路径是不行的：手机相机扫到「/#/checkin/AB12CD」不会跳转，只把这
-    行字显示出来——码是好码，但它编的不是一个网址。签到码与服装码此前就是
-    这样，扫了进不了网站。
+    编相对路径是不行的：手机相机扫到「/checkin/AB12CD」不会跳转，只把这
+    行字显示出来——码是好码，但它编的不是一个网址，扫了进不了网站。
 
     base（形如 https://host/）由前端传，那是管理者浏览器此刻的地址，也正是
     要让志愿者打开的地址，最可靠。没传才按请求头兜底——反代后面推不准：
@@ -46,6 +45,6 @@ def page_qr(request: Request, path: str, base: str = "") -> Response:
     拿平台的地址生成一张指向别处的码，贴在海报上，扫的人无从分辨。
     """
     root = _trusted_root(request, base)
-    return Response(content=qr_svg(f"{root}/#{path}"),
+    return Response(content=qr_svg(f"{root}{path}"),
                     media_type="image/svg+xml",
                     headers={"Cache-Control": "no-store"})

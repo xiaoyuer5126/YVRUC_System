@@ -154,7 +154,7 @@ def submit_lock_when_due(db: OrmSession) -> int:
                     f"「{act.title}」的确认/申诉期已满，本该自动提交时长审核，"
                     f"但这是对外联络部归口的活动，还没有上传盖章立项书。\n"
                     f"请到活动管理的「审核」页签上传，上传后系统会自动提交。",
-                    duty="hours")
+                    duty="hours", tab="review")
                 reminded += 1
             continue
         if not act.vb_names:
@@ -166,7 +166,7 @@ def submit_lock_when_due(db: OrmSession) -> int:
                     f"但还没有填写志愿北京上的活动名称。\n"
                     f"请到活动管理的「审核」页签填写（可填多个），"
                     f"保存后系统会自动提交；也可以在「时长管理」直接提交时长审核。",
-                    duty="hours")
+                    duty="hours", tab="review")
                 reminded += 1
             continue
         reason = (f"确认/申诉截止（{act.appeal_deadline:%m-%d %H:%M}）无人申诉，"
@@ -221,7 +221,7 @@ def notify_managers_to_assign(db: OrmSession, act: Activity) -> None:
                     f"「{act.title}」报名已截止，还有场次没排完：\n"
                     f"{lines}\n"
                     f"请进入活动管理的「岗位设置」补齐岗位，"
-                    f"再到「志愿者管理」运行一键分配岗位。", duty="roster")
+                    f"再到「志愿者管理」运行一键分配岗位。", duty="roster", tab="tree")
     logger.info("活动「%s」已截止，提醒管理者排岗：%s", act.title, "；".join(gaps))
 
 
@@ -409,7 +409,7 @@ def remind_vb_resubmit(db: OrmSession) -> int:
             f"「{act.title}」的志愿北京活动名称已被对外联络部退回 {days} 天，还没有重新提交。\n"
             f"退回理由：{last.reply}\n"
             f"请到活动管理的「审核」页签修改名称后重新提交，活动才会标记为已完成。",
-            duty="hours")
+            duty="hours", tab="review")
         db.commit()
         sent += 1
         logger.info("活动「%s」志愿北京名称退回 %d 天未重提，已提醒管理者", act.title, days)
@@ -648,7 +648,7 @@ def send_roster_digests(db: OrmSession) -> int:
             f"过去 24 小时：新增 {joined} 人，退出 {left} 人。\n"
             f"当前 {enrolled}/{capacity} 人"
             + (f"，缺 {gap} 人。" if gap else "，人数已满。")
-            + f"\n场次开始：{g.start_time:%m-%d %H:%M}", duty="roster")
+            + f"\n场次开始：{g.start_time:%m-%d %H:%M}", duty="roster", tab="roster")
         sent += 1
     if shifts:
         db.commit()

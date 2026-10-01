@@ -109,6 +109,8 @@ TEMPLATE_PAGE: dict[str, str] = {
 
 # data.route 能直接当页面路径的取值。名单外的不猜，认错页面比不跳更糟。
 ROUTE_PAGES = ("hours", "approvals")
+# route="manage"：发给活动管理者的，进活动管理页；data.tab 指定直接打开哪个页签
+MANAGE_TABS = ("tree", "roster", "hours", "review")
 
 
 def page_for(template_key: str, data: dict | None) -> str:
@@ -118,17 +120,22 @@ def page_for(template_key: str, data: dict | None) -> str:
     都按它跳。依次看：
     1. 模板配了落点（TEMPLATE_PAGE）；
     2. data.route 指的页。它排在活动 id 前面：待办的审批也带着活动 id，
-       可审批人在活动详情页看不到通过/驳回的按钮；
+       可审批人在活动详情页看不到通过/驳回的按钮；发给活动管理者的
+       （route="manage"）进活动管理页，学生看的那个详情页上没有他要办的事；
     3. data.activity_id：进活动页；
     4. 都没有：不跳。
     """
     data = data or {}
+    activity_id = data.get("activity_id")
     if template_key in TEMPLATE_PAGE:
         return TEMPLATE_PAGE[template_key]
     if data.get("route") in ROUTE_PAGES:
         return "/" + data["route"]
-    if data.get("activity_id"):
-        return f"/activity/{data['activity_id']}"
+    if data.get("route") == "manage" and activity_id:
+        tab = data.get("tab")
+        return f"/manage/{activity_id}" + (f"?tab={tab}" if tab in MANAGE_TABS else "")
+    if activity_id:
+        return f"/activity/{activity_id}"
     return ""
 
 
@@ -147,7 +154,7 @@ def _link_for(template_key: str, data: dict | None, need_ack: bool) -> str:
         page = page_for(template_key, data)
     if not page or not config.SITE_URL:
         return ""
-    return config.SITE_URL.rstrip("/") + "/#" + page
+    return config.SITE_URL + page
 
 
 def render(template_key: str, extra: str = "", **kw) -> tuple[str, str]:

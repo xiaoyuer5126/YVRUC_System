@@ -867,7 +867,7 @@ def delete_activity(activity_id: str, db: OrmSession = Depends(db_session),
     return {"ok": True}
 
 
-# ======================= 一级场次 =======================
+# ======================= 场次 =======================
 
 SHIFT_MODES = ("pick", "assign")
 
