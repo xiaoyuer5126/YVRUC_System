@@ -58,6 +58,7 @@ export function validateActivity(f, range) {
     return '请选择报名开始与截止时间'
   }
   if (!f.intro?.trim()) return '请填写活动简介'
+  if (!f.volunteer_benefit?.trim()) return '请填写志愿者保障'
   if (!f.contact_group_qr) return '请上传志愿者联络群二维码'
   return ''
 }

@@ -323,10 +323,12 @@ class Activity(Base):
     # 谁办的这场活动：校青协 / 某院系志愿团体 / 学校某部门。必填——
     # 审批时靠它判断该由哪个部门归口，志愿者也要知道自己报的是谁的活动。
     organizer: Mapped[str] = mapped_column(String(64), default="")
-    # 活动级的整体要求与保障，都选填。岗位上的「要求原文」讲的是那个岗位
-    # 特有的事，这两条讲的是整个活动共通的：着装、集合、餐食、时长、纪念品。
+    # 活动级的整体要求与保障。岗位上的「要求原文」讲的是那个岗位特有的事，
+    # 这两条讲的是整个活动共通的：着装、集合、餐食、时长、纪念品。
+    # 要求选填；保障必填，招募文案里固定有这一段，默认见 config
     volunteer_requirement: Mapped[str] = mapped_column(Text, default="")
-    volunteer_benefit: Mapped[str] = mapped_column(Text, default="")
+    volunteer_benefit: Mapped[str] = mapped_column(
+        Text, default=config.DEFAULT_VOLUNTEER_BENEFIT)
     # 招募范围：限定校区、学段与学院，空列表 = 不限。整个活动一刀切，
     # 更细的差别（这一场只要研究生）走场次/岗位各自的条件要求。
     recruit_campuses: Mapped[list] = mapped_column(JSON, default=list)
@@ -868,7 +870,8 @@ class Enrollment(Base):
     excuse_reason: Mapped[str] = mapped_column(String(256), default="")
     excused_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    source: Mapped[str] = mapped_column(String(16), default="self")  # self/promoted/admin
+    # self 自己报名 / admin 负责人补招 / party_school 补招的党校同学（见 hours.PARTY_SCHOOL）
+    source: Mapped[str] = mapped_column(String(16), default="self")
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=now)  # 排队/报名时间
     # 退选时间。和 joined_at 一起就是「报了多久之后退的」——退选画像要这个，
     # 从留痕里按文本翻是翻得出来，但那不是能拿来统计的东西

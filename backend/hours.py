@@ -17,6 +17,26 @@ from .models import (Activity, Enrollment, HoursRecord, HoursRequest, Position,
                      User, now, uid)
 
 
+# 以党校同学身份补招进来的报名（Enrollment.source）。党校同学的志愿时长另有
+# 用途，不能同时拿去做学分认定：不进时长导出表（那张表是给志愿北京录时长的）、
+# 不计入本人的累计时长；数据总览照算，那是平台自己的数。
+PARTY_SCHOOL = "party_school"
+
+
+def party_school_users(db: OrmSession, activity_id: str) -> set[str]:
+    """这场活动里以党校同学身份补招进来的人。"""
+    return {r[0] for r in db.query(Enrollment.user_id)
+            .filter(Enrollment.activity_id == activity_id,
+                    Enrollment.source == PARTY_SCHOOL).distinct()}
+
+
+def party_school_activities(db: OrmSession, user_id: str) -> set[str]:
+    """这个人以党校同学身份参加的那些活动。"""
+    return {r[0] for r in db.query(Enrollment.activity_id)
+            .filter(Enrollment.user_id == user_id,
+                    Enrollment.source == PARTY_SCHOOL).distinct()}
+
+
 def pending_lock(db: OrmSession, activity_id: str) -> HoursRequest | None:
     """这场活动是不是有一条锁定申请正等着部长处理。"""
     return (db.query(HoursRequest)

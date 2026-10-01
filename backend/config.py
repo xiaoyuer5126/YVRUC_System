@@ -292,6 +292,9 @@ ORPHAN_ATTACHMENT_DAYS = 7
 #   record   不公开招募（补记录）——线下已经办完的活动，只在平台上补记时长：
 #            不上广场、不收报名、不建场次与岗位，照常过青协立项审批，通过后
 #            由管理者导入「学号 + 时长」名单，之后走同一套时长结账流程。
+# 「志愿者保障」必填，新建活动时预先填好这一句（前端经 /api/auth/constants 取）
+DEFAULT_VOLUNTEER_BENEFIT = "根据实际服务情况认定志愿时长"
+
 RECRUIT_MODES = {
     "instant": {"name": "即选即得",
                 "desc": "报名即生效，名额已满自动进入候补"},

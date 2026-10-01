@@ -837,3 +837,41 @@ def test_同一批里同一人出现两次只有一笔(client, admin, db, served
     recs = db.query(HoursRecord).filter(HoursRecord.activity_id == act.id,
                                         HoursRecord.user_id == other.id).all()
     assert len(recs) == 1 and recs[0].hours == 1.0
+
+
+# ======================= 党校同学 =======================
+
+def test_党校同学_时长带标签_不进导出_不计入本人累计(client, admin, db, served,
+                                       take_student):
+    """党校同学只能经补招加进来；他们的时长不能同时拿去做学分认定。"""
+    from io import BytesIO
+    from openpyxl import load_workbook
+
+    act, g, u = served
+    party = student_row(db, take_student())
+    r = client.post(f"/api/staff/shifts/{g.id}/add-walkin", headers=admin,
+                    json={"student_id": party.student_id, "party_school": True,
+                          "force": True})       # 这一场名额已经排满
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert [e.source for e in db.query(Enrollment).filter(
+        Enrollment.activity_id == act.id, Enrollment.user_id == party.id)] == ["party_school"]
+    r = client.post(f"/api/staff/activities/{act.id}/hours/manual", headers=admin,
+                    json={"items": [{"student_id": party.student_id, "hours": 3,
+                                     "note": "场外支援"}]})
+    assert r.status_code == 200, r.text
+    _confirm(client, admin, act)
+
+    # 时长管理里一眼看得出来
+    rows = client.get(f"/api/staff/activities/{act.id}/hours", headers=admin).json()["items"]
+    assert {x["user"]["id"]: x["party_school"] for x in rows} == {u.id: False, party.id: True}
+    # 导出表（给志愿北京录时长的）里没有他
+    r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
+    names = [x[0] for x in list(load_workbook(BytesIO(r.content)).active.values)[1:]]
+    assert u.name in names and party.name not in names
+    # 本人看得到这条、带标签，但累计时长不算它
+    mine = client.get("/api/me/hours", headers=login(client, party.student_id)).json()
+    assert [(x["party_school"], x["hours"]) for x in mine["records"]] == [(True, 3)]
+    assert mine["total"] == 0
+    # 别人照常
+    assert client.get("/api/me/hours", headers=login(client, u.student_id)).json()["total"] == 4

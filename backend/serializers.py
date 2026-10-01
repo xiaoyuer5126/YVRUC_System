@@ -95,6 +95,14 @@ def tags_desc(tags: dict | None) -> str:
     return "；".join(parts)
 
 
+def recruit_scope_phrase(act) -> str:
+    """招募范围放进句子里的说法，接在「现面向」后面：全校同学、中关村校区本科生、
+    信息学院、法学院硕士研究生。"""
+    where = "、".join(act.recruit_campuses or []) + "、".join(act.recruit_colleges or [])
+    stages = "、".join(act.recruit_stages or [])
+    return f"{where or '全校'}{stages or '同学'}"
+
+
 def recruit_scope_text(act) -> str:
     """招募范围的一句话说明；三项都没限就是「面向全校」。"""
     text = tags_desc({"校区": act.recruit_campuses or [],

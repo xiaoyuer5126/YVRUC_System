@@ -275,13 +275,15 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
     rows = (db.query(HoursRecord)
             .filter(HoursRecord.user_id == user.id)
             .order_by(HoursRecord.created_at.desc()).all())
-    # 选了劳务的那次不计入时长：账上只有志愿时长
-    total = sum(r.hours for r in rows if r.counts_hours())
+    # 选了劳务的那次不计入时长：账上只有志愿时长。党校同学的那几场也不计入：
+    # 不能同时拿去做学分认定（见 hours.PARTY_SCHOOL），明细里照样列、带标签
+    party = hours_flow.party_school_activities(db, user.id)
+    counted = [r for r in rows if r.counts_hours() and r.activity_id not in party]
+    total = sum(r.hours for r in counted)
     acts = {a.id: a for a in db.query(Activity)
             .filter(Activity.id.in_([r.activity_id for r in rows] or [""])).all()}
-    locked = sum(r.hours for r in rows
-                 if r.counts_hours() and acts.get(r.activity_id)
-                 and acts[r.activity_id].hours_locked())
+    locked = sum(r.hours for r in counted
+                 if acts.get(r.activity_id) and acts[r.activity_id].hours_locked())
     appeals = {a.record_id: a for a in db.query(HoursAppeal)
                .filter(HoursAppeal.user_id == user.id)
                .order_by(HoursAppeal.created_at).all()}
@@ -298,6 +300,7 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
                     "activity_id": r.activity_id,
                     # 补记录活动不公开：前端别给它挂活动详情的链接
                     "record_only": bool(act and act.is_record()),
+                    "party_school": r.activity_id in party,
                     "hours": r.hours, "parts": r.parts or [],
                     "reward": r.reward, "reward_label": r.reward_label(),
                     "confirmed_at": iso_of(r.confirmed_at),

@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
-from .. import assign, config, copying, scoring
+from .. import assign, config, copying, hours as hours_flow, scoring
 from ..stage import ensure_hours_editable, ensure_not_finished
 from ..audit import diff_changes, log as audit_log
 from ..database import db_session
@@ -52,6 +52,9 @@ ACTIVITY_FIELDS = {
     "reg_start": "报名开始", "reg_end": "报名截止",
     "held_start": "活动开始", "held_end": "活动结束",
 }
+# 必填的文字字段：新建时逐个查过，修改时也不能改成空的
+REQUIRED_TEXT = {"title": "活动名称", "organizer": "组织单位", "location": "活动地点",
+                 "intro": "活动简介", "volunteer_benefit": "志愿者保障"}
 # 补记录活动（config.RECORD_MODE）用不上的那些：不公开、不报名，就没有联络群、
 # 报名时间与招募范围。编辑时传了也不认，免得前端一个旧表单把它们又写回来
 RECORD_UNUSED_FIELDS = ("contact_group_qr", "reg_start", "reg_end",
@@ -144,9 +147,9 @@ class ActivityBody(BaseModel):
     contacts: list[dict] = []
     contact_group_qr: str = ""
     cover_hue: int = 0
-    # 都选填：整体要求（着装、集合）与保障（餐食、时长、纪念品）
+    # 整体要求（着装、集合）选填；保障（时长、餐食、纪念品）必填，没传就是默认那句
     volunteer_requirement: str = ""
-    volunteer_benefit: str = ""
+    volunteer_benefit: str = config.DEFAULT_VOLUNTEER_BENEFIT
     # 招募范围：限定校区/学段/学院，空 = 不限
     recruit_campuses: list[str] = []
     recruit_stages: list[str] = []
@@ -306,6 +309,11 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
     if not body.intro.strip():
         raise HTTPException(400, "请填写活动简介")
     record = body.recruit_mode == config.RECORD_MODE
+    # 补记录活动不招人、没有招募文案，表单上也没有这一项
+    benefit = body.volunteer_benefit.strip() or (
+        config.DEFAULT_VOLUNTEER_BENEFIT if record else "")
+    if not benefit:
+        raise HTTPException(400, "请填写志愿者保障")
     held_start = held_end = None
     if record:
         # 补记录：线下已经办完，不公开、不报名——没有联络群、报名时间与招募
@@ -328,7 +336,7 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                    contact_group_qr=body.contact_group_qr.strip(),
                    cover_hue=body.cover_hue,
                    volunteer_requirement=body.volunteer_requirement.strip(),
-                   volunteer_benefit=body.volunteer_benefit.strip(),
+                   volunteer_benefit=benefit,
                    recruit_campuses=_clean_scope(body.recruit_campuses,
                                                  config.CAMPUSES, "校区"),
                    recruit_stages=_clean_scope(body.recruit_stages,
@@ -373,6 +381,12 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
         if not act.is_record() and key in ("held_start", "held_end"):
             continue
         value = body[key]
+        if key in REQUIRED_TEXT:
+            value = str(value or "").strip()
+            if not value and key == "volunteer_benefit" and act.is_record():
+                value = config.DEFAULT_VOLUNTEER_BENEFIT
+            if not value:
+                raise HTTPException(400, f"{REQUIRED_TEXT[key]}不能为空")
         if key == "title" and str(value).strip() != act.title:
             ensure_unique_title(db, str(value), exclude_id=act.id)
         if key in ("reg_start", "reg_end", "held_start", "held_end"):
@@ -2091,8 +2105,10 @@ def add_walkin(shift_id: str, body: dict,
             raise HTTPException(409, f"{u.name}：{'；'.join(reasons)}。"
                                      f"确认添加请勾选强制")
 
+        # 党校同学只能这样加进来：时长带「党校」标签，不进导出表、不计入本人累计
+        source = hours_flow.PARTY_SCHOOL if body.get("party_school") else "admin"
         enr = Enrollment(id=uid("enr"), activity_id=g.activity_id, shift_id=g.id,
-                         user_id=u.id, source="admin", joined_at=now(),
+                         user_id=u.id, source=source, joined_at=now(),
                          status="enrolled",
                          allow_reassign=bool(body.get("allow_reassign", True)))
         if position is not None:
@@ -2103,13 +2119,14 @@ def add_walkin(shift_id: str, body: dict,
         for s in extra:
             # 与 sync_attached 连带报上的行同形：附属场次不设岗位
             db.add(Enrollment(id=uid("enr"), activity_id=g.activity_id,
-                              shift_id=s.id, user_id=u.id, source="admin",
+                              shift_id=s.id, user_id=u.id, source=source,
                               status="enrolled", joined_at=now()))
         also = "、".join(f"{s.kind_label()}「{s.name}」" for s in extra)
         audit_log(db, actor=user, action="force_assign" if reasons else "create",
                   target_type="enrollment", target_id=enr.id,
                   target_label=f"{u.name}", activity_id=g.activity_id,
                   summary=f"补招 {u.name}（{sid}）至场次「{g.name}」"
+                          + ("（党校同学）" if source == hours_flow.PARTY_SCHOOL else "")
                           + (f"，并报上{also}" if extra else "")
                           + (f"（强制：{'；'.join(reasons)}）" if reasons else ""))
         # 补招是管理者单方面加进来的：不通知的话，本人那边一点动静都没有——

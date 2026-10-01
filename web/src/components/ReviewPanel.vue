@@ -180,7 +180,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
 import ApprovalCommentDialog from './ApprovalCommentDialog.vue'
-import { vbConfirmed } from '../approvalTemplates'
+import { vbConfirmed } from '../replyTemplates'
 import ProjectFileSlot from './ProjectFileSlot.vue'
 import VbNamesInput from './VbNamesInput.vue'
 

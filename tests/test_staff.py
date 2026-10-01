@@ -706,3 +706,51 @@ def test_补招要通知本人(client, admin, db, assigned_group, take_student):
                  Notification.title.like("您已被补招%")).first())
     assert n is not None and n.data.get("activity_id") == act.id
     assert g.name in n.content
+
+
+# ======================= 志愿者保障与必填项 =======================
+
+def _new_activity(client, headers, **over):
+    from datetime import timedelta
+    from backend.models import now, uid
+    body = {"contact_group_qr": "x", "title": f"保障测试 {uid('t')}", "organizer": "青协",
+            "intro": "x", "location": "世纪馆",
+            "contacts": [{"name": "王", "phone": "13900000000"}],
+            "reg_start": (now() - timedelta(days=1)).isoformat(),
+            "reg_end": (now() + timedelta(days=5)).isoformat(), **over}
+    return client.post("/api/staff/activities", headers=headers, json=body)
+
+
+def test_志愿者保障必填_没填就是默认那句(client, admin, db):
+    from backend import config
+    default = "根据实际服务情况认定志愿时长"
+    # 新建表单预填的那句来自后端
+    assert client.get("/api/auth/constants", headers=admin).json()[
+        "volunteer_benefit_default"] == default == config.DEFAULT_VOLUNTEER_BENEFIT
+    r = _new_activity(client, admin)
+    assert r.status_code == 200, r.text
+    aid = r.json()["id"]
+    assert client.get(f"/api/activities/{aid}", headers=admin).json()[
+        "volunteer_benefit"] == default
+    r = _new_activity(client, admin, volunteer_benefit="  ")
+    assert r.status_code == 400 and "志愿者保障" in r.json()["detail"]
+    # 修改时也不能改成空的
+    r = client.patch(f"/api/staff/activities/{aid}", headers=admin,
+                     json={"volunteer_benefit": ""})
+    assert r.status_code == 400 and r.json()["detail"] == "志愿者保障不能为空"
+    # 补记录活动表单上没有这一项，空着就用默认那句
+    from backend.models import now
+    from datetime import timedelta
+    r = _new_activity(client, admin, recruit_mode="record", volunteer_benefit="",
+                      held_start=(now() - timedelta(days=3)).isoformat(),
+                      held_end=(now() - timedelta(days=3, hours=-2)).isoformat())
+    assert r.status_code == 200, r.text
+
+
+def test_修改活动时必填项不能清空(client, admin, db):
+    """新建时逐个查过的，改的时候同样不能改成空串。"""
+    aid = _new_activity(client, admin).json()["id"]
+    for key, label in (("title", "活动名称"), ("organizer", "组织单位"),
+                       ("location", "活动地点"), ("intro", "活动简介")):
+        r = client.patch(f"/api/staff/activities/{aid}", headers=admin, json={key: " "})
+        assert r.status_code == 400 and r.json()["detail"] == f"{label}不能为空", key

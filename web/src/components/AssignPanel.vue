@@ -135,8 +135,8 @@
 
     <el-empty v-else description="点击名单上方的「一键分配岗位」开始试算" :image-size="80" />
 
-    <!-- 补招：现场临时加人 -->
-    <el-dialog v-model="walkinVisible" title="补招志愿者（现场添加）" width="430">
+    <!-- 补招：负责人直接把人加进场次 -->
+    <el-dialog v-model="walkinVisible" title="补招志愿者" width="430">
       <el-form label-width="90px">
         <el-form-item label="学号"><el-input v-model="walkin.sid" /></el-form-item>
         <el-form-item label="指定岗位">
@@ -156,6 +156,11 @@
             </el-checkbox>
           </el-checkbox-group>
           <div class="dim">默认不报；勾上的一并报上</div>
+        </el-form-item>
+        <!-- 党校同学只能从这里加进来 -->
+        <el-form-item label="党校同学">
+          <el-checkbox v-model="walkin.party">是党校同学</el-checkbox>
+          <div class="dim">时长带「党校」标签，不进时长导出表，也不计入本人的累计时长</div>
         </el-form-item>
         <el-form-item label="">
           <el-checkbox v-model="walkin.force">
@@ -195,7 +200,7 @@ function openWalkin() { walkinVisible.value = true }
 defineExpose({ runPreview, openWalkin, solving })
 const walkinVisible = ref(false)
 const walkin = ref({ sid: '', position: '', force: false, allowReassign: true,
-                     attached: [] })
+                     attached: [], party: false })
 // 本场次下对所选岗位生效的培训/彩排（没选岗位就全列），口径同后端 attached_shifts
 const walkinAttached = computed(() => (props.shift.attached || []).filter(a =>
   !walkin.value.position || !a.applies_to_positions?.length
@@ -272,11 +277,11 @@ async function addWalkin() {
       allow_reassign: walkin.value.allowReassign,
       attached_ids: walkin.value.attached.filter(
         id => walkinAttached.value.some(a => a.id === id)),
-      force: walkin.value.force })
+      force: walkin.value.force, party_school: walkin.value.party })
     ElMessage.success('补招成功')
     walkinVisible.value = false
     walkin.value = { sid: '', position: '', force: false, allowReassign: true,
-                     attached: [] }
+                     attached: [], party: false }
     emit('reload')
   } catch (e) {
     // 冲突/超额都需要显式勾选强制，替用户把勾打上并提示重试

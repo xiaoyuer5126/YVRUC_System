@@ -250,24 +250,69 @@ def test_培训必须挂在服务场次下(client, admin, db, act_with_positions
         assert r.status_code == 400 and "必须挂在" in r.json()["detail"]
 
 
-def test_招募文案带上岗位与彩排(client, admin, db, act_with_positions):
-    act, g, east, _c = act_with_positions
-    _add_attached(client, admin, act, g, positions=[east.id])
+def test_招募文案按校青协定的格式拼(client, admin, db, act_with_positions):
+    import re
     from backend import config
 
-    client.patch(f"/api/staff/activities/{act.id}", headers=admin,
-                 json={"volunteer_requirement": "需全程站立",
-                       "volunteer_benefit": "提供午餐与纪念徽章",
-                       "recruit_stages": [config.STAGES[0]]})
+    act, g, east, _c = act_with_positions
+    _add_attached(client, admin, act, g, positions=[east.id])
+    assert client.patch(f"/api/staff/activities/{act.id}", headers=admin,
+                        json={"intro": "演出当天需要引导与检录。", "organizer": "校团委",
+                              "volunteer_requirement": "需全程站立",
+                              "volunteer_benefit": "提供午餐与纪念徽章",
+                              "recruit_stages": [config.STAGES[0]]}).status_code == 200
+    base = "https://v.ruc.edu.cn"           # 测试环境配的正式域名
+    url = f"/api/staff/activities/{act.id}/poster?base={base}"
+    text = client.get(url, headers=admin).json()["text"]
+    lines = text.split("\n")
+    # 简介去掉句号接「现面向……」；[玫瑰] 原样写，发到微信里显示成表情
+    assert lines[:6] == [f"志愿招募|{act.title}", "各位同学大家好！", "【活动内容简介】",
+                         f"演出当天需要引导与检录，现面向全校{config.STAGES[0]}招募志愿者[玫瑰]",
+                         "【活动主办单位】", "校团委"]
+    assert lines[6] == "【活动时间】"
+    assert re.fullmatch(r"\d+月\d+日（周[一二三四五六日]）\d\d:\d\d—.*\d\d:\d\d", lines[7])
+    # 选填的段有内容才出现，夹在「服务内容」和「志愿者保障」之间
+    assert [s for s in lines if s.startswith("【")] == [
+        "【活动内容简介】", "【活动主办单位】", "【活动时间】", "【活动地点】",
+        "【服务内容及招募人数】", "【培训与彩排】", "【志愿者要求】", "【志愿者保障】",
+        "【报名方式】"]
+    assert "东门引导 3人：无特殊要求" in lines and "  岗位地点：北门" in lines
+    assert any("排练厅（东门引导需参加，计入时长）" in s for s in lines)
+    assert lines[lines.index("【志愿者保障】") + 1] == "提供午餐与纪念徽章"
+    # 链接前后留空格，免得微信把后面的 / 吞进网址
+    assert f"点击链接 {base}/activity/{act.id} /扫描下方二维码报名" in lines[-1]
+    # 报名截止、联系方式不写；招募文案对外，更不能带名单
+    assert "报名截止" not in text and "13900000000" not in text and "学号" not in text
 
-    text = client.get(f"/api/staff/activities/{act.id}/poster",
-                      headers=admin).json()["text"]
-    for want in ("志愿者招募", "东门引导", "检录台", "需全程站立",
-                 "提供午餐与纪念徽章", "彩排", "排练厅", "东门引导需参加",
-                 f"招募范围：学段：{config.STAGES[0]}"):
-        assert want in text, f"招募文案里少了「{want}」\n{text}"
-    # 招募文案对外，不能带名单
-    assert "学号" not in text
+    client.patch(f"/api/staff/activities/{act.id}", headers=admin,
+                 json={"volunteer_requirement": ""})
+    assert "【志愿者要求】" not in client.get(url, headers=admin).json()["text"]
+    # base 只认本平台域名
+    r = client.get(f"/api/staff/activities/{act.id}/poster?base=https://evil.example",
+                   headers=admin)
+    assert r.status_code == 400
+
+
+def test_招募文案的时间与招募范围写法():
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from backend.routers.staff_ops import _cn_span
+    from backend.serializers import recruit_scope_phrase
+
+    assert _cn_span(datetime(2026, 10, 18, 7, 30), datetime(2026, 10, 18, 12)) == \
+        "10月18日（周日）07:30—12:00"
+    assert _cn_span(datetime(2026, 10, 1, 22), datetime(2026, 10, 2, 2)) == \
+        "10月1日（周四）22:00—10月2日（周五）02:00"
+
+    def scope(campuses=(), colleges=(), stages=()):
+        return recruit_scope_phrase(SimpleNamespace(
+            recruit_campuses=list(campuses), recruit_colleges=list(colleges),
+            recruit_stages=list(stages)))
+    assert scope() == "全校同学"
+    assert scope(stages=["本科生", "硕士研究生"]) == "全校本科生、硕士研究生"
+    assert scope(campuses=["中关村校区"], stages=["本科生"]) == "中关村校区本科生"
+    assert scope(colleges=["信息学院", "法学院"]) == "信息学院、法学院同学"
 
 
 def test_培训彩排可以请假(client, admin, db, act_with_positions, take_student):

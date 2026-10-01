@@ -19,7 +19,7 @@ def qr_svg(data: str, scale: int = 6) -> str:
     return buf.getvalue().decode("utf-8")
 
 
-def _trusted_root(request: Request, base: str) -> str:
+def trusted_root(request: Request, base: str) -> str:
     """二维码里允许出现的网址前缀：配置的正式域名，或本次请求自己的域名。"""
     root = (base or str(request.base_url)).rstrip("/")
     allowed = {urlparse(u).netloc for u in config.PUBLIC_BASE_URLS}
@@ -44,7 +44,7 @@ def page_qr(request: Request, path: str, base: str = "") -> Response:
     base 只认自家域名：这个接口不需要登录，收下任意 base 就等于让任何人
     拿平台的地址生成一张指向别处的码，贴在海报上，扫的人无从分辨。
     """
-    root = _trusted_root(request, base)
+    root = trusted_root(request, base)
     return Response(content=qr_svg(f"{root}{path}"),
                     media_type="image/svg+xml",
                     headers={"Cache-Control": "no-store"})

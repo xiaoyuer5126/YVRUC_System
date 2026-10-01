@@ -6,6 +6,7 @@
         <el-card shadow="never" class="stat">
           <div class="big">{{ data.total }}</div>
           <div class="dim">累计时长（小时）</div>
+          <div v-if="data.records.some(r => r.party_school)" class="dim">党校的时长不计入</div>
         </el-card>
       </el-col>
       <el-col :span="8">
@@ -34,6 +35,7 @@
           <b style="font-size:16px;color:var(--el-color-primary)">{{ row.hours }}h</b>
         </template>
         <template #body="{ row }">
+          <el-tag v-if="row.party_school" effect="plain" size="small">党校</el-tag>
           <el-tag :type="stateOf(row).type" effect="light" size="small">
             {{ stateOf(row).text }}
           </el-tag>
@@ -54,7 +56,13 @@
         <el-table-column type="expand" width="30">
           <template #default="{ row }"><HoursParts :parts="row.parts" style="margin-left:30px" /></template>
         </el-table-column>
-        <el-table-column prop="activity_title" label="活动" min-width="200" />
+        <el-table-column label="活动" min-width="200">
+          <template #default="{ row }">
+            {{ row.activity_title }}
+            <el-tag v-if="row.party_school" effect="plain" size="small"
+                    style="margin-left:4px">党校</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="时长（小时）" width="110">
           <template #default="{ row }"><b>{{ row.hours }}</b></template>
         </el-table-column>

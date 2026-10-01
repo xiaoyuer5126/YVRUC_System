@@ -261,6 +261,7 @@ def constants(user: User = Depends(current_user)):
         "violation_kinds": ViolationRecord.KINDS,
         "campuses": config.CAMPUSES,
         "stages": config.STAGES,
+        "volunteer_benefit_default": config.DEFAULT_VOLUNTEER_BENEFIT,
         "rules": {
             "late_cancel_hours": config.LATE_CANCEL_HOURS,
             "confirm_hours": config.PROMOTE_CONFIRM_HOURS,

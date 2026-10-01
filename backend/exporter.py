@@ -23,7 +23,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session as OrmSession
 
-from . import config, scoring
+from . import config, hours as hours_flow, scoring
 from .models import (Activity, Attachment, CheckinRecord, Enrollment,
                      FormQuestion, HoursRecord, Shift, User, now)
 
@@ -283,13 +283,16 @@ def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
     """时长记录：一人一行，姓名、学号、身份证号、时长、备注。
 
     备注是明细拼成的一行（时段 + 岗位名，分号隔开，不换行）。
-    选了劳务的人不导：平台不给他们记时长。
+    选了劳务的人不导：平台不给他们记时长。党校同学也不导：这张表是给志愿北京
+    录时长的，他们的时长不能同时拿去做学分认定（见 hours.PARTY_SCHOOL）。
     """
-    rows = (db.query(HoursRecord, User)
-            .join(User, HoursRecord.user_id == User.id)
-            .filter(HoursRecord.activity_id == activity.id,
-                    HoursRecord.reward == "hours")
-            .order_by(User.name).all())
+    party = hours_flow.party_school_users(db, activity.id)
+    rows = [(rec, u) for rec, u in (
+        db.query(HoursRecord, User)
+        .join(User, HoursRecord.user_id == User.id)
+        .filter(HoursRecord.activity_id == activity.id,
+                HoursRecord.reward == "hours")
+        .order_by(User.name).all()) if u.id not in party]
     wb = Workbook()
     ws = wb.active
     ws.title = "时长记录"

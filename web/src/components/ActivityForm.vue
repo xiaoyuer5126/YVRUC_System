@@ -86,9 +86,9 @@
       <el-input v-model="f.volunteer_requirement" type="textarea" :rows="2"
                 placeholder="选填。整个活动共通的要求，如：着深色衣裤、提前 20 分钟集合" />
     </el-form-item>
-    <el-form-item v-if="!isRecord" label="志愿者保障">
+    <el-form-item v-if="!isRecord" label="志愿者保障" required>
       <el-input v-model="f.volunteer_benefit" type="textarea" :rows="2"
-                placeholder="选填。提供什么，如：午餐与饮水、志愿时长、纪念证书、意外险" />
+                placeholder="提供什么，如：志愿时长、午餐与饮水、纪念证书、意外险" />
     </el-form-item>
     <el-form-item v-if="!isRecord" label="志愿者联络群二维码" required>
       <div class="contacts-box">
@@ -165,6 +165,8 @@ onMounted(async () => {
   ])
   campuses.value = c.campuses || []
   stages.value = c.stages || []
+  // 新建时预先填好默认的保障（以后端为准，不在前端抄一份）；编辑时已有内容就不动
+  if (!f.value.volunteer_benefit) f.value.volunteer_benefit = c.volunteer_benefit_default || ''
   colleges.value = cl.colleges || []
 })
 

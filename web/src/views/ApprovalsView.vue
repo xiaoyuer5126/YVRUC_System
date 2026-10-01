@@ -297,7 +297,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
 import ApprovalCommentDialog from '../components/ApprovalCommentDialog.vue'
 import ProjectFileSlot from '../components/ProjectFileSlot.vue'
-import { closingApproved, projectApproved, vbConfirmed } from '../approvalTemplates'
+import { closingApproved, projectApproved, vbConfirmed } from '../replyTemplates'
 import { useNarrow } from '../composables/useNarrow'
 import { auth } from '../store'
 

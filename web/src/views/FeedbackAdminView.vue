@@ -45,6 +45,12 @@
 
     <el-dialog v-model="handling" title="处理反馈" :width="narrow ? '94%' : '520px'">
       <div class="text dim">{{ current?.content }}</div>
+      <!-- 常用语：点一下整段替换进回复框（见 replyTemplates.js） -->
+      <div class="tpl-row">
+        <span class="dim">常用语：</span>
+        <el-tag v-for="t in feedbackReplies()" :key="t.label" class="tpl" effect="plain"
+                @click="reply = t.text">{{ t.label }}</el-tag>
+      </div>
       <el-input v-model="reply" type="textarea" :rows="5" maxlength="2000" show-word-limit
                 placeholder="回复内容（可选），会通过站内消息发给提交人" />
       <template #footer>
@@ -61,6 +67,7 @@ import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import FeedbackShots from '../components/FeedbackShots.vue'
+import { feedbackReplies } from '../replyTemplates'
 
 const SIZE = 20
 const narrow = useNarrow()
@@ -117,4 +124,6 @@ onMounted(load)
 .act { margin-left: auto; }
 .text { white-space: pre-wrap; word-break: break-word; line-height: 1.7; margin-bottom: 8px; }
 .reply { background: #f5f7fa; border-radius: 6px; padding: 8px 12px; margin-top: 8px; }
+.tpl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+.tpl { cursor: pointer; }
 </style>

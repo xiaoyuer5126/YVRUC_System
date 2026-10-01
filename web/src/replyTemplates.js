@@ -1,6 +1,9 @@
-/** 审批意见的常用语：点一下整段填进意见框（见 ApprovalCommentDialog）。
- *  文字由校青协定，[活动标题]、[日期] 这类占位在这里填好。 */
+/** 常用语：审批意见（见 ApprovalCommentDialog）与意见反馈的回复。
+ *  点一下整段填进输入框；文字由校青协定，[活动标题]、[日期] 这类占位在这里填好。 */
 const SIGN = '中国人民大学青年志愿者协会'
+const DEV_SIGN = '中国人民大学志愿服务管理平台开发者'
+const THANKS = '感谢同学对志愿服务的支持。让有爱者有力，让奉献者发光，'
+  + '期待与同学一起参与更多丰富多彩的志愿活动！'
 
 function today() {
   const d = new Date()
@@ -28,3 +31,12 @@ export const vbConfirmed = names => ({
   label: '志愿北京立项通过',
   text: `志愿北京平台${names.join('、')}立项已通过。`,
 })
+
+/** 意见反馈的回复（管理员在「意见反馈」页处理时用） */
+export const feedbackReplies = () => [
+  { label: '已收到·修复中',
+    text: `同学你好！已收到同学对平台使用的反馈，正在着手修复。\n${THANKS}\n${DEV_SIGN}\n${today()}` },
+  { label: '转校青协处理',
+    text: '同学你好！已收到同学的反馈，您反馈的是志愿相关问题，已转接校青协处理，'
+      + `将以邮件形式给您回复。\n${THANKS}\n${DEV_SIGN}\n${today()}` },
+]

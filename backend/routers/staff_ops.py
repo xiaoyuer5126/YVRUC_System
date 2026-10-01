@@ -7,7 +7,7 @@ import urllib.request
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -18,10 +18,10 @@ from .. import config, hours as hours_flow, liaison
 from ..stage import ensure_hours_editable, ensure_not_finished
 from ..database import db_session
 from ..deps import require_manager, require_manager_download
-from ..enroll_logic import position_enrolled_count
 from ..exporter import (build_activity_workbook, build_application_workbook,
                         build_hours_workbook)
 from ..perm import ensure_activity_manager
+from ..qrcodes import trusted_root
 from ..integrations import msgcenter
 from ..locks import current_checkin_code
 from ..notify import notify, notify_checkin
@@ -29,7 +29,7 @@ from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
                       Department, Enrollment, HoursAppeal, HoursRecord,
                       HoursRequest, Shift, Position, User, iso, new_checkin_token, now,
                       parse_local_dt, span_text, uid)
-from ..serializers import iso_of, recruit_scope_text
+from ..serializers import iso_of, recruit_scope_phrase
 from .checkin import checkout_open
 from .geo import tiles_configured
 
@@ -828,72 +828,94 @@ def export_application_attachments(activity_id: str,
     return _attachments_download(db, user, act, ex, name, "报名问卷")
 
 
-def _indent(text: str, pad: str = "      ") -> str:
-    """多行文字接在「服务任务：」这类标签后面，第二行起缩进到与正文对齐。"""
-    lines = [l.rstrip() for l in text.strip().splitlines()]
-    return ("\n" + pad).join(lines)
+_WEEKDAYS = "一二三四五六日"
+
+
+def _cn_day(d: datetime) -> str:
+    return f"{d.month}月{d.day}日（周{_WEEKDAYS[d.weekday()]}）"
+
+
+def _cn_span(start: datetime, end: datetime) -> str:
+    """招募文案里的时间：10月18日（周六）07:30—12:00，跨天的两头都写日期。
+
+    只用在招募文案上，系统里别处的时间仍走 models.span_text：同一段服务在
+    各个页面上各写各的格式，对账时就得靠眼睛去认。
+    """
+    if start.date() == end.date():
+        return f"{_cn_day(start)}{start:%H:%M}—{end:%H:%M}"
+    return f"{_cn_day(start)}{start:%H:%M}—{_cn_day(end)}{end:%H:%M}"
+
+
+def _one_line(text: str) -> str:
+    """多行文字并成一行（分号隔开），接在「岗位名 N人：」后面。"""
+    return "；".join(s.strip() for s in (text or "").splitlines() if s.strip())
 
 
 @router.get("/activities/{activity_id}/poster")
-def poster(activity_id: str, db: OrmSession = Depends(db_session),
+def poster(activity_id: str, request: Request, base: str = "",
+           db: OrmSession = Depends(db_session),
            user: User = Depends(require_manager)):
-    """招募版活动信息（纯文本，供复制到群里/推送）。
+    """招募文案（纯文本，复制到群里/推送），格式由校青协定。
 
-    只写对外能公开的：时间地点、岗位与名额、要求与保障、联系人。
-    不含任何志愿者名单——名单要用「导出排班表」，那条路有下载留痕。
+    只写对外能公开的：时间地点、岗位与名额、要求与保障。不含任何志愿者名单——
+    名单要用「导出排班表」，那条路有下载留痕。选填的段（培训与彩排、志愿者
+    要求）有内容才出现，放在「服务内容」与「志愿者保障」之间。[玫瑰] 原样写：
+    发到微信里显示成玫瑰表情。报名链接的域名同活动二维码：base 由前端传当前
+    站点地址，只认本平台的域名。
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    L: list[str] = [f"【{act.title}】志愿者招募",
-                    f"主办：{act.organizer or '—'}",
-                    f"类型：{act.recruit_label()}"]
-    span = act.time_span()
-    if span:
-        L.append(f"时间：{span[0]:%Y-%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}")
-    L.append(f"地点：{act.location or '待定'}")
-    L.append(f"招募范围：{recruit_scope_text(act)}")
-    if act.reg_end:
-        L.append(f"报名截止：{act.reg_end:%Y-%m-%d %H:%M}")
-    if act.intro:
-        L += ["", "【活动简介】", act.intro.strip()]
-    if act.volunteer_requirement:
-        L += ["", "【志愿者要求】", act.volunteer_requirement.strip()]
-    if act.volunteer_benefit:
-        L += ["", "【志愿者保障】", act.volunteer_benefit.strip()]
-
-    L += ["", "【岗位安排】"]
-    for g in sorted(act.main_shifts(), key=lambda x: x.start_time):
-        head = f"◆ {g.name}（{g.span_text()}）"
+    link = f"{trusted_root(request, base)}/activity/{act.id}"
+    mains = sorted(act.main_shifts(), key=lambda x: x.start_time)
+    # 简介后面要接「，现面向……」，句末的标点先去掉
+    intro = (act.intro or "").strip().rstrip("。！!；;，,、.． ")
+    L: list[str] = [
+        f"志愿招募|{act.title}", "各位同学大家好！",
+        "【活动内容简介】",
+        f"{intro}{'，' if intro else ''}现面向{recruit_scope_phrase(act)}招募志愿者[玫瑰]",
+        "【活动主办单位】", act.organizer or "—",
+        "【活动时间】",
+        *(dict.fromkeys(_cn_span(g.start_time, g.end_time) for g in mains) or ["待定"]),
+        "【活动地点】", act.location or "待定",
+        "【服务内容及招募人数】"]
+    for g in mains:
+        if len(mains) > 1:
+            L.append(f"{g.name}　{_cn_span(g.start_time, g.end_time)}")
         if g.needs_assign():
-            head += f"　名额 {g.total_capacity()} 人，岗位于报名截止后统一分配"
-        L.append(head)
-        for p in sorted(g.positions, key=lambda x: x.sort):
-            left = max(0, p.quota - position_enrolled_count(db, p.id))
-            line = (f"  · {p.name}　{p.quota} 人"
-                    + (f"（剩 {left}）" if left else "（已满）")
-                    + (f"　{p.location}" if p.location else ""))
-            if p.service_task:
-                line += "\n    服务任务：" + _indent(p.service_task)
-            if p.attire_text():
-                line += f"\n    志愿服装：{p.attire_text()}"
-            if p.pay_text():
-                line += f"\n    报酬方式：{p.pay_text()}"
-            L.append(line)
+            hold = g.placeholder()
+            L.append(f"招募 {hold.quota if hold else g.total_capacity()} 人，"
+                     f"岗位于报名截止后统一分配")
+        for p in sorted(g.real_positions(), key=lambda x: x.sort):
+            task = _one_line(p.service_task)
+            L.append(p.name + ("" if g.needs_assign() else f" {p.quota}人")
+                     + (f"：{task}" if task else ""))
+            extra = [x for x in (
+                f"岗位地点：{p.location}" if p.location and p.location != act.location else "",
+                f"志愿服装：{p.attire_text()}" if p.attire_text() else "",
+                f"报酬方式：{p.pay_text()}" if p.pay_text() else "") if x]
+            if extra:
+                L.append("  " + "；".join(extra))
+    attached = []
+    for g in mains:
         for s in sorted((x for x in act.shifts if x.parent_id == g.id),
                         key=lambda x: x.start_time):
             who = "全体" if not s.applies_to_positions else "、".join(
                 p.name for p in g.positions if p.id in s.applies_to_positions)
-            L.append(f"  ▷ {s.kind_label()}：{s.span_text()}"
-                     + (f"　{s.location}" if s.location else "")
-                     + f"　（{who}需参加"
-                     + ("，不计时长）" if s.hours_mode == "none" else "，计入时长）")
-                     + (f"\n    备注：{s.note}" if s.note else ""))
-
-    contacts = "；".join(f"{c.get('name', '')} {c.get('phone', '')}".strip()
-                        for c in (act.contacts or []) if isinstance(c, dict))
-    if contacts:
-        L += ["", f"【联系方式】{contacts}"]
-    L += ["", "报名方式：登录志愿服务管理平台，在「活动广场」找到本活动报名。"]
+            attached.append(
+                f"{_cn_span(s.start_time, s.end_time)} {s.kind_label()}"
+                + (f"，{s.location}" if s.location else "")
+                + f"（{who}需参加，{'不计时长' if s.hours_mode == 'none' else '计入时长'}）"
+                + (f"；{_one_line(s.note)}" if s.note else ""))
+    if attached:
+        L += ["【培训与彩排】", *attached]
+    if (act.volunteer_requirement or "").strip():
+        L += ["【志愿者要求】", act.volunteer_requirement.strip()]
+    L += ["【志愿者保障】",
+          (act.volunteer_benefit or "").strip() or config.DEFAULT_VOLUNTEER_BENEFIT,
+          "【报名方式】",
+          # 链接前后留空格：紧跟着「/扫描」的话，微信识别网址时会把 / 一起吞进去
+          f"有意愿参加的同学请点击链接 {link} /扫描下方二维码报名，报名成功情况将在"
+          f"志愿服务管理平台进行通知。十分感谢大家对志愿活动的支持！"]
     return {"text": "\n".join(L)}
 
 
@@ -1095,6 +1117,7 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
     for uid_ in extra:
         per_user.setdefault(uid_, 0.0)
 
+    party = hours_flow.party_school_users(db, act.id)
     out = []
     for uid_, raw in sorted(per_user.items(), key=lambda kv: -kv[1]):
         fl = flags.get(uid_, set())
@@ -1118,6 +1141,7 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
             "record_id": existing.id if existing else "",
             # 签到算出来的在前、手动补录的追加在后：后者是对这笔账的补充说明
             "parts": parts.get(uid_, []) + manual,
+            "party_school": uid_ in party,
             **_volunteer_side(existing),
         })
     return out

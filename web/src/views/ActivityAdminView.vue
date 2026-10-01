@@ -364,6 +364,7 @@
             </template>
             <template #extra="{ row }">
               <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+              <el-tag v-if="row.source === 'party_school'" size="small" effect="plain">党校</el-tag>
               <el-tag v-if="row.checked_in" size="small" type="success" effect="light">已到岗</el-tag>
               <el-tag size="small" effect="plain"
                       :type="row.allow_reassign ? 'success' : 'info'">
@@ -405,6 +406,8 @@
               <el-tag size="small" type="warning" effect="plain"
                       style="margin-left:4px">愿任</el-tag>
             </el-tooltip>
+            <el-tag v-if="row.source === 'party_school'" size="small" effect="plain"
+                    style="margin-left:4px">党校</el-tag>
           </template>
         </el-table-column>
             <el-table-column prop="user.student_id" label="学号" width="110" />
@@ -591,7 +594,7 @@
             <el-icon><Download /></el-icon>&nbsp;导出时长记录
           </el-button>
           <!-- 说明文字要能换行：窄屏下 toolbar 的子项不收缩，不给宽度就会被裁掉 -->
-          <span class="dim" style="flex:1 1 260px">用于志愿北京时长录入，选择劳务的人不在其中，包含身份证号，下载留痕</span>
+          <span class="dim" style="flex:1 1 260px">用于志愿北京时长录入，选择劳务的人和党校同学不在其中，包含身份证号，下载留痕</span>
         </div>
 
         <!-- 时长申诉：出了岔子的那一条才走这里，不是全员自报 -->
@@ -731,7 +734,7 @@
                    :fields="[{ key: 'user.student_id', label: '学号' },
                              { key: 'user.college', label: '学院' }]">
           <template #extra="{ row }">
-            <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+            <el-tag v-if="row.party_school" size="small" effect="plain">党校</el-tag>
             <el-tag v-if="row.pending" size="small" type="warning" effect="plain">待签退</el-tag>
             <el-tag v-else-if="row.auto_checkout" size="small" type="danger" effect="plain">
               待核·自动兜底
@@ -768,12 +771,9 @@
           <el-table-column label="姓名" width="110">
               <template #default="{row}">
                 {{ row.user.name }}
-                <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark"
-                        style="margin-left:4px">组长</el-tag>
-                <el-tooltip v-else-if="row.leader_willing" content="愿意担任组长">
-                  <el-tag size="small" type="warning" effect="plain"
-                          style="margin-left:4px">愿任</el-tag>
-                </el-tooltip>
+                <!-- 党校同学的时长不进导出表，核准时一眼看得出来 -->
+                <el-tag v-if="row.party_school" size="small" effect="plain"
+                        style="margin-left:4px">党校</el-tag>
               </template>
             </el-table-column>
           <el-table-column prop="user.student_id" label="学号" width="110" />
@@ -1282,6 +1282,10 @@
           <img :src="`/api/activities/${activityId}/qr.svg?base=${qrBase()}`"
                width="200" height="200" alt="活动二维码" />
           <div class="dim">扫码直达活动详情页</div>
+          <!-- 文案里写的是「扫描下方二维码」：发群时要配这张图 -->
+          <el-button size="small" style="margin-top:8px" @click="downloadQrPng">
+            下载二维码图片
+          </el-button>
           <el-input size="small" readonly :model-value="shareUrl" style="margin-top:8px">
             <template #append><el-button @click="copyShare">复制链接</el-button></template>
           </el-input>
@@ -2016,8 +2020,31 @@ async function copyShare() {
 const posterDlg = ref({ visible: false, text: '' })
 
 async function openPoster() {
-  const d = await api.get(`/api/staff/activities/${activityId}/poster`)
+  // base 同二维码：文案里的报名链接用管理者此刻打开的站点地址
+  const d = await api.get(`/api/staff/activities/${activityId}/poster?base=${qrBase()}`)
   posterDlg.value = { visible: true, text: d.text }
+}
+
+/** 二维码存成 PNG：微信群里发不了 SVG。白底、600 像素见方，打印也够清楚。 */
+async function downloadQrPng() {
+  const svg = await (await fetch(`/api/activities/${activityId}/qr.svg?base=${qrBase()}`)).text()
+  const img = new Image()
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
+  await img.decode()
+  const size = 600
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, size, size)
+  ctx.drawImage(img, 0, 0, size, size)
+  canvas.toBlob(blob => {
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${act.value.title}-报名二维码.png`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+  }, 'image/png')
 }
 
 async function copyPoster() {
