@@ -140,7 +140,7 @@
     </template>
     <div v-if="hoursReqs.length || vbConfirms.length" class="section-title">待审批活动</div>
 
-    <el-empty v-if="!rows.length && !loading" :image-size="70"
+    <el-empty v-if="!rows.length && !loading"
               :description="duties.length && !duties.some(d => d.can_handover || d.can_assign)
                 ? '没有待你审批的活动（轮到你值班时，本部门的审批会出现在这里）'
                 : '没有待你审批的活动'" />
@@ -450,7 +450,7 @@ async function submitTransfer() {
 <style scoped>
 .submit-note {
   margin-top: 8px; padding: 8px 12px; border-radius: 8px;
-  background: var(--el-fill-color-light); font-size: 13px; line-height: 1.75;
+  background: var(--el-fill-color-light); font-size: 13px; line-height: 1.6;
 }
 .submit-note b { margin-right: 8px; }
 .item { margin-bottom: 12px; border-radius: 12px; }

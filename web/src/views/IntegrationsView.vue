@@ -28,8 +28,8 @@
               <el-input v-model="draft[f.key]" :placeholder="f.holder || ''" />
             </el-form-item>
             <div style="text-align:right">
-              <el-button size="small" @click="editKey = ''">取消</el-button>
-              <el-button size="small" type="primary" @click="save(c)">保存配置</el-button>
+              <el-button @click="editKey = ''">取消</el-button>
+              <el-button type="primary" @click="save(c)">保存配置</el-button>
             </div>
           </el-form>
 
@@ -39,7 +39,7 @@
               <span class="mono">{{ mask(f.key, c[f.key]) }}</span>
             </div>
             <div style="margin-top:12px;display:flex;gap:8px">
-              <el-button size="small" @click="startEdit(c)">编辑参数</el-button>
+              <el-button @click="startEdit(c)">编辑参数</el-button>
               <el-switch v-model="c.enabled" active-text="启用真实接口"
                          @change="toggleEnabled(c)" />
             </div>
@@ -133,7 +133,7 @@ const notes = [
 
 <style scoped>
 .int-card { border-radius: 12px; }
-.caps { margin: 4px 0; padding-left: 18px; line-height: 1.9; }
-.kv { display:flex; gap:8px; line-height:2; }
+.caps { margin: 4px 0; padding-left: 18px; line-height: 1.6; }
+.kv { display:flex; gap:8px; line-height: 1.6; }
 .kv span:first-child { width:110px; }
 </style>

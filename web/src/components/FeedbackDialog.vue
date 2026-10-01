@@ -172,7 +172,7 @@ defineExpose({ open })
 .mine { min-height: 120px; }
 .item { border-bottom: 1px dashed #eceef1; padding: 12px 0; }
 .item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.text { white-space: pre-wrap; word-break: break-word; line-height: 1.7; margin-bottom: 8px; }
+.text { white-space: pre-wrap; word-break: break-word; line-height: 1.6; margin-bottom: 8px; }
 .reply { background: #f5f7fa; border-radius: 6px; padding: 8px 12px; margin-top: 8px; }
 @media (max-width: 860px) {
   .kinds { grid-template-columns: 1fr; }

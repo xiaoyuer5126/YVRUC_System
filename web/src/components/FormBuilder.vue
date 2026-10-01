@@ -71,7 +71,7 @@
     <div v-if="editable" class="dim" style="margin-top:8px">
       适用岗位留空 = 人人都答；显示条件只能挂在前面的选择题上，新增的题目保存后才能作为条件。
     </div>
-    <el-empty v-else-if="!questions.length" description="没有设置题目" :image-size="40" />
+    <el-empty v-else-if="!questions.length" description="没有设置题目" />
   </div>
 </template>
 
@@ -160,7 +160,7 @@ async function save() {
 .fb-no { width: 22px; color: #909399; }
 .fb-title { flex: 1 1 240px; min-width: 0; }
 .fb-opts { width: 100%; margin-left: 30px; }
-.fb-readonly { margin: 0; padding-left: 20px; line-height: 2; }
+.fb-readonly { margin: 0; padding-left: 20px; line-height: 1.6; }
 .fb-cond { width: 100%; margin-left: 30px; display: flex; align-items: center;
            gap: 8px; flex-wrap: wrap; }
 </style>

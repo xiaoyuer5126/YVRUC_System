@@ -37,5 +37,5 @@ defineExpose({ open })
 .qr-box img { width: 200px; height: 200px; object-fit: contain;
               border: 1px solid #eceef1; border-radius: 10px; }
 .title { margin: 12px 0 4px; font-weight: 600; }
-.qr-box .dim { margin: 4px 0; line-height: 1.7; }
+.qr-box .dim { margin: 4px 0; line-height: 1.5; }
 </style>

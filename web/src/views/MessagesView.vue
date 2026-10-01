@@ -2,7 +2,7 @@
   <div class="page page-narrow">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h2 style="margin:0">消息通知</h2>
-      <el-button size="small" @click="readAll" :disabled="!unread">全部已读</el-button>
+      <el-button @click="readAll" :disabled="!unread">全部已读</el-button>
     </div>
     <el-alert v-if="pendingAck" type="warning" :closable="false" show-icon
               :title="`有 ${pendingAck} 条通知需要您签收`" />
@@ -118,5 +118,5 @@ async function ack(n) {
 @media (max-width: 700px) {
   .msg-title { order: 9; flex: 0 0 100%; margin-top: 4px; line-height: 1.5; }
 }
-.content { margin: 8px 0 0; color: #606266; line-height: 1.75; font-size: 13.5px; }
+.content { margin: 8px 0 0; color: #606266; line-height: 1.6; font-size: 13.5px; }
 </style>

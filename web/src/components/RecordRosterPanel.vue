@@ -73,7 +73,7 @@
     <div class="section-title" style="margin-top:16px">
       当前名单（{{ state.items.length }} 人，合计 {{ state.total_hours }} 小时）
     </div>
-    <el-empty v-if="!state.items.length" :image-size="60" description="还没有导入名单" />
+    <el-empty v-if="!state.items.length" description="还没有导入名单" />
     <div v-else class="scroll-x">
       <el-table :data="state.items" size="small" style="min-width:600px">
         <el-table-column label="姓名" width="110">

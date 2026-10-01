@@ -38,7 +38,7 @@
       <div v-if="$slots.actions" class="card-actions"><slot name="actions" :row="row" /></div>
     </div>
   </div>
-  <el-empty v-else :description="empty" :image-size="60" />
+  <el-empty v-else :description="empty" />
 </template>
 
 <script setup>

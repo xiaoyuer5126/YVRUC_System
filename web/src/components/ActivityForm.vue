@@ -13,7 +13,7 @@
           {{ m.name }}
         </el-radio-button>
       </el-radio-group>
-      <div class="dim" style="line-height:1.8">
+      <div class="dim">
         {{ modes[f.recruit_mode]?.desc }}
         <template v-if="f.recruit_mode === 'screened'">
           ；报名问卷在「岗位设置」中设计，由管理者统一分配

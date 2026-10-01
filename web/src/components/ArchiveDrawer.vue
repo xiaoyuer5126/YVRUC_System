@@ -55,7 +55,7 @@
           {{ gapText(d.cancels.median_gap_hours) }}）
         </span>
       </div>
-      <el-empty v-if="!d.cancels.items.length" :image-size="50" description="没有退选记录" />
+      <el-empty v-if="!d.cancels.items.length" description="没有退选记录" />
       <DataCards v-else-if="narrow" :rows="d.cancels.items" title-key="activity_title"
                  :fields="[{ key: 'cancelled_at', label: '退选时间', format: fmtDT },
                            { key: 'gap_hours', label: '报名后多久', format: gapText }]">
@@ -88,7 +88,7 @@
       </el-table>
 
       <div class="section-title">违规记录</div>
-      <el-empty v-if="!d.violations.length" :image-size="50" description="没有违规记录" />
+      <el-empty v-if="!d.violations.length" description="没有违规记录" />
       <div v-for="v in d.violations" :key="v.id" class="vio">
         <el-tag size="small" type="warning" effect="plain">{{ v.kind_label }}</el-tag>
         <b>{{ v.activity_title }}</b>
@@ -97,7 +97,7 @@
       </div>
 
       <div class="section-title">参与过的活动</div>
-      <el-empty v-if="!d.history.length" :image-size="50" description="还没有报过名" />
+      <el-empty v-if="!d.history.length" description="还没有报过名" />
       <DataCards v-else-if="narrow" :rows="d.history" row-key="enrollment_id"
                  :fields="[{ key: 'time_text', label: '时间' }]">
         <template #title="{ row }">{{ row.activity_title }} · {{ row.shift_name }}</template>

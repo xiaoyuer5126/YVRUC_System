@@ -28,7 +28,7 @@
           <el-tag size="small" effect="plain">{{ row.action_label }}</el-tag>
         </template>
         <template #body="{ row }">
-          <div v-for="(ch, i) in row.changes" :key="i" class="dim" style="line-height:1.7">
+          <div v-for="(ch, i) in row.changes" :key="i" class="dim">
             {{ ch.label }}：{{ ch.old || '空' }} →
             <b style="color:var(--el-color-primary)">{{ ch.new || '空' }}</b>
           </div>

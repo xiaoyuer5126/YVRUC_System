@@ -66,7 +66,7 @@
           </el-button>
         </div>
       </div>
-      <el-empty v-if="!rows.length && !loading" description="还没有报名记录" :image-size="60" />
+      <el-empty v-if="!rows.length && !loading" description="还没有报名记录" />
     </div>
 
     <el-table v-else :data="rows" style="width:100%" v-loading="loading">
@@ -144,7 +144,7 @@
     </el-table>
 
     <el-alert type="info" :closable="false">
-      <p style="margin:0;font-size:12.5px;line-height:1.9">
+      <p style="margin:0;font-size:12.5px;line-height:1.6">
         退选规则：开始前 <b>24 小时内</b>且报名已截止时退选，名额将被扣留不再释放，且记录一次临期退选。
       </p>
     </el-alert>
@@ -155,7 +155,7 @@
 
     <el-dialog v-model="teamDlg.visible" :title="'组员名单 · ' + (teamDlg.data?.scope || '')"
                width="560">
-      <p class="dim" style="line-height:1.8">
+      <p class="dim">
         {{ teamDlg.data?.activity_title }} · {{ teamDlg.data?.shift_name }}。
         联系方式仅用于本次活动的联络，请勿他用；<b>每次查看都会记入审计</b>。
       </p>

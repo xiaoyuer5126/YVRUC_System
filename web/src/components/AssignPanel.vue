@@ -133,7 +133,7 @@
       </div>
     </template>
 
-    <el-empty v-else description="点击名单上方的「一键分配岗位」开始试算" :image-size="80" />
+    <el-empty v-else description="点击名单上方的「一键分配岗位」开始试算" />
 
     <!-- 补招：负责人直接把人加进场次 -->
     <el-dialog v-model="walkinVisible" title="补招志愿者" width="430">

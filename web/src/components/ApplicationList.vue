@@ -92,7 +92,7 @@
         <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
       </el-table-column>
     </el-table>
-    <el-empty v-if="!apps.length && !loading" description="还没有人申请" :image-size="40" />
+    <el-empty v-if="!apps.length && !loading" description="还没有人申请" />
   </el-card>
 </template>
 

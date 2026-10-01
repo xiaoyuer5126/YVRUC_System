@@ -31,7 +31,7 @@
                说清楚去哪儿签，别让人对着这个按钮点了报错 -->
           <el-alert v-if="task.method === 'geo'" type="info" :closable="false"
                     style="margin-top:16px;text-align:left">
-            <p style="margin:0 0 8px;line-height:1.9">
+            <p style="margin:0 0 8px;line-height:1.6">
               本场次用<b>定位签到</b>，不用扫码：「我的报名」里点「签到」，
               平台会比对您与签到点的距离。
             </p>
@@ -167,5 +167,5 @@ async function doCheckin() {
   width: 64px; height: 64px; margin: 4px auto; border-radius: 50%;
   background: #f0f9eb; color: #67c23a; font-size: 34px; line-height: 64px;
 }
-.foot { margin-top: 16px; line-height: 1.7; }
+.foot { margin-top: 16px; line-height: 1.6; }
 </style>

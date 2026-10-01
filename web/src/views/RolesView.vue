@@ -22,7 +22,7 @@
       <el-input v-model="q" placeholder="按姓名或学号搜索"
                 style="width:280px" clearable @keyup.enter="load" @clear="load" />
       <el-button type="primary" @click="load">查询</el-button>
-      <RefreshBar ref="refresher" :load="load" />
+      <RefreshBar :load="load" :at="loadedAt" />
       <span class="dim">{{ coreOnly ? '只列本部门的成员' : headOnly ? '不搜索时只列本部门的人，添加新成员请搜索学号' : '不搜索时只列已有管理类身份的人' }}</span>
     </div>
 
@@ -114,7 +114,7 @@
               <el-radio value="head" :disabled="headOnly">部长</el-radio>
               <el-radio value="council" :disabled="headOnly">会长团</el-radio>
             </el-radio-group>
-            <div class="dim" style="line-height:1.7">
+            <div class="dim">
               会长团：除集成设置外与管理员同权 · 部长：审批本部门活动，管理本部门骨干与成员 ·
               骨干：只管理自己参与的活动 · 成员：可见范围与归属骨干一致，可查看但不能保存
             </div>
@@ -166,7 +166,7 @@ const rows = ref([])
 const depts = ref([])
 const q = ref('')
 const loading = ref(false)
-const refresher = ref(null)
+const loadedAt = ref(0)
 const dlg = ref({ visible: false, row: null, roles: [], post: 'member', deptId: '', busy: false })
 // 部长视角：只能在本部门里设骨干/成员；骨干视角：只认领本部门成员
 const headOnly = computed(() =>
@@ -189,13 +189,13 @@ async function load() {
   loading.value = true
   try {
     rows.value = await api.get(`/api/staff/roles?q=${encodeURIComponent(q.value.trim())}`)
+    loadedAt.value = Date.now()
   } finally { loading.value = false }
 }
 
 onMounted(async () => {
   depts.value = await api.get('/api/staff/departments')
   await load()
-  refresher.value?.markLoaded()
 })
 
 function open(row) {

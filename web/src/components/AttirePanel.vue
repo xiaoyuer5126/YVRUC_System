@@ -2,20 +2,20 @@
   <div v-loading="loading">
     <div class="toolbar">
       <!-- 码是幂等的，生成过就不必再点；按钮留着只会让人以为还能再生成一套 -->
-      <el-button v-if="!data?.tasks?.take" type="primary" size="small" @click="ensureTasks">
+      <el-button v-if="!data?.tasks?.take" type="primary" @click="ensureTasks">
         <el-icon><Plus /></el-icon>&nbsp;生成领取 / 归还码
       </el-button>
-      <el-button v-if="data?.tasks?.take" size="small" @click="openQR('take')">领取码</el-button>
-      <el-button v-if="data?.tasks?.return" size="small" @click="openQR('return')">归还码</el-button>
-      <el-button size="small" type="primary" plain :disabled="!data?.not_taken"
+      <el-button v-if="data?.tasks?.take" @click="openQR('take')">领取码</el-button>
+      <el-button v-if="data?.tasks?.return" @click="openQR('return')">归还码</el-button>
+      <el-button type="primary" plain :disabled="!data?.not_taken"
                  @click="openRemind('take')">
         提醒领取（{{ data?.not_taken || 0 }} 人）
       </el-button>
-      <el-button size="small" type="warning" plain :disabled="!data?.outstanding"
+      <el-button type="warning" plain :disabled="!data?.outstanding"
                  @click="openRemind('return')">
         提醒归还（{{ data?.outstanding || 0 }} 人）
       </el-button>
-      <RefreshBar ref="refresher" :load="load" />
+      <RefreshBar :load="load" :at="loadedAt" />
       <span class="dim">领取与归还各一个码，现场也可手动登记</span>
     </div>
 
@@ -30,10 +30,10 @@
     <div class="toolbar">
       <template v-if="selected.length">
         <span class="dim">已选 {{ selected.length }} 人：</span>
-        <el-button size="small" type="primary" @click="batch('take')">登记领取</el-button>
-        <el-button size="small" type="warning" @click="batch('return')">登记归还</el-button>
-        <el-button size="small" plain @click="batch('cancel_return')">撤销归还</el-button>
-        <el-button size="small" type="danger" plain @click="batch('cancel_take')">撤销领取</el-button>
+        <el-button type="primary" @click="batch('take')">登记领取</el-button>
+        <el-button type="warning" @click="batch('return')">登记归还</el-button>
+        <el-button plain @click="batch('cancel_return')">撤销归还</el-button>
+        <el-button type="danger" plain @click="batch('cancel_take')">撤销领取</el-button>
       </template>
       <span v-else class="dim">勾选多个人可批量登记；单个人直接在他那一行点</span>
     </div>
@@ -75,7 +75,7 @@
 
     <el-dialog v-model="rm.visible" :title="rm.action === 'take' ? '提醒领取服装' : '提醒归还服装'"
                width="440">
-      <p class="dim" style="line-height:1.8">
+      <p class="dim">
         {{ rm.action === 'take'
            ? '发给该范围内尚未领取服装的志愿者。'
            : '发给该范围内尚未归还服装的志愿者。' }}
@@ -144,20 +144,20 @@ const data = ref(null)
 const loading = ref(false)
 const selected = ref([])      // 批量登记勾的人
 const qr = ref({ visible: false, token: '', label: '' })
-const refresher = ref(null)
+const loadedAt = ref(0)
 const campuses = ref([])      // 校区清单以后端为准，别在这儿抄第二份
 
 async function load() {
   loading.value = true
   try {
     data.value = await api.get(`/api/staff/activities/${props.activityId}/attire`)
+    loadedAt.value = Date.now()
     selected.value = []       // 名单重拉之后，之前勾的那批已经不是同一批人了
   } finally { loading.value = false }
 }
 const onSelect = rows => { selected.value = rows }
 onMounted(async () => {
   await load()
-  refresher.value?.markLoaded()
   try {
     campuses.value = (await api.get('/api/auth/constants', { silent: true })).campuses || []
   } catch { /* 拿不到就只按场次筛 */ }

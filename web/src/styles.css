@@ -47,20 +47,42 @@ body {
 /* 区块标题后面跟的那句说明：标题行本身是 flex gap:8，不用再补外边距 */
 .section-title .dim { font-weight: 400; }
 
-/* 标题的默认外边距按字号算（0.83em/1em），几个页面的字号又不一样，
-   看起来就是这一页顶得高、那一页顶得低 */
+/* 标题、段落的默认外边距按字号算（0.83em/1em），几个页面的字号又不一样，
+   看起来就是这一页顶得高、那一页顶得低；段落上下各 1em，标题与正文之间、
+   对话框里的说明文字之间都空出一大截 */
 h2 { margin: 12px 0 8px; }
 h3 { margin: 12px 0 8px; }
+p { margin: 8px 0; }
 
 /* 页签栏与内容之间：Element 默认 15px */
 .el-tabs__header { margin-bottom: 12px; }
 
 /* 卡片内边距 20px、表格行高固定 23px 都是 Element 的默认值，一屏放不下
-   几行东西。这两处是页面「空」的主要来源，按自己的尺度收一档。 */
+   几行东西。这两处是页面「空」的主要来源，按自己的尺度收一档。卡片头同理：
+   默认上下各 18px，一行粗体字的标题就占 58px */
 .el-card__body { padding: 16px; }
+.el-card__header { padding: 12px 16px; }
 .el-table .cell { line-height: 1.5; }
 /* 三段选择器是为了压过 Element 自己的同名规则 */
 .el-descriptions__body .el-descriptions__table .el-descriptions__cell { line-height: 1.5; }
+
+/* 表单项之间：Element 默认 18px，单行输入框一项就占 50px，十来项的表单要
+   翻好几屏。那 18px 是给校验报错留的，平台的表单不用 Element 的校验（提交时
+   一条条提示），留 12px 就够 */
+.el-form-item,
+.el-form--inline .el-form-item { margin-bottom: 12px; }
+
+/* 「暂无数据」：Element 默认 160px 的大图、上下再各空 40px，演示数据少的时候
+   满屏都是它。全站统一一个小图，组件里不再各写各的 image-size */
+.el-empty {
+  --el-empty-padding: 24px 0;
+  --el-empty-image-width: 60px;
+  --el-empty-description-margin-top: 8px;
+  --el-empty-bottom-margin-top: 12px;
+}
+
+/* 分割线：Element 默认上下各 24px，比区块之间还宽 */
+.el-divider--horizontal { margin: 12px 0; }
 
 .act-card {
   border-radius: 12px; overflow: hidden; cursor: pointer; background: #fff;
@@ -96,7 +118,9 @@ h3 { margin: 12px 0 8px; }
 .station-chip.disabled { opacity: .55; cursor: not-allowed; }
 
 .mono { font-family: Consolas, Monaco, monospace; }
-.dim { color: #909399; font-size: 13px; }
+/* 灰色说明小字。行高统一在这里：模板里不再一处 1.7、一处 1.8 地写——
+   行距一大，说明文字就松成一片，正文段落用 1.6 */
+.dim { color: #909399; font-size: 13px; line-height: 1.5; }
 .pre { white-space: pre-wrap; }   /* 多行文字（服务任务、培训内容）按换行显示 */
 /* 确认框里写的是「先说清楚风险，再说做了会怎样」，分段全靠换行 */
 .el-message-box__message { white-space: pre-line; }

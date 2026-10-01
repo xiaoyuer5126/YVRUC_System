@@ -119,7 +119,7 @@
              连「调整岗位」的入口都不给 -->
         <el-alert v-if="isOver" type="info" show-icon :closable="false"
                   :title="`活动${act.status_label}，安排与信息均为只读`">
-          <div style="line-height:1.8">
+          <div style="line-height:1.6">
             时长已由活动管理者核准，不再接受修改，如确需更正请联系会长团。
           </div>
         </el-alert>
@@ -134,7 +134,7 @@
         <el-alert v-if="treeAlerts.length" type="error" show-icon
                   :closable="false"
                   :title="`有 ${treeAlerts.length} 个场次还没排好`">
-          <div v-for="a in treeAlerts" :key="a.id" style="line-height:1.9">
+          <div v-for="a in treeAlerts" :key="a.id" style="line-height:1.6">
             <b>{{ a.name }}</b>：{{ a.text }}
           </div>
         </el-alert>
@@ -342,12 +342,12 @@
           <div class="section-title roster-head" style="margin-top:0">
             <span>已报名名单（{{ roster.enrolled.length }} 人）</span>
             <span class="roster-actions">
-              <el-button type="primary" size="small" :loading="assignPanel?.solving"
+              <el-button type="primary" :loading="assignPanel?.solving"
                          :disabled="isOver" @click="assignPanel.runPreview()">
                 <el-icon><MagicStick /></el-icon>&nbsp;一键分配岗位
               </el-button>
-              <RefreshBar ref="rosterRefresh" :load="refreshRoster" />
-              <el-button size="small" type="success" plain :disabled="hoursFrozen"
+              <RefreshBar :load="refreshRoster" :at="rosterAt" />
+              <el-button type="success" plain :disabled="hoursFrozen"
                          @click="assignPanel.openWalkin()">补招志愿者</el-button>
             </span>
           </div>
@@ -529,7 +529,7 @@
                 <template #title>
                   自动递补已停止（{{ fmtDT(roster.auto_promote_deadline) }} 起）
                 </template>
-                <div style="line-height:1.7">
+                <div style="line-height:1.6">
                   离活动开始不足 24 小时，且报名已截止，停止自动递补，确需补人请手动「转正」通知本人确认
                 </div>
               </el-alert>
@@ -552,7 +552,7 @@
                   </template>
                 </el-popconfirm>
               </div>
-              <el-empty v-if="!roster.waitlist.length" description="暂无候补" :image-size="50" />
+              <el-empty v-if="!roster.waitlist.length" description="暂无候补" />
             </el-card>
             <el-card shadow="never" class="wl-card" v-if="roster.cancelled.length">
               <template #header><b>退选记录（近20条）</b></template>
@@ -589,7 +589,7 @@
         </template>
         <div class="toolbar">
           <!-- 核准之后志愿者陆续确认、提申诉，这一页不刷新看到的就是旧的 -->
-          <RefreshBar ref="hoursRefresh" :load="refreshHours" />
+          <RefreshBar :load="refreshHours" :at="hoursAt" />
           <el-button type="primary" :disabled="!confirmedCount" @click="doExportHours">
             <el-icon><Download /></el-icon>&nbsp;导出时长记录
           </el-button>
@@ -675,7 +675,7 @@
         <!-- 核准之后这一段就是这场活动的账本状态 -->
         <el-alert v-if="hoursState.locked_at" type="success" show-icon :closable="false"
                   :title="`时长已于 ${fmtDT(hoursState.locked_at)} 锁定，${act.status === 'vb_pending' ? '待外联确认' : '活动已完成'}`">
-          <div style="line-height:1.8">
+          <div style="line-height:1.6">
             已通过校青协审核，时长不再改动。确需更正请点「申请解锁」，同样由校青协审批
             <template v-if="act.status === 'vb_pending'">
               <br />志愿北京活动名称已推给对外联络部，外联在志愿北京核对确认后活动标记为「已完成」。
@@ -699,7 +699,7 @@
         <el-alert v-else-if="hoursState.lock_pending" type="warning" show-icon
                   :closable="false"
                   title="时长已提交校青协审核，审核期间本页只读">
-          <div style="line-height:1.8">
+          <div style="line-height:1.6">
             通过即锁定时长，志愿北京活动名称推给对外联络部，外联确认后活动标记为「已完成」；驳回会退回给你，改完重新核准再提交一次。
             审核进度与历史见 <el-link type="primary" @click="tab = 'review'">「审核」页签</el-link>。
             <template v-if="hoursState.request">
@@ -710,7 +710,7 @@
         <el-alert v-else-if="hoursState.approved_at" type="warning" show-icon
                   :closable="false"
                   :title="`已核准，申诉截止 ${fmtDT(hoursState.appeal_deadline)}`">
-          <div style="line-height:1.8">
+          <div style="line-height:1.6">
             志愿者已收到时长通知，将于截止前确认或提出申诉，超时未确认自动按「无误 + 志愿时长」处理。
             截止时没有申诉将自动提交校青协审核，<b>有申诉就不会自动提交</b>——改完再核准一次
             （只会再通知 申诉过或数值变过的人），或直接「提交时长审核」。
@@ -834,7 +834,7 @@
               {{ mh.sign === 'deduct' ? '批量扣减' : '批量添加' }}{{ mh.userIds.length ? `（${mh.userIds.length} 人）` : '' }}
             </el-button>
           </div>
-          <div class="dim" style="line-height:1.8">
+          <div class="dim">
             加进这个人这场活动的总时长里，在表格中展开他的明细可以看到那一段，
             要删也在那里删。本人只会收到一条核准通知、只见得到一笔账。
           </div>
@@ -844,7 +844,7 @@
       <!-- ============ 管理者 ============ -->
       <el-tab-pane v-if="isPublic && !isRecord" label="签收情况" name="acks" lazy>
         <div class="toolbar">
-          <RefreshBar ref="ackRefresh" :load="loadBatches" />
+          <RefreshBar :load="loadBatches" :at="ackAt" />
         </div>
         <div class="dim" style="margin-bottom:12px">
           只列要求签收的通知。签收 = 本人点过「我已知悉」。
@@ -996,7 +996,7 @@
             <el-radio-button value="pick">报名即选岗位</el-radio-button>
             <el-radio-button value="assign">截止后统一分配</el-radio-button>
           </el-radio-group>
-          <div class="dim" style="margin-top:4px;line-height:1.7">
+          <div class="dim" style="margin-top:4px">
             <template v-if="screened">
               报名后筛选：建好岗位的场次，志愿者按岗位勾意向；没建岗位的场次
               勾的是「待分配」，录取之后再排岗位。
@@ -1094,7 +1094,7 @@
             <el-radio value="checkin">扫码计时</el-radio>
             <el-radio value="none">不计时长</el-radio>
           </el-radio-group>
-          <div class="dim" style="line-height:1.7">
+          <div class="dim">
             {{ HOURS_HINT[attForm.hours_mode] }}
           </div>
         </el-form-item>
@@ -1107,7 +1107,7 @@
 
     <!-- 核准时长：定下账、通知本人，并给一段申诉时间 -->
     <el-dialog v-model="approveDlg.visible" title="确认核准时长" width="480">
-      <p class="dim" style="line-height:1.8">
+      <p class="dim">
         核准之后，志愿者将会收到确认通知，截止前确认无误或提出申诉。截止后若无申诉，系统自动提交校青协审核（须先在「审核」页签填好志愿北京活动名称）；通过即锁定时长，对外联络部确认志愿北京后活动标记为「已完成」。
       </p>
       <el-form label-width="100px">
@@ -1126,12 +1126,12 @@
 
     <!-- 提交时长审核：一并填志愿北京活动名称，锁定后推给对外联络部核对 -->
     <el-dialog v-model="lockDlg.visible" title="提交时长审核" width="520">
-      <p v-if="lockDlg.early" class="dim" style="line-height:1.8">
+      <p v-if="lockDlg.early" class="dim">
         申诉期还没结束（截止 {{ fmtDT(hoursState.appeal_deadline) }}）。现在提交，还没确认时长的志愿者就没机会提申诉了；
         到点没有申诉的话系统会自动提交，不必手动来这一下。
       </p>
       <p v-if="hoursState.pending_appeals" class="dim">还有 {{ hoursState.pending_appeals }} 条申诉没处理。</p>
-      <p class="dim" style="line-height:1.8">
+      <p class="dim">
         提交后时长冻结、不能再改，等校青协审核；通过即锁定时长，志愿北京活动名称推给对外联络部，
         外联确认后活动标记为「已完成」；驳回则退回你修改。
       </p>
@@ -1227,7 +1227,7 @@
 
     <!-- 恢复报名：必须重设截止时间，否则定时任务下一分钟又给截了 -->
     <el-dialog v-model="reopenDlg.visible" title="恢复报名" width="460">
-      <p class="dim" style="line-height:1.8">
+      <p class="dim">
         重新开放报名，并延后报名截止时间。<b>必须填新的截止时间</b>。
       </p>
       <el-form label-width="110px">
@@ -1245,7 +1245,7 @@
     <!-- 处理时长申诉 -->
     <el-dialog v-model="resolveDlg.visible"
                :title="resolveDlg.accept ? '采纳申诉' : '不采纳申诉'" width="480">
-      <p class="dim" style="line-height:1.8">
+      <p class="dim">
         {{ resolveDlg.row?.name }}：{{ resolveDlg.row?.old_hours }}h →
         申报 {{ resolveDlg.row?.claimed_hours }}h<br />
         理由：{{ resolveDlg.row?.reason }}
@@ -1479,7 +1479,7 @@
 </template>
 
 <script setup>
-import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
 import { api, download as dl, downloadExport, fmtDT, pageUrl, qrBase } from '../api'
@@ -1548,14 +1548,16 @@ const notifyDlg = ref({ visible: false, saving: false })
 const notifyForm = ref({ scope: 'all', shift_id: '', title: '', content: '',
                          need_ack: false })
 const ackBatches = ref([])
-const ackRefresh = ref(null)
-const rosterRefresh = ref(null)
-const hoursRefresh = ref(null)
+// 各块数据上次拉成功的时刻，给刷新条显示（见 RefreshBar）
+const ackAt = ref(0)
+const rosterAt = ref(0)
+const hoursAt = ref(0)
 
 // —— 签收情况 ——
 async function loadBatches() {
   ackBatches.value = await api.get(
     `/api/staff/activities/${activityId}/notify-batches`)
+  ackAt.value = Date.now()
 }
 
 async function remindBatch(b) {
@@ -1763,15 +1765,17 @@ async function loadAll() {
     const rosters = await Promise.all(d.shifts.map(g => api.get(`/api/staff/shifts/${g.id}/roster`)))
     d.shifts.forEach((g, i) => {
       g._roster = rosters[i]
+      g._rosterAt = Date.now()
     })
     // 弹窗里的表要等打开才加载，题数得自己先问一句，按钮上要写
     formCount.value = (await api.get(
       `/api/staff/activities/${activityId}/form`)).questions.length
     await loadManagers()
     loadAppeals()      // 标签上的红点要一进页面就在，不能等切到那一页才知道
-    // ?tab=hours 直达：watch(tab) 不会触发，时长这一页要在这里加载，
-    // 否则核准按钮拿不到申诉截止时间的默认值
+    // ?tab=hours 这类直达：watch(tab) 不会触发，切过去才加载的那几页要在这里
+    // 补上——时长页的核准按钮要拿申诉截止时间的默认值，签收页要有批次列表
     if (tab.value === 'hours') hoursPreview(true)
+    if (tab.value === 'acks') loadBatches()
     if (tab.value === 'logs') loadLogs()
     loadApproval()
     if (!currentGroupId.value && shifts.value.length) {
@@ -1782,11 +1786,6 @@ async function loadAll() {
     loadError.value = e.message || '加载失败'
   } finally {
     loading.value = false
-    // 记「更新于」必须等在这之后：loading 为真时整页是骨架屏，页签根本没渲染，
-    // 刷新条的 ref 还是 null，写在 try 里等于没写。
-    await nextTick()
-    rosterRefresh.value?.markLoaded()
-    hoursRefresh.value?.markLoaded()   // ?tab=hours 直达时这一路负责加载
   }
 }
 
@@ -2403,6 +2402,7 @@ async function hoursPreview(silent = false) {
     // 时长只读（见模板里的说明），勾选确认时按后端算出来的值提交
     hours.value = d.items || []
     hoursState.value = d
+    hoursAt.value = Date.now()
     hoursSel.value = []
     if (!hours.value.length && !silent) ElMessage.info('暂无签到数据')
   } finally { hoursLoading.value = false }
@@ -2543,6 +2543,7 @@ function loadRoster() {
   const g = currentShift.value
   if (!g?._roster) return
   roster.value = g._roster
+  rosterAt.value = g._rosterAt
   moveSel.value = {}
 }
 
@@ -2551,6 +2552,7 @@ async function refreshRoster() {
   const g = currentShift.value
   if (!g) return
   g._roster = await api.get(`/api/staff/shifts/${g.id}/roster`)
+  g._rosterAt = Date.now()
   loadRoster()
 }
 
@@ -2653,16 +2655,8 @@ async function removeManager(row) {
 // ?tab=hours 直达时 tab 一开始就是它，这个 watch 不会触发——那一路由
 // loadAll 负责补上。
 watch(tab, async t => {
-  if (t === 'hours') {
-    await refreshHours()
-    await nextTick()                 // lazy 页签这一轮才渲染，ref 要等一帧
-    hoursRefresh.value?.markLoaded()
-  }
-  if (t === 'acks') {
-    await loadBatches()
-    await nextTick()                 // lazy 页签这一轮才渲染，ref 要等一帧
-    ackRefresh.value?.markLoaded()   // 首次由这里加载，时刻也要记上
-  }
+  if (t === 'hours') await refreshHours()
+  if (t === 'acks') await loadBatches()
   if (t === 'logs') {
     // 变更记录是给「翻旧账」用的，多数人从不点开；进活动就拉 50 条，
     // 等于替没打开的页签白干一趟

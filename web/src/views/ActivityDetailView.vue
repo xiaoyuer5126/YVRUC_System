@@ -83,7 +83,7 @@
         <!-- 名额是抢的：刷新按钮就放在名额上方，别让人翻回页头去找 -->
         <div v-else class="section-title">岗位安排<span class="dim">
           点击场次、岗位名称可查看详细安排</span>
-          <RefreshBar :load="load" style="margin-left:auto" /></div>
+          <RefreshBar :load="load" :at="loadedAt" size="small" style="margin-left:auto" /></div>
 
         <!-- 报名后筛选：先是申请入口，下面照旧列场次与岗位——
              审批人要在同一页看完整安排，学生也要先知道自己在报什么 -->
@@ -91,7 +91,7 @@
                           style="margin-bottom:12px" />
         <div v-if="screenedApplying && !isTeacher" class="section-title">场次与岗位<span class="dim">
           仅供了解；录取后由负责人安排到具体岗位</span>
-          <RefreshBar :load="load" style="margin-left:auto" /></div>
+          <RefreshBar :load="load" :at="loadedAt" size="small" style="margin-left:auto" /></div>
 
         <!-- 窄屏：场次与岗位改成竖排卡片。手机上选岗位是最要紧的动作，
              不能藏在表格的展开箭头后面，所以岗位直接铺开。 -->
@@ -581,7 +581,7 @@
               </div>
             </el-timeline-item>
           </el-timeline>
-          <el-empty v-else description="暂无变更" :image-size="60" />
+          <el-empty v-else description="暂无变更" />
         </el-card>
       </el-col>
     </el-row>
@@ -634,7 +634,7 @@
           </template>
           <template v-else>
             {{ stationDetail.data.leader_name || '尚未任命' }}
-            <div v-if="stationDetail.data.leader_contact" class="dim" style="line-height:1.8">
+            <div v-if="stationDetail.data.leader_contact" class="dim">
               手机 {{ stationDetail.data.leader_contact.phone || '—' }} ·
               微信 {{ stationDetail.data.leader_contact.wechat || '—' }}
             </div>
@@ -661,7 +661,7 @@
                : (enrollDlg.shift.mode === 'assign' ? '将由负责人统一筛选分配' : '无需选择') }}
           </el-descriptions-item>
           <el-descriptions-item v-if="enrollExtra.length" label="还需参加">
-            <div v-for="s in enrollExtra" :key="s.id" style="line-height:1.7">
+            <div v-for="s in enrollExtra" :key="s.id" style="line-height:1.6">
               {{ s.kind_label }}：{{ s.time_text }}
               <span class="dim">{{ s.location || act.location || '地点待定' }}</span>
               <div v-if="s.note" class="dim">备注：{{ s.note }}</div>
@@ -887,6 +887,9 @@ const opensAt = ref(0)
 const openFormat = computed(
   () => (act.value?.opens_in > 86400 ? 'DD 天 HH:mm:ss' : 'HH:mm:ss'))
 
+// 这份详情上次拉成功的时刻：报名、退选之后也走 load 重拉，刷新条上的时刻跟着走
+const loadedAt = ref(0)
+
 async function load() {
   let d
   try {
@@ -900,6 +903,7 @@ async function load() {
   // 每场的截止也换成本地时间戳，本地开闸时拿它判断这一场还收不收人
   for (const g of d.shifts || []) g.closesAt = at + (g.closes_in_ms ?? Infinity)
   act.value = d
+  loadedAt.value = at
   const ms = d.opens_in_ms ?? d.opens_in * 1000
   opensAt.value = ms ? at + ms : 0
 }
@@ -1071,12 +1075,12 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .req-blocked { color: #e6a23c; }
 .mine-card { margin-top: 12px; border-left: 3px solid var(--el-color-success); }
 .mine-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.mine-note { margin: 4px 0; font-size: 13px; line-height: 1.75; color: #606266;
+.mine-note { margin: 4px 0; font-size: 13px; line-height: 1.6; color: #606266;
              white-space: pre-wrap; }
 .group-card { margin-bottom: 12px; border-radius: 12px; }
 .g-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
 .reassign-box { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: #f7f8fa; }
-.reassign-box .dim { margin: 8px 0 0; font-size: 13px; line-height: 1.7; }
+.reassign-box .dim { margin: 8px 0 0; font-size: 13px; line-height: 1.5; }
 
 /* 活动级的要求与保障 */
 .side-note {
@@ -1085,7 +1089,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 }
 .side-note.benefit { border-left-color: var(--el-color-success); background: #f0f9eb; }
 .side-note b { font-size: 13px; }
-.side-note p { margin: 4px 0 0; font-size: 13px; line-height: 1.75;
+.side-note p { margin: 4px 0 0; font-size: 13px; line-height: 1.6;
                white-space: pre-wrap; color: #606266; }
 
 /* 培训 / 彩排：跟在场次后面的附加时段 */

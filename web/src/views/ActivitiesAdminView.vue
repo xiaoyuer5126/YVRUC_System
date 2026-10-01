@@ -37,7 +37,7 @@
           <el-tag size="small" :type="statusType(row.status)">{{ row.status_label }}</el-tag>
         </template>
         <template #body="{ row }">
-          <div class="dim" style="line-height:1.8">
+          <div class="dim">
             <template v-if="row.record_only">{{ row.recruit_label }} · {{ row.time_text }}</template>
             <template v-else>
               {{ row.recruit_label }} · 场次 {{ row.shifts_count }} ·
@@ -134,7 +134,7 @@
 
     <!-- 复制活动：只带结构，落草稿并直接进编辑页 -->
     <el-dialog v-model="copyDlg.visible" title="复制活动" width="500">
-      <p class="dim" style="line-height:1.8">
+      <p class="dim">
         复制「{{ copyDlg.source?.title }}」的<b>结构</b>：活动信息、场次、岗位、学习材料、报名问卷。
       </p>
       <el-form label-width="96px">

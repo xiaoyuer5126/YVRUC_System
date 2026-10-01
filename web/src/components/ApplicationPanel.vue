@@ -97,7 +97,7 @@
           <div v-if="q.options?.length" class="dim">选项：{{ q.options.join(' / ') }}</div>
         </li>
       </ol>
-      <el-empty v-else description="还没有设置题目" :image-size="50" />
+      <el-empty v-else description="还没有设置题目" />
     </template>
   </el-card>
 </template>
@@ -183,5 +183,5 @@ async function withdraw() {
 .shift-block { margin-bottom: 12px; }
 .shift-name { font-weight: 600; margin-bottom: 4px; }
 .pos-line { display: flex; align-items: center; gap: 8px; padding-left: 10px; }
-.preview { margin: 8px 0 0; padding-left: 20px; line-height: 2; }
+.preview { margin: 8px 0 0; padding-left: 20px; line-height: 1.6; }
 </style>

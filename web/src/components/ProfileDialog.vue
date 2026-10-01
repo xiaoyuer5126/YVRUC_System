@@ -48,7 +48,7 @@
         </el-checkbox>
       </el-form-item>
     </el-form>
-    <p class="dim" style="margin:0;line-height:1.7">
+    <p class="dim" style="margin:0">
       信息仅用于志愿服务组织联络，身份证号仅用于时长录入，不对外展示</p>
     <template #footer>
       <el-button v-if="!forced" @click="visible = false">取消</el-button>

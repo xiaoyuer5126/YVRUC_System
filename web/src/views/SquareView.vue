@@ -168,7 +168,7 @@ onMounted(load)
 .hero h2 { margin:0; }
 .filters { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
 .pager { margin-top:16px; justify-content:center; }
-.hero p { margin:8px 0 0; color:#909399; font-size:13px; line-height:1.7; }
+.hero p { margin:8px 0 0; color:#909399; font-size:13px; line-height: 1.6; }
 .square-card { padding:16px 18px; }
 .card-top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .card-title {

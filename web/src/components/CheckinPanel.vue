@@ -1,10 +1,10 @@
 <template>
   <div v-if="boardShift">
     <div class="toolbar">
-      <el-button type="primary" size="small" :disabled="over" @click="openCreate">
+      <el-button type="primary" :disabled="over" @click="openCreate">
         <el-icon><Plus /></el-icon>&nbsp;生成签到码
       </el-button>
-      <el-button size="small" :disabled="over" @click="openReminder">
+      <el-button :disabled="over" @click="openReminder">
         <el-icon><Bell /></el-icon>&nbsp;补发签到提醒
       </el-button>
       <span class="dim">
@@ -115,7 +115,7 @@
       </el-select>
       <!-- 刷新条放在这里而不是看板里：换场次时看板会整块卸载重建，
            待在里面的话组件跟着重来一次，「更新于」被清空 -->
-      <RefreshBar ref="boardRefresh" :load="loadBoard" />
+      <RefreshBar ref="boardRefresh" :load="loadBoard" :at="boardAt" />
     </div>
 
     <!-- 到岗看板：按场次拉取，不依赖激活任务 -->
@@ -159,20 +159,20 @@
       <div class="section-title">到场名单（含未签到者，勾选后可批量操作）</div>
       <el-card shadow="never">
         <div class="manual-bar">
-          <el-input v-model="manualSid" size="small" placeholder="输入学号单个操作" style="width:180px"
+          <el-input v-model="manualSid" placeholder="输入学号单个操作" style="width:180px"
                     :disabled="!batchTaskId || hoursFrozen" />
-          <el-button size="small" :disabled="!batchTaskId || hoursFrozen" @click="quick('checkin')">签到</el-button>
-          <el-button size="small" :disabled="!batchTaskId || hoursFrozen" @click="quick('checkout')">签退</el-button>
+          <el-button :disabled="!batchTaskId || hoursFrozen" @click="quick('checkin')">签到</el-button>
+          <el-button :disabled="!batchTaskId || hoursFrozen" @click="quick('checkout')">签退</el-button>
           <el-divider direction="vertical" />
           <template v-if="selected.length">
             <span class="dim">已选 {{ selected.length }} 人：</span>
-            <el-button size="small" type="primary" :disabled="!batchTaskId || hoursFrozen"
+            <el-button type="primary" :disabled="!batchTaskId || hoursFrozen"
                        @click="batch('checkin')">批量签到</el-button>
-            <el-button size="small" type="warning" :disabled="!batchTaskId || hoursFrozen"
+            <el-button type="warning" :disabled="!batchTaskId || hoursFrozen"
                        @click="batch('checkout')">批量签退</el-button>
-            <el-button size="small" :disabled="!batchTaskId || hoursFrozen"
+            <el-button :disabled="!batchTaskId || hoursFrozen"
                        @click="batch('cancel_checkout')">取消签退</el-button>
-            <el-button size="small" type="danger" plain :disabled="!batchTaskId || hoursFrozen"
+            <el-button type="danger" plain :disabled="!batchTaskId || hoursFrozen"
                        @click="batch('cancel_checkin')">取消签到</el-button>
             <el-tag v-if="!batchTaskId" size="small" type="warning" effect="plain">请先生成并开启签到码</el-tag>
           </template>
@@ -299,7 +299,7 @@
         <!-- 定位签到的任务没有可扫的码：这一屏显示在墙上也没人能扫。
              说清楚该干什么，别让现场的人对着一块空屏瞎猜 -->
         <el-alert v-if="qrTask.geo" type="info" :closable="false" style="text-align:left">
-          <p style="margin:0;line-height:1.9">
+          <p style="margin:0;line-height:1.6">
             本场次用<b>定位签到</b>，不需要二维码。<br>
             志愿者到场后在「我的报名」里点「签到」，平台比对距离
             （半径 {{ qrTask.geo.radius_m }} 米）。<br>
@@ -355,7 +355,7 @@
 
     <!-- 改可签时段：场次提前或拖堂时用，不必关掉重建（重建会让已扫过的码作废） -->
     <el-dialog v-model="winDlg.visible" title="改可签时段" width="440">
-      <p class="dim" style="line-height:1.8;margin:0 0 12px">
+      <p class="dim" style="margin:0 0 12px">
         {{ winDlg.task?.shift_name }}<template
           v-if="winDlg.task?.mode === 'position'"> · {{ winDlg.task?.position_name }}</template>
         。改时段不影响已经扫过的记录，码也还是同一张。
@@ -406,7 +406,7 @@
               没找到这个地名。加上校区或城市再试（如「人民大学明德楼」），
               或者直接在地图上点、拖着图钉挪。
             </div>
-            <div v-if="geoForm.lat" class="dim" style="line-height:1.7">
+            <div v-if="geoForm.lat" class="dim">
               {{ geoForm.lat.toFixed(5) }}, {{ geoForm.lng.toFixed(5) }}
               <template v-if="geoForm.accuracy">
                 （手机报的误差约 ±{{ Math.round(geoForm.accuracy) }} 米）
@@ -428,7 +428,7 @@
         <GeoMap v-if="geoForm.lat" :lat="geoForm.lat" :lng="geoForm.lng"
                 :radius="geoForm.radius_m" pickable
                 @pick="onPick" />
-        <div class="dim" style="line-height:1.8">
+        <div class="dim">
           图上可以直接点一下、或者拖着图钉挪位置。
         </div>
       </template>
@@ -443,7 +443,7 @@
 
     <!-- 补发签到提醒：先选范围再发，别在下拉里盲点 -->
     <el-dialog v-model="reminderDlg" title="补发签到提醒" width="460">
-      <p class="dim" style="line-height:1.8">
+      <p class="dim">
         只发给<b>未签到</b>的正式志愿者。场次开始前 30 分钟系统已自动发送过一次。
       </p>
       <el-form label-width="72px">
@@ -538,6 +538,7 @@ let codeBusy = false
 const manualSid = ref('')
 const selected = ref([])
 const boardRefresh = ref(null)
+const boardAt = ref(0)
 
 const pct = computed(() => board.value
   ? Math.min(100, Math.round(board.value.checked / Math.max(1, board.value.expected) * 100))
@@ -621,11 +622,13 @@ async function loadBoard() {
     loadTasks(),
   ])
   board.value = b
+  boardAt.value = Date.now()
 }
 
 /** 换场次：看板整份换掉，先前勾选的人不再属于这一场，必须清空。 */
 function onSwitchBoard() {
   board.value = null
+  boardAt.value = 0
   selected.value = []
   manualSid.value = ''
   boardRefresh.value?.fire()
@@ -663,7 +666,6 @@ onMounted(async () => {
   await loadTasks()
   boardShiftId.value = shiftOptions.value[0]?.id || ''
   await loadBoard()
-  boardRefresh.value?.markLoaded()
 })
 
 /** 默认可签时段：场次起止各外扩 WINDOW_PAD 分钟。

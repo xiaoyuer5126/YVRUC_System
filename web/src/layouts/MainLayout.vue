@@ -223,7 +223,7 @@ async function onCommand(cmd) {
   display: flex; flex-direction: column;
   height: 100%; overflow-y: auto; flex-shrink: 0;
 }
-.side-foot { padding: 14px; line-height: 1.7; border-top: 1px dashed #eceef1;
+.side-foot { padding: 14px; line-height: 1.5; border-top: 1px dashed #eceef1;
              flex-shrink: 0; margin-top: auto; }
 .msg-badge :deep(.el-button) { color: #fff; }
 .switch-cap { font-size: 13px; color: #a8abb2; padding: 4px 16px 6px;
