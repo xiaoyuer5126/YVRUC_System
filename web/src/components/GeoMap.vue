@@ -1,4 +1,4 @@
-<!-- 签到点的小地图：把锚点和它的范围画出来。
+<!-- 小地图：把一个点（和它的范围圈）画出来。签到点和活动地点都用它（经 GeoPicker）。
  *
  * 用天地图的瓦片 + Leaflet，**不引天地图官方的 JS API**——它的瓦片是标准
  * WMTS，Leaflet 一个 tileLayer 就吃得下，不必再学一套 API。
@@ -12,9 +12,9 @@
  * 几百米），而我们的锚点和学生坐标都是 WGS-84，一转反而对不上。
  *
  * 默认只读；传 pickable 才能在图上点一下或拖图钉改坐标（抛 pick 事件）。
- * 定位弹窗是打开的：到不了现场的时候，总得有个办法把点定下来。但图上点的
- * 坐标说明不了「有人到过那儿」，所以调用方要把来源记成 map——弹窗随即亮出
- * 警告，后端把它写进审计（见 CheckinPanel 的 geoWarn 与后端 set_geo）。
+ * 签到点也允许这样定：到不了现场的时候，总得有个办法把点定下来。但图上点的
+ * 坐标说明不了「有人到过那儿」，所以调用方要把来源记成 map，后端把它写进
+ * 审计（见 routers/staff_ops 的 set_geo）。
  -->
 <template>
   <div>
@@ -47,10 +47,9 @@ L.Icon.Default.mergeOptions({
 const props = defineProps({
   lat: { type: Number, required: true },
   lng: { type: Number, required: true },
-  radius: { type: Number, default: 200 },
-  // 允许在图上点/拖来定坐标。默认关着：锚点本该站在现场量，
-  // 放开就等于允许坐办公室把点位挪到任何地方——要开就得把代价说清楚，
-  // 见 CheckinPanel 里那段提示
+  radius: { type: Number, default: 0 },          // 范围圈（米）；0 = 不画圈
+  // 允许在图上点/拖来定坐标。签到点本该站在现场量，图上挪等于坐办公室定点位，
+  // 所以来源要记成 map 写进审计（见 set_geo）
   pickable: { type: Boolean, default: false },
 })
 const emit = defineEmits(['pick'])
@@ -134,10 +133,11 @@ async function addTiles() {
   scheduleRefresh(t)
 }
 
-/** 把视野框到「圈再往外放一圈」：只看圈内的话，周边什么参照都没有 */
+/** 把视野框到「圈再往外放一圈」：只看圈内的话，周边什么参照都没有。
+ *  没有圈的就看周围三百来米，够认出是哪栋楼、哪个路口 */
 function fit() {
-  map.fitBounds(
-    L.latLng(props.lat, props.lng).toBounds(props.radius * 3), { maxZoom: 17 })
+  map.fitBounds(L.latLng(props.lat, props.lng)
+    .toBounds(Math.max(props.radius * 3, 300)), { maxZoom: 17 })
 }
 
 onMounted(() => {
@@ -147,10 +147,12 @@ onMounted(() => {
   addTiles()
   marker = L.marker([props.lat, props.lng],
                     { draggable: props.pickable }).addTo(map)
-  circle = L.circle([props.lat, props.lng], {
-    radius: props.radius,
-    color: '#9e2235', weight: 1.5, fillColor: '#9e2235', fillOpacity: 0.12,
-  }).addTo(map)
+  if (props.radius) {
+    circle = L.circle([props.lat, props.lng], {
+      radius: props.radius,
+      color: '#9e2235', weight: 1.5, fillColor: '#9e2235', fillOpacity: 0.12,
+    }).addTo(map)
+  }
   if (props.pickable) {
     // 拖图钉比点地图准：点击是「大致那一带」，拖动能看着圈挪到位
     marker.on('dragend', () => {
@@ -167,12 +169,12 @@ onMounted(() => {
 watch(() => [props.lat, props.lng], () => {
   if (!map) return
   marker.setLatLng([props.lat, props.lng])
-  circle.setLatLng([props.lat, props.lng])
+  circle?.setLatLng([props.lat, props.lng])
   fit()
 })
 watch(() => props.radius, r => {
   if (!map) return
-  circle.setRadius(r)
+  circle?.setRadius(r)
   fit()
 })
 

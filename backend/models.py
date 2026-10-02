@@ -312,6 +312,9 @@ class Activity(Base):
     recruit_mode: Mapped[str] = mapped_column(String(12), default="instant")
     intro: Mapped[str] = mapped_column(Text, default="")
     location: Mapped[str] = mapped_column(String(128), default="")
+    # 活动地点在地图上的点 {"lat", "lng"}（WGS-84，和签到点、天地图同一套坐标），
+    # 选填。志愿者在活动详情里点「导航」按它跳到地图应用
+    location_point: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
     # 联系人（多人）：[{"name": 姓名, "phone": 电话}]
     contacts: Mapped[list] = mapped_column(JSON, default=list)
     # 志愿者联络群二维码（dataURL）。必填；不在活动详情公开，报名成功/候补转正/

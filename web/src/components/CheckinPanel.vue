@@ -377,41 +377,7 @@
       <template v-if="geoTask">
         <el-form label-width="90px">
           <el-form-item label="签到地点">
-            <!-- 三行：快捷来源 / 按地名搜 / 坐标。校区按钮只把地图带到校区，
-                 落点还得拖着图钉挪到具体岗位 -->
-            <div class="geo-line">
-              <el-button size="small" :loading="geoLocating"
-                         @click="locateMe">使用我的当前位置</el-button>
-              <el-button v-for="c in campuses" :key="c.name" size="small" plain
-                         @click="useCampus(c)">{{ c.name }}</el-button>
-            </div>
-            <div class="geo-line">
-              <el-input v-model="geoQuery" size="small" style="width:200px"
-                        placeholder="地名，如「明德楼」" clearable
-                        @keyup.enter="searchPlace" />
-              <el-button size="small" :loading="geoSearching"
-                         @click="searchPlace">搜索</el-button>
-            </div>
-            <!-- 同名异地很常见（「明德楼」全国一堆），所以地址必须列出来 -->
-            <div v-if="geoResults.length" class="geo-results">
-              <div v-for="(r, i) in geoResults" :key="i" class="geo-result"
-                   @click="pickResult(r)">
-                <b>{{ r.name }}</b>
-                <span class="dim">{{ r.address }}</span>
-              </div>
-            </div>
-            <!-- 只在搜过且为空时说：地名库对校园里的楼不一定收，加上校区名
-                 （「人民大学明德楼」）常能搜到 -->
-            <div v-else-if="geoSearched" class="dim">
-              没找到这个地名。加上校区或城市再试（如「人民大学明德楼」），
-              或者直接在地图上点、拖着图钉挪。
-            </div>
-            <div v-if="geoForm.lat" class="dim">
-              {{ geoForm.lat.toFixed(5) }}, {{ geoForm.lng.toFixed(5) }}
-              <template v-if="geoForm.accuracy">
-                （手机报的误差约 ±{{ Math.round(geoForm.accuracy) }} 米）
-              </template>
-            </div>
+            <GeoPicker v-model="geoForm" :radius="geoForm.radius_m" style="width:100%" />
           </el-form-item>
           <el-form-item label="签到范围">
             <el-input-number v-model="geoForm.radius_m" :min="30" :max="3000"
@@ -422,15 +388,6 @@
             </div>
           </el-form-item>
         </el-form>
-        <!-- 地图只给人看，不能拖：锚点必须站在现场量，能拖着改就等于允许
-             坐办公室把点位挪到任何地方，那道判定就白设了。leaflet 只在打开
-             这个弹窗时才去加载（异步组件），大多数管理者不会开这一页 -->
-        <GeoMap v-if="geoForm.lat" :lat="geoForm.lat" :lng="geoForm.lng"
-                :radius="geoForm.radius_m" pickable
-                @pick="onPick" />
-        <div class="dim">
-          图上可以直接点一下、或者拖着图钉挪位置。
-        </div>
       </template>
       <template #footer>
         <el-button v-if="geoTask?.geo" type="danger" plain :loading="geoBusy"
@@ -481,17 +438,15 @@
 </template>
 
 <script setup>
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT, qrBase } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
 import DateTimeField from './DateTimeField.vue'
+import GeoPicker from './GeoPicker.vue'
 import RefreshBar from './RefreshBar.vue'
 
-// leaflet 六十来 KB，只有打开「定位」弹窗才用得上，就别让它跟着这一页一起
-// 进包——大多数管理者整场活动都不会开那个弹窗
-const GeoMap = defineAsyncComponent(() => import('./GeoMap.vue'))
 
 const props = defineProps({
   activityId: { type: String, required: true },
@@ -792,75 +747,12 @@ function openQR(row) {
 const geoDlg = ref(false)
 const geoTask = ref(null)
 const geoBusy = ref(false)
-const geoLocating = ref(false)
-// source：这个坐标是怎么来的——'gps' 站在现场量的 / 'map' 在图上点或拖的 /
-// 'campus' 校区预设点。后端按它写审计，别让几种来源在记录里分不出来
+// source：这个坐标是怎么来的（gps / search / map / campus，见 GeoPicker）。
+// 后端按它写审计，别让几种来源在记录里分不出来
 const geoForm = ref({ lat: 0, lng: 0, accuracy: 0, radius_m: 200, source: '' })
-
-// 地图瓦片走本站转发，前端不拿任何天地图 tk（GeoMap 自己去领瓦片令牌）。
-// 这里只取校区预设点
-let mapCfgLoaded = false
-
-// 校区快捷选点的坐标也来自后端（config.CAMPUS_PRESETS）：改一个校区的位置
-// 不该要重新构建前端
-const campuses = ref([])
-
-async function loadMapConfig() {
-  if (mapCfgLoaded) return
-  mapCfgLoaded = true
-  try {
-    const d = await api.get('/api/staff/map-config', { silent: true })
-    campuses.value = d.campuses || []
-  } catch { /* 取不到就没有快捷选点，不影响定位签到本身 */ }
-}
-
-/** 按校区把地图挪过去。**这是起点不是终点**：校区中心跟具体岗位（东门、
- *  某栋楼前）能差好几百米，落点要拖着图钉挪到实际位置上。 */
-function useCampus(c) {
-  geoForm.value.lat = c.lat
-  geoForm.value.lng = c.lng
-  geoForm.value.accuracy = 0
-  geoForm.value.source = 'campus'
-}
-
-// —— 按地名搜坐标 ——
-const geoQuery = ref('')
-const geoResults = ref([])
-const geoSearching = ref(false)
-const geoSearched = ref(false)     // 搜过一次了：搜空和从没搜过要分得开
-
-/** 搜地名。**带上当前坐标**：搜出来的范围限定在这附近，
- *  不然「明德楼」会把桂林、深圳的都端上来。 */
-async function searchPlace() {
-  const q = geoQuery.value.trim()
-  if (q.length < 2) return ElMessage.warning('请至少输入两个字')
-  geoSearching.value = true
-  try {
-    const d = await api.get(
-      `/api/staff/geo/search?q=${encodeURIComponent(q)}`
-      + (geoForm.value.lat ? `&lat=${geoForm.value.lat}&lng=${geoForm.value.lng}` : ''),
-      { silent: true })
-    geoResults.value = d.items || []
-    geoSearched.value = true
-  } catch { /* 搜索坏了不影响手填坐标，api 层已经提示过 */ } finally {
-    geoSearching.value = false
-  }
-}
-
-/** 选中一个候选点：坐标以它为准，并且记下来源不是现场量的。 */
-function pickResult(r) {
-  geoForm.value.lat = r.lat
-  geoForm.value.lng = r.lng
-  geoForm.value.accuracy = 0
-  geoForm.value.source = 'search'
-  geoResults.value = []
-  geoSearched.value = false        // 选完了就不是「没搜到」的状态了
-  geoQuery.value = r.name
-}
 
 function openGeo(row) {
   geoTask.value = row
-  loadMapConfig()
   // 已经有锚点的，先把旧的填进去：多数时候只是改个半径，
   // 不该逼着人再站到太阳底下量一次
   geoForm.value = {
@@ -871,37 +763,6 @@ function openGeo(row) {
     source: '',
   }
   geoDlg.value = true
-}
-
-/** 在图上点了一下或拖了图钉：坐标以这个为准，并且记下它不是现场量的。 */
-function onPick(lat, lng) {
-  geoForm.value.lat = lat
-  geoForm.value.lng = lng
-  geoForm.value.accuracy = 0
-  geoForm.value.source = 'map'
-}
-
-/** 量当前位置。这个坐标只是「管理者此刻站在哪」，判定用的仍是服务端。 */
-function locateMe() {
-  if (!navigator.geolocation) {
-    return ElMessage.error('这个浏览器不能定位，请换手机浏览器再试')
-  }
-  geoLocating.value = true
-  navigator.geolocation.getCurrentPosition(pos => {
-    geoLocating.value = false
-    geoForm.value.lat = pos.coords.latitude
-    geoForm.value.lng = pos.coords.longitude
-    geoForm.value.accuracy = pos.coords.accuracy || 0
-    geoForm.value.source = 'gps'
-  }, e => {
-    geoLocating.value = false
-    if (!window.isSecureContext) {
-      return ElMessage.error('定位只能在 https 下使用，请用平台正式网址打开')
-    }
-    ElMessage.error(e?.code === 1 ? '您没有允许定位，请在浏览器设置里允许后重试'
-                   : e?.code === 3 ? '定位超时，请到空旷处重试'
-                   : '取不到定位，请到空旷处或窗边重试')
-  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 })
 }
 
 async function saveGeo() {
@@ -1005,16 +866,6 @@ function setWindowEnd(v) { form.value.range = [form.value.range[0] || '', v || '
 .manual-bar { display:flex; gap:8px; margin-bottom:8px; align-items:center; flex-wrap:wrap; }
 /* 只靠 gap 隔开：Element 给相邻按钮自带的 12px 左外边距会叠上去 */
 .manual-bar .el-button + .el-button { margin-left: 0; }
-/* 签到地点那三行：快捷来源 / 搜索 / 坐标 */
-.geo-line { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
-            margin-bottom:8px; width:100%; }
-/* 搜索结果：一条一行，点一下就用它的坐标。地址必须显示——同名异地太多了 */
-.geo-results { margin-bottom:8px; max-height:180px; overflow-y:auto; width:100%;
-               border:1px solid #eceef1; border-radius:8px; }
-.geo-result { padding:6px 10px; cursor:pointer; line-height:1.6; font-size:13px; }
-.geo-result + .geo-result { border-top:1px solid #f2f3f5; }
-.geo-result:hover { background:#f7f8fa; }
-.geo-result .dim { margin-left:8px; }
 /* 二维码下面那行「这是哪一场、哪个岗位」 */
 .qr-who { display:flex; justify-content:center; align-items:center; gap:8px;
           flex-wrap:wrap; margin:8px 0 4px; font-size:14px; }

@@ -25,6 +25,19 @@
     </el-form-item>
     <el-form-item label="活动地点" required>
       <el-input v-model="f.location" placeholder="如：中关村校区世纪馆北门" />
+      <!-- 地图上的点选填：定了的话，志愿者在活动详情里能一键跳到地图应用导航 -->
+      <div v-if="!isRecord" class="point-line">
+        <template v-if="f.location_point">
+          <span class="dim">已定位 {{ f.location_point.lat.toFixed(5) }},
+            {{ f.location_point.lng.toFixed(5) }}</span>
+          <el-button size="small" link type="primary" @click="openPoint">修改</el-button>
+          <el-button size="small" link @click="f.location_point = null">清除</el-button>
+        </template>
+        <template v-else>
+          <el-button size="small" plain @click="openPoint">在地图上定位</el-button>
+          <span class="dim">选填，定位后志愿者可以一键导航</span>
+        </template>
+      </div>
     </el-form-item>
     <el-form-item label="联系人" required>
       <div class="contacts-box">
@@ -107,6 +120,14 @@
         </div>
       </div>
     </el-form-item>
+    <el-dialog v-model="pointDlg.visible" title="活动地点定位" width="440" append-to-body>
+      <GeoPicker v-model="pointDlg.value" @place="name => pointDlg.place = name" />
+      <template #footer>
+        <el-button @click="pointDlg.visible = false">取消</el-button>
+        <el-button type="primary" :disabled="!pointDlg.value.lat"
+                   @click="savePoint">用这个位置</el-button>
+      </template>
+    </el-dialog>
   </el-form>
 </template>
 
@@ -125,6 +146,7 @@ import { DAY_END, DAY_START } from '../store'
 import { uploadImage } from '../composables/uploadImage'
 import { RECORD_MODE } from '../composables/activityForm'
 import DateTimeField from './DateTimeField.vue'
+import GeoPicker from './GeoPicker.vue'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },   // 表单数据
@@ -181,6 +203,21 @@ onMounted(async () => {
   colleges.value = cl.colleges || []
 })
 
+// —— 地点定位 ——
+const pointDlg = ref({ visible: false, value: {}, place: '' })
+function openPoint() {
+  const p = f.value.location_point
+  pointDlg.value = { visible: true, place: '',
+                     value: { lat: p?.lat || 0, lng: p?.lng || 0, accuracy: 0, source: '' } }
+}
+function savePoint() {
+  const { lat, lng } = pointDlg.value.value
+  f.value.location_point = { lat, lng }
+  // 地点还没写字的，拿选中的地名顺手填上；写了就不动，那是管理者自己的说法
+  if (!f.value.location?.trim() && pointDlg.value.place) f.value.location = pointDlg.value.place
+  pointDlg.value.visible = false
+}
+
 async function uploadQr({ file }) {
   qrUploading.value = true
   try {
@@ -194,6 +231,9 @@ async function uploadQr({ file }) {
 
 <style scoped>
 .contacts-box { width: 100%; }
+.point-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+              width: 100%; margin-top: 8px; }
+.point-line .el-button + .el-button { margin-left: 0; }
 .contact-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
 .qr-preview { margin-top: 8px; display: flex; align-items: center; gap: 12px; }
 .qr-preview img { width: 96px; height: 96px; object-fit: contain;

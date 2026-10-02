@@ -754,3 +754,43 @@ def test_修改活动时必填项不能清空(client, admin, db):
                        ("location", "活动地点"), ("intro", "活动简介")):
         r = client.patch(f"/api/staff/activities/{aid}", headers=admin, json={key: " "})
         assert r.status_code == 400 and r.json()["detail"] == f"{label}不能为空", key
+
+
+# ======================= 活动地点定位 =======================
+
+def test_活动地点定位选填_详情里带着(client, admin, db):
+    from datetime import timedelta
+    from backend.models import now
+    r = _new_activity(client, admin, location_point={"lat": 39.9690012345, "lng": 116.30741})
+    assert r.status_code == 200, r.text
+    aid = r.json()["id"]
+    assert client.get(f"/api/activities/{aid}", headers=admin).json()[
+        "location_point"] == {"lat": 39.969001, "lng": 116.30741}
+
+    # 改点位进变更记录，写成坐标而不是一个字典
+    r = client.patch(f"/api/staff/activities/{aid}", headers=admin,
+                     json={"location_point": {"lat": 39.97, "lng": 116.31}})
+    assert r.status_code == 200, r.text
+    change = next(c for c in r.json()["changes"] if c["field"] == "location_point")
+    assert change["label"] == "地点定位"
+    assert change["old"] == "39.96900, 116.30741" and change["new"] == "39.97000, 116.31000"
+    r = client.patch(f"/api/staff/activities/{aid}", headers=admin,
+                     json={"location_point": None})
+    assert next(c for c in r.json()["changes"]
+                if c["field"] == "location_point")["new"] == "未定位"
+
+    # 不选就是没有；坐标不对的不收
+    assert client.get(f"/api/activities/{_new_activity(client, admin).json()['id']}",
+                      headers=admin).json()["location_point"] is None
+    for bad in ({"lat": 91, "lng": 0}, {"lat": "x", "lng": 1}, {"lng": 116}):
+        r = _new_activity(client, admin, location_point=bad)
+        assert r.status_code == 400 and "地点定位" in r.json()["detail"], bad
+
+    # 补记录活动没有人要导航，传了也不收
+    r = _new_activity(client, admin, recruit_mode="record",
+                      location_point={"lat": 39.97, "lng": 116.31},
+                      held_start=(now() - timedelta(days=3)).isoformat(),
+                      held_end=(now() - timedelta(days=3, hours=-2)).isoformat())
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/activities/{r.json()['id']}", headers=admin).json()[
+        "location_point"] is None

@@ -43,7 +43,7 @@ router = APIRouter(prefix="/api/staff", tags=["staff"])
 
 ACTIVITY_FIELDS = {
     "title": "名称", "recruit_mode": "活动类型", "intro": "简介",
-    "location": "地点", "organizer": "组织单位",
+    "location": "地点", "location_point": "地点定位", "organizer": "组织单位",
     "contacts": "联系人",
     "contact_group_qr": "志愿者联络群二维码",
     "volunteer_requirement": "志愿者要求", "volunteer_benefit": "志愿者保障",
@@ -57,7 +57,7 @@ REQUIRED_TEXT = {"title": "活动名称", "organizer": "组织单位", "location
                  "intro": "活动简介", "volunteer_benefit": "志愿者保障"}
 # 补记录活动（config.RECORD_MODE）用不上的那些：不公开、不报名，就没有联络群、
 # 报名时间与招募范围。编辑时传了也不认，免得前端一个旧表单把它们又写回来
-RECORD_UNUSED_FIELDS = ("contact_group_qr", "reg_start", "reg_end",
+RECORD_UNUSED_FIELDS = ("contact_group_qr", "reg_start", "reg_end", "location_point",
                         "recruit_campuses", "recruit_stages", "recruit_colleges")
 
 
@@ -143,6 +143,7 @@ class ActivityBody(BaseModel):
     recruit_mode: str = "instant"
     intro: str = ""
     location: str = ""
+    location_point: dict | None = None
     contacts: list[dict] = []
     contact_group_qr: str = ""
     cover_hue: int = 0
@@ -158,6 +159,24 @@ class ActivityBody(BaseModel):
     # 补记录活动的活动时间（它没有场次，只能直接填）
     held_start: str | None = None
     held_end: str | None = None
+
+
+def _clean_point(raw) -> dict | None:
+    """地点定位：{"lat", "lng"}，或空（没定位）。坐标留 6 位小数，约 0.1 米。"""
+    if not raw:
+        return None
+    try:
+        lat, lng = float(raw["lat"]), float(raw["lng"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(400, "地点定位的坐标不对，请重新在地图上选")
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        raise HTTPException(400, "地点定位的坐标不对，请重新在地图上选")
+    return {"lat": round(lat, 6), "lng": round(lng, 6)}
+
+
+def _point_text(p: dict | None) -> str:
+    """变更记录与通知里怎么写这个点：一串坐标比 {'lat': …} 好认。"""
+    return f"{p['lat']:.5f}, {p['lng']:.5f}" if p else "未定位"
 
 
 def _check_held_span(start: datetime | None, end: datetime | None) -> None:
@@ -331,6 +350,7 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                    recruit_mode=body.recruit_mode,
                    organizer=body.organizer.strip(),
                    intro=body.intro.strip(), location=body.location.strip(),
+                   location_point=None if record else _clean_point(body.location_point),
                    contact_group_qr=body.contact_group_qr.strip(),
                    cover_hue=body.cover_hue,
                    volunteer_requirement=body.volunteer_requirement.strip(),
@@ -391,6 +411,8 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
             setattr(act, key, _parse_dt(value))
         elif key == "contacts":
             act.contacts = _clean_contacts(value)
+        elif key == "location_point":
+            act.location_point = _clean_point(value)
         elif key == "recruit_campuses":
             act.recruit_campuses = _clean_scope(value, config.CAMPUSES, "校区")
         elif key == "recruit_stages":
@@ -412,11 +434,13 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
                                "recruit_colleges")) \
             and not body.get("keep_outsiders"):
         _refuse_if_enrolled_outside_scope(db, act)
-    changes = diff_changes(
-        {k: (iso(v) if isinstance(v, datetime) else v) for k, v in before.items()},
-        {k: (iso(getattr(act, k)) if isinstance(getattr(act, k), datetime)
-             else getattr(act, k)) for k in ACTIVITY_FIELDS},
-        ACTIVITY_FIELDS)
+    def shown(k, v):
+        if isinstance(v, datetime):
+            return iso(v)
+        return _point_text(v) if k == "location_point" else v
+    changes = diff_changes({k: shown(k, v) for k, v in before.items()},
+                           {k: shown(k, getattr(act, k)) for k in ACTIVITY_FIELDS},
+                           ACTIVITY_FIELDS)
     if not changes:
         return {"ok": True, "changes": []}
 

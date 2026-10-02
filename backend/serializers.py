@@ -509,6 +509,7 @@ def _detail_public(db: OrmSession, act: Activity) -> dict:
     out["_t"] = _time_basis(act, shifts=True)
     out.update({
         "intro": act.intro,
+        "location_point": act.location_point,
         "volunteer_requirement": act.volunteer_requirement,
         "recruit_campuses": act.recruit_campuses or [],
         "recruit_stages": act.recruit_stages or [],

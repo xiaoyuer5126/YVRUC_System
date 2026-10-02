@@ -21,7 +21,14 @@
           <el-descriptions :column="narrow ? 1 : 2" border size="small">
             <el-descriptions-item label="组织单位">{{ act.organizer || '—' }}</el-descriptions-item>
             <el-descriptions-item label="活动时间">{{ act.time_text }}</el-descriptions-item>
-            <el-descriptions-item label="活动地点">{{ act.location || '待定' }}</el-descriptions-item>
+            <el-descriptions-item label="活动地点">
+              {{ act.location || '待定' }}
+              <!-- 高德的网页版标点：手机上装了高德会问要不要打开 App，没装就在
+                   网页里看路线。coordinate=wgs84 让高德自己换算——我们存的是
+                   天地图/GPS 那一套坐标，直接当高德坐标用会偏几百米 -->
+              <el-link v-if="act.location_point" :href="navUrl" target="_blank"
+                       type="primary" style="margin-left:8px">导航</el-link>
+            </el-descriptions-item>
             <el-descriptions-item label="联系人">
               <span v-for="(c, i) in act.contacts" :key="i" style="margin-right:12px">
                 {{ c.name }} <span class="mono">{{ c.phone }}</span>
@@ -780,6 +787,15 @@ const STATUS_TYPES = {
 const statusType = computed(() => STATUS_TYPES[act.value?.display_status] || 'info')
 // 负责人正在改安排：报名、退选、确认转正后端一律拦，按钮跟着灰掉
 const paused = computed(() => !!act.value?.editing)
+// 活动地点的导航链接（高德网页版标点，见模板里那段说明）
+const navUrl = computed(() => {
+  const p = act.value?.location_point
+  if (!p) return ''
+  // 照高德文档的写法拼「经度,纬度」，逗号不转义（URLSearchParams 会把它转成 %2C）
+  const name = encodeURIComponent(act.value.location || act.value.title)
+  return `https://uri.amap.com/marker?position=${p.lng},${p.lat}&name=${name}`
+       + '&coordinate=wgs84&callnative=1&src=rucva'
+})
 // 老师不参与志愿报名：安排照看，报名、申请入口都不给
 const isTeacher = computed(() => auth.user?.user_type === 'teacher')
 

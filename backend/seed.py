@@ -219,6 +219,7 @@ def main() -> None:
                          intro="全校秋季运动会开幕式需要大量志愿者支持，涉及引导、检录、礼仪、医疗辅助等岗位。"
                                "请仔细核对时间后报名；如无法参加请提前 24 小时退选。",
                          location="世纪馆田径场",
+                         location_point={"lat": 39.96785, "lng": 116.30905},
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"},
                                    {"name": "王砚秋", "phone": "13950010000"}],
                          contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
@@ -352,6 +353,7 @@ def main() -> None:
                         intro="面向来访考生家长的咨询引导志愿服务。岗位简单，无需分岗位，"
                               "报名即锁定时段。",
                         location="明德广场",
+                        location_point={"lat": 39.96921, "lng": 116.30772},
                         contacts=[{"name": "张远航", "phone": "13950030000"}],
                         contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
                         status="published", reg_start=dt(days=-1),
