@@ -218,7 +218,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
   的时长表里也不含他。
 - 定位签到的管理端小地图用天地图瓦片，**由本站服务器转发**（`backend/routers/geo.py`）：
   浏览器直连时浏览器端 tk 靠 Referer 域名白名单，AdGuard 隐身模式之类的插件会改掉
-  第三方 Referer，天地图一律 403、地图整块灰掉。现在浏览器只请求
+  第三方 Referer，天地图一律 403、地图整块灰掉。所以浏览器只请求
   `/api/geo/tiles/{vec|cva}/{z}/{x}/{y}?t=令牌`，拿不到任何 tk。
   - tk：只用服务端 tk（`RUCVA_TIANDITU_TK_SERVER`），**部署时要在天地图后台把服务器
     公网出口 IP 登记进白名单**；没配则地图只显示点和圈。浏览器端 tk 用不上：天地图对它

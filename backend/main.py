@@ -3,7 +3,7 @@
 每个进程同时提供：
   · /api/**      业务接口
   · /assets/**   前端构建产物（web/dist）
-  · /            SPA 回退（hash 路由的兜底直链）
+  · /            SPA 回退（前端路由是真实路径，/my、/manage/xxx 都回 index.html）
 
 进程数由部署决定（Dockerfile CMD 读 RUCVA_WORKERS，默认 4）。后台清扫协程
 也是每个进程各起一份，靠 Redis 租约选主，同一时刻只有主进程在跑，见

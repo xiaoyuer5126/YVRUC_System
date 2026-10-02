@@ -105,8 +105,8 @@ def login_url(next_url: str = "") -> str:
     """真实 SSO 的授权跳转地址；没配好时返回空串，由前端显示「登录方式未配置」。
 
     state 现取现用、一次一用，跳转前想去的页面存在它背后（见 locks.py）。
-    前端是 hash 路由，而 redirect_uri 指向平台根路径，所以 CAS 追加的
-    ?code=..&state=.. 会落在真正的查询串上——前端在 router.js 里接。
+    redirect_uri 指向平台根路径，CAS 在后面追加 ?code=..&state=..，
+    前端在 router.js 的路由守卫里接住、转给 /sso-callback。
     """
     cfg = get_config("sso")
     authorize = _endpoint(cfg, "authorize_url")
