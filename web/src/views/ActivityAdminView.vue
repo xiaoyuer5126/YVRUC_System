@@ -110,9 +110,12 @@
         </el-alert>
         <div class="toolbar">
           <el-button plain @click="formDlg = true">{{ formLabel }}</el-button>
-          <span class="dim">
-            {{ act.recruit_mode === 'screened'
-               ? '志愿者申请时填写' : '选填，志愿者报名时填写' }}
+          <!-- 筛选活动没有问卷也能发，但筛的时候只剩档案可看：提醒，不拦 -->
+          <el-text v-if="screened && !formCount && !isPublic" type="warning" size="small">
+            报名后筛选的活动建议设置报名问卷，不然筛选时只能看志愿者档案
+          </el-text>
+          <span v-else class="dim">
+            {{ screened ? '志愿者申请时填写' : '选填，志愿者报名时填写' }}
           </span>
         </div>
         <!-- 结束之后是终态：时长按当时的岗位与名单结的账，再改就对不上，
@@ -1205,6 +1208,9 @@
                            :exts="submitFiles.proposal_exts" :template="templates.proposal"
                            :required="!submitFiles.proposal" @changed="loadSubmitFiles" />
         </el-form-item>
+        <el-alert v-if="screened && !formCount" type="warning" :closable="false"
+                  title="还没有设置报名问卷"
+                  description="报名后筛选的活动，没有问卷的话筛选时只能看志愿者档案。需要的话先取消，到「岗位设置」页签设置；不需要可以直接提交。" />
         <el-form-item label="补充说明">
           <el-input v-model="submitDlg.note" type="textarea" :rows="2"
                     placeholder="选填" />
@@ -1496,7 +1502,7 @@
       </template>
     </el-dialog>
 
-    <!-- 智能起草场次岗位：只在「场次岗位」页签、能改结构的时候出现（草稿或调整中） -->
+    <!-- 智能起草场次岗位：只在「岗位设置」页签、能改结构的时候出现（草稿或调整中） -->
     <AiStructureAssist v-if="tab === 'tree' && !isRecord && !isOver && !structureLocked"
                        :activity-id="activityId" @created="loadAll" />
 
@@ -2126,7 +2132,7 @@ function openStation(st, g) {
     attire: st.attire || 'none', attire_note: st.attire_note || '',
     pay_optional: !!st.pay_optional, pay_note: st.pay_note || '',
     group_name: st.group_name || '',
-    genderReq: (st.requirement_tags?.性别) || '',
+    genderReq: st.requirement_tags?.性别?.[0] || '',   // 存的是 ["女"]，下拉是单选
     collegeReq: st.requirement_tags?.学院 || [],
     service_task: st.service_task, position_requirement: st.position_requirement || '',
     training_note: st.training_note,

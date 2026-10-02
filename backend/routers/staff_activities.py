@@ -250,13 +250,21 @@ def list_colleges(db: OrmSession = Depends(db_session),
     return {"colleges": college_options(db)}
 
 
-def _clean_requirement_tags(raw: dict) -> dict:
-    """场次/岗位的条件要求。只认识的标签留下，值按各自的可选集合校验。"""
-    known = {"校区": config.CAMPUSES, "学段": config.STAGES,
-             "学院": None, "性别": ["男", "女"]}
+# 场次、岗位各管各的条件，和两个表单上能填的一致：校区、学段跟着时段走（哪个
+# 校区的人能来这一场），性别、学院跟着分工走。None = 学院，按学院清单校验
+SHIFT_TAGS = {"校区": config.CAMPUSES, "学段": config.STAGES}
+POSITION_TAGS = {"性别": ["男", "女"], "学院": None}
+
+
+def _clean_requirement_tags(raw: dict, level: str) -> dict:
+    """场次/岗位（level）的条件要求。只认这一层的标签，值按各自的可选集合校验。"""
+    known, other = (SHIFT_TAGS, "岗位") if level == "场次" else (POSITION_TAGS, "场次")
     out = {}
     for tag, value in (raw or {}).items():
         if tag not in known:
+            if tag in SHIFT_TAGS or tag in POSITION_TAGS:
+                raise HTTPException(400, f"{level}上只能设{'、'.join(known)}条件，"
+                                         f"「{tag}」请设在{other}上")
             raise HTTPException(400, f"未知的条件标签「{tag}」")
         vals = value if isinstance(value, list) else [value]
         vals = (_clean_colleges(vals) if known[tag] is None
@@ -948,7 +956,7 @@ def _apply_attachment(db: OrmSession, g: Shift, body: ShiftBody,
         raise HTTPException(400, "场次类型不合法")
     g.hours_mode = body.hours_mode
     g.kind = body.kind
-    g.requirement_tags = _clean_requirement_tags(body.requirement_tags)
+    g.requirement_tags = _clean_requirement_tags(body.requirement_tags, "场次")
     if not body.parent_id:
         if body.kind != "service":
             raise HTTPException(400, "培训/彩排必须挂在一个服务场次下")
@@ -1119,7 +1127,7 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
                 raise HTTPException(400, "时长认定方式不合法")
             g.hours_mode = v
         elif key == "requirement_tags":
-            g.requirement_tags = _clean_requirement_tags(v)
+            g.requirement_tags = _clean_requirement_tags(v, "场次")
         else:
             setattr(g, key, v)
     if "applies_to_positions" in body and g.is_attached():
@@ -1323,7 +1331,7 @@ def create_position(shift_id: str, body: PositionBody,
                 attire=body.attire, attire_note=body.attire_note.strip(),
                 pay_optional=body.pay_optional, pay_note=body.pay_note.strip(),
                 group_name=body.group_name.strip(),
-                requirement_tags=_clean_requirement_tags(body.requirement_tags),
+                requirement_tags=_clean_requirement_tags(body.requirement_tags, "岗位"),
                 service_task=body.service_task.strip(),
                 position_requirement=body.position_requirement.strip(),
                 training_note=body.training_note.strip(),
@@ -1362,7 +1370,7 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
         if key not in body:
             continue
         if key == "requirement_tags":
-            s.requirement_tags = _clean_requirement_tags(body[key])
+            s.requirement_tags = _clean_requirement_tags(body[key], "岗位")
         else:
             setattr(s, key, body[key])
     _validate_position(db, g, s)

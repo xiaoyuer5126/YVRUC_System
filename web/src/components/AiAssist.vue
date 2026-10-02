@@ -36,14 +36,9 @@
   </template>
 </template>
 
-<script>
-// 开没开 AI 整个页面会话里不会变，几个页面共用一次查询
-let enabledCache = null
-</script>
-
 <script setup>
 import { onMounted, ref } from 'vue'
-import { api } from '../api'
+import { aiEnabled } from '../aiEnabled'
 import { useNarrow } from '../composables/useNarrow'
 import aiIcon from '../assets/ai-draft.png'
 
@@ -61,14 +56,7 @@ const text = ref('')
 const busy = ref(false)
 const result = ref(null)
 
-onMounted(async () => {
-  try {
-    enabledCache ||= api.get('/api/auth/constants', { silent: true }).then(c => !!c.ai_enabled)
-    enabled.value = await enabledCache
-  } catch {
-    enabledCache = null
-  }
-})
+onMounted(async () => { enabled.value = await aiEnabled() })
 
 async function go() {
   busy.value = true

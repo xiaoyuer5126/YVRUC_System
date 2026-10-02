@@ -306,5 +306,19 @@ def test_岗位条件也走同一套校验(client, admin, db, scoped):
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
     r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
                     json={"name": "新岗", "quota": 2, **POSITION_TEXT,
-                          "requirement_tags": {"学段": ["幼儿园"]}})
+                          "requirement_tags": {"性别": ["不限男女"]}})
     assert r.status_code == 400 and "不在可选范围内" in r.json()["detail"]
+
+
+def test_场次岗位各设各的条件(client, admin, db, scoped):
+    """和两个表单一致：校区、学段设在场次上，性别、学院设在岗位上。
+    放错层的话页面上改不了也看不见，只在报名时莫名其妙地拦人。"""
+    act, g, _u, _h = scoped
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
+                    json={"name": "新岗", "quota": 2, **POSITION_TEXT,
+                          "requirement_tags": {"校区": [CAMPUS_A]}})
+    assert r.status_code == 400 and "请设在场次上" in r.json()["detail"]
+    r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+                     json={"requirement_tags": {"性别": ["女"]}})
+    assert r.status_code == 400 and "请设在岗位上" in r.json()["detail"]

@@ -1,5 +1,7 @@
 <!-- 报名问卷：题目在这里设计（管理页「岗位设置」里的弹窗）。即选即得的活动
-     在报名弹窗里答，报名后筛选的申请时填。公开之后锁定。 -->
+     在报名弹窗里答，报名后筛选的申请时填。公开之后锁定。
+     智能出题：按活动简介和岗位起草几道题，先列出来给人看，点「加进题目列表」
+     才进下面可改的列表，照常点「保存报名问卷」才算数。 -->
 <template>
   <div v-loading="loading">
     <div class="fb-head">
@@ -67,7 +69,51 @@
         </el-select>
       </div>
     </div>
-    <el-button v-if="editable" plain size="small" @click="add">添加题目</el-button>
+    <div v-if="editable" class="fb-add">
+      <el-button plain size="small" @click="add">添加题目</el-button>
+      <el-button v-if="aiOn" plain size="small" type="primary"
+                 @click="aiOpen ? closeAi() : (aiOpen = true)">智能出题</el-button>
+    </div>
+    <div v-if="aiOpen" class="fb-ai">
+      <div class="dim">
+        按活动简介和岗位出题。想重点了解什么可以写在下面，不写也行。
+      </div>
+      <el-input v-model="aiText" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }"
+                maxlength="2000" show-word-limit
+                placeholder="如：翻译岗要会英语或日语，想看相关经历；要统计服装尺码" />
+      <el-alert type="warning" :closable="false" show-icon
+                title="活动信息和这里写的话会发给 AI 服务，别写身份证号、志愿者名单这类个人信息。题目可能有错，用之前请逐条核对。" />
+      <div class="fb-add">
+        <el-button type="primary" size="small" :loading="aiBusy" @click="draftQuestions">
+          {{ aiResult ? '重新出题' : '出题' }}
+        </el-button>
+        <span v-if="aiBusy" class="dim">正在出题，一般要十几秒到一分钟</span>
+      </div>
+      <template v-if="aiResult">
+        <el-alert v-if="aiResult.notes.length" type="info" :closable="false" title="智能起草提醒">
+          <div v-for="(n, i) in aiResult.notes" :key="i">· {{ n }}</div>
+        </el-alert>
+        <div v-if="!aiResult.questions.length" class="dim">没起草出题目，换个说法再试</div>
+        <ol v-else class="fb-readonly">
+          <li v-for="(q, i) in aiResult.questions" :key="i">
+            <b>{{ q.title }}</b>
+            <el-tag size="small" effect="plain" style="margin:0 8px">{{ KINDS[q.kind] }}</el-tag>
+            <el-tag v-if="q.required" size="small" type="warning" effect="plain">必填</el-tag>
+            <div v-if="q.options.length" class="dim">选项：{{ q.options.join(' / ') }}</div>
+            <div v-if="q.applies_to_positions.length" class="dim">
+              只问：{{ [...new Set(q.applies_to_positions.map(positionName))].join('、') }}
+            </div>
+          </li>
+        </ol>
+        <div class="fb-add">
+          <el-button size="small" @click="closeAi">先不用</el-button>
+          <el-button v-if="aiResult.questions.length" type="primary" size="small"
+                     @click="addDrafted">
+            加进题目列表（{{ aiResult.questions.length }} 题）
+          </el-button>
+        </div>
+      </template>
+    </div>
     <div v-if="editable" class="dim" style="margin-top:8px">
       适用岗位留空 = 人人都答；显示条件只能挂在前面的选择题上，新增的题目保存后才能作为条件。
     </div>
@@ -79,6 +125,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
+import { aiEnabled } from '../aiEnabled'
 
 const props = defineProps({
   activityId: { type: String, required: true },
@@ -135,6 +182,41 @@ function move(i, delta) {
   list.splice(i + delta, 0, q)
 }
 
+// —— 智能出题 ——
+const aiOn = ref(false)
+const aiOpen = ref(false)
+const aiText = ref('')
+const aiBusy = ref(false)
+const aiResult = ref(null)      // { questions, notes }
+onMounted(async () => { aiOn.value = await aiEnabled() })
+
+async function draftQuestions() {
+  aiBusy.value = true
+  try {
+    aiResult.value = await api.post(
+      `/api/staff/ai/activities/${props.activityId}/form-draft`, { text: aiText.value })
+  } catch { /* 错误提示 api 层已经给了 */ } finally {
+    aiBusy.value = false
+  }
+}
+
+function closeAi() {
+  aiOpen.value = false
+  aiText.value = ''
+  aiResult.value = null
+}
+
+function addDrafted() {
+  const drafted = aiResult.value.questions
+  for (const q of drafted) {
+    questions.value.push({ id: '', kind: q.kind, title: q.title, required: q.required,
+                           optionsText: q.options.join('\n'), condQ: '', condValues: [],
+                           applies_to_positions: q.applies_to_positions })
+  }
+  closeAi()
+  ElMessage.success(`已加进 ${drafted.length} 道题，核对后点「保存报名问卷」`)
+}
+
 async function save() {
   saving.value = true
   try {
@@ -163,4 +245,9 @@ async function save() {
 .fb-readonly { margin: 0; padding-left: 20px; line-height: 1.6; }
 .fb-cond { width: 100%; margin-left: 30px; display: flex; align-items: center;
            gap: 8px; flex-wrap: wrap; }
+.fb-add { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fb-add .el-button + .el-button { margin-left: 0; }
+.fb-ai { margin-top: 12px; padding: 12px; border: 1px solid #eceef1; border-radius: 12px;
+         display: flex; flex-direction: column; gap: 8px; }
+.fb-ai .el-alert { margin: 0; }
 </style>

@@ -1,4 +1,4 @@
-"""智能起草（预览版）：没开不让用、原文长短与限频、模型输出按白名单收拾。
+"""智能起草（预览版）：没开不让用、原文长短与限频、模型输出按白名单收拾、缺项由平台自己数。
 
 不连真模型：把 httpx.post 换成假的，验的是平台这一侧怎么问、怎么收。
 """
@@ -11,7 +11,7 @@ import pytest
 
 from backend import ai, config, locks
 from backend.models import Activity
-from conftest import login, make_draft
+from conftest import POSITION_TEXT, login, make_draft
 
 
 class _Resp:
@@ -81,7 +81,8 @@ def test_活动草稿按白名单收拾_空值不回(client, admin, model):
         "recruit_campuses": ["中关村校区"], "recruit_stages": ["本科生"],
         "reg_end": "2026-10-15T23:59",
     }
-    assert d["notes"] == ["原文没写报名开始时间"]
+    # 缺项平台自己数，合成一条放最前面；联络群二维码永远要自己传
+    assert d["notes"] == ["还需要自己补上：报名开始时间、联络群二维码", "原文没写报名开始时间"]
     # 发出去的请求：key 在头里，要求 json 输出，原文原样作为用户消息
     sent = calls[0]
     assert sent["url"] == f"{config.AI_BASE_URL}/chat/completions"
@@ -91,12 +92,32 @@ def test_活动草稿按白名单收拾_空值不回(client, admin, model):
     assert "json" in sent["body"]["messages"][0]["content"]
 
 
+def test_活动草稿_全选等于不限_缺项一条写完(client, admin, model):
+    calls, replies = model
+    replies.append((200, json.dumps({
+        "title": "迎新志愿服务",
+        "recruit_campuses": config.CAMPUSES,           # 全选 = 不限，留空
+        "recruit_stages": ["本科生", "本科生", {"x": 1}],
+        "contacts": {"name": "王"},                    # 该是数组的给了对象：当没有
+        "notes": "不是数组",
+    }, ensure_ascii=False)))
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, json={"text": TEXT})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["draft"] == {"title": "迎新志愿服务", "recruit_stages": ["本科生"]}
+    assert d["notes"] == ["还需要自己补上：组织单位、活动地点、活动简介、联系人、"
+                          "报名开始时间、报名截止时间、联络群二维码"]
+    assert "不要写进简介" in calls[0]["body"]["messages"][0]["content"]
+
+
 def test_场次草稿_岗位字段收拾好(client, admin, db, model):
     calls, replies = model
     aid = make_draft(client, admin)
     replies.append((200, json.dumps({"shifts": [{
         "name": "开幕式当天", "start_time": "2026-10-18 07:30", "end_time": "不知道",
         "location": "",
+        # 场次上只收校区、学段；学段全选 = 不限
+        "requirement_tags": {"校区": ["中关村校区"], "学段": config.STAGES, "性别": ["男"]},
         "positions": [
             {"name": "检录引导", "quota": "6", "service_task": "引导运动员检录",
              "attire": "issued", "attire_note": "",            # 发服装却没说怎么领：按不需要放
@@ -110,14 +131,118 @@ def test_场次草稿_岗位字段收拾好(client, admin, db, model):
     g = r.json()["shifts"][0]
     assert g["name"] == "开幕式当天" and g["start_time"] == "2026-10-18T07:30"
     assert g["end_time"] == ""                                  # 认不出的留空，让人填
+    assert g["requirement_tags"] == {"校区": ["中关村校区"]} and g["attached"] == []
     p1, p2 = g["positions"]
     assert p1["quota"] == 6 and p1["attire"] == "none" and p1["needs_leader"] is False
-    assert p1["requirement_tags"] == {"性别": ["女"], "校区": ["中关村校区"]}
+    # 岗位上只收性别：校区、学段手建时也只能设在场次上
+    assert p1["requirement_tags"] == {"性别": ["女"]}
     assert p2["name"] == "志愿者" and p2["quota"] == 1 and p2["service_task"] == ""
+    assert r.json()["notes"] == ["还需要自己补上：「开幕式当天」的起止时间、岗位「志愿者」的服务任务"]
     # 活动信息与已有场次带给了模型
     title = db.get(Activity, aid).title
     assert title in calls[0]["body"]["messages"][0]["content"]
     assert "上午场" in calls[0]["body"]["messages"][0]["content"]
+
+
+def test_场次草稿_培训彩排挂在场次下(client, admin, model):
+    _calls, replies = model
+    aid = make_draft(client, admin)
+    replies.append((200, json.dumps({"shifts": [{
+        "name": "比赛日", "start_time": "2026-10-25 07:00", "end_time": "2026-10-25 12:00",
+        "positions": [{"name": "补给站", "quota": 8, "service_task": "发水"},
+                      {"name": "终点引导", "quota": 4, "service_task": "引导完赛选手"}],
+        "attached": [
+            {"kind": "rehearsal", "name": "终点走台", "start_time": "2026-10-24 16:00",
+             "end_time": "2026-10-24 17:00", "positions": ["终点引导", "不存在的岗"],
+             "hours_mode": "none", "location": "终点拱门"},
+            {"kind": "meeting", "name": "", "start_time": "", "end_time": "",
+             "positions": ["查无此岗"], "hours_mode": "weird"},
+        ]}], "notes": []}, ensure_ascii=False)))
+    r = client.post(f"/api/staff/ai/activities/{aid}/structure-draft", headers=admin,
+                    json={"text": TEXT})
+    assert r.status_code == 200, r.text
+    a1, a2 = r.json()["shifts"][0]["attached"]
+    assert a1 == {"kind": "rehearsal", "name": "终点走台", "start_time": "2026-10-24T16:00",
+                  "end_time": "2026-10-24T17:00", "location": "终点拱门", "note": "",
+                  "positions": ["终点引导"], "hours_mode": "none"}
+    assert (a2["kind"], a2["name"], a2["positions"], a2["hours_mode"]) == \
+        ("training", "集中培训", [], "fixed")
+    # 点了岗位却一个没对上：按「全场次」放了，必须说出来
+    assert r.json()["notes"] == ["还需要自己补上：「集中培训」的起止时间",
+                                 "「集中培训」要参加的岗位没对上，先按本场次所有人放，请核对"]
+
+
+def test_场次草稿_结构不对也不报错(client, admin, model):
+    _calls, replies = model
+    aid = make_draft(client, admin)
+    replies.append((200, json.dumps({"shifts": {"name": "不是数组"}})))
+    replies.append((200, json.dumps({"shifts": [{"name": "A", "positions": "x",
+                                                 "attached": {"k": 1}}]})))
+    url = f"/api/staff/ai/activities/{aid}/structure-draft"
+    r = client.post(url, headers=admin, json={"text": TEXT})
+    assert r.status_code == 200 and r.json()["shifts"] == []
+    r = client.post(url, headers=admin, json={"text": TEXT})
+    g = r.json()["shifts"][0]
+    assert g["positions"] == [] and g["attached"] == []
+
+
+def test_问卷草稿_不写原文也行_岗位名对回岗位(client, admin, db, model):
+    calls, replies = model
+    aid = make_draft(client, admin)
+    act = db.get(Activity, aid)
+    first = next(p for g in act.main_shifts() for p in g.positions)       # 上午场「引导」
+    g2 = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
+                     json={"name": "下午场", "mode": "pick",
+                           "start_time": "2026-12-01 13:00", "end_time": "2026-12-01 17:00"}).json()["id"]
+    second = client.post(f"/api/staff/shifts/{g2}/positions", headers=admin,
+                         json={"name": "引导", "quota": 2, **POSITION_TEXT}).json()["id"]
+    trans = client.post(f"/api/staff/shifts/{g2}/positions", headers=admin,
+                        json={"name": "翻译", "quota": 1, **POSITION_TEXT}).json()["id"]
+    replies.append((200, json.dumps({"questions": [
+        {"kind": "single", "title": "参加过类似活动吗", "options": ["是", "否", "是"],
+         "required": True, "positions": []},
+        {"kind": "multi", "title": "会哪些外语", "options": ["英语"], "positions": ["翻译"]},
+        {"kind": "file", "title": "上传简历", "options": ["x"], "required": False,
+         "positions": ["引导", "不存在的岗"]},
+        {"kind": "essay", "title": "简单介绍一下自己"},
+        {"title": ""}, "不是对象",
+    ], "notes": ["要不要收简历你定"]}, ensure_ascii=False)))
+    r = client.post(f"/api/staff/ai/activities/{aid}/form-draft", headers=admin,
+                    json={"text": ""})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["notes"] == ["要不要收简历你定"]
+    q1, q2, q3, q4 = d["questions"]
+    assert (q1["kind"], q1["options"], q1["required"], q1["applies_to_positions"]) == \
+        ("single", ["是", "否"], True, [])
+    # 选项凑不齐两个的选择题当填空放；同名岗位（两个场次的「引导」）一起算
+    assert (q2["kind"], q2["options"], q2["applies_to_positions"]) == ("text", [], [trans])
+    assert (q3["kind"], q3["options"], q3["required"]) == ("file", [], False)
+    assert sorted(q3["applies_to_positions"]) == sorted([first.id, second])
+    assert q4["kind"] == "text"
+    prompt = calls[0]["body"]["messages"][0]["content"]
+    assert "报名即录取" in prompt and "- 翻译（下午场，1 人）" in prompt
+    assert "不要再出题问" in prompt
+    # 草稿原样就能保存：前端把它加进题目列表，管理者点保存走的是这个接口
+    r = client.put(f"/api/staff/activities/{aid}/form", headers=admin, json={"questions": [
+        {"kind": q["kind"], "title": q["title"], "options": q["options"],
+         "required": q["required"], "applies_to_positions": q["applies_to_positions"]}
+        for q in d["questions"]]})
+    assert r.status_code == 200, r.text
+
+
+def test_问卷草稿_补记录与已公开的不行(client, admin, db, model):
+    aid = make_draft(client, admin)
+    url = f"/api/staff/ai/activities/{aid}/form-draft"
+    act = db.get(Activity, aid)
+    act.status = "published"
+    db.commit()
+    r = client.post(url, headers=admin, json={"text": ""})
+    assert r.status_code == 409 and "已公开" in r.json()["detail"]
+    act.status, act.recruit_mode = "draft", config.RECORD_MODE
+    db.commit()
+    r = client.post(url, headers=admin, json={"text": ""})
+    assert r.status_code == 409 and "补记录" in r.json()["detail"]
 
 
 def test_原文长短与限频(client, admin, model, monkeypatch):

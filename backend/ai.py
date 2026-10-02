@@ -1,8 +1,12 @@
-"""智能起草（预览版）：活动基本信息、场次与岗位。
+"""智能起草（预览版）：活动基本信息、场次与岗位、报名问卷。
 
 只起草、不落库。草稿回到前端：基本信息填进「新建活动」表单，场次岗位放进
-可改的预览；管理者核对、改好之后，照常走新建活动 / 新建场次 / 新建岗位的
-接口——校验、审计、通知都和手填的一样，平台不替人保存任何东西。
+可改的预览，问卷题目加进出题列表；管理者核对、改好之后，照常走新建活动 /
+新建场次 / 新建岗位 / 保存报名问卷的接口——校验、审计、通知都和手填的一样，
+平台不替人保存任何东西。
+
+缺了哪些必填信息由平台对着草稿自己数，合成一条放在提醒的最前面：模型数不准，
+也不该占它那几条提醒的名额。
 
 模型说的话一律当不可信输入：字段按白名单逐个取，按类型、长度、可选值收，
 认不得的丢掉，不往外透传。拿不准的让模型写进 notes，原样给管理者看。
@@ -18,7 +22,8 @@ import time
 import httpx
 
 from . import config
-from .models import Activity, now, parse_local_dt
+from .models import Activity, FormQuestion, now, parse_local_dt
+from .serializers import recruit_scope_text
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +80,15 @@ def _text(v, limit: int) -> str:
     return v.strip()[:limit] if isinstance(v, str) else ""
 
 
+def _list(v) -> list:
+    """该是数组的地方给了别的（对象、字符串），当没有。"""
+    return v if isinstance(v, list) else []
+
+
+def _strs(v) -> list[str]:
+    return [x for x in _list(v) if isinstance(x, str)]
+
+
 def _when(v) -> str:
     """模型给的时间 → 「YYYY-MM-DDTHH:MM」；认不出给空串，前端会标出来要人填。"""
     if not isinstance(v, str) or not v.strip():
@@ -87,15 +101,19 @@ def _when(v) -> str:
 
 def _pick(v, allowed: list[str]) -> list[str]:
     """多选值只留在可选集合里的：这些值要和志愿者档案逐字比对，错一个字就永远匹配不上。"""
-    if not isinstance(v, list):
-        return []
-    return [x for x in dict.fromkeys(v) if isinstance(x, str) and x in allowed]
+    return [x for x in dict.fromkeys(_strs(v)) if x in allowed]
 
 
-def _notes(v) -> list[str]:
-    if not isinstance(v, list):
-        return []
-    return [n for n in (_text(x, 200) for x in v[:8]) if n]
+def _scope(v, allowed: list[str]) -> list[str]:
+    """招募范围、场次条件：全选等于不限，留空——不然表单里一排全勾上，看着像有限制。"""
+    picked = _pick(v, allowed)
+    return [] if set(picked) == set(allowed) else picked
+
+
+def _notes(v, missing: list[str] | None = None) -> list[str]:
+    """模型的提醒，前面加上平台数出来的缺项（一条写完）。"""
+    notes = [n for n in (_text(x, 200) for x in _list(v)[:8]) if n]
+    return ([f"还需要自己补上：{'、'.join(missing)}"] if missing else []) + notes
 
 
 def _today() -> str:
@@ -105,9 +123,9 @@ def _today() -> str:
 
 # ======================= 活动基本信息 =======================
 
-ACTIVITY_PROMPT = """你帮中国人民大学青年志愿者协会的志愿服务管理平台起草「新建活动」表单。
+ACTIVITY_PROMPT = """你帮中国人民大学的志愿服务管理平台起草「新建活动」表单。
 用户会贴来活动通知、立项书或一段口头描述。只根据原文提取，原文没有的一律留空字符串或空数组，
-不要编造——尤其不要编联系人姓名和电话。今天是 {today}，原文里的「下周六」「本月 20 日」按今天推算，
+不要编造——尤其不要编联系人姓名和电话。今天是 {today}，原文里的「下周六」「本月 20 日」等按今天推算，
 时间一律写成「YYYY-MM-DD HH:MM」（北京时间）。
 
 只输出一个 json 对象，键如下（都要有）：
@@ -115,18 +133,23 @@ ACTIVITY_PROMPT = """你帮中国人民大学青年志愿者协会的志愿服�
   "title": "活动名称，如「校运动会开幕式志愿服务」",
   "organizer": "组织单位（主办方），如「校团委」",
   "location": "活动地点，尽量具体到校区和楼",
-  "intro": "活动简介：背景、服务对象、做什么，100～300 字，用原文的意思写成通顺的一段",
+  "intro": "活动简介：背景、服务对象、志愿者做什么，100～300 字，用原文的意思写成通顺的一段。时间、地点、主办方、招募范围、报名方式、联系人、保障这些表单里各有字段，招募文案也会单独列出，不要写进简介；招募文案会在简介后面接「，现面向……招募志愿者」，所以简介里也不写招募的话",
   "volunteer_requirement": "整个活动共通的志愿者要求（着装、集合时间等），没有就空",
   "volunteer_benefit": "志愿者保障（时长认定、餐食、纪念品、保险等），没有就空",
   "contacts": [{{"name": "联系人姓名", "phone": "电话或微信"}}],
-  "recruit_mode": "instant 或 screened：报名即录取写 instant，要面试/筛选/简历的写 screened，看不出来就空",
-  "recruit_campuses": ["只能从这些里选：{campuses}"],
-  "recruit_stages": ["只能从这些里选：{stages}"],
+  "recruit_mode": "instant 或 screened：报名即录取写 instant，要面试/筛选/简历的写 screened，看不出来就默认instant",
+  "recruit_campuses": ["只能从这些里选：{campuses}。原文明确只招某些校区才写；不限、面向全校、各校区都招的给空数组"],
+  "recruit_stages": ["只能从这些里选：{stages}。原文明确只招某些学段才写；不限的给空数组"],
   "reg_start": "报名开始时间，没写就空",
   "reg_end": "报名截止时间，没写就空",
-  "notes": ["原文里没说清、需要管理者自己确认的事，每条一句，最多 5 条"]
+  "notes": ["原文里说得含糊、需要管理者自己拿主意的事，每条一句，最多 5 条。缺了哪些信息不用写，平台会自己列出来"]
 }}
 场次、岗位、人数这些不属于这张表，不用写（会在下一步单独设置），但可以在 notes 里提一句原文有没有。"""
+
+
+ACTIVITY_REQUIRED = [("title", "活动名称"), ("organizer", "组织单位"), ("location", "活动地点"),
+                     ("intro", "活动简介"), ("contacts", "联系人"),
+                     ("reg_start", "报名开始时间"), ("reg_end", "报名截止时间")]
 
 
 def activity_draft(text: str) -> dict:
@@ -141,8 +164,8 @@ def activity_draft(text: str) -> dict:
         "intro": _text(data.get("intro"), 2000),
         "volunteer_requirement": _text(data.get("volunteer_requirement"), 1000),
         "volunteer_benefit": _text(data.get("volunteer_benefit"), 1000),
-        "recruit_campuses": _pick(data.get("recruit_campuses"), config.CAMPUSES),
-        "recruit_stages": _pick(data.get("recruit_stages"), config.STAGES),
+        "recruit_campuses": _scope(data.get("recruit_campuses"), config.CAMPUSES),
+        "recruit_stages": _scope(data.get("recruit_stages"), config.STAGES),
         "reg_start": _when(data.get("reg_start")),
         "reg_end": _when(data.get("reg_end")),
     }
@@ -150,23 +173,27 @@ def activity_draft(text: str) -> dict:
     if mode in ("instant", "screened"):
         draft["recruit_mode"] = mode
     contacts = []
-    for c in data.get("contacts") or []:
+    for c in _list(data.get("contacts")):
         if isinstance(c, dict):
             name, phone = _text(c.get("name"), 32), _text(c.get("phone"), 64)
             if name or phone:
                 contacts.append({"name": name, "phone": phone})
     if contacts:
         draft["contacts"] = contacts[:5]
+    # 联络群二维码永远要自己传；志愿者保障没写有默认的那句，不算缺
+    missing = [label for key, label in ACTIVITY_REQUIRED if not draft.get(key)]
     # 空值不回：前端拿草稿去盖空表单，空串会把默认值（比如志愿者保障那句）冲掉
     return {"draft": {k: v for k, v in draft.items() if v},
-            "notes": _notes(data.get("notes"))}
+            "notes": _notes(data.get("notes"), missing + ["联络群二维码"])}
 
 
 # ======================= 场次与岗位 =======================
 
-STRUCTURE_PROMPT = """你帮中国人民大学青年志愿者协会的志愿服务管理平台起草一场活动的「场次」和「岗位」。
+STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草一场活动的「场次」和「岗位」。
 场次 = 一段服务时间（如「上午场 9:00-12:00」）；岗位 = 这段时间里的一种分工，带名额（如「检录引导 6 人」）。
 同一时间段的不同分工是同一个场次下的多个岗位，不要拆成多个场次。
+培训、彩排不是服务场次：原文给了具体时间的，写进它所服务的那个场次的 attached；
+没有具体时间、只是到岗前要知道的培训内容，写进岗位的 training_note。
 只根据原文提取，原文没有的留空字符串，不要编造。今天是 {today}；时间写成「YYYY-MM-DD HH:MM」（北京时间），
 原文只说「当天」的，用下面活动信息里能推出的日期。
 
@@ -180,30 +207,48 @@ STRUCTURE_PROMPT = """你帮中国人民大学青年志愿者协会的志愿服�
     "start_time": "开始时间",
     "end_time": "结束时间",
     "location": "这个场次的地点，和活动地点一样就空",
+    "requirement_tags": {{"校区": ["只能从这些里选：{campuses}"], "学段": ["只能从这些里选：{stages}"]}},
     "positions": [{{
       "name": "岗位名",
-      "quota": 名额（正整数，原文没写就按分工合理估一个，并在 notes 里说明是估的）,
+      "quota": 名额（正整数，原文没写就按分工合理估一个）,
       "group_name": "岗位组（几个岗位同属一组时写，如「场内组」），没有就空",
       "location": "岗位地点，和场次/活动地点一样就空",
       "service_task": "服务任务：到岗做什么，一两句话，必须写",
       "position_requirement": "岗位特有的要求（身高、外语、经验等），没有就空",
-      "training_note": "培训或集合安排，没有就空",
+      "training_note": "到岗前要知道的培训内容、集合安排，没有就空",
       "needs_leader": true 或 false（人多、需要有人带队时 true）,
       "attire": "none / issued / own：不需要统一服装、统一发放、志愿者自备",
       "attire_note": "服装说明：发放的写领取和归还方式，自备的写样式；attire 为 none 时空",
-      "requirement_tags": {{"性别": ["男" 或 "女"], "校区": ["只能从这些里选：{campuses}"], "学段": ["只能从这些里选：{stages}"]}}
+      "requirement_tags": {{"性别": ["男" 或 "女"]}}
+    }}],
+    "attached": [{{
+      "kind": "training 或 rehearsal：培训写 training，彩排、走台、演练写 rehearsal",
+      "name": "如「集中培训」「开幕式彩排」",
+      "start_time": "开始时间",
+      "end_time": "结束时间",
+      "location": "和活动地点一样就空",
+      "note": "备注，如要自带什么、线上会议链接什么时候发，没有就空",
+      "positions": ["要参加的岗位名，和上面 positions 里的岗位名一字不差；这个场次的人都要参加就给空数组"],
+      "hours_mode": "fixed / checkin / none：一般写 fixed（到场即按这一场的时长计）；原文说按签到签退计时写 checkin；原文说不计时长、或者是线上培训写 none"
     }}]
   }}],
-  "notes": ["原文里没说清、估算的、需要管理者确认的事，每条一句，最多 5 条"]
+  "notes": ["原文里没说清、需要管理者确认的事，每条一句，最多 5 条；估了名额的岗位合成一条写。缺时间、缺服务任务不用写，平台会自己列出来"]
 }}
-requirement_tags 只在原文明确限定时才写，不限就给空对象 {{}}。培训、彩排不要算成场次，写进 training_note。"""
+条件只在原文明确限定时才写，不限就给空对象 {{}}：岗位上只写性别；校区、学段写在场次上，而且只在原文说
+「这一场只要某校区/学段的人」时才写——整个活动的招募范围已经在活动信息里设好了，不要重复。"""
 
 ATTIRES = ("none", "issued", "own")
+ATTACHED_KINDS = ("training", "rehearsal")
+ATTACHED_HOURS = ("fixed", "checkin", "none")
+# 场次、岗位各自能设的条件，和手建时两个表单上的一致
+SHIFT_TAGS = {"校区": config.CAMPUSES, "学段": config.STAGES}
+POSITION_TAGS = {"性别": ["男", "女"]}
 
 
 def _activity_brief(act: Activity) -> str:
     lines = [f"名称：{act.title}", f"组织单位：{act.organizer or '—'}",
-             f"地点：{act.location or '—'}", f"简介：{(act.intro or '')[:600]}"]
+             f"地点：{act.location or '—'}", f"招募范围：{recruit_scope_text(act)}",
+             f"简介：{(act.intro or '')[:600]}"]
     if act.reg_end:
         lines.append(f"报名截止：{act.reg_end:%Y-%m-%d %H:%M}")
     if act.main_shifts():
@@ -212,13 +257,13 @@ def _activity_brief(act: Activity) -> str:
     return "\n".join(lines)
 
 
-def _tags(v) -> dict:
+def _tags(v, known: dict[str, list[str]]) -> dict:
     if not isinstance(v, dict):
         return {}
-    known = {"性别": ["男", "女"], "校区": config.CAMPUSES, "学段": config.STAGES}
     out = {}
     for tag, allowed in known.items():
-        vals = _pick(v.get(tag) if isinstance(v.get(tag), list) else [v.get(tag)], allowed)
+        raw = v.get(tag)
+        vals = _scope(raw if isinstance(raw, list) else [raw], allowed)
         if vals:
             out[tag] = vals
     return out
@@ -244,8 +289,39 @@ def _position(p: dict) -> dict:
         "training_note": _text(p.get("training_note"), 1000),
         "needs_leader": p.get("needs_leader") is True,
         "attire": attire, "attire_note": attire_note,
-        "requirement_tags": _tags(p.get("requirement_tags")),
+        "requirement_tags": _tags(p.get("requirement_tags"), POSITION_TAGS),
     }
+
+
+def _attached(a: dict, names: list[str]) -> dict:
+    """培训/彩排。要参加的岗位只认这个场次里的岗位名：前端按名字对回草稿里的岗位。"""
+    kind = a.get("kind") if a.get("kind") in ATTACHED_KINDS else "training"
+    return {
+        "kind": kind,
+        "name": _text(a.get("name"), 128) or ("集中培训" if kind == "training" else "彩排"),
+        "start_time": _when(a.get("start_time")),
+        "end_time": _when(a.get("end_time")),
+        "location": _text(a.get("location"), 128),
+        "note": _text(a.get("note"), 1000),
+        "positions": [n for n in dict.fromkeys(_strs(a.get("positions"))) if n in names],
+        "hours_mode": (a.get("hours_mode") if a.get("hours_mode") in ATTACHED_HOURS
+                       else "fixed"),
+    }
+
+
+def _structure_missing(shifts: list[dict]) -> list[str]:
+    """缺的起止时间、服务任务。岗位多了只报个数：预览里缺服务任务的已经标红。"""
+    out = []
+    for g in shifts:
+        for s in (g, *g["attached"]):
+            if not (s["start_time"] and s["end_time"]):
+                out.append(f"「{s['name']}」的起止时间")
+    tasks = list(dict.fromkeys(p["name"] for g in shifts for p in g["positions"]
+                               if not p["service_task"]))
+    if tasks:
+        out.append(f"岗位「{'」「'.join(tasks)}」的服务任务" if len(tasks) <= 3
+                   else f"{len(tasks)} 个岗位的服务任务")
+    return out
 
 
 def structure_draft(act: Activity, text: str) -> dict:
@@ -253,17 +329,112 @@ def structure_draft(act: Activity, text: str) -> dict:
                                          campuses="、".join(config.CAMPUSES),
                                          stages="、".join(config.STAGES)),
                  text)
-    shifts = []
-    for g in (data.get("shifts") or [])[:20]:
+    shifts, lost = [], []
+    for g in _list(data.get("shifts"))[:20]:
         if not isinstance(g, dict):
             continue
-        positions = [_position(p) for p in (g.get("positions") or [])[:30]
+        positions = [_position(p) for p in _list(g.get("positions"))[:30]
                      if isinstance(p, dict)]
+        names = [p["name"] for p in positions]
+        attached = []
+        for a in _list(g.get("attached"))[:10]:
+            if isinstance(a, dict):
+                attached.append(_attached(a, names))
+                # 点了岗位却一个都没对上：空着就成了「全场次都要来」，得告诉人
+                if _strs(a.get("positions")) and not attached[-1]["positions"]:
+                    lost.append(attached[-1]["name"])
         shifts.append({
             "name": _text(g.get("name"), 128) or f"场次 {len(shifts) + 1}",
             "start_time": _when(g.get("start_time")),
             "end_time": _when(g.get("end_time")),
             "location": _text(g.get("location"), 128),
+            "requirement_tags": _tags(g.get("requirement_tags"), SHIFT_TAGS),
             "positions": positions,
+            "attached": attached,
         })
-    return {"shifts": shifts, "notes": _notes(data.get("notes"))}
+    notes = _notes(data.get("notes"), _structure_missing(shifts))
+    notes += [f"「{n}」要参加的岗位没对上，先按本场次所有人放，请核对" for n in lost]
+    return {"shifts": shifts, "notes": notes}
+
+
+# ======================= 报名问卷 =======================
+
+FORM_PROMPT = """你帮中国人民大学的志愿服务管理平台给一场志愿活动出「报名问卷」的题目。
+{mode}
+平台的志愿者档案里已经有这些信息，导出名单时自动带上，不要再出题问：
+姓名、学号、性别、学院、年级、校区、学段、手机号、邮箱、微信号、身份证号。
+报名时平台还会自己问报哪个场次、哪个岗位、愿不愿意当组长，这些也不要出题；
+志愿时长和以往的出勤表现，管理者在名单里能直接看到，也不用问。
+
+活动信息：
+{activity}
+
+用户可能补充了想了解的事，按它出题；没补充就按活动简介和岗位要求，出几道真正用得上的题。
+题目少而精，最多 10 道；题干简短，不超过 50 字。
+
+只输出一个 json 对象：
+{{
+  "questions": [{{
+    "kind": "single / multi / text / file：单选、多选、填空、文件上传（要交简历、作品、证书时才用）",
+    "title": "题干",
+    "options": ["单选、多选的选项，至少两个；填空和文件上传给空数组"],
+    "required": true 或 false（不答就没法安排或筛选的写 true，锦上添花的写 false）,
+    "positions": ["只问哪些岗位的人：写岗位名，和活动信息里的岗位名一字不差；人人都答就给空数组"]
+  }}],
+  "notes": ["需要管理者自己拿主意的事，每条一句，最多 3 条"]
+}}"""
+
+FORM_MODES = {
+    "screened": "这场活动「报名后筛选」：志愿者先交申请和问卷，管理者看完再决定录不录。"
+                "问卷是筛选的依据，问能看出合不合适的事（相关经历、技能、空闲时间等）。",
+    "instant": "这场活动「报名即录取」：报上就算录取，问卷是选填的。"
+               "只问组织活动真要用到的事（如服装尺码、饮食禁忌），不出筛选性质的题。",
+}
+
+
+def _form_brief(act: Activity) -> str:
+    lines = [f"名称：{act.title}", f"组织单位：{act.organizer or '—'}",
+             f"简介：{(act.intro or '')[:600]}"]
+    if (act.volunteer_requirement or "").strip():
+        lines.append(f"志愿者要求：{act.volunteer_requirement.strip()[:300]}")
+    lines.append("岗位：")
+    for g in sorted(act.main_shifts(), key=lambda x: x.sort):
+        for p in sorted(g.real_positions(), key=lambda x: x.sort):
+            extra = "；".join(x for x in (
+                (p.service_task or "").strip()[:150],
+                f"岗位要求：{p.position_requirement.strip()[:150]}"
+                if (p.position_requirement or "").strip() else "") if x)
+            lines.append(f"- {p.name}（{g.name}，{p.quota} 人）{'：' + extra if extra else ''}")
+    if lines[-1] == "岗位：":
+        lines[-1] = "岗位：还没建"
+    return "\n".join(lines)
+
+
+def form_draft(act: Activity, text: str) -> dict:
+    data = _chat(FORM_PROMPT.format(mode=FORM_MODES[act.recruit_mode],
+                                    activity=_form_brief(act)),
+                 text or "（没有补充，按活动信息出题）")
+    # 同名岗位（上午场、下午场都有「检录引导」）一起算：问的是这类岗位的人
+    ids_by_name: dict[str, list[str]] = {}
+    for g in act.main_shifts():
+        for p in g.real_positions():
+            ids_by_name.setdefault(p.name, []).append(p.id)
+    questions = []
+    for q in _list(data.get("questions"))[:15]:
+        title = _text(q.get("title"), 200) if isinstance(q, dict) else ""
+        if not title:
+            continue
+        kind = q.get("kind") if q.get("kind") in FormQuestion.KINDS else "text"
+        options = [o for o in dict.fromkeys(_text(x, 100) for x in _list(q.get("options"))[:20])
+                   if o]
+        # 选项凑不齐两个的选择题当填空放，免得一保存就被拦
+        if kind in ("single", "multi") and len(options) < 2:
+            kind = "text"
+        questions.append({
+            "kind": kind, "title": title,
+            "options": options if kind in ("single", "multi") else [],
+            "required": q.get("required") is not False,
+            "applies_to_positions": [i for n in dict.fromkeys(_strs(q.get("positions")))
+                                     for i in ids_by_name.get(n, [])],
+        })
+    return {"questions": questions, "notes": _notes(data.get("notes"))}

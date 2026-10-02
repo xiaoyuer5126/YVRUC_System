@@ -1,11 +1,12 @@
 <!-- 智能起草场次与岗位：草稿放在可改的预览里，管理者改好、点「按草稿新建」才
-     逐个调新建场次 / 新建岗位的接口——校验、审计和手建的一样。
+     逐个调新建场次 / 新建岗位的接口——校验、审计和手建的一样。培训、彩排也是
+     新建场次，挂在它服务的那个场次下，等那个场次的岗位建好了再建。
      只新建、不碰已有的场次岗位。中途某一个被后端拦下就停在那儿：已建好的从
      预览里划掉，改好剩下的再点一次接着建。 -->
 <template>
   <AiAssist ref="assist" title="智能起草场次岗位" :run="run"
-            placeholder="把排班安排、立项书里的人员分工贴在这里，如：10 月 18 日 7:30-12:00，检录引导 6 人、颁奖礼仪 4 人（女生）……"
-            hint="按原文起草场次（一段服务时间）和岗位（这段时间里的分工与名额）。只会新建，不改已有的场次岗位；培训、彩排建好后再手动加。">
+            placeholder="把排班安排、立项书里的人员分工贴在这里，如：10 月 18 日 7:30-12:00，检录引导 6 人、颁奖礼仪 4 人（女生）；10 月 16 日晚 7 点全体彩排……"
+            hint="按原文起草场次（一段服务时间）和岗位（这段时间里的分工与名额），原文里有时间的培训、彩排挂在对应场次下。只会新建，不改已有的场次岗位。">
     <template #preview>
       <el-empty v-if="!draft.length" description="原文里没找到能用的场次安排" />
       <div v-for="(g, gi) in draft" :key="gi" class="ai-shift">
@@ -20,7 +21,10 @@
                          :default-time="DAY_END" />
         </div>
         <el-input v-if="g.location" v-model="g.location" placeholder="场次地点（空 = 活动地点）" />
-        <div v-for="(p, pi) in g.positions" :key="pi" class="ai-pos">
+        <div v-if="tagText(g.requirement_tags)" class="dim">
+          场次条件：{{ tagText(g.requirement_tags) }}
+        </div>
+        <div v-for="(p, pi) in g.positions" :key="p.key" class="ai-pos">
           <div class="ai-head">
             <el-input v-model="p.name" placeholder="岗位名" style="flex:1 1 120px" />
             <el-input-number v-model="p.quota" :min="1" :max="999" style="width:120px" />
@@ -33,13 +37,32 @@
           <div v-if="extras(p)" class="dim pre">{{ extras(p) }}</div>
         </div>
         <div v-if="!g.positions.length" class="dim">这个场次没有岗位，建好后再手动加</div>
+        <!-- 培训、彩排：挂在这个场次下，等它的岗位建好再建，好把「哪些岗位要来」对上 -->
+        <div v-for="(a, ti) in g.attached" :key="'a' + ti" class="ai-pos">
+          <div class="ai-head">
+            <el-select v-model="a.kind" style="width:88px">
+              <el-option value="training" label="培训" />
+              <el-option value="rehearsal" label="彩排" />
+            </el-select>
+            <el-input v-model="a.name" placeholder="名称" style="flex:1 1 120px" />
+            <el-button link type="danger" @click="g.attached.splice(ti, 1)">删掉</el-button>
+          </div>
+          <div class="two-col">
+            <DateTimeField v-model="a.start_time" placeholder="开始时间"
+                           :default-time="DAY_START" />
+            <DateTimeField v-model="a.end_time" placeholder="结束时间"
+                           :default-time="DAY_END" />
+          </div>
+          <div class="dim pre">{{ attachedText(g, a) }}</div>
+        </div>
       </div>
     </template>
     <template #footer="{ close }">
       <el-button @click="close">先不用</el-button>
       <el-button type="primary" :disabled="!draft.length" :loading="creating"
                  @click="create(close)">
-        按草稿新建 {{ draft.length }} 个场次、{{ positionCount }} 个岗位
+        按草稿新建 {{ draft.length }} 个场次、{{ positionCount }} 个岗位{{
+          attachedCount ? `、${attachedCount} 场培训/彩排` : '' }}
       </el-button>
     </template>
   </AiAssist>
@@ -60,18 +83,30 @@ const assist = ref(null)
 const draft = ref([])          // 可改的草稿：起草结果拷一份进来，预览里直接改它
 const creating = ref(false)
 const positionCount = computed(() => draft.value.reduce((n, g) => n + g.positions.length, 0))
+const attachedCount = computed(() => draft.value.reduce((n, g) => n + g.attached.length, 0))
 
+/** 培训/彩排「哪些岗位要来」起草时写的是岗位名，进预览就换成岗位的 key：
+ *  预览里改了岗位名照样对得上，删掉的岗位自然就不算了。 */
 async function run(text) {
   const d = await api.post(`/api/staff/ai/activities/${props.activityId}/structure-draft`,
                            { text })
-  draft.value = JSON.parse(JSON.stringify(d.shifts))
+  draft.value = JSON.parse(JSON.stringify(d.shifts)).map((g, gi) => {
+    g.positions.forEach((p, pi) => { p.key = `${gi}-${pi}` })
+    g.attached = g.attached.map(({ positions, ...a }) => ({
+      ...a, keys: positions.map(n => g.positions.find(p => p.name === n)?.key).filter(Boolean),
+    }))
+    g.done = {}     // 已经建好的岗位：key → { id, name }
+    return g
+  })
   return d
 }
+
+const tagText = tags => Object.entries(tags || {}).map(([k, v]) => `${k}：${v.join('、')}`)
+  .join('；')
 
 const ATTIRE = { issued: '统一发放', own: '志愿者自备' }
 /** 预览里不单独给输入框的那些字段，写成一段话给人过目；建好后都能再改 */
 function extras(p) {
-  const tags = Object.entries(p.requirement_tags || {}).map(([k, v]) => `${k}：${v.join('、')}`)
   return [
     p.group_name && `岗位组：${p.group_name}`,
     p.location && `地点：${p.location}`,
@@ -79,19 +114,42 @@ function extras(p) {
     p.training_note && `培训：${p.training_note}`,
     p.needs_leader && '需要组长',
     p.attire !== 'none' && `志愿服装：${ATTIRE[p.attire]}（${p.attire_note}）`,
-    tags.length && `条件：${tags.join('；')}`,
+    tagText(p.requirement_tags) && `条件：${tagText(p.requirement_tags)}`,
   ].filter(Boolean).join('\n')
 }
+
+const posName = (g, key) => g.positions.find(p => p.key === key)?.name || g.done[key]?.name
+const HOURS = { fixed: '固定计时', checkin: '扫码计时', none: '不计时长' }
+function attachedText(g, a) {
+  const names = a.keys.map(k => posName(g, k)).filter(Boolean)
+  return [
+    `需参加：${names.length ? names.join('、') : a.keys.length ? '（岗位都删掉了）' : '本场次所有人'}`,
+    `时长：${HOURS[a.hours_mode]}`,
+    a.location && `地点：${a.location}`,
+    a.note && `备注：${a.note}`,
+  ].filter(Boolean).join('\n')
+}
+
+const badSpan = s => new Date(s.end_time) <= new Date(s.start_time)
 
 /** 建之前先在前端过一遍：后端照样会查，但建到一半才被拦，前面那几个已经落库了 */
 function problem() {
   for (const g of draft.value) {
     if (!g.name.trim()) return '有场次没写名字'
     if (!g.start_time || !g.end_time) return `请填写「${g.name}」的开始和结束时间`
-    if (new Date(g.end_time) <= new Date(g.start_time)) return `「${g.name}」的结束时间要晚于开始时间`
+    if (badSpan(g)) return `「${g.name}」的结束时间要晚于开始时间`
     for (const p of g.positions) {
       if (!p.name.trim()) return `「${g.name}」里有岗位没写名字`
       if (!p.service_task.trim()) return `请填写岗位「${p.name}」的服务任务`
+    }
+    for (const a of g.attached) {
+      if (!a.name.trim()) return `「${g.name}」里有培训/彩排没写名字`
+      if (!a.start_time || !a.end_time) return `请填写「${a.name}」的开始和结束时间`
+      if (badSpan(a)) return `「${a.name}」的结束时间要晚于开始时间`
+      // 一个都不剩就成了「全场次都要来」，和原文的意思反了
+      if (a.keys.length && !a.keys.some(k => posName(g, k))) {
+        return `「${a.name}」要参加的岗位都删掉了：删掉这一场，或者建好后再手动设置`
+      }
     }
   }
   return ''
@@ -103,33 +161,47 @@ async function create(close) {
   creating.value = true
   let shifts = 0
   let positions = 0
+  let attached = 0
   try {
     while (draft.value.length) {
       const g = draft.value[0]
-      // 场次建过了（上一次停在它的岗位上）就跳过，接着建剩下的岗位
+      // 场次建过了（上一次停在它的岗位上）就跳过，接着建剩下的
       if (!g.createdId) {
         g.createdId = (await api.post(`/api/staff/activities/${props.activityId}/shifts`, {
           name: g.name.trim(), start_time: g.start_time, end_time: g.end_time,
           mode: 'pick', location: (g.location || '').trim(),
+          requirement_tags: g.requirement_tags,
         })).id
         shifts += 1
       }
       while (g.positions.length) {
-        const { name, ...rest } = g.positions[0]
-        await api.post(`/api/staff/shifts/${g.createdId}/positions`, { ...rest, name: name.trim() })
+        const { name, key, ...rest } = g.positions[0]
+        const { id } = await api.post(`/api/staff/shifts/${g.createdId}/positions`,
+                                      { ...rest, name: name.trim() })
+        g.done[key] = { id, name: name.trim() }
         g.positions.shift()
         positions += 1
       }
+      while (g.attached.length) {
+        const { keys, ...a } = g.attached[0]
+        await api.post(`/api/staff/activities/${props.activityId}/shifts`, {
+          ...a, name: a.name.trim(), location: a.location.trim(), parent_id: g.createdId,
+          applies_to_positions: keys.map(k => g.done[k]?.id).filter(Boolean),
+        })
+        g.attached.shift()
+        attached += 1
+      }
       draft.value.shift()
     }
-    ElMessage.success(`已新建 ${shifts} 个场次、${positions} 个岗位，请逐个核对`)
+    ElMessage.success(`已新建 ${shifts} 个场次、${positions} 个岗位`
+                      + (attached ? `、${attached} 场培训/彩排` : '') + '，请逐个核对')
     close()
     assist.value.reset()
   } catch {
     // 后端的提示 api 层已经弹过；建好的已从预览里划掉，改好剩下的再点一次
   } finally {
     creating.value = false
-    if (shifts || positions) emit('created')
+    if (shifts || positions || attached) emit('created')
   }
 }
 </script>

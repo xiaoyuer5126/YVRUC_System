@@ -109,7 +109,7 @@ def current_user_download(request: Request,
 # 试算类 POST 不写库，恰恰最该让新人看（一键分配试算、智能起草都只回一份草稿）；
 # 导出是 GET，方法判断拦不住，要点名禁。
 # 按**处理函数名**匹配而不是拼 URL：函数名是路由表里的常量，URL 里有 id 会变。
-TRAINEE_ALLOWED_WRITES = {"assign_preview", "activity_draft", "structure_draft"}
+TRAINEE_ALLOWED_WRITES = {"assign_preview", "activity_draft", "structure_draft", "form_draft"}
 # 导出一家子都要列上：只拦排班表的 "export" 的话，时长记录（带身份证号）
 # 和报名问卷结果会漏掉，部门成员照样下得到。附件数接口也拦：前端先问数目，
 # 在这一步就能提示「不能导出」，不必等直链落到一张报错页上。
