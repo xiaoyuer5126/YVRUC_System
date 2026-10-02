@@ -123,7 +123,7 @@
                      :total="total" @current-change="goPage" />
     </el-card>
 
-    <!-- AI 起草活动信息：草稿由管理者点了才填进下面的新建表单 -->
+    <!-- 智能起草活动信息：草稿由管理者点了才填进下面的新建表单 -->
     <AiActivityAssist @fill="fillFromAi" />
 
     <!-- 新建活动 -->
@@ -291,7 +291,7 @@ function openCreate() {
   creating.value = true
 }
 
-/** AI 起草的草稿盖在空表单上打开新建：没起草出来的字段保持默认（比如志愿者保障那句） */
+/** 智能起草的草稿盖在空表单上打开新建：没起草出来的字段保持默认（比如志愿者保障那句） */
 function fillFromAi(draft) {
   const { reg_start: start, reg_end: end, ...rest } = draft
   form.value = { ...emptyActivity(), ...rest }

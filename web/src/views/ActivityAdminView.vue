@@ -1496,7 +1496,7 @@
       </template>
     </el-dialog>
 
-    <!-- AI 起草场次岗位：只在「场次岗位」页签、能改结构的时候出现（草稿或调整中） -->
+    <!-- 智能起草场次岗位：只在「场次岗位」页签、能改结构的时候出现（草稿或调整中） -->
     <AiStructureAssist v-if="tab === 'tree' && !isRecord && !isOver && !structureLocked"
                        :activity-id="activityId" @created="loadAll" />
 

@@ -1,9 +1,9 @@
-<!-- AI 起草活动基本信息：草稿列出来给人看，点「填进新建表单」才打开新建活动
-     并把有的字段填上——表单照常要管理者核对、补齐（联络群二维码 AI 给不了）、保存。 -->
+<!-- 智能起草活动基本信息：草稿列出来给人看，点「填进新建表单」才打开新建活动
+     并把有的字段填上——表单照常要管理者核对、补齐（联络群二维码智能起草给不了）、保存。 -->
 <template>
-  <AiAssist ref="assist" title="AI 起草活动信息" :run="run"
+  <AiAssist ref="assist" title="智能起草活动信息" :run="run"
             placeholder="把活动通知、立项书正文或一段描述贴在这里"
-            hint="贴进活动的原始材料，AI 起草新建活动表单里的基本信息；场次和岗位在建好活动后，到「场次岗位」页签再用 AI 起草。">
+            hint="贴进活动的原始材料，智能起草新建活动表单里的基本信息；场次和岗位在建好活动后，到「场次岗位」页签里再起草。">
     <template #preview="{ result }">
       <el-empty v-if="!Object.keys(result.draft).length" description="原文里没找到能用的活动信息" />
       <el-descriptions v-else :column="1" border size="small">
@@ -55,3 +55,8 @@ function fill(draft, close) {
   assist.value.reset()
 }
 </script>
+
+<style scoped>
+/* 标签列不换行：值里常有几百字的简介，自动布局会把「活动名称」挤成一字一行 */
+:deep(.el-descriptions__label) { white-space: nowrap; }
+</style>

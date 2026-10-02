@@ -36,7 +36,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
 | `RUCVA_EXPOSE_DOCS` | 设为 `1` 才暴露 `/docs` 与 `/openapi.json`，默认关闭 |
 | `RUCVA_TIANDITU_TK_SERVER` | 天地图**服务端** tk：管理端地图瓦片转发 + 地名搜索。要在天地图后台登记服务器公网出口 IP；只在后端用，不进前端。留空 = 地图只显示点和圈 |
 | `RUCVA_TIANDITU_DAILY_LIMIT` | 每天向天地图取瓦片的上限，默认 10000（天地图给的额度），到上限直接 503 |
-| `RUCVA_AI_API_KEY` | AI 起草（活动管理右下角的按钮）用的 key，留空则按钮不出现。贴进去的原文会发给这家服务 |
+| `RUCVA_AI_API_KEY` | 智能起草（活动管理右下角的按钮）用的 key，留空则按钮不出现。贴进去的原文会发给这家服务 |
 | `RUCVA_AI_BASE_URL` / `RUCVA_AI_MODEL` | OpenAI 兼容接口的地址与模型，默认 `https://api.deepseek.com` / `deepseek-chat` |
 | `RUCVA_AI_TIMEOUT` | 一次起草最多等几秒，默认 90 |
 | `CLOUDFLARE_TOKEN` | 隧道令牌，勿提交/外传 |

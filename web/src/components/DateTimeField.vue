@@ -7,7 +7,7 @@
   <el-date-picker v-else type="datetime" style="width:100%"
                   :model-value="modelValue || ''" :placeholder="placeholder"
                   format="YYYY-MM-DD HH:mm" time-format="HH:mm"
-                  :default-time="defaultTime"
+                  :default-time="defaultTime || undefined"
                   @update:model-value="pick" />
 </template>
 
@@ -18,7 +18,8 @@ import { useNarrow } from '../composables/useNarrow'
 const props = defineProps({
   modelValue: { type: [Date, String], default: '' },
   placeholder: { type: String, default: '选择日期与时间' },
-  // 只点日期不点时刻时补哪个时刻：开始时间给 DAY_START，截止时间给 DAY_END
+  // 只点日期不点时刻时补哪个时刻：开始时间给 DAY_START，截止时间给 DAY_END。
+  // 不补就别传——把 null 原样递给 Element，点日期时它算不出时刻，值会变成 NaN
   defaultTime: { type: Date, default: null },
 })
 const emit = defineEmits(['update:modelValue', 'change'])

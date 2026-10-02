@@ -1,4 +1,4 @@
-"""AI 起草（预览版）：活动基本信息、场次与岗位。
+"""智能起草（预览版）：活动基本信息、场次与岗位。
 
 只起草、不落库。草稿回到前端：基本信息填进「新建活动」表单，场次岗位放进
 可改的预览；管理者核对、改好之后，照常走新建活动 / 新建场次 / 新建岗位的
@@ -48,17 +48,17 @@ def _chat(system: str, user: str) -> dict:
     except httpx.TimeoutException:
         raise AiError("AI 这次想得太久了，请把原文删短一些再试")
     except httpx.HTTPError:
-        raise AiError("连不上 AI 服务，请稍后再试")
+        raise AiError("AI 服务无法连接，请稍后再试")
     # 只记耗时和状态，不记原文：原文里可能有联系人电话
-    logger.info("AI 起草 %s %.1fs", r.status_code, time.monotonic() - started)
+    logger.info("智能起草 %s %.1fs", r.status_code, time.monotonic() - started)
     if r.status_code in (401, 403):
-        raise AiError("AI 服务的 key 不对或已失效，请联系管理员")
+        raise AiError("智能起草服务凭证错误，请联系管理员")
     if r.status_code == 402:
-        raise AiError("AI 服务的余额不足，请联系管理员")
+        raise AiError("智能起草服务余额不足，请联系管理员")
     if r.status_code == 429:
-        raise AiError("AI 服务这会儿太忙，请过一会儿再试")
+        raise AiError("智能起草服务繁忙，请过会儿再试")
     if r.status_code != 200:
-        raise AiError("AI 服务暂时不可用，请稍后再试")
+        raise AiError("智能起草服务暂时不可用，请稍后再试")
     try:
         content = r.json()["choices"][0]["message"]["content"]
         data = json.loads(content)

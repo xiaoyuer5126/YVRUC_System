@@ -85,7 +85,7 @@ def test_部门成员对每一个写接口都被拦在写库之前(client):
         detail = r.json().get("detail") if r.status_code == 403 else None
         trainee_hit = isinstance(detail, dict) and detail.get("code") == "TRAINEE_READONLY"
         if name in TRAINEE_ALLOWED_WRITES:
-            ok = not trainee_hit          # 试算、AI 起草不写库，不该被学习权限拦
+            ok = not trainee_hit          # 试算、智能起草不写库，不该被学习权限拦
         elif name in STRICTER_GATE:
             # 被更严的身份闸先拦下，同样没写进去
             ok = isinstance(detail, str) and detail.startswith("需要")

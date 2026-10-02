@@ -1,11 +1,11 @@
-<!-- AI 起草场次与岗位：草稿放在可改的预览里，管理者改好、点「按草稿新建」才
+<!-- 智能起草场次与岗位：草稿放在可改的预览里，管理者改好、点「按草稿新建」才
      逐个调新建场次 / 新建岗位的接口——校验、审计和手建的一样。
      只新建、不碰已有的场次岗位。中途某一个被后端拦下就停在那儿：已建好的从
      预览里划掉，改好剩下的再点一次接着建。 -->
 <template>
-  <AiAssist ref="assist" title="AI 起草场次岗位" :run="run"
+  <AiAssist ref="assist" title="智能起草场次岗位" :run="run"
             placeholder="把排班安排、立项书里的人员分工贴在这里，如：10 月 18 日 7:30-12:00，检录引导 6 人、颁奖礼仪 4 人（女生）……"
-            hint="AI 按原文起草场次（一段服务时间）和岗位（这段时间里的分工与名额）。只会新建，不改已有的场次岗位；培训、彩排建好后再手动加。">
+            hint="按原文起草场次（一段服务时间）和岗位（这段时间里的分工与名额）。只会新建，不改已有的场次岗位；培训、彩排建好后再手动加。">
     <template #preview>
       <el-empty v-if="!draft.length" description="原文里没找到能用的场次安排" />
       <div v-for="(g, gi) in draft" :key="gi" class="ai-shift">
@@ -14,8 +14,10 @@
           <el-button link type="danger" @click="draft.splice(gi, 1)">删掉这个场次</el-button>
         </div>
         <div class="two-col">
-          <DateTimeField v-model="g.start_time" placeholder="开始时间" />
-          <DateTimeField v-model="g.end_time" placeholder="结束时间" />
+          <DateTimeField v-model="g.start_time" placeholder="开始时间"
+                         :default-time="DAY_START" />
+          <DateTimeField v-model="g.end_time" placeholder="结束时间"
+                         :default-time="DAY_END" />
         </div>
         <el-input v-if="g.location" v-model="g.location" placeholder="场次地点（空 = 活动地点）" />
         <div v-for="(p, pi) in g.positions" :key="pi" class="ai-pos">
@@ -47,6 +49,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
+import { DAY_END, DAY_START } from '../store'
 import AiAssist from './AiAssist.vue'
 import DateTimeField from './DateTimeField.vue'
 

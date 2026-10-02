@@ -1,4 +1,4 @@
-"""AI 起草（预览版）的接口。只起草、不落库，见 backend/ai.py。"""
+"""智能起草（预览版）的接口。只起草、不落库，见 backend/ai.py。"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,7 +21,7 @@ class DraftBody(BaseModel):
 def _prepare(user: User, body: DraftBody) -> str:
     """没开、原文太短太长、这一小时用得太多，都在打到模型之前拦下。"""
     if not ai.enabled():
-        raise HTTPException(409, "AI 起草还没有启用，请联系管理员")
+        raise HTTPException(409, "智能起草还没有启用，请联系管理员")
     text = body.text.strip()
     if len(text) < 10:
         raise HTTPException(400, "原文太短了，多贴一些活动信息再试")

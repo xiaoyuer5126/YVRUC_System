@@ -1,4 +1,4 @@
-"""AI 起草（预览版）：没开不让用、原文长短与限频、模型输出按白名单收拾。
+"""智能起草（预览版）：没开不让用、原文长短与限频、模型输出按白名单收拾。
 
 不连真模型：把 httpx.post 换成假的，验的是平台这一侧怎么问、怎么收。
 """
@@ -134,7 +134,7 @@ def test_原文长短与限频(client, admin, model, monkeypatch):
 
 
 @pytest.mark.parametrize("status, content, word", [
-    (401, "", "key"), (402, "", "余额"), (500, "", "暂时不可用"),
+    (401, "", "凭证"), (402, "", "余额"), (500, "", "暂时不可用"),
     (200, "不是 json", "不完整"), (200, "[1, 2]", "不完整"),
 ])
 def test_模型出错给人看得懂的话(client, admin, model, status, content, word):
@@ -154,4 +154,4 @@ def test_超时与连不上(client, admin, model, monkeypatch):
     assert r.status_code == 502 and "太久" in r.json()["detail"]
     monkeypatch.setattr(ai.httpx, "post", boom(httpx.ConnectError("down")))
     r = client.post("/api/staff/ai/activity-draft", headers=admin, json={"text": TEXT})
-    assert r.status_code == 502 and "连不上" in r.json()["detail"]
+    assert r.status_code == 502 and "无法连接" in r.json()["detail"]
