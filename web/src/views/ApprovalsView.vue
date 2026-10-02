@@ -194,7 +194,7 @@
 
     <!-- 部门与部长：换届、增设或撤销部门时管理员在这里改 -->
     <template v-if="isAdmin">
-      <div class="section-title" style="margin-top:16px">
+      <div class="section-title">
         部门与部长
         <el-button size="small" type="primary" plain @click="openDept(null)">新增部门</el-button>
       </div>
@@ -250,7 +250,8 @@
     <ApprovalCommentDialog v-model="cd.visible" :approve="cd.approve" :title="cd.title"
                            :subject="cd.subject" :audience="cd.audience"
                            :approve-label="cd.approveLabel" :reject-label="cd.rejectLabel"
-                           :templates="cd.templates" :submit="submitDecision" />
+                           :templates="cd.templates" :reject-templates="cd.rejectTemplates"
+                           :submit="submitDecision" />
 
     <el-dialog v-model="tr.visible" title="转交审批" width="480">
       <p class="dim">{{ tr.row?.title }}</p>
@@ -297,7 +298,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
 import ApprovalCommentDialog from '../components/ApprovalCommentDialog.vue'
 import ProjectFileSlot from '../components/ProjectFileSlot.vue'
-import { closingApproved, projectApproved, vbConfirmed } from '../replyTemplates'
+import { closingApproved, closingRejected, projectApproved, projectRejected, vbConfirmed }
+  from '../replyTemplates'
 import { useNarrow } from '../composables/useNarrow'
 import { auth } from '../store'
 
@@ -310,7 +312,8 @@ const depts = ref([])
 const loading = ref(false)
 // 审批意见对话框：kind = activity 活动立项 / hours 时长锁定解锁 / vb 外联确认志愿北京
 const cd = ref({ visible: false, kind: '', row: null, approve: true, title: '', subject: '',
-                 audience: '', approveLabel: '通过', rejectLabel: '驳回', templates: [] })
+                 audience: '', approveLabel: '通过', rejectLabel: '驳回',
+                 templates: [], rejectTemplates: [] })
 // 部门的维护：管理员或会长团
 const dd = ref({ visible: false, row: null, name: '', note: '', studentId: '', busy: false })
 const isAdmin = computed(() =>
@@ -392,23 +395,29 @@ function openVb(row, approve) {
   cd.value = { visible: true, kind: 'vb', row, approve, subject: row.activity_title,
                title: approve ? '确认志愿北京' : '退回志愿北京名称',
                audience: '活动管理者', approveLabel: '确认', rejectLabel: '退回',
-               templates: [vbConfirmed(row.names || [])] }
+               templates: [vbConfirmed(row.names || [])], rejectTemplates: [] }
 }
 
 /** 锁定：同意即封账，志愿北京名称推给对外联络部确认；驳回退回管理者改。
- *  解锁：同意即允许改已经封了的账，外联确认作废，改完他要重新核准。 */
+ *  解锁：同意即允许改已经封了的账，外联确认作废，改完他要重新核准。
+ *  结项常用语说的是结项材料，只有归口外联的活动有。 */
 function decideHours(row, approve) {
   const what = row.kind === 'lock' ? '时长审核' : '解锁申请'
+  const closing = row.kind === 'lock' && row.external
   cd.value = { visible: true, kind: 'hours', row, approve, subject: row.activity_title,
                title: `${approve ? '同意' : '驳回'}${what}`, audience: '申请人',
                approveLabel: '同意', rejectLabel: '驳回',
-               templates: row.kind === 'lock' ? [closingApproved(row.activity_title)] : [] }
+               templates: closing ? [closingApproved(row.activity_title)] : [],
+               rejectTemplates: closing ? [closingRejected(row.activity_title)] : [] }
 }
 
+/** 立项常用语说的是立项书，内部活动没有立项书，不给 */
 function decide(row, approve) {
   cd.value = { visible: true, kind: 'activity', row, approve, subject: row.title,
                title: approve ? '通过审批' : '驳回', audience: '发起方',
-               approveLabel: '通过', rejectLabel: '驳回', templates: [projectApproved(row.title)] }
+               approveLabel: '通过', rejectLabel: '驳回',
+               templates: row.external ? [projectApproved(row.title)] : [],
+               rejectTemplates: row.external ? [projectRejected(row.title)] : [] }
 }
 
 async function submitDecision(comment) {

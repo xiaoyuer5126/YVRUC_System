@@ -452,7 +452,7 @@ def list_applications(activity_id: str, db: OrmSession = Depends(db_session),
             .order_by(Application.created_at).all())
     shifts = {g.id: g for g in act.main_shifts()}
     out = []
-    for app in apps:
+    for seq, app in enumerate(apps, 1):
         u = db.get(User, app.user_id)
         rows = (db.query(Enrollment)
                 .filter(Enrollment.activity_id == activity_id,
@@ -464,7 +464,8 @@ def list_applications(activity_id: str, db: OrmSession = Depends(db_session),
                   for e in rows if e.shift_id in shifts]
         answers = answers_out(db, questions, app.answers)
         out.append({
-            "id": app.id, "status": app.status, "status_label": app.status_label(),
+            # 第几个交申请的：提交时间只精确到分钟，同一分钟交的靠它分先后
+            "id": app.id, "seq": seq, "status": app.status, "status_label": app.status_label(),
             "created_at": app.created_at.isoformat(timespec="minutes"),
             "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
                      "college": u.college, "campus": u.campus, "stage": u.stage,

@@ -399,7 +399,8 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
     """报名问卷结果：一人一行，一题一列。
 
     筛选是在表格里做的事——把答案摊平了导出来，部长们习惯在 Excel 里排序、
-    筛选、分工看。被显示条件挡掉的题对那个人本来就不存在，留空。
+    筛选、分工看。序号是交申请的先后，排序打乱了也找得回来。被显示条件挡掉的
+    题对那个人本来就不存在，留空。
     """
     from .models import Application
 
@@ -415,13 +416,13 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
     ex = Export(db)
     ws = ex.wb.active
     ws.title = "报名问卷结果"
-    header = ["姓名", "学号", "学院", "校区", "学段", "手机号", "提交时间",
+    header = ["序号", "姓名", "学号", "学院", "校区", "学段", "手机号", "提交时间",
               "意向场次", "录取结果", "组长意愿", "内部提示分"]
     header += [q.title for q in questions]
     ws.append(header)
     _style_header(ws, len(header))
 
-    for app in apps:
+    for seq, app in enumerate(apps, 1):
         u = db.get(User, app.user_id)
         rows = (db.query(Enrollment)
                 .filter(Enrollment.activity_id == activity.id,
@@ -434,13 +435,14 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
             st = positions.get(e.position_id) if e.position_id else None
             mark = "（录取）" if e.status == "enrolled" else ""
             wanted.append(f"{g.name}{'·' + st.name if st else ''}{mark}")
-        line = [u.name, u.student_id, u.college, u.campus, u.stage, u.phone,
+        line = [seq, u.name, u.student_id, u.college, u.campus, u.stage, u.phone,
                 f"{app.created_at:%Y-%m-%d %H:%M}", "、".join(wanted),
                 app.status_label(), "愿意" if app.leader_willing else "",
                 scoring.score_of(db, u.id)]
         ex.write_answers(ws, u, questions, app.answers, line)
 
-    ws.column_dimensions["A"].width = 12
+    ws.column_dimensions["A"].width = 6
+    ws.column_dimensions["B"].width = 12
     for i in range(len(header) - len(questions) + 1, len(header) + 1):
         ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = 26
     return ex

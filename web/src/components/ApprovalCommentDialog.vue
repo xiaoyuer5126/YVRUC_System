@@ -6,9 +6,9 @@
              subject="活动名" audience="发起方" :submit="async comment => …" />
      submit 抛错就不关（接口报的错 api 层已经弹过了），成功才关。
 
-     常用语：templates 传一组 { label, text }（见 replyTemplates.js），只在
-     「通过」时出现。点一下把 text 整段填进意见框、替换原有内容：常用语是成段
-     的几行字，接在已有内容后面只会乱。 -->
+     常用语：templates / reject-templates 各传一组 { label, text }（见
+     replyTemplates.js），分别在「通过」「驳回」时出现。点一下把 text 整段填进
+     意见框、替换原有内容：常用语是成段的几行字，接在已有内容后面只会乱。 -->
 <template>
   <el-dialog :model-value="modelValue" :title="title || (approve ? approveLabel : rejectLabel)"
              width="480" @update:model-value="v => emit('update:modelValue', v)">
@@ -44,7 +44,8 @@ const props = defineProps({
   audience: { type: String, default: '申请人' },   // 意见发给谁
   approveLabel: { type: String, default: '通过' },
   rejectLabel: { type: String, default: '驳回' },
-  templates: { type: Array, default: () => [] },   // [{ label, text }]，只在通过时出现
+  templates: { type: Array, default: () => [] },         // [{ label, text }]，通过时出现
+  rejectTemplates: { type: Array, default: () => [] },   // 驳回时出现
   submit: { type: Function, required: true },     // async (comment) => void
 })
 const emit = defineEmits(['update:modelValue'])
@@ -55,7 +56,7 @@ const MIN_REASON = 2
 // 每次打开都是一张白纸：上一条的意见不能带到下一条上
 watch(() => props.modelValue, v => { if (v) { comment.value = ''; busy.value = false } })
 
-const shownTemplates = computed(() => (props.approve ? props.templates : []))
+const shownTemplates = computed(() => (props.approve ? props.templates : props.rejectTemplates))
 
 async function confirm() {
   const text = comment.value.trim()

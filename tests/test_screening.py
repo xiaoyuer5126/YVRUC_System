@@ -531,6 +531,8 @@ def test_报名问卷结果导出excel(client, admin, db, take_student):
                               "answers": _answers(q), "leader_willing": bool(i)})
         assert r.status_code == 200, r.text
     lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
+    # 序号是交申请的先后：提交时间只到分钟，同一分钟交的靠它分
+    assert [a["seq"] for a in lst["applications"]] == [1, 2]
     client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
                 json={"application_ids": [lst["applications"][0]["id"]],
                       "accept": True, "shift_id": ids[0]})
@@ -540,7 +542,8 @@ def test_报名问卷结果导出excel(client, admin, db, take_student):
     ws = load_workbook(BytesIO(r.content)).active
     rows = list(ws.values)
     header = list(rows[0])
-    assert header[:2] == ["姓名", "学号"]
+    assert header[:3] == ["序号", "姓名", "学号"]
+    assert [row[0] for row in rows[1:]] == [1, 2]
     assert header[-4:] == ["参加过吗", "能做什么", "介绍自己", "证明材料"]
     assert "内部提示分" in header and "组长意愿" in header
     assert len(rows) == 3
@@ -630,8 +633,8 @@ def test_报名问卷导出只给excel附件另外打包(client, admin, db, take
     assert ".xlsx" in r.headers["content-disposition"]
     ws = load_workbook(BytesIO(r.content)).active
     header = list(ws.values)[0]
-    col = header.index("证明材料") + 1
-    cells = {ws.cell(row=i, column=2).value: ws.cell(row=i, column=col)
+    col, sid_col = header.index("证明材料") + 1, header.index("学号") + 1
+    cells = {ws.cell(row=i, column=sid_col).value: ws.cell(row=i, column=col)
              for i in (2, 3)}
     u, u2 = student_row(db, sid), student_row(db, sid2)
     name = f"{u.name}_{u.student_id}_证明材料.pdf"

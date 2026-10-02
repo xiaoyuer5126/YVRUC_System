@@ -279,8 +279,9 @@ def test_招募文案按校青协定的格式拼(client, admin, db, act_with_pos
     assert "东门引导 3人：无特殊要求" in lines and "  岗位地点：北门" in lines
     assert any("排练厅（东门引导需参加，计入时长）" in s for s in lines)
     assert lines[lines.index("【志愿者保障】") + 1] == "提供午餐与纪念徽章"
-    # 链接前后留空格，免得微信把后面的 / 吞进网址
-    assert f"点击链接 {base}/activity/{act.id} /扫描下方二维码报名" in lines[-1]
+    # 报名方式按校青协定的原文；链接两边留空格，免得微信把旁边的字吞进网址
+    assert lines[-1].startswith(
+        f"有意愿参加的同学请【点击链接 {base}/activity/{act.id} 或 扫描下方二维码报名】(二选一)，")
     # 报名截止、联系方式不写；招募文案对外，更不能带名单
     assert "报名截止" not in text and "13900000000" not in text and "学号" not in text
 

@@ -249,6 +249,7 @@ def test_时长审批通知值班人_值班人能拍(client, admin, db, liaison)
                       client.get("/api/staff/hours-requests", headers=head).json()]
     rows = client.get("/api/staff/hours-requests", headers=core).json()
     req = next(x for x in rows if x["activity_id"] == act.id)
+    assert req["external"] is True          # 前端据此给「结项通过 / 不通过」常用语
     r = client.post(f"/api/staff/hours-requests/{req['id']}/decide", headers=core,
                     json={"approve": True})
     assert r.status_code == 200, r.text

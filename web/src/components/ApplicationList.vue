@@ -37,6 +37,8 @@
           <AnswerList :answers="row.answers" style="margin:4px 0 4px 30px" />
         </template>
       </el-table-column>
+      <!-- 先来后到：序号是第几个交的申请，提交时间紧跟在姓名后面，不用拖到最右边看 -->
+      <el-table-column label="序号" prop="seq" width="56" />
       <el-table-column label="姓名" width="110">
         <template #default="{ row }">
           <ScoreAlert :user="row.user" />
@@ -44,6 +46,9 @@
             {{ row.user.name }}
           </el-link>
         </template>
+      </el-table-column>
+      <el-table-column label="提交时间" width="130">
+        <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
       </el-table-column>
       <el-table-column label="学号" prop="user.student_id" width="110" />
       <el-table-column label="学院" prop="user.college" min-width="120" />
@@ -87,9 +92,6 @@
         <template #default="{ row }">
           <el-tag size="small" :type="STATUS_TYPE[row.status]">{{ row.status_label }}</el-tag>
         </template>
-      </el-table-column>
-      <el-table-column label="提交时间" width="150">
-        <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
       </el-table-column>
     </el-table>
     <el-empty v-if="!apps.length && !loading" description="还没有人申请" />

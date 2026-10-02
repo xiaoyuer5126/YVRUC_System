@@ -939,9 +939,9 @@ def poster(activity_id: str, request: Request, base: str = "",
     L += ["【志愿者保障】",
           (act.volunteer_benefit or "").strip() or config.DEFAULT_VOLUNTEER_BENEFIT,
           "【报名方式】",
-          # 链接前后留空格：紧跟着「/扫描」的话，微信识别网址时会把 / 一起吞进去
-          f"有意愿参加的同学请点击链接 {link} /扫描下方二维码报名，报名成功情况将在"
-          f"志愿服务管理平台进行通知。十分感谢大家对志愿活动的支持！"]
+          # 链接两边留空格：紧挨着别的字，微信识别网址时可能把旁边的字一起吞进去
+          f"有意愿参加的同学请【点击链接 {link} 或 扫描下方二维码报名】(二选一)，"
+          f"报名成功情况将在志愿服务管理平台进行通知。十分感谢大家对志愿活动的支持！"]
     return {"text": "\n".join(L)}
 
 
@@ -1860,6 +1860,8 @@ def my_hours_requests(db: OrmSession = Depends(db_session),
         out.append({"id": req.id, "kind": req.kind,
                     "kind_label": req.kind_label(), "activity_id": act.id,
                     "activity_title": act.title, "reason": req.reason,
+                    # 归口外联的才有结项材料，「结项通过 / 不通过」常用语只给它们
+                    "external": liaison.is_external(db, act),
                     "vb_names": (list(act.vb_names or []) if req.kind == "lock"
                                  else []),
                     # 盖章材料就在这张卡片上给：审批人多半不是这场活动的管理者，
