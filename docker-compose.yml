@@ -38,6 +38,11 @@ x-backend-env: &backend_env
   RUCVA_TIANDITU_TK_SERVER: ${RUCVA_TIANDITU_TK_SERVER:-}
   # 每个 tk 每天的瓦片额度，到上限后端直接 503、不再请求天地图
   RUCVA_TIANDITU_DAILY_LIMIT: ${RUCVA_TIANDITU_DAILY_LIMIT:-10000}
+  # AI 起草（活动管理右下角的按钮）：OpenAI 兼容接口，key 留空则按钮不出现
+  RUCVA_AI_BASE_URL: ${RUCVA_AI_BASE_URL:-}
+  RUCVA_AI_MODEL: ${RUCVA_AI_MODEL:-}
+  RUCVA_AI_API_KEY: ${RUCVA_AI_API_KEY:-}
+  RUCVA_AI_TIMEOUT: ${RUCVA_AI_TIMEOUT:-}
   # 进程数与连接池。加进程是为了吃满多核（一个进程一个核，压测见
   # tests/perf_probe.py），但 Postgres 的连接是**按进程各开一个池**再相加的：
   # 进程数 ×(池子+溢出) 不能顶到 max_connections（默认 100），所以两个一起调。

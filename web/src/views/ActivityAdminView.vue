@@ -1496,6 +1496,10 @@
       </template>
     </el-dialog>
 
+    <!-- AI 起草场次岗位：只在「场次岗位」页签、能改结构的时候出现（草稿或调整中） -->
+    <AiStructureAssist v-if="tab === 'tree' && !isRecord && !isOver && !structureLocked"
+                       :activity-id="activityId" @created="loadAll" />
+
     <!-- 基本信息编辑 -->
     <el-dialog v-model="editBase" title="编辑活动基本信息" width="620">
       <ActivityForm v-model="baseForm" v-model:range="baseRange" :modes="modes"
@@ -1513,6 +1517,7 @@ import { computed, h, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
 import { api, download as dl, downloadExport, fmtDT, pageUrl, qrBase } from '../api'
+import AiStructureAssist from '../components/AiStructureAssist.vue'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
 import RefreshBar from '../components/RefreshBar.vue'

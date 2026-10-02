@@ -40,7 +40,7 @@ def used(tpl: str) -> set:
     local = set()
     for m in re.findall(r'v-for="\(?([^)"]*?)\)?\s+in\s', tpl):
         local |= set(re.findall(r'\w+', m))
-    for m in re.findall(r'#default="\{([^}]*)\}"', tpl):
+    for m in re.findall(r'#[\w-]+="\{([^}]*)\}"', tpl):     # 作用域插槽：#default、#footer…
         local |= set(re.findall(r'\w+', m))
     for m in re.findall(r'v-slot:?\w*="\{([^}]*)\}"', tpl):
         local |= set(re.findall(r'\w+', m))

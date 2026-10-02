@@ -9,6 +9,7 @@ from datetime import timedelta
 
 import pytest
 
+from backend.deps import TRAINEE_ALLOWED_WRITES
 from backend.routers import all_routers
 from backend.models import Activity, ActivityManager, Department, User, now, uid
 from conftest import ADMIN, POSITION_TEXT, dl_url, login, student_row
@@ -83,8 +84,8 @@ def test_部门成员对每一个写接口都被拦在写库之前(client):
         r = client.request(method, url, headers=member, json={})
         detail = r.json().get("detail") if r.status_code == 403 else None
         trainee_hit = isinstance(detail, dict) and detail.get("code") == "TRAINEE_READONLY"
-        if name == "assign_preview":
-            ok = not trainee_hit          # 试算不写库，不该被学习权限拦
+        if name in TRAINEE_ALLOWED_WRITES:
+            ok = not trainee_hit          # 试算、AI 起草不写库，不该被学习权限拦
         elif name in STRICTER_GATE:
             # 被更严的身份闸先拦下，同样没写进去
             ok = isinstance(detail, str) and detail.startswith("需要")

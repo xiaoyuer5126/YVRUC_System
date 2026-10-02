@@ -88,6 +88,24 @@ TILE_UPSTREAM_TIMEOUT = 5
 # 不落库、不绑人。前端快过期时自己重新领。
 TILE_TOKEN_HOURS = 6
 
+# —— AI 起草（预览版）——
+# 活动管理里右下角的 AI 按钮：管理者把通知、立项书的原文贴进去，模型起草活动
+# 基本信息或场次岗位，管理者核对之后才填进表单、才建（见 backend/ai.py）。
+# 走 OpenAI 兼容的 /chat/completions 接口，DeepSeek 就是这一种。
+# 没配 key = 按钮不出现。key 只在后端用，不进前端。
+AI_BASE_URL = (os.environ.get("RUCVA_AI_BASE_URL", "").strip().rstrip("/")
+               or "https://api.deepseek.com")
+AI_MODEL = os.environ.get("RUCVA_AI_MODEL", "").strip() or "deepseek-chat"
+AI_API_KEY = os.environ.get("RUCVA_AI_API_KEY", "").strip()
+# 一次起草最多等几秒。场次多的时候模型要写好一阵，给宽一点；但要小于前面
+# 两跳的上限——Cloudflare 回源最多等 100 秒、nginx 的 /api/ 是 120 秒，超了
+# 浏览器拿到的是一张 524/504 网关错误页，而不是「AI 想得太久」这句话
+AI_TIMEOUT = int(os.environ.get("RUCVA_AI_TIMEOUT", "").strip() or "90")
+# 每人每小时最多起草几次：按 token 计费，也免得被当成聊天工具
+AI_HOURLY_LIMIT = 30
+# 一次贴进来的原文最多多少字。立项书正文一般两三千字
+AI_INPUT_MAX = 8000
+
 # 校区的大致中心点：管理端「快捷选点」按它把地图挪过去、给个起点。
 # 数值由用户提供（比网上查的可靠——不同来源能差四百米，比我们默认的 200 米
 # 半径还大）。**它仍然不是签到点**：真正要定的是「东门」「某栋楼前」这种岗位

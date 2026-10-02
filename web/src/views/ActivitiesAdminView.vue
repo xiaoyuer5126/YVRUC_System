@@ -123,6 +123,9 @@
                      :total="total" @current-change="goPage" />
     </el-card>
 
+    <!-- AI 起草活动信息：草稿由管理者点了才填进下面的新建表单 -->
+    <AiActivityAssist @fill="fillFromAi" />
+
     <!-- 新建活动 -->
     <el-dialog v-model="creating" title="新建活动（草稿）" width="620">
       <ActivityForm v-model="form" v-model:range="createRange" :modes="modes" />
@@ -184,6 +187,7 @@ import { useNarrow } from '../composables/useNarrow'
 import { activityBody, emptyActivity, validateActivity } from '../composables/activityForm'
 import { uploadImage } from '../composables/uploadImage'
 import ActivityForm from '../components/ActivityForm.vue'
+import AiActivityAssist from '../components/AiActivityAssist.vue'
 import DataCards from '../components/DataCards.vue'
 
 const router = useRouter()
@@ -284,6 +288,14 @@ function onSearch() {
 function openCreate() {
   form.value = emptyActivity()
   createRange.value = []
+  creating.value = true
+}
+
+/** AI 起草的草稿盖在空表单上打开新建：没起草出来的字段保持默认（比如志愿者保障那句） */
+function fillFromAi(draft) {
+  const { reg_start: start, reg_end: end, ...rest } = draft
+  form.value = { ...emptyActivity(), ...rest }
+  createRange.value = start || end ? [start || '', end || ''] : []
   creating.value = true
 }
 

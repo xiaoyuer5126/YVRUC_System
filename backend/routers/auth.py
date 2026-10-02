@@ -255,6 +255,7 @@ def download_ticket(body: TicketBody, user: User = Depends(current_user)):
 
 @router.get("/constants")
 def constants(user: User = Depends(current_user)):
+    from .. import ai
     from ..integrations import DEFAULTS
     return {
         "recruit_modes": config.RECRUIT_MODES,
@@ -269,4 +270,6 @@ def constants(user: User = Depends(current_user)):
             "confirm_quiet": [config.PROMOTE_QUIET_START, config.PROMOTE_QUIET_END],
         },
         "integration_labels": {k: v["label"] for k, v in DEFAULTS.items()},
+        # 活动管理里的 AI 起草按钮：没配 key 就不出现
+        "ai_enabled": ai.enabled(),
     }
