@@ -358,9 +358,17 @@ def test_转交审批就是改归口(client, admin, db, draft, take_student):
                                                "reason": "环保类活动归他们"}
                            ).status_code == 200
         db.expire_all()
-        assert db.get(Activity, draft).approval_dept_id == other.id
+        act = db.get(Activity, draft)
+        assert act.approval_dept_id == other.id
         assert draft not in [a["id"] for a in
                              client.get("/api/staff/activities", headers=head).json()["items"]]
+        # 转出对外联络部就是内部活动：立项书删掉，并告诉管理者
+        from backend.models import Attachment
+        assert not db.query(Attachment).filter(Attachment.owner_type == "proposal",
+                                               Attachment.owner_id == draft).count()
+        from conftest import ADMIN, inbox
+        note = inbox(db, ADMIN, f"审批已转交｜{act.title}")[0]
+        assert "立项书已删除" in note.content
     finally:
         # 复原：撤掉这位临时部长，别让环保项目部从此「有部长」影响别的用例
         r = client.put(f"/api/staff/roles/{new_head.id}", headers=admin,

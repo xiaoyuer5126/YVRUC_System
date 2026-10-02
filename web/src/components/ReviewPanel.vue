@@ -24,16 +24,14 @@
         <el-timeline-item v-for="(e, i) in approval.events" :key="i"
                           :timestamp="fmtDT(e.created_at)" :type="EVENT_TYPE[e.kind]">
           {{ e.actor }} {{ e.kind_label }}<template v-if="e.to"> → {{ e.to }}</template>
-          <div v-if="e.comment" class="dim">{{ e.comment }}</div>
+          <div v-if="e.comment" class="dim pre">{{ e.comment }}</div>
         </el-timeline-item>
       </el-timeline>
       <div v-else class="dim" style="margin-bottom:8px">还没有提交过审批（在页头点「提交审批」）。</div>
-      <el-alert v-if="files && !files.external" type="info" :closable="false"
-                style="margin-bottom:8px">
-        提交<b>对外联络部</b>审批的活动（二级志愿团体的活动）须上传立项书；
-        审批通过后立项书不能再更换，被驳回则作废，重新提交时要传新的一份。
-      </el-alert>
-      <template v-if="files">
+      <!-- 立项书只在交给对外联络部之后出现：审批中可换，通过后留着下载打印。
+           上传入口在「提交审批」弹窗里；草稿阶段就摆出来，内部活动的发起方
+           会以为自己也得传一份 -->
+      <template v-if="files?.external && act && act.status !== 'draft'">
         <ProjectFileSlot :activity-id="activityId" kind="proposal" label="立项书"
                          :file="files.proposal" :can-upload="files.can_upload_proposal"
                          :block="files.manager ? files.proposal_block : ''"
@@ -84,7 +82,7 @@
           <template #default="{ row }">
             <template v-if="row.handled_by">
               {{ row.handled_by }} · {{ fmtDT(row.handled_at) }}
-              <div v-if="row.reply" class="dim">意见：{{ row.reply }}</div>
+              <div v-if="row.reply" class="dim pre">意见：{{ row.reply }}</div>
             </template>
             <span v-else class="dim">等待审核</span>
           </template>
@@ -152,9 +150,7 @@
           <template #default="{ row }">
             <template v-if="row.handled_by">
               {{ row.handled_by }} · {{ fmtDT(row.handled_at) }}
-              <div v-if="row.reply" class="dim">
-                {{ row.status === 'returned' ? '理由' : '意见' }}：{{ row.reply }}
-              </div>
+              <div v-if="row.reply" class="dim pre">{{ row.status === 'returned' ? '理由' : '意见' }}：{{ row.reply }}</div>
             </template>
             <template v-else-if="row.status === 'pending' && vbc.can_decide">
               <el-button size="small" link type="success" @click="openDecide(row, true)">确认</el-button>

@@ -297,7 +297,7 @@
             </el-button>
           </div>
         </div>
-        <el-button style="width:100%;margin-top:4px" plain dashed
+        <el-button style="width:100%" plain dashed
                    :disabled="structureLocked" @click="openShift(null)">
           <el-icon><Plus /></el-icon>&nbsp;新建场次
         </el-button>
@@ -327,7 +327,12 @@
           </el-button>
           <!-- 用主题色（人大红）而不是 danger：平台把 primary 覆盖成了 #9e2235，
                danger 那个亮红在这一屏里显得突兀 -->
-          <el-button type="primary" @click="doExport" style="margin-left:auto">
+          <el-button v-if="formCount" type="primary" plain @click="openAnswersExport"
+                     style="margin-left:auto">
+            <el-icon><Download /></el-icon>&nbsp;导出问卷结果
+          </el-button>
+          <el-button type="primary" @click="doExport"
+                     :style="formCount ? '' : 'margin-left:auto'">
             <el-icon><Download /></el-icon>&nbsp;导出排班表
           </el-button>
         </div>
@@ -496,10 +501,10 @@
             </template>
             </el-col>
 
-            <!-- 右栏（窄）：扣留的名额、候补队列、退选记录 -->
-            <el-col :xs="24" :md="8">
+            <!-- 右栏（窄）：扣留的名额、候补队列、退选记录，块与块之间统一 12px -->
+            <el-col :xs="24" :md="8" class="side-stack">
             <!-- 临期退选扣留的名额：不列出来老师根本找不到它 -->
-            <template v-if="roster.held?.length">
+            <div v-if="roster.held?.length">
               <div class="section-title">
                 临期退选扣留的名额（{{ roster.held.length }}）
                 <span class="dim" style="font-weight:400">
@@ -521,7 +526,7 @@
                   </el-popconfirm>
                 </template>
               </DataCards>
-            </template>
+            </div>
             <el-card shadow="never" class="wl-card">
               <template #header><b>候补队列</b></template>
               <el-alert v-if="roster.auto_promote_over" type="warning" show-icon
@@ -558,8 +563,7 @@
               <template #header><b>退选记录（近20条）</b></template>
               <div v-for="x in roster.cancelled" :key="x.enrollment_id" class="wl-row dim">
                 {{ x.user.name }}
-                <el-tag size="small" :type="x.status === 'cancelled' && x.confirm_deadline ? 'info':'info'"
-                        effect="plain">{{ cancelType(x) }}</el-tag>
+                <el-tag size="small" type="info" effect="plain">{{ cancelType(x) }}</el-tag>
               </div>
             </el-card>
             </el-col>
@@ -632,7 +636,7 @@
                   <el-button size="small" plain :disabled="hoursFrozen"
                              @click="openResolve(row, false)">不采纳</el-button>
                 </template>
-                <span v-else class="dim">{{ row.reply || '—' }}</span>
+                <span v-else class="dim pre">{{ row.reply || '—' }}</span>
               </template>
             </el-table-column>
           </el-table>
@@ -680,7 +684,7 @@
             <template v-if="act.status === 'vb_pending'">
               <br />志愿北京活动名称已推给对外联络部，外联在志愿北京核对确认后活动标记为「已完成」。
               <template v-if="hoursState.vb_confirm?.status === 'returned'">
-                <br /><b>外联退回了名称：{{ hoursState.vb_confirm.reply }}</b>——请到
+                <br /><b class="pre">外联退回了名称：{{ hoursState.vb_confirm.reply }}</b>——请到
                 <el-link type="primary" @click="tab = 'review'">「审核」页签</el-link>修改后重新提交。
               </template>
               <template v-else>
@@ -690,9 +694,7 @@
             <template v-if="hoursState.request">
               <br />最近一条{{ hoursState.request.kind_label }}申请：
               {{ hoursState.request.status_label }} · {{ hoursState.request.reason }}
-              <template v-if="hoursState.request.reply">
-                （意见：{{ hoursState.request.reply }}）
-              </template>
+              <span v-if="hoursState.request.reply" class="pre">（意见：{{ hoursState.request.reply }}）</span>
             </template>
           </div>
         </el-alert>
@@ -719,7 +721,7 @@
             </template>
             <template v-if="hoursState.request?.kind === 'lock'
                             && hoursState.request.status === 'rejected'">
-              <br />上次审核未通过：{{ hoursState.request.reply }}——改完重新核准再提交一次。
+              <br />上次审核未通过：<span class="pre">{{ hoursState.request.reply }}</span>——改完重新核准再提交一次。
             </template>
           </div>
         </el-alert>
@@ -1463,6 +1465,34 @@
       <template #footer>
         <el-button @click="notifyDlg.visible = false">取消</el-button>
         <el-button type="primary" :loading="notifyDlg.saving" @click="sendNotify">发送</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 问卷结果：按场次、岗位挑人导出，附件按「场次/岗位」分文件夹 -->
+    <el-dialog v-model="answersDlg.visible" title="导出问卷结果" width="480">
+      <el-form label-width="56px">
+        <el-form-item label="场次">
+          <el-select v-model="answersDlg.shifts" multiple clearable collapse-tags
+                     collapse-tags-tooltip placeholder="全部场次" style="width:100%">
+            <el-option v-for="g in shifts" :key="g.id" :value="g.id" :label="g.name" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="岗位">
+          <el-select v-model="answersDlg.positions" multiple clearable collapse-tags
+                     collapse-tags-tooltip placeholder="全部岗位" style="width:100%">
+            <el-option-group v-for="g in answersShifts" :key="g.id" :label="g.name">
+              <el-option v-for="p in g.positions" :key="p.id" :value="p.id" :label="p.name" />
+            </el-option-group>
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <div class="dim">
+        导出名单里已录取的人，每人每个岗位一行；不选就是全部。选了岗位时，还没分到岗位的人不在其中。
+        问卷里有上传的文件时，会再问要不要打包下载，附件按「场次/岗位」分文件夹。
+      </div>
+      <template #footer>
+        <el-button @click="answersDlg.visible = false">取消</el-button>
+        <el-button type="primary" @click="doAnswersExport">导出</el-button>
       </template>
     </el-dialog>
 
@@ -2273,9 +2303,28 @@ async function transition(action) {
 }
 
 // —— 导出 ——
-// 排班表：按场次分 Sheet，含签到状态，交付现场。只下 Excel；
-// 报名问卷里有上传的文件时再问要不要一起下附件包
-function doExport() { downloadExport(`/api/staff/activities/${activityId}/export`) }
+// 排班表：活动概览、志愿者信息、每个场次一张名单（含签到状态），交付现场
+function doExport() { dl(`/api/staff/activities/${activityId}/export.xlsx`) }
+// 问卷结果：按场次、岗位挑人；有附件时再问要不要一起下附件包
+const answersDlg = ref({ visible: false, shifts: [], positions: [] })
+const answersShifts = computed(() => answersDlg.value.shifts.length
+  ? shifts.value.filter(g => answersDlg.value.shifts.includes(g.id)) : shifts.value)
+// 场次收窄后，不在这些场次里的岗位从已选里去掉，免得导出条件和眼前看到的不一致
+watch(answersShifts, list => {
+  const ok = new Set(list.flatMap(g => g.positions.map(p => p.id)))
+  answersDlg.value.positions = answersDlg.value.positions.filter(id => ok.has(id))
+})
+function openAnswersExport() {
+  answersDlg.value = { visible: true, shifts: [], positions: [] }
+}
+function doAnswersExport() {
+  const { shifts: s, positions: p } = answersDlg.value
+  const q = new URLSearchParams()
+  if (s.length) q.set('shifts', s.join(','))
+  if (p.length) q.set('positions', p.join(','))
+  answersDlg.value.visible = false
+  downloadExport(`/api/staff/activities/${activityId}/answers`, q.toString())
+}
 // 时长记录：姓名、身份证号、岗位、时长、备注
 function doExportHours() { dl(`/api/staff/activities/${activityId}/hours.xlsx`) }
 
@@ -2707,7 +2756,9 @@ function toISO(v) {
 .needs-positions { border-color: var(--el-color-danger) !important; }
 .group-card { border:1px solid #eceef1; border-radius:12px; padding:12px 14px; margin-bottom:12px; background:#fff; }
 .g-head { display:flex; gap:12px; align-items:center; margin-bottom:8px; font-size:13.5px; flex-wrap:wrap;}
-.wl-card { margin-bottom:12px; border-radius:12px; }
+.side-stack { display: flex; flex-direction: column; gap: 12px; }
+.side-stack .section-title { margin-top: 0; }
+.wl-card { border-radius:12px; }
 .wl-row { display:flex; gap:8px; align-items:center; padding:3px 0; font-size:13px; }
 button.dashed { border-style:dashed; }
 .contacts-box { width: 100%; }

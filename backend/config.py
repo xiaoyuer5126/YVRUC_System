@@ -293,7 +293,7 @@ ORPHAN_ATTACHMENT_DAYS = 7
 #            不上广场、不收报名、不建场次与岗位，照常过青协立项审批，通过后
 #            由管理者导入「学号 + 时长」名单，之后走同一套时长结账流程。
 # 「志愿者保障」必填，新建活动时预先填好这一句（前端经 /api/auth/constants 取）
-DEFAULT_VOLUNTEER_BENEFIT = "根据实际服务情况认定志愿时长"
+DEFAULT_VOLUNTEER_BENEFIT = "根据实际服务情况认定志愿时长（根据实际情况填写，如午餐与饮水、纪念证书、意外险等）"
 
 RECRUIT_MODES = {
     "instant": {"name": "即选即得",

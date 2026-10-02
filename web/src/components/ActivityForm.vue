@@ -117,7 +117,7 @@
  *
  * 只管字段与校验，不管按钮：调用方拿 validate() 校验、拿 body() 取提交体。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -157,6 +157,17 @@ const qrUploading = ref(false)
 const campuses = ref([])
 const stages = ref([])
 const colleges = ref([])
+const benefitDefault = ref('')   // vuecheck: script-only，只用来预填
+
+// 新建时预填默认的保障（以后端为准，不在前端抄一份）；编辑时已有内容就不动。
+// 新建弹窗关了再开，组件还在、表单换成一份新的空表：所以跟着表单对象填，
+// 只在挂载时填一次的话，第二次打开就是空的
+function fillBenefit() {
+  if (!f.value.volunteer_benefit && benefitDefault.value) {
+    f.value.volunteer_benefit = benefitDefault.value
+  }
+}
+watch(() => props.modelValue, fillBenefit)
 
 onMounted(async () => {
   const [c, cl] = await Promise.all([
@@ -165,8 +176,8 @@ onMounted(async () => {
   ])
   campuses.value = c.campuses || []
   stages.value = c.stages || []
-  // 新建时预先填好默认的保障（以后端为准，不在前端抄一份）；编辑时已有内容就不动
-  if (!f.value.volunteer_benefit) f.value.volunteer_benefit = c.volunteer_benefit_default || ''
+  benefitDefault.value = c.volunteer_benefit_default || ''
+  fillBenefit()
   colleges.value = cl.colleges || []
 })
 

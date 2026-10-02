@@ -153,11 +153,11 @@ def test_部门成员的导出一个都下不到(client, db, dept_activity):
     aid, _g = dept_activity
     _add_core_manager(db, aid)
     member = login(client, MEMBER)
-    for tail in ("hours.xlsx", "applications.xlsx", "export/attachments.zip",
-                 "applications/attachments.zip"):
+    for tail in ("hours.xlsx", "applications.xlsx", "answers.xlsx",
+                 "answers/attachments.zip", "applications/attachments.zip"):
         r = client.get(dl_url(client, member, f"/api/staff/activities/{aid}/{tail}"))
         assert r.status_code == 403, tail
-    for tail in ("export/attachments", "applications/attachments"):
+    for tail in ("answers/attachments", "applications/attachments"):
         r = client.get(f"/api/staff/activities/{aid}/{tail}", headers=member)
         assert r.status_code == 403 and r.json()["detail"]["code"] == "TRAINEE_READONLY"
 

@@ -1,4 +1,5 @@
-// 各视口下的页面自检：横向溢出、侧栏/汉堡切换、页面有没有真的渲染出来。
+// 各视口下的页面自检：横向溢出、侧栏/汉堡切换、页面有没有真的渲染出来、
+// 同类元素的间距齐不齐。
 //
 // 用法（栈已起好、种子数据已导入）：
 //   python3 scripts/viewcheck-setup.py /tmp/viewcheck
@@ -13,6 +14,12 @@
 // 用 console.error 打出来，页面照常渲染，window.onerror 一声不吭。
 // 一个子组件 setup 崩了，父级拿到的就是个空壳，点按钮才报「不是函数」。
 // 所以活动管理页的每个页签都要打开一遍，子组件只在自己的页签里挂载。
+//
+// 「间距不齐」只比同类的东西：同一排的控件（按钮、标签、输入框，或只包着
+// 一个控件的壳），同一栏里上下相邻的块（有边框或底色的卡片、提示条）。
+// 标题与正文、区块与区块本来就隔得不一样，不比。这类问题肉眼要盯着看才觉得
+// 「哪里怪」，截图里几乎看不出来：Element 给相邻两个按钮自带 12px 左外边距，
+// 和 flex 的 gap 叠成 20px，被 tooltip 的 span 包住的那个按钮又只有 8px。
 import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 const CHROME = '/home/xiaoyuer5126/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome'
@@ -45,7 +52,7 @@ const PAGES = [
   ['admin', `/manage/${ACT}?tab=logs`, '变更记录', 100],
   ['admin', `/manage/${ATT}?tab=attire`, '志愿服装', 100],
   ['admin', `/manage/${REC}?tab=records`, '名单导入', 100],
-  ['admin', '/users', '志愿者档案', 200],
+  ['admin', '/volunteers', '志愿者档案', 200],
   ['admin', '/approvals', '活动审批', 200],
   ['admin', '/audit', '审计日志', 200],
   ['admin', '/dashboard', '数据总览', 200],
@@ -84,6 +91,52 @@ const PROBE = `(() => {
           ? '.' + el.className.trim().split(/\\s+/).slice(0,2).join('.') : '')
        + ' →' + Math.round(el.getBoundingClientRect().right)))
     .filter((v,i,a) => a.indexOf(v) === i).slice(0, 6);
+  const vis = el => { const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden'
+      && cs.position !== 'absolute' && cs.position !== 'fixed'; };
+  const shown = el => [...el.children].filter(vis);
+  const CTRL = 'button.el-button:not(.is-link):not(.is-text), .el-tag, .el-input, '
+             + '.el-select, .el-switch, .el-date-editor, .el-radio-group, .el-checkbox';
+  const isCtrl = el => el.matches(CTRL) || (shown(el).length === 1 && isCtrl(shown(el)[0]));
+  const boxy = (el, d = 0) => {
+    const cs = getComputedStyle(el);
+    if ((parseFloat(cs.borderTopWidth) > 0 && parseFloat(cs.borderBottomWidth) > 0)
+        || (!/^(rgba\\(0, 0, 0, 0\\)|transparent)$/.test(cs.backgroundColor)
+            && el.getBoundingClientRect().height > 30)) return true;
+    const k = shown(el);
+    return d < 2 && k.length > 0 && boxy(k[0], d + 1) && boxy(k[k.length - 1], d + 1);
+  };
+  const label = el => (el.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 8) || el.tagName.toLowerCase();
+  // gaps: [[前一个, 后一个, 间距]]；40px 以上是 margin-left:auto 之类有意推开的，不算
+  const uneven = gaps => { const g = gaps.filter(x => x[2] >= 0 && x[2] < 40).map(x => x[2]);
+    return g.length >= 2 && Math.max(...g) - Math.min(...g) >= 4; };
+  const fmt = gaps => gaps.map(([a, b, g]) => label(a) + ' ‹' + g + '› ' + label(b)).join(' ｜ ');
+  const gapsOff = [];
+  for (const p of (document.querySelector('.app-main') || document.body).querySelectorAll('*')) {
+    if (p.closest('.el-table, .el-select-dropdown, .el-picker-panel, .el-radio-group')) continue;
+    const kids = shown(p);
+    if (kids.length < 3) continue;
+    const R = new Map(kids.map(k => [k, k.getBoundingClientRect()]));
+    const rows = [];
+    for (const k of kids) { const cy = R.get(k).top + R.get(k).height / 2;
+      let row = rows.find(x => Math.abs(x.cy - cy) < 6);
+      if (!row) rows.push(row = { cy, items: [] });
+      row.items.push(k); }
+    for (const row of rows) {
+      const it = row.items.sort((a, b) => R.get(a).left - R.get(b).left);
+      const gaps = it.slice(1).map((b, n) => [it[n], b, Math.round(R.get(b).left - R.get(it[n]).right)])
+        .filter(([a, b]) => isCtrl(a) && isCtrl(b));
+      if (uneven(gaps)) gapsOff.push('横排 ' + fmt(gaps));
+    }
+    const col = [];
+    for (const k of [...kids].sort((a, b) => R.get(a).top - R.get(b).top)) {
+      const last = col[col.length - 1], r = R.get(k);
+      if (!last || (r.top >= R.get(last).bottom - 1 && r.left < R.get(last).right
+                    && R.get(last).left < r.right)) col.push(k); }
+    const vg = col.slice(1).map((b, n) => [col[n], b, Math.round(R.get(b).top - R.get(col[n]).bottom)])
+      .filter(([a, b]) => boxy(a) && boxy(b));
+    if (uneven(vg)) gapsOff.push('竖排 ' + fmt(vg));
+  }
   return JSON.stringify({
     // 崩掉的页面不会溢出，所以必须同时看「有没有渲染出东西」。
     // 签到/服装落地页不在主框架里，没有 .app-main，就看整页
@@ -94,7 +147,7 @@ const PROBE = `(() => {
     burger: !!document.querySelector('.hamburger'),
     cards: document.querySelectorAll('.cards .card, .mob-card, .m-shift').length,
     tables: document.querySelectorAll('.el-table').length,
-    over,
+    over, gapsOff: gapsOff.slice(0, 4),
   });
 })()`
 
@@ -125,14 +178,15 @@ for (const [who, route, name, min] of PAGES) {
   await sleep(2400)
   const r = await send('Runtime.evaluate', { expression: PROBE, returnByValue: true })
   const d = r.timeout
-    ? { textLen: 0, errors: ['页面没有响应（主线程卡死？）'], vw: 0, scrollW: 0, over: [] }
+    ? { textLen: 0, errors: ['页面没有响应（主线程卡死？）'], vw: 0, scrollW: 0, over: [], gapsOff: [] }
     : JSON.parse(r.result.result.value)
-  const bad = d.scrollW > d.vw + 1 || d.textLen < min || d.errors.length
+  const bad = d.scrollW > d.vw + 1 || d.textLen < min || d.errors.length || d.gapsOff.length
   console.log(`${bad ? '✗' : '✓'} ${name.padEnd(6)} 视口${d.vw} 内容${d.scrollW}` +
     ` | 侧栏${d.aside?'在':'收'} 汉堡${d.burger?'有':'无'}` +
     ` | 卡片${d.cards} 表格${d.tables} 文字${d.textLen}` +
     (d.textLen < min ? `（少于该有的 ${min}）` : '') +
     (d.errors.length ? `\n     JS 错误: ${d.errors[0]}` : '') +
-    (d.over.length ? `\n     超宽: ${d.over.join(', ')}` : ''))
+    (d.over.length ? `\n     超宽: ${d.over.join(', ')}` : '') +
+    d.gapsOff.map(g => `\n     间距不齐: ${g}`).join(''))
 }
 ws.close(); proc.kill()

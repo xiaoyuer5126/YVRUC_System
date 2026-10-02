@@ -87,7 +87,7 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
     # 联络群二维码不带：每场活动一个新群，复制时就要求传新图
     act = Activity(id=uid("act"), title=title, recruit_mode=src.recruit_mode,
                    intro=src.intro, organizer=src.organizer,
-                   location=src.location, contact_info=src.contact_info,
+                   location=src.location,
                    contacts=[dict(c) for c in (src.contacts or [])],
                    contact_group_qr=contact_group_qr, cover_hue=src.cover_hue,
                    volunteer_requirement=src.volunteer_requirement,

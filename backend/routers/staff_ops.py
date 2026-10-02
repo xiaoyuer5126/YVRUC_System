@@ -18,8 +18,8 @@ from .. import config, hours as hours_flow, liaison
 from ..stage import ensure_hours_editable, ensure_not_finished
 from ..database import db_session
 from ..deps import require_manager, require_manager_download
-from ..exporter import (build_activity_workbook, build_application_workbook,
-                        build_hours_workbook)
+from ..exporter import (build_activity_workbook, build_answers_workbook,
+                        build_application_workbook, build_hours_workbook)
 from ..perm import ensure_activity_manager
 from ..qrcodes import trusted_root
 from ..integrations import msgcenter
@@ -706,15 +706,9 @@ def batch_op(task_id: str, body: dict,
 
 # ======================= 导出 =======================
 
-# 排班表与报名问卷结果都可能带问卷里上传的文件。表格和附件分开下：
+# 问卷结果与报名问卷结果都可能带问卷里上传的文件。表格和附件分开下：
 # 「导出」只给 .xlsx；附件包另有接口，前端先问一句附件数（<a> 直链下载
 # 拿不到响应头，所以数目走一个单独的 JSON 接口），有附件才询问要不要一起下。
-
-def _roster_export(db: OrmSession, user: User, activity_id: str):
-    ensure_activity_manager(db, user, activity_id)
-    act = _act(db, activity_id)
-    return act, build_activity_workbook(db, act), f"{act.title}_排班表"
-
 
 def _applications_export(db: OrmSession, user: User, activity_id: str):
     ensure_activity_manager(db, user, activity_id)
@@ -722,6 +716,19 @@ def _applications_export(db: OrmSession, user: User, activity_id: str):
     if not act.is_screened():
         raise HTTPException(409, "只有「报名后筛选」的活动有报名问卷")
     return act, build_application_workbook(db, act), f"{act.title}_报名问卷"
+
+
+def _ids(raw: str) -> set[str]:
+    return {x for x in (raw or "").split(",") if x.strip()}
+
+
+def _answers_export(db: OrmSession, user: User, activity_id: str,
+                    shifts: str, positions: str):
+    """问卷结果；shifts / positions 是逗号分隔的 id，空表示不限。"""
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    ex = build_answers_workbook(db, act, _ids(shifts), _ids(positions))
+    return act, ex, f"{act.title}_问卷结果"
 
 
 def _attachments_download(db: OrmSession, user: User, act: Activity, ex,
@@ -741,31 +748,50 @@ def _attachments_download(db: OrmSession, user: User, act: Activity, ex,
 @router.get("/activities/{activity_id}/export.xlsx")
 def export(activity_id: str, db: OrmSession = Depends(db_session),
            user: User = Depends(require_manager_download)):
-    act, ex, name = _roster_export(db, user, activity_id)
-    stamp = now().strftime("%Y%m%d_%H%M")
-    filename = f"{name}_{stamp}.xlsx"
+    """排班表：活动概览、志愿者信息、每个场次一张名单。"""
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    filename = f"{act.title}_排班表_{now():%Y%m%d_%H%M}.xlsx"
     # 下载留痕：后台记录每一次下载操作
     audit_log(db, actor=user, action="export", target_type="export",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"导出排班表《{filename}》")
     db.commit()
+    return _download(build_activity_workbook(db, act), filename)
+
+
+@router.get("/activities/{activity_id}/answers.xlsx")
+def export_answers(activity_id: str, shifts: str = "", positions: str = "",
+                   db: OrmSession = Depends(db_session),
+                   user: User = Depends(require_manager_download)):
+    """问卷结果：在册志愿者按场次、岗位挑出来，一题一列。"""
+    act, ex, name = _answers_export(db, user, activity_id, shifts, positions)
+    filename = f"{name}_{now():%Y%m%d_%H%M}.xlsx"
+    audit_log(db, actor=user, action="export", target_type="export",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=f"导出问卷结果《{filename}》")
+    db.commit()
     return _download(ex.xlsx(), filename)
 
 
-@router.get("/activities/{activity_id}/export/attachments")
-def export_attachment_count(activity_id: str, db: OrmSession = Depends(db_session),
-                            user: User = Depends(require_manager)):
-    """排班表附件数：前端据此决定要不要问「是否同时打包下载」。"""
-    _, ex, _ = _roster_export(db, user, activity_id)
+@router.get("/activities/{activity_id}/answers/attachments")
+def export_answer_attachment_count(activity_id: str, shifts: str = "",
+                                   positions: str = "",
+                                   db: OrmSession = Depends(db_session),
+                                   user: User = Depends(require_manager)):
+    """问卷结果的附件数：前端据此决定要不要问「是否同时打包下载」。"""
+    _, ex, _ = _answers_export(db, user, activity_id, shifts, positions)
     return {"count": len(ex.files)}
 
 
-@router.get("/activities/{activity_id}/export/attachments.zip")
-def export_attachments(activity_id: str, db: OrmSession = Depends(db_session),
-                       user: User = Depends(require_manager_download)):
-    """排班表里文件题的附件包；没有附件时 404。"""
-    act, ex, name = _roster_export(db, user, activity_id)
-    return _attachments_download(db, user, act, ex, name, "排班表")
+@router.get("/activities/{activity_id}/answers/attachments.zip")
+def export_answer_attachments(activity_id: str, shifts: str = "",
+                              positions: str = "",
+                              db: OrmSession = Depends(db_session),
+                              user: User = Depends(require_manager_download)):
+    """问卷结果里文件题的附件包，按「场次/岗位」分文件夹；没有附件时 404。"""
+    act, ex, name = _answers_export(db, user, activity_id, shifts, positions)
+    return _attachments_download(db, user, act, ex, name, "问卷结果")
 
 
 def _download(buf, filename: str) -> StreamingResponse:
@@ -814,7 +840,7 @@ def export_applications(activity_id: str, db: OrmSession = Depends(db_session),
 def export_application_attachment_count(activity_id: str,
                                         db: OrmSession = Depends(db_session),
                                         user: User = Depends(require_manager)):
-    """报名问卷附件数，用法同排班表那个。"""
+    """报名问卷附件数，用法同问卷结果那个。"""
     _, ex, _ = _applications_export(db, user, activity_id)
     return {"count": len(ex.files)}
 

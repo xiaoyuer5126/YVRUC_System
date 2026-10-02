@@ -41,8 +41,17 @@ body {
 .el-dialog__body > :first-child,
 .page > :first-child { margin-top: 0; }
 
-/* 提示条自带上下间距，摆在哪里都一样 */
-.el-alert { margin: 8px 0; }
+/* 工具条、页头按钮区只靠 gap 隔开。Element 给相邻两个按钮自带 12px 左外边距，
+   和 gap 叠起来是 20px；被 tooltip 的 span、popconfirm 包住的按钮和标签又拿不到它，
+   同一排就有宽有窄 */
+.toolbar .el-button + .el-button,
+.el-page-header__extra .el-button + .el-button { margin-left: 0; }
+.el-page-header__extra { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+
+/* 提示条是个块，和卡片之间一样隔 12px，摆在哪里都一样；
+   工具条里的提示条由工具条的 gap 隔开，不另外叠一层外边距 */
+.el-alert { margin: 12px 0; }
+.toolbar > .el-alert { margin: 0; }
 
 /* 区块标题后面跟的那句说明：标题行本身是 flex gap:8，不用再补外边距 */
 .section-title .dim { font-weight: 400; }
@@ -118,12 +127,17 @@ p { margin: 8px 0; }
 .station-chip.disabled { opacity: .55; cursor: not-allowed; }
 
 .mono { font-family: Consolas, Monaco, monospace; }
-/* 灰色说明小字。行高统一在这里：模板里不再一处 1.7、一处 1.8 地写——
-   行距一大，说明文字就松成一片，正文段落用 1.6 */
+/* 灰色说明小字。行高只在这里定，模板里不单独写：一处 1.7、一处 1.8，
+   看着就乱；行距一大，说明文字也会松成一片。正文段落用 1.6 */
 .dim { color: #909399; font-size: 13px; line-height: 1.5; }
 .pre { white-space: pre-wrap; }   /* 多行文字（服务任务、培训内容）按换行显示 */
 /* 确认框里写的是「先说清楚风险，再说做了会怎样」，分段全靠换行 */
 .el-message-box__message { white-space: pre-line; }
+/* 提示条里常拼着审批意见，意见是带换行存的（常用语就是好几段）。
+   模板里写的文字会被 Vue 编译时压成单个空格，不会因此多出换行 */
+.el-alert__title, .el-alert__description { white-space: pre-line; }
+/* 悬浮提示里的意见同上；用法：popper-class="pre-tip" */
+.pre-tip { white-space: pre-line; max-width: 320px; }
 .section-title { font-size: 15px; font-weight: 600; margin: 12px 0 8px; display:flex; align-items:center; gap:8px; }
 .section-title::before { content:""; width: 4px; height: 16px; background: var(--el-color-primary);
   border-radius: 2px; display:inline-block; }
@@ -197,12 +211,7 @@ p { margin: 8px 0; }
   .el-page-header__left .el-divider--vertical { display: none; }
   .el-page-header__back { margin-right: 0; }
   .el-page-header__content { margin-top: 8px; font-size: 16px; line-height: 1.5; }
-  .el-page-header__extra {
-    display: flex; flex-wrap: wrap; gap: 8px;
-    margin-top: 12px; text-align: left;
-  }
-  /* 页头里的按钮自身带的左外边距会破坏 gap 对齐 */
-  .el-page-header__extra .el-button + .el-button { margin-left: 0; }
+  .el-page-header__extra { margin-top: 12px; text-align: left; }
 
   /* 标签栏在窄屏是横滑的，但看不出来——在这一行下面补一句提示。
      用伪元素是因为 el-tabs 的 header 与 content 之间插不进真实节点。 */

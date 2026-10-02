@@ -160,7 +160,7 @@ const AppealTag = (props) => {
                          style: 'margin-left:6px' },
                 () => `申诉${a.label}`)
   return a.reply
-    ? h(ElTooltip, { content: a.reply, placement: 'top' }, () => tag)
+    ? h(ElTooltip, { content: a.reply, placement: 'top', popperClass: 'pre-tip' }, () => tag)
     : tag
 }
 

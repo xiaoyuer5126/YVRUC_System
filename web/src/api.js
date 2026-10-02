@@ -121,20 +121,21 @@ export async function download(url) {
 
 /** 导出表格；本次导出带问卷里上传的文件时，再问要不要把附件包一起下。
  *
- * base 形如 /api/staff/activities/<id>/export：表是 base.xlsx，附件数是
- * base/attachments，附件包是 base/attachments.zip。表和附件分开下——多数
- * 时候只要表，不必每次拖着几十兆的附件。
+ * base 形如 /api/staff/activities/<id>/answers：表是 base.xlsx，附件数是
+ * base/attachments，附件包是 base/attachments.zip，三处都带上同一个 query
+ * （筛选条件）。表和附件分开下——多数时候只要表，不必每次拖着几十兆的附件。
  * 附件数单独问一次 JSON 接口，而不是放在表的响应头里：直链下载是 <a> 点出去的，
  * 前端读不到响应头。先问数目再下表，没权限之类的错在这一步就能提示出来。
  */
-export async function downloadExport(base) {
+export async function downloadExport(base, query = '') {
+  const q = query ? `?${query}` : ''
   let count
   try {
-    ({ count } = await api.get(`${base}/attachments`))
+    ({ count } = await api.get(`${base}/attachments${q}`))
   } catch {
     return          // api 层已经提示过
   }
-  await download(`${base}.xlsx`)
+  await download(`${base}.xlsx${q}`)
   if (!count) return
   try {
     await ElMessageBox.confirm(`本次导出含 ${count} 个附件，是否同时打包下载？`, '附件', {
@@ -143,7 +144,7 @@ export async function downloadExport(base) {
   } catch {
     return
   }
-  await download(`${base}/attachments.zip`)
+  await download(`${base}/attachments.zip${q}`)
 }
 
 /** 上传一个文件（multipart）。FormData 不能走 api 的 JSON 封装，错误提示照旧。 */

@@ -113,8 +113,8 @@ TRAINEE_ALLOWED_WRITES = {"assign_preview"}
 # 和报名问卷结果会漏掉，部门成员照样下得到。附件数接口也拦：前端先问数目，
 # 在这一步就能提示「不能导出」，不必等直链落到一张报错页上。
 TRAINEE_DENIED_READS = {
-    "export", "export_attachment_count", "export_attachments",
-    "export_hours",
+    "export", "export_hours",
+    "export_answers", "export_answer_attachment_count", "export_answer_attachments",
     "export_applications", "export_application_attachment_count",
     "export_application_attachments",
 }

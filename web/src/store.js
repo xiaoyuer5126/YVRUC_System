@@ -69,7 +69,7 @@ export const canSee = {
   dashboard: () => full(),
   manage: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
   audit: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
-  users: () => full() || qx('head'),
+  volunteers: () => full() || qx('head'),
   roles: () => full() || qx('head', 'core'),   // 骨干进来只为认领本部门成员
   // 对外联络部的骨干有值班资格：要看得到谁在班、轮到自己时接得了班、处理得了审批
   approvals: () => full() || qx('head') || (qx('core') && !!auth.user?.duty_eligible),

@@ -1003,6 +1003,8 @@ function setWindowEnd(v) { form.value.range = [form.value.range[0] || '', v || '
 .ratio b { font-size:30px; color: var(--ruc-red); }
 .st-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap:12px; }
 .manual-bar { display:flex; gap:8px; margin-bottom:8px; align-items:center; flex-wrap:wrap; }
+/* 只靠 gap 隔开：Element 给相邻按钮自带的 12px 左外边距会叠上去 */
+.manual-bar .el-button + .el-button { margin-left: 0; }
 /* 签到地点那三行：快捷来源 / 搜索 / 坐标 */
 .geo-line { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
             margin-bottom:8px; width:100%; }

@@ -44,7 +44,7 @@ router = APIRouter(prefix="/api/staff", tags=["staff"])
 ACTIVITY_FIELDS = {
     "title": "名称", "recruit_mode": "活动类型", "intro": "简介",
     "location": "地点", "organizer": "组织单位",
-    "contact_info": "联系方式", "contacts": "联系人",
+    "contacts": "联系人",
     "contact_group_qr": "志愿者联络群二维码",
     "volunteer_requirement": "志愿者要求", "volunteer_benefit": "志愿者保障",
     "recruit_campuses": "招募校区", "recruit_stages": "招募学段",
@@ -143,7 +143,6 @@ class ActivityBody(BaseModel):
     recruit_mode: str = "instant"
     intro: str = ""
     location: str = ""
-    contact_info: str = ""
     contacts: list[dict] = []
     contact_group_qr: str = ""
     cover_hue: int = 0
@@ -332,7 +331,6 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                    recruit_mode=body.recruit_mode,
                    organizer=body.organizer.strip(),
                    intro=body.intro.strip(), location=body.location.strip(),
-                   contact_info=body.contact_info.strip(),
                    contact_group_qr=body.contact_group_qr.strip(),
                    cover_hue=body.cover_hue,
                    volunteer_requirement=body.volunteer_requirement.strip(),

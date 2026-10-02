@@ -219,7 +219,6 @@ def main() -> None:
                          intro="全校秋季运动会开幕式需要大量志愿者支持，涉及引导、检录、礼仪、医疗辅助等岗位。"
                                "请仔细核对时间后报名；如无法参加请提前 24 小时退选。",
                          location="世纪馆田径场",
-                         contact_info="青协项目部 李慕清 138xxxx0002（微信同）",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"},
                                    {"name": "王砚秋", "phone": "13950010000"}],
                          contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
@@ -312,7 +311,6 @@ def main() -> None:
                         intro="图书馆馆藏调整需要大批志愿者参与图书下架、搬运与重新上架。"
                               "具体分工将在报名截止后由青协统一排班公布。",
                         location="图书馆（明德楼）",
-                        contact_info="青协项目部 lib-vol@ruc.edu.cn",
                         contacts=[{"name": "张远航", "phone": "13950030000"}],
                         contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
                         status="published",
@@ -353,7 +351,7 @@ def main() -> None:
                         recruit_mode="instant", cover_hue=150,
                         intro="面向来访考生家长的咨询引导志愿服务。岗位简单，无需分岗位，"
                               "报名即锁定时段。",
-                        location="明德广场", contact_info="招办协同 张远航",
+                        location="明德广场",
                         contacts=[{"name": "张远航", "phone": "13950030000"}],
                         contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
                         status="published", reg_start=dt(days=-1),
@@ -395,7 +393,6 @@ def main() -> None:
                         recruit_mode="instant", cover_hue=280,
                         intro="校庆晚会当天全流程保障，已截止报名。请按分配岗位准时到岗并扫码签到。",
                         location="明德堂",
-                        contact_info="青协办公室 张远航",
                         contacts=[{"name": "王砚秋", "phone": "13950010000"},
                                   {"name": "张远航", "phone": "13950030000"}],
                         contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
@@ -446,7 +443,6 @@ def main() -> None:
                          intro="每周定期前往附近社区敬老院陪伴老人，聊天读报、组织小活动。"
                                "岗位简单，仅按场次报名。",
                          location="海淀街道敬老院",
-                         contact_info="青协项目部 李慕清",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
                          contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
                          status="completed", reg_start=dt(days=-20),
@@ -500,7 +496,6 @@ def main() -> None:
                          intro="迎新周需要一批能独立带队的志愿者，请如实填写报名问卷；"
                                "报名截止后由青协统一筛选，录取结果通过企业微信通知。",
                          location="东门迎新广场",
-                         contact_info="青协项目部 李慕清",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
                          contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
                          status="published",

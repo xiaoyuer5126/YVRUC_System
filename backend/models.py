@@ -312,8 +312,7 @@ class Activity(Base):
     recruit_mode: Mapped[str] = mapped_column(String(12), default="instant")
     intro: Mapped[str] = mapped_column(Text, default="")
     location: Mapped[str] = mapped_column(String(128), default="")
-    contact_info: Mapped[str] = mapped_column(String(256), default="")   # 联系方式
-    # 结构化联系人（多人）：[{"name": 姓名, "phone": 电话}]；导出/展示优先用它
+    # 联系人（多人）：[{"name": 姓名, "phone": 电话}]
     contacts: Mapped[list] = mapped_column(JSON, default=list)
     # 志愿者联络群二维码（dataURL）。必填；不在活动详情公开，报名成功/候补转正/
     # 录取之后弹给本人一次，之后在「我的报名」里随时能再看。复制活动不带它——

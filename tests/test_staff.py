@@ -723,7 +723,7 @@ def _new_activity(client, headers, **over):
 
 def test_志愿者保障必填_没填就是默认那句(client, admin, db):
     from backend import config
-    default = "根据实际服务情况认定志愿时长"
+    default = "根据实际服务情况认定志愿时长（根据实际情况填写，如午餐与饮水、纪念证书、意外险等）"
     # 新建表单预填的那句来自后端
     assert client.get("/api/auth/constants", headers=admin).json()[
         "volunteer_benefit_default"] == default == config.DEFAULT_VOLUNTEER_BENEFIT

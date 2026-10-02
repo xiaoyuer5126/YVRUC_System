@@ -101,9 +101,9 @@ def dl_url(client: TestClient, headers: dict, path: str) -> str:
     才验得到真实的下载流程。
     """
     r = client.post("/api/auth/download-ticket", headers=headers,
-                    json={"path": path})
+                    json={"path": path.split("?")[0]})
     assert r.status_code == 200, r.text
-    return f"{path}?ticket={r.json()['ticket']}"
+    return f"{path}{'&' if '?' in path else '?'}ticket={r.json()['ticket']}"
 
 
 def login(client: TestClient, student_id: str) -> dict:

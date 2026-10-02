@@ -400,6 +400,10 @@ def transfer(activity_id: str, body: TransferBody,
     转交审批就是改归口：转给哪个部门（或哪个部门的人），活动就归那个部门，
     部长的活动列表、部门成员的可见范围都跟着变。转给会长团（没有部门）时
     归口不动，只是换个人拍板。
+
+    立项书跟着归口走：从对外联络部转出去就是内部活动，已传的立项书删掉，
+    免得发起方以为还要照着它走外联的流程；转进对外联络部而还没有立项书的，
+    通知活动管理者补传（没有它外联批不了，见 decide）。
     """
     act = db.get(Activity, activity_id)
     if act is None:
@@ -438,21 +442,29 @@ def transfer(activity_id: str, body: TransferBody,
         raise HTTPException(400, "转交对象就是当前审批人")
 
     before = db.get(User, act.approval_assignee_id) if act.approval_assignee_id else None
+    was_external = liaison.is_external(db, act)
     act.approval_dept_id = dept.id if dept else None
     act.approval_assignee_id = target.id
     act.approval_reminded_at = None
     _event(db, act, "transfer", user, dept_id=dept.id if dept else None,
            to_user_id=target.id, comment=reason)
+    external = liaison.is_external(db, act)
+    dropped = (liaison.drop_project_file(db, act.id, "proposal")
+               if was_external and not external else None)
+    need_proposal = external and liaison.project_file(db, act.id, "proposal") is None
     audit_log(db, actor=user, action="update", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"审批转交：{before.name if before else '—'} → {target.name}"
-                      f"（{dept.name if dept else '未归口'}）；理由：{reason}")
+                      f"（{dept.name if dept else '未归口'}）；理由：{reason}"
+                      + (f"；转为内部活动，立项书《{dropped.title}》已删除"
+                         if dropped else ""))
     # 转给部门的（审批人落在部长身上）通知该部门的值班人；点名转给某人的就是他
     contact = target
     if not body.student_id.strip() and dept is not None:
         contact = liaison.approval_contact(db, dept.id) or target
     _notify(db, contact, f"转来一条待审批｜{act.title}",
-            f"{user.name} 把「{act.title}」的审批转交给您。\n理由：{reason}",
+            f"{user.name} 把「{act.title}」的审批转交给您。\n理由：{reason}"
+            + ("\n这场活动还没有上传立项书，已通知活动管理者补传。" if need_proposal else ""),
             act, route="approvals")
     _notify(db, before, f"审批已转出｜{act.title}",
             f"您名下的「{act.title}」已由 {user.name} 转交给 {target.name}。\n"
@@ -462,7 +474,10 @@ def transfer(activity_id: str, body: TransferBody,
             ActivityManager.activity_id == act.id).all():
         _notify(db, db.get(User, row.user_id), f"审批已转交｜{act.title}",
                 f"「{act.title}」的审批已转交给 {target.name}"
-                f"（{dept.name if dept else '未归口'}）。", act,
+                f"（{dept.name if dept else '未归口'}）。"
+                + ("\n现在按内部活动审批，已上传的立项书已删除。" if dropped else "")
+                + ("\n对外联络部归口的活动须上传立项书：请到活动管理的「审核」页签上传，"
+                   "传好后对外联络部才能审批。" if need_proposal else ""), act,
                 route="manage", tab="review")
     db.commit()
     return {"ok": True, "assignee": contact.name}

@@ -114,6 +114,29 @@ def test_转进对外联络部没有立项书就批不了(client, admin, db, lia
     assert r.status_code == 400 and "立项书" in r.json()["detail"]
 
 
+def test_转进对外联络部缺立项书就通知管理者补传(client, admin, db, liaison):
+    aid = make_draft(client, admin, proposal=False)
+    other = db.query(Department).filter(Department.name == "办公室").one()
+    act = db.get(Activity, aid)
+    act.status, act.approval_dept_id = "pending", other.id
+    act.approval_assignee_id = student_row(db, ADMIN).id
+    act.submitted_at = now()
+    db.commit()
+    r = client.post(f"/api/staff/activities/{aid}/transfer-approval", headers=admin,
+                    json={"department_id": liaison.id, "reason": "二级团体的活动"})
+    assert r.status_code == 200, r.text
+    note = inbox(db, ADMIN, f"审批已转交｜{act.title}")[0]
+    assert "须上传立项书" in note.content and note.data["tab"] == "review"
+    assert "还没有上传立项书" in inbox(db, LIAISON_HEAD, f"转来一条待审批｜{act.title}")[0].content
+    # 审批中可以补传，补完外联就能批
+    files = _files(client, admin, aid)
+    assert files["external"] and files["can_upload_proposal"]
+    assert _upload(client, admin, aid, "proposal").status_code == 200
+    head = login(client, LIAISON_HEAD)
+    assert client.post(f"/api/staff/activities/{aid}/decide", headers=head,
+                       json={"approve": True}).status_code == 200
+
+
 def test_立项书只给管理者和审批线上的人下载(client, admin, db, liaison, take_student):
     lin = student_row(db, LIAISON_CORE)
     aid = make_draft(client, admin)

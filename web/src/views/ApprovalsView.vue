@@ -87,7 +87,7 @@
           <div v-for="n in v.names" :key="n">{{ n }}</div>
         </div>
         <div v-if="v.last_return" class="submit-note">
-          <b>上次退回理由</b><span>{{ v.last_return }}</span>
+          <b>上次退回理由</b><span class="pre">{{ v.last_return }}</span>
         </div>
         <div class="dim" style="margin-top:8px">
           {{ v.organizer }} · 时长锁定于 {{ fmtDT(v.locked_at) }} ·
@@ -117,7 +117,7 @@
           </span>
         </div>
         <div class="submit-note">
-          <b>说明</b><span>{{ u.reason }}</span>
+          <b>说明</b><span class="pre">{{ u.reason }}</span>
         </div>
         <div v-if="u.vb_names?.length" class="submit-note">
           <b>志愿北京活动名称</b>
@@ -176,7 +176,7 @@
       <!-- 提交人写的说明。审批人就是在这一屏点通过/驳回的，这句话必须在这里 -->
       <div class="submit-note">
         <b>提交说明</b>
-        <span :class="{ dim: !a.submit_note }">{{ a.submit_note || '提交时未填写' }}</span>
+        <span class="pre" :class="{ dim: !a.submit_note }">{{ a.submit_note || '提交时未填写' }}</span>
       </div>
       <!-- 对外活动的立项书：批的就是它 -->
       <div v-if="a.external" class="submit-note">

@@ -11,7 +11,7 @@
         <el-icon><Stamp /></el-icon>活动审批
       </el-menu-item>
       <el-menu-item index="/audit"><el-icon><Document /></el-icon>审计日志</el-menu-item>
-      <el-menu-item v-if="canSee.users()" index="/users">
+      <el-menu-item v-if="canSee.volunteers()" index="/volunteers">
         <el-icon><UserFilled /></el-icon>志愿者档案
       </el-menu-item>
       <el-menu-item v-if="canSee.roles()" index="/roles">

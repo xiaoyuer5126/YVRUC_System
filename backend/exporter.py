@@ -1,15 +1,13 @@
-"""智能导出排班表。
+"""活动的几份导出表。
 
-导出逻辑：
-  · 第 1 个 Sheet：活动概览（各组已排/名额、签到统计）；
-  · 之后按"场次"分 Sheet，字段：
-      姓名 学号 学院 手机号 | 岗位 岗位时间 岗位地点 签到状态 签退时间
-    这张表直接交付现场负责人用于点名和排班，无需人工二次制表；
-  · 有未分配人员的组追加「未分配名单」Sheet。
+  · 排班表（build_activity_workbook）：交给现场负责人点名、排班。
+    活动概览 → 志愿者信息（一人一行，报保险、报入校用）→ 每个场次一张名单。
+  · 问卷结果（build_answers_workbook）：志愿者管理页按场次、岗位挑人导出，
+    答案一题一列，上传的文件按「场次/岗位」分文件夹另打附件包。
+  · 报名问卷结果（build_application_workbook）：报名后筛选的全部报名者。
+  · 时长记录（build_hours_workbook）：给志愿北京录时长。
 
-安全：正式版对文件强制加密（密码经企业微信单独
-发送下载人）并记录每次下载；演示版先做**下载留痕**（审计中心可见），
-加密在对接企业微信后启用。
+每次下载都记审计（见 routers/staff_ops 的导出接口）。
 """
 from __future__ import annotations
 
@@ -62,8 +60,11 @@ class Export:
         self.files: list[tuple[str, Path]] = []      # (包内文件名, 磁盘路径)
         self._used: set[str] = set()
 
-    def attach(self, u: User, q: FormQuestion, attachment_id) -> str:
-        """把一份文件答案登记进附件包，返回单元格该写的文件名；文件不在了给空。"""
+    def attach(self, u: User, q: FormQuestion, attachment_id, folder: str = "") -> str:
+        """把一份文件答案登记进附件包，返回单元格该写的文件名；文件不在了给空。
+
+        folder 是包内的目录（如「上午场/引导岗/」），单元格里写的也带着它。
+        """
         att = self.db.get(Attachment, str(attachment_id))
         if att is None:
             return ""
@@ -71,7 +72,7 @@ class Export:
         if not path.exists():
             return ""
         ext = Path(att.stored_name).suffix
-        base = re.sub(r'[\\/:*?"<>|]', "_", f"{u.name}_{u.student_id}_{q.title}")
+        base = folder + _safe_path_part(f"{u.name}_{u.student_id}_{q.title}")
         arc = f"{base}{ext}"
         n = 2
         while arc in self._used:
@@ -107,17 +108,23 @@ class Export:
         return out
 
     def write_answers(self, ws, u: User, questions: list[FormQuestion],
-                      answers: dict | None, line: list) -> None:
+                      answers: dict | None, line: list, folder: str = "") -> None:
         """在 line 后面接上一题一列的答案并写入；文件题写附件包内的文件名。"""
         for q in questions:
             v = (answers or {}).get(q.id)
             if q.kind == "file" and v:
-                line.append(self.attach(u, q, v))
+                line.append(self.attach(u, q, v, folder))
             elif isinstance(v, list):
                 line.append("、".join(str(x) for x in v))
             else:
                 line.append("" if v is None else str(v))
         ws.append(line)
+
+
+def _safe_path_part(name: str) -> str:
+    """附件包里的一段文件名或目录名：Windows 不认的字符换成下划线。"""
+    return re.sub(r'[\\/:*?"<>|]', "_", name).strip() or "_"
+
 
 HEADER_FILL = PatternFill("solid", fgColor="9E2235")   # 人大红
 HEADER_FONT = Font(name="微软雅黑", bold=True, color="FFFFFF")
@@ -153,9 +160,30 @@ def _style_header(ws, ncols: int) -> None:
     ws.freeze_panes = "A2"
 
 
-def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
-    ex = Export(db)
-    wb = ex.wb
+def _id_card_text(u: User) -> str:
+    if u.id_card:
+        return u.id_card
+    return "无大陆身份证" if u.no_mainland_id else ""
+
+
+def _roster_order(positions: dict):
+    """名单的排法：先按岗位分块，块内组长排头（点名时先找他），其余按报名先后。
+    没岗位的（统一分配还没排完）沉到最后，一眼看得出还差谁没安排。"""
+    def key(pair):
+        enr, _u = pair
+        st = positions.get(enr.position_id) if enr.position_id else None
+        return (0 if st else 1, st.sort if st else 0,
+                0 if enr.is_leader else 1, enr.joined_at or now())
+    return key
+
+
+def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
+    """排班表：活动概览、志愿者信息、每个场次一张名单。
+
+    这张表是拿去现场点名、报保险的。问卷答案另有「问卷结果」导出，
+    时长另有「时长记录」导出，都不混在这儿。
+    """
+    wb = Workbook()
     shifts = sorted(activity.shifts, key=lambda g: g.sort)
 
     # ---------- 概览 Sheet ----------
@@ -164,14 +192,12 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
     overview.append(["志愿服务管理平台 · 排班表导出"])
     overview.append(["活动名称", activity.title])
     overview.append(["活动类型", f"{activity.recruit_label()} · {activity.label_status()}"])
-    # 联系人优先用结构化 contacts（"姓名 电话"，多人分号连接），
-    # 为空则回退旧字段 contact_info
+    # 联系人是「姓名 电话」，多人分号连接
     contact_text = "；".join(
         f"{(c or {}).get('name', '')} {(c or {}).get('phone', '')}".strip()
         for c in (activity.contacts or []) if isinstance(c, dict)
     ).strip("；")
-    overview.append(["联系人",
-                     contact_text or activity.contact_info or "—"])
+    overview.append(["联系人", contact_text or "—"])
     span = activity.time_span()
     if span:
         overview.append(["活动时间",
@@ -200,60 +226,62 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
     for col, w in zip("ABCDE", (24, 30, 14, 14, 10)):
         overview.column_dimensions[col].width = w
 
-    # 即选即得的报名问卷答案挂在报名记录上，一题一列跟在签到后面；
-    # 筛选活动的答案在「报名问卷结果」那份导出里
-    questions = [] if activity.is_screened() else (
-        db.query(FormQuestion).filter(FormQuestion.activity_id == activity.id)
-        .order_by(FormQuestion.sort).all())
-
-    # ---------- 每个场次一个 Sheet ----------
-    used_names: set[str] = {"活动概览"}
+    # 每个场次的在册名单，按点名的顺序排好；志愿者信息与各场次名单共用
+    rosters = []
     for g in shifts:
         positions = {s.id: s for s in g.positions}
         rows = (db.query(Enrollment, User)
                 .filter(Enrollment.shift_id == g.id,
                         Enrollment.status == "enrolled")
                 .join(User, Enrollment.user_id == User.id).all())
-        # 这张表是拿去现场点名的，所以按现场的组织方式排：先按岗位分块，
-        # 块内组长排头（点名时先找他），其余按报名先后。
-        # 没岗位的（统一分配还没排完）沉到最后，一眼看得出还差谁没安排。
-        def _order(pair):
-            enr, u = pair
-            st = positions.get(enr.position_id) if enr.position_id else None
-            return (0 if st else 1,            # 有岗位的在前
-                    st.sort if st else 0,      # 岗位按管理者排的顺序
-                    0 if enr.is_leader else 1,  # 组长置顶，但仍在本岗位内
-                    enr.joined_at or now())     # 其余按报名时间
-        rows.sort(key=_order)
+        rows.sort(key=_roster_order(positions))
+        rosters.append((g, positions, rows))
 
+    # ---------- 志愿者信息 Sheet：全活动每人一行 ----------
+    info = wb.create_sheet("志愿者信息")
+    header = ["姓名", "学号", "学院", "身份证号", "手机号", "微信号"]
+    info.append(header)
+    _style_header(info, len(header))
+    seen: set[str] = set()
+    for _g, _positions, rows in rosters:
+        for _enr, u in rows:
+            if u.id in seen:
+                continue
+            seen.add(u.id)
+            info.append([u.name, u.student_id, u.college, _id_card_text(u),
+                         u.phone, u.wechat])
+    for col, w in zip("ABCDEF", (12, 14, 16, 22, 15, 16)):
+        info.column_dimensions[col].width = w
+
+    # ---------- 每个场次一个 Sheet ----------
+    used_names: set[str] = {"活动概览", "志愿者信息"}
+    for g, positions, rows in rosters:
         ws = wb.create_sheet(_safe_sheet_name(g.name, used_names))
         has_positions = bool(positions)
-        header = ["姓名", "学号", "学院", "手机号", "场次时间"]
-        header += (["岗位组", "岗位", "组长", "服务地点", "接受调剂"]
-                   if has_positions else [])
+        header = ["姓名", "学号", "性别", "学院", "手机号", "微信号", "场次时间"]
+        header += ["岗位组", "岗位", "组长", "服务地点"] if has_positions else []
         header += ["签到状态", "签退时间"]
-        header += [q.title for q in questions]
         ws.append(header)
         _style_header(ws, len(header))
 
         for enr, u in rows:
-            line = [u.name, u.student_id, u.college, u.phone, g.span_text()]
+            line = [u.name, u.student_id, u.gender, u.college, u.phone, u.wechat,
+                    g.span_text()]
             st = positions.get(enr.position_id) if enr.position_id else None
             if has_positions:
                 line += [(st.group_name if st and st.group_name else "—"),
                          st.name if st else "待分配",
                          "组长 ★" if enr.is_leader else "",
-                         (st.location or activity.location) if st else "—",
-                         "是" if enr.allow_reassign else "否"]
+                         (st.location or activity.location) if st else "—"]
             rec = checked.get(u.id)
             line += ["已到岗 ✓" if rec else "未签到"]
             line += [rec.checkout_at.strftime("%m-%d %H:%M")
                      if rec and rec.checkout_at else "—"]
-            ex.write_answers(ws, u, questions, enr.answers, line)
+            ws.append(line)
 
-        for idx, w in enumerate((12, 14, 16, 15, 18), start=1):
+        for idx, w in enumerate((12, 14, 6, 16, 15, 16, 18), start=1):
             ws.column_dimensions[get_column_letter(idx)].width = w
-        for idx in range(6, len(header) + 1):
+        for idx in range(8, len(header) + 1):
             ws.column_dimensions[get_column_letter(idx)].width = 14
 
         # 未分配名单（有岗位且有人没分到时才有意义）。
@@ -273,9 +301,65 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> Export:
                     ws.cell(row=i, column=1, value=u.name)
                     ws.cell(row=i, column=2, value=u.student_id)
 
-    # 这张表是给现场点名用的：只有活动概览和每个场次一张名单。
-    # 时长另有一份专门的导出（见 build_hours_workbook），不混在这儿。
+    disarm_formulas(wb)
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
 
+
+def build_answers_workbook(db: OrmSession, activity: Activity,
+                           shift_ids: set[str] | None = None,
+                           position_ids: set[str] | None = None) -> Export:
+    """问卷结果：在册志愿者每人每个岗位一行，一题一列。
+
+    shift_ids / position_ids 为空表示不限。挑了岗位时，还没分到岗位的人不在其中。
+    附件按「场次/岗位/姓名_学号_题目」分文件夹：部长们拿去按点位看简历，
+    一个文件夹就是一个点位的人。同一个人在两个岗位，文件就在两个文件夹里各放一份。
+    报名后筛选的答案在报名记录（Application）上，即选即得的在每条报名上。
+    """
+    from .models import Application
+
+    questions = (db.query(FormQuestion)
+                 .filter(FormQuestion.activity_id == activity.id)
+                 .order_by(FormQuestion.sort).all())
+    screened = activity.is_screened()
+    apps = {a.user_id: a for a in db.query(Application)
+            .filter(Application.activity_id == activity.id).all()} if screened else {}
+
+    ex = Export(db)
+    ws = ex.wb.active
+    ws.title = "问卷结果"
+    header = ["姓名", "学号", "学院", "手机号", "场次", "岗位"]
+    header += [q.title for q in questions]
+    ws.append(header)
+    _style_header(ws, len(header))
+
+    for g in sorted(activity.main_shifts(), key=lambda x: x.sort):
+        if shift_ids and g.id not in shift_ids:
+            continue
+        positions = {s.id: s for s in g.positions}
+        rows = (db.query(Enrollment, User)
+                .filter(Enrollment.shift_id == g.id,
+                        Enrollment.status == "enrolled")
+                .join(User, Enrollment.user_id == User.id).all())
+        rows.sort(key=_roster_order(positions))
+        for enr, u in rows:
+            st = positions.get(enr.position_id) if enr.position_id else None
+            if position_ids and (st is None or st.id not in position_ids):
+                continue
+            pos_name = st.name if st else "未分配岗位"
+            folder = f"{_safe_path_part(g.name)}/{_safe_path_part(pos_name)}/"
+            answers = (apps[u.id].answers if u.id in apps else {}) if screened \
+                else enr.answers
+            ex.write_answers(ws, u, questions, answers,
+                             [u.name, u.student_id, u.college, u.phone, g.name, pos_name],
+                             folder)
+
+    for col, w in zip("ABCDEF", (12, 14, 16, 15, 18, 16)):
+        ws.column_dimensions[col].width = w
+    for i in range(len(header) - len(questions) + 1, len(header) + 1):
+        ws.column_dimensions[get_column_letter(i)].width = 26
     return ex
 
 

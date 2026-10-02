@@ -23,12 +23,10 @@
             <el-descriptions-item label="活动时间">{{ act.time_text }}</el-descriptions-item>
             <el-descriptions-item label="活动地点">{{ act.location || '待定' }}</el-descriptions-item>
             <el-descriptions-item label="联系人">
-              <template v-if="act.contacts?.length">
-                <span v-for="(c, i) in act.contacts" :key="i" style="margin-right:12px">
-                  {{ c.name }} <span class="mono">{{ c.phone }}</span>
-                </span>
-              </template>
-              <span v-else>{{ act.contact_info || '—' }}</span>
+              <span v-for="(c, i) in act.contacts" :key="i" style="margin-right:12px">
+                {{ c.name }} <span class="mono">{{ c.phone }}</span>
+              </span>
+              <span v-if="!act.contacts?.length">—</span>
             </el-descriptions-item>
             <el-descriptions-item v-if="!act.record_only" label="报名时间">
               {{ fmtDT(act.reg_start) }} ~ {{ fmtDT(act.reg_end) }}

@@ -28,7 +28,16 @@ def _export_sheet(client, admin, act):
                           f"/api/staff/activities/{act.id}/export.xlsx"))
     assert r.status_code == 200
     wb = load_workbook(BytesIO(r.content))
-    return wb[[s for s in wb.sheetnames if s != "活动概览"][0]]
+    return wb[[s for s in wb.sheetnames if s not in ("活动概览", "志愿者信息")][0]]
+
+
+def _answers(client, admin, act, query: str = "") -> list[list]:
+    """问卷结果导出的全部数据行（不含表头）。"""
+    r = client.get(dl_url(client, admin,
+                          f"/api/staff/activities/{act.id}/answers.xlsx{query}"))
+    assert r.status_code == 200, r.text
+    ws = load_workbook(BytesIO(r.content)).active
+    return [[c.value for c in row] for row in ws.iter_rows(min_row=2)]
 
 
 def _setup(client, db, admin, enrolled_activity, take_student, n=3):
@@ -55,19 +64,14 @@ def _setup(client, db, admin, enrolled_activity, take_student, n=3):
     return act, shift, pos, people
 
 
-def test_导出表带组长与调剂意愿(client, admin, db, enrolled_activity,
-                              take_student):
+def test_排班表带组长性别与微信号(client, admin, db, enrolled_activity,
+                                take_student):
     act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
                                      take_student)
-
-    r = client.get(dl_url(client, admin,
-                          f"/api/staff/activities/{act.id}/export.xlsx"))
-    assert r.status_code == 200
-
-    wb = load_workbook(BytesIO(r.content))
-    ws = wb[[s for s in wb.sheetnames if s != "活动概览"][0]]
+    ws = _export_sheet(client, admin, act)
     header = [c.value for c in ws[1]]
-    assert "组长" in header and "接受调剂" in header and "岗位" in header
+    assert header[:7] == ["姓名", "学号", "性别", "学院", "手机号", "微信号", "场次时间"]
+    assert "组长" in header and "岗位" in header and "接受调剂" not in header
 
     col = header.index("组长") + 1
     leaders = [ws.cell(row=i, column=col).value
@@ -278,7 +282,7 @@ def test_导出表不把志愿者填的内容当公式(client, admin, db, enroll
     db.commit()
 
     r = client.get(dl_url(client, admin,
-                          f"/api/staff/activities/{act.id}/export.xlsx"))
+                          f"/api/staff/activities/{act.id}/answers.xlsx"))
     assert r.status_code == 200
     wb = load_workbook(BytesIO(r.content))
     formulas = [c.value for ws in wb for row in ws.iter_rows() for c in row
@@ -303,26 +307,75 @@ def test_微信号不能以公式符号开头(client, take_student):
     assert ok.status_code == 200, ok.text
 
 
-def test_排班表的页签只有概览和名单(client, admin, db,
-                                       enrolled_activity, take_student):
-    """这张表是拿去现场点名的。时长另有专门的一份导出，不混在这儿。"""
+def test_排班表的页签是概览志愿者信息和各场次名单(client, admin, db,
+                                                enrolled_activity, take_student):
+    """这张表是拿去现场点名、报保险的。时长和问卷各有专门的导出，不混在这儿。"""
     act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
                                      take_student)
+    people[0].id_card = "110101200001011234"
+    people[1].id_card = ""
+    people[1].no_mainland_id = True
+    people[2].wechat = "wx_third"
+    db.commit()
 
     r = client.get(dl_url(client, admin,
                           f"/api/staff/activities/{act.id}/export.xlsx"))
     assert r.status_code == 200
-    names = load_workbook(BytesIO(r.content)).sheetnames
-    assert "活动概览" in names
-    assert "志愿时长" not in names
+    wb = load_workbook(BytesIO(r.content))
+    assert wb.sheetnames[:2] == ["活动概览", "志愿者信息"]
+    assert len(wb.sheetnames) == 2 + len(act.shifts)
+
+    info = wb["志愿者信息"]
+    assert [c.value for c in info[1]] == ["姓名", "学号", "学院", "身份证号", "手机号", "微信号"]
+    rows = {r[1]: r for r in ([c.value for c in row] for row in info.iter_rows(min_row=2))}
+    assert set(rows) == {u.student_id for u in people}       # 一人一行
+    assert rows[people[0].student_id][3] == "110101200001011234"
+    assert rows[people[1].student_id][3] == "无大陆身份证"
+    assert rows[people[2].student_id][5] == "wx_third"
+    # 问卷答案不进排班表
+    ws = _export_sheet(client, admin, act)
+    assert [c.value for c in ws[1]][-2:] == ["签到状态", "签退时间"]
+
+
+def test_问卷结果按场次与岗位筛选(client, admin, db, enrolled_activity, take_student):
+    from backend.models import FormQuestion, Position
+
+    act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
+                                     take_student)
+    other = Position(id=uid("st"), shift_id=shift.id, name="另一个岗位", quota=5,
+                     sort=99)
+    db.add(other)
+    db.flush()          # 先落岗位，下面改报名的外键才指得到它
+    q = FormQuestion(id=uid("fq"), activity_id=act.id, kind="text",
+                     title="特长", required=False, sort=0)
+    db.add(q)
+    moved = (db.query(Enrollment)
+             .filter(Enrollment.shift_id == shift.id,
+                     Enrollment.user_id == people[2].id).one())
+    moved.position_id = other.id
+    moved.answers = {q.id: "会摄影"}
+    db.commit()
+
+    everyone = _answers(client, admin, act)
+    assert {r[1] for r in everyone} == {u.student_id for u in people}
+    assert everyone[0][:6] == [people[0].name, people[0].student_id, people[0].college,
+                               people[0].phone, shift.name, pos.name]
+    row = next(r for r in everyone if r[1] == people[2].student_id)
+    assert row[5:] == ["另一个岗位", "会摄影"]
+
+    only = _answers(client, admin, act, f"?positions={other.id}")
+    assert [r[1] for r in only] == [people[2].student_id]
+    both = _answers(client, admin, act, f"?shifts={shift.id}&positions={pos.id},{other.id}")
+    assert len(both) == 3
+    assert _answers(client, admin, act, "?shifts=nope") == []
 
 
 # ======================= 排班表与附件分开下 =======================
 
-def test_排班表只给excel附件另外打包且重名加序号(client, admin, db, open_group,
-                                          take_student):
-    """即选即得活动的报名问卷答案挂在排班表上：表里写附件包内的文件名，
-    同名的加序号、题目里的非法字符换成下划线，与附件包里一字不差。"""
+def test_问卷结果只给excel附件按场次岗位分文件夹另外打包(client, admin, db,
+                                                  open_group, take_student):
+    """表里写附件包内的文件名（带「场次/岗位/」目录），同名的加序号、
+    题目里的非法字符换成下划线，与附件包里一字不差。"""
     import zipfile
     from backend.models import Activity
     from conftest import student_row
@@ -341,10 +394,10 @@ def test_排班表只给excel附件另外打包且重名加序号(client, admin,
     db.get(Activity, act.id).status = "published"
     db.commit()
 
-    base = f"/api/staff/activities/{act.id}"
+    base = f"/api/staff/activities/{act.id}/answers"
     # 还没人报名：附件数 0，附件包 404
-    assert client.get(f"{base}/export/attachments", headers=admin).json() == {"count": 0}
-    assert client.get(dl_url(client, admin, f"{base}/export/attachments.zip")
+    assert client.get(f"{base}/attachments", headers=admin).json() == {"count": 0}
+    assert client.get(dl_url(client, admin, f"{base}/attachments.zip")
                       ).status_code == 404
 
     sid = take_student()
@@ -360,21 +413,25 @@ def test_排班表只给excel附件另外打包且重名加序号(client, admin,
                           "answers": dict(zip(qs, ids))})
     assert r.status_code == 200, r.text
 
+    from backend.models import Position
     u = student_row(db, sid)
-    stem = f"{u.name}_{u.student_id}"
+    folder = f"{g.name}/{db.get(Position, g.test_position_id).name}/"
+    stem = f"{folder}{u.name}_{u.student_id}"
     names = [f"{stem}_证明材料.pdf", f"{stem}_证明材料(2).pdf", f"{stem}_学生证_校园卡.jpg"]
 
-    r = client.get(dl_url(client, admin, f"{base}/export.xlsx"))
+    r = client.get(dl_url(client, admin, f"{base}.xlsx"))
     assert r.status_code == 200
     assert "spreadsheetml" in r.headers["content-type"]
-    wb = load_workbook(BytesIO(r.content))
-    ws = wb[[s for s in wb.sheetnames if s != "活动概览"][0]]
+    ws = load_workbook(BytesIO(r.content)).active
     row = [c for c in ws[2]][-3:]
     assert [c.value for c in row] == names
     assert all(c.hyperlink is None for c in row)
 
-    assert client.get(f"{base}/export/attachments", headers=admin).json() == {"count": 3}
-    r = client.get(dl_url(client, admin, f"{base}/export/attachments.zip"))
+    assert client.get(f"{base}/attachments", headers=admin).json() == {"count": 3}
+    # 筛到别的岗位：一个附件都没有
+    assert client.get(f"{base}/attachments?positions=nope",
+                      headers=admin).json() == {"count": 0}
+    r = client.get(dl_url(client, admin, f"{base}/attachments.zip"))
     assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
     z = zipfile.ZipFile(BytesIO(r.content))
     assert z.namelist() == names
