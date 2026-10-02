@@ -307,10 +307,11 @@ async function save() {
     const d = await api.post('/api/staff/activities',
                              activityBody(form.value, createRange.value))
     ElMessage.success('已创建草稿，请继续配置岗位')
+    // 只有成功才关：服务端拦下的（重名等）弹窗得留着，改完还能直接再交一次
+    creating.value = false
     router.push('/manage/' + d.id)
   } catch { /* toast by api */ } finally {
     saving.value = false
-    creating.value = false
   }
 }
 
