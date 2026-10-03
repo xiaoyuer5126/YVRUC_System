@@ -401,3 +401,19 @@ def test_只传图片也能起草(client, admin, model):
     r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": ""},
                     files=[("files", ("通知.jpg", _png(), "image/jpeg"))])
     assert r.status_code == 200, r.text
+
+
+def test_文档里的超大图先看大小再读(client, admin, model, monkeypatch):
+    """docx 是压缩包：文档只有 10MB，里面塞的图能解出几百 MB。解压之前先看
+    解压后的大小，超限的图连读都不读；文档正文照常转文字。"""
+    monkeypatch.setattr(config, "AI_IMAGE_MAX_BYTES", 50)    # 1×1 的 PNG 也超
+    calls, replies = model
+    replies.append((200, json.dumps({"title": "x"})))
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": ""},
+                    files=[("files", ("排班.docx", _docx(), DOCX)),
+                           ("files", ("截图.png", _png(), "image/png"))])
+    assert r.status_code == 200, r.text
+    content = calls[0]["body"]["messages"][1]["content"]
+    assert isinstance(content, str), "一张图都不该发，就是纯文本"
+    assert "上午场 | 检录 | 6" in content
+    assert any("太大" in n for n in r.json()["notes"])

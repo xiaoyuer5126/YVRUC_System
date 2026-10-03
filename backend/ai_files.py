@@ -54,6 +54,11 @@ def _media(data: bytes, folder: str, out: Extracted, name: str) -> None:
                 continue
             ext = PurePosixPath(item).suffix.lower()
             if ext in IMAGE_TYPES:
+                # 先看解压后多大再读：文档本身只有 10MB，里面塞的图能解出几百 MB，
+                # 读进来再判大小的话，这一下内存就顶上去了
+                if z.getinfo(item).file_size > config.AI_IMAGE_MAX_BYTES:
+                    out.notes.append(f"「{name}」里的图片太大，没有发给模型")
+                    continue
                 out.add_image(z.read(item), IMAGE_TYPES[ext], f"「{name}」里的图片")
             elif ext in (".emf", ".wmf"):
                 vector += 1
