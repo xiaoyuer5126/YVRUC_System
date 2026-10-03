@@ -8,11 +8,14 @@
 """
 from __future__ import annotations
 
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as OrmSession
 
 from ..audit import log as audit_log
+from ..codes import insert_with_unique_code
 from ..database import db_session
 from ..deps import current_user, require_manager
 from ..models import (Activity, Enrollment, Position, Shift, User, AttireRecord,
@@ -25,11 +28,15 @@ router = APIRouter(prefix="/api/attire", tags=["attire"])
 ACTIONS = ("take", "return")
 
 
+_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
 def _token() -> str:
-    """六位好念的码，去掉容易看错的 0/O、1/I。"""
-    import random
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    return "".join(random.choice(alphabet) for _ in range(6))
+    """六位好念的码，去掉容易看错的 0/O、1/I。
+
+    用 secrets 而不是 random：random 的序列能从输出里推算出来，码就能被猜中。
+    """
+    return "".join(secrets.choice(_ALPHABET) for _ in range(6))
 
 
 def _need_attire_user_ids(db: OrmSession, activity_id: str) -> set[str]:
@@ -129,10 +136,11 @@ def ensure_tasks(activity_id: str, db: OrmSession = Depends(db_session),
                 .filter(AttireTask.activity_id == activity_id,
                         AttireTask.action == action).first())
         if task is None:
-            task = AttireTask(id=uid("atk"), activity_id=activity_id,
-                            action=action, token=_token(), created_by=user.id)
-            db.add(task)
-            db.flush()
+            task = insert_with_unique_code(
+                db, AttireTask.token, _token,
+                lambda code, action=action: AttireTask(
+                    id=uid("atk"), activity_id=activity_id, action=action,
+                    token=code, created_by=user.id))
             audit_log(db, actor=user, action="checkin_task", target_type="attire",
                       target_id=task.id, target_label=act.title,
                       activity_id=activity_id,
