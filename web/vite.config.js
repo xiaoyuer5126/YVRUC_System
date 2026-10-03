@@ -11,7 +11,7 @@ const BUILD_ID = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')
 export default defineConfig({
   define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   plugins: [vue(), {
-    name: 'rucva-build-id',
+    name: 'yvruc-build-id',
     generateBundle() {
       // 落在 dist 根下而不是 /assets/：那里是按内容哈希命名的永久缓存
       this.emitFile({ type: 'asset', fileName: 'version.json',

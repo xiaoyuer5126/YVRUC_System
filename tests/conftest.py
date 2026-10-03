@@ -3,8 +3,8 @@
 需要 PostgreSQL 与 Redis：
     docker compose --profile test run --rm tests
 
-**测试会清空所连的库**，所以默认连的是独立的 rucva_test（不存在则自动建），
-Redis 也用另一个 db 号。可用 RUCVA_TEST_DATABASE_URL / RUCVA_TEST_REDIS_URL 覆盖。
+**测试会清空所连的库**，所以默认连的是独立的 yvruc_test（不存在则自动建），
+Redis 也用另一个 db 号。可用 YVRUC_TEST_DATABASE_URL / YVRUC_TEST_REDIS_URL 覆盖。
 """
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 TEST_DATABASE_URL = os.environ.get(
-    "RUCVA_TEST_DATABASE_URL",
-    "postgresql+psycopg://rucva:rucva_dev@127.0.0.1:5433/rucva_test")
+    "YVRUC_TEST_DATABASE_URL",
+    "postgresql+psycopg://yvruc:yvruc_dev@127.0.0.1:5433/yvruc_test")
 
 
 def _ensure_database(url: str) -> None:
@@ -37,19 +37,19 @@ def _ensure_database(url: str) -> None:
 
 
 _ensure_database(TEST_DATABASE_URL)
-os.environ["RUCVA_DATABASE_URL"] = TEST_DATABASE_URL
-os.environ["RUCVA_REDIS_URL"] = os.environ.get(
-    "RUCVA_TEST_REDIS_URL", "redis://127.0.0.1:6380/1")
-os.environ.setdefault("RUCVA_DEMO_PASSWORD", "test-pass")
+os.environ["YVRUC_DATABASE_URL"] = TEST_DATABASE_URL
+os.environ["YVRUC_REDIS_URL"] = os.environ.get(
+    "YVRUC_TEST_REDIS_URL", "redis://127.0.0.1:6380/1")
+os.environ.setdefault("YVRUC_DEMO_PASSWORD", "test-pass")
 # 身份证号是加密存的，用例里用一把固定密钥（生产的那把在 .env 里）
-os.environ.setdefault("RUCVA_ID_CARD_KEY",
+os.environ.setdefault("YVRUC_ID_CARD_KEY",
                       "OaIvZ3wSxT9mQ1rKcB7hLdN5fGyU2pVe4XjA6snMtE0=")
 # 二维码只认自家域名。用例里的「对外域名」就是这一个，别的一律被拒。
-os.environ.setdefault("RUCVA_PUBLIC_BASE_URL", "https://v.ruc.edu.cn")
+os.environ.setdefault("YVRUC_PUBLIC_BASE_URL", "https://v.ruc.edu.cn")
 # 关掉后台定时任务：每建一个 TestClient 都会触发一次立即扫描，它在另一个
 # 线程里跟用例抢同一批数据（解冻、递补、状态流转），断言会随机多算一份。
 # 定时任务本身在 test_scheduled.py 里直接调函数来验，不靠这个循环。
-os.environ["RUCVA_DISABLE_SWEEPER"] = "1"
+os.environ["YVRUC_DISABLE_SWEEPER"] = "1"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -65,7 +65,7 @@ seed.main()
 
 from backend.main import app  # noqa: E402
 
-DEMO_PASSWORD = os.environ["RUCVA_DEMO_PASSWORD"]
+DEMO_PASSWORD = os.environ["YVRUC_DEMO_PASSWORD"]
 
 ADMIN = "2025001"        # 王砚秋，管理员
 INITIATOR = "2025002"    # 李慕清，活动发起方（只管自己的活动）

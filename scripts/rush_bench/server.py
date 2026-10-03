@@ -18,7 +18,7 @@ import time
 from collections import defaultdict
 
 sys.path.insert(0, "/app")
-os.environ["RUCVA_DISABLE_SWEEPER"] = "1"
+os.environ["YVRUC_DISABLE_SWEEPER"] = "1"
 
 import uvicorn  # noqa: E402
 

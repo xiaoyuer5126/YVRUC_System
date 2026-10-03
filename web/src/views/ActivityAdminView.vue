@@ -2000,7 +2000,7 @@ const allShifts = computed(() => [
 ])
 
 // —— 按岗位看 ——
-const VIEW_KEY = 'rucva_tree_view'
+const VIEW_KEY = 'yvruc_tree_view'
 function readView() {
   try { return localStorage.getItem(VIEW_KEY) === 'role' ? 'role' : 'shift' } catch { return 'shift' }
 }

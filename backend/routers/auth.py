@@ -4,7 +4,7 @@
 
 SSO 接通之前，开发小组需要一个能进系统的口子：`/api/auth/demo-login`
 选学号登录，但**必须同时满足**两个条件才存在——SSO 尚未接通，且部署时
-配置了 RUCVA_DEMO_PASSWORD 共享口令。任一不满足，这个接口连路由都不注册。
+配置了 YVRUC_DEMO_PASSWORD 共享口令。任一不满足，这个接口连路由都不注册。
 学校 SSO 上线后，删掉本文件里 demo 相关的三个接口即可，其余代码不受影响。
 """
 from __future__ import annotations

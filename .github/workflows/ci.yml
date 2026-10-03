@@ -30,12 +30,12 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: rucva
-          POSTGRES_PASSWORD: rucva_ci
-          POSTGRES_DB: rucva
+          POSTGRES_USER: yvruc
+          POSTGRES_PASSWORD: yvruc_ci
+          POSTGRES_DB: yvruc
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U rucva -d rucva"
+          --health-cmd "pg_isready -U yvruc -d yvruc"
           --health-interval 5s --health-timeout 3s --health-retries 12
       redis:
         image: redis:7-alpine
@@ -44,16 +44,16 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 3s --health-retries 12
     env:
-      RUCVA_TEST_DATABASE_URL: postgresql+psycopg://rucva:rucva_ci@127.0.0.1:5432/rucva_test
-      RUCVA_TEST_REDIS_URL: redis://127.0.0.1:6379/1
-      RUCVA_DEMO_PASSWORD: test-pass
+      YVRUC_TEST_DATABASE_URL: postgresql+psycopg://yvruc:yvruc_ci@127.0.0.1:5432/yvruc_test
+      YVRUC_TEST_REDIS_URL: redis://127.0.0.1:6379/1
+      YVRUC_DEMO_PASSWORD: test-pass
       TZ: Asia/Shanghai
       # 学校侧的对接参数一律留空：消息中心与统一身份认证因此走演示模式，
       # 测试不会往学校的接口上打任何请求
-      RUCVA_OPENPLATFORM_APPID: ""
-      RUCVA_OPENPLATFORM_SECRET: ""
-      RUCVA_OPENPLATFORM_GATEWAY: ""
-      RUCVA_CAS_BASE_URL: ""
+      YVRUC_OPENPLATFORM_APPID: ""
+      YVRUC_OPENPLATFORM_SECRET: ""
+      YVRUC_OPENPLATFORM_GATEWAY: ""
+      YVRUC_CAS_BASE_URL: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

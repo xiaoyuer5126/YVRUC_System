@@ -5,7 +5,7 @@
   · /assets/**   前端构建产物（web/dist）
   · /            SPA 回退（前端路由是真实路径，/my、/manage/xxx 都回 index.html）
 
-进程数由部署决定（Dockerfile CMD 读 RUCVA_WORKERS，默认 4）。后台清扫协程
+进程数由部署决定（Dockerfile CMD 读 YVRUC_WORKERS，默认 4）。后台清扫协程
 也是每个进程各起一份，靠 Redis 租约选主，同一时刻只有主进程在跑，见
 locks.hold_sweeper_lease。
 """
@@ -84,7 +84,7 @@ async def lifespan(_app: FastAPI):
     logger.info("数据库：%s", config.DATABASE_URL.split("@")[-1])
     if config.DEMO_LOGIN_PASSWORD:
         logger.warning("演示登录已启用（口令登录）。接入统一身份认证后请清空 "
-                       "RUCVA_DEMO_PASSWORD")
+                       "YVRUC_DEMO_PASSWORD")
     task, token = None, ""
     if config.RUN_SWEEPER:
         token = locks.sweeper_token()

@@ -116,13 +116,13 @@ async function load() {
 onMounted(async () => {
   if (!auth.token) {
     // 未登录先去登录（模拟扫码后需身份核验）
-    localStorage.setItem('rucva_after_checkin', route.params.token)
+    localStorage.setItem('yvruc_after_checkin', route.params.token)
     router.replace({ path: '/login', query: { next: `/checkin/${route.params.token}` } })
     return
   }
-  const pending = localStorage.getItem('rucva_after_checkin')
+  const pending = localStorage.getItem('yvruc_after_checkin')
   if (pending && auth.token) {
-    localStorage.removeItem('rucva_after_checkin')
+    localStorage.removeItem('yvruc_after_checkin')
     afterLogin.value = true
   }
   await load()

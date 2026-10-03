@@ -214,7 +214,7 @@ def test_刷新不碰学生自己填的项(db):
     「资料未完善」拦住，人还不知道为什么。
 
     身份证号同理（它也不在 _SCHOOL_FIELDS 里），只是测试环境没有
-    RUCVA_ID_CARD_KEY，写非空值会直接抛错，这里就不碰它了。
+    YVRUC_ID_CARD_KEY，写非空值会直接抛错，这里就不碰它了。
     """
     from backend.routers.auth import _provision, _sync_from_school
     try:

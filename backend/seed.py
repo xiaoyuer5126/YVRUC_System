@@ -222,7 +222,7 @@ def main() -> None:
                          location_point={"lat": 39.96785, "lng": 116.30905},
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"},
                                    {"name": "王砚秋", "phone": "13950010000"}],
-                         contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
+                         contact_group_qr=demo_qr("YVRUC-CONTACT-GROUP"),
                          status="published",
                          reg_start=dt(days=-3), reg_end=dt(days=2),
                          created_by=wang.id, created_at=dt(days=-4))
@@ -313,7 +313,7 @@ def main() -> None:
                               "具体分工将在报名截止后由青协统一排班公布。",
                         location="图书馆（明德楼）",
                         contacts=[{"name": "张远航", "phone": "13950030000"}],
-                        contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
+                        contact_group_qr=demo_qr("YVRUC-CONTACT-GROUP"),
                         status="published",
                         reg_start=dt(days=-2), reg_end=dt(days=3),
                         created_by=wang.id, created_at=dt(days=-3))
@@ -363,7 +363,7 @@ def main() -> None:
                         location="明德广场",
                         location_point={"lat": 39.96921, "lng": 116.30772},
                         contacts=[{"name": "张远航", "phone": "13950030000"}],
-                        contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
+                        contact_group_qr=demo_qr("YVRUC-CONTACT-GROUP"),
                         status="published", reg_start=dt(days=-1),
                         reg_end=dt(days=4), created_by=zhang.id,
                         created_at=dt(days=-2))
@@ -405,7 +405,7 @@ def main() -> None:
                         location="明德堂",
                         contacts=[{"name": "王砚秋", "phone": "13950010000"},
                                   {"name": "张远航", "phone": "13950030000"}],
-                        contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
+                        contact_group_qr=demo_qr("YVRUC-CONTACT-GROUP"),
                         status="closed", reg_start=dt(days=-6), reg_end=dt(days=-2),
                         created_by=zhang.id, created_at=dt(days=-7))
         db.add(gala)
@@ -454,7 +454,7 @@ def main() -> None:
                                "岗位简单，仅按场次报名。",
                          location="海淀街道敬老院",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
-                         contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
+                         contact_group_qr=demo_qr("YVRUC-CONTACT-GROUP"),
                          status="completed", reg_start=dt(days=-20),
                          hours_approved_at=dt(days=-6),
                          appeal_deadline=dt(days=-5),
@@ -507,7 +507,7 @@ def main() -> None:
                                "报名截止后由青协统一筛选，录取结果通过企业微信通知。",
                          location="东门迎新广场",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
-                         contact_group_qr=demo_qr("RUCVA-CONTACT-GROUP"),
+                         contact_group_qr=demo_qr("YVRUC-CONTACT-GROUP"),
                          status="published",
                          reg_start=dt(days=-2), reg_end=dt(days=5),
                          created_by=limu.id, created_at=dt(days=-3))

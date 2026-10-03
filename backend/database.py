@@ -1,6 +1,6 @@
 """数据库会话与建表。
 
-连 RUCVA_DATABASE_URL 指向的 PostgreSQL（compose 内为 postgres 服务）。
+连 YVRUC_DATABASE_URL 指向的 PostgreSQL（compose 内为 postgres 服务）。
 连不上就启动失败：静默降级到别的库只会让人对着一份空数据发懵。
 """
 from __future__ import annotations

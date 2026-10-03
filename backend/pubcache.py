@@ -53,11 +53,11 @@ def _client():
 
 
 def _key(kind: str, activity_id: str) -> str:
-    return f"rucva:pub:{kind}:{activity_id}"
+    return f"yvruc:pub:{kind}:{activity_id}"
 
 
 def _ver_key(activity_id: str) -> str:
-    return f"rucva:pub:ver:{activity_id}"
+    return f"yvruc:pub:ver:{activity_id}"
 
 
 def get_many(kind: str, ids: list[str], build) -> dict[str, dict]:

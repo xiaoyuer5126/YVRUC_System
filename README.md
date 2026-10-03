@@ -9,19 +9,19 @@ FastAPI + SQLAlchemy（PostgreSQL）+ Redis + Vue3 / Element Plus / ECharts（Vi
 统一用 Docker 跑（后端依赖 PostgreSQL 与 Redis 两个服务，不支持本机直跑）。
 
 ```bash
-cp .env.example .env          # 填 POSTGRES_PASSWORD、RUCVA_ID_CARD_KEY
+cp .env.example .env          # 填 POSTGRES_PASSWORD、YVRUC_ID_CARD_KEY
 docker compose up -d --build                    # postgres + redis + backend + web + cloudflared
 docker compose --profile seed run --rm seed     # 重置演示数据
-docker compose --profile test run --rm tests    # 跑回归测试（独立的 rucva_test 库）
+docker compose --profile test run --rm tests    # 跑回归测试（独立的 yvruc_test 库）
 ```
 
 - 入口 **http://127.0.0.1:8080** （nginx 托管前端并同源反代 `/api`，无跨域）。
 - 数据库 5433 / Redis 6380 / 后端 8000 都只绑 `127.0.0.1`，调试用得上、公网碰不到；
   对外只有 web 的 8080 与 cloudflared 隧道。
 - cloudflared 固定域名隧道：token 存 `.env` 的 `CLOUDFLARE_TOKEN`，公网域名在
-  Cloudflare Zero Trust 控制台绑定，`docker logs rucva-cloudflared` 看连接状态。
-- 上传的活动二维码存命名卷 `rucva_uploads`，学习材料、立项书与结项书、模板和反馈截图存
-  `rucva_materials`，数据库存 `rucva_pgdata`。
+  Cloudflare Zero Trust 控制台绑定，`docker logs yvruc-cloudflared` 看连接状态。
+- 上传的活动二维码存命名卷 `yvruc_uploads`，学习材料、立项书与结项书、模板和反馈截图存
+  `yvruc_materials`，数据库存 `yvruc_pgdata`。
 - 启动时 Redis 与身份证加密密钥都是**硬依赖**：连不上、密钥不对直接起不来——
   半可用的服务比起不来更难排查。
 
@@ -30,16 +30,16 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
 | 变量 | 说明 |
 |---|---|
 | `POSTGRES_PASSWORD` | 数据库口令，必填；公网部署务必改掉示例值 |
-| `RUCVA_ID_CARD_KEY` | 身份证号的加密密钥，必填。**必须与数据库分开保管**，否则加密只是走过场；换密钥等于已有数据读不出来（先解密导出再重新写入） |
-| `RUCVA_DEMO_PASSWORD` | 内测登录共享口令。**留空则整个演示登录接口不存在**；SSO 接通后必须留空 |
-| `RUCVA_PUBLIC_BASE_URL` | 平台对外网址（多个用逗号分隔）。二维码里写的就是它，只有列在这里的域名才允许出现在码里 |
-| `RUCVA_EXPOSE_DOCS` | 设为 `1` 才暴露 `/docs` 与 `/openapi.json`，默认关闭 |
-| `RUCVA_TIANDITU_TK_SERVER` | 天地图**服务端** tk：管理端地图瓦片转发 + 地名搜索。要在天地图后台登记服务器公网出口 IP；只在后端用，不进前端。留空 = 地图只显示点和圈 |
-| `RUCVA_TIANDITU_DAILY_LIMIT` | 每天向天地图取瓦片的上限，默认 10000（天地图给的额度），到上限直接 503 |
-| `RUCVA_AI_API_KEY` | 智能起草（活动管理右下角的按钮）用的 key，留空则按钮不出现。贴进去的原文、上传的附件会发给这家服务 |
-| `RUCVA_AI_BASE_URL` / `RUCVA_AI_MODEL` | OpenAI 兼容接口的地址与模型，默认 `https://api.deepseek.com` / `deepseek-flash`（附件里的图片要模型能识图） |
-| `RUCVA_AI_TIMEOUT` | 一次起草最多等几秒，默认 90 |
-| `RUCVA_AI_THINKING` | 思考模式 `enabled` / `disabled`，默认 `disabled`；服务商不认这个参数时填 `none` |
+| `YVRUC_ID_CARD_KEY` | 身份证号的加密密钥，必填。**必须与数据库分开保管**，否则加密只是走过场；换密钥等于已有数据读不出来（先解密导出再重新写入） |
+| `YVRUC_DEMO_PASSWORD` | 内测登录共享口令。**留空则整个演示登录接口不存在**；SSO 接通后必须留空 |
+| `YVRUC_PUBLIC_BASE_URL` | 平台对外网址（多个用逗号分隔）。二维码里写的就是它，只有列在这里的域名才允许出现在码里 |
+| `YVRUC_EXPOSE_DOCS` | 设为 `1` 才暴露 `/docs` 与 `/openapi.json`，默认关闭 |
+| `YVRUC_TIANDITU_TK_SERVER` | 天地图**服务端** tk：管理端地图瓦片转发 + 地名搜索。要在天地图后台登记服务器公网出口 IP；只在后端用，不进前端。留空 = 地图只显示点和圈 |
+| `YVRUC_TIANDITU_DAILY_LIMIT` | 每天向天地图取瓦片的上限，默认 10000（天地图给的额度），到上限直接 503 |
+| `YVRUC_AI_API_KEY` | 智能起草（活动管理右下角的按钮）用的 key，留空则按钮不出现。贴进去的原文、上传的附件会发给这家服务 |
+| `YVRUC_AI_BASE_URL` / `YVRUC_AI_MODEL` | OpenAI 兼容接口的地址与模型，默认 `https://api.deepseek.com` / `deepseek-flash`（附件里的图片要模型能识图） |
+| `YVRUC_AI_TIMEOUT` | 一次起草最多等几秒，默认 90 |
+| `YVRUC_AI_THINKING` | 思考模式 `enabled` / `disabled`，默认 `disabled`；服务商不认这个参数时填 `none` |
 | `CLOUDFLARE_TOKEN` | 隧道令牌，勿提交/外传 |
 | `WEB_/BACKEND_/POSTGRES_/REDIS_HOST_PORT` | 宿主机端口，被别的项目占用时改这里 |
 
@@ -47,7 +47,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
 
 学校统一身份认证（微人大，走 CAS 服务器上的 OAuth2.0 接口）是唯一正式入口，
 参数在「集成设置」页配置。
-接通之前，开发小组用 `POST /api/auth/demo-login`（学号 + `RUCVA_DEMO_PASSWORD` 共享口令）
+接通之前，开发小组用 `POST /api/auth/demo-login`（学号 + `YVRUC_DEMO_PASSWORD` 共享口令）
 登录；口令连错 10 次锁该来源 IP 5 分钟。`GET /api/auth/sso-mode` 会如实告诉前端当前是
 哪种情形（演示登录 / SSO 已接通 / 两者都没有、谁也进不来）。
 
@@ -161,7 +161,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
   容量判断与落库整段持场次锁串行化，配合 `enrollments` 的部分唯一索引，
   杜绝抢报瞬间的超卖与重复报名（见 `backend/locks.py`）。场次锁是 Postgres 的
   事务级咨询锁，拿在请求自己的会话上、随事务提交/回滚释放（没有租期，不会
-  「活还没干完锁先过期」）；每个进程最多 `RUCVA_LOCK_SLOTS`（默认 5）个请求
+  「活还没干完锁先过期」）；每个进程最多 `YVRUC_LOCK_SLOTS`（默认 5）个请求
   带着连接去数据库排队，其余在进程内等，不占连接池。前面再挡一道 Redis 名额闸门，
   抢不到号的请求一次 Redis 往返就回「满了」。
 - 抢报压测：`scripts/rush_bench/`（300 人抢 200 名额 + 50 候补，另有 20 人刷页面），
@@ -224,13 +224,13 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 ru
   浏览器直连时浏览器端 tk 靠 Referer 域名白名单，AdGuard 隐身模式之类的插件会改掉
   第三方 Referer，天地图一律 403、地图整块灰掉。所以浏览器只请求
   `/api/geo/tiles/{vec|cva}/{z}/{x}/{y}?t=令牌`，拿不到任何 tk。
-  - tk：只用服务端 tk（`RUCVA_TIANDITU_TK_SERVER`），**部署时要在天地图后台把服务器
+  - tk：只用服务端 tk（`YVRUC_TIANDITU_TK_SERVER`），**部署时要在天地图后台把服务器
     公网出口 IP 登记进白名单**；没配则地图只显示点和圈。浏览器端 tk 用不上：天地图对它
     只认真浏览器，服务器发出的请求带什么 Referer 都被拒（403 / 301012）。
     上游请求也**不能带浏览器样的 User-Agent**：天地图按 UA 分辨浏览器/服务器，带服务端
     tk 却用 Mozilla 开头的 UA 会被拒（403 / 301013）。
   - 额度（每个 tk 每天 10000 次）：同一张瓦片只向天地图取一次，磁盘缓存 30 天
-    （`rucva_tiles` 卷）；Redis 按天数真正打到天地图的请求（缓存命中不算），到九成记
+    （`yvruc_tiles` 卷）；Redis 按天数真正打到天地图的请求（缓存命中不算），到九成记
     警告日志，到上限直接 503 不再请求上游；过期缓存在取不到新图时照旧拿出来用。
   - 防滥用：`<img>` 带不上登录令牌，所以管理者打开地图时先领一张瓦片令牌
     （`GET /api/geo/tile-token`，HMAC 签名、约 6 小时过期、不落库），前端快过期时自己
@@ -323,7 +323,7 @@ SSO 模拟「认证已通过」。
 ## 九、目录结构
 
 ```
-rucva_system/
+YVRUC_System/
 ├── docker-compose.yml          全栈编排：postgres + redis + backend + web + cloudflared
 │                               （+ seed / tests 两个一次性任务 profile）
 ├── .env.example                环境变量模板（数据库口令、加密密钥、演示登录、隧道令牌）

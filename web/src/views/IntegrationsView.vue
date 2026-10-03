@@ -77,7 +77,7 @@ const FIELD_LABELS = {
 const SECRET_KEYS = new Set(['app_secret', 'client_secret'])
 const PLACEHOLDERS = {
   msgcenter_gateway: 'https://opengw.ruc.edu.cn',
-  msgcenter_appid: '开放平台应用标识。密钥在 .env 的 RUCVA_OPENPLATFORM_SECRET，不在此填写',
+  msgcenter_appid: '开放平台应用标识。密钥在 .env 的 YVRUC_OPENPLATFORM_SECRET，不在此填写',
   msgcenter_channels: '4（企业微信）。1=短信、2=邮件——本平台不使用短信',
   sso_redirect_uri: '必须与应用中心登记的地址一字不差，差一个字符就换不到令牌',
 }

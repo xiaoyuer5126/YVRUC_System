@@ -1,10 +1,10 @@
 import { reactive } from 'vue'
 
 export const auth = reactive({
-  token: localStorage.getItem('rucva_token') || '',
-  user: JSON.parse(localStorage.getItem('rucva_user') || 'null'),
+  token: localStorage.getItem('yvruc_token') || '',
+  user: JSON.parse(localStorage.getItem('yvruc_user') || 'null'),
   // 当前身份视角（在持有的身份之间切换；决定菜单与默认落地页）
-  activeIdentity: localStorage.getItem('rucva_active_identity') || '',
+  activeIdentity: localStorage.getItem('yvruc_active_identity') || '',
 })
 
 // 自校验：本地残留的视角不在当前用户持有的身份里（如换号登录、身份被调整）→ 回退默认
@@ -17,14 +17,14 @@ export function setAuth(token, user) {
   auth.token = token
   auth.user = user
   auth.activeIdentity = pickDefaultIdentity(user)
-  localStorage.setItem('rucva_token', token)
-  localStorage.setItem('rucva_user', JSON.stringify(user))
-  localStorage.setItem('rucva_active_identity', auth.activeIdentity)
+  localStorage.setItem('yvruc_token', token)
+  localStorage.setItem('yvruc_user', JSON.stringify(user))
+  localStorage.setItem('yvruc_active_identity', auth.activeIdentity)
 }
 
 export function setActiveIdentity(role) {
   auth.activeIdentity = role
-  localStorage.setItem('rucva_active_identity', role)
+  localStorage.setItem('yvruc_active_identity', role)
 }
 
 // 登录后落在哪个视角：管理员进管理端；青协只有会长团和部长默认进青协视角，
@@ -41,9 +41,9 @@ export function clearAuth() {
   auth.token = ''
   auth.user = null
   auth.activeIdentity = ''
-  localStorage.removeItem('rucva_token')
-  localStorage.removeItem('rucva_user')
-  localStorage.removeItem('rucva_active_identity')
+  localStorage.removeItem('yvruc_token')
+  localStorage.removeItem('yvruc_user')
+  localStorage.removeItem('yvruc_active_identity')
 }
 
 export const ROLE_LABELS = {

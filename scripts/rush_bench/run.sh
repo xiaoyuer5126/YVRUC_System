@@ -16,29 +16,29 @@
 # ⚠️ 数字只用来做**同一台机器上的前后对比**：小机器（2 核）上压测客户端、后端、
 # 数据库挤在一起抢 CPU，绝对值说明不了线上能扛多少。
 #
-# 用的是 rucva_bench 库（每次重建）和 Redis 的 3 号库（每次清空），
-# 不碰 tests 用的 rucva_test / 1 号库。
+# 用的是 yvruc_bench 库（每次重建）和 Redis 的 3 号库（每次清空），
+# 不碰 tests 用的 yvruc_test / 1 号库。
 set -euo pipefail
 : "${N:=300}" "${Q:=200}" "${W:=50}"
 BENCH=$(cd "$(dirname "$0")" && pwd)
 # 口令从 tests 服务的测试库地址里借，换一个库名
-export RUCVA_DATABASE_URL=${RUCVA_TEST_DATABASE_URL%/*}/rucva_bench
-export RUCVA_REDIS_URL=${RUCVA_TEST_REDIS_URL%/*}/3
-export RUCVA_DEMO_PASSWORD=test-pass
-export RUCVA_ID_CARD_KEY=OaIvZ3wSxT9mQ1rKcB7hLdN5fGyU2pVe4XjA6snMtE0=
-export RUCVA_PUBLIC_BASE_URL=https://v.ruc.edu.cn
+export YVRUC_DATABASE_URL=${YVRUC_TEST_DATABASE_URL%/*}/yvruc_bench
+export YVRUC_REDIS_URL=${YVRUC_TEST_REDIS_URL%/*}/3
+export YVRUC_DEMO_PASSWORD=test-pass
+export YVRUC_ID_CARD_KEY=OaIvZ3wSxT9mQ1rKcB7hLdN5fGyU2pVe4XjA6snMtE0=
+export YVRUC_PUBLIC_BASE_URL=https://v.ruc.edu.cn
 
 python - <<'PY'
 import os
 import redis
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
-url = make_url(os.environ["RUCVA_DATABASE_URL"])
+url = make_url(os.environ["YVRUC_DATABASE_URL"])
 e = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
 with e.connect() as c:
-    c.execute(text("DROP DATABASE IF EXISTS rucva_bench"))
-    c.execute(text("CREATE DATABASE rucva_bench"))
-redis.Redis.from_url(os.environ["RUCVA_REDIS_URL"]).flushdb()
+    c.execute(text("DROP DATABASE IF EXISTS yvruc_bench"))
+    c.execute(text("CREATE DATABASE yvruc_bench"))
+redis.Redis.from_url(os.environ["YVRUC_REDIS_URL"]).flushdb()
 PY
 
 cd /app && python "$BENCH/setup.py" "$N" "$Q" "$W" | tail -1
@@ -54,7 +54,7 @@ python -c "import os;f=open('/proc/$SP/stat').read().split();print('后端进程
 python - <<'PY'
 import os
 from sqlalchemy import create_engine, text
-e = create_engine(os.environ["RUCVA_DATABASE_URL"])
+e = create_engine(os.environ["YVRUC_DATABASE_URL"])
 q = ("select count(*) from enrollments e join positions p on p.id=e.position_id "
      "where p.name='岗' and e.status=:s")
 with e.connect() as c:

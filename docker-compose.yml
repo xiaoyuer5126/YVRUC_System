@@ -3,7 +3,7 @@
 #   cp .env.example .env && 填好口令                # 首次
 #   docker compose up -d --build                    # 启动全套
 #   docker compose --profile seed run --rm seed     # 重置演示数据
-#   docker logs rucva-cloudflared --tail 20         # 查看隧道连接状态
+#   docker logs yvruc-cloudflared --tail 20         # 查看隧道连接状态
 #
 # 服务拓扑：
 #   web(nginx:8080) ──/api──▶ backend(uvicorn:8000) ──▶ postgres + redis
@@ -17,74 +17,74 @@ x-backend-build: &backend_build
   target: runtime
 
 x-backend-env: &backend_env
-  RUCVA_DATABASE_URL: postgresql+psycopg://rucva:${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}@postgres:5432/rucva
-  RUCVA_REDIS_URL: redis://redis:6379/0
-  RUCVA_DEMO_PASSWORD: ${RUCVA_DEMO_PASSWORD:-}
-  RUCVA_EXPOSE_DOCS: ${RUCVA_EXPOSE_DOCS:-}
-  RUCVA_PUBLIC_BASE_URL: ${RUCVA_PUBLIC_BASE_URL:-}
-  RUCVA_SITE_URL: ${RUCVA_SITE_URL:-}
-  RUCVA_ID_CARD_KEY: ${RUCVA_ID_CARD_KEY:?请在 .env 设置 RUCVA_ID_CARD_KEY（见 .env.example）}
+  YVRUC_DATABASE_URL: postgresql+psycopg://yvruc:${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}@postgres:5432/yvruc
+  YVRUC_REDIS_URL: redis://redis:6379/0
+  YVRUC_DEMO_PASSWORD: ${YVRUC_DEMO_PASSWORD:-}
+  YVRUC_EXPOSE_DOCS: ${YVRUC_EXPOSE_DOCS:-}
+  YVRUC_PUBLIC_BASE_URL: ${YVRUC_PUBLIC_BASE_URL:-}
+  YVRUC_SITE_URL: ${YVRUC_SITE_URL:-}
+  YVRUC_ID_CARD_KEY: ${YVRUC_ID_CARD_KEY:?请在 .env 设置 YVRUC_ID_CARD_KEY（见 .env.example）}
   # 学校开放平台（能力开放平台 / 统一认证）。留空 = 相关能力回落 Mock。
   # tests 服务**故意不注入**这几个变量：测试永远跑在 Mock 下，碰不到真实接口。
-  RUCVA_OPENPLATFORM_APPID: ${RUCVA_OPENPLATFORM_APPID:-}
-  RUCVA_OPENPLATFORM_SECRET: ${RUCVA_OPENPLATFORM_SECRET:-}
-  RUCVA_OPENPLATFORM_GATEWAY: ${RUCVA_OPENPLATFORM_GATEWAY:-}
-  RUCVA_CAS_BASE_URL: ${RUCVA_CAS_BASE_URL:-}
-  RUCVA_SSO_REDIRECT_URI: ${RUCVA_SSO_REDIRECT_URI:-}
+  YVRUC_OPENPLATFORM_APPID: ${YVRUC_OPENPLATFORM_APPID:-}
+  YVRUC_OPENPLATFORM_SECRET: ${YVRUC_OPENPLATFORM_SECRET:-}
+  YVRUC_OPENPLATFORM_GATEWAY: ${YVRUC_OPENPLATFORM_GATEWAY:-}
+  YVRUC_CAS_BASE_URL: ${YVRUC_CAS_BASE_URL:-}
+  YVRUC_SSO_REDIRECT_URI: ${YVRUC_SSO_REDIRECT_URI:-}
   # 天地图（管理端画签到点用）。瓦片由后端转发，只用服务端 tk（瓦片 + 地名搜索，
   # 按服务器 IP 白名单校验），只在后端用、不进前端；没配则地图只画点和圈。
   # 注意这一份是逐个变量列出来的——往 .env 加了新变量，忘了在这儿加一行，
   # 容器里就当它不存在（表现为「地图不出来、也不报错」）。
-  RUCVA_TIANDITU_TK_SERVER: ${RUCVA_TIANDITU_TK_SERVER:-}
+  YVRUC_TIANDITU_TK_SERVER: ${YVRUC_TIANDITU_TK_SERVER:-}
   # 每个 tk 每天的瓦片额度，到上限后端直接 503、不再请求天地图
-  RUCVA_TIANDITU_DAILY_LIMIT: ${RUCVA_TIANDITU_DAILY_LIMIT:-10000}
+  YVRUC_TIANDITU_DAILY_LIMIT: ${YVRUC_TIANDITU_DAILY_LIMIT:-10000}
   # AI 起草（活动管理右下角的按钮）：OpenAI 兼容接口，key 留空则按钮不出现
-  RUCVA_AI_BASE_URL: ${RUCVA_AI_BASE_URL:-}
-  RUCVA_AI_MODEL: ${RUCVA_AI_MODEL:-}
-  RUCVA_AI_API_KEY: ${RUCVA_AI_API_KEY:-}
-  RUCVA_AI_TIMEOUT: ${RUCVA_AI_TIMEOUT:-}
-  RUCVA_AI_THINKING: ${RUCVA_AI_THINKING:-}
+  YVRUC_AI_BASE_URL: ${YVRUC_AI_BASE_URL:-}
+  YVRUC_AI_MODEL: ${YVRUC_AI_MODEL:-}
+  YVRUC_AI_API_KEY: ${YVRUC_AI_API_KEY:-}
+  YVRUC_AI_TIMEOUT: ${YVRUC_AI_TIMEOUT:-}
+  YVRUC_AI_THINKING: ${YVRUC_AI_THINKING:-}
   # 进程数与连接池。加进程是为了吃满多核（一个进程一个核，压测见
   # tests/perf_probe.py），但 Postgres 的连接是**按进程各开一个池**再相加的：
   # 进程数 ×(池子+溢出) 不能顶到 max_connections（默认 100），所以两个一起调。
-  RUCVA_WORKERS: ${RUCVA_WORKERS:-4}
-  RUCVA_DB_POOL_SIZE: ${RUCVA_DB_POOL_SIZE:-5}
-  RUCVA_DB_MAX_OVERFLOW: ${RUCVA_DB_MAX_OVERFLOW:-10}
+  YVRUC_WORKERS: ${YVRUC_WORKERS:-4}
+  YVRUC_DB_POOL_SIZE: ${YVRUC_DB_POOL_SIZE:-5}
+  YVRUC_DB_MAX_OVERFLOW: ${YVRUC_DB_MAX_OVERFLOW:-10}
   # 场次锁在数据库里排队、各占一条连接：每进程最多放这么多个进去，
   # 要明显小于上面「池子+溢出」，否则抢报时读请求拿不到连接
-  RUCVA_LOCK_SLOTS: ${RUCVA_LOCK_SLOTS:-5}
-  RUCVA_THREADS: ${RUCVA_THREADS:-100}
+  YVRUC_LOCK_SLOTS: ${YVRUC_LOCK_SLOTS:-5}
+  YVRUC_THREADS: ${YVRUC_THREADS:-100}
   # 拿到名额闸门号的报名请求最多排多少秒场次锁（等不到回 503）
-  RUCVA_TICKET_WAIT_SECONDS: ${RUCVA_TICKET_WAIT_SECONDS:-30}
+  YVRUC_TICKET_WAIT_SECONDS: ${YVRUC_TICKET_WAIT_SECONDS:-30}
   # 审批放着没人处理多少小时开始催（只催人，不自动通过）
-  RUCVA_APPROVAL_REMIND_HOURS: ${RUCVA_APPROVAL_REMIND_HOURS:-24}
+  YVRUC_APPROVAL_REMIND_HOURS: ${YVRUC_APPROVAL_REMIND_HOURS:-24}
   # 设为 1 关掉后台定时任务（候补清扫、状态流转、提醒、日报）。生产别关
-  RUCVA_DISABLE_SWEEPER: ${RUCVA_DISABLE_SWEEPER:-}
+  YVRUC_DISABLE_SWEEPER: ${YVRUC_DISABLE_SWEEPER:-}
   TZ: Asia/Shanghai
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: rucva-postgres
+    container_name: yvruc-postgres
     environment:
-      POSTGRES_USER: rucva
+      POSTGRES_USER: yvruc
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}
-      POSTGRES_DB: rucva
+      POSTGRES_DB: yvruc
       TZ: Asia/Shanghai
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
-      - rucva_pgdata:/var/lib/postgresql/data
+      - yvruc_pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rucva -d rucva"]
+      test: ["CMD-SHELL", "pg_isready -U yvruc -d yvruc"]
       interval: 5s
       timeout: 3s
       retries: 12
 
   redis:
     image: redis:7-alpine
-    container_name: rucva-redis
+    container_name: yvruc-redis
     # 名额闸门与限流计数都是可重建的瞬时状态，不做持久化
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
@@ -98,16 +98,16 @@ services:
 
   backend:
     build: *backend_build
-    image: rucva-backend:local
-    container_name: rucva-backend
+    image: yvruc-backend:local
+    container_name: yvruc-backend
     environment: *backend_env
     ports:
       - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"   # 本机直连 API 调试用，公网只走 web 反代
     volumes:
-      - rucva_uploads:/app/data/uploads   # 活动二维码等上传件持久化
-      - rucva_materials:/app/data/materials # 学习材料、立项书与反馈截图持久化
+      - yvruc_uploads:/app/data/uploads   # 活动二维码等上传件持久化
+      - yvruc_materials:/app/data/materials # 学习材料、立项书与反馈截图持久化
       # 天地图瓦片的磁盘缓存：重建容器不丢，免得重新花每天 10000 次的额度
-      - rucva_tiles:/app/data/tiles
+      - yvruc_tiles:/app/data/tiles
     depends_on:
       postgres:
         condition: service_healthy
@@ -130,7 +130,7 @@ services:
     build:
       context: .
       dockerfile: web/Dockerfile
-    container_name: rucva-web
+    container_name: yvruc-web
     ports:
       # 只绑本机：公网走 cloudflared 隧道，它在 compose 内网里直连 web:80。
       # 绑 0.0.0.0 等于把源站也摆到公网上，绕过隧道前面的防护。
@@ -142,7 +142,7 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: rucva-cloudflared
+    container_name: yvruc-cloudflared
     # 固定域名隧道：token 存于 .env 的 CLOUDFLARE_TOKEN（勿提交/外传）。
     # 官方镜像为 distroless（无 shell），故命令必须直接可执行、不能做条件分支。
     command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TOKEN}"]
@@ -150,19 +150,19 @@ services:
       - web
     restart: unless-stopped
 
-  # 一次性任务：跑回归测试（用独立的 rucva_test 库，不碰演示数据）
+  # 一次性任务：跑回归测试（用独立的 yvruc_test 库，不碰演示数据）
   #   docker compose --profile test run --rm tests
   tests:
     profiles: ["test"]
     build:
       <<: *backend_build
       target: test
-    image: rucva-backend:test
-    container_name: rucva-tests
+    image: yvruc-backend:test
+    container_name: yvruc-tests
     environment:
-      RUCVA_TEST_DATABASE_URL: postgresql+psycopg://rucva:${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}@postgres:5432/rucva_test
-      RUCVA_TEST_REDIS_URL: redis://redis:6379/1
-      RUCVA_DEMO_PASSWORD: test-pass
+      YVRUC_TEST_DATABASE_URL: postgresql+psycopg://yvruc:${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}@postgres:5432/yvruc_test
+      YVRUC_TEST_REDIS_URL: redis://redis:6379/1
+      YVRUC_DEMO_PASSWORD: test-pass
       TZ: Asia/Shanghai
     depends_on:
       postgres:
@@ -176,8 +176,8 @@ services:
   seed:
     profiles: ["seed"]
     build: *backend_build
-    image: rucva-backend:local
-    container_name: rucva-seed
+    image: yvruc-backend:local
+    container_name: yvruc-seed
     environment: *backend_env
     entrypoint: ["python", "-X", "utf8", "-m", "backend.seed"]
     depends_on:
@@ -186,7 +186,7 @@ services:
     restart: "no"
 
 volumes:
-  rucva_pgdata:
-  rucva_uploads:
-  rucva_materials:
-  rucva_tiles:
+  yvruc_pgdata:
+  yvruc_uploads:
+  yvruc_materials:
+  yvruc_tiles:

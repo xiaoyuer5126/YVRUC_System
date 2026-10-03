@@ -154,7 +154,7 @@ async function refreshUser() {
   try {
     const d = await api.get('/api/auth/me', { silent: true })
     auth.user = d.user
-    localStorage.setItem('rucva_user', JSON.stringify(d.user))
+    localStorage.setItem('yvruc_user', JSON.stringify(d.user))
   } catch { /* 静默：401 由 api 层处理 */ }
 }
 

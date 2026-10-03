@@ -775,7 +775,7 @@ const navUrl = computed(() => {
   // 照高德文档的写法拼「经度,纬度」，逗号不转义（URLSearchParams 会把它转成 %2C）
   const name = encodeURIComponent(act.value.location || act.value.title)
   return `https://uri.amap.com/marker?position=${p.lng},${p.lat}&name=${name}`
-       + '&coordinate=wgs84&callnative=1&src=rucva'
+       + '&coordinate=wgs84&callnative=1&src=yvruc'
 })
 // 老师不参与志愿报名：安排照看，报名、申请入口都不给
 const isTeacher = computed(() => auth.user?.user_type === 'teacher')
@@ -817,7 +817,7 @@ function attachedWho(g, s) {
 }
 
 // —— 按岗位看 ——
-const VIEW_KEY = 'rucva_detail_view'
+const VIEW_KEY = 'yvruc_detail_view'
 function readView() {
   try { return localStorage.getItem(VIEW_KEY) === 'role' ? 'role' : 'shift' } catch { return 'shift' }
 }

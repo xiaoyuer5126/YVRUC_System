@@ -120,7 +120,7 @@ async function save() {
       phone, wechat, campus, id_card: noId ? '' : idCard, no_mainland_id: noId,
     })
     auth.user = d.user
-    localStorage.setItem('rucva_user', JSON.stringify(d.user))
+    localStorage.setItem('yvruc_user', JSON.stringify(d.user))
     const wasForced = forced.value
     visible.value = false
     ElMessage.success(wasForced ? '个人资料已完善，现在可以报名志愿活动了'

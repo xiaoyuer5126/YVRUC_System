@@ -96,7 +96,7 @@ def tiles_configured() -> bool:
 def _signing_key() -> bytes:
     # 复用服务端已有的密钥，按用途派生一把：同一把原始密钥不直接拿去干两件事，
     # 这里泄露的签名也推不回身份证号加密用的那把
-    return hmac.new(config.ID_CARD_KEY.encode(), b"rucva:geo-tiles:v1",
+    return hmac.new(config.ID_CARD_KEY.encode(), b"yvruc:geo-tiles:v1",
                     hashlib.sha256).digest()
 
 

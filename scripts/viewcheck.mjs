@@ -171,9 +171,9 @@ for (const [who, route, name, min] of PAGES) {
   await send('Page.navigate', { url: 'http://127.0.0.1:8080/' })
   await sleep(700)
   await send('Runtime.evaluate', { expression: `
-    localStorage.setItem('rucva_token', ${JSON.stringify(TOK[who])});
-    localStorage.setItem('rucva_user', ${JSON.stringify(USR[who])});
-    localStorage.setItem('rucva_active_identity', ${JSON.stringify(who)});
+    localStorage.setItem('yvruc_token', ${JSON.stringify(TOK[who])});
+    localStorage.setItem('yvruc_user', ${JSON.stringify(USR[who])});
+    localStorage.setItem('yvruc_active_identity', ${JSON.stringify(who)});
     location.assign(${JSON.stringify(route)});` })
   await sleep(2400)
   const r = await send('Runtime.evaluate', { expression: PROBE, returnByValue: true })

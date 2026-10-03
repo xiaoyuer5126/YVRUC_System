@@ -20,7 +20,7 @@
   <div>
     <div ref="mapEl" class="geo-map" />
     <div v-if="unconfigured" class="dim" style="margin-top:8px">
-      没有配置天地图的 tk（.env 里的 RUCVA_TIANDITU_TK_SERVER），先只显示坐标。
+      没有配置天地图的 tk（.env 里的 YVRUC_TIANDITU_TK_SERVER），先只显示坐标。
     </div>
   </div>
 </template>
@@ -93,7 +93,7 @@ function tileUrl(t, layer) {
 function tile(t, layer) {
   // 天地图的级别从 1 开始，0 级后端直接回 400，不去请求
   const lyr = L.tileLayer(tileUrl(t, layer), { minZoom: 1, maxZoom: 18 })
-  lyr._rucvaLayer = layer
+  lyr._yvrucLayer = layer
   return lyr
 }
 
@@ -104,7 +104,7 @@ function scheduleRefresh(t) {
     try {
       const n = await fetchToken()
       if (!map || !n) return
-      layers.forEach(l => l.setUrl(tileUrl(n, l._rucvaLayer), true))
+      layers.forEach(l => l.setUrl(tileUrl(n, l._yvrucLayer), true))
       scheduleRefresh(n)
     } catch {
       // 网络抖了一下：一分钟后再试，别让地图在令牌过期后整块灰掉

@@ -17,7 +17,7 @@ const PORT = 9223
 const edge = spawn(EDGE, [
   '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
   `--remote-debugging-port=${PORT}`, '--window-size=1500,950',
-  '--user-data-dir=' + process.env.TEMP + '\\rucva_edge_profile',
+  '--user-data-dir=' + process.env.TEMP + '\\yvruc_edge_profile',
   'about:blank',
 ], { stdio: 'ignore' })
 

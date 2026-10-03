@@ -59,7 +59,7 @@ def ping() -> None:
 # 一起挡在外面。Redis 不可用时一律放行——加固不该变成新的单点故障。
 
 def _fail_key(key: str) -> str:
-    return f"rucva:fail:{key}"
+    return f"yvruc:fail:{key}"
 
 
 def failure_count(key: str) -> int:
@@ -89,7 +89,7 @@ def note_failure(key: str, window_seconds: int) -> None:
 def issue_ticket(user_id: str, path: str, ttl: int, identity: str = "") -> str:
     """identity：换票时的身份视角（X-Identity），兑换时照样套上；没有就留空。"""
     token = secrets.token_urlsafe(24)
-    _client.setex(f"rucva:dl:{token}", ttl, f"{user_id}|{path}|{identity}")
+    _client.setex(f"yvruc:dl:{token}", ttl, f"{user_id}|{path}|{identity}")
     return token
 
 
@@ -98,7 +98,7 @@ def redeem_ticket(token: str, path: str) -> tuple[str, str] | None:
     网址都返回 None。旧票只有两段（没有视角），按空视角处理。"""
     if not token:
         return None
-    raw = _client.getdel(f"rucva:dl:{token}")
+    raw = _client.getdel(f"yvruc:dl:{token}")
     if not raw or "|" not in raw:
         return None
     # 网址以 /api/ 开头、不含查询串，里面不会有「|」；视角在最后一段
@@ -120,15 +120,15 @@ def clear_failures(key: str) -> None:
 
 def rate_count(key: str) -> int:
     try:
-        return int(_client.get(f"rucva:rate:{key}") or 0)
+        return int(_client.get(f"yvruc:rate:{key}") or 0)
     except redis.RedisError:
         return 0
 
 
 def note_rate(key: str, window_seconds: int) -> None:
     try:
-        if _client.incr(f"rucva:rate:{key}") == 1:
-            _client.expire(f"rucva:rate:{key}", window_seconds)
+        if _client.incr(f"yvruc:rate:{key}") == 1:
+            _client.expire(f"yvruc:rate:{key}", window_seconds)
     except redis.RedisError:
         pass
 
@@ -147,7 +147,7 @@ def note_rate(key: str, window_seconds: int) -> None:
 # 租期取得比一轮（60s）长得多：正常跑一轮远用不到它，主进程只要还活着就
 # 一定续得上；反过来它被 kill 时，最多一个租期内就有人接手，而这几个任务
 # 本来就是分钟级的（提醒按提前量发、候补按截止时间清），晚一轮没有外部表现。
-SWEEPER_KEY = "rucva:sweeper:leader"
+SWEEPER_KEY = "yvruc:sweeper:leader"
 SWEEPER_LEASE_SECONDS = 300
 
 # 抢占与续期必须在一段 Lua 里做完：分成「抢」和「看是不是我的」两步的话，
@@ -235,7 +235,7 @@ return 0
 
 def gate_key(shift_id: str, position_id: str, kind: str) -> str:
     """一个岗位一种闸门一条键。kind 目前是 seat（正式名额）与 waitlist（候补）。"""
-    return f"rucva:gate:{kind}:{shift_id}:{position_id}"
+    return f"yvruc:gate:{kind}:{shift_id}:{position_id}"
 
 
 def _gate_keys(shift_id: str, position_id: str, kind: str) -> list[str]:
@@ -349,7 +349,7 @@ def hold_sweeper_lease(token: str, ttl: int = SWEEPER_LEASE_SECONDS) -> bool:
 
 def issue_sso_state(next_url: str, ttl: int) -> str:
     state = secrets.token_urlsafe(24)
-    _client.setex(f"rucva:sso:{state}", ttl, next_url or "")
+    _client.setex(f"yvruc:sso:{state}", ttl, next_url or "")
     return state
 
 
@@ -362,7 +362,7 @@ def redeem_sso_state(state: str) -> str | None:
     """
     if not state:
         return None
-    return _client.getdel(f"rucva:sso:{state}")
+    return _client.getdel(f"yvruc:sso:{state}")
 
 
 # —— 动态签到码 ——
@@ -385,13 +385,13 @@ def current_checkin_code(task_id: str, ttl: int, refresh: int) -> tuple[str, int
     续期用的键比码本身短命（refresh < ttl）：键一过期，下次调用就发新码，
     而旧码还能再用一会儿——正是要的「换码不打断正在扫的人」。
     """
-    key = f"rucva:cktask:{task_id}"
+    key = f"yvruc:cktask:{task_id}"
     code = _client.get(key)
     if code:
         return code, max(1, int(_client.ttl(key)))
     code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(CHECKIN_CODE_LEN))
     pipe = _client.pipeline()
-    pipe.setex(f"rucva:ckcode:{code}", ttl, task_id)
+    pipe.setex(f"yvruc:ckcode:{code}", ttl, task_id)
     pipe.setex(key, refresh, code)
     pipe.execute()
     return code, refresh
@@ -405,7 +405,7 @@ def redeem_checkin_code(code: str) -> str | None:
     """
     if not code:
         return None
-    return _client.get(f"rucva:ckcode:{code}")
+    return _client.get(f"yvruc:ckcode:{code}")
 
 
 # —— 场次锁 ——
@@ -431,8 +431,8 @@ _SLOTS = threading.BoundedSemaphore(config.LOCK_SLOTS)
 # 同一个 id 串哈希到同一个数也不会互相挡
 _LOCK_NS = 1
 _USER_NS = 2
-_USER_LOCKED = "rucva_user_locked"       # 会话上记着：本事务已经拿了用户锁
-_SLOT_DEPTH = "rucva_shift_lock_depth"     # 会话上记着：这一个请求已经占了名额
+_USER_LOCKED = "yvruc_user_locked"       # 会话上记着：本事务已经拿了用户锁
+_SLOT_DEPTH = "yvruc_shift_lock_depth"     # 会话上记着：这一个请求已经占了名额
 
 # —— 锁内不做外呼 ——
 #
@@ -442,7 +442,7 @@ _SLOT_DEPTH = "rucva_shift_lock_depth"     # 会话上记着：这一个请求�
 # 一律排到 with 块结束（名额也还了）之后再做：
 # after_unlock(fn) 在锁里调用就排队，最外层的锁结束时依次执行；不在锁里就立刻执行。
 _after_unlock: contextvars.ContextVar[list | None] = contextvars.ContextVar(
-    "rucva_after_unlock", default=None)
+    "yvruc_after_unlock", default=None)
 
 
 def after_unlock(fn) -> None:
@@ -596,12 +596,12 @@ TILE_QUOTA_TTL = 2 * 24 * 3600
 
 def tile_fetches(day: str) -> int:
     """这一天已经向天地图取了多少张瓦片。"""
-    return int(_client.get(f"rucva:tiles:{day}") or 0)
+    return int(_client.get(f"yvruc:tiles:{day}") or 0)
 
 
 def count_tile_fetch(day: str) -> int:
     """记一次向天地图取瓦片，返回记完之后的数。"""
-    key = f"rucva:tiles:{day}"
+    key = f"yvruc:tiles:{day}"
     pipe = _client.pipeline()
     pipe.incr(key)
     pipe.expire(key, TILE_QUOTA_TTL)

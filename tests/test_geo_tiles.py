@@ -34,9 +34,9 @@ def upstream(monkeypatch, tmp_path):
     monkeypatch.setattr(geo, "_http", httpx.Client(transport=httpx.MockTransport(handler)))
     monkeypatch.setattr(config, "TILE_CACHE_DIR", tmp_path / "tiles")
     monkeypatch.setattr(config, "TIANDITU_TK_SERVER", "server-tk")
-    locks._client.delete(f"rucva:tiles:{now().date().isoformat()}")
+    locks._client.delete(f"yvruc:tiles:{now().date().isoformat()}")
     yield state
-    locks._client.delete(f"rucva:tiles:{now().date().isoformat()}")
+    locks._client.delete(f"yvruc:tiles:{now().date().isoformat()}")
 
 
 def _token(client, headers) -> str:
@@ -236,7 +236,7 @@ def test_计数只算上游请求(client, admin, upstream):
     client.get("/api/geo/tiles/vec/0/0/0", params={"t": t})   # 400
     assert len(upstream["calls"]) == 2
     assert _today() == 2
-    ttl = locks._client.ttl(f"rucva:tiles:{now().date().isoformat()}")
+    ttl = locks._client.ttl(f"yvruc:tiles:{now().date().isoformat()}")
     assert 0 < ttl <= 2 * 86400
 
 

@@ -21,8 +21,8 @@ DATA_DIR = ROOT_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # —— 基础设施 ——
-DATABASE_URL = os.environ["RUCVA_DATABASE_URL"]
-REDIS_URL = os.environ["RUCVA_REDIS_URL"]
+DATABASE_URL = os.environ["YVRUC_DATABASE_URL"]
+REDIS_URL = os.environ["YVRUC_REDIS_URL"]
 
 # —— 会话 ——
 SESSION_HOURS = 24          # 令牌有效期；接 SSO 后由统一身份认证接管
@@ -33,29 +33,29 @@ SESSION_HOURS = 24          # 令牌有效期；接 SSO 后由统一身份认证
 SSO_STATE_SECONDS = 600
 
 # 身份证号在库里是加密存的（见 crypto.py），密钥必须与数据库分开保管。
-ID_CARD_KEY = os.environ.get("RUCVA_ID_CARD_KEY", "").strip()
+ID_CARD_KEY = os.environ.get("YVRUC_ID_CARD_KEY", "").strip()
 
 # —— 演示登录 ——
 # 仅在 SSO 未接通时开放，且必须配置共享口令；未配置则整个演示登录接口不存在。
 # 学校 SSO 接通后删除 routers/auth.py 里的 demo 分支与这一项。
-DEMO_LOGIN_PASSWORD = os.environ.get("RUCVA_DEMO_PASSWORD", "").strip()
+DEMO_LOGIN_PASSWORD = os.environ.get("YVRUC_DEMO_PASSWORD", "").strip()
 
 # 接口文档（/docs、/openapi.json）仅在显式打开时暴露
-EXPOSE_API_DOCS = os.environ.get("RUCVA_EXPOSE_DOCS", "").strip() == "1"
+EXPOSE_API_DOCS = os.environ.get("YVRUC_EXPOSE_DOCS", "").strip() == "1"
 
 # —— 学校开放平台（能力开放平台 / 统一认证）——
 # 在应用中心注册应用后获得，调用任何接口都要拿它俩签名。放环境变量而不是
 # integration_configs 表：密钥不该出现在「集成设置」页的接口响应里。
 # 留空 = 相关能力一律回落 Mock，测试环境天然拿不到这些变量。
-OPENPLATFORM_APPID = os.environ.get("RUCVA_OPENPLATFORM_APPID", "").strip()
-OPENPLATFORM_SECRET = os.environ.get("RUCVA_OPENPLATFORM_SECRET", "").strip()
-OPENPLATFORM_GATEWAY = os.environ.get("RUCVA_OPENPLATFORM_GATEWAY", "").strip()
+OPENPLATFORM_APPID = os.environ.get("YVRUC_OPENPLATFORM_APPID", "").strip()
+OPENPLATFORM_SECRET = os.environ.get("YVRUC_OPENPLATFORM_SECRET", "").strip()
+OPENPLATFORM_GATEWAY = os.environ.get("YVRUC_OPENPLATFORM_GATEWAY", "").strip()
 # 统一身份认证（CAS 与 OAuth 两套接口都挂在它下面）
-CAS_BASE_URL = os.environ.get("RUCVA_CAS_BASE_URL", "").strip()
+CAS_BASE_URL = os.environ.get("YVRUC_CAS_BASE_URL", "").strip()
 # OAuth 回调地址，必须与应用中心登记的**一字不差**，否则换令牌时报 invalid_grant。
 # 单独一项而不是从 PUBLIC_BASE_URLS 里取：登记的是哪个地址只有学校后台说了算，
 # 而且随时可能改，改这个不该顺带把二维码域名白名单也改了。
-SSO_REDIRECT_URI = os.environ.get("RUCVA_SSO_REDIRECT_URI", "").strip()
+SSO_REDIRECT_URI = os.environ.get("YVRUC_SSO_REDIRECT_URI", "").strip()
 
 # —— 地图（管理端看签到点与范围）——
 # 瓦片由**我们自己的服务器**向天地图取、再转给浏览器（见 routers/geo.py），
@@ -69,14 +69,14 @@ SSO_REDIRECT_URI = os.environ.get("RUCVA_SSO_REDIRECT_URI", "").strip()
 # 定位签到功能照旧（那个本来就不依赖地图）。
 # 浏览器端 tk 用不上：天地图对它只认真浏览器，服务器发出去的请求带什么
 # Referer 都被拒（403 / 301012），所以不设浏览器端 tk 的配置。
-TIANDITU_TK_SERVER = os.environ.get("RUCVA_TIANDITU_TK_SERVER", "").strip()
+TIANDITU_TK_SERVER = os.environ.get("YVRUC_TIANDITU_TK_SERVER", "").strip()
 
 # 天地图每个 tk 每天 10000 次瓦片请求。保护有三层（见 routers/geo.py）：
 # 同一张瓦片只向天地图取一次、在磁盘上存 TILE_CACHE_DAYS 天；Redis 按天数
 # 真正打到天地图的请求，到 TIANDITU_WARN_AT 记警告日志；到上限直接 503，
 # 不再打上游——超了天地图也是拒，还可能按违规封 tk（地名搜索用的是同一把），
 # 不如自己先停。
-TIANDITU_DAILY_LIMIT = int(os.environ.get("RUCVA_TIANDITU_DAILY_LIMIT", "").strip() or "10000")
+TIANDITU_DAILY_LIMIT = int(os.environ.get("YVRUC_TIANDITU_DAILY_LIMIT", "").strip() or "10000")
 TIANDITU_WARN_AT = TIANDITU_DAILY_LIMIT * 9 // 10
 TILE_CACHE_DIR = DATA_DIR / "tiles"
 TILE_CACHE_DAYS = 30
@@ -93,20 +93,20 @@ TILE_TOKEN_HOURS = 6
 # 基本信息或场次岗位，管理者核对之后才填进表单、才建（见 backend/ai.py）。
 # 走 OpenAI 兼容的 /chat/completions 接口，DeepSeek 就是这一种。
 # 没配 key = 按钮不出现。key 只在后端用，不进前端。
-AI_BASE_URL = (os.environ.get("RUCVA_AI_BASE_URL", "").strip().rstrip("/")
+AI_BASE_URL = (os.environ.get("YVRUC_AI_BASE_URL", "").strip().rstrip("/")
                or "https://api.deepseek.com")
-AI_MODEL = os.environ.get("RUCVA_AI_MODEL", "").strip() or "deepseek-flash"
-AI_API_KEY = os.environ.get("RUCVA_AI_API_KEY", "").strip()
+AI_MODEL = os.environ.get("YVRUC_AI_MODEL", "").strip() or "deepseek-flash"
+AI_API_KEY = os.environ.get("YVRUC_AI_API_KEY", "").strip()
 # 一次起草最多等几秒。场次多的时候模型要写好一阵，给宽一点；但要小于前面
 # 两跳的上限——Cloudflare 回源最多等 100 秒、nginx 的 /api/ 是 120 秒，超了
 # 浏览器拿到的是一张 524/504 网关错误页，而不是「AI 想得太久」这句话
-AI_TIMEOUT = int(os.environ.get("RUCVA_AI_TIMEOUT", "").strip() or "90")
+AI_TIMEOUT = int(os.environ.get("YVRUC_AI_TIMEOUT", "").strip() or "90")
 # 每人每小时最多起草几次：按 token 计费，也免得被当成聊天工具
 AI_HOURLY_LIMIT = 30
 # 思考模式：DeepSeek 默认开着，起草只是照原文提取，开着白白多等、多花钱，
 # 还可能撞上上面的超时。填 enabled / disabled 就随请求带上；换成不认这个参数
 # 的服务商时填 none，不带
-AI_THINKING = os.environ.get("RUCVA_AI_THINKING", "").strip() or "disabled"
+AI_THINKING = os.environ.get("YVRUC_AI_THINKING", "").strip() or "disabled"
 # 原文（贴的字加上附件转出来的字）最多多少字。立项书正文一般两三千字，
 # 排班表转成文字会长不少
 AI_INPUT_MAX = 30000
@@ -154,7 +154,7 @@ def _url_list(raw: str) -> list[str]:
     return [s for s in pieces if s]
 
 
-PUBLIC_BASE_URLS = _url_list(os.environ.get("RUCVA_PUBLIC_BASE_URL", ""))
+PUBLIC_BASE_URLS = _url_list(os.environ.get("YVRUC_PUBLIC_BASE_URL", ""))
 
 
 def _site_root(raw: str) -> str:
@@ -178,7 +178,7 @@ def _site_root(raw: str) -> str:
 # （落哪一页见 integrations/msgcenter._link_for）。必须是手机上打得开的
 # 公网地址；没单独配就用正式域名的第一个，两个都空则通知不带跳转——
 # 开发环境本来也没有公网入口。
-SITE_URL = _site_root(os.environ.get("RUCVA_SITE_URL", "")
+SITE_URL = _site_root(os.environ.get("YVRUC_SITE_URL", "")
                       or (PUBLIC_BASE_URLS[0] if PUBLIC_BASE_URLS else ""))
 
 # 下载票据：导出与材料下载走 <a> 直链，带不了请求头，改用一次性票据。
@@ -188,15 +188,15 @@ DOWNLOAD_TICKET_SECONDS = 60
 # 后台定时任务循环（见 main._sweeper）。测试里要关掉：每建一个 TestClient
 # 都会触发一次立即扫描，它在另一个线程里跟用例抢同一批数据——用例刚把编辑态
 # 改成超时，扫描线程也看见了，于是解冻通知发了两条，断言随机失败。
-RUN_SWEEPER = os.environ.get("RUCVA_DISABLE_SWEEPER", "").strip() != "1"
+RUN_SWEEPER = os.environ.get("YVRUC_DISABLE_SWEEPER", "").strip() != "1"
 
 # —— 连接池 ——
 # 每个进程各有一个池子，所以池子大小要乘上进程数一起算：Postgres 默认
 # max_connections=100，按默认的 4 进程 4×(5+10)=60，留了余量。往上加进程
-# （RUCVA_WORKERS）要顺手把这两个调小，否则峰值一连就顶到数据库上限，
+# （YVRUC_WORKERS）要顺手把这两个调小，否则峰值一连就顶到数据库上限，
 # 表现是所有请求一起变慢甚至报错，而不是只慢一点。
-DB_POOL_SIZE = int(os.environ.get("RUCVA_DB_POOL_SIZE", "5"))
-DB_MAX_OVERFLOW = int(os.environ.get("RUCVA_DB_MAX_OVERFLOW", "10"))
+DB_POOL_SIZE = int(os.environ.get("YVRUC_DB_POOL_SIZE", "5"))
+DB_MAX_OVERFLOW = int(os.environ.get("YVRUC_DB_MAX_OVERFLOW", "10"))
 
 # —— 场次锁的进程内名额 ——
 # 场次锁是在数据库里排队的（见 locks.shift_lock），排队期间占着一条连接。
@@ -204,7 +204,7 @@ DB_MAX_OVERFLOW = int(os.environ.get("RUCVA_DB_MAX_OVERFLOW", "10"))
 # 必须明显小于 DB_POOL_SIZE + DB_MAX_OVERFLOW（默认 15）：名额吃掉的连接越多，
 # 留给刷页面、登录这些读请求的越少，抢报时整站跟着卡。锁本身一次只放一个人，
 # 名额再多也不会更快，只是多几个人占着连接干等。
-LOCK_SLOTS = int(os.environ.get("RUCVA_LOCK_SLOTS", "5"))
+LOCK_SLOTS = int(os.environ.get("YVRUC_LOCK_SLOTS", "5"))
 
 # —— 线程池 ——
 # 同步的 def 接口都跑在线程池里，默认每个进程只有 40 条线程、所有接口共用。
@@ -212,12 +212,12 @@ LOCK_SLOTS = int(os.environ.get("RUCVA_LOCK_SLOTS", "5"))
 # 排队期间占着一条线程；名额一多，刷页面的请求就得等线程。等锁的线程大多在
 # 睡、不占 CPU；除了 LOCK_SLOTS 个在数据库里排队的，也不占数据库连接（进锁前
 # 已还回池子），多开的代价只是内存。
-THREADS = int(os.environ.get("RUCVA_THREADS", "100"))
+THREADS = int(os.environ.get("YVRUC_THREADS", "100"))
 
 # 已经扣到名额闸门号的报名请求，最多等场次锁多少秒。拿到号的人数不超过名额，
 # 队伍不会无限长；等不到回 503 等于把名额让给后来重试的人，所以给得宽。
 # 8 核机器实测 300 人抢 200 个名额，最慢的人要排 12～15 秒。
-TICKET_WAIT_SECONDS = float(os.environ.get("RUCVA_TICKET_WAIT_SECONDS", "30"))
+TICKET_WAIT_SECONDS = float(os.environ.get("YVRUC_TICKET_WAIT_SECONDS", "30"))
 
 # —— 业务规则常量 ——
 # 平台不对志愿者做任何限制：没有准入名单，也不拦任何人报名。临期退选只影响
@@ -254,7 +254,7 @@ CHECKOUT_MIN_GAP_MINUTES = 10
 
 # 审批放着没人处理多久开始催（小时）。只催人，**绝不自动通过**——
 # 审批不能因为没人看就默认放行。
-APPROVAL_REMIND_HOURS = int(os.environ.get("RUCVA_APPROVAL_REMIND_HOURS", "24"))
+APPROVAL_REMIND_HOURS = int(os.environ.get("YVRUC_APPROVAL_REMIND_HOURS", "24"))
 
 # 编辑冻结的自动解除时长（小时）：管理者点了「调整岗位」就去开会，
 # 学生一下午都报不了名——超时没保存就自动解冻并提醒他。

@@ -23,7 +23,7 @@ from test_enroll import enroll
 def clean_gates():
     """每个用例从「没预热」开始，也不把计数器留给下一个用例。"""
     def wipe():
-        keys = locks._client.keys("rucva:gate:*")
+        keys = locks._client.keys("yvruc:gate:*")
         if keys:
             locks._client.delete(*keys)
     wipe()

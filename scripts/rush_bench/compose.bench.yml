@@ -6,11 +6,11 @@ networks:
     internal: true
 services:
   postgres:
-    container_name: rucva-bench-postgres
+    container_name: yvruc-bench-postgres
     ports: !reset []
   redis:
-    container_name: rucva-bench-redis
+    container_name: yvruc-bench-redis
     ports: !reset []
   tests:
-    container_name: rucva-bench-tests
-    image: rucva-backend:bench
+    container_name: yvruc-bench-tests
+    image: yvruc-backend:bench
