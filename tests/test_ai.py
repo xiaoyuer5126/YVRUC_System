@@ -115,15 +115,17 @@ def test_场次草稿_岗位字段收拾好(client, admin, db, model):
     aid = make_draft(client, admin)
     replies.append((200, json.dumps({"shifts": [{
         "name": "开幕式当天", "start_time": "2026-10-18 07:30", "end_time": "不知道",
-        "location": "",
+        "location": "世纪馆北门",                      # 服务场次没有地点字段：丢掉
         # 场次上只收校区、学段；学段全选 = 不限
         "requirement_tags": {"校区": ["中关村校区"], "学段": config.STAGES, "性别": ["男"]},
         "positions": [
             {"name": "检录引导", "quota": "6", "service_task": "引导运动员检录",
              "attire": "issued", "attire_note": "",            # 发服装却没说怎么领：按不需要放
              "needs_leader": "yes",                             # 不是 true 就当 false
+             "pay_optional": True, "pay_note": "",              # 说可选劳务却没写标准：按只记时长放
              "requirement_tags": {"性别": "女", "学院": ["文学院"], "校区": ["中关村校区"]}},
-            {"name": "", "quota": 0, "service_task": ""},
+            {"name": "", "quota": 0, "service_task": "",
+             "pay_optional": True, "pay_note": "100 元/天，活动后统一发放"},
         ]}], "notes": []}, ensure_ascii=False)))
     r = client.post(f"/api/staff/ai/activities/{aid}/structure-draft", headers=admin,
                     data={"text": TEXT})
@@ -131,12 +133,15 @@ def test_场次草稿_岗位字段收拾好(client, admin, db, model):
     g = r.json()["shifts"][0]
     assert g["name"] == "开幕式当天" and g["start_time"] == "2026-10-18T07:30"
     assert g["end_time"] == ""                                  # 认不出的留空，让人填
+    assert "location" not in g, "服务场次不带地点：地点在岗位与活动上"
     assert g["requirement_tags"] == {"校区": ["中关村校区"]} and g["attached"] == []
     p1, p2 = g["positions"]
     assert p1["quota"] == 6 and p1["attire"] == "none" and p1["needs_leader"] is False
+    assert p1["pay_optional"] is False and p1["pay_note"] == ""
     # 岗位上只收性别：校区、学段手建时也只能设在场次上
     assert p1["requirement_tags"] == {"性别": ["女"]}
     assert p2["name"] == "志愿者" and p2["quota"] == 1 and p2["service_task"] == ""
+    assert p2["pay_optional"] is True and p2["pay_note"] == "100 元/天，活动后统一发放"
     assert r.json()["notes"] == ["还需要自己补上：「开幕式当天」的起止时间、岗位「志愿者」的服务任务"]
     # 活动信息与已有场次带给了模型
     title = db.get(Activity, aid).title

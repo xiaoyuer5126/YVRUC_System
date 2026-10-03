@@ -21,7 +21,6 @@
           <DateTimeField v-model="g.end_time" placeholder="结束时间"
                          :default-time="DAY_END" />
         </div>
-        <el-input v-if="g.location" v-model="g.location" placeholder="场次地点（空 = 活动地点）" />
         <div v-if="tagText(g.requirement_tags)" class="dim">
           场次条件：{{ tagText(g.requirement_tags) }}
         </div>
@@ -116,6 +115,7 @@ function extras(p) {
     p.training_note && `培训：${p.training_note}`,
     p.needs_leader && '需要组长',
     p.attire !== 'none' && `志愿服装：${ATTIRE[p.attire]}（${p.attire_note}）`,
+    p.pay_optional && `报酬方式：可选劳务（${p.pay_note}）`,
     tagText(p.requirement_tags) && `条件：${tagText(p.requirement_tags)}`,
   ].filter(Boolean).join('\n')
 }
@@ -171,8 +171,7 @@ async function create(close) {
       if (!g.createdId) {
         g.createdId = (await api.post(`/api/staff/activities/${props.activityId}/shifts`, {
           name: g.name.trim(), start_time: g.start_time, end_time: g.end_time,
-          mode: 'pick', location: (g.location || '').trim(),
-          requirement_tags: g.requirement_tags,
+          mode: 'pick', requirement_tags: g.requirement_tags,
         })).id
         shifts += 1
       }

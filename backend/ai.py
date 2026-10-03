@@ -216,7 +216,6 @@ STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草�
     "name": "场次名，如「开幕式当天」「第一天上午」",
     "start_time": "开始时间",
     "end_time": "结束时间",
-    "location": "这个场次的地点，和活动地点一样就空",
     "requirement_tags": {{"校区": ["只能从这些里选：{campuses}"], "学段": ["只能从这些里选：{stages}"]}},
     "positions": [{{
       "name": "岗位名",
@@ -229,6 +228,8 @@ STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草�
       "needs_leader": true 或 false（人多、需要有人带队时 true）,
       "attire": "none / issued / own：不需要统一服装、统一发放、志愿者自备",
       "attire_note": "服装说明：发放的写领取和归还方式，自备的写样式；attire 为 none 时空",
+      "pay_optional": true 或 false（原文说志愿者可以选领劳务报酬的写 true，其余写 false）,
+      "pay_note": "劳务报酬的标准与发放方式，如「100 元/天，活动后统一发放」；pay_optional 为 false 时空",
       "requirement_tags": {{"性别": ["男" 或 "女"]}}
     }}],
     "attached": [{{
@@ -289,6 +290,11 @@ def _position(p: dict) -> dict:
     # 要统一服装却没说怎么领、什么样式：后端会拦，草稿里先按「不需要」放，让人自己定
     if not attire_note:
         attire = "none"
+    pay = p.get("pay_optional") is True
+    pay_note = _text(p.get("pay_note"), 256) if pay else ""
+    # 说了可选劳务却没写标准和发放方式：后端会拦，同上先按只记时长放
+    if not pay_note:
+        pay = False
     return {
         "name": _text(p.get("name"), 128) or "志愿者",
         "quota": quota,
@@ -299,6 +305,7 @@ def _position(p: dict) -> dict:
         "training_note": _text(p.get("training_note"), 1000),
         "needs_leader": p.get("needs_leader") is True,
         "attire": attire, "attire_note": attire_note,
+        "pay_optional": pay, "pay_note": pay_note,
         "requirement_tags": _tags(p.get("requirement_tags"), POSITION_TAGS),
     }
 
@@ -357,7 +364,6 @@ def structure_draft(act: Activity, text: str, images: list[str] = ()) -> dict:
             "name": _text(g.get("name"), 128) or f"场次 {len(shifts) + 1}",
             "start_time": _when(g.get("start_time")),
             "end_time": _when(g.get("end_time")),
-            "location": _text(g.get("location"), 128),
             "requirement_tags": _tags(g.get("requirement_tags"), SHIFT_TAGS),
             "positions": positions,
             "attached": attached,
