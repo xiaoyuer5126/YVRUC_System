@@ -130,3 +130,42 @@ def test_截图下载权限(client, take_student, admin, db):
     if att is not None:
         assert client.get(f"/api/feedback/files/{att.id}",
                           headers=admin).status_code == 404
+
+
+def _admin_notes(client, headers, fid):
+    items = client.get("/api/me/notifications", headers=headers).json()["items"]
+    return [n for n in items if (n["data"] or {}).get("feedback_id") == fid]
+
+
+def test_新反馈通知管理员且点开进意见反馈页(client, take_student, admin, initiator):
+    sid = take_student()
+    fid = _submit(client, login(client, sid), "导出的表格少了一列" * 10).json()["id"]
+
+    notes = _admin_notes(client, admin, fid)
+    assert len(notes) == 1
+    n = notes[0]
+    assert n["title"] == "新的意见反馈"
+    assert sid in n["content"] and "导出的表格少了一列" in n["content"]
+    assert n["content"].endswith("…」")          # 正文是摘要，不是全文
+    assert n["page"] == "/feedback"
+    # 活动发起方不是管理员，收不到
+    assert _admin_notes(client, initiator, fid) == []
+
+
+def test_管理员自己提的反馈不通知自己(client, admin):
+    fid = _submit(client, admin, "管理员自己发现的问题").json()["id"]
+    assert _admin_notes(client, admin, fid) == []
+
+
+def test_通知失败不影响提交(client, take_student, admin, monkeypatch):
+    from backend.routers import feedback
+
+    def boom(*_a, **_kw):
+        raise RuntimeError("消息中心挂了")
+    monkeypatch.setattr(feedback, "notify", boom)
+    me = login(client, take_student())
+    r = _submit(client, me, "通知发不出去时也要能提交")
+    assert r.status_code == 200, r.text
+    fid = r.json()["id"]
+    assert [x["id"] for x in client.get("/api/feedback/mine", headers=me).json()] == [fid]
+    assert _admin_notes(client, admin, fid) == []

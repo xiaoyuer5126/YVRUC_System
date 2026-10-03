@@ -9,12 +9,14 @@
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from sqlalchemy import Text, cast
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import config, locks
@@ -26,6 +28,7 @@ from ..notify import notify
 from .materials import MATERIAL_DIR
 
 router = APIRouter(prefix="/api", tags=["feedback"])
+log = logging.getLogger(__name__)
 
 OWNER = "feedback"
 RATE_WINDOW_SECONDS = 3600
@@ -123,7 +126,34 @@ async def submit_feedback(content: str = Form(""),
               summary=f"提交意见反馈（{len(text)} 字，截图 {len(images)} 张）")
     db.commit()
     locks.note_rate(rate_key, RATE_WINDOW_SECONDS)
+    _notify_admins(db, fb, user)
     return _out(fb, _shots(db, [fb.id])[fb.id])
+
+
+def _notify_admins(db: OrmSession, fb: Feedback, submitter: User) -> None:
+    """新反馈告诉每位管理员，点开进管理端「意见反馈」页。
+
+    反馈已经提交在先、通知单独一个事务：通知出了岔子只记日志，不能让用户
+    看到「提交失败」再重提一遍。管理员按真实身份找（别人的身份是事实，不看
+    视角）；提交人自己是管理员时不发给他——这条就是他刚写的。
+    """
+    brief = fb.content if len(fb.content) <= 60 else fb.content[:60] + "…"
+    who = f"{submitter.name}（{submitter.student_id}）"
+    try:
+        # roles 是 JSON 不是 JSONB，没有包含运算符；按序列化文本匹配带引号的
+        # "admin"，粗筛之后再用 has_role 精确判一遍
+        rows = (db.query(User)
+                .filter(cast(User.roles, Text).like('%"admin"%'),
+                        User.id != submitter.id).all())
+        for u in rows:
+            if u.has_role("admin", real=True):
+                notify(db, u, "新的意见反馈",
+                       f"{who} 提交了一条意见反馈：「{brief}」",
+                       data={"feedback_id": fb.id, "route": "feedback"})
+        db.commit()
+    except Exception:
+        db.rollback()
+        log.exception("意见反馈 %s 已提交，通知管理员失败", fb.id)
 
 
 @router.get("/feedback/mine")

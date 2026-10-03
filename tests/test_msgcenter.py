@@ -66,6 +66,7 @@ def test_点开去哪页只有一份规则():
     # route 优先于活动 id：待办的审批也带着活动 id，但通过/驳回只在审批页
     assert page("custom", {"activity_id": "a1", "route": "approvals"}) == "/approvals"
     assert page("custom", {"route": "hours"}) == "/hours"
+    assert page("custom", {"route": "feedback", "feedback_id": "f1"}) == "/feedback"
     assert page("activity_changed", {"activity_id": "a1"}) == "/activity/a1"
     # 发给活动管理者的进活动管理页，页签只认名单里的
     assert (page("custom", {"activity_id": "a1", "route": "manage", "tab": "review"})
