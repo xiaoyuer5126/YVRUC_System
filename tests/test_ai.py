@@ -47,13 +47,13 @@ TEXT = "校运动会开幕式志愿者招募，10 月 18 日上午在世纪馆�
 def test_没配key就不能用_常量里也说没开(client, admin, monkeypatch):
     monkeypatch.setattr(config, "AI_API_KEY", "")
     assert client.get("/api/auth/constants", headers=admin).json()["ai_enabled"] is False
-    r = client.post("/api/staff/ai/activity-draft", headers=admin, json={"text": TEXT})
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT})
     assert r.status_code == 409
 
 
 def test_学生不能用(client, take_student, model):
     r = client.post("/api/staff/ai/activity-draft", headers=login(client, take_student()),
-                    json={"text": TEXT})
+                    data={"text": TEXT})
     assert r.status_code == 403
 
 
@@ -71,7 +71,7 @@ def test_活动草稿按白名单收拾_空值不回(client, admin, model):
         "notes": ["原文没写报名开始时间"],
         "password": "不该透传的东西",
     }, ensure_ascii=False)))
-    r = client.post("/api/staff/ai/activity-draft", headers=admin, json={"text": TEXT})
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT})
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["draft"] == {
@@ -101,7 +101,7 @@ def test_活动草稿_全选等于不限_缺项一条写完(client, admin, model
         "contacts": {"name": "王"},                    # 该是数组的给了对象：当没有
         "notes": "不是数组",
     }, ensure_ascii=False)))
-    r = client.post("/api/staff/ai/activity-draft", headers=admin, json={"text": TEXT})
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT})
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["draft"] == {"title": "迎新志愿服务", "recruit_stages": ["本科生"]}
@@ -126,7 +126,7 @@ def test_场次草稿_岗位字段收拾好(client, admin, db, model):
             {"name": "", "quota": 0, "service_task": ""},
         ]}], "notes": []}, ensure_ascii=False)))
     r = client.post(f"/api/staff/ai/activities/{aid}/structure-draft", headers=admin,
-                    json={"text": TEXT})
+                    data={"text": TEXT})
     assert r.status_code == 200, r.text
     g = r.json()["shifts"][0]
     assert g["name"] == "开幕式当天" and g["start_time"] == "2026-10-18T07:30"
@@ -159,7 +159,7 @@ def test_场次草稿_培训彩排挂在场次下(client, admin, model):
              "positions": ["查无此岗"], "hours_mode": "weird"},
         ]}], "notes": []}, ensure_ascii=False)))
     r = client.post(f"/api/staff/ai/activities/{aid}/structure-draft", headers=admin,
-                    json={"text": TEXT})
+                    data={"text": TEXT})
     assert r.status_code == 200, r.text
     a1, a2 = r.json()["shifts"][0]["attached"]
     assert a1 == {"kind": "rehearsal", "name": "终点走台", "start_time": "2026-10-24T16:00",
@@ -179,9 +179,9 @@ def test_场次草稿_结构不对也不报错(client, admin, model):
     replies.append((200, json.dumps({"shifts": [{"name": "A", "positions": "x",
                                                  "attached": {"k": 1}}]})))
     url = f"/api/staff/ai/activities/{aid}/structure-draft"
-    r = client.post(url, headers=admin, json={"text": TEXT})
+    r = client.post(url, headers=admin, data={"text": TEXT})
     assert r.status_code == 200 and r.json()["shifts"] == []
-    r = client.post(url, headers=admin, json={"text": TEXT})
+    r = client.post(url, headers=admin, data={"text": TEXT})
     g = r.json()["shifts"][0]
     assert g["positions"] == [] and g["attached"] == []
 
@@ -208,7 +208,7 @@ def test_问卷草稿_不写原文也行_岗位名对回岗位(client, admin, db
         {"title": ""}, "不是对象",
     ], "notes": ["要不要收简历你定"]}, ensure_ascii=False)))
     r = client.post(f"/api/staff/ai/activities/{aid}/form-draft", headers=admin,
-                    json={"text": ""})
+                    data={"text": ""})
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["notes"] == ["要不要收简历你定"]
@@ -237,23 +237,23 @@ def test_问卷草稿_补记录与已公开的不行(client, admin, db, model):
     act = db.get(Activity, aid)
     act.status = "published"
     db.commit()
-    r = client.post(url, headers=admin, json={"text": ""})
+    r = client.post(url, headers=admin, data={"text": ""})
     assert r.status_code == 409 and "已公开" in r.json()["detail"]
     act.status, act.recruit_mode = "draft", config.RECORD_MODE
     db.commit()
-    r = client.post(url, headers=admin, json={"text": ""})
+    r = client.post(url, headers=admin, data={"text": ""})
     assert r.status_code == 409 and "补记录" in r.json()["detail"]
 
 
 def test_原文长短与限频(client, admin, model, monkeypatch):
     calls, replies = model
     assert client.post("/api/staff/ai/activity-draft", headers=admin,
-                       json={"text": "太短"}).status_code == 400
+                       data={"text": "太短"}).status_code == 400
     r = client.post("/api/staff/ai/activity-draft", headers=admin,
-                    json={"text": "长" * (config.AI_INPUT_MAX + 1)})
+                    data={"text": "长" * (config.AI_INPUT_MAX + 1)})
     assert r.status_code == 400 and "太长" in r.json()["detail"]
     monkeypatch.setattr(locks, "rate_count", lambda key: config.AI_HOURLY_LIMIT)
-    r = client.post("/api/staff/ai/activity-draft", headers=admin, json={"text": TEXT})
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT})
     assert r.status_code == 429
     assert not calls                     # 都在打到模型之前拦下
 
@@ -265,7 +265,7 @@ def test_原文长短与限频(client, admin, model, monkeypatch):
 def test_模型出错给人看得懂的话(client, admin, model, status, content, word):
     _calls, replies = model
     replies.append((status, content))
-    r = client.post("/api/staff/ai/activity-draft", headers=admin, json={"text": TEXT})
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT})
     assert r.status_code == 502 and word in r.json()["detail"]
 
 
@@ -275,8 +275,129 @@ def test_超时与连不上(client, admin, model, monkeypatch):
             raise exc
         return _post
     monkeypatch.setattr(ai.httpx, "post", boom(httpx.ReadTimeout("slow")))
-    r = client.post("/api/staff/ai/activity-draft", headers=admin, json={"text": TEXT})
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT})
     assert r.status_code == 502 and "太久" in r.json()["detail"]
     monkeypatch.setattr(ai.httpx, "post", boom(httpx.ConnectError("down")))
-    r = client.post("/api/staff/ai/activity-draft", headers=admin, json={"text": TEXT})
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT})
     assert r.status_code == 502 and "无法连接" in r.json()["detail"]
+
+
+# ======================= 附件 =======================
+
+def _png() -> bytes:
+    """一张 1×1 的 PNG（python-docx 插图要读得出尺寸，得是真 PNG）。"""
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff))
+    raw = zlib.compress(b"\x00\xff\x00\x00")
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", raw) + chunk(b"IEND", b""))
+
+
+def _docx() -> bytes:
+    from io import BytesIO
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("校运动会志愿者排班")
+    t = doc.add_table(rows=2, cols=3)
+    for i, v in enumerate(["场次", "岗位", "人数"]):
+        t.cell(0, i).text = v
+    for i, v in enumerate(["上午场", "检录", "6"]):
+        t.cell(1, i).text = v
+    doc.add_picture(BytesIO(_png()))
+    buf = BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def _xlsx() -> bytes:
+    from io import BytesIO
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "排班"
+    ws.append(["场次", "岗位", "人数"])
+    ws.append(["下午场", "引导", 4])
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _pdf_text(line: bytes) -> bytes:
+    """一页带文字层的 PDF：按字节偏移拼好交叉引用表，正规的 PDF 阅读器都读得了。"""
+    stream = b"BT /F1 18 Tf 20 100 Td (" + line + b") Tj ET"
+    objs = [b"<</Type/Catalog/Pages 2 0 R>>",
+            b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+            b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 144]/Contents 4 0 R"
+            b"/Resources<</Font<</F1 5 0 R>>>>>>",
+            b"<</Length %d>>stream\n" % len(stream) + stream + b"\nendstream",
+            b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>"]
+    out, offsets = b"%PDF-1.4\n", []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj" % i + o + b"endobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    out += b"".join(b"%010d 00000 n \n" % off for off in offsets)
+    out += b"trailer<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+    return out
+
+
+def _blank_pdf() -> bytes:
+    from io import BytesIO
+    from pypdf import PdfWriter
+
+    w = PdfWriter()
+    w.add_blank_page(width=200, height=200)
+    buf = BytesIO()
+    w.write(buf)
+    return buf.getvalue()
+
+
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def test_附件转成文字_图片按多模态发_思考默认关(client, admin, model):
+    calls, replies = model
+    replies.append((200, json.dumps({"title": "校运动会"}, ensure_ascii=False)))
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": ""},
+                    files=[("files", ("排班.docx", _docx(), DOCX)),
+                           ("files", ("排班.xlsx", _xlsx(), "application/octet-stream")),
+                           ("files", ("说明.pdf", _pdf_text(b"Gate A 09:00 x6"), "application/pdf")),
+                           ("files", ("截图.png", _png(), "image/png"))])
+    assert r.status_code == 200, r.text
+    body = calls[0]["body"]
+    assert body["thinking"] == {"type": "disabled"}
+    parts = body["messages"][1]["content"]
+    text = parts[0]["text"]
+    assert "【附件：排班.docx】" in text and "上午场 | 检录 | 6" in text
+    assert "【工作表：排班】" in text and "下午场 | 引导 | 4" in text
+    assert "Gate A 09:00 x6" in text
+    images = [p for p in parts if p["type"] == "image_url"]
+    assert len(images) == 2, "docx 里插的图和单独传的截图都发了"
+    assert images[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_附件格式不对说清楚(client, admin, model):
+    for name, data, word in [("旧版.doc", b"xx", "另存为"), ("视频.mp4", b"xx", "读不了"),
+                             ("扫描.pdf", _blank_pdf(), "扫描件"), ("坏的.docx", b"xx", "损坏")]:
+        r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT},
+                        files=[("files", (name, data, "application/octet-stream"))])
+        assert r.status_code == 400 and word in r.json()["detail"], (name, r.text)
+    too_many = [("files", (f"{i}.png", _png(), "image/png")) for i in range(6)]
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT},
+                    files=too_many)
+    assert r.status_code == 400 and "最多传" in r.json()["detail"]
+
+
+def test_只传图片也能起草(client, admin, model):
+    _calls, replies = model
+    replies.append((200, json.dumps({"title": "x"})))
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": ""},
+                    files=[("files", ("通知.jpg", _png(), "image/jpeg"))])
+    assert r.status_code == 200, r.text

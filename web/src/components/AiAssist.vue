@@ -12,10 +12,17 @@
     <el-drawer v-model="open" :title="title" :size="narrow ? '100%' : '560px'" append-to-body>
       <div class="dim">{{ hint }}</div>
       <el-input v-model="text" type="textarea" :autosize="{ minRows: 6, maxRows: 14 }"
-                :placeholder="placeholder" :maxlength="8000" show-word-limit
+                :placeholder="placeholder" :maxlength="30000" show-word-limit
                 style="margin-top:8px" />
+      <!-- 附件只在点「起草」时随请求发出去，后端转成文字或原样发图，不留存 -->
+      <el-upload v-model:file-list="files" :auto-upload="false" multiple
+                 :limit="AI_FILE_LIMIT" :accept="AI_FILE_ACCEPT" class="ai-files"
+                 :on-exceed="() => ElMessage.warning(`最多传 ${AI_FILE_LIMIT} 个文件`)">
+        <el-button size="small">上传文件</el-button>
+        <template #tip><div class="dim">{{ AI_FILE_TIP }}</div></template>
+      </el-upload>
       <el-alert type="warning" :closable="false" show-icon
-                title="原文会发给 AI 服务，别贴身份证号、志愿者名单这类个人信息。草稿可能有错，用之前请逐项核对。" />
+                title="原文和附件会发给 AI 服务，别传身份证号、志愿者名单这类个人信息。草稿可能有错，用之前请逐项核对。" />
       <div class="toolbar">
         <el-button type="primary" :loading="busy" @click="go">
           {{ result ? '重新起草' : '起草' }}
@@ -38,7 +45,8 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { aiEnabled } from '../aiEnabled'
+import { ElMessage } from 'element-plus'
+import { AI_FILE_ACCEPT, AI_FILE_LIMIT, AI_FILE_TIP, aiEnabled } from '../ai'
 import { useNarrow } from '../composables/useNarrow'
 import aiIcon from '../assets/ai-draft.png'
 
@@ -46,13 +54,14 @@ const props = defineProps({
   title: { type: String, required: true },
   hint: { type: String, default: '' },
   placeholder: { type: String, default: '' },
-  run: { type: Function, required: true },     // async (原文) => { …草稿, notes }
+  run: { type: Function, required: true },     // async (原文, 附件 File[]) => { …草稿, notes }
 })
 
 const narrow = useNarrow()
 const enabled = ref(false)
 const open = ref(false)
 const text = ref('')
+const files = ref([])          // el-upload 的文件列表，真正的 File 在 raw 上
 const busy = ref(false)
 const result = ref(null)
 
@@ -61,7 +70,7 @@ onMounted(async () => { enabled.value = await aiEnabled() })
 async function go() {
   busy.value = true
   try {
-    result.value = await props.run(text.value)
+    result.value = await props.run(text.value, files.value.map(f => f.raw))
   } catch { /* 错误提示 api 层已经给了 */ } finally {
     busy.value = false
   }
@@ -71,6 +80,7 @@ async function go() {
 function reset() {
   result.value = null
   text.value = ''
+  files.value = []
 }
 defineExpose({ reset })
 </script>

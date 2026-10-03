@@ -95,7 +95,7 @@ TILE_TOKEN_HOURS = 6
 # 没配 key = 按钮不出现。key 只在后端用，不进前端。
 AI_BASE_URL = (os.environ.get("RUCVA_AI_BASE_URL", "").strip().rstrip("/")
                or "https://api.deepseek.com")
-AI_MODEL = os.environ.get("RUCVA_AI_MODEL", "").strip() or "deepseek-chat"
+AI_MODEL = os.environ.get("RUCVA_AI_MODEL", "").strip() or "deepseek-flash"
 AI_API_KEY = os.environ.get("RUCVA_AI_API_KEY", "").strip()
 # 一次起草最多等几秒。场次多的时候模型要写好一阵，给宽一点；但要小于前面
 # 两跳的上限——Cloudflare 回源最多等 100 秒、nginx 的 /api/ 是 120 秒，超了
@@ -103,8 +103,18 @@ AI_API_KEY = os.environ.get("RUCVA_AI_API_KEY", "").strip()
 AI_TIMEOUT = int(os.environ.get("RUCVA_AI_TIMEOUT", "").strip() or "90")
 # 每人每小时最多起草几次：按 token 计费，也免得被当成聊天工具
 AI_HOURLY_LIMIT = 30
-# 一次贴进来的原文最多多少字。立项书正文一般两三千字
-AI_INPUT_MAX = 8000
+# 思考模式：DeepSeek 默认开着，起草只是照原文提取，开着白白多等、多花钱，
+# 还可能撞上上面的超时。填 enabled / disabled 就随请求带上；换成不认这个参数
+# 的服务商时填 none，不带
+AI_THINKING = os.environ.get("RUCVA_AI_THINKING", "").strip() or "disabled"
+# 原文（贴的字加上附件转出来的字）最多多少字。立项书正文一般两三千字，
+# 排班表转成文字会长不少
+AI_INPUT_MAX = 30000
+# 附件：一次最多几个、单个多大；发给模型的图片最多几张、单张多大（见 ai_files.py）
+AI_FILE_COUNT = 5
+AI_FILE_MAX_BYTES = 10 * 1024 * 1024
+AI_IMAGE_MAX = 10
+AI_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 
 # 校区的大致中心点：管理端「快捷选点」按它把地图挪过去、给个起点。
 # 数值由用户提供（比网上查的可靠——不同来源能差四百米，比我们默认的 200 米

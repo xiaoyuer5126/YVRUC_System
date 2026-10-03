@@ -23,6 +23,7 @@
 <script setup>
 import { ref } from 'vue'
 import { api } from '../api'
+import { aiForm } from '../ai'
 import AiAssist from './AiAssist.vue'
 
 const emit = defineEmits(['fill'])
@@ -45,8 +46,8 @@ function rows(draft) {
     .map(([k, label, fmt]) => ({ label, value: fmt ? fmt(draft[k]) : draft[k] }))
 }
 
-function run(text) {
-  return api.post('/api/staff/ai/activity-draft', { text })
+function run(text, files) {
+  return api.post('/api/staff/ai/activity-draft', aiForm(text, files))
 }
 
 function fill(draft, close) {

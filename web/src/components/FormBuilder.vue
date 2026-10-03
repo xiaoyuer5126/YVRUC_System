@@ -81,8 +81,13 @@
       <el-input v-model="aiText" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }"
                 maxlength="2000" show-word-limit
                 placeholder="如：翻译岗要会英语或日语，想看相关经历；要统计服装尺码" />
+      <el-upload v-model:file-list="aiFiles" :auto-upload="false" multiple
+                 :limit="AI_FILE_LIMIT" :accept="AI_FILE_ACCEPT">
+        <el-button size="small">上传文件（招募要求、立项书等）</el-button>
+        <template #tip><div class="dim">{{ AI_FILE_TIP }}</div></template>
+      </el-upload>
       <el-alert type="warning" :closable="false" show-icon
-                title="活动信息和这里写的话会发给 AI 服务，别写身份证号、志愿者名单这类个人信息。题目可能有错，用之前请逐条核对。" />
+                title="活动信息、这里写的话和附件会发给 AI 服务，别传身份证号、志愿者名单这类个人信息。题目可能有错，用之前请逐条核对。" />
       <div class="fb-add">
         <el-button type="primary" size="small" :loading="aiBusy" @click="draftQuestions">
           {{ aiResult ? '重新出题' : '出题' }}
@@ -125,7 +130,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
-import { aiEnabled } from '../aiEnabled'
+import { AI_FILE_ACCEPT, AI_FILE_LIMIT, AI_FILE_TIP, aiEnabled, aiForm } from '../ai'
 
 const props = defineProps({
   activityId: { type: String, required: true },
@@ -186,6 +191,7 @@ function move(i, delta) {
 const aiOn = ref(false)
 const aiOpen = ref(false)
 const aiText = ref('')
+const aiFiles = ref([])
 const aiBusy = ref(false)
 const aiResult = ref(null)      // { questions, notes }
 onMounted(async () => { aiOn.value = await aiEnabled() })
@@ -193,8 +199,8 @@ onMounted(async () => { aiOn.value = await aiEnabled() })
 async function draftQuestions() {
   aiBusy.value = true
   try {
-    aiResult.value = await api.post(
-      `/api/staff/ai/activities/${props.activityId}/form-draft`, { text: aiText.value })
+    aiResult.value = await api.post(`/api/staff/ai/activities/${props.activityId}/form-draft`,
+                                    aiForm(aiText.value, aiFiles.value.map(f => f.raw)))
   } catch { /* 错误提示 api 层已经给了 */ } finally {
     aiBusy.value = false
   }
@@ -203,6 +209,7 @@ async function draftQuestions() {
 function closeAi() {
   aiOpen.value = false
   aiText.value = ''
+  aiFiles.value = []
   aiResult.value = null
 }
 

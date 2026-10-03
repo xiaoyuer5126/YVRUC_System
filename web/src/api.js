@@ -35,11 +35,13 @@ export function authHeaders() {
 }
 
 async function request(method, url, body, opts = {}) {
-  const headers = { 'Content-Type': 'application/json', ...authHeaders() }
+  // 表单（带文件）原样发，Content-Type 让浏览器带上分隔符自己填
+  const form = body instanceof FormData
+  const headers = { ...(form ? {} : { 'Content-Type': 'application/json' }), ...authHeaders() }
   const resp = await fetch(url, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : form ? body : JSON.stringify(body),
   })
   const ct = resp.headers.get('content-type') || ''
   if (!ct.includes('application/json')) {

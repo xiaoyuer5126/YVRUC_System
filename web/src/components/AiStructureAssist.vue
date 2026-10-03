@@ -73,6 +73,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
+import { aiForm } from '../ai'
 import { DAY_END, DAY_START } from '../store'
 import AiAssist from './AiAssist.vue'
 import DateTimeField from './DateTimeField.vue'
@@ -88,9 +89,9 @@ const attachedCount = computed(() => draft.value.reduce((n, g) => n + g.attached
 
 /** 培训/彩排「哪些岗位要来」起草时写的是岗位名，进预览就换成岗位的 key：
  *  预览里改了岗位名照样对得上，删掉的岗位自然就不算了。 */
-async function run(text) {
+async function run(text, files) {
   const d = await api.post(`/api/staff/ai/activities/${props.activityId}/structure-draft`,
-                           { text })
+                           aiForm(text, files))
   draft.value = JSON.parse(JSON.stringify(d.shifts)).map((g, gi) => {
     g.positions.forEach((p, pi) => { p.key = `${gi}-${pi}` })
     g.attached = g.attached.map(({ positions, ...a }) => ({

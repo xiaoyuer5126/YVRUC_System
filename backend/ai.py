@@ -38,18 +38,26 @@ def enabled() -> bool:
     return bool(config.AI_API_KEY)
 
 
-def _chat(system: str, user: str) -> dict:
-    """问一次模型，要回一个 JSON 对象。"""
+def _chat(system: str, user: str, images: list[str] = ()) -> dict:
+    """问一次模型，要回一个 JSON 对象。images：附件里的图片（data: URL），
+    和原文一起作为多模态消息发过去。"""
+    content: str | list = user
+    if images:
+        content = ([{"type": "text", "text": f"{user}\n\n另附图片 {len(images)} 张，"
+                                              "图里的通知、排班、分工也要读。"}]
+                   + [{"type": "image_url", "image_url": {"url": u}} for u in images])
+    body = {"model": config.AI_MODEL, "temperature": 0.2,
+            "response_format": {"type": "json_object"},
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": content}]}
+    if config.AI_THINKING in ("enabled", "disabled"):
+        body["thinking"] = {"type": config.AI_THINKING}
     started = time.monotonic()
     try:
         r = httpx.post(
             f"{config.AI_BASE_URL}/chat/completions",
             headers={"Authorization": f"Bearer {config.AI_API_KEY}"},
-            json={"model": config.AI_MODEL, "temperature": 0.2,
-                  "response_format": {"type": "json_object"},
-                  "messages": [{"role": "system", "content": system},
-                               {"role": "user", "content": user}]},
-            timeout=config.AI_TIMEOUT)
+            json=body, timeout=config.AI_TIMEOUT)
     except httpx.TimeoutException:
         raise AiError("AI 这次想得太久了，请把原文删短一些再试")
     except httpx.HTTPError:
@@ -124,7 +132,8 @@ def _today() -> str:
 # ======================= 活动基本信息 =======================
 
 ACTIVITY_PROMPT = """你帮中国人民大学的志愿服务管理平台起草「新建活动」表单。
-用户会贴来活动通知、立项书或一段口头描述。只根据原文提取，原文没有的一律留空字符串或空数组，
+用户会贴来活动通知、立项书或一段口头描述，也可能有上传文件转出的文字（表格一行一行，
+单元格用「 | 」隔开）和图片。只根据原文提取，原文没有的一律留空字符串或空数组，
 不要编造——尤其不要编联系人姓名和电话。今天是 {today}，原文里的「下周六」「本月 20 日」等按今天推算，
 时间一律写成「YYYY-MM-DD HH:MM」（北京时间）。
 
@@ -152,11 +161,11 @@ ACTIVITY_REQUIRED = [("title", "活动名称"), ("organizer", "组织单位"), (
                      ("reg_start", "报名开始时间"), ("reg_end", "报名截止时间")]
 
 
-def activity_draft(text: str) -> dict:
+def activity_draft(text: str, images: list[str] = ()) -> dict:
     data = _chat(ACTIVITY_PROMPT.format(today=_today(),
                                         campuses="、".join(config.CAMPUSES),
                                         stages="、".join(config.STAGES)),
-                 text)
+                 text, images)
     draft = {
         "title": _text(data.get("title"), 128),
         "organizer": _text(data.get("organizer"), 64),
@@ -194,6 +203,7 @@ STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草�
 同一时间段的不同分工是同一个场次下的多个岗位，不要拆成多个场次。
 培训、彩排不是服务场次：原文给了具体时间的，写进它所服务的那个场次的 attached；
 没有具体时间、只是到岗前要知道的培训内容，写进岗位的 training_note。
+原文可能含上传文件转出的表格（一行一行，单元格用「 | 」隔开）和图片，排班常常就在表里。
 只根据原文提取，原文没有的留空字符串，不要编造。今天是 {today}；时间写成「YYYY-MM-DD HH:MM」（北京时间），
 原文只说「当天」的，用下面活动信息里能推出的日期。
 
@@ -324,11 +334,11 @@ def _structure_missing(shifts: list[dict]) -> list[str]:
     return out
 
 
-def structure_draft(act: Activity, text: str) -> dict:
+def structure_draft(act: Activity, text: str, images: list[str] = ()) -> dict:
     data = _chat(STRUCTURE_PROMPT.format(today=_today(), activity=_activity_brief(act),
                                          campuses="、".join(config.CAMPUSES),
                                          stages="、".join(config.STAGES)),
-                 text)
+                 text, images)
     shifts, lost = [], []
     for g in _list(data.get("shifts"))[:20]:
         if not isinstance(g, dict):
@@ -410,10 +420,10 @@ def _form_brief(act: Activity) -> str:
     return "\n".join(lines)
 
 
-def form_draft(act: Activity, text: str) -> dict:
+def form_draft(act: Activity, text: str, images: list[str] = ()) -> dict:
     data = _chat(FORM_PROMPT.format(mode=FORM_MODES[act.recruit_mode],
                                     activity=_form_brief(act)),
-                 text or "（没有补充，按活动信息出题）")
+                 text or "（没有补充，按活动信息出题）", images)
     # 同名岗位（上午场、下午场都有「检录引导」）一起算：问的是这类岗位的人
     ids_by_name: dict[str, list[str]] = {}
     for g in act.main_shifts():
