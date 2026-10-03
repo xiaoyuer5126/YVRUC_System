@@ -115,6 +115,17 @@ AI_FILE_COUNT = 5
 AI_FILE_MAX_BYTES = 10 * 1024 * 1024
 AI_IMAGE_MAX = 10
 AI_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+# docx / xlsx 是压缩包，10MB 的文件能解出几百 MB。打开之前先按包里登记的解压后
+# 大小卡住：单项、总量各一道，再加一道压缩比。正常文档的正文 XML 压缩比在几倍到
+# 二三十倍，几十页的立项书、上千行的排班表解压后也就几 MB 到十几 MB，给 50 / 100MB
+# 留足了余量；压缩比超过 100 倍、解压后又超过 10MB 的只会是故意构造的包
+AI_ZIP_ENTRY_MAX_BYTES = 50 * 1024 * 1024
+AI_ZIP_TOTAL_MAX_BYTES = 100 * 1024 * 1024
+AI_ZIP_RATIO_MAX = 100
+AI_ZIP_RATIO_MIN_BYTES = 10 * 1024 * 1024
+# pdf 最多几页。原文本来就限 AI_INPUT_MAX 字，两三百页的文字远超这个数；页数再多
+# 只是白白让 pypdf 逐页解析、拖住线程
+AI_PDF_MAX_PAGES = 200
 
 # 校区的大致中心点：管理端「快捷选点」按它把地图挪过去、给个起点。
 # 数值由用户提供（比网上查的可靠——不同来源能差四百米，比我们默认的 200 米
