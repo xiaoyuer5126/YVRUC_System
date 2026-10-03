@@ -31,6 +31,9 @@
         </template>
       </div>
     </el-card>
+    <div v-if="hasMore" class="more">
+      <el-button :loading="loadingMore" @click="loadMore">加载更多</el-button>
+    </div>
     <el-empty v-if="!items.length" description="暂无消息" />
   </div>
 </template>
@@ -62,6 +65,10 @@ const items = ref([])
 const unread = ref(0)
 const pendingAck = ref(0)
 const acking = ref('')
+const page = ref(1)
+const hasMore = ref(false)
+const loadingMore = ref(false)
+const SIZE = 20
 
 const TAGS = {
   signup_success: ['success', '报名成功'],
@@ -75,25 +82,49 @@ const TAGS = {
 const tagType = k => TAGS[k]?.[0] || 'info'
 const tagLabel = k => TAGS[k]?.[1] || '通知'
 
-async function load() {
-  const d = await api.get('/api/me/notifications')
-  items.value = d.items
+function apply(d) {
   unread.value = d.unread
   pendingAck.value = d.pending_ack
+  hasMore.value = d.has_more
+}
+
+async function load() {
+  const d = await api.get(`/api/me/notifications?page=1&size=${SIZE}`)
+  page.value = 1
+  items.value = d.items
+  apply(d)
 }
 onMounted(load)
 
+/** 接着往下翻一页。翻的过程中来了新通知，后面的会整体往后挪一位，
+ * 下一页开头就会是已经显示过的那条：按 id 去重 */
+async function loadMore() {
+  loadingMore.value = true
+  try {
+    const d = await api.get(`/api/me/notifications?page=${page.value + 1}&size=${SIZE}`)
+    page.value += 1
+    const seen = new Set(items.value.map(n => n.id))
+    items.value.push(...d.items.filter(n => !seen.has(n.id)))
+    apply(d)
+  } finally { loadingMore.value = false }
+}
+
+// 下面两个只改本地已加载的那几条，不重新拉：重拉会把翻过的页收回第一页
 async function readAll() {
   await api.post('/api/me/notifications/read-all')
-  load()
+  items.value.forEach(n => { n.read = true })
+  unread.value = 0
 }
 
 async function ack(n) {
   acking.value = n.id
   try {
-    await api.post(`/api/me/notifications/${n.id}/ack`)
+    const d = await api.post(`/api/me/notifications/${n.id}/ack`)
     ElMessage.success('签收成功')
-    load()
+    if (!n.read) unread.value = Math.max(0, unread.value - 1)
+    n.read = true
+    n.acked_at = d.acked_at
+    pendingAck.value = Math.max(0, pendingAck.value - 1)
   } finally { acking.value = '' }
 }
 </script>
@@ -118,5 +149,6 @@ async function ack(n) {
 @media (max-width: 700px) {
   .msg-title { order: 9; flex: 0 0 100%; margin-top: 4px; line-height: 1.5; }
 }
+.more { display: flex; justify-content: center; margin-bottom: 12px; }
 .content { margin: 8px 0 0; color: #606266; line-height: 1.6; font-size: 13.5px; }
 </style>

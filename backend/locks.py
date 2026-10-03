@@ -379,21 +379,43 @@ CHECKIN_CODE_LEN = 8      # 固定码是 6 位，长度不同，两类码在形�
 _CODE_ALPHABET = string.ascii_uppercase + string.digits
 
 
+def _new_checkin_code() -> str:
+    return "".join(secrets.choice(_CODE_ALPHABET) for _ in range(CHECKIN_CODE_LEN))
+
+
+# 8 位码有两万多亿种，连撞这么多次说明出了别的问题，别再试了
+_CODE_TRIES = 8
+
+
 def current_checkin_code(task_id: str, ttl: int, refresh: int) -> tuple[str, int]:
     """取该任务此刻的签到码，没有就发一张。返回 (码, 距离下次换码的秒数)。
 
     续期用的键比码本身短命（refresh < ttl）：键一过期，下次调用就发新码，
     而旧码还能再用一会儿——正是要的「换码不打断正在扫的人」。
+
+    发码分两步：先用 SET NX 占住「码 → 任务」，占不到说明这张码别的任务
+    正在用，换一张再占；占到了才写「任务 → 码」。直接覆盖的话，撞上的那张码
+    会被改指到本任务，另一个任务现场扫码的人就签进了这一场。
     """
     key = f"yvruc:cktask:{task_id}"
     code = _client.get(key)
     if code:
         return code, max(1, int(_client.ttl(key)))
-    code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(CHECKIN_CODE_LEN))
-    pipe = _client.pipeline()
-    pipe.setex(f"yvruc:ckcode:{code}", ttl, task_id)
-    pipe.setex(key, refresh, code)
-    pipe.execute()
+    for _ in range(_CODE_TRIES):
+        code = _new_checkin_code()
+        if _client.set(f"yvruc:ckcode:{code}", task_id, nx=True, ex=ttl):
+            break
+    else:
+        raise HTTPException(503, "签到码生成失败，请稍后重试")
+    if _client.set(key, code, nx=True, ex=refresh):
+        return code, refresh
+    # 同一时刻另一个请求已经给这个任务发了码：用它那张，自己占的退掉，
+    # 免得一个任务同时挂着两张码
+    other = _client.get(key)
+    if other:
+        _client.delete(f"yvruc:ckcode:{code}")
+        return other, max(1, int(_client.ttl(key)))
+    _client.set(key, code, ex=refresh)
     return code, refresh
 
 

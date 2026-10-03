@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
@@ -189,10 +189,19 @@ def my_team(enrollment_id: str, db: OrmSession = Depends(db_session),
 
 
 @router.get("/notifications")
-def my_notifications(db: OrmSession = Depends(db_session),
+def my_notifications(page: int = Query(1, ge=1),
+                     size: int = Query(20, ge=1, le=100),
+                     db: OrmSession = Depends(db_session),
                      user=Depends(current_user)):
-    rows = (db.query(Notification).filter(Notification.user_id == user.id)
-            .order_by(Notification.created_at.desc()).limit(50).all())
+    """消息列表，新的在前，分页（页面上是「加载更多」）。
+
+    id 兜底排序：同一秒发出的几条通知 created_at 相同，只按时间排的话
+    翻页时它们的先后不固定，会一条出现两次、另一条一次都不出现。
+    """
+    mine = db.query(Notification).filter(Notification.user_id == user.id)
+    total = mine.count()
+    rows = (mine.order_by(Notification.created_at.desc(), Notification.id.desc())
+            .offset((page - 1) * size).limit(size).all())
     unread = (db.query(func.count(Notification.id))
               .filter(Notification.user_id == user.id,
                       Notification.read.is_(False)).scalar() or 0)
@@ -202,7 +211,8 @@ def my_notifications(db: OrmSession = Depends(db_session),
                            Notification.acked_at.is_(None)).scalar() or 0)
     # page：点开去哪一页。由后端按通知算，企业微信卡片的跳转链接出自同一份
     # 规则（msgcenter.page_for），站内和企业微信里点同一条不会各去各的
-    return {"unread": unread, "pending_ack": pending_ack,
+    return {"unread": unread, "pending_ack": pending_ack, "total": total,
+            "has_more": page * size < total,
             "items": [{**n.out(), "page": msgcenter.page_for(n.template_key, n.data)}
                       for n in rows]}
 
@@ -212,7 +222,7 @@ def notifications_unread(db: OrmSession = Depends(db_session),
                          user: User = Depends(current_user)):
     """只要两个数：未读数、待签收数。
 
-    给顶上那个 30 秒轮询用。走完整的 /notifications 会把最近 50 条通知的
+    给顶上那个 30 秒轮询用。走完整的 /notifications 会把一页通知的
     正文一并拉回来，而轮询只用到其中一个数字——开着的每个页面每 30 秒拉
     一次几十 KB 的正文，纯浪费。
     """

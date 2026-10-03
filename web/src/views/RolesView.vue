@@ -20,8 +20,8 @@
 
     <div class="toolbar">
       <el-input v-model="q" placeholder="按姓名或学号搜索"
-                style="width:280px" clearable @keyup.enter="load" @clear="load" />
-      <el-button type="primary" @click="load">查询</el-button>
+                style="width:280px" clearable @keyup.enter="reload" @clear="reload" />
+      <el-button type="primary" @click="reload">查询</el-button>
       <RefreshBar :load="load" :at="loadedAt" />
       <span class="dim">{{ coreOnly ? '只列本部门的成员' : headOnly ? '不搜索时只列本部门的人，添加新成员请搜索学号' : '不搜索时只列已有管理类身份的人' }}</span>
     </div>
@@ -88,6 +88,9 @@
         </template>
       </el-table-column>
     </el-table>
+    <el-pagination layout="total, prev, pager, next" :total="total" :page-size="SIZE"
+                   v-model:current-page="page" @current-change="load" small
+                   style="margin-top:12px;justify-content:flex-end" />
 
     <el-dialog v-model="dlg.visible" title="调整身份" width="480">
       <p>
@@ -161,8 +164,11 @@ const ROLE_ORDER = ['admin', 'qingxie', 'initiator', 'student']
 const ROLE_LABELS = { admin: '管理员', qingxie: '青协', initiator: '活动发起方', student: '学生' }
 const ROLE_TAG = { admin: 'danger', qingxie: 'success', initiator: 'primary', student: 'info' }
 
+const SIZE = 20
 const narrow = useNarrow()
 const rows = ref([])
+const total = ref(0)
+const page = ref(1)
 const depts = ref([])
 const q = ref('')
 const loading = ref(false)
@@ -188,9 +194,18 @@ const myDeptName = computed(() =>
 async function load() {
   loading.value = true
   try {
-    rows.value = await api.get(`/api/staff/roles?q=${encodeURIComponent(q.value.trim())}`)
+    const d = await api.get(`/api/staff/roles?page=${page.value}&size=${SIZE}`
+      + `&q=${encodeURIComponent(q.value.trim())}`)
+    rows.value = d.items
+    total.value = d.total
     loadedAt.value = Date.now()
   } finally { loading.value = false }
+}
+
+// 换了搜索词，结果集变了，停在后面的页可能是空的：回到第 1 页
+function reload() {
+  page.value = 1
+  load()
 }
 
 onMounted(async () => {

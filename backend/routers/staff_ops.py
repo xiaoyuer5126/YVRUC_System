@@ -14,6 +14,7 @@ from sqlalchemy import and_, func
 from sqlalchemy.orm import Session as OrmSession, selectinload
 
 from ..audit import log as audit_log
+from ..codes import insert_with_unique_code
 from .. import config, hours as hours_flow, liaison
 from ..stage import ensure_hours_editable, ensure_not_finished
 from ..database import db_session
@@ -126,13 +127,15 @@ def create_task(shift_id: str, body: TaskBody,
     pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
     made: list[CheckinTask] = []
     for st in (positions or [None]):
-        task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
-                           position_id=st.id if st else None,
-                           mode=body.mode, token=new_checkin_token(),
-                           valid_from=valid_from or g.start_time - pad,
-                           valid_to=valid_to or g.end_time + pad,
-                           created_by=user.id)
-        db.add(task)
+        task = insert_with_unique_code(
+            db, CheckinTask.token, new_checkin_token,
+            lambda code, st=st: CheckinTask(
+                id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+                position_id=st.id if st else None,
+                mode=body.mode, token=code,
+                valid_from=valid_from or g.start_time - pad,
+                valid_to=valid_to or g.end_time + pad,
+                created_by=user.id))
         label = st.name if st else f"{g.name}·统一签到"
         audit_log(db, actor=user, action="checkin_task", target_type="checkin",
                   target_id=task.id, target_label=f"{act.title}·{label}",

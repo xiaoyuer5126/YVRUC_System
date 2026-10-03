@@ -133,7 +133,7 @@ watch(() => route.path, () => { drawer.value = false })
 async function poll() {
   if (!auth.token) return
   try {
-    // 只问数字：完整那个接口会把最近 50 条通知的正文一并拉回来，
+    // 只问数字：完整那个接口会把一页通知的正文一并拉回来，
     // 而这儿只用得上一个 unread。30 秒一次 × 每个开着的页面，省下来不少
     const d = await api.get('/api/me/notifications/unread', { silent: true })
     unread.value = d.unread
