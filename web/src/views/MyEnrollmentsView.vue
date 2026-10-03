@@ -18,7 +18,7 @@
           {{ row.shift.name }} · {{ row.shift.time_text }}
         </div>
         <div v-if="row.shift.attached" class="dim">
-          随「{{ row.shift.parent_name }}」报名，退选请退主场次
+          随服务场次的报名产生；不能参加请到活动页请假
           <template v-if="row.shift.location"> · {{ row.shift.location }}</template>
           <el-tag v-if="row.excused" size="small" type="info" effect="plain">已请假</el-tag>
         </div>
@@ -84,7 +84,7 @@
           </el-tag>
           {{ row.shift.name }}（{{ row.shift.time_text }}）
           <div v-if="row.shift.attached" class="dim">
-            随「{{ row.shift.parent_name }}」报名
+            随服务场次的报名产生
             <template v-if="row.shift.location"> · {{ row.shift.location }}</template>
             <el-tag v-if="row.excused" size="small" type="info" effect="plain">已请假</el-tag>
           </div>

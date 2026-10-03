@@ -622,7 +622,7 @@ def send_roster_digests(db: OrmSession) -> int:
               .join(Activity, Shift.activity_id == Activity.id)
               .filter(Shift.start_time > t,
                       Shift.start_time <= t + lead,
-                      Shift.parent_id.is_(None),   # 培训/彩排不单独报日报
+                      Shift.kind == "service",   # 培训/彩排不单独报日报
                       Activity.status.in_(("published", "closed")))
               .all())
     sent = 0

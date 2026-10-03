@@ -138,7 +138,7 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
         (aid, (lo, hi)) for aid, lo, hi in
         db.query(Shift.activity_id, func.min(Shift.start_time),
                  func.max(Shift.end_time))
-        .filter(Shift.parent_id.is_(None)).group_by(Shift.activity_id).all())
+        .filter(Shift.kind == "service").group_by(Shift.activity_id).all())
     # 招募范围外的活动不上广场：看得见报不了，只会多一次被拦的失望。
     # 报过名的人不受此限（范围是后来缩的），自己管的活动同样照常显示——
     # 管理者要从这里进详情核对志愿者看到的样子。
@@ -608,11 +608,9 @@ def cancel_enroll(enrollment_id: str,
         raise HTTPException(400, "该记录已退选")
     g = db.get(Shift, enr.shift_id)
     if g.is_attached():
-        parent = db.get(Shift, g.parent_id)
         raise HTTPException(
-            409, f"「{g.name}」是「{parent.name}」的{g.kind_label()}，"
-                 f"随该场次报名产生，不能单独退出；如确实不能参加，"
-                 f"请退选「{parent.name}」或联系负责人")
+            409, f"「{g.name}」是本活动的{g.kind_label()}，随服务场次的报名产生，"
+                 f"不能单独退出；不能参加的话请点「我无法参加」请假，或联系负责人")
     act = db.get(Activity, enr.activity_id)
     _ensure_not_editing(act)
 

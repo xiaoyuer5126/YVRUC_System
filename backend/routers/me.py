@@ -91,11 +91,9 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
                   "start_time": iso_of(g.start_time),
                   "end_time": iso_of(g.end_time),
                   "location": g.location,
-                  # 培训/彩排是主场次带出来的，学生不能单独退，只能整体退
+                  # 培训/彩排随服务场次的报名产生，学生不能单独退，只能请假
                   "kind": g.kind, "kind_label": g.kind_label(),
                   "attached": g.is_attached(),
-                  "parent_name": (db.get(Shift, g.parent_id).name
-                                  if g.is_attached() else ""),
                   "hours_mode": g.hours_mode},
         "position": ({"id": st.id, "name": st.name, "time_text": st.time_text(),
                      "location": st.location} if st else None),

@@ -53,7 +53,7 @@ def test_待分配与培训不单独暂停_学生不能切(client, admin, db, op
                     json={"paused": True})
     assert r.status_code == 400 and "暂停整个场次" in r.json()["detail"]
     att = Shift(id=uid("g"), activity_id=act.id, name="彩排", kind="rehearsal",
-                parent_id=g.id, start_time=g.start_time, end_time=g.end_time, sort=1)
+                start_time=g.start_time, end_time=g.end_time, sort=1)
     db.add(att)
     db.commit()
     r = client.post(f"/api/staff/shifts/{att.id}/pause", headers=admin, json={"paused": True})

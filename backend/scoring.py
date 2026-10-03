@@ -78,7 +78,7 @@ def _events_many(db: OrmSession, user_ids: list[str]) -> dict[str, list[_Event]]
                           .join(Shift, Enrollment.shift_id == Shift.id)
                           .join(Activity, Enrollment.activity_id == Activity.id)
                           .filter(Enrollment.user_id.in_(ids),
-                                  Shift.parent_id.is_(None)).all()):
+                                  Shift.kind == "service").all()):
         key = (e.user_id, e.activity_id)
         titles[key] = title
         if e.cancel_type == "late":

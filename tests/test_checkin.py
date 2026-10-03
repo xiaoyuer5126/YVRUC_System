@@ -136,7 +136,7 @@ def two_shift_act(client, db, admin):
     db.flush()
     db.add(Position(id=uid("p"), shift_id=am.id, name="引导", quota=5, sort=0))
     train = Shift(id=uid("g"), activity_id=act.id, name="赛前培训",
-                  kind="training", parent_id=am.id,
+                  kind="training",
                   start_time=now() + timedelta(days=1),
                   end_time=now() + timedelta(days=1, hours=2),
                   mode="pick", hours_mode="checkin", sort=1)

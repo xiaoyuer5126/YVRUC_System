@@ -220,10 +220,9 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
                              Enrollment.status == "enrolled").scalar() or 0)
         here = (db.query(func.count(func.distinct(CheckinRecord.user_id)))
                 .filter(CheckinRecord.shift_id == g.id).scalar() or 0)
-        # 培训/彩排不招人，名额那一列写它属于哪个服务场次更有用
+        # 培训/彩排不招人，名额那一列写有多少人要来
         if g.is_attached():
-            parent = db.get(Shift, g.parent_id)
-            quota = f"{enrolled} 人（随「{parent.name if parent else '?'}」）"
+            quota = f"{enrolled} 人（随服务场次）"
         else:
             quota = f"{enrolled}/{g.total_capacity()}"
         overview.append([g.name, g.kind_label(), g.span_text(),

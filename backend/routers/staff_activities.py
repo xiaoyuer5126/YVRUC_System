@@ -37,7 +37,7 @@ from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
                       CheckinRecord, CheckinTask, Enrollment, FormQuestion,
                       Notification, Position, Shift, User, VbConfirm,
                       iso, like_pattern, now, parse_local_dt, uid)
-from ..serializers import activity_brief, load_trees
+from ..serializers import activity_brief, applies_text, load_trees
 from .screening import answers_out
 
 router = APIRouter(prefix="/api/staff", tags=["staff"])
@@ -931,9 +931,8 @@ class ShiftBody(BaseModel):
     location: str = Field(default="", max_length=128)
     waitlist_quota: int = Field(default=3, ge=0)   # 候补队列人数上限
     hours_mode: str = "checkin"
-    # —— 培训/彩排（附属场次）——
+    # —— 培训/彩排：挂在整个活动上，applies_to_positions 圈要来的岗位（空 = 全体）——
     kind: str = "service"
-    parent_id: str = ""
     applies_to_positions: list[str] = []
     # 场次级硬性条件：{"校区": [...], "学段": [...]}，空 = 不限
     requirement_tags: dict = {}
@@ -944,11 +943,19 @@ def _validate_shift_times(start: datetime, end: datetime):
         raise HTTPException(400, "结束时间必须晚于开始时间")
 
 
+def _clean_applies(act: Activity, ids: list[str]) -> list[str]:
+    """培训/彩排要叫的岗位：本活动服务场次里的岗位，可以跨场次。"""
+    known = {p.id for g in act.main_shifts() for p in g.positions}
+    if [i for i in ids if i not in known]:
+        raise HTTPException(400, "所选岗位不属于本活动")
+    return list(dict.fromkeys(ids))
+
+
 def _apply_attachment(db: OrmSession, g: Shift, body: ShiftBody,
                       act: Activity) -> None:
-    """把「这是某个服务场次的培训/彩排」这层关系落到场次上。
+    """场次类型；培训/彩排再落下它要叫的岗位。
 
-    附属场次不设名额与候补：来不来由主场次的报名决定，自己不招人。
+    培训/彩排挂在整个活动上，不设名额与候补：来不来由服务场次的报名决定。
     """
     if body.hours_mode not in HOURS_MODES:
         raise HTTPException(400, "时长认定方式不合法")
@@ -956,29 +963,38 @@ def _apply_attachment(db: OrmSession, g: Shift, body: ShiftBody,
         raise HTTPException(400, "场次类型不合法")
     g.hours_mode = body.hours_mode
     g.kind = body.kind
-    g.requirement_tags = _clean_requirement_tags(body.requirement_tags, "场次")
-    if not body.parent_id:
-        if body.kind != "service":
-            raise HTTPException(400, "培训/彩排必须挂在一个服务场次下")
-        g.parent_id = None
+    if body.kind == "service":
+        g.requirement_tags = _clean_requirement_tags(body.requirement_tags, "场次")
         g.applies_to_positions = []
         return
-    if body.kind == "service":
-        raise HTTPException(400, "附属场次的类型必须是培训或彩排")
-    parent = db.get(Shift, body.parent_id)
-    if parent is None or parent.activity_id != act.id:
-        raise HTTPException(400, "所属服务场次不属于本活动")
-    if parent.is_attached():
-        raise HTTPException(400, "培训/彩排不能再挂培训/彩排")
-    if parent.id == g.id:
-        raise HTTPException(400, "场次不能挂在自己下面")
-    known = {p.id for p in parent.positions}
-    bad = [i for i in body.applies_to_positions if i not in known]
-    if bad:
-        raise HTTPException(400, "所选岗位不属于该服务场次")
-    g.parent_id = parent.id
-    g.applies_to_positions = list(body.applies_to_positions)
-    g.mode = "pick"          # 附属场次不选岗位，模式对它没有意义
+    g.requirement_tags = {}
+    g.applies_to_positions = _clean_applies(act, body.applies_to_positions)
+    g.mode = "pick"          # 培训/彩排不选岗位，模式对它没有意义
+
+
+def _resync_training(db: OrmSession, act: Activity, s: Shift) -> None:
+    """培训/彩排新建或改了要叫的岗位：已经报上名的人按新的范围连带报上或退出，
+    否则他们看不到这一场、也签不了到。"""
+    db.flush()
+    for enr in (db.query(Enrollment)
+                .join(Shift, Enrollment.shift_id == Shift.id)
+                .filter(Enrollment.activity_id == act.id,
+                        Enrollment.status == "enrolled",
+                        Shift.kind == "service").all()):
+        logic.sync_attached(db, enr, [s])
+
+
+def _prune_trainings(db: OrmSession, act: Activity, gone: set[str]) -> None:
+    """岗位要删了：把它们从培训/彩排的范围里拿掉。拿掉之后范围空了的
+    （只叫这几个岗位的培训）不能悄悄变成「全体」，先拦下让人自己处理。"""
+    for s in act.trainings():
+        left = [i for i in s.applies_to_positions or [] if i not in gone]
+        if s.applies_to_positions and not left:
+            raise HTTPException(
+                409, f"{s.kind_label()}「{s.name}」只叫要删的这些岗位，"
+                     f"请先删掉它或改一下要参加的岗位")
+        if len(left) != len(s.applies_to_positions or []):
+            s.applies_to_positions = left
 
 
 def _sync_placeholder(db: OrmSession, g: Shift, capacity: int,
@@ -1066,13 +1082,9 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
     _sync_placeholder(db, g, body.capacity, body.waitlist_quota)
     db.flush()
     if g.is_attached():
-        parent = db.get(Shift, g.parent_id)
-        scope = ("全场次" if not g.applies_to_positions else
-                 "、".join(p.name for p in parent.positions
-                           if p.id in g.applies_to_positions))
-        summary = (f"为「{parent.name}」新增{g.kind_label()}「{g.name}」"
+        summary = (f"新增{g.kind_label()}「{g.name}」"
                    f"（{g.span_text()}，{g.location or '地点待定'}，"
-                   f"适用 {scope}，{g.hours_label()}）")
+                   f"{applies_text(act, g)}参加，{g.hours_label()}）")
     else:
         summary = (f"新建场次「{g.name}」（{g.span_text()}，"
                    f"{g.mode_label()}，上限{body.capacity}人）")
@@ -1080,11 +1092,7 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
               target_id=g.id, target_label=f"{act.title}·{g.name}",
               activity_id=act.id, summary=summary, visible=True)
     if g.is_attached():
-        # 已经报上名的人要连带报进这场培训/彩排，否则他们看不到也签不了到
-        for enr in (db.query(Enrollment)
-                    .filter(Enrollment.shift_id == g.parent_id,
-                            Enrollment.status == "enrolled").all()):
-            logic.sync_attached(db, enr)
+        _resync_training(db, act, g)
     db.commit()
     if act.status != "draft":
         bg.add_task(_notify_activity_bg, act.id, "activity_changed",
@@ -1124,16 +1132,8 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
         else:
             setattr(g, key, v)
     if "applies_to_positions" in body and g.is_attached():
-        parent = db.get(Shift, g.parent_id)
-        known = {p.id for p in parent.positions}
-        if [i for i in body["applies_to_positions"] if i not in known]:
-            raise HTTPException(400, "所选岗位不属于该服务场次")
-        g.applies_to_positions = list(body["applies_to_positions"])
-        db.flush()
-        for enr in (db.query(Enrollment)
-                    .filter(Enrollment.shift_id == g.parent_id,
-                            Enrollment.status == "enrolled").all()):
-            logic.sync_attached(db, enr)
+        g.applies_to_positions = _clean_applies(act, body["applies_to_positions"])
+        _resync_training(db, act, g)
     _validate_shift_times(g.start_time, g.end_time)
     # 名额与候补落到占位岗位上；没传就沿用它当前的值
     holder = g.placeholder()
@@ -1174,18 +1174,14 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
-    # 附属的培训/彩排跟着主场次走：它们的报名本来就是主场次带出来的
-    children = db.query(Shift).filter(Shift.parent_id == g.id).all()
+    if not g.is_attached():
+        _prune_trainings(db, act, {p.id for p in g.positions})
     n_active = db.query(Enrollment).filter(
         Enrollment.shift_id == g.id,
         Enrollment.status.in_(logic.ACTIVE)).count()
     if n_active and not force:
         raise HTTPException(409, f"该场次已有 {n_active} 人有效报名，"
                                  f"删除需强制执行（force=1），全部记录将被取消")
-    for child in children:
-        (db.query(Enrollment).filter(Enrollment.shift_id == child.id)
-         .delete(synchronize_session=False))
-        db.delete(child)
     db.flush()
     if n_active and force:
         # 场次没了，扣留的占位名额也一并失效——这不是志愿者的责任
@@ -1201,9 +1197,7 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
     audit_log(db, actor=user, action="delete", target_type="group",
               target_id=g.id, target_label=label, activity_id=act.id,
               summary=f"删除场次「{g.name}」" +
-                      (f"（强制，含{n_active}条报名记录）" if n_active else "") +
-                      (f"；同时删除 {len(children)} 个附属的培训/彩排"
-                       if children else ""),
+                      (f"（强制，含{n_active}条报名记录）" if n_active else ""),
               visible=True)
     db.commit()
     return {"ok": True}
@@ -1313,6 +1307,12 @@ def create_position(shift_id: str, body: PositionBody,
     db.flush()   # 让 group 关系可用，供 time_text() 使用
     copied = (copying.copy_attachments(db, "position", source.id, s.id,
                                        act.id, user) if source else 0)
+    # 复制出来的是同一个岗位的另一个时段（「按岗位看」里的加时段）：叫原岗位
+    # 的培训/彩排也叫它
+    if source is not None:
+        for t in act.trainings():
+            if source.id in (t.applies_to_positions or []):
+                t.applies_to_positions = [*t.applies_to_positions, s.id]
     audit_log(db, actor=user, action="create", target_type="position",
               target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
               activity_id=act.id,
@@ -1464,6 +1464,7 @@ def delete_position(position_id: str,
     if s.is_placeholder:
         raise HTTPException(409, "「待分配」是这一场报名的入口，不能删；"
                                  "名额改在场次的「人数上限」里")
+    _prune_trainings(db, act, {s.id})
     n = db.query(Enrollment).filter(Enrollment.position_id == s.id,
                                     Enrollment.status == "enrolled").count()
     if n:

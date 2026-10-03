@@ -433,8 +433,13 @@ class Activity(Base):
         return config.recruit_name(self.recruit_mode)
 
     def main_shifts(self) -> list["Shift"]:
-        """服务场次。培训/彩排是附属场次，不参与名额、时间跨度与广场展示。"""
-        return [s for s in self.shifts if s.parent_id is None]
+        """服务场次。培训/彩排不参与名额、时间跨度与广场展示。"""
+        return [s for s in self.shifts if s.kind == "service"]
+
+    def trainings(self) -> list["Shift"]:
+        """培训/彩排，按开始时间排。"""
+        return sorted((s for s in self.shifts if s.kind != "service"),
+                      key=lambda s: s.start_time)
 
     def time_span(self) -> tuple[datetime, datetime] | None:
         """活动整体起止 = 最早服务场次开始 / 最晚服务场次结束。
@@ -530,9 +535,12 @@ class Shift(Base):
       assign  截止后分配：报名只锁时段，名额与候补在场次上，
               截止后由一键分配把人分进岗位
 
-    培训与彩排也是场次，只是**附属**于某个服务场次（parent_id）：报名主场次
-    时连带报上，退选时连带退，自己不设名额与候补。这样签到码、到岗大屏、
-    时长计算、时段冲突检测全部原样复用——它们本来就是按场次算的。
+    培训与彩排也是场次（kind=training/rehearsal），挂在整个活动上：
+    applies_to_positions 圈出要来的岗位，可以跨场次（检录组周五、周六两天都
+    来同一场培训），空 = 本活动所有报上名的人。报上任一个被圈到的岗位就连带
+    报上，最后一个被圈到的报名退掉或调走才连带退；自己不设名额与候补。这样
+    签到码、到岗大屏、时长计算、时段冲突检测全部原样复用——它们本来就是按
+    场次算的。
     """
     __tablename__ = "shifts"
 
@@ -543,12 +551,10 @@ class Shift(Base):
     end_time: Mapped[datetime] = mapped_column(DateTime)
     location: Mapped[str] = mapped_column(String(128), default="")
     mode: Mapped[str] = mapped_column(String(12), default="pick")
-    # —— 附属场次（培训/彩排）——
+    # —— 培训/彩排 ——
     kind: Mapped[str] = mapped_column(String(12), default="service")
-    parent_id: Mapped[str | None] = mapped_column(
-        ForeignKey("shifts.id"), nullable=True, index=True)
-    # 只对主场次的这些岗位生效；空 = 全场次。东门组周五彩排、检录组周六彩排
-    # 是常事，一刀切会把人叫到不该来的场。
+    # 培训/彩排只叫这些岗位的人（可以跨场次）；空 = 本活动所有报上名的人。
+    # 东门组周五彩排、检录组周六彩排是常事，一刀切会把人叫到不该来的场
     applies_to_positions: Mapped[list] = mapped_column(JSON, default=list)
     # 时长怎么认：checkin 签退−签到 / fixed 到场即按场次时长 / none 不计时长。
     # 把不确定性收在建场次这一次决定里，而不是散在事后逐条核对里。
@@ -584,7 +590,8 @@ class Shift(Base):
         return self.HOURS_LABELS.get(self.hours_mode, self.hours_mode)
 
     def is_attached(self) -> bool:
-        return self.parent_id is not None
+        """培训/彩排：跟着服务场次的报名走，自己不招人。"""
+        return self.kind != "service"
 
     def span_text(self) -> str:
         return span_text(self.start_time, self.end_time)

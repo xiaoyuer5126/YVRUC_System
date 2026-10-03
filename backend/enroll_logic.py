@@ -84,16 +84,24 @@ def enroll_deadline(act: Activity, shift: Shift) -> datetime:
     return shift.start_time
 
 
+def applies_to_shift(s: Shift, g: Shift) -> bool:
+    """培训/彩排 s 叫不叫服务场次 g 的人：全体，或者圈到了 g 的某个岗位。"""
+    return (not s.applies_to_positions
+            or any(p.id in s.applies_to_positions for p in g.positions))
+
+
 def attached_shifts(db: OrmSession, shift_id: str,
                     position_id: str | None = None) -> list[Shift]:
-    """某服务场次下的培训/彩排场次；给了岗位就只留对该岗位生效的。"""
-    rows = (db.query(Shift).filter(Shift.parent_id == shift_id)
+    """对某服务场次生效的培训/彩排；给了岗位就只留对该岗位生效的。"""
+    g = db.get(Shift, shift_id)
+    rows = (db.query(Shift)
+            .filter(Shift.activity_id == g.activity_id, Shift.kind != "service")
             .order_by(Shift.start_time).all())
-    return for_position(rows, position_id)
+    return for_position([s for s in rows if applies_to_shift(s, g)], position_id)
 
 
 def for_position(attached: list[Shift], position_id: str | None) -> list[Shift]:
-    """在 attached_shifts(db, shift_id) 查回来的全集里挑出对这个岗位生效的，不再查库。"""
+    """在 attached_shifts(db, shift_id) 查回来的那批里挑出对这个岗位生效的，不再查库。"""
     if position_id is None:
         return attached
     return [s for s in attached
@@ -103,22 +111,39 @@ def for_position(attached: list[Shift], position_id: str | None) -> list[Shift]:
 
 def sync_attached(db: OrmSession, enr: Enrollment,
                   attached: list[Shift] | None = None) -> None:
-    """按主报名的状态与岗位，同步培训/彩排的报名。
+    """主报名有变化之后，同步这个人的培训/彩排报名。
 
     一个入口管所有变化——报名、候补转正、退选、改岗——省得每处各写一遍
     然后漏掉一处。改岗尤其要紧：东门组周五彩排，人被调去检录组之后，
     那场彩排就不该再叫他。
+    一场培训可能管好几个场次的人，所以看的是他在本活动**全部**正式报名的
+    岗位：任一个被圈到就该去，一个都不剩才退。
     已经签到过的不删：人确实来了，记录不能凭空消失。
 
     attached：调用方已经查过的 attached_shifts(db, enr.shift_id)（不按岗位
-    过滤的全集）。报名在锁外为比时段查过一遍，锁里直接用，省一条 SQL。
+    过滤）。报名在锁外为比时段查过一遍，锁里直接用；这一场的变化也只可能
+    影响这几场培训。一场培训都没有时什么也不查。
     """
     if attached is None:
         attached = attached_shifts(db, enr.shift_id)
+    if not attached:
+        return
+    # 会话不自动 flush：enr 自己的最新状态单独算，库里只取他别的报名
+    others = (db.query(Enrollment.position_id)
+              .join(Shift, Enrollment.shift_id == Shift.id)
+              .filter(Enrollment.user_id == enr.user_id,
+                      Enrollment.activity_id == enr.activity_id,
+                      Enrollment.id != enr.id,
+                      Enrollment.status == "enrolled",
+                      Shift.kind == "service").all())
+    pids = {pid for (pid,) in others}
+    if enr.status == "enrolled":
+        pids.add(enr.position_id)
+    enrolled_any = bool(pids)
+    pids.discard(None)
     for s in attached:
-        want = (enr.status == "enrolled"
-                and (not s.applies_to_positions
-                     or enr.position_id in s.applies_to_positions))
+        want = enrolled_any and (not s.applies_to_positions
+                                 or bool(pids & set(s.applies_to_positions)))
         row = (db.query(Enrollment)
                .filter(Enrollment.shift_id == s.id,
                        Enrollment.user_id == enr.user_id).first())

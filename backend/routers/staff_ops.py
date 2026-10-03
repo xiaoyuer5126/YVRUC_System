@@ -29,7 +29,7 @@ from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
                       Department, Enrollment, HoursAppeal, HoursRecord,
                       HoursRequest, Shift, Position, User, iso, new_checkin_token, now,
                       parse_local_dt, span_text, uid)
-from ..serializers import iso_of, recruit_scope_phrase
+from ..serializers import applies_text, iso_of, recruit_scope_phrase
 from .checkin import checkout_open
 from .geo import tiles_configured
 
@@ -921,17 +921,13 @@ def poster(activity_id: str, request: Request, base: str = "",
                 f"报酬方式：{p.pay_text()}" if p.pay_text() else "") if x]
             if extra:
                 L.append("  " + "；".join(extra))
-    attached = []
-    for g in mains:
-        for s in sorted((x for x in act.shifts if x.parent_id == g.id),
-                        key=lambda x: x.start_time):
-            who = "全体" if not s.applies_to_positions else "、".join(
-                p.name for p in g.positions if p.id in s.applies_to_positions)
-            attached.append(
-                f"{_cn_span(s.start_time, s.end_time)} {s.kind_label()}"
-                + (f"，{s.location}" if s.location else "")
-                + f"（{who}需参加，{'不计时长' if s.hours_mode == 'none' else '计入时长'}）"
-                + (f"；{_one_line(s.note)}" if s.note else ""))
+    attached = [
+        f"{_cn_span(s.start_time, s.end_time)} {s.kind_label()}"
+        + (f"，{s.location}" if s.location else "")
+        + f"（{applies_text(act, s)}需参加，"
+          f"{'不计时长' if s.hours_mode == 'none' else '计入时长'}）"
+        + (f"；{_one_line(s.note)}" if s.note else "")
+        for s in act.trainings()]
     if attached:
         L += ["【培训与彩排】", *attached]
     if (act.volunteer_requirement or "").strip():

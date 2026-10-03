@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm.attributes import set_committed_value
 
 from . import pubcache
-from .enroll_logic import (Occupancy, active_rows, conflicts_among,
+from .enroll_logic import (Occupancy, active_rows, applies_to_shift, conflicts_among,
                            enroll_deadline, group_needs_leader, shift_counts,
                            unmet_for_tags, waitlist_position)
 from .models import (Activity, Application, Attachment, AuditLog, Enrollment,
@@ -101,6 +101,24 @@ def recruit_scope_phrase(act) -> str:
     where = "、".join(act.recruit_campuses or []) + "、".join(act.recruit_colleges or [])
     stages = "、".join(act.recruit_stages or [])
     return f"{where or '全校'}{stages or '同学'}"
+
+
+def applies_text(act, s) -> str:
+    """培训/彩排叫谁：「全体」，或者岗位名。同名岗位（几个场次都有「检录」）
+    全圈上了只写名字，只圈了其中几个时段的带上场次名。"""
+    ids = s.applies_to_positions or []
+    if not ids:
+        return "全体"
+    by_name: dict[str, list] = defaultdict(list)
+    for g in sorted(act.main_shifts(), key=lambda x: x.sort):
+        for p in sorted(g.positions, key=lambda x: x.sort):
+            by_name[p.name].append((p.id, g.name))
+    out = []
+    for name, items in by_name.items():
+        hit = [gname for pid, gname in items if pid in ids]
+        if hit:
+            out.append(name if len(hit) == len(items) else f"{name}（{'、'.join(hit)}）")
+    return "、".join(out)
 
 
 def recruit_scope_text(act) -> str:
@@ -392,9 +410,9 @@ def _material_counts(db: OrmSession, position_ids: list[str]) -> dict[str, int]:
 
 
 def _attached_public(s: Shift, occ: Occupancy) -> dict:
-    """附属场次（培训/彩排）在主场次上的一行摘要，人人都一样的部分。
+    """培训/彩排的一行摘要，人人都一样的部分。
 
-    自己不招人，所以没有名额与候补；关心的是什么时候、在哪、对谁生效、算不算时长。
+    自己不招人，所以没有名额与候补；关心的是什么时候、在哪、叫谁、算不算时长。
     """
     return {
         "excused_count": occ.shift_excused(s.id),
@@ -406,6 +424,7 @@ def _attached_public(s: Shift, occ: Occupancy) -> dict:
         "requirement_tags": s.requirement_tags or {},
         "requirement_desc": tags_desc(s.requirement_tags) or "不限",
         "applies_to_positions": s.applies_to_positions or [],
+        "applies_text": applies_text(s.activity, s),
         "enrolled": occ.shift_enrolled(s.id),
     }
 
@@ -431,16 +450,12 @@ def _shift_public(g: Shift, occ: Occupancy, n_materials: dict) -> dict:
         "mode_label": g.mode_label(),
         "location": g.location,
         "kind": g.kind, "kind_label": g.kind_label(),
-        "parent_id": g.parent_id,
-        "applies_to_positions": g.applies_to_positions or [],
         "hours_mode": g.hours_mode, "hours_label": g.hours_label(),
         "requirement_tags": g.requirement_tags or {},
         "requirement_desc": tags_desc(g.requirement_tags) or "不限",
-        # 本场次附带的培训/彩排：学生看的是「报这个岗位还要去哪几场」
-        "attached": [_attached_public(s, occ)
-                     for s in sorted(
-                         (x for x in g.activity.shifts if x.parent_id == g.id),
-                         key=lambda x: x.start_time)],
+        # 叫这一场的人的培训/彩排：学生看的是「报这个岗位还要去哪几场」
+        "attached": [_attached_public(s, occ) for s in g.activity.trainings()
+                     if applies_to_shift(s, g)],
         "note": g.note, "sort": g.sort,
         "positions": [_position_public(p, _group_of(p, positions), occ,
                                        n_materials.get(p.id, 0))
@@ -472,7 +487,7 @@ def application_out(db: OrmSession, act: Activity, user=None) -> dict:
                 .join(Shift, Enrollment.shift_id == Shift.id)
                 .filter(Enrollment.activity_id == act.id,
                         Enrollment.user_id == user.id,
-                        Shift.parent_id.is_(None))
+                        Shift.kind == "service")
                 .order_by(Shift.sort).all())
         # 同一场次可以勾好几个意向岗位，完整的一份记在申请上
         picked = {p.id: p for p in
@@ -523,7 +538,9 @@ def _detail_public(db: OrmSession, act: Activity) -> dict:
         "approval_dept_id": act.approval_dept_id or "",
         "auto_publish": act.auto_publish,
         "volunteer_benefit": act.volunteer_benefit,
-        # 培训/彩排不单列，它们挂在各自主场次的 attached 里
+        # 全部培训/彩排（挂在整个活动上）：管理端列一处，「按岗位看」按岗位挑；
+        # 每个服务场次的 attached 里另有叫这一场的那几个
+        "trainings": [_attached_public(s, occ) for s in act.trainings()],
         "shifts": sorted([_shift_public(g, occ, n_materials)
                           for g in act.main_shifts()],
                          key=lambda x: x["start_time"]),

@@ -97,7 +97,7 @@ def test_撞的是另一场的彩排_同样只成一个(client, db, open_group, 
     act1, g1 = open_group(5, day_offset=640, start_in_hours=4)
     act2, g2 = open_group(5, day_offset=650, start_in_hours=4)
     db.add(Shift(id=uid("g"), activity_id=act1.id, name="彩排",
-                 kind="rehearsal", parent_id=g1.id,
+                 kind="rehearsal",
                  start_time=g2.start_time + timedelta(hours=1),
                  end_time=g2.start_time + timedelta(hours=2)))
     db.commit()

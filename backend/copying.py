@@ -108,15 +108,14 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=operator.id, added_by=operator.id))
 
-    def clone(src_shift: Shift, parent_id: str | None,
-              position_map: dict[str, str]) -> Shift:
+    def clone(src_shift: Shift, position_map: dict[str, str]) -> Shift:
         shift = Shift(id=uid("s"), activity_id=act.id, name=src_shift.name,
                       start_time=src_shift.start_time + delta,
                       end_time=src_shift.end_time + delta,
                       mode=src_shift.mode,
                       note=src_shift.note, sort=src_shift.sort,
                       location=src_shift.location, kind=src_shift.kind,
-                      hours_mode=src_shift.hours_mode, parent_id=parent_id,
+                      hours_mode=src_shift.hours_mode,
                       # 适用岗位要换成新岗位的 id，照抄会指向旧活动
                       applies_to_positions=[
                           position_map[i]
@@ -128,17 +127,14 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
 
     all_positions: dict[str, str] = {}
     for src_shift in sorted(src.main_shifts(), key=lambda s: s.sort):
-        shift = clone(src_shift, None, {})
-        position_map = {}
+        shift = clone(src_shift, {})
         for i, src_pos in enumerate(sorted(src_shift.positions,
                                            key=lambda p: p.sort)):
-            position_map[src_pos.id] = copy_position(
+            all_positions[src_pos.id] = copy_position(
                 db, src_pos, shift, operator, sort=i).id
-        all_positions.update(position_map)
-        for child in sorted((s for s in src.shifts
-                             if s.parent_id == src_shift.id),
-                            key=lambda s: s.start_time):
-            clone(child, shift.id, position_map)
+    # 培训/彩排挂在整个活动上，等全部岗位复制完再建，要叫的岗位才换得成新 id
+    for t in src.trainings():
+        clone(t, all_positions)
     # 题目里指着别的东西的两处都要换成新 id：适用岗位、显示条件依赖的前一道题。
     # 题目按 sort 复制，显示条件只指向前面的题，所以边复制边建映射就够了
     question_map: dict[str, str] = {}

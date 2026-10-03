@@ -1,6 +1,7 @@
 <!-- 智能起草场次与岗位：草稿放在可改的预览里，管理者改好、点「按草稿新建」才
      逐个调新建场次 / 新建岗位的接口——校验、审计和手建的一样。培训、彩排也是
-     新建场次，挂在它服务的那个场次下，等那个场次的岗位建好了再建。
+     新建场次（挂在整个活动上），等它服务的那个场次的岗位建好了再建，好把要来
+     的岗位对上；原文说「这一场的人都来」的，就圈上这一场的全部岗位。
      只新建、不碰已有的场次岗位。中途某一个被后端拦下就停在那儿：已建好的从
      预览里划掉，改好剩下的再点一次接着建。 -->
 <template>
@@ -184,9 +185,11 @@ async function create(close) {
       }
       while (g.attached.length) {
         const { keys, ...a } = g.attached[0]
+        // 圈空了在活动一级是「全体」，原文的意思是「这一场的人」：圈上这一场的全部岗位
+        const ids = (keys.length ? keys.map(k => g.done[k]?.id)
+                                 : Object.values(g.done).map(x => x.id)).filter(Boolean)
         await api.post(`/api/staff/activities/${props.activityId}/shifts`, {
-          ...a, name: a.name.trim(), location: a.location.trim(), parent_id: g.createdId,
-          applies_to_positions: keys.map(k => g.done[k]?.id).filter(Boolean),
+          ...a, name: a.name.trim(), location: a.location.trim(), applies_to_positions: ids,
         })
         g.attached.shift()
         attached += 1

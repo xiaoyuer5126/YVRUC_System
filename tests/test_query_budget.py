@@ -75,7 +75,7 @@ def build(db, take_student, per_shift: int, title: str = "") -> dict:
         db.add(g)
         db.flush()
         db.add(Shift(id=uid("g"), activity_id=act.id, name=f"培训{k}",
-                     kind="training", parent_id=g.id,
+                     kind="training",
                      start_time=start - timedelta(hours=2),
                      end_time=start - timedelta(hours=1)))
         for i in range(per_shift):

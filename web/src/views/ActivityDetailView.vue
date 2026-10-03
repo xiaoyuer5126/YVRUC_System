@@ -98,9 +98,73 @@
           仅供了解；录取后由负责人安排到具体岗位</span>
           <RefreshBar :load="load" :at="loadedAt" size="small" style="margin-left:auto" /></div>
 
+        <!-- 两种看法只是同一份数据换个排法，报名按钮是同一个（PositionAction） -->
+        <div v-if="act.shifts.length" class="toolbar">
+          <el-radio-group v-model="detailView" size="small">
+            <el-radio-button value="shift">按场次看</el-radio-button>
+            <el-radio-button value="role">按岗位看</el-radio-button>
+          </el-radio-group>
+        </div>
+
+        <!-- 按岗位看：同名岗位一张卡，列出它的各个时段 -->
+        <div v-if="detailView === 'role'" class="m-shifts">
+          <el-card v-for="r in roles" :key="r.name" shadow="never" class="m-shift">
+            <div class="m-shift-head">
+              <b @click="showStationDetail(r.slots[0].g, r.slots[0].p)">{{ r.name }}</b>
+              <el-tag v-if="r.slots[0].p.needs_leader" size="small" type="warning"
+                      effect="plain">设组长</el-tag>
+              <el-tag v-if="r.slots[0].p.attire !== 'none'" size="small" type="primary"
+                      effect="plain">服装{{ r.slots[0].p.attire_label }}</el-tag>
+            </div>
+            <div v-if="r.slots[0].p.service_task" class="dim pre">{{ r.slots[0].p.service_task }}</div>
+            <div v-for="x in r.slots" :key="x.p.id" class="m-pos"
+                 :class="{ mine: myStationId(x.g) === x.p.id, blocked: x.p.eligible === false }">
+              <div class="m-pos-head">
+                <span>{{ x.g.name }} · {{ x.g.time_text }}</span>
+                <span class="dim">{{ x.p.enrolled }}/{{ x.p.quota }}</span>
+              </div>
+              <div class="m-pos-meta dim">
+                {{ x.p.location || x.g.location || act.location || '地点待定' }}
+                <template v-if="x.p.requirement_desc !== '不限'"> · {{ x.p.requirement_desc }}</template>
+              </div>
+              <div v-if="!isTeacher" class="m-pos-act-wrap">
+                <PositionAction :g="x.g" :s="x.p" by-role />
+              </div>
+            </div>
+            <div v-if="roleTrainings(r).length" class="att-list">
+              <div v-for="t in roleTrainings(r)" :key="t.id" class="att-item">
+                <el-tag size="small" effect="dark"
+                        :type="t.kind === 'training' ? 'success' : 'warning'">{{ t.kind_label }}</el-tag>
+                <span>{{ t.time_text }}</span>
+                <span class="dim">{{ t.location || act.location }}</span>
+              </div>
+            </div>
+          </el-card>
+          <!-- 截止后统一分配的场次报名只选时间，归不到哪个岗位下 -->
+          <el-card v-for="g in act.shifts.filter(x => x.needs_assign)" :key="g.id"
+                   shadow="never" class="m-shift">
+            <div class="m-shift-head">
+              <b @click="showGroupDetail(g)">{{ g.name }}</b>
+              <el-tag size="small" type="warning" effect="plain">按时间报名</el-tag>
+              <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
+            </div>
+            <div class="dim">{{ g.time_text }} · 岗位在报名截止后统一分配</div>
+            <div v-for="p in g.positions.filter(x => x.is_placeholder || myStationId(g) === x.id)"
+                 :key="p.id" class="m-pos" :class="{ mine: myStationId(g) === p.id }">
+              <div class="m-pos-head">
+                <span>{{ p.display_name }}</span>
+                <span class="dim">{{ p.enrolled }}/{{ p.quota }}</span>
+              </div>
+              <div v-if="!isTeacher" class="m-pos-act-wrap">
+                <PositionAction :g="g" :s="p" by-role />
+              </div>
+            </div>
+          </el-card>
+        </div>
+
         <!-- 窄屏：场次与岗位改成竖排卡片。手机上选岗位是最要紧的动作，
              不能藏在表格的展开箭头后面，所以岗位直接铺开。 -->
-        <div v-if="narrow" class="m-shifts">
+        <div v-else-if="narrow" class="m-shifts">
           <el-card v-for="g in act.shifts" :key="g.id" shadow="never" class="m-shift">
             <div class="m-shift-head">
               <b @click="showGroupDetail(g)">{{ g.name }}</b>
@@ -643,7 +707,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, provide, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT } from '../api'
@@ -747,13 +811,35 @@ async function toggleExcuse(s) {
   load()
 }
 
-// 培训/彩排可以只对某几个岗位生效，把「谁要去」写在脸上
+// 培训/彩排可以只叫某几个岗位，把「谁要去」写在脸上
 function attachedWho(g, s) {
-  if (!s.applies_to_positions?.length) return '全体参加'
-  const names = (g.positions || [])
-    .filter(p => s.applies_to_positions.includes(p.id)).map(p => p.name)
-  return names.length ? `仅 ${names.join('、')}` : '仅部分岗位'
+  return s.applies_to_positions?.length ? `仅 ${s.applies_text}` : '全体参加'
 }
+
+// —— 按岗位看 ——
+const VIEW_KEY = 'rucva_detail_view'
+function readView() {
+  try { return localStorage.getItem(VIEW_KEY) === 'role' ? 'role' : 'shift' } catch { return 'shift' }
+}
+const detailView = ref(readView())
+watch(detailView, v => {
+  try { localStorage.setItem(VIEW_KEY, v) } catch { /* 存不了就每次默认按场次看 */ }
+})
+/** 报名即选岗位的场次里，同名岗位合成一个「岗位」，列它的各个时段 */
+const roles = computed(() => {
+  const by = new Map()
+  for (const g of act.value?.shifts || []) {
+    if (g.needs_assign) continue
+    for (const p of g.positions) {
+      if (!by.has(p.name)) by.set(p.name, { name: p.name, slots: [] })
+      by.get(p.name).slots.push({ g, p })
+    }
+  }
+  for (const r of by.values()) r.slots.sort((a, b) => a.g.start_time.localeCompare(b.g.start_time))
+  return [...by.values()]
+})
+const roleTrainings = r => (act.value?.trainings || []).filter(t => !t.applies_to_positions.length
+  || r.slots.some(x => t.applies_to_positions.includes(x.p.id)))
 
 function myPosition(g) {
   const pid = g.my_enrollment?.position_id

@@ -46,7 +46,6 @@ def _add_attached(client, admin, act, parent, *, kind="rehearsal",
     with editing(client, admin, act.id):
         r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
                         json={"name": "赛前彩排", "kind": kind,
-                              "parent_id": parent.id,
                               "applies_to_positions": list(positions),
                               "hours_mode": hours_mode,
                               "location": "排练厅",
@@ -239,15 +238,83 @@ def test_附属场次不占活动的名额与时间跨度(client, admin, db, act
     assert [s["kind"] for s in detail["shifts"][0]["attached"]] == ["rehearsal"]
 
 
-def test_培训必须挂在服务场次下(client, admin, db, act_with_positions):
-    act, g, _e, _c = act_with_positions
+def _second_shift(db, act, g):
+    """再加一个场次，也有「检录台」：同一个岗位的另一个时段。"""
+    g2 = Shift(id=uid("g"), activity_id=act.id, name="第二天",
+               start_time=g.start_time + timedelta(days=1),
+               end_time=g.end_time + timedelta(days=1), mode="pick", sort=1)
+    db.add(g2)
+    db.flush()
+    check2 = Position(id=uid("p"), shift_id=g2.id, name="检录台", quota=3, sort=0,
+                      **POSITION_TEXT)
+    db.add(check2)
+    db.commit()
+    return g2, check2
+
+
+def test_培训挂在活动上_跨场次圈人_最后一个报名退掉才退(client, admin, db,
+                                             act_with_positions, take_student):
+    act, g, east, check = act_with_positions
+    g2, check2 = _second_shift(db, act, g)
+    tid = _add_attached(client, admin, act, g, positions=[check.id, check2.id])
+    sid = take_student()
+    h = login(client, sid)
+    u = db.query(User).filter(User.student_id == sid).one()
+
+    def in_training():
+        db.expire_all()
+        return db.query(Enrollment).filter(Enrollment.shift_id == tid,
+                                           Enrollment.user_id == u.id).count()
+
+    e1 = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll", headers=h,
+                     json={"position_id": check.id}).json()["enrollment_id"]
+    e2 = client.post(f"/api/activities/{act.id}/shifts/{g2.id}/enroll", headers=h,
+                     json={"position_id": check2.id}).json()["enrollment_id"]
+    assert in_training() == 1, "两个时段都叫同一场培训，只报一次"
+    assert client.delete(f"/api/activities/enrollments/{e1}", headers=h).status_code == 200
+    assert in_training() == 1, "第二天的检录台还在，培训照样要来"
+    assert client.delete(f"/api/activities/enrollments/{e2}", headers=h).status_code == 200
+    assert in_training() == 0
+    # 东门引导没被圈到
+    other = login(client, take_student())
+    client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll", headers=other,
+                json={"position_id": east.id})
+    d = client.get(f"/api/activities/{act.id}", headers=admin).json()
+    [t] = d["trainings"]
+    assert t["applies_text"] == "检录台" and t["enrolled"] == 0
+
+
+def test_删岗位删场次_只叫它们的培训要先处理(client, admin, db, act_with_positions):
+    act, g, east, check = act_with_positions
+    g2, check2 = _second_shift(db, act, g)
+    _add_attached(client, admin, act, g, positions=[check.id])
+    both = _add_attached(client, admin, act, g, positions=[check.id, check2.id])
     with editing(client, admin, act.id):
-        r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
-                        json={"name": "野生培训", "kind": "training",
-                              "start_time": (now() + timedelta(days=3)).isoformat(),
-                              "end_time": (now() + timedelta(days=3, hours=1)
-                                           ).isoformat()})
-        assert r.status_code == 400 and "必须挂在" in r.json()["detail"]
+        r = client.delete(f"/api/staff/shifts/{g.id}", headers=admin)
+        assert r.status_code == 409 and "只叫要删的这些岗位" in r.json()["detail"]
+        r = client.delete(f"/api/staff/positions/{check2.id}", headers=admin)
+        assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(Shift, both).applies_to_positions == [check.id], "删掉的岗位从范围里拿掉"
+
+
+def test_复制出的时段也叫原岗位的培训_圈外岗位不收(client, admin, db, act_with_positions):
+    act, g, east, check = act_with_positions
+    g2, _check2 = _second_shift(db, act, g)
+    tid = _add_attached(client, admin, act, g, positions=[east.id])
+    with editing(client, admin, act.id):
+        r = client.post(f"/api/staff/shifts/{g2.id}/positions", headers=admin,
+                        json={"name": "东门引导", "quota": 2, "copy_from": east.id,
+                              **POSITION_TEXT})
+        assert r.status_code == 200, r.text
+        new_id = r.json()["id"]
+        bad = client.patch(f"/api/staff/shifts/{tid}", headers=admin,
+                           json={"applies_to_positions": ["p_not_here"]})
+        assert bad.status_code == 400 and "不属于本活动" in bad.json()["detail"]
+    db.expire_all()
+    assert db.get(Shift, tid).applies_to_positions == [east.id, new_id]
+    d = client.get(f"/api/activities/{act.id}", headers=admin).json()
+    assert d["trainings"][0]["applies_text"] == "东门引导"
 
 
 def test_招募文案按校青协定的格式拼(client, admin, db, act_with_positions):
