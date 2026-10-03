@@ -10,7 +10,28 @@ from __future__ import annotations
 
 import itertools
 import os
+import urllib.request
 from contextlib import contextmanager
+
+# 学校对接参数（开放平台、统一身份认证）一律清空，而且必须在导入 backend 之前：
+# config.py 在导入时就把环境变量读成常量。开发机的 .env 或宿主机环境里填着
+# 真实参数时，不清空就会让消息中心、SSO 走真实接口——真实的人会收到测试发的
+# 消息。compose 的 tests 服务也置空了这几项，这里兜底直接在宿主机跑 pytest 的情况。
+SCHOOL_ENV = ("YVRUC_OPENPLATFORM_APPID", "YVRUC_OPENPLATFORM_SECRET",
+              "YVRUC_OPENPLATFORM_GATEWAY", "YVRUC_CAS_BASE_URL",
+              "YVRUC_SSO_REDIRECT_URI")
+for _name in SCHOOL_ENV:
+    os.environ[_name] = ""
+
+
+def _no_school_network(*args, **kwargs):
+    """学校接口（消息中心、SSO）都经 urllib 发请求。就算哪个用例在「集成设置」里
+    把开关打开、自己填了地址，请求也到不了网上，直接在这里报错。要验真实分支的
+    用例自己 monkeypatch 掉发请求的那一层。"""
+    raise RuntimeError("测试里不许经 urllib 访问外部接口")
+
+
+urllib.request.urlopen = _no_school_network
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
