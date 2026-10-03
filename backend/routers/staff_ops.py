@@ -10,8 +10,8 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func
-from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy import and_, func
+from sqlalchemy.orm import Session as OrmSession, selectinload
 
 from ..audit import log as audit_log
 from .. import config, hours as hours_flow, liaison
@@ -20,6 +20,7 @@ from ..database import db_session
 from ..deps import require_manager, require_manager_download
 from ..exporter import (build_activity_workbook, build_answers_workbook,
                         build_application_workbook, build_hours_workbook)
+from ..enroll_logic import Occupancy
 from ..perm import ensure_activity_manager
 from ..qrcodes import trusted_root
 from ..integrations import msgcenter
@@ -27,8 +28,8 @@ from ..locks import current_checkin_code
 from ..notify import notify, notify_checkin
 from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
                       Department, Enrollment, HoursAppeal, HoursRecord,
-                      HoursRequest, Shift, Position, User, iso, new_checkin_token, now,
-                      parse_local_dt, span_text, uid)
+                      HoursRequest, Shift, Position, User, ViolationRecord, iso,
+                      new_checkin_token, now, parse_local_dt, span_text, uid)
 from ..serializers import applies_text, iso_of, recruit_scope_phrase
 from .checkin import checkout_open
 from .geo import tiles_configured
@@ -1462,6 +1463,122 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
 
 
 # ======================= 时长申诉 =======================
+
+# ======================= 活动概况 =======================
+
+@router.get("/activities/{activity_id}/overview")
+def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
+                      user: User = Depends(require_manager)):
+    """活动管理页顶上那张概况卡：本活动的报名、签到、时长、违规一眼看完。
+
+    口径：
+    · 只算服务场次。培训/彩排不招人、不设名额（跟着服务场次的报名连带进来），
+      算进来同一个人会被数两三遍。
+    · 报名按人次（一条正式报名记录算一次，一人报两场算两次），另给去重人数；
+      名额同 Shift.total_capacity（截止后分配的场次按占位岗位的整场名额）；
+      候补 = 排队中 + 转正待确认，同 waitlist_rows。
+    · 签到率 = 已签到的正式报名 / 已开始场次的正式报名（人次）。还没开始的
+      场次不进分母，否则活动进行到一半，签到率看着永远偏低。
+    · 未签退：「扫码计时」场次里签了到还没签退的人次。固定计时/不计时长的
+      场次本来就不用签退，算进来全是假警报。
+    · 时长：已入账（HoursRecord）且选「志愿时长」的合计；党校同学的照算
+      （同数据总览，那是平台自己的数），另单独给出党校部分。approved 说明
+      这笔账是否已经核准。
+    · 临期退选：本活动服务场次里有过临期退选（cancel_type=late）的人数。
+    补记录活动没有场次与报名，只给名单人数、时长和违规。
+
+    全部是按活动聚合的几条查询，条数不随人数、岗位数涨。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    t = now()
+
+    party = (db.query(Enrollment.user_id)
+             .filter(Enrollment.activity_id == act.id,
+                     Enrollment.source == hours_flow.PARTY_SCHOOL))
+    counts_hours = HoursRecord.reward == "hours"
+    roster, total, party_total = (
+        db.query(func.count(HoursRecord.id),
+                 func.coalesce(func.sum(HoursRecord.hours).filter(counts_hours), 0.0),
+                 func.coalesce(func.sum(HoursRecord.hours).filter(
+                     counts_hours & HoursRecord.user_id.in_(party)), 0.0))
+        .filter(HoursRecord.activity_id == act.id).one())
+    violations = (db.query(func.count(ViolationRecord.id))
+                  .filter(ViolationRecord.activity_id == act.id).scalar())
+    out = {"record": act.is_record(),
+           "hours": {"total": round(total, 2), "party_school": round(party_total, 2),
+                     "records": roster,
+                     "approved": act.hours_approved_at is not None,
+                     "locked": act.hours_locked_at is not None},
+           "violations": violations}
+    if act.is_record():
+        out["roster"] = roster
+        return out
+
+    shifts = (db.query(Shift).options(selectinload(Shift.positions))
+              .filter(Shift.activity_id == act.id, Shift.kind == "service")
+              .order_by(Shift.sort, Shift.start_time).all())
+    occ = Occupancy(db, act.id)
+    service = and_(Enrollment.shift_id == Shift.id, Shift.kind == "service")
+    enrolled = Enrollment.status == "enrolled"
+    people, applied, late = (
+        db.query(func.count(func.distinct(Enrollment.user_id)).filter(enrolled),
+                 func.count(Enrollment.id).filter(Enrollment.status == "applied"),
+                 func.count(func.distinct(Enrollment.user_id))
+                 .filter(Enrollment.cancel_type == "late"))
+        .join(Shift, service).filter(Enrollment.activity_id == act.id).one())
+    # 应到：已开始的服务场次里的正式报名；签到记录按（人, 场次）对上
+    signed = and_(CheckinRecord.shift_id == Enrollment.shift_id,
+                  CheckinRecord.user_id == Enrollment.user_id)
+    due, arrived = (
+        db.query(func.count(func.distinct(Enrollment.id)),
+                 func.count(func.distinct(Enrollment.id))
+                 .filter(CheckinRecord.id.isnot(None)))
+        .join(Shift, service).outerjoin(CheckinRecord, signed)
+        .filter(Enrollment.activity_id == act.id, enrolled,
+                Shift.start_time <= t).one())
+    open_out = (db.query(func.count(CheckinRecord.id))
+                .join(Shift, CheckinRecord.shift_id == Shift.id)
+                .filter(CheckinRecord.activity_id == act.id,
+                        Shift.kind == "service", Shift.hours_mode == "checkin",
+                        CheckinRecord.checkout_at.is_(None)).scalar())
+
+    rows = []
+    for g in shifts:
+        cap = g.total_capacity()
+        holder = g.placeholder()
+        positions = []
+        for p in g.real_positions():
+            n = occ.position_occupied(p.id)
+            positions.append({"id": p.id, "name": p.name, "group": p.group_name,
+                              "enrolled": occ.position_enrolled(p.id),
+                              "occupied": n, "quota": p.quota,
+                              "waitlist": occ.position_wait(p.id),
+                              "paused": p.enroll_paused,
+                              "full": n >= p.quota})
+        rows.append({"id": g.id, "name": g.name, "time": g.span_text(),
+                     "mode": g.mode, "started": g.start_time <= t,
+                     "enrolled": occ.shift_enrolled(g.id),
+                     "occupied": occ.shift_occupied(g.id),
+                     "capacity": cap, "waitlist": occ.shift_wait(g.id),
+                     "paused": g.enroll_paused,
+                     "full": cap > 0 and occ.shift_occupied(g.id) >= cap,
+                     # 截止后分配的场次：还在占位岗位里、没分到岗位的人
+                     "unassigned": occ.position_enrolled(holder.id) if holder else 0,
+                     "positions": positions})
+    out.update({
+        "enroll": {"count": sum(r["enrolled"] for r in rows), "people": people,
+                   "capacity": sum(r["capacity"] for r in rows),
+                   "occupied": sum(r["occupied"] for r in rows),
+                   "waitlist": sum(r["waitlist"] for r in rows),
+                   "applied": applied},
+        "checkin": {"due": due, "arrived": arrived,
+                    "rate": round(arrived / due, 4) if due else None,
+                    "not_checked_out": open_out},
+        "late_cancel": late,
+        "shifts": rows})
+    return out
+
 
 @router.get("/activities/{activity_id}/hours-appeals")
 def list_appeals(activity_id: str, db: OrmSession = Depends(db_session),
