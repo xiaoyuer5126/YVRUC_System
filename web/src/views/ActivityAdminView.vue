@@ -92,6 +92,9 @@
               title="正在调整岗位，学生已暂停报名与退选"
               :description="`改完点右上角「保存并发布」恢复报名并通知志愿者；${lockHours} 小时未保存会自动退出编辑。`" />
 
+    <!-- 活动概况：发布之后才有报名、签到、时长可看 -->
+    <ActivityOverviewCard v-if="isPublic" ref="overviewCard" :activity-id="activityId" />
+
     <el-tabs v-model="tab" style="margin-top:8px">
       <!-- ============ 岗位设置 ============ -->
       <el-tab-pane v-if="!isRecord" name="tree">
@@ -1688,6 +1691,7 @@ import HoursParts from '../components/HoursParts.vue'
 import ApplicationList from '../components/ApplicationList.vue'
 import ReviewPanel from '../components/ReviewPanel.vue'
 import RecordRosterPanel from '../components/RecordRosterPanel.vue'
+import ActivityOverviewCard from '../components/ActivityOverviewCard.vue'
 import VbNamesInput from '../components/VbNamesInput.vue'
 import ProjectFileSlot from '../components/ProjectFileSlot.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
@@ -2924,7 +2928,10 @@ async function removeManager(row) {
 // 切到「时长管理」页签时自动加载时长预览（静默加载，不弹提示）。
 // ?tab=hours 直达时 tab 一开始就是它，这个 watch 不会触发——那一路由
 // loadAll 负责补上。
+// 概况跟着页签走：在名单、签到、时长页里办完事切走，顶上的数也跟着更新
+const overviewCard = ref(null)
 watch(tab, async t => {
+  overviewCard.value?.load()
   if (t === 'hours') await refreshHours()
   if (t === 'acks') await loadBatches()
   if (t === 'logs') {

@@ -108,7 +108,7 @@ TEMPLATE_PAGE: dict[str, str] = {
 }
 
 # data.route 能直接当页面路径的取值。名单外的不猜，认错页面比不跳更糟。
-ROUTE_PAGES = ("hours", "approvals")
+ROUTE_PAGES = ("hours", "approvals", "feedback")
 # route="manage"：发给活动管理者的，进活动管理页；data.tab 指定直接打开哪个页签
 MANAGE_TABS = ("tree", "roster", "hours", "review")
 
