@@ -1398,6 +1398,59 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
     return {"ok": True, "changes": changes}
 
 
+class PauseBody(BaseModel):
+    paused: bool
+
+
+def _pause_target_check(act: Activity) -> None:
+    """暂停 / 恢复报名不用进编辑态：它只管收不收新报名，不改任何人的安排。"""
+    ensure_not_finished(act)
+    if act.is_record():
+        raise HTTPException(409, "补记录活动不接受报名")
+
+
+@router.post("/shifts/{shift_id}/pause")
+def pause_shift(shift_id: str, body: PauseBody,
+                db: OrmSession = Depends(db_session),
+                user: User = Depends(require_manager)):
+    """暂停 / 恢复一个场次的报名（含它下面所有岗位）。"""
+    g = _shift(db, shift_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = _act(db, g.activity_id)
+    _pause_target_check(act)
+    if g.is_attached():
+        raise HTTPException(400, "培训/彩排跟着服务场次走，没有单独的报名")
+    g.enroll_paused = body.paused
+    audit_log(db, actor=user, action="update", target_type="group",
+              target_id=g.id, target_label=f"{act.title}·{g.name}", activity_id=act.id,
+              summary=f"{'暂停' if body.paused else '恢复'}场次「{g.name}」的报名")
+    db.commit()
+    return {"ok": True, "paused": g.enroll_paused}
+
+
+@router.post("/positions/{position_id}/pause")
+def pause_position(position_id: str, body: PauseBody,
+                   db: OrmSession = Depends(db_session),
+                   user: User = Depends(require_manager)):
+    """暂停 / 恢复一个岗位的报名。「待分配」就是整场的报名入口，暂停整个场次。"""
+    s = db.get(Position, position_id)
+    if s is None:
+        raise HTTPException(404, "岗位不存在")
+    g = _shift(db, s.shift_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = _act(db, g.activity_id)
+    _pause_target_check(act)
+    if s.is_placeholder:
+        raise HTTPException(400, "「待分配」是整场的报名入口，请暂停整个场次")
+    s.enroll_paused = body.paused
+    audit_log(db, actor=user, action="update", target_type="position",
+              target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
+              activity_id=act.id,
+              summary=f"{'暂停' if body.paused else '恢复'}岗位「{s.name}」的报名")
+    db.commit()
+    return {"ok": True, "paused": s.enroll_paused}
+
+
 @router.delete("/positions/{position_id}")
 def delete_position(position_id: str,
                    db: OrmSession = Depends(db_session),

@@ -168,7 +168,15 @@
                 {{ g.unassigned_count }} 人待分配
               </el-tag>
             </el-tooltip>
+            <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">
+              暂停报名
+            </el-tag>
             <span style="margin-left:auto">
+              <!-- 暂停报名不用进编辑态：只管收不收新报名，不改任何人的安排 -->
+              <el-button v-if="isPublic" size="small" :disabled="isOver"
+                         @click="togglePause('shifts', g)">
+                {{ g.enroll_paused ? '恢复报名' : '暂停报名' }}
+              </el-button>
               <el-button size="small" :disabled="structureLocked"
                          @click="openShift(g)">编辑</el-button>
               <el-button size="small" plain :disabled="structureLocked"
@@ -197,8 +205,13 @@
                 {{ row.enrolled }}/{{ row.quota }}
               </el-tag>
               <el-tag v-if="row.needs_leader" size="small" type="warning" effect="plain">组长</el-tag>
+              <el-tag v-if="row.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
             </template>
             <template #actions="{ row }">
+              <el-button v-if="isPublic && !row.is_placeholder" size="small" plain
+                         :disabled="isOver" @click="togglePause('positions', row)">
+                {{ row.enroll_paused ? '恢复报名' : '暂停' }}
+              </el-button>
               <el-button size="small" type="primary" plain :disabled="structureLocked"
                          @click="openStation(row, g)">编辑</el-button>
               <el-button size="small" plain :disabled="structureLocked"
@@ -243,8 +256,13 @@
               </template>
             </el-table-column>
             <el-table-column prop="training_note" label="培训内容" min-width="160" show-overflow-tooltip />
-            <el-table-column label="操作" width="170">
+            <el-table-column label="操作" width="210">
               <template #default="{row}">
+                <el-button v-if="isPublic && !row.is_placeholder" size="small" link
+                           :type="row.enroll_paused ? 'danger' : ''" :disabled="isOver"
+                           @click="togglePause('positions', row)">
+                  {{ row.enroll_paused ? '恢复报名' : '暂停' }}
+                </el-button>
                 <el-button size="small" link type="primary" :disabled="structureLocked"
                            @click="openStation(row, g)">编辑</el-button>
                 <el-button size="small" link :disabled="structureLocked"
@@ -2090,6 +2108,15 @@ async function copyPoster() {
 }
 
 const materialMgr = ref(null)
+
+/** 暂停 / 恢复一个场次或岗位的报名。已报的人照常，候补照常递补 */
+async function togglePause(kind, item) {
+  const paused = !item.enroll_paused
+  await api.post(`/api/staff/${kind}/${item.id}/pause`, { paused })
+  ElMessage.success(paused ? `已暂停「${item.name}」的报名；已报名的人不受影响`
+                           : `已恢复「${item.name}」的报名`)
+  loadAll()
+}
 
 function openStation(st, g) {
   positionDlg.value = { visible: true, editing: st, groupId: g.id, copyFrom: '' }

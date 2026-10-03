@@ -109,6 +109,7 @@
                 {{ g.mode_label }}
               </el-tag>
               <el-tag v-if="g.started" size="small" type="info" effect="plain">已开场</el-tag>
+              <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
             </div>
             <div class="dim">{{ g.time_text }}</div>
             <div v-if="act.status === 'published' && !act.opens_in && !g.enroll_open"
@@ -166,53 +167,9 @@
                   <template v-if="s.pay_optional"> · 报酬可选劳务</template>
                   <template v-if="s.material_count"> · 材料 {{ s.material_count }}</template>
                 </div>
-                <div v-if="!isTeacher" class="m-pos-act">
-                  <!-- 我选中的岗位：原地退选／确认 -->
-                  <template v-if="g.my_enrollment && myStationId(g) === s.id">
-                    <template v-if="g.my_enrollment.status === 'pending_confirm'">
-                      <el-countdown format="HH:mm:ss" :value="deadlineTs(g)" />
-                      <el-button type="primary" size="small" :disabled="paused"
-                                 @click="confirmPromo(g)">确认</el-button>
-                      <el-button size="small" plain :disabled="paused"
-                                 @click="cancelEnroll(g)">放弃</el-button>
-                    </template>
-                    <template v-else>
-                      <el-tag :type="g.my_enrollment.status === 'waitlisted' ? 'warning' : 'success'"
-                              size="small">
-                        {{ g.my_enrollment.status === 'waitlisted'
-                           ? `候补第 ${g.my_enrollment.waitlist_position} 位` : '已选中' }}
-                      </el-tag>
-                      <el-button size="small" type="danger" plain
-                                 :disabled="paused || !canCancel(g)"
-                                 @click="cancelEnroll(g)">
-                        {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
-                      </el-button>
-                    </template>
-                  </template>
-                  <!-- 截止后统一分配的场次：报名只从「待分配」进，真实岗位由负责人分 -->
-                  <span v-else-if="g.needs_assign && !s.is_placeholder" class="dim">
-                    由负责人分配
-                  </span>
-                  <span v-else-if="g.my_enrollment" class="dim">同场次只能选一个岗位</span>
-                  <el-button v-else-if="queuedShift(g)" size="small" disabled
-                             :loading="queuedHere(g, s)">
-                    {{ queuedHere(g, s) ? '排队中…' : (s.remaining > 0 ? '选中' : '候补') }}
-                  </el-button>
-                  <el-button v-else-if="s.eligible === false" size="small" disabled>
-                    不符合条件
-                  </el-button>
-                  <el-button v-else-if="paused" size="small" disabled>报名暂停</el-button>
-                  <el-button v-else-if="openFor(g)" size="small"
-                             type="primary" plain @click="doEnroll(g, s)">
-                    {{ s.is_placeholder ? enrollText(g)
-                       : s.remaining > 0 ? '选中' : '候补' }}
-                  </el-button>
-                  <el-button v-else size="small" disabled>{{ closedText(g) }}</el-button>
+                <div v-if="!isTeacher" class="m-pos-act-wrap">
+                  <PositionAction :g="g" :s="s" />
                 </div>
-                <div v-if="s.eligible === false && !isTeacher" class="m-pos-why">
-                  {{ s.ineligible_reason }}
-                </div>
-                <div v-if="queuedHere(g, s)" class="queue-note">{{ QUEUE_NOTE }}</div>
               </div>
               <!-- 报了名却没有对应的岗位卡（补招时没指定岗位，或岗位被删） -->
               <div v-if="g.my_enrollment && !myStationId(g)" class="m-pos-act"
@@ -371,54 +328,7 @@
                       </el-table-column>
                       <el-table-column v-if="!isTeacher" label="操作" width="170" align="center">
                         <template #default="{ row: s }">
-                          <!-- 我选中的岗位：原地退选/确认 -->
-                          <template v-if="g.my_enrollment && myStationId(g) === s.id">
-                            <template v-if="g.my_enrollment.status === 'pending_confirm'">
-                              <el-countdown format="HH:mm:ss" :value="deadlineTs(g)"
-                                            style="vertical-align:middle;margin-right:8px" />
-                              <el-button type="primary" size="small" :disabled="paused"
-                                         @click="confirmPromo(g)">确认</el-button>
-                              <el-button size="small" plain :disabled="paused"
-                                         @click="cancelEnroll(g)">放弃</el-button>
-                            </template>
-                            <el-button v-else size="small" type="danger" plain
-                                       :disabled="paused || !canCancel(g)"
-                                       @click="cancelEnroll(g)">
-                              {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
-                            </el-button>
-                          </template>
-                          <!-- 已选其他岗位：置灰 -->
-                          <el-tooltip v-else-if="g.my_enrollment"
-                                      content="同场次只能选择一个岗位，如需更换请先退选" placement="top">
-                            <el-button size="small" disabled>
-                              {{ s.remaining > 0 ? '选中' : '候补' }}
-                            </el-button>
-                          </el-tooltip>
-                          <!-- 已提交、还在排队：结果回来之前不能再点，也不能改选同场次别的岗位 -->
-                          <template v-else-if="queuedShift(g)">
-                            <el-button size="small" disabled :loading="queuedHere(g, s)">
-                              {{ queuedHere(g, s) ? '排队中…' : (s.remaining > 0 ? '选中' : '候补') }}
-                            </el-button>
-                            <div v-if="queuedHere(g, s)" class="queue-note">{{ QUEUE_NOTE }}</div>
-                          </template>
-                          <!-- 条件不满足：灰掉并说明为什么，别让人点了再被拒 -->
-                          <el-tooltip v-else-if="s.eligible === false" placement="top"
-                                      :content="`不符合报名条件：${s.ineligible_reason}`">
-                            <el-button size="small" disabled>不符合条件</el-button>
-                          </el-tooltip>
-                          <!-- 未报名 -->
-                          <el-tooltip v-else-if="paused" placement="top"
-                                      content="负责人正在调整安排，报名暂停中">
-                            <el-button size="small" disabled>报名暂停</el-button>
-                          </el-tooltip>
-                          <el-button v-else-if="openFor(g)" size="small"
-                                     type="primary" plain @click="doEnroll(g, s)">
-                            {{ s.is_placeholder ? enrollText(g)
-                               : s.remaining > 0 ? '选中' : '候补' }}
-                          </el-button>
-                          <el-button v-else size="small" disabled>
-                            {{ closedText(g) }}
-                          </el-button>
+                          <PositionAction :g="g" :s="s" :show-why="false" />
                         </template>
                       </el-table-column>
                     </el-table>
@@ -549,6 +459,8 @@
                         :type="row.mode === 'pick' ? 'info' : row.mode === 'assign' ? 'warning' : 'primary'">
                   {{ row.mode_label }}
                 </el-tag>
+                <el-tag v-if="row.enroll_paused" size="small" type="danger" effect="plain"
+                        style="margin-left:8px">暂停报名</el-tag>
                 <!-- 每个场次在自己开场时就停止收人，活动整体可能还在报名期 -->
                 <div v-if="act.status === 'published' && !act.opens_in && !row.enroll_open"
                      class="dim">
@@ -731,7 +643,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT } from '../api'
@@ -742,6 +654,7 @@ import ApplicationPanel from '../components/ApplicationPanel.vue'
 import MaterialList from '../components/MaterialList.vue'
 import QuestionFields from '../components/QuestionFields.vue'
 import RefreshBar from '../components/RefreshBar.vue'
+import PositionAction from '../components/PositionAction.vue'
 import { useNarrow } from '../composables/useNarrow'
 import { Clock, Warning } from '@element-plus/icons-vue'
 
@@ -886,6 +799,11 @@ function enrollText(g) {
   }
   return g.remaining > 0 ? '立即报名' : '加入候补'
 }
+// 岗位的报名按钮（PositionAction）在几种视角里共用，动作和状态从这里给
+provide('enrollCtx', { deadlineTs, confirmPromo, cancelEnroll, canCancel, queuedShift,
+                       queuedHere, openFor, doEnroll, enrollText, closedText, paused,
+                       QUEUE_NOTE })
+
 function showGroupDetail(g) {
   groupDetail.value = { visible: true, data: g }
 }
@@ -1086,7 +1004,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .m-pos-name :deep(.el-link__inner) { font-weight: 600; }
 .m-pos-meta { margin-top: 4px; line-height: 1.6; }
 .m-pos-act { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.m-pos-why { margin-top: 8px; font-size: 12px; color: #e6a23c; }
+.m-pos-act-wrap { margin-top: 8px; }
 .queue-note { margin-top: 4px; font-size: 12px; color: #909399; }
 .m-reassign { margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .shift-bar { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

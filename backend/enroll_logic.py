@@ -360,6 +360,15 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
                         bool(row[5]))
 
 
+def paused_reason(shift: Shift, position: Position | None) -> str:
+    """这一场 / 这个岗位是不是被管理者暂停了报名；没暂停返回空串。"""
+    if shift.enroll_paused:
+        return f"场次「{shift.name}」暂停报名"
+    if position is not None and position.enroll_paused:
+        return f"岗位「{position.name}」暂停报名"
+    return ""
+
+
 # ======================= 硬性条件（场次与岗位共用） =======================
 
 def profile_fields(user: User) -> dict[str, str]:

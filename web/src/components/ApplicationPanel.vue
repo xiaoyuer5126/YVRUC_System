@@ -50,12 +50,15 @@
               {{ g.name }} · {{ g.time_text }}
               <span class="dim">（{{ g.location || act.location || '地点待定' }}）</span>
             </div>
-            <div v-for="p in g.positions" :key="p.id" class="pos-line">
-              <el-checkbox :value="p.id" :disabled="p.eligible === false">
+            <!-- 截止后统一分配的场次只能勾「待分配」：真实岗位由负责人分 -->
+            <div v-for="p in choosable(g)" :key="p.id" class="pos-line">
+              <el-checkbox :value="p.id"
+                           :disabled="p.eligible === false || g.enroll_paused || p.enroll_paused">
                 {{ p.display_name }}
                 <span class="dim">{{ p.is_placeholder ? '' : `（${p.enrolled}/${p.quota}）` }}</span>
               </el-checkbox>
-              <span v-if="p.eligible === false" class="dim">
+              <span v-if="g.enroll_paused || p.enroll_paused" class="dim">暂停报名</span>
+              <span v-else-if="p.eligible === false" class="dim">
                 不符合条件：{{ p.ineligible_reason }}
               </span>
             </div>
@@ -132,6 +135,8 @@ const loadingStep = ref(false)
 // 还收人的场次才列出来；每个场次列它的岗位，没建岗位的场次只有一个「待分配」
 const openShifts = computed(
   () => props.act.shifts.filter(g => g.enroll_open && g.positions.length))
+const choosable = g => (g.needs_assign ? g.positions.filter(p => p.is_placeholder)
+                                        : g.positions)
 const chosen = computed(() => openShifts.value.flatMap(
   g => g.positions.filter(p => form.position_ids.includes(p.id))
     .map(p => ({ ...p, shift_name: g.name }))))

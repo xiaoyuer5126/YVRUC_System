@@ -363,6 +363,11 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
     else:
         raise HTTPException(400, "请选择具体岗位")
 
+    # 暂停报名排在闸门前面：停了就不该占闸门的号
+    why = logic.paused_reason(g, position)
+    if why:
+        raise HTTPException(409, f"{why}，请过一会儿再来看看")
+
     # ★ 名额闸门排在资格校验**前面**，这是它存在的全部意义：几百个请求同一瞬间
     # 到的时候，抢不到的那些只花一次 Redis 往返就被挡回去，下面那十来条资格
     # 查询、时段比较、场次锁根本不会执行。闸门只挡洪水、不判定名额——拿不到号

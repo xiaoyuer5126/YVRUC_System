@@ -557,6 +557,9 @@ class Shift(Base):
     # 规则（见 enroll_logic.unmet_for_tags），报名时直接拦截。
     requirement_tags: Mapped[dict] = mapped_column(JSON, default=dict)
     note: Mapped[str] = mapped_column(String(512), default="")
+    # 管理者暂停这一场的报名：不收新报名、新申请、新候补；已报的人照常，
+    # 有人退选时候补照常递补（那是暂停前排的队）。不用进编辑态就能切
+    enroll_paused: Mapped[bool] = mapped_column(Boolean, default=False)
     sort: Mapped[int] = mapped_column(Integer, default=0)
     # 签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
     reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -657,6 +660,8 @@ class Position(Base):
     group_name: Mapped[str] = mapped_column(String(64), default="")
     # 占位岗位：「截止后统一分配」场次自动建的那一个，见 Shift.placeholder()
     is_placeholder: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 暂停这个岗位的报名，口径同 Shift.enroll_paused
+    enroll_paused: Mapped[bool] = mapped_column(Boolean, default=False)
     sort: Mapped[int] = mapped_column(Integer, default=0)
 
     shift: Mapped[Shift] = relationship(back_populates="positions")
