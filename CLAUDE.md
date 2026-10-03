@@ -27,6 +27,9 @@ python3 scripts/vuecheck.py && python3 scripts/spacecheck.py
 cd web && npx vite build
 ```
 
+测试容器（compose 的 tests 服务）与 `tests/conftest.py` 都强制清空了学校对接参数，
+conftest 还堵住了 urllib 出网，全量 pytest 不会触达学校接口。
+
 动了页面的，再按 `scripts/viewcheck.mjs` 文件头的说明，在手机（390×844）和桌面
 （1440×900）两个视口各跑一遍。
 

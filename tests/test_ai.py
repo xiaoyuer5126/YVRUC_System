@@ -422,3 +422,74 @@ def test_文档里的超大图先看大小再读(client, admin, model, monkeypat
     assert isinstance(content, str), "一张图都不该发，就是纯文本"
     assert "上午场 | 检录 | 6" in content
     assert any("太大" in n for n in r.json()["notes"])
+
+
+def _bloated(doc: bytes, entry: str, extra: int) -> bytes:
+    """把压缩包里的 entry 换成同一份内容外加 extra 个空格（XML 里的空白不影响解析）。
+    重复字符压缩比上千倍：文件只有几十 KB，解压后却有 extra 那么大。"""
+    import zipfile
+    from io import BytesIO
+
+    src = zipfile.ZipFile(BytesIO(doc))
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for info in src.infolist():
+            body = src.read(info)
+            if info.filename == entry:
+                body += b" " * extra
+            z.writestr(info.filename, body)
+    return buf.getvalue()
+
+
+def test_正文解压炸弹打开之前就挡掉(client, admin, model):
+    """docx 是压缩包，正文 XML 也能塞成解压炸弹：几十 KB 的文件解出 20MB 空白。
+    还没交给 python-docx 就按登记的大小和压缩比挡掉，模型一次也不调。"""
+    calls, _replies = model
+    bomb = _bloated(_docx(), "word/document.xml", 20 * 1024 * 1024)
+    assert len(bomb) < 1024 * 1024
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT},
+                    files=[("files", ("排班.docx", bomb, DOCX))])
+    assert r.status_code == 400 and "解压后太大" in r.json()["detail"], r.text
+    assert not calls
+
+
+@pytest.mark.parametrize("limit", ["AI_ZIP_ENTRY_MAX_BYTES", "AI_ZIP_TOTAL_MAX_BYTES"])
+def test_压缩包单项与总量上限(client, admin, model, monkeypatch, limit):
+    """压缩比正常、但解压后单项或总量超了的，同样挡掉；xlsx 和 docx 一样查。"""
+    calls, _replies = model
+    monkeypatch.setattr(config, limit, 1024)
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT},
+                    files=[("files", ("排班.xlsx", _bloated(_xlsx(), "xl/worksheets/sheet1.xml",
+                                                          4096), "application/octet-stream"))])
+    assert r.status_code == 400 and "解压后太大" in r.json()["detail"], r.text
+    assert not calls
+
+
+def test_正常文档不受解压上限影响(client, admin, model):
+    """解压后不到 10MB 的正文不看压缩比：2MB 空白压得再狠也照常转文字。"""
+    calls, replies = model
+    replies.append((200, json.dumps({"title": "x"})))
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": ""},
+                    files=[("files", ("排班.docx", _bloated(_docx(), "word/document.xml",
+                                                          2 * 1024 * 1024), DOCX)),
+                           ("files", ("排班.xlsx", _xlsx(), "application/octet-stream"))])
+    assert r.status_code == 200, r.text
+    text = calls[0]["body"]["messages"][1]["content"][0]["text"]
+    assert "上午场 | 检录 | 6" in text and "下午场 | 引导 | 4" in text
+
+
+def test_pdf_页数上限(client, admin, model, monkeypatch):
+    from io import BytesIO
+    from pypdf import PdfWriter
+
+    calls, _replies = model
+    monkeypatch.setattr(config, "AI_PDF_MAX_PAGES", 2)
+    w = PdfWriter()
+    for _ in range(3):
+        w.add_blank_page(width=200, height=200)
+    buf = BytesIO()
+    w.write(buf)
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT},
+                    files=[("files", ("长文.pdf", buf.getvalue(), "application/pdf"))])
+    assert r.status_code == 400 and "超过 2 页" in r.json()["detail"], r.text
+    assert not calls

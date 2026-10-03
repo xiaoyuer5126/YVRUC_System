@@ -25,7 +25,7 @@ x-backend-env: &backend_env
   YVRUC_SITE_URL: ${YVRUC_SITE_URL:-}
   YVRUC_ID_CARD_KEY: ${YVRUC_ID_CARD_KEY:?请在 .env 设置 YVRUC_ID_CARD_KEY（见 .env.example）}
   # 学校开放平台（能力开放平台 / 统一认证）。留空 = 相关能力回落 Mock。
-  # tests 服务**故意不注入**这几个变量：测试永远跑在 Mock 下，碰不到真实接口。
+  # tests 服务把这几个变量显式置空：测试永远跑在 Mock 下，碰不到真实接口。
   YVRUC_OPENPLATFORM_APPID: ${YVRUC_OPENPLATFORM_APPID:-}
   YVRUC_OPENPLATFORM_SECRET: ${YVRUC_OPENPLATFORM_SECRET:-}
   YVRUC_OPENPLATFORM_GATEWAY: ${YVRUC_OPENPLATFORM_GATEWAY:-}
@@ -163,6 +163,14 @@ services:
       YVRUC_TEST_DATABASE_URL: postgresql+psycopg://yvruc:${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}@postgres:5432/yvruc_test
       YVRUC_TEST_REDIS_URL: redis://redis:6379/1
       YVRUC_DEMO_PASSWORD: test-pass
+      # 学校对接参数显式置空：不用 x-backend-env，也不让 .env 里的真实值漏进来，
+      # 否则全量 pytest 会往学校网关、统一身份认证上打请求。tests/conftest.py
+      # 导入 backend 之前还会再清一遍
+      YVRUC_OPENPLATFORM_APPID: ""
+      YVRUC_OPENPLATFORM_SECRET: ""
+      YVRUC_OPENPLATFORM_GATEWAY: ""
+      YVRUC_CAS_BASE_URL: ""
+      YVRUC_SSO_REDIRECT_URI: ""
       TZ: Asia/Shanghai
     depends_on:
       postgres:

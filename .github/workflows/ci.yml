@@ -54,6 +54,7 @@ jobs:
       YVRUC_OPENPLATFORM_SECRET: ""
       YVRUC_OPENPLATFORM_GATEWAY: ""
       YVRUC_CAS_BASE_URL: ""
+      YVRUC_SSO_REDIRECT_URI: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -65,10 +66,10 @@ jobs:
             requirements-dev.txt
       - name: 装依赖
         run: pip install -r backend/requirements.txt -r requirements-dev.txt
-      # 统一身份认证那组用例本身全是 mock，但登录这条路离学校接口最近，
-      # 按约定不在 CI 里跑
+      # 全量跑，统一身份认证那组也在内：conftest 导入 backend 前清空学校参数、
+      # 堵住 urllib 出网，这组用例碰不到学校接口
       - name: 跑测试
-        run: python -m pytest -q --ignore=tests/test_sso_oauth.py
+        run: python -m pytest -q
 
   web:
     name: 前端自检与构建

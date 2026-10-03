@@ -45,6 +45,26 @@ class Extracted:
         self.images.append(f"data:{mime};base64,{base64.b64encode(data).decode()}")
 
 
+def _check_zip(data: bytes, name: str) -> None:
+    """打开 docx / xlsx 之前，按包里登记的解压后大小把解压炸弹挡在门外。
+
+    登记的大小信得过：zipfile 解压时最多吐出登记的那么多字节，多出来的截掉并
+    在校验 CRC 时报错，所以谎报大小也解不出更多东西来。不是 zip 的（坏文件）
+    在这里抛 BadZipFile，由调用方当作「读不了」。
+    """
+    total = 0
+    with zipfile.ZipFile(BytesIO(data)) as z:
+        for info in z.infolist():
+            size = info.file_size
+            total += size
+            bomb = (size > config.AI_ZIP_RATIO_MIN_BYTES
+                    and size > config.AI_ZIP_RATIO_MAX * max(info.compress_size, 1))
+            if (size > config.AI_ZIP_ENTRY_MAX_BYTES or bomb
+                    or total > config.AI_ZIP_TOTAL_MAX_BYTES):
+                raise HTTPException(400, f"「{name}」解压后太大或结构异常，读不了。"
+                                         "请删掉不需要的内容、另存一份再传")
+
+
 def _media(data: bytes, folder: str, out: Extracted, name: str) -> None:
     """docx / xlsx 本质是压缩包，插进去的图片在 media 目录里。"""
     vector = 0
@@ -97,10 +117,13 @@ def _xlsx(data: bytes) -> str:
     return "\n".join(lines)
 
 
-def _pdf(data: bytes) -> str:
+def _pdf(data: bytes, name: str) -> str:
     from pypdf import PdfReader
 
     reader = PdfReader(BytesIO(data))
+    if len(reader.pages) > config.AI_PDF_MAX_PAGES:
+        raise HTTPException(400, f"「{name}」超过 {config.AI_PDF_MAX_PAGES} 页，"
+                                 "请只保留需要的几页再传")
     return "\n".join((page.extract_text() or "").strip() for page in reader.pages).strip()
 
 
@@ -125,6 +148,8 @@ def extract(files: list[UploadFile]) -> Extracted:
             out.add_image(data, IMAGE_TYPES[ext], f"「{name}」")
             continue
         try:
+            if ext in (".docx", ".xlsx"):
+                _check_zip(data, name)
             if ext == ".docx":
                 text = _docx(data)
                 _media(data, "word/media/", out, name)
@@ -132,7 +157,7 @@ def extract(files: list[UploadFile]) -> Extracted:
                 text = _xlsx(data)
                 _media(data, "xl/media/", out, name)
             else:
-                text = _pdf(data)
+                text = _pdf(data, name)
                 if not text:
                     raise HTTPException(400, f"「{name}」取不到文字（多半是扫描件），"
                                              "请截图后作为图片上传")
