@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
@@ -120,8 +120,10 @@ def audit_logs(activity_id: str = "", target_type: str = "",
 
 @router.get("/users")
 def list_users(q: str = "", college: str = "",
+               page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
                db: OrmSession = Depends(db_session),
                user: User = Depends(require_archive_page)):
+    """全校名册，分页。按学号排：学号唯一，翻页时不会有人重复或漏掉。"""
     query = db.query(User).filter(User.user_type == "student")
     if q:
         like = like_pattern(q.strip())
@@ -129,12 +131,14 @@ def list_users(q: str = "", college: str = "",
                              (User.student_id.ilike(like, escape="\\")))
     if college:
         query = query.filter(User.college == college)
-    rows = query.order_by(User.student_id).limit(200).all()
-    return [{
+    total = query.count()
+    rows = (query.order_by(User.student_id)
+            .offset((page - 1) * size).limit(size).all())
+    return {"total": total, "items": [{
         **u.full(),
         "id_card_masked": ("无内地身份证号" if u.no_mainland_id
                            else u.masked_id_card()),
-    } for u in rows]
+    } for u in rows]}
 
 
 # ======================= 志愿者档案 =======================

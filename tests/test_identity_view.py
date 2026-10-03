@@ -68,19 +68,19 @@ def test_管理员兼骨干在管理员身份下看得到全部(client, make_use
     sid = make_user(["admin", "qingxie", "student"], post="core")
     h = login(client, sid)
 
-    r = client.get("/api/staff/roles", headers=_as(h, "admin"))
+    r = client.get("/api/staff/roles?size=100", headers=_as(h, "admin"))
     assert r.status_code == 200, r.text
-    rows = _sids(r.json())
+    rows = _sids(r.json()["items"])
     assert {ADMIN, HEAD, CORE} <= rows, "管理员身份下应看到全部管理类身份的人"
 
     # 切到青协身份：就是一个没有部门的骨干，只能认领本部门成员
-    r = client.get("/api/staff/roles", headers=_as(h, "qingxie"))
+    r = client.get("/api/staff/roles?size=100", headers=_as(h, "qingxie"))
     assert r.status_code == 200, r.text
-    assert not ({ADMIN, HEAD, CORE} & _sids(r.json()))
+    assert not ({ADMIN, HEAD, CORE} & _sids(r.json()["items"]))
 
     # 不带头按并集：管理员身份在，就不该被骨干的范围卡成空列表
-    r = client.get("/api/staff/roles", headers=h)
-    assert {ADMIN, HEAD, CORE} <= _sids(r.json())
+    r = client.get("/api/staff/roles?size=100", headers=h)
+    assert {ADMIN, HEAD, CORE} <= _sids(r.json()["items"])
 
 
 def test_学生身份下进不了工作台(client, make_user):
@@ -117,7 +117,7 @@ def test_部长默认列表不越出本部门_骨干只看本部门成员(client
     other = _other_dept(db)
     foreign = make_user(["qingxie", "student"], post="core", dept_id=other.id)
     for sid in (HEAD, CORE):
-        rows = _sids(client.get("/api/staff/roles", headers=login(client, sid)).json())
+        rows = _sids(client.get("/api/staff/roles?size=100", headers=login(client, sid)).json()["items"])
         assert foreign not in rows
         assert ADMIN not in rows
 
@@ -126,11 +126,11 @@ def test_部长默认列表不越出本部门_骨干只看本部门成员(client
 
 def test_伪造身份头不会提权(client, db):
     h = login(client, CORE)
-    plain = _sids(client.get("/api/staff/roles", headers=h).json())
-    forged = client.get("/api/staff/roles", headers=_as(h, "admin"))
+    plain = _sids(client.get("/api/staff/roles?size=100", headers=h).json()["items"])
+    forged = client.get("/api/staff/roles?size=100", headers=_as(h, "admin"))
     assert forged.status_code == 200
-    assert _sids(forged.json()) == plain
-    assert ADMIN not in _sids(forged.json())
+    assert _sids(forged.json()["items"]) == plain
+    assert ADMIN not in _sids(forged.json()["items"])
     assert client.get("/api/staff/integrations",
                       headers=_as(h, "admin")).status_code == 403
     assert client.get("/api/staff/overview",
@@ -234,6 +234,6 @@ def test_管理员身份下修改自己不会丢掉青协层级(client, db, make
     other = _other_dept(db)
     sid = make_user(["admin", "qingxie", "student"], post="core", dept_id=other.id)
     h = login(client, sid)
-    rows = client.get(f"/api/staff/roles?q={sid}", headers=_as(h, "admin")).json()
+    rows = client.get(f"/api/staff/roles?q={sid}", headers=_as(h, "admin")).json()["items"]
     me = next(r for r in rows if r["student_id"] == sid)
     assert me["is_me"] and me["qingxie_post"] == "core"

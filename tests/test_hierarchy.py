@@ -210,7 +210,7 @@ def test_骨干只能把本部门成员归到自己名下(client, admin, db, tak
     """角色页对骨干只开一个口子：认领成员。身份、层级、部门一概动不了。"""
     core = login(client, CORE)
     me = _user(db, CORE)
-    rows = client.get("/api/staff/roles", headers=core).json()
+    rows = client.get("/api/staff/roles?size=100", headers=core).json()["items"]
     assert rows and all(r["qingxie_post"] == "member"
                         and r["department_id"] == me.department_id for r in rows)
     member = _user(db, MEMBER)
@@ -321,7 +321,7 @@ def test_部长不能动青协以外的身份(client, db):
 
 def test_部长的角色列表默认只有本部门(client, db):
     head = login(client, HEAD)
-    rows = client.get("/api/staff/roles", headers=head).json()
+    rows = client.get("/api/staff/roles?size=100", headers=head).json()["items"]
     dept = _liaison(db)
     assert rows and all(r["department_id"] == dept.id for r in rows)
 

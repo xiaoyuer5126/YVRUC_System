@@ -27,11 +27,11 @@ def test_只有管理员进得来(client, admin, initiator, db, take_student):
 
 def test_默认只列有管理身份的人搜索才找得到学生(client, admin, db, take_student):
     sid = take_student()
-    rows = client.get("/api/staff/roles", headers=admin).json()
+    rows = client.get("/api/staff/roles?size=100", headers=admin).json()["items"]
     assert _find(rows, sid) is None, "普通学生不该出现在默认列表里"
     assert all(set(r["roles"]) & {"admin", "qingxie", "initiator"} for r in rows)
 
-    rows = client.get(f"/api/staff/roles?q={sid}", headers=admin).json()
+    rows = client.get(f"/api/staff/roles?q={sid}", headers=admin).json()["items"]
     assert _find(rows, sid) is not None, "按学号搜得到"
 
 

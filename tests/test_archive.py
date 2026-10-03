@@ -239,10 +239,10 @@ def test_退选画像统计次数与间隔(client, admin, db, open_group, take_s
 
 def test_搜索里的通配符只当普通字符(client, admin):
     """% 在 LIKE 里是通配符，直接拼进去会把全部人搜出来。"""
-    all_rows = client.get("/api/staff/users", headers=admin).json()
+    all_rows = client.get("/api/staff/users", headers=admin).json()["items"]
     assert len(all_rows) > 1
     hit = client.get("/api/staff/users?q=%25", headers=admin).json()
-    assert hit == [], "搜 % 应当一个人都不匹配"
+    assert hit == {"total": 0, "items": []}, "搜 % 应当一个人都不匹配"
 
 
 def test_身份证号在库里是密文(client, db, take_student):
