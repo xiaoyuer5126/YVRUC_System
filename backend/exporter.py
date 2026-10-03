@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from . import config, hours as hours_flow, scoring
 from .models import (Activity, Attachment, CheckinRecord, Enrollment,
-                     FormQuestion, HoursRecord, Shift, User, now)
+                     FormQuestion, HoursRecord, Position, Shift, User, now)
 
 MATERIAL_DIR = config.DATA_DIR / "materials"
 
@@ -145,6 +145,14 @@ def _safe_sheet_name(name: str, used: set[str]) -> str:
     return candidate
 
 
+def roster_sheet_names(activity: Activity) -> dict[str, str]:
+    """排班表里每个场次的工作表名（场次 id → 表名）。导出和导入排班共用：
+    名字截断、重名加序号都按同一套规则，导回来才找得到自己那张表。"""
+    used = {"活动概览", "志愿者信息"}
+    return {g.id: _safe_sheet_name(g.name, used)
+            for g in sorted(activity.shifts, key=lambda g: g.sort)}
+
+
 def _checked_records(db: OrmSession, activity_id: str) -> dict[str, CheckinRecord]:
     rows = db.query(CheckinRecord).filter(
         CheckinRecord.activity_id == activity_id).all()
@@ -254,9 +262,9 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         info.column_dimensions[col].width = w
 
     # ---------- 每个场次一个 Sheet ----------
-    used_names: set[str] = {"活动概览", "志愿者信息"}
+    sheet_names = roster_sheet_names(activity)
     for g, positions, rows in rosters:
-        ws = wb.create_sheet(_safe_sheet_name(g.name, used_names))
+        ws = wb.create_sheet(sheet_names[g.id])
         has_positions = bool(positions)
         header = ["姓名", "学号", "性别", "学院", "手机号", "微信号", "场次时间"]
         header += ["岗位组", "岗位", "组长", "服务地点"] if has_positions else []
@@ -270,7 +278,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
             st = positions.get(enr.position_id) if enr.position_id else None
             if has_positions:
                 line += [(st.group_name if st and st.group_name else "—"),
-                         st.name if st else "待分配",
+                         st.name if st else Position.PLACEHOLDER_NAME,
                          "组长 ★" if enr.is_leader else "",
                          (st.location or activity.location) if st else "—"]
             rec = checked.get(u.id)

@@ -168,7 +168,8 @@ def test_试算不被学习权限拦(client, db, dept_activity):
     _add_core_manager(db, aid)
     member = login(client, MEMBER)
     r = client.post(f"/api/staff/shifts/{g}/assign/preview", headers=member, json={})
-    assert r.status_code == 200, r.text
+    # 进了处理函数：这一场是报名即选岗位，试算本身说「不需要」，但不是学习权限拦的
+    assert r.status_code == 400 and "不需要排班" in r.json()["detail"], r.text
 
 
 # ======================= 可见范围 =======================

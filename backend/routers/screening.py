@@ -575,6 +575,12 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                     raise HTTPException(
                         409, f"「{g.name}·{position.name}」名额已满"
                              f"（{position.quota} 人），请先调整名额或更换岗位")
+                # 截止后统一分配的场次，直接录到真实岗位也占这一场的招募名额
+                holder = g.placeholder()
+                if holder is not None and position is not holder \
+                        and not logic.has_room(db, g, holder):
+                    raise HTTPException(
+                        409, f"「{g.name}」已招满（{holder.quota} 人），请先调整人数上限")
                 target.status = "enrolled"
                 target.leader_willing = app.leader_willing
                 target.position_id = position.id

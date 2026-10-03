@@ -154,7 +154,7 @@
             <span class="dim">{{ g.start_time.slice(5,16).replace('T',' ') }}
               ~ {{ g.end_time.slice(5,16).replace('T',' ') }}</span>
             <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}（待分配）` : `本场合计 ${g.capacity} 人` }}</span>
-            <el-tag v-if="!g.positions.length"
+            <el-tag v-if="!realPositions(g).length"
                     size="small" :type="g.mode === 'assign' ? 'info' : 'danger'"
                     :effect="g.mode === 'assign' ? 'plain' : 'dark'">
               {{ g.mode === 'assign' ? '岗位后续再创建' : '未设岗位' }}
@@ -174,7 +174,7 @@
               <el-button size="small" plain :disabled="structureLocked"
                          @click="openCopyPositions(g)">复制岗位到其它场次</el-button>
               <el-button size="small" type="primary" plain :disabled="structureLocked"
-                         @click="addPosition(g)">添加岗位</el-button>
+                         @click="openStation(null, g)">添加岗位</el-button>
               <el-popconfirm :title="`删除场次「${g.name}」？`" @confirm="delShift(g)"
                              :disabled="structureLocked">
                 <template #reference>
@@ -261,7 +261,7 @@
           </el-table>
           <p v-else class="dim" style="margin:8px 0 0">
             {{ g.mode === 'assign'
-               ? '截止后统一分配：学生报名只选时间，确定分工后将本场次改为「报名即选岗位」，建好岗位再一键分配。'
+               ? '截止后统一分配：学生报名只选时间；分工定下来后直接在本场次下建岗位，再到「报名与调配」一键分配或导入排班。'
                : '还没有岗位，请先设置岗位及名额。' }}
           </p>
 
@@ -353,6 +353,9 @@
               <el-button type="primary" :loading="assignPanel?.solving"
                          :disabled="isOver" @click="assignPanel.runPreview()">
                 <el-icon><MagicStick /></el-icon>&nbsp;一键分配岗位
+              </el-button>
+              <el-button plain :disabled="isOver" @click="assignPanel.openImport()">
+                导入排班
               </el-button>
               <RefreshBar :load="refreshRoster" :at="rosterAt" />
               <el-button type="success" plain :disabled="hoursFrozen"
@@ -482,9 +485,8 @@
           <el-row :gutter="16" style="margin-top:12px">
             <!-- 左栏（宽）：分配程序计算结果、人员变动 -->
             <el-col :xs="24" :md="16">
-              <div class="section-title" style="margin-top:0">一键分配结果</div>
-              <AssignPanel ref="assignPanel" :shift="currentShift"
-                           :unassigned-count="unassignedCount" @reload="loadAll" />
+              <div class="section-title" style="margin-top:0">分配方案</div>
+              <AssignPanel ref="assignPanel" :shift="currentShift" @reload="loadAll" />
             <!-- 人员变动流水 -->
             <template v-if="roster.roster_changes?.length">
               <div class="section-title">人员变动</div>
@@ -1010,11 +1012,11 @@
               提前设置岗位分工，学生报名时自己挑岗位。
             </template>
             <template v-else>
-              适用于未敲定岗位分工的情况，学生报名时不挑岗位，
-              敲定后把本场次改回「报名即选岗位」再给志愿者分配岗位。
+              适用于未敲定岗位分工的情况，学生报名时不挑岗位。分工定下来后直接在
+              本场次下建岗位，再一键分配或导入排班。
             </template>
+            有人报名之后不能再切换模式。
           </div>
-          <!-- 改成 assign 会作废学生已经选好的岗位，先把代价摆出来 -->
           <el-alert v-if="modeSwitchCost" type="warning" show-icon :closable="false" :title="modeSwitchCost" />
         </el-form-item>
         <el-alert type="info" :closable="false">
@@ -1721,35 +1723,37 @@ const isOver = computed(
 
 function unassignedHint(g) {
   if (g.mode === 'pick') {
-    return '这些人报了名却没有岗位（岗位被删或管理员补录）；到「志愿者管理」手动指派'
+    return '这些人报了名却没有岗位（岗位被删或管理员补录）；到「志愿者管理」手动调岗'
   }
   return regClosed.value
-    ? '报名已截止，这些人还没分到岗位；到「志愿者管理」分配'
-    : '本场次报名只锁时段，岗位手动分配'
+    ? '报名已截止，这些人还在待分配；到「志愿者管理」一键分配或导入排班'
+    : '本场次报名只锁时段，截止后再分配岗位'
 }
 
+// 「截止后统一分配」场次里的「待分配」不是岗位，是装还没安排的人的地方
+const realPositions = g => g.positions.filter(p => !p.is_placeholder)
+
 // 岗位设置页上的红色感叹号：这里列出的都是「不处理就会出事」的场次。
-// assign 场次报名期没有岗位是设计如此，不报警；截止后还没建才是漏排。
+// assign 场次报名期没有岗位是设计如此，不报警；截止后还没建、还有人没分才是漏排。
 const treeAlerts = computed(() => shifts.value.flatMap(g => {
-  if (!g.positions.length) {
-    if (g.mode === 'pick') {
-      return [{ id: g.id, name: g.name,
-        text: '还没有岗位，学生无法报名' }]
-    }
-    return regClosed.value
-      ? [{ id: g.id, name: g.name,
-           text: '报名已截止，还没建岗位。改为「报名即选岗位」并建好岗位，再一键分配。' }]
+  const real = realPositions(g)
+  const alert = text => [{ id: g.id, name: g.name, text }]
+  if (g.mode === 'pick') {
+    if (!real.length) return alert('还没有岗位，学生无法报名')
+    return g.unassigned_count
+      ? alert(`还有 ${g.unassigned_count} 人没有岗位，到「报名与调配」调岗`)
       : []
   }
-  if (g.unassigned_count && (regClosed.value || g.mode === 'pick')) {
-    return [{ id: g.id, name: g.name,
-      text: `还有 ${g.unassigned_count} 人没分到岗位`
-        + (sumQuota(g) < g.enrolled
-           ? `，而岗位名额合计只有 ${sumQuota(g)}、已报名 ${g.enrolled} 人——`
-             + '先加名额再分配。'
-           : '，到「报名与调配」运行一键分配。') }]
+  if (!regClosed.value) return []
+  if (!real.length) {
+    return alert('报名已截止，还没建岗位。在本场次下建好岗位，再到「报名与调配」一键分配或导入排班。')
   }
-  return []
+  if (!g.unassigned_count) return []
+  const room = real.reduce((n, p) => n + Math.max(0, p.quota - p.enrolled), 0)
+  return alert(`还有 ${g.unassigned_count} 人在待分配`
+    + (room < g.unassigned_count
+       ? `，而各岗位空位合计只有 ${room} 个——先加岗位或名额再分配。`
+       : '，到「报名与调配」一键分配或导入排班。'))
 }))
 
 // 手动补时长时要认得出人：同名同姓靠学号，排在哪儿靠场次与岗位。
@@ -1848,15 +1852,9 @@ const allShifts = computed(() => shifts.value.flatMap(g => [
     // 培训/彩排自己不设岗位（用 applies_to_positions 圈人），只能统一签到
     positions: [], parent_name: g.name })),
 ]))
-const unassignedCount = computed(() =>
-  (roster.value.enrolled || []).filter(x => !x.position_id).length)
 const pendingPromo = computed(() => roster.value.waitlist.some(w => w.status === 'pending_confirm'))
 // 已经确认下来的时长条数（手动补录的也在各自那一笔里）：有账才谈得上核准
 const confirmedCount = computed(() => hours.value.filter(h => h.confirmed).length)
-
-function sumQuota(g) {
-  return g.positions.reduce((s, x) => s + x.quota, 0)
-}
 
 // —— 场次 CRUD ——
 // 选完开始时间，结束时间自动落到当天最后一刻；已经填过就不动
@@ -1883,21 +1881,14 @@ function openShift(g) {
   shiftDlg.value.visible = true
 }
 const screened = computed(() => act.value?.recruit_mode === 'screened')
-/** 切模式的后果说明。反向切（pick → assign）只在没人报名时允许，
- *  有人之后后端直接 409——那会作废他们已经选定的岗位。 */
+/** 切模式只在一个人都没报时允许（后端同样拦）：两种场次的人记在不同的账上，
+ *  有人之后再切，要么作废大家选好的岗位，要么让还没安排的人无处可放。 */
 const modeSwitchCost = computed(() => {
   const g = shiftDlg.value.editing
   if (!g || g.mode === groupForm.value.mode) return ''
-  if (groupForm.value.mode === 'assign') {
-    return g.enrolled
-      ? `本场次已有 ${g.enrolled} 人报名，不能改回「截止后统一分配」——`
-        + '那会作废他们已经选定的岗位。如确需改，请新建场次。'
-      : '改为「截止后统一分配」后，学生报名时不再挑岗位，'
-        + '全部落在自动生成的「待分配」岗位上。'
-  }
-  return '改为「报名即选岗位」后可以开始建岗位。「待分配」岗位会留下来，'
-    + '里面是还没安排的人——一键分配会把他们挪进新岗位，排不下的留在里面；'
-    + '空了之后可以删掉它。'
+  return g.enrolled || g.waitlist_count
+    ? '本场次已有人报名，不能再切换岗位模式；如确需调整，请新建场次。'
+    : ''
 })
 
 async function saveShift() {
@@ -2096,30 +2087,6 @@ async function copyPoster() {
     document.querySelector('.recruit-text textarea')?.select()
     ElMessage.warning('浏览器不允许自动复制，已全选，请按 Ctrl+C')
   }
-}
-
-// assign 场次不能建岗位。点按钮的当下就说清楚，并给一步到位的切换——
-// 别让人填完一整个表单再被后端 409 拦下。
-async function addPosition(g) {
-  if (g.mode === 'assign') {
-    const enrolled = g.enrolled || 0
-    try {
-      await ElMessageBox.confirm(
-        `「${g.name}」现在是「截止后统一分配」：报名只锁时段，名额记在场次上（上限 ${g.capacity}），`
-        + `岗位要改成「报名即选岗位」之后才能建。\n\n`
-        + `切换后名额口径转到各个岗位，`
-        + (enrolled ? `已报上名的 ${enrolled} 人不受影响，但都是「待分配」，`
-                    + `需要你手动指派或在「报名与调配」里一键分配。` : '本场次目前还没有人报名。'),
-        '需要先改岗位模式',
-        { type: 'warning', confirmButtonText: '改为「报名即选岗位」并继续',
-          cancelButtonText: '取消' })
-    } catch { return }
-    await api.patch(`/api/staff/shifts/${g.id}`, { mode: 'pick' })
-    await loadAll()
-    g = shifts.value.find(x => x.id === g.id) || g
-    ElMessage.success('已改为「报名即选岗位」，现在可以建岗位了')
-  }
-  openStation(null, g)
 }
 
 const materialMgr = ref(null)

@@ -1,11 +1,10 @@
+<!-- 一键分配与导入排班：只给「截止后统一分配」的场次用，只排「待分配」里的人。
+     两条路出来的是同一种方案，在这里过目、可改，确认后走同一个提交接口。 -->
 <template>
   <div v-loading="loading || solving">
-    <!-- 模式说明 -->
-    <el-alert v-if="pickModeAllAssigned" type="info" :closable="false"
-              title="本场次报名时已各自选定岗位"
-              description="试算会保持现有岗位，可直接修改下方的建议岗位。" />
+    <input ref="fileInput" type="file" accept=".xlsx" hidden @change="onImportFile" />
 
-    <!-- 一键分配、补招这些动作放在父级「已报名名单」那一行；这里只留试算选项 -->
+    <!-- 一键分配、导入、补招这些动作放在父级「已报名名单」那一行；这里只留试算选项 -->
     <div class="toolbar">
       <el-checkbox v-model="continuity" size="small">尽量同一人同一岗位</el-checkbox>
       <el-tooltip placement="top"
@@ -18,11 +17,18 @@
     </div>
 
     <div class="dim" style="margin-bottom:12px">
-      按报名先后匹配尚有名额且满足条件的岗位，不满足条件的不排入，可勾选「强制」。
+      一键分配只排「待分配」里的人，已经在岗位上的人不动：按报名先后匹配尚有空位且
+      满足条件的岗位，不满足条件的不排入，可勾选「强制」。导入排班用「导出排班表」的
+      文件，改好「岗位」「组长」两列再传回来。
     </div>
 
-
     <template v-if="preview">
+      <el-alert v-if="preview.errors?.length" type="warning" :closable="false"
+                :title="`排班表里有 ${preview.errors.length} 行没有导入`">
+        <div v-for="e in preview.errors" :key="e.row">第 {{ e.row }} 行：{{ e.message }}</div>
+      </el-alert>
+      <el-alert v-if="importLeaders.length" type="info" :closable="false"
+                :title="`确认发布后，把 ${importLeaders.length} 人设为组长（排班表「组长」列）`" />
       <!-- 岗位统计 -->
       <div class="section-title">各岗位建议人数</div>
       <el-table :data="preview.position_stats" size="small" border style="margin-bottom:12px">
@@ -42,6 +48,9 @@
               <span class="dim">（扣留 {{ row.held }}）</span>
             </el-tooltip>
           </template>
+        </el-table-column>
+        <el-table-column label="已在岗" width="80">
+          <template #default="{row}">{{ row.existing }}</template>
         </el-table-column>
         <el-table-column label="建议排入" width="90">
           <template #default="{row}"><b>{{ row.planned }}</b></template>
@@ -87,18 +96,18 @@
         </el-table-column>
         <el-table-column label="建议岗位" min-width="200">
           <template #default="{row}">
-            <el-select v-model="row.target" size="small" clearable placeholder="未分配">
-              <el-option v-for="s in stationOpts" :key="s.value" :value="s.value"
+            <el-select v-model="row.target" size="small" clearable placeholder="留在待分配">
+              <el-option v-for="s in targetOpts" :key="s.value" :value="s.value"
                          :label="`${s.label}（余${s.left}）`" />
             </el-select>
           </template>
         </el-table-column>
         <el-table-column label="变化" width="90">
           <template #default="{row}">
-            <el-tag v-if="!row.target" size="small" type="danger" effect="plain">不排</el-tag>
+            <el-tag v-if="!row.target" size="small" type="info" effect="plain">待分配</el-tag>
             <el-tag v-else-if="row.target === row.current_position_id" size="small" type="success" effect="plain">保持</el-tag>
             <el-tag v-else-if="row.continuity" size="small" type="success" effect="plain">同岗延续</el-tag>
-            <el-tag v-else-if="!row.current_position_id" size="small" type="primary" effect="plain">新排入</el-tag>
+            <el-tag v-else-if="isWaiting(row)" size="small" type="primary" effect="plain">新排入</el-tag>
             <el-tag v-else size="small" :type="row.allow_reassign ? 'warning' : 'danger'"
                     effect="plain">
               {{ row.allow_reassign ? '调整' : '调整(违意愿)' }}
@@ -133,7 +142,7 @@
       </div>
     </template>
 
-    <el-empty v-else description="点击名单上方的「一键分配岗位」开始试算" />
+    <el-empty v-else description="点击名单上方的「一键分配岗位」开始试算，或「导入排班」" />
 
     <!-- 补招：负责人直接把人加进场次 -->
     <el-dialog v-model="walkinVisible" title="补招志愿者" width="430">
@@ -179,11 +188,10 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api } from '../api'
+import { api, uploadFile } from '../api'
 
 const props = defineProps({
   shift: { type: Object, required: true },
-  unassignedCount: { type: Number, default: 0 },   // 已报名但还没有岗位的人数
 })
 const emit = defineEmits(['reload'])
 
@@ -197,7 +205,7 @@ const rows = ref([])
 // 父级的「已报名名单」那一行触发试算与补招。函数会提升，ref 不会——
 // 暴露给父级的东西必须在声明之后再交出去
 function openWalkin() { walkinVisible.value = true }
-defineExpose({ runPreview, openWalkin, solving })
+defineExpose({ runPreview, openImport, openWalkin, solving })
 const walkinVisible = ref(false)
 const walkin = ref({ sid: '', position: '', force: false, allowReassign: true,
                      attached: [], party: false })
@@ -206,15 +214,16 @@ const walkinAttached = computed(() => (props.shift.attached || []).filter(a =>
   !walkin.value.position || !a.applies_to_positions?.length
   || a.applies_to_positions.includes(walkin.value.position)))
 
-// 报名即选岗位且人人有岗 → 提示即可，不禁止试算
-const pickModeAllAssigned = computed(() =>
-  !props.shift.needs_assign && props.unassignedCount === 0)
-
 const stationOpts = computed(() =>
   props.shift.positions.map(s => ({
     value: s.id, label: s.name,
     left: Math.max(0, s.quota - (s.enrolled || 0)),
   })))
+const holderId = computed(  // vuecheck: script-only，模板经 isWaiting、targetOpts 读它
+  () => props.shift.positions.find(s => s.is_placeholder)?.id)
+// 方案里能选的去处：真实岗位。清空就是留在 / 放回「待分配」
+const targetOpts = computed(() => stationOpts.value.filter(s => s.value !== holderId.value))
+const isWaiting = row => !row.current_position_id || row.current_position_id === holderId.value
 
 function stationName(sid) {
   const s = props.shift.positions.find(x => x.id === sid)
@@ -223,8 +232,8 @@ function stationName(sid) {
 
 // 本人不接受调剂、方案又把他挪出原岗位的人数（只提示，不拦）
 const unwillingMoved = computed(() => rows.value.filter(
-  r => !r.allow_reassign && r.current_position_id && r.target
-       && r.target !== r.current_position_id).length)
+  r => !r.allow_reassign && !isWaiting(r)
+       && (r.target || holderId.value) !== r.current_position_id).length)
 
 // 编辑态行
 function buildRows() {
@@ -239,18 +248,59 @@ function overQuota(row) {
 }
 
 // 缺口按「可用名额」算：扣留的位子填不进人，不该算成缺口
-const gap = row => row.quota - row.held - row.planned
+const gap = row => row.quota - row.held - row.existing - row.planned
+
+/** 点了之前先看要不要：报名即选岗位的场次人人自己选好了；截止后分配的场次
+ *  没人在待分配，也就没什么可排的。后端同样拦，这里先给一句好懂的话。 */
+function notNeeded(forImport) {
+  if (!props.shift.needs_assign) {
+    ElMessage.info('本场次是「报名即选岗位」，志愿者报名时已各自选好岗位，不需要排班；'
+                   + '个别调整请用名单里的「调岗」')
+    return true
+  }
+  if (!props.shift.positions.some(s => !s.is_placeholder)) {
+    ElMessage.warning('请先在「岗位设置」里为本场次建好岗位')
+    return true
+  }
+  if (!forImport && !props.shift.unassigned_count) {
+    ElMessage.info('本场次没有待分配的同学，不需要一键分配；要整体调整可以导入排班')
+    return true
+  }
+  return false
+}
 
 async function runPreview() {
-  if (!props.shift.positions.length) {
-    ElMessage.warning('请先在「岗位设置」中创建岗位')
-    return
-  }
+  if (notNeeded(false)) return
   solving.value = true
   try {
     preview.value = await api.post(
       `/api/staff/shifts/${props.shift.id}/assign/preview`,
       { continuity: continuity.value })
+    importLeaders.value = []
+    buildRows()
+  } finally { solving.value = false }
+}
+
+// —— 导入排班 ——
+const fileInput = ref(null)
+const importLeaders = ref([])      // 排班表「组长」列标了的人，发布后设为组长
+function openImport() {
+  if (notNeeded(true)) return
+  fileInput.value.value = ''
+  fileInput.value.click()
+}
+async function onImportFile(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  solving.value = true
+  try {
+    const d = await uploadFile(`/api/staff/shifts/${props.shift.id}/assign/import`, file)
+    if (!d.plan.length && !d.errors.length) {
+      ElMessage.info('排班表里的岗位和现在一样，没有要调整的人')
+      return
+    }
+    preview.value = d
+    importLeaders.value = d.leaders
     buildRows()
   } finally { solving.value = false }
 }
@@ -262,8 +312,14 @@ async function apply() {
   try {
     const d = await api.post(`/api/staff/shifts/${props.shift.id}/assign/apply`,
       { plan: fullPlan, source: 'assign' })
-    ElMessage.success(d.summary + (d.applied ? '，通知已发送' : ''))
+    // 组长要等人落到岗位上才能设，所以放在发布之后逐个设
+    for (const id of importLeaders.value) {
+      await api.post(`/api/staff/enrollments/${id}/leader`, { is_leader: true })
+    }
+    ElMessage.success(d.summary + (d.applied ? '，通知已发送' : '')
+                      + (importLeaders.value.length ? `；已设 ${importLeaders.value.length} 位组长` : ''))
     preview.value = null
+    importLeaders.value = []
     emit('reload')
   } catch (e) {
     ElMessage.error(e.message + '，可勾选「强制」后重试')

@@ -198,7 +198,7 @@ def staffing_gaps(db: OrmSession, act: Activity) -> list[str]:
                 # 没人报就没什么可排的，不打扰
                 if n:
                     out.append(f"「{s.name}」还没有岗位，{n} 人等待分配"
-                               "（请先改回「报名即选岗位」再建岗位）")
+                               "（在本场次下建好岗位，再一键分配或导入排班）")
             else:
                 out.append(f"「{s.name}」还没有岗位（报名期间学生无法报名该场次）")
             continue

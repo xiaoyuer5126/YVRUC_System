@@ -334,6 +334,14 @@ def main() -> None:
                            service_task="报名截止后由负责人统一分配岗位",
                            training_note="岗位确定后另行通知")
         db.add(b1_hold)
+        # 截止后再分的真实岗位可以先建好：报名的人看不到也选不了，一键分配
+        # 或导入排班时把人从「待分配」挪进来
+        for i, (pname, quota, task) in enumerate([
+                ("分拣", 8, "按类别分拣捐赠图书，剔除破损书籍"),
+                ("搬运", 6, "把分拣好的图书搬到仓库指定货架"),
+                ("上架", 6, "按编号上架并登记")]):
+            db.add(Position(id=uid("p"), shift_id=b1.id, name=pname, quota=quota,
+                            sort=i, service_task=task, training_note="到场后统一讲解"))
         db.flush()
         spare_id = spare.id
         cnt = 0

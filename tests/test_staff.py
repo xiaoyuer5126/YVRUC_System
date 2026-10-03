@@ -277,24 +277,16 @@ def test_copy_positions_skips_duplicate_names(client, admin, db,
         assert r.json()["copied"] == 0 and len(r.json()["skipped"]) == 2
 
 
-def test_统一分配的场次必须先切模式才能加岗位(client, admin, db, assigned_group):
-    """两种场次的分界线：assign 报名时只锁时段，岗位是截止后才建的。
-
-    前端在点「添加岗位」当下就提示并给一键切换，后端这道闸门是兜底。
-    """
+def test_统一分配的场次直接加岗位(client, admin, db, assigned_group):
+    """截止后统一分配的场次不用切模式就能建岗位：建好再一键分配或导入排班。"""
     act, g, _p1, _p2 = assigned_group
     with editing(client, admin, act.id):
         r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
                         json={"name": "岗位丙", "quota": 1, **POSITION_TEXT})
-        assert r.status_code == 409
-        assert "报名即选岗位" in r.json()["detail"]
-
-        client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
-                     json={"mode": "pick"})
-        r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
-                        json={"name": "岗位丙", "quota": 1, **POSITION_TEXT})
         assert r.status_code == 200, r.text
-    assert len(db.get(Shift, g.id).positions) == 3
+    db.expire_all()
+    g = db.get(Shift, g.id)
+    assert g.mode == "assign" and len(g.positions) == 3
 
 
 def test_有人报名就不能改回统一分配(client, admin, db, assigned_group,

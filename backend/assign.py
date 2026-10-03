@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .enroll_logic import position_held_count, unmet_requirements
+from .enroll_logic import (group_needs_leader, group_positions, position_held_count,
+                           position_occupied_count, unmet_requirements)
 from .models import Enrollment, Position, Shift, User, now
 
 
@@ -80,29 +81,83 @@ def match(candidates: list[tuple[str, list[str]]],
     return placed
 
 
+NOT_ASSIGN_SHIFT = ("本场次是「报名即选岗位」，志愿者报名时已各自选好岗位，"
+                    "不需要排班；个别调整请用「调岗」")
+
+
+def _brief(u: User) -> dict:
+    return {"id": u.id, "name": u.name, "student_id": u.student_id,
+            "college": u.college, "gender": u.gender}
+
+
+def _plan_row(r: Enrollment, u: User, target: str | None, continuity: bool) -> dict:
+    return {
+        "enrollment_id": r.id,
+        "user": _brief(u),
+        "joined_at": r.joined_at.isoformat(timespec="minutes"),
+        "current_position_id": r.position_id,
+        "position_id": target,
+        "keep_current": target == r.position_id,
+        "leader_willing": r.leader_willing,
+        "allow_reassign": r.allow_reassign,
+        "continuity": continuity,
+    }
+
+
+def _position_stats(db: OrmSession, positions: list[Position], plan: list[dict]) -> list[dict]:
+    """各岗位的名额、已在岗、扣留、本次排入。本次方案里要挪走的人不算「已在岗」。"""
+    moving = {x["enrollment_id"] for x in plan}
+    out = []
+    for p in positions:
+        staying = (db.query(Enrollment)
+                   .filter(Enrollment.position_id == p.id,
+                           Enrollment.status == "enrolled",
+                           Enrollment.id.notin_(moving or {""})).count())
+        out.append({
+            "position_id": p.id, "name": p.name, "quota": p.quota,
+            "held": position_held_count(db, p.id),
+            "existing": staying,
+            "location": p.location,
+            "requirement_desc": p.requirement_desc() or "不限",
+            "needs_leader": p.needs_leader,
+            "planned": sum(1 for x in plan if x["position_id"] == p.id),
+        })
+    return out
+
+
+def _waiting(db: OrmSession, shift: Shift) -> list[Enrollment]:
+    """「待分配」里的人（以及岗位被删后没有岗位的人），按报名先后。"""
+    holder = shift.placeholder()
+    q = (db.query(Enrollment)
+         .filter(Enrollment.shift_id == shift.id, Enrollment.status == "enrolled"))
+    q = q.filter((Enrollment.position_id.is_(None))
+                 | (Enrollment.position_id == (holder.id if holder else "")))
+    return q.order_by(Enrollment.joined_at).all()
+
+
 def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
-    """试算一次，不落库。
+    """试算一次，不落库。只排「待分配」里的人，已经在真实岗位上的人一个不动——
+    他们的去向是报名时自己选的、或者管理者已经定下的，试算没有理由推翻；
+    他们占着的名额照算，排的只是剩下的空位。
 
     continuity=True 时，如果这个人在本活动的其它场次已经排过同名岗位，
     优先让他还待在那个岗位——多天活动里换来换去，交接成本全落在现场。
     """
+    if not shift.needs_assign():
+        raise ValueError(NOT_ASSIGN_SHIFT)
     # 占位岗位不参与分配：它是「还没安排的人」待的地方，人只能从里面出去。
-    # 把它当成候选岗位的话，匹配会心安理得地把人留在原地，等于什么也没分。
     positions = sorted(shift.real_positions(), key=lambda p: p.sort)
     if not positions:
-        raise ValueError("请先在该场次下创建岗位")
-
-    rows = (db.query(Enrollment)
-            .filter(Enrollment.shift_id == shift.id,
-                    Enrollment.status == "enrolled")
-            .order_by(Enrollment.joined_at).all())
-
+        raise ValueError("请先在「岗位设置」里为本场次建好岗位")
+    rows = _waiting(db, shift)
+    if not rows:
+        raise ValueError("本场次没有待分配的同学，不需要一键分配")
     users = {r.id: db.get(User, r.user_id) for r in rows}
     candidates = [(r.id, _eligible_positions(users[r.id], positions))
                   for r in rows]
-    held = _held_seats(db, positions)
-    quota = {p.id: max(0, p.quota - held[p.id]) for p in positions}
-
+    # 空位 = 名额 − 已占（在岗 + 待确认 + 临期退选扣留）。扣留的位子不释放给
+    # 任何人，分配同样不能用，否则等于绕开了扣留规则
+    quota = {p.id: max(0, p.quota - position_occupied_count(db, p.id)) for p in positions}
     prefer: dict[str, str] = {}
     if continuity:
         by_name = {p.name: p.id for p in positions}
@@ -115,46 +170,20 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
                                 Enrollment.status == "enrolled").first())
             if previous and previous[0] in by_name:
                 prefer[r.id] = by_name[previous[0]]
-
     placed = match(candidates, quota, prefer)
-
     plan, unassigned = [], []
     for r in rows:
         u = users[r.id]
         target = placed.get(r.id)
         if target is None:
-            # 排不下不等于出局：他仍然待在原来的岗位（assign 场次就是占位岗位），
-            # 管理者可以加岗位、扩名额再跑一次，或者手动指派。
+            # 排不下不等于出局：他仍然待在「待分配」，管理者可以加岗位、扩名额
+            # 再跑一次，或者手动指派
             reason = ("没有满足条件的岗位"
                       if not _eligible_positions(u, positions)
                       else "可去的岗位名额已满")
-            unassigned.append({
-                "user": {"id": u.id, "name": u.name,
-                         "student_id": u.student_id, "college": u.college},
-                "reason": reason})
+            unassigned.append({"user": _brief(u), "reason": reason})
             continue
-        plan.append({
-            "enrollment_id": r.id,
-            "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
-                     "college": u.college, "gender": u.gender},
-            "joined_at": r.joined_at.isoformat(timespec="minutes"),
-            "current_position_id": r.position_id,
-            "position_id": target,
-            "keep_current": target == r.position_id,
-            "leader_willing": r.leader_willing,
-            "allow_reassign": r.allow_reassign,
-            "continuity": prefer.get(r.id) == target,
-        })
-
-    stats = [{
-        "position_id": p.id, "name": p.name, "quota": p.quota,
-        "held": held[p.id],
-        "location": p.location,
-        "requirement_desc": p.requirement_desc() or "不限",
-        "needs_leader": p.needs_leader,
-        "planned": sum(1 for x in plan if x["position_id"] == p.id),
-    } for p in positions]
-
+        plan.append(_plan_row(r, u, target, prefer.get(r.id) == target))
     return {
         "shift": {"id": shift.id, "name": shift.name,
                   "time": shift.span_text(),
@@ -162,24 +191,120 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
         "continuity": continuity,
         "plan": plan,
         "unassigned": unassigned,
-        "position_stats": stats,
+        "position_stats": _position_stats(db, positions, plan),
         "total_enrolled": len(rows),
         "total_assigned": len(plan),
     }
 
 
+def plan_from_workbook(db: OrmSession, shift: Shift, data: bytes) -> dict:
+    """导入排班：读管理者在 Excel 里改好的排班表，拼成一份和试算同样结构的方案。
+
+    用的就是「导出排班表」那份文件：找这一场对应的工作表，按学号对人，「岗位」
+    列按名称对到本场次的岗位（写「待分配」就是放回待分配），「组长」列不空就是
+    设为组长。岗位留空的行不动。只调本场次已报名的人，不增不减人。
+    不落库：方案进分配面板给人过目、可改，确认后走 apply_plan，校验与留痕同一键分配。
+    另外返回 errors（第几行、什么问题）与 leaders（要设为组长的报名 id）。
+    """
+    from io import BytesIO
+    from openpyxl import load_workbook
+    from .exporter import roster_sheet_names
+
+    if not shift.needs_assign():
+        raise ValueError(NOT_ASSIGN_SHIFT)
+    try:
+        wb = load_workbook(BytesIO(data), read_only=True, data_only=True)
+    except Exception:       # 坏文件、不是 xlsx：openpyxl 抛的异常五花八门
+        raise ValueError("读不了这个文件，请上传「导出排班表」导出、改好的 .xlsx 文件")
+    name = roster_sheet_names(shift.activity)[shift.id]
+    if name in wb.sheetnames:
+        ws = wb[name]
+    elif len(wb.worksheets) == 1:
+        ws = wb.worksheets[0]
+    else:
+        raise ValueError(f"文件里没有「{name}」这张工作表，请用「导出排班表」导出的文件修改")
+    lines = ws.iter_rows(values_only=True)
+    header = [str(c or "").strip() for c in next(lines, ())]
+    if "学号" not in header or "岗位" not in header:
+        raise ValueError(f"工作表「{ws.title}」里找不到「学号」「岗位」两列")
+    col_sid, col_pos = header.index("学号"), header.index("岗位")
+    col_leader = header.index("组长") if "组长" in header else None
+
+    holder = shift.placeholder()
+    by_name = {p.name: p for p in shift.real_positions()}
+    rows = (db.query(Enrollment, User)
+            .join(User, Enrollment.user_id == User.id)
+            .filter(Enrollment.shift_id == shift.id, Enrollment.status == "enrolled").all())
+    enrolled = {u.student_id: (e, u) for e, u in rows}
+
+    def cell(line, col):
+        v = line[col] if col is not None and col < len(line) else None
+        if isinstance(v, float) and v.is_integer():
+            v = int(v)          # 学号被 Excel 当成数字存了
+        return str(v).strip() if v is not None else ""
+
+    plan, errors, leaders, seen = [], [], [], set()
+    for no, line in enumerate(lines, start=2):
+        sid = cell(line, col_sid)
+        if not sid:
+            continue
+        if sid not in enrolled:
+            # 表底「以下人员尚未分配岗位」那几行也有学号，岗位是空的：一并跳过
+            if cell(line, col_pos):
+                errors.append({"row": no, "message": f"学号 {sid} 不在本场次的已报名名单里"})
+            continue
+        pos_name = cell(line, col_pos)
+        if not pos_name:
+            continue
+        if sid in seen:
+            errors.append({"row": no, "message": f"学号 {sid} 出现了不止一次，以第一次为准"})
+            continue
+        seen.add(sid)
+        target = holder if pos_name == Position.PLACEHOLDER_NAME else by_name.get(pos_name)
+        if target is None:
+            errors.append({"row": no, "message": f"本场次没有「{pos_name}」这个岗位"})
+            continue
+        e, u = enrolled[sid]
+        if target.id != e.position_id:
+            plan.append(_plan_row(e, u, None if target is holder else target.id, False))
+        if col_leader is not None and cell(line, col_leader) and target is not holder:
+            if group_needs_leader(group_positions(db, target)):
+                leaders.append(e.id)
+            else:
+                errors.append({"row": no, "message": f"岗位「{target.name}」没有设组长，"
+                                                     "这一行的组长没有导入"})
+    positions = sorted(shift.real_positions(), key=lambda p: p.sort)
+    return {
+        "shift": {"id": shift.id, "name": shift.name, "time": shift.span_text(),
+                  "capacity": shift.total_capacity()},
+        "continuity": False,
+        "plan": plan,
+        "unassigned": [],
+        "position_stats": _position_stats(db, positions, plan),
+        "total_enrolled": len(rows),
+        "total_assigned": len(plan),
+        "errors": errors,
+        "leaders": leaders,
+    }
+
+
 def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
                source: str = "assign", notify_out: list | None = None) -> dict:
-    """落库分配方案（试算结果可人工微调后提交）。
+    """落库分配方案（试算或导入的结果，可人工微调后提交；调岗也走这里）。
 
     plan 行：{"enrollment_id", "position_id"|"", "force": false}
+    position_id 为空：assign 场次是放回「待分配」，pick 场次是不分岗位。
     校验：记录属于本场次、岗位属于本场次、硬性条件、名额。
     force 可以突破名额与条件，单独标记为强制分配并留痕——这正是「强制」的含义。
+
+    只 flush 不提交：调用方要在同一把场次锁、同一个事务里接着递补候补
+    （调走的人空出来的位子），再一起提交。
     """
     from .audit import log as audit_log
     from .enroll_logic import on_leader_vacated, sync_attached
 
     positions = {p.id: p for p in shift.positions}
+    holder = shift.placeholder()
     rows = []
     for row in plan:
         enr = db.get(Enrollment, row.get("enrollment_id") or "")
@@ -188,6 +313,8 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
         pid = (row.get("position_id") or "").strip()
         if pid and pid not in positions:
             raise ValueError(f"岗位不属于该场次：{pid}")
+        if not pid and holder is not None:
+            pid = holder.id
         rows.append((enr, positions.get(pid), bool(row.get("force"))))
 
     # 名额：把本次方案与未列入方案的既有分配合并起来算。
@@ -230,7 +357,9 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
             vacated.add(old.id)
             if enr.is_leader:
                 enr.is_leader = False
-        if not enr.allow_reassign and old is not None and old is not position:
+        # 从「待分配」分出去不算调剂：他本来就没有岗位
+        if (not enr.allow_reassign and old is not None and not old.is_placeholder
+                and old is not position):
             against_will.append(db.get(User, enr.user_id).name)
         changed.append((enr, old, position, force))
         enr.position_id = position.id if position else None
@@ -249,8 +378,8 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
         sync_attached(db, enr)
 
     for enr, _old, position, _f in changed:
-        if position is None:
-            continue
+        if position is None or position.is_placeholder:
+            continue        # 放回「待分配」不算分到岗位，不发岗位通知
         if notify_out is not None:
             notify_out.append({"user_id": enr.user_id,
                                "position_id": position.id,
@@ -275,7 +404,7 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
     audit_log(db, actor=actor, action=action, target_type="assignment",
               target_id=shift.id, target_label=shift.name,
               activity_id=shift.activity_id, summary=summary, changes=changes)
-    db.commit()
+    db.flush()
 
     return {
         "applied": len(changed), "forced": len(forced),

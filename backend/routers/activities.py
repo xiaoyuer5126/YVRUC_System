@@ -259,8 +259,18 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
 
 
 def _room_left(db, g, position) -> int:
-    """岗位还剩几个正式名额（待确认的也算占着，见 logic.position_occupied_count）。"""
+    """岗位还剩几个正式名额（待确认的也算占着，见 logic.position_occupied_count）。
+    占位岗位按整场数，同 logic.has_room。"""
+    if position.is_placeholder:
+        return position.quota - logic.shift_occupied_count(db, g.id)
     return position.quota - logic.position_occupied_count(db, position.id)
+
+
+def _seat_gate_id(g, position_id: str | None) -> str | None:
+    """名额闸门挂在哪个岗位上。assign 场次一律是占位岗位：报名都从它进，
+    名额按整场数，所以这一场里谁退选（哪怕已经分到了真实岗位）都要作废它。"""
+    holder = g.placeholder() if g.needs_assign() else None
+    return holder.id if holder else position_id
 
 
 def _waitlist_left(db, g, position) -> int:
@@ -420,7 +430,8 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
             # 它发在拿到用户锁之后：读已提交下每条语句一个新快照，同一个人
             # 先到的那个请求已提交的报名，这里一定看得见
             ledger = logic.enroll_ledger(db, act.id, g.id, position.id, user.id,
-                                         [g] + attached)
+                                         [g] + attached,
+                                         whole_shift=position.is_placeholder)
             if ledger.mine_held:
                 raise HTTPException(
                     409, "您此前在该场次临期退选，名额已按规则扣留，无法再次报名；"
@@ -622,7 +633,7 @@ def cancel_enroll(enrollment_id: str,
             db.flush()                   # 递补按落库后的人数算，但先不提交（见上）
             logic.promote_all(db, g)
             db.commit()
-            invalidate_gates(g.id, enr.position_id)
+            invalidate_gates(g.id, _seat_gate_id(g, enr.position_id))
             return {"ok": True, "effect": "abandoned",
                     "message": "已放弃候补转正，名额顺延下一位。"}
 
@@ -632,7 +643,7 @@ def cancel_enroll(enrollment_id: str,
             enr.cancelled_at = now()
             logic.record_change(db, user, enr, "quit_queue")
             db.commit()
-            invalidate_gates(g.id, enr.position_id)
+            invalidate_gates(g.id, _seat_gate_id(g, enr.position_id))
             return {"ok": True, "effect": "quit_queue", "message": "已退出候补队列。"}
 
         # enrolled：活动开始后不可退
@@ -673,7 +684,7 @@ def cancel_enroll(enrollment_id: str,
         db.commit()
         # 名额在闸门之外变了（放出一个正式名额，或候补顶上后空出一个排队位）：
         # 作废计数器，下一个报名按数据库重新对齐，别让刚放出来的位子被挡住
-        invalidate_gates(g.id, vacated)
+        invalidate_gates(g.id, _seat_gate_id(g, vacated))
 
     if hold_seat:
         return {"ok": True, "effect": "held",

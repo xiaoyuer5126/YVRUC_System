@@ -317,14 +317,20 @@ def _group_of(p: Position, positions: list[Position]) -> list[Position]:
 
 def _position_public(p: Position, siblings: list[Position], occ: Occupancy,
                      n_materials: int) -> dict:
-    """岗位里人人都一样的部分。培训内容、材料列表、组长、能不能报见 _for_viewer。"""
+    """岗位里人人都一样的部分。培训内容、材料列表、组长、能不能报见 _for_viewer。
+
+    占位岗位的人数按整场数（同 enroll_logic.has_room）：它的名额就是这一场的
+    招募人数，分到真实岗位的人也还占着。
+    """
+    whole = p.is_placeholder
     return {
         "id": p.id, "name": p.name,
         # 岗位没有独立时间：显示所属场次的时段
         "time_text": p.time_text(),
         "location": p.location, "quota": p.quota,
-        "enrolled": occ.position_enrolled(p.id),
-        "remaining": max(0, p.quota - occ.position_occupied(p.id)),
+        "enrolled": occ.shift_enrolled(p.shift_id) if whole else occ.position_enrolled(p.id),
+        "remaining": max(0, p.quota - (occ.shift_occupied(p.shift_id) if whole
+                                       else occ.position_occupied(p.id))),
         # 临期退选扣留的名额：不发出去的话，「已报名 8/10、剩余 0」没人看得懂
         "held_seats": occ.position_held(p.id),
         "waitlist_quota": p.waitlist_quota,
@@ -339,11 +345,8 @@ def _position_public(p: Position, siblings: list[Position], occ: Occupancy,
         "position_requirement": p.position_requirement,
         "group_name": p.group_name,
         "is_placeholder": p.is_placeholder,
-        # assign 场次里它不是一个岗位，是「这一场怎么报」的说明，所以换个说法。
-        # 切成 pick 之后它就是个普通岗位（人从里面往外挪），照常显示本名。
-        "display_name": (PLACEHOLDER_LABEL
-                         if p.is_placeholder and p.shift.needs_assign()
-                         else p.name),
+        # 占位岗位不是一个岗位，是「这一场怎么报」的说明，所以换个说法
+        "display_name": PLACEHOLDER_LABEL if p.is_placeholder else p.name,
         "sort": p.sort,
         # 材料数量始终公开：让人知道「报名后有 3 份培训材料」是招募信息，
         # 内容本身才需要报名后才能看

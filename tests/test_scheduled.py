@@ -126,14 +126,12 @@ def test_统一分配场次没人报名截止时不打扰(db, open_group):
 
 
 def test_排完的活动截止时不打扰(client, admin, db, open_group, take_student):
-    """照线上流程走一遍：改回选岗位 → 建岗位 → 一键分配，人全离开占位。"""
+    """照线上流程走一遍：直接在场次下建岗位 → 分配，人全离开占位。"""
     act, g = open_group(5, mode="assign")
     r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                     headers=login(client, take_student()), json={})
     assert r.status_code == 200, r.text
     with editing(client, admin, act.id):
-        assert client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
-                            json={"mode": "pick"}).status_code == 200
         pid = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
                           json={"name": "分拣", "quota": 5, **POSITION_TEXT}
                           ).json()["id"]

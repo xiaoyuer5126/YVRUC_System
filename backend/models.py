@@ -593,20 +593,25 @@ class Shift(Base):
         return self.mode == "assign"
 
     def total_capacity(self) -> int:
-        """场次总名额 = 各岗位名额之和。
+        """场次总名额（招多少人）。
 
-        名额只有这一个来源。「截止后统一分配」的场次也有岗位——建场次时
-        自动带一个占位岗位，报名的人都落在它上面，名额记在它头上。
+        「报名即选岗位」：各岗位名额之和。
+        「截止后统一分配」：占位岗位的名额——它就是这一场的招募人数。场次下
+        另建的真实岗位是分配用的坑位，人从占位岗位挪过去，仍在这一场里，
+        把它们的名额再加进来就重复算了。
         """
+        if self.needs_assign():
+            holder = self.placeholder()
+            return holder.quota if holder else 0
         return sum(p.quota for p in self.positions)
 
     def placeholder(self):
-        """占位岗位：「截止后统一分配」场次里那个装「还没安排的人」的桶。
+        """占位岗位：「截止后统一分配」场次里装「还没安排的人」的桶。
 
-        建 assign 场次时自动生成，学生报名就落在它上面。切成 pick 模式后
-        它仍然带着这个标记——一键分配据此**不把它当作分配目标**，
-        于是人只会从它里面出去、不会被排进来，排不下的自然留在里面。
-        标记不影响它作为普通岗位被改名、改名额、删除（空了才删得掉）。
+        建 assign 场次时自动生成，学生报名都落在它上面；名额记在它头上，但按
+        整场数人（见 enroll_logic.has_room）——分到真实岗位的人仍占着这一场的
+        名额。人只从它里面往外挪（一键分配、导入、调岗），一键分配不把它当作
+        分配目标，排不下的自然留在里面。只有 assign 场次有它。
         """
         return next((p for p in self.positions if p.is_placeholder), None)
 
@@ -619,6 +624,8 @@ class Position(Base):
     """岗位：场次下的具体职责。没有自己的时间——时间统一由场次负责，
     同场次内的岗位互斥（一人只占一个），所以换岗不会产生新的时段冲突。"""
     __tablename__ = "positions"
+    # 占位岗位的名字；排班表里没分到岗位的人也写这三个字，导入排班按它认回来
+    PLACEHOLDER_NAME = "待分配"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     shift_id: Mapped[str] = mapped_column(ForeignKey("shifts.id"), index=True)

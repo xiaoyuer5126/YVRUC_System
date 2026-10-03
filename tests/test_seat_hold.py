@@ -123,7 +123,8 @@ def test_提前截止报名后临期退选照样扣留(client, admin, db, open_g
 
 
 def test_扣留的名额分配时不能占用(client, admin, db, open_group, take_student):
-    """扣留的位子不释放给任何人，一键分配与手动调岗同样不能拿它排人。"""
+    """扣留的位子不释放给任何人，手动调岗同样不能拿它排人
+    （一键分配那边见 test_placeholder 的「扣留的位子一键分配不用」）。"""
     from backend.models import Position, uid
     act, g = open_group(2, day_offset=0, start_in_hours=10)
     spare = Position(id=uid("p"), shift_id=g.id, name="备用岗位", quota=1, sort=1)
@@ -143,12 +144,6 @@ def test_扣留的名额分配时不能占用(client, admin, db, open_group, tak
             .filter(Enrollment.shift_id == g.id,
                     User.student_id == quitter).one())
     assert _cancel(client, quitter, gone.id).json()["effect"] == "held"
-
-    # 试算：名额 2 里有 1 个被扣留，剩下的 1 个已经有人，缺口是 0 不是 1
-    d = client.post(f"/api/staff/shifts/{g.id}/assign/preview",
-                    headers=admin, json={}).json()
-    main = next(s for s in d["position_stats"] if s["position_id"] == g.test_position_id)
-    assert main["held"] == 1 and main["quota"] == 2
 
     # 手动调岗：把第三个人塞进这个岗位要被拦下，除非勾强制
     client.post(f"/api/staff/shifts/{g.id}/add-walkin", headers=admin,

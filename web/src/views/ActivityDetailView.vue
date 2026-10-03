@@ -189,6 +189,10 @@
                       </el-button>
                     </template>
                   </template>
+                  <!-- 截止后统一分配的场次：报名只从「待分配」进，真实岗位由负责人分 -->
+                  <span v-else-if="g.needs_assign && !s.is_placeholder" class="dim">
+                    由负责人分配
+                  </span>
                   <span v-else-if="g.my_enrollment" class="dim">同场次只能选一个岗位</span>
                   <el-button v-else-if="queuedShift(g)" size="small" disabled
                              :loading="queuedHere(g, s)">

@@ -287,10 +287,14 @@ def has_room(db: OrmSession, shift: Shift, position=None) -> bool:
     """还有没有正式名额。名额只记在岗位上，场次不另存一份。
 
     assign 模式下报名时看似「没有岗位可选」，其实落在占位岗位上——
-    调用方（报名接口）负责把它解析成 shift.placeholder()。
+    调用方（报名接口）负责把它解析成 shift.placeholder()。占位岗位按整场
+    数人：分到真实岗位的人还在这一场里，只数占位岗位的话，人一挪出去
+    就像空出了位子，会再招进来一批。
     """
     if position is None:
         return False
+    if position.is_placeholder:
+        return shift_occupied_count(db, shift.id) < position.quota
     return position_occupied_count(db, position.id) < position.quota
 
 
@@ -306,7 +310,7 @@ class EnrollLedger(NamedTuple):
 
 def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
                   position_id: str, user_id: str,
-                  targets: list[Shift]) -> EnrollLedger:
+                  targets: list[Shift], *, whole_shift: bool = False) -> EnrollLedger:
     """报名锁里的「查重 + 数名额 + 数候补 + 看编辑态 + 有没有时段冲突」，**一条 SQL**。
 
     分开查要四五条：查重一条、has_room 一条、没位子时把整场候补行全捞回来
@@ -318,6 +322,7 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
       · 查重：status ∈ ACTIVE 或 seat_held（唯一索引 uq_enrollment_live 的口径，
         所以最多一行，max/bool_or 取到的就是那一行）；
       · 名额：position_occupied_count——正式 + 待确认 + 临期退选占位；
+        whole_shift（报的是占位岗位）时按整场数，同 has_room；
       · 候补：waitlist_rows——waitlisted + pending_confirm，限本场次本岗位。
         待确认既占名额又在队列里，两边都算；
       · 冲突：time_conflicts——本人 ACTIVE 的报名，场次与 targets 里任一场
@@ -328,6 +333,7 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
     live = or_(Enrollment.status.in_(ACTIVE), Enrollment.seat_held.is_(True))
     mine = (Enrollment.shift_id == shift_id) & (Enrollment.user_id == user_id)
     at_pos = Enrollment.position_id == position_id
+    seats = (Enrollment.shift_id == shift_id) if whole_shift else at_pos
     editing = (select(Activity.editing_since.isnot(None))
                .where(Activity.id == activity_id).scalar_subquery())
     clash = (select(Enrollment.id)
@@ -342,14 +348,14 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
     row = db.execute(
         select(func.max(Enrollment.status).filter(mine & live),
                func.coalesce(func.bool_or(mine & Enrollment.seat_held), False),
-               func.count().filter(at_pos & or_(
+               func.count().filter(seats & or_(
                    Enrollment.status.in_(("enrolled", "pending_confirm")),
                    Enrollment.seat_held.is_(True))),
                func.count().filter(
                    at_pos & (Enrollment.shift_id == shift_id)
                    & Enrollment.status.in_(("waitlisted", "pending_confirm"))),
                editing, clash)
-        .where(or_(mine, at_pos))).one()
+        .where(or_(mine, seats))).one()
     return EnrollLedger(row[0], bool(row[1]), row[2], row[3], bool(row[4]),
                         bool(row[5]))
 
@@ -728,7 +734,8 @@ def promote_all(db: OrmSession, shift: Shift) -> int:
     过了自动转正截止点整个不动（见 auto_promote_deadline）。
     """
     if shift.needs_assign():
-        return 1 if promote_head(db, shift) else 0
+        # 队列排在占位岗位上，名额按整场数（见 has_room）
+        return 1 if promote_head(db, shift, shift.placeholder()) else 0
     n = 0
     for position in shift.positions:
         if promote_head(db, shift, position):

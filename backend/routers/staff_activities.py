@@ -17,6 +17,7 @@ from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
                      UploadFile)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import or_
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
@@ -682,7 +683,6 @@ def copy_positions_route(shift_id: str, body: CopyPositionsBody,
         target = db.get(Shift, tid)
         if target is None or target.activity_id != src.activity_id:
             raise HTTPException(400, "目标场次不属于本活动")
-        _ensure_pick_mode_for_positions(target)
         if target.id == src.id:
             continue
         targets.append(target)
@@ -981,9 +981,6 @@ def _apply_attachment(db: OrmSession, g: Shift, body: ShiftBody,
     g.mode = "pick"          # 附属场次不选岗位，模式对它没有意义
 
 
-PLACEHOLDER_NAME = "待分配"
-
-
 def _sync_placeholder(db: OrmSession, g: Shift, capacity: int,
                       waitlist_quota: int) -> None:
     """「截止后统一分配」的场次自动带一个占位岗位，名额记在它头上。
@@ -998,56 +995,53 @@ def _sync_placeholder(db: OrmSession, g: Shift, capacity: int,
         raise HTTPException(400, "「截止后统一分配」的场次必须填写人数上限")
     holder = g.placeholder()
     if holder is None:
-        # 这个场次可能切到过 pick——那时占位岗位转成了普通岗位。没人报的话
-        # 直接把它收回来，否则会多出一个同名岗位。
-        holder = next((p for p in g.positions
-                       if p.name == PLACEHOLDER_NAME
-                       and not logic.position_occupied_count(db, p.id)), None)
-    if holder is None:
-        holder = Position(id=uid("p"), shift_id=g.id, name=PLACEHOLDER_NAME,
-                          sort=-1,
+        holder = Position(id=uid("p"), shift_id=g.id, name=Position.PLACEHOLDER_NAME,
+                          is_placeholder=True, sort=-1,
                           service_task="报名截止后由负责人统一分配岗位",
                           training_note="岗位确定后另行通知")
         db.add(holder)
         g.positions.append(holder)
-    holder.is_placeholder = True
-    enrolled = logic.position_enrolled_count(db, holder.id) if holder.id else 0
+    # 名额按整场数（见 enroll_logic.has_room）：已经分到真实岗位的人也算
+    enrolled = logic.shift_enrolled_count(db, g.id) if g.id else 0
     if capacity < enrolled:
         raise HTTPException(400, f"人数上限不能小于已报名的 {enrolled} 人")
     holder.quota = capacity
     holder.waitlist_quota = waitlist_quota
 
 
-def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> int:
-    """切换场次模式。返回 0，签名保留是因为调用方还在报「影响人数」。
+def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
+    """切换场次模式：只在这一场一个人都没报（含候补、临期占位）时允许。
 
-    assign → pick 是正常流程：报名截止后改模式、建岗位、跑一键分配。
-    占位岗位就地转成普通岗位：名字还叫「待分配」，管理者一眼认得出这是谁，
-    一个场次只有一个岗位时不必再新建一个，一键分配也照常往里排人。
-    预置的服务任务与培训内容清空——那两句话是说给「还没分岗位」的人听的。
+    两种场次的人记在不同的账上：pick 的人各自占着自己选的岗位；assign 的人
+    都从占位岗位进来、名额按整场数，分到真实岗位后仍算这一场的名额。有人
+    之后再切，要么作废大家选好的岗位，要么让「还没安排的人」无处可放——
+    建错模式的场次趁没人报的时候改，或者删了重建。
 
-    pick → assign 只在**一个人都没报**时允许。反向切要作废所有人已经选定的
-    岗位，那是一次实打实的减损；与其做一个带二次确认的破坏性操作，不如
-    干脆不给——建错模式的场次删了重建就是。
+    「截止后统一分配」的场次不用切模式就能建岗位：直接建，再一键分配或导入。
+    切到 pick 时占位岗位用不上了，删掉；它上面有过报名记录（报了又退的）
+    就删不掉，也就不让切。
     """
     if mode not in SHIFT_MODES:
         raise HTTPException(400, "场次模式必须是 pick 或 assign")
-    if mode == "assign" and g.mode != "assign" and g.id:
-        live = (db.query(Enrollment)
-                .filter(Enrollment.shift_id == g.id,
-                        Enrollment.status.in_(logic.ACTIVE)).count())
+    if mode == g.mode:
+        return
+    if g.id:
+        rows = db.query(Enrollment).filter(Enrollment.shift_id == g.id)
+        live = rows.filter(or_(Enrollment.status.in_(logic.ACTIVE),
+                               Enrollment.seat_held.is_(True))).count()
         if live:
             raise HTTPException(
-                409, f"「{g.name}」已有 {live} 人报名，不能改回"
-                     f"「截止后统一分配」，如确需调整请新建场次。")
-    if mode == "pick" and g.mode == "assign":
+                409, f"「{g.name}」已有 {live} 人报名，不能再切换岗位模式；"
+                     f"如确需调整请新建场次")
         holder = g.placeholder()
-        if holder is not None:
-            holder.is_placeholder = False
-            holder.service_task = ""
-            holder.training_note = ""
+        if mode == "pick" and holder is not None:
+            if rows.filter(Enrollment.position_id == holder.id).count():
+                raise HTTPException(
+                    409, f"「{g.name}」有过报名记录，不能再改成「报名即选岗位」；"
+                         f"如确需调整请新建场次")
+            g.positions.remove(holder)
+            db.delete(holder)
     g.mode = mode
-    return 0
 
 
 @router.post("/activities/{activity_id}/shifts")
@@ -1113,7 +1107,6 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
     before_raw = {k: getattr(g, k) for k in SHIFT_FIELDS}
-    cleared = 0
     for key in SHIFT_FIELDS:
         if key not in body:
             continue
@@ -1121,7 +1114,7 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
         if key in ("start_time", "end_time"):
             setattr(g, key, _parse_dt(v))
         elif key == "mode":
-            cleared = _apply_shift_mode(db, g, v)
+            _apply_shift_mode(db, g, v)
         elif key == "hours_mode":
             if v not in HOURS_MODES:
                 raise HTTPException(400, "时长认定方式不合法")
@@ -1167,13 +1160,11 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
               target_id=g.id, target_label=f"{act.title}·{g.name}",
               activity_id=act.id,
               summary=f"修改场次「{g.name}」："
-                      f"{'、'.join(c['label'] for c in changes) or '无实质变化'}"
-                      + (f"；已清空 {cleared} 人的岗位，改由截止后统一分配"
-                         if cleared else ""),
+                      f"{'、'.join(c['label'] for c in changes) or '无实质变化'}",
               changes=changes,
               visible=True)
     db.commit()
-    return {"ok": True, "changes": changes, "cleared": cleared}
+    return {"ok": True, "changes": changes}
 
 
 @router.delete("/shifts/{shift_id}")
@@ -1265,20 +1256,6 @@ def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:
     return act
 
 
-def _ensure_pick_mode_for_positions(g: Shift) -> None:
-    """加岗位前必须是「报名即选岗位」模式。
-
-    这是两种场次的分界线：assign 场次报名时只锁时段，名额记在场次上，
-    岗位是报名截止后才建的；留在 assign 模式下建岗位，名额会同时挂在
-    两层，谁也说不清以哪个为准。前端在点「添加岗位」时就会提示并给出
-    一键切换，不会让人填完一整个表单才被拦下。
-    """
-    if g.needs_assign():
-        raise HTTPException(
-            409, f"场次「{g.name}」当前是「截止后统一分配」，请先在场次设置中"
-                 f"改为「报名即选岗位」，再添加岗位")
-
-
 def _require_position_text(s: Position) -> None:
     """服务任务是志愿者到岗前唯一必看的一句话；地点留空用活动地点，
     培训内容可以之后再补。"""
@@ -1297,8 +1274,8 @@ def _require_position_text(s: Position) -> None:
 def _validate_position(db: OrmSession, g: Shift, s: Position):
     """岗位自带名额，不受场次总数约束——场次只管时间。
 
-    assign 模式例外：切过模式的场次可能留着一批岗位，那时名额记在场次上，
-    各岗位之和不能超过它，否则一键分配会分出比报名人数更多的坑位。
+    「截止后统一分配」场次里的真实岗位也一样：它们是分配用的坑位，名额之和
+    可以多于招募人数（有的岗位排不满），也可以少（排不下的留在「待分配」）。
     """
     if s.quota <= 0:
         raise HTTPException(400, "岗位名额必须大于 0")
@@ -1306,11 +1283,6 @@ def _validate_position(db: OrmSession, g: Shift, s: Position):
     enrolled = logic.position_enrolled_count(db, s.id) if s.id else 0
     if s.quota < enrolled:
         raise HTTPException(400, f"岗位名额不能小于已报名的 {enrolled} 人")
-    if g.needs_assign():
-        quota_sum = sum(x.quota for x in g.positions if x.id != s.id) + s.quota
-        if quota_sum > g.capacity:
-            raise HTTPException(
-                400, f"各岗位名额之和({quota_sum})超过场次人数上限({g.capacity})")
 
 
 @router.post("/shifts/{shift_id}/positions")
@@ -1320,7 +1292,6 @@ def create_position(shift_id: str, body: PositionBody,
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
-    _ensure_pick_mode_for_positions(g)
     source = db.get(Position, body.copy_from) if body.copy_from else None
     if source is not None and source.shift.activity_id != g.activity_id:
         raise HTTPException(400, "只能复制本活动的岗位")
@@ -1437,6 +1408,9 @@ def delete_position(position_id: str,
     g = _shift(db, s.shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
+    if s.is_placeholder:
+        raise HTTPException(409, "「待分配」是这一场报名的入口，不能删；"
+                                 "名额改在场次的「人数上限」里")
     n = db.query(Enrollment).filter(Enrollment.position_id == s.id,
                                     Enrollment.status == "enrolled").count()
     if n:
@@ -2030,6 +2004,26 @@ def assign_preview(shift_id: str, body: PreviewBody,
         raise HTTPException(400, str(exc))
 
 
+IMPORT_MAX_BYTES = 5 * 1024 * 1024
+
+
+@router.post("/shifts/{shift_id}/assign/import")
+async def assign_import(shift_id: str, file: UploadFile = File(...),
+                        db: OrmSession = Depends(db_session),
+                        user: User = Depends(require_manager)):
+    """导入排班：把改好的排班表读成一份方案，不落库（见 assign.plan_from_workbook）。"""
+    g = _shift(db, shift_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    ensure_not_finished(_act(db, g.activity_id))
+    data = await file.read(IMPORT_MAX_BYTES + 1)
+    if len(data) > IMPORT_MAX_BYTES:
+        raise HTTPException(413, "文件太大了，排班表一般不会超过 5 MB")
+    try:
+        return assign.plan_from_workbook(db, g, data)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
 class ApplyPlanBody(BaseModel):
     plan: list[dict]
     source: str = "assign"
@@ -2045,13 +2039,23 @@ def assign_apply(shift_id: str, body: ApplyPlanBody, bg: BackgroundTasks,
     if not body.plan:
         raise HTTPException(400, "空方案")
     notify_items: list[dict] = []
-    try:
-        result = assign.apply_plan(db, g, user, body.plan,
-                                   source=body.source,
-                                   notify_out=notify_items)
-    except ValueError as exc:
-        db.rollback()
-        raise HTTPException(409, str(exc))
+    db.commit()          # 还连接再排锁，理由同 enroll
+    # 名额校验、落库、递补在同一把场次锁、同一个事务里：调岗把人从甲岗调走，
+    # 甲岗的候补队首要马上顶上；分开提交的话，中间那一瞬放出来的位子会被
+    # 新报名的人抢走，排着队的人反倒轮不上
+    with shift_lock(db, g.id):
+        try:
+            result = assign.apply_plan(db, g, user, body.plan,
+                                       source=body.source,
+                                       notify_out=notify_items)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(409, str(exc))
+        result["promoted"] = logic.fill_vacancies(db, g)
+        db.commit()
+    # 各岗位的空位在闸门之外变了：作废计数器，下一个报名按数据库重新对齐
+    for p in g.positions:
+        invalidate_gates(g.id, p.id)
     if notify_items:
         bg.add_task(_notify_assignment_bg, notify_items)
     return result
@@ -2099,7 +2103,9 @@ def add_walkin(shift_id: str, body: dict,
 
         # 名额要按落点算：pick 模式下名额在岗位上，不传岗位一律判「满」，
         # 补招任何按岗位报名的场次都会被要求勾强制。
-        position = None
+        # 截止后统一分配的场次没指定岗位就进「待分配」，名额按整场数
+        holder = g.placeholder()
+        position = holder
         if body.get("position_id"):
             position = db.get(Position, body["position_id"])
             if position is None or position.shift_id != g.id:
@@ -2129,8 +2135,11 @@ def add_walkin(shift_id: str, body: dict,
 
         if not logic.has_room(db, g, position):
             reasons.append(f"「{position.name}」名额已满（上限{position.quota}人）"
-                           if position else
+                           if position is not None and position is not holder else
                            f"场次名额已满（上限{g.total_capacity()}人）")
+        elif holder is not None and position is not holder \
+                and not logic.has_room(db, g, holder):
+            reasons.append(f"场次名额已满（上限{holder.quota}人）")
         if reasons and not force:
             raise HTTPException(409, f"{u.name}：{'；'.join(reasons)}。"
                                      f"确认添加请勾选强制")
