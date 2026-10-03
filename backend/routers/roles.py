@@ -16,7 +16,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import Text, cast, or_
 from sqlalchemy.orm import Session as OrmSession
@@ -170,6 +170,8 @@ def list_cores(department_id: str = "", db: OrmSession = Depends(db_session),
 
 @router.get("/roles")
 def list_role_users(q: str = "", role: str = "",
+                    page: int = Query(1, ge=1),
+                    size: int = Query(20, ge=1, le=100),
                     db: OrmSession = Depends(db_session),
                     user: User = Depends(require_role_manager)):
     """可授予/已持有管理类身份的人，加上按学号或姓名的搜索。
@@ -177,6 +179,8 @@ def list_role_users(q: str = "", role: str = "",
     默认只列**已经有非学生身份的人**：全校几万人平铺出来没法用，要给某个
     学生加身份就搜他的学号。部长默认只看本部门的人，搜索不受限——他要从
     全校学生里挑人进部门。骨干只看本部门的成员，搜也只在这里面搜。
+
+    分页，按学号排：学号唯一，翻页时不会有人重复或漏掉。
     """
     query = db.query(User)
     # 先看是不是管理员/会长团，再看部门层级：管理员兼骨干（以并集判权时）
@@ -199,14 +203,16 @@ def list_role_users(q: str = "", role: str = "",
             return cast(User.roles, Text).like(f'%"{r}"%')
         wanted = [role] if role in ROLES else ["admin", "qingxie", "initiator"]
         query = query.filter(or_(*[holds(r) for r in wanted]))
-    rows = query.order_by(User.student_id).limit(200).all()
+    total = query.count()
+    rows = (query.order_by(User.student_id)
+            .offset((page - 1) * size).limit(size).all())
     names = {d.id: d.name for d in db.query(Department).all()}
     # 归属骨干的名字也从同一张表查：成员行上要写「归属：林骁」
     boss_ids = {u.supervisor_id for u in rows if u.supervisor_id}
     if boss_ids:
         names.update({b.id: b.name for b in db.query(User)
                       .filter(User.id.in_(boss_ids)).all()})
-    return [_row(u, user, names) for u in rows]
+    return {"total": total, "items": [_row(u, user, names) for u in rows]}
 
 
 class RoleBody(BaseModel):

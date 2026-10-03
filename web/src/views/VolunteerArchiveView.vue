@@ -4,13 +4,13 @@
     <el-card shadow="never">
       <div class="toolbar">
         <el-input v-model="q" placeholder="姓名 / 学号" clearable style="width:220px"
-                  @keyup.enter="load" @clear="load">
+                  @keyup.enter="reload" @clear="reload">
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
-        <el-select v-model="college" clearable placeholder="学院筛选" style="width:180px" @change="load">
+        <el-select v-model="college" clearable placeholder="学院筛选" style="width:180px" @change="reload">
           <el-option v-for="c in colleges" :key="c" :value="c" :label="c" />
         </el-select>
-        <el-button type="primary" @click="load">查询</el-button>
+        <el-button type="primary" @click="reload">查询</el-button>
         <span class="dim">档案记录参与过的活动、违规记录与临期退选次数，不作为报名限制</span>
       </div>
 
@@ -51,6 +51,9 @@
           </template>
         </el-table-column>
       </el-table>
+      <el-pagination layout="total, prev, pager, next" :total="total" :page-size="SIZE"
+                     v-model:current-page="page" @current-change="load" small
+                     style="margin-top:12px;justify-content:flex-end" />
     </el-card>
 
     <ArchiveDrawer ref="drawer" />
@@ -65,8 +68,11 @@ import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
 import ArchiveDrawer from '../components/ArchiveDrawer.vue'
 
+const SIZE = 20
 const narrow = useNarrow()
 const users = ref([])
+const total = ref(0)
+const page = ref(1)
 const colleges = ref([])
 const q = ref('')
 const college = ref('')
@@ -76,9 +82,18 @@ const drawer = ref(null)
 async function load() {
   loading.value = true
   try {
-    users.value = await api.get(`/api/staff/users?q=${encodeURIComponent(q.value)}` +
-      (college.value ? `&college=${encodeURIComponent(college.value)}` : ''))
+    const d = await api.get(`/api/staff/users?page=${page.value}&size=${SIZE}`
+      + `&q=${encodeURIComponent(q.value)}`
+      + (college.value ? `&college=${encodeURIComponent(college.value)}` : ''))
+    users.value = d.items
+    total.value = d.total
   } finally { loading.value = false }
+}
+
+// 换了搜索词或学院，结果集变了，停在第 5 页可能是空的：回到第 1 页
+function reload() {
+  page.value = 1
+  load()
 }
 onMounted(async () => {
   // 学院选项从档案里汇总，不用写死的清单（与活动页的招募范围同源）
