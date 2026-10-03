@@ -23,8 +23,12 @@
       <div class="toolbar">
         <el-input v-model="f.q" placeholder="搜索活动名称" clearable
                   style="width:220px" @input="onSearch" @clear="reload" />
-        <el-select v-model="f.status" placeholder="全部状态" clearable
+        <!-- 筛选不带清除按钮，用「全部」那一项（空串）回到不筛：清除会把值置成
+             undefined，拼进查询串就成了 status=undefined。空串默认被当作「没选」
+             而显示占位文字，empty-values 去掉它，让「全部状态」照常显示出来 -->
+        <el-select v-model="f.status" :empty-values="[null, undefined]"
                    style="width:150px" @change="reload">
+          <el-option value="" label="全部状态" />
           <el-option v-for="(label, code) in STATUS_LABELS" :key="code"
                      :value="code" :label="label" />
         </el-select>

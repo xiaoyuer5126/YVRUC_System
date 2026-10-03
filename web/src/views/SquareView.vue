@@ -8,17 +8,23 @@
     <div class="filters">
       <el-input v-model="f.q" placeholder="搜索活动名称" clearable
                 style="width:220px" @input="onSearch" @clear="reload" />
-      <el-select v-model="f.status" style="width:140px" @change="reload">
+      <!-- 筛选都用「全部」那一项（空串）回到不筛，不带清除按钮：清除会把值置成
+           undefined，拼进查询串就成了 mode=undefined。empty-values 让空串照常
+           显示成「全部…」，而不是被当作没选、显示占位文字 -->
+      <el-select v-model="f.status" :empty-values="[null, undefined]"
+                 style="width:140px" @change="reload">
         <el-option v-for="s in STATUS_OPTIONS" :key="s.value"
                    :value="s.value" :label="s.label" />
       </el-select>
-      <el-select v-model="f.mode" placeholder="活动类型" clearable
+      <el-select v-model="f.mode" :empty-values="[null, undefined]"
                  style="width:150px" @change="reload">
+        <el-option value="" label="全部类型" />
         <el-option value="instant" label="即选即得" />
         <el-option value="screened" label="报名后筛选" />
       </el-select>
-      <el-select v-model="f.organizer" placeholder="组织单位" clearable filterable
+      <el-select v-model="f.organizer" :empty-values="[null, undefined]" filterable
                  style="width:220px" @change="reload">
+        <el-option value="" label="全部组织单位" />
         <el-option v-for="o in organizers" :key="o" :value="o" :label="o" />
       </el-select>
     </div>
