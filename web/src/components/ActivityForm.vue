@@ -233,6 +233,7 @@ async function uploadQr({ file }) {
 .contacts-box { width: 100%; }
 .point-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
               width: 100%; margin-top: 8px; }
+.point-line .el-button + .el-button { margin-left: 0; }
 .contact-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
 .qr-preview { margin-top: 8px; display: flex; align-items: center; gap: 12px; }
 .qr-preview img { width: 96px; height: 96px; object-fit: contain;

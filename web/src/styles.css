@@ -45,29 +45,12 @@ body {
 .el-dialog__body > :first-child,
 .page > :first-child { margin-top: 0; }
 
-/* 一排按钮：全站按钮之间一律 8px，只由所在容器的 gap 给出。
-   Element 给相邻两个按钮自带 12px 左外边距，这里去掉：它只认「紧挨着的两个
-   el-button」，按钮被 tooltip 的 span、popconfirm、dropdown 包上一层就拿不到，
-   在 flex 容器里又和 gap 叠成 20px，同一排就有宽有窄。
-   放一排按钮的地方用 .btn-row（或本身已是 gap 8px 的 flex 容器，如 .toolbar）；
-   包着按钮的 tooltip / popconfirm 外壳就是一个 flex 子项，间距照样是 8px。
-   表格操作列里的一串文字按钮也包一层 .btn-row，否则字挨着字 */
-.el-button + .el-button { margin-left: 0; }
-.btn-row { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 工具条、页头按钮区只靠 gap 隔开。Element 给相邻两个按钮自带 12px 左外边距，
+   和 gap 叠起来是 20px；被 tooltip 的 span、popconfirm 包住的按钮和标签又拿不到它，
+   同一排就有宽有窄 */
+.toolbar .el-button + .el-button,
+.el-page-header__extra .el-button + .el-button { margin-left: 0; }
 .el-page-header__extra { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-/* Element 自己的几处按钮排：对话框、抽屉底部，确认框，气泡确认框，日期面板底部 */
-.el-dialog__footer, .el-drawer__footer, .el-popconfirm__action, .el-picker-panel__footer {
-  display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px;
-}
-.el-message-box__btns { gap: 8px; }
-.el-result__extra { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; }
-
-/* 白色（默认类型）按钮的边框用 #c0c4cc：Element 默认的 #dcdfe6 在白底上发虚，
-   和同样高的实色按钮并排，看着小一圈。只改默认类型，带颜色的按钮各有自己的边框色 */
-.el-button:not(.el-button--primary, .el-button--success, .el-button--warning,
-               .el-button--danger, .el-button--info) {
-  --el-button-border-color: #c0c4cc;
-}
 
 /* 提示条是个块，和卡片之间一样隔 12px，摆在哪里都一样；
    工具条里的提示条由工具条的 gap 隔开，不另外叠一层外边距 */

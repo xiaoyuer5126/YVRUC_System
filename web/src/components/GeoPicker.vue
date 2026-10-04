@@ -146,6 +146,7 @@ function locateMe() {
 <style scoped>
 .geo-line { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
             margin-bottom:8px; width:100%; }
+.geo-line .el-button + .el-button { margin-left: 0; }
 /* 搜索结果：一条一行，点一下就用它的坐标。地址必须显示——同名异地太多了 */
 .geo-results { margin-bottom:8px; max-height:180px; overflow-y:auto; width:100%;
                border:1px solid #eceef1; border-radius:8px; }

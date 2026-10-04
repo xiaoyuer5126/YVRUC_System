@@ -80,16 +80,14 @@
         </el-table-column>
         <el-table-column label="操作" width="200">
           <template #default="{ row }">
-            <div class="btn-row">
-              <el-button v-if="row.can_confirm" size="small" type="primary"
-                         :plain="!!row.confirmed_at" @click="openConfirm(row)">
-                {{ row.confirmed_at ? '改报酬方式' : '确认无误' }}
-              </el-button>
-              <el-button v-if="row.can_appeal" size="small" plain @click="openAppeal(row)">
-                有异议
-              </el-button>
-              <span v-if="!row.can_confirm && !row.can_appeal" class="dim">—</span>
-            </div>
+            <el-button v-if="row.can_confirm" size="small" type="primary"
+                       :plain="!!row.confirmed_at" @click="openConfirm(row)">
+              {{ row.confirmed_at ? '改报酬方式' : '确认无误' }}
+            </el-button>
+            <el-button v-if="row.can_appeal" size="small" plain @click="openAppeal(row)">
+              有异议
+            </el-button>
+            <span v-if="!row.can_confirm && !row.can_appeal" class="dim">—</span>
           </template>
         </el-table-column>
       </el-table>

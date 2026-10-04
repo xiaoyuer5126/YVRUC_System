@@ -123,24 +123,22 @@
       </el-table-column>
       <el-table-column label="操作" width="300" fixed="right">
         <template #default="{ row }">
-          <div class="btn-row">
-            <el-button v-if="signAction(row)" size="small"
-                       :type="signAction(row) === '签退' ? 'warning' : 'primary'"
-                       @click="openCheckin(row)">{{ signAction(row) }}</el-button>
-            <el-button size="small" @click="$router.push('/activity/' + row.activity.id)">查看</el-button>
-            <el-button v-if="row.contact_group_qr" size="small" plain
-                       @click="showQr(row)">联络群</el-button>
-            <el-button v-if="row.is_leader" size="small" type="warning" plain
-                       @click="openTeam(row)">组员</el-button>
-            <el-button v-if="row.status === 'pending_confirm'" size="small" type="primary"
-                       @click="confirm(row)">确认</el-button>
-            <el-button v-else-if="row.status === 'applied'" size="small" type="danger" plain
-                       @click="withdraw(row)">撤回申请</el-button>
-            <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached"
-                       size="small" type="danger" plain @click="cancel(row)">
-              {{ row.status === 'waitlisted' ? '退出候补' : '退选' }}
-            </el-button>
-          </div>
+          <el-button v-if="signAction(row)" size="small"
+                     :type="signAction(row) === '签退' ? 'warning' : 'primary'"
+                     @click="openCheckin(row)">{{ signAction(row) }}</el-button>
+          <el-button size="small" @click="$router.push('/activity/' + row.activity.id)">查看</el-button>
+          <el-button v-if="row.contact_group_qr" size="small" plain
+                     @click="showQr(row)">联络群</el-button>
+          <el-button v-if="row.is_leader" size="small" type="warning" plain
+                     @click="openTeam(row)">组员</el-button>
+          <el-button v-if="row.status === 'pending_confirm'" size="small" type="primary"
+                     @click="confirm(row)">确认</el-button>
+          <el-button v-else-if="row.status === 'applied'" size="small" type="danger" plain
+                     @click="withdraw(row)">撤回申请</el-button>
+          <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached"
+                     size="small" type="danger" plain @click="cancel(row)">
+            {{ row.status === 'waitlisted' ? '退出候补' : '退选' }}
+          </el-button>
         </template>
       </el-table-column>
     </el-table>

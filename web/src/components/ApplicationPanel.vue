@@ -81,10 +81,8 @@
             <el-checkbox v-model="form.leader_willing">愿意担任组长（如岗位需要）</el-checkbox>
           </el-form-item>
         </el-form>
-        <div class="btn-row">
-          <el-button @click="step = 1">上一步</el-button>
-          <el-button type="primary" :loading="submitting" @click="submit">提交申请</el-button>
-        </div>
+        <el-button @click="step = 1">上一步</el-button>
+        <el-button type="primary" :loading="submitting" @click="submit">提交申请</el-button>
       </template>
     </template>
 

@@ -126,5 +126,6 @@ async function doLogin() {
   display: flex; align-items: center; justify-content: center;
 }
 .quick { display: flex; flex-wrap: wrap; gap: 8px; }
+.quick .el-button { margin-left: 0 !important; }
 .foot { text-align: center; line-height: 1.6; margin-top: 16px; }
 </style>

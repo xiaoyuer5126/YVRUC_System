@@ -92,20 +92,18 @@
         <el-table-column label="操作" width="140">
           <template #default="{ row }">
             <template v-if="state.editable">
-              <div class="btn-row">
-                <el-button size="small" link type="primary" @click="openEdit(row)">修改</el-button>
-                <el-tooltip :disabled="!row.appealed" content="有过时长申诉的记录不能删除，请改时长">
-                  <span>
-                    <el-popconfirm :title="`从名单删除 ${row.user?.name}？`"
-                                   :disabled="row.appealed" @confirm="remove(row)">
-                      <template #reference>
-                        <el-button size="small" link type="danger"
-                                   :disabled="row.appealed">删除</el-button>
-                      </template>
-                    </el-popconfirm>
-                  </span>
-                </el-tooltip>
-              </div>
+              <el-button size="small" link type="primary" @click="openEdit(row)">修改</el-button>
+              <el-tooltip :disabled="!row.appealed" content="有过时长申诉的记录不能删除，请改时长">
+                <span>
+                  <el-popconfirm :title="`从名单删除 ${row.user?.name}？`"
+                                 :disabled="row.appealed" @confirm="remove(row)">
+                    <template #reference>
+                      <el-button size="small" link type="danger"
+                                 :disabled="row.appealed">删除</el-button>
+                    </template>
+                  </el-popconfirm>
+                </span>
+              </el-tooltip>
             </template>
             <el-tag v-else-if="row.appeal_pending" size="small" type="warning">申诉中</el-tag>
             <span v-else class="dim">—</span>
