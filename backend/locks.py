@@ -453,6 +453,7 @@ _SLOTS = threading.BoundedSemaphore(config.LOCK_SLOTS)
 # 同一个 id 串哈希到同一个数也不会互相挡
 _LOCK_NS = 1
 _USER_NS = 2
+_URGENT_NS = 3
 _USER_LOCKED = "yvruc_user_locked"       # 会话上记着：本事务已经拿了用户锁
 _SLOT_DEPTH = "yvruc_shift_lock_depth"     # 会话上记着：这一个请求已经占了名额
 
@@ -605,6 +606,29 @@ def user_lock(db: OrmSession, user_id: str, wait: float | None = None) -> None:
     """
     budget = WAIT_TIMEOUT if wait is None else wait
     _pg_lock(db, [], time.monotonic() + budget, user_id)
+
+
+# —— 急招名额锁 ——
+#
+# 急招有全站上限（config.URGENT_LIMIT）。「数现有急招 → 没满就置顶」是读-改-写，
+# 两位会长团成员同时给两个活动点置顶，会双双数到 4 个、双双写入，变成 6 个。
+# 名额是全站一份，所以锁也只有一把（命名空间 3），随事务放。
+# 置顶是低频的手动操作，不另占进程名额。
+
+
+def urgent_lock(db: OrmSession, wait: float | None = None) -> None:
+    """在 db 当前事务里锁住急招名额，直到事务结束。等不到回 503。"""
+    budget = WAIT_TIMEOUT if wait is None else wait
+    db.execute(text("SELECT set_config('lock_timeout', :t, true)"),
+               {"t": f"{max(1, int(budget * 1000))}ms"})
+    try:
+        db.execute(text("SELECT pg_advisory_xact_lock(:ns, 0)"),
+                   {"ns": _URGENT_NS})
+    except OperationalError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "55P03":
+            raise _busy() from exc
+        raise
+    db.execute(text("SET LOCAL lock_timeout TO DEFAULT"))
 
 
 # —— 天地图瓦片的每日额度 ——

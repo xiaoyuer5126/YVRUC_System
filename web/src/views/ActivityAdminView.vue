@@ -2270,7 +2270,7 @@ async function togglePin() {
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/pin`,
                              { pinned: !act.value.pinned })
-    ElMessage.success(d.pinned ? '已置顶，广场上会标「急招」' : '已取消置顶')
+    ElMessage.success(d.pinned ? '已置顶，广场上会标「急招」，报名截止时自动取消' : '已取消置顶')
     await loadAll()
   } finally { pinBusy.value = false }
 }

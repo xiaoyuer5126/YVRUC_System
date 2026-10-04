@@ -26,7 +26,7 @@ from ..stage import ensure_hours_editable, ensure_not_finished
 from ..audit import diff_changes, log as audit_log
 from ..database import db_session
 from ..deps import require_council, require_manager
-from ..locks import invalidate_gates, shift_lock
+from ..locks import invalidate_gates, shift_lock, urgent_lock
 from ..notify import notify_enrolled
 from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, managed_activity_ids,
@@ -811,11 +811,33 @@ def pin(activity_id: str, body: PinBody,
         db: OrmSession = Depends(db_session),
         user: User = Depends(require_council)):
     """置顶（急招）/ 取消置顶。只有会长团和管理员能点：急招是全校层面的
-    调度，不是某个活动自己说了算。只对报名中的活动有意义。"""
+    调度，不是某个活动自己说了算。只对报名中的活动有意义，截止时自动取消
+    （见 models._drop_pin_off_published）。
+
+    同时最多 config.URGENT_LIMIT 个；已经置顶的再点一次不算新占名额，
+    置顶时间也不动（广场上急招之间按置顶先后排）。
+    """
     act = _act(db, activity_id)
-    if body.pinned and act.status != "published":
-        raise HTTPException(409, "只有报名中的活动才能置顶为急招")
-    act.pinned_at = now() if body.pinned else None
+    if body.pinned == (act.pinned_at is not None):
+        return {"ok": True, "pinned": body.pinned}
+    if body.pinned:
+        # 拿到名额锁之后重读：锁里看到的才是别人提交之后的状态与名额
+        urgent_lock(db)
+        db.refresh(act)
+        if act.status != "published":
+            raise HTTPException(409, "只有报名中的活动才能置顶为急招")
+        if act.pinned_at is None:
+            taken = [t for (t,) in (db.query(Activity.title)
+                                    .filter(Activity.status == "published",
+                                            Activity.pinned_at.isnot(None))
+                                    .order_by(Activity.pinned_at))]
+            if len(taken) >= config.URGENT_LIMIT:
+                raise HTTPException(
+                    409, f"急招最多同时 {config.URGENT_LIMIT} 个，请先取消其中一个："
+                         + "、".join(f"「{t}」" for t in taken))
+            act.pinned_at = now()
+    else:
+        act.pinned_at = None
     audit_log(db, actor=user, action="update", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary="置顶为急招" if body.pinned else "取消急招置顶")
