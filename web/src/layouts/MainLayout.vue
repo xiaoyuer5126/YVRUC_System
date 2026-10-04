@@ -213,7 +213,7 @@ async function onCommand(cmd) {
 .name { font-size: 16px; font-weight: 600; letter-spacing: .5px;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub { font-size: 11px; opacity: .75; }
-.right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 /* 深红顶栏上的图标按钮：el-button 自己带一套文字色（默认深色），
    在这儿压成白的，反馈和消息两个图标才是同一种颜色 */
 .right .el-button { color: #fff; }

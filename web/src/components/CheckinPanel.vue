@@ -81,19 +81,21 @@
       </el-table-column>
       <el-table-column label="操作" width="360">
         <template #default="{row}">
-          <el-button size="small" @click="openQR(row)">
-            {{ row.geo ? '大屏' : '二维码 / 大屏' }}
-          </el-button>
-          <el-button size="small" :disabled="over" @click="openGeo(row)">定位</el-button>
-          <!-- 现场最常见的意外是场次提前或拖堂：关掉重建会让已经扫过的那张码
-               作废，所以给「改时段」 -->
-          <el-button size="small" :disabled="over" @click="openWindow(row)">改时段</el-button>
-          <!-- 确认放在 toggle 里：关码的后果要写清楚（没签退的人按场次结束
-               兜底），窄屏卡片那边也走同一个确认 -->
-          <el-button size="small" :type="row.active ? 'danger' : 'success'" link
-                     :disabled="over" @click="toggle(row)">
-            {{ row.active ? '关闭' : '开启' }}
-          </el-button>
+          <div class="btn-row">
+            <el-button size="small" @click="openQR(row)">
+              {{ row.geo ? '大屏' : '二维码 / 大屏' }}
+            </el-button>
+            <el-button size="small" :disabled="over" @click="openGeo(row)">定位</el-button>
+            <!-- 现场最常见的意外是场次提前或拖堂：关掉重建会让已经扫过的那张码
+                 作废，所以给「改时段」 -->
+            <el-button size="small" :disabled="over" @click="openWindow(row)">改时段</el-button>
+            <!-- 确认放在 toggle 里：关码的后果要写清楚（没签退的人按场次结束
+                 兜底），窄屏卡片那边也走同一个确认 -->
+            <el-button size="small" :type="row.active ? 'danger' : 'success'" link
+                       :disabled="over" @click="toggle(row)">
+              {{ row.active ? '关闭' : '开启' }}
+            </el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -864,8 +866,6 @@ function setWindowEnd(v) { form.value.range = [form.value.range[0] || '', v || '
 .ratio b { font-size:30px; color: var(--ruc-red); }
 .st-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap:12px; }
 .manual-bar { display:flex; gap:8px; margin-bottom:8px; align-items:center; flex-wrap:wrap; }
-/* 只靠 gap 隔开：Element 给相邻按钮自带的 12px 左外边距会叠上去 */
-.manual-bar .el-button + .el-button { margin-left: 0; }
 /* 二维码下面那行「这是哪一场、哪个岗位」 */
 .qr-who { display:flex; justify-content:center; align-items:center; gap:8px;
           flex-wrap:wrap; margin:8px 0 4px; font-size:14px; }

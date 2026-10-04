@@ -27,7 +27,7 @@
             <el-form-item v-for="f in fieldsOf(c)" :key="f.key" :label="f.label">
               <el-input v-model="draft[f.key]" :placeholder="f.holder || ''" />
             </el-form-item>
-            <div style="text-align:right">
+            <div class="btn-row" style="display:flex;justify-content:flex-end">
               <el-button @click="editKey = ''">取消</el-button>
               <el-button type="primary" @click="save(c)">保存配置</el-button>
             </div>

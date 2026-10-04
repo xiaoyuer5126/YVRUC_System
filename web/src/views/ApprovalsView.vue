@@ -77,7 +77,7 @@
           <el-tag v-if="v.kind === 'resubmit'" size="small" type="warning" effect="plain">
             退回后重提
           </el-tag>
-          <span style="margin-left:auto">
+          <span class="btn-row" style="margin-left:auto">
             <el-button size="small" type="success" @click="openVb(v, true)">确认</el-button>
             <el-button size="small" type="danger" plain @click="openVb(v, false)">退回</el-button>
           </span>
@@ -110,7 +110,7 @@
                   effect="plain">
             {{ u.kind === 'lock' ? '时长待审核' : '申请解锁时长' }}
           </el-tag>
-          <span style="margin-left:auto">
+          <span class="btn-row" style="margin-left:auto">
             <el-button size="small" type="success" @click="decideHours(u, true)">同意</el-button>
             <el-button size="small" type="danger" plain
                        @click="decideHours(u, false)">驳回</el-button>
@@ -155,7 +155,7 @@
         <el-tag v-if="a.on_duty" size="small" type="success" effect="plain">
           值班：{{ a.on_duty }}
         </el-tag>
-        <span style="margin-left:auto">
+        <span class="btn-row" style="margin-left:auto">
           <el-button size="small" type="success" @click="decide(a, true)">通过</el-button>
           <el-button size="small" type="danger" plain @click="decide(a, false)">驳回</el-button>
           <el-button size="small" plain @click="openTransfer(a)">转交</el-button>
@@ -213,10 +213,12 @@
         </el-table-column>
         <el-table-column label="操作" width="140">
           <template #default="{ row }">
-            <el-button size="small" link type="primary"
-                       @click="openDept(row)">编辑</el-button>
-            <el-button size="small" link type="danger"
-                       @click="removeDept(row)">删除</el-button>
+            <div class="btn-row">
+              <el-button size="small" link type="primary"
+                         @click="openDept(row)">编辑</el-button>
+              <el-button size="small" link type="danger"
+                         @click="removeDept(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
