@@ -69,10 +69,16 @@ const TOK = { student: readFileSync(`${S}/tok.txt`,'utf8'), admin: readFileSync(
 const USR = { student: readFileSync(`${S}/suser.json`,'utf8'), admin: readFileSync(`${S}/auser.json`,'utf8') }
 const port = 9334
 const proc = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`,
-  '--no-sandbox','--disable-gpu','--hide-scrollbars','about:blank'], { stdio:'ignore' })
+  '--no-sandbox','--disable-gpu','--hide-scrollbars','about:blank'], { stdio:['ignore','ignore','inherit'] })
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-await sleep(1800)
-const t = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(x=>x.type==='page')
+// 浏览器起来要多久看机器：本机两秒内，CI 上更久。轮询到调试端口应答为止，最多 30 秒
+let t
+for (let i = 0; !t && i < 60; i++) {
+  await sleep(500)
+  t = await fetch(`http://127.0.0.1:${port}/json/list`)
+    .then(r => r.json()).then(l => l.find(x => x.type === 'page')).catch(() => undefined)
+}
+if (!t) { console.error(`浏览器 30 秒内没起来：${CHROME}`); proc.kill(); process.exit(1) }
 const ws = new WebSocket(t.webSocketDebuggerUrl)
 await new Promise(r => ws.addEventListener('open', r))
 let id=0; const pend=new Map()
