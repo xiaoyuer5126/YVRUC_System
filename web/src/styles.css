@@ -32,6 +32,10 @@ body {
    下面几条是这些间距的唯一出处，模板里不一个一个写 margin——同一种
    东西在不同页面差着两三个像素，看的人说不清哪里不对，但就是觉得乱。 */
 
+/* 页面标题行：左边页面标题，右边这一页的主操作按钮 */
+.page-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
+.page-head > h2 { margin: 0; }
+
 /* 工具条：搜索框、筛选、按钮并排的那一行 */
 .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 
@@ -231,6 +235,118 @@ p { margin: 8px 0; }
   .section-title { flex-wrap: wrap; }
   h2 { font-size: 19px; }
   h3 { font-size: 16px; }
+}
+
+/* ===== 电脑上（鼠标指针）：页面内容区的控件用小号 =====
+   鼠标点得准，32px 高的默认号按钮在宽屏上又大又占地方，一排筛选、一行操作
+   都显得笨重。电脑上页面内容区（主框架 .app-main、不在主框架里的扫码落地页
+   .scan-wrap）里没写 size 的 el-button 按 Element 的 small 档显示：高 24px、
+   字号 12px。数值照抄 Element 各组件 --small 的规则，和写了 size="small"
+   的控件一模一样。
+   按钮不动的：
+   - 页面标题行（el-page-header 的 extra、自定义标题行 .page-head）：一页的
+     主操作，要醒目；
+   - 对话框底部（.el-dialog__footer）的「取消 / 确定」，同样要醒目；确认框
+     （.el-message-box__btns）和气泡确认框挂在 body 上，本来就不在内容区；
+   - 输入框组里贴着输入框的按钮：高度跟着输入框走；
+   - 写了 size="large" / "small" 的；
+   - 触屏设备：手指点 24px 的按钮容易点偏，触屏规则见文件末尾。
+   范围和排除都包在 :where() 里，规则的优先级只等于 Element 自己的 .el-button，
+   靠写在 Element 样式之后取胜；圆角、圆形按钮另写一条，压过 Element 的
+   .el-button.is-round / .is-circle。文字按钮的 .el-button.is-link 优先级更高，
+   照旧不要内边距、高度随文字，只缩字号 */
+@media (hover: hover) and (pointer: fine) {
+  :where(.app-main, .scan-wrap) .el-button:where(:not(.el-button--small, .el-button--large,
+      :is(.el-page-header__extra, .page-head, .el-dialog__footer, .el-message-box__btns,
+          .el-input-group__append, .el-input-group__prepend) *)) {
+    --el-button-size: var(--el-component-size-small);
+    height: var(--el-button-size);
+    padding: 5px 11px;
+    font-size: 12px;
+    border-radius: calc(var(--el-border-radius-base) - 1px);
+  }
+  :where(.app-main, .scan-wrap) .el-button.is-round:where(:not(.el-button--small, .el-button--large,
+      :is(.el-page-header__extra, .page-head, .el-dialog__footer, .el-message-box__btns,
+          .el-input-group__append, .el-input-group__prepend) *)) {
+    padding: 5px 11px;
+  }
+  :where(.app-main, .scan-wrap) .el-button.is-circle:where(:not(.el-button--small, .el-button--large,
+      :is(.el-page-header__extra, .page-head, .el-dialog__footer, .el-message-box__btns,
+          .el-input-group__append, .el-input-group__prepend) *)) {
+    width: var(--el-button-size);
+    padding: 5px;
+  }
+  :where(.app-main, .scan-wrap) .el-button:where(:not(.el-button--small, .el-button--large,
+      :is(.el-page-header__extra, .page-head, .el-dialog__footer, .el-message-box__btns,
+          .el-input-group__append, .el-input-group__prepend) *)) [class*=el-icon] + span {
+    margin-left: 4px;
+  }
+
+  /* 和按钮排在一起的输入类控件跟着用 small 档，否则 24px 的按钮挨着 32px 的
+     输入框，同一排高矮不齐。范围是内容区里的输入框（含日期选择）、下拉、
+     数字框和按钮式单选组，除了两处：
+     - 表单项里的控件，只要这一项里没有直接放按钮：标签行高是 32px，控件缩到
+       24px 就和标签对不上，一列表单也会一项高一项矮；
+     - 分页条里的「每页条数」「跳至」：分页条自有一套尺寸。 */
+  :where(.app-main, .scan-wrap) .el-input:where(:not(.el-input--small, .el-input--large,
+      .el-pagination *, .el-form-item__content:not(:has(> .el-button)) > *,
+      .el-form-item__content:not(:has(> .el-button)) > .el-input-number *)) {
+    --el-input-height: var(--el-component-size-small);
+    font-size: 12px;
+  }
+  :where(.app-main, .scan-wrap) .el-input:where(:not(.el-input--small, .el-input--large,
+      .el-pagination *, .el-form-item__content:not(:has(> .el-button)) > *,
+      .el-form-item__content:not(:has(> .el-button)) > .el-input-number *)) .el-input__wrapper {
+    padding: 1px 7px;
+  }
+
+  :where(.app-main, .scan-wrap) .el-select:where(:not(.el-select--small, .el-select--large,
+      .el-pagination *, .el-form-item__content:not(:has(> .el-button)) > *)) .el-select__wrapper {
+    gap: 4px;
+    min-height: var(--el-component-size-small);
+    padding: 2px 8px;
+    font-size: 12px;
+    line-height: 20px;
+  }
+  :where(.app-main, .scan-wrap) .el-select:where(:not(.el-select--small, .el-select--large,
+      .el-pagination *, .el-form-item__content:not(:has(> .el-button)) > *))
+      :is(.el-select__selection, .el-select__prefix, .el-select__suffix) {
+    gap: 4px;
+  }
+  :where(.app-main, .scan-wrap) .el-select:where(:not(.el-select--small, .el-select--large,
+      .el-pagination *, .el-form-item__content:not(:has(> .el-button)) > *)) .el-select__input {
+    height: 20px;
+  }
+  /* 多选折叠出来的标签默认 24px 高，放进 24px 的框里会把框撑高 */
+  :where(.app-main, .scan-wrap) .el-select:where(:not(.el-select--small, .el-select--large,
+      .el-pagination *, .el-form-item__content:not(:has(> .el-button)) > *)) .el-select__wrapper .el-tag {
+    height: 20px;
+    padding: 0 7px;
+  }
+
+  /* 数字框：两头的加减钮按 24px 的框收窄，输入区左右让开它们。
+     这条比上面输入框的 7px 多一层 .el-input-number，压得过它 */
+  :where(.app-main, .scan-wrap) .el-input-number:where(:not(.el-input-number--small, .el-input-number--large,
+      .el-form-item__content:not(:has(> .el-button)) > *)) {
+    line-height: 22px;
+  }
+  :where(.app-main, .scan-wrap) .el-input-number:where(:not(.el-input-number--small, .el-input-number--large,
+      .el-form-item__content:not(:has(> .el-button)) > *))
+      :is(.el-input-number__increase, .el-input-number__decrease) {
+    width: var(--el-component-size-small);
+    font-size: 12px;
+  }
+  :where(.app-main, .scan-wrap) .el-input-number:where(:not(.el-input-number--small, .el-input-number--large,
+      .el-form-item__content:not(:has(> .el-button)) > *)) .el-input .el-input__wrapper {
+    padding-left: 31px;
+    padding-right: 31px;
+  }
+
+  :where(.app-main, .scan-wrap) .el-radio-button:where(:not(.el-radio-button--small, .el-radio-button--large,
+      .el-form-item__content:not(:has(> .el-button)) > .el-radio-group *)) .el-radio-button__inner {
+    padding: 5px 11px;
+    font-size: 12px;
+  }
 }
 
 /* 触摸设备上按钮给足点击面积 */

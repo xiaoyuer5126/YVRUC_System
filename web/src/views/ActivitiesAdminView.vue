@@ -1,7 +1,7 @@
 <template>
   <div class="page page-wide">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <h2 style="margin:0">活动管理</h2>
+    <div class="page-head">
+      <h2>活动管理</h2>
       <div style="display:flex;gap:8px">
         <!-- 立项书、结项书的空白模板，外联部长在「活动审批」页上传 -->
         <el-dropdown trigger="click" @command="t => download(`/api/materials/${t.file.id}`)">
