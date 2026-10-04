@@ -2339,19 +2339,22 @@ def add_walkin(shift_id: str, body: dict,
                           + (f"，并报上{also}" if extra else "")
                           + (f"（强制：{'；'.join(reasons)}）" if reasons else ""))
         # 补招是管理者单方面加进来的：不通知的话，本人那边一点动静都没有——
-        # 不知道自己报了名，更不知道哪天要去哪儿。跟候补转正一样得告诉他
+        # 不知道自己报了名，更不知道哪天要去哪儿。跟候补转正一样得告诉他。
+        # 场次已经结束的是事后补登记，只告诉他补记上了，不叫他来
         act = _act(db, g.activity_id)
-        msgcenter.send_user(
-            db, u, "custom", data={"activity_id": g.activity_id},
-            title=f"您已被补招｜{act.title}",
-            content=(f"负责人已将您加入「{act.title}」的场次「{g.name}」。\n"
-                     f"时间：{g.span_text()}\n"
-                     f"地点：{g.location or act.location or '待定'}\n"
-                     f"岗位：{position.name if position else '待分配'}\n"
-                     + "".join(f"{s.kind_label()}：{s.span_text()}"
-                               f"（{s.location or act.location or '地点待定'}）\n"
-                               for s in extra)
-                     + "如无法参加，请尽快联系负责人。"))
+        data = {"activity_id": g.activity_id}
+        if g.end_time <= now():
+            msgcenter.send_user(db, u, "walkin_recorded", data, activity=act.title,
+                                shift=g.name, time=g.span_text())
+        else:
+            msgcenter.send_user(
+                db, u, "walkin_added", data, activity=act.title, shift=g.name,
+                time=g.span_text(), loc=g.location or act.location or "待定",
+                position=(position.name if position is not holder
+                          else "待分配，岗位确定后另行通知"),
+                attached="".join(f"{s.kind_label()}：{s.span_text()}"
+                                 f"（{s.location or act.location or '地点待定'}）\n"
+                                 for s in extra))
         db.commit()
     return {"ok": True, "enrollment_id": enr.id, "forced_reasons": reasons,
             "attached": [s.id for s in extra]}
