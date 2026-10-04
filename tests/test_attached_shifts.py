@@ -514,3 +514,37 @@ def test_彩排时段冲突要强制(client, admin, db, act_with_positions, take
     r = _walkin(client, admin, g, sid, position_id=east.id, attached_ids=[rehearsal],
                 force=True)
     assert r.status_code == 200 and r.json()["attached"] == [rehearsal]
+
+
+def _walkin_notice(client, sid, act):
+    items = client.get("/api/me/notifications", headers=login(client, sid)).json()["items"]
+    return [n for n in items if act.title in n["title"]]
+
+
+def test_补招通知写明岗位与培训_点开进我的报名(client, admin, db, act_with_positions,
+                                     take_student):
+    act, g, east, _check = act_with_positions
+    rehearsal = _add_attached(client, admin, act, g)
+    sid = take_student()
+    assert _walkin(client, admin, g, sid, position_id=east.id,
+                   attached_ids=[rehearsal]).status_code == 200
+    [n] = _walkin_notice(client, sid, act)
+    assert n["title"] == f"您已被补招｜{act.title}"
+    assert "岗位：东门引导" in n["content"] and "彩排" in n["content"]
+    assert "如无法参加" in n["content"] and n["page"] == "/my"
+
+
+def test_场次结束后补招_通知写补记而不叫人来(client, admin, db, act_with_positions,
+                                  take_student):
+    act, g, east, _check = act_with_positions
+    s = db.get(Shift, g.id)
+    s.start_time = now() - timedelta(hours=5)
+    s.end_time = now() - timedelta(hours=1)
+    db.commit()
+    sid = take_student()
+    assert _walkin(client, admin, g, sid, position_id=east.id,
+                   force=True).status_code == 200
+    [n] = _walkin_notice(client, sid, act)
+    assert n["title"] == f"已补记为志愿者｜{act.title}"
+    assert "时长以负责人登记为准" in n["content"]
+    assert "如无法参加" not in n["content"] and n["page"] == "/my"

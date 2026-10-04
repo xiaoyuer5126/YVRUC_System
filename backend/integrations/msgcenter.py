@@ -76,6 +76,16 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "您在「{activity}」已被老师选为岗位「{position}」组长。\n"
         "时间：{position_time}\n地点：{position_loc}\n"
         "请提前与负责人对接现场安排。"),
+    # 补招：管理者把人直接加进场次。场次还没结束是叫他来，结束了是事后补登记
+    "walkin_added": (
+        "您已被补招｜{activity}",
+        "负责人已将您加入「{activity}」· {shift}。\n"
+        "时间：{time}\n地点：{loc}\n岗位：{position}\n{attached}"
+        "如无法参加，请尽快联系负责人。"),
+    "walkin_recorded": (
+        "已补记为志愿者｜{activity}",
+        "负责人已将您补记为「{activity}」· {shift} 的志愿者。\n"
+        "时间：{time}\n时长以负责人登记为准，录入后可在「我的志愿时长」查看。"),
     "checkin_reminder": (
         "签到提醒｜{activity}",
         "您报名的「{activity}」· {shift} 即将开始。\n"
@@ -102,6 +112,8 @@ TEMPLATE_PAGE: dict[str, str] = {
     "application_accepted": "/my",
     "application_rejected": "/my",
     "assignment": "/my",
+    "walkin_added": "/my",
+    "walkin_recorded": "/my",
     "leader_appointed": "/my",
     "hours_approved": "/hours",
     "hours_locked": "/hours",
