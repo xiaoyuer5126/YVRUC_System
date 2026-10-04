@@ -61,11 +61,9 @@ def test_管理者不必先报名就能核对(client, admin, enrolled_activity):
     assert p["training_visible"] is True
 
 
-def test_急招置顶排最前且只有会长团能点(client, admin, initiator, db,
+def test_急招置顶排最前且只有会长团能点(client, admin, initiator,
                                         enrolled_activity, take_student):
     """急招是全校层面的调度：会长团/管理员置顶，广场上排最前挂「急招」。"""
-    from backend.models import Activity
-
     act, _g, _u = enrolled_activity
     url = f"/api/staff/activities/{act.id}/pin"
     assert client.post(url, headers=initiator, json={"pinned": True}).status_code == 403
@@ -76,12 +74,6 @@ def test_急招置顶排最前且只有会长团能点(client, admin, initiator,
     items = client.get("/api/activities", headers=h).json()["items"]
     assert items[0]["id"] == act.id and items[0]["urgent"]
 
-    # 截止后不再显示急招，但字段留着，恢复报名时不必再点
-    db.get(Activity, act.id).status = "closed"
-    db.commit()
-    items = client.get("/api/activities?status=", headers=h).json()["items"]
-    me = next(a for a in items if a["id"] == act.id)
-    assert me["pinned"] and not me["urgent"]
     assert client.post(url, headers=admin, json={"pinned": False}).json()["pinned"] is False
 
 

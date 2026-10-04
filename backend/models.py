@@ -17,8 +17,9 @@ import uuid
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Index,
-                        Integer, String, Text, text)
+                        Integer, String, Text, event, text)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm.attributes import flag_modified
 
 from . import config
 from .crypto import EncryptedString
@@ -354,7 +355,9 @@ class Activity(Base):
     # 提交审批时勾的：通过即发布。不勾就停在「待发布」，由发起方自己点。
     auto_publish: Mapped[bool] = mapped_column(Boolean, default=True)
     # 置顶（急招）：会长团/管理员点的，有值即置顶，广场上排最前并挂「急招」。
-    # 只在报名中展示；截止后字段留着，恢复报名时不必再点一次。
+    # 只有报名中的活动能置顶；状态一离开「报名中」就清掉（见下面的
+    # _drop_pin_off_published），恢复报名后要急招得再点一次。同时最多
+    # config.URGENT_LIMIT 个，见 staff_activities.pin。
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -467,6 +470,21 @@ class Activity(Base):
         """
         rows = self.main_shifts()
         return max(s.start_time for s in rows) if rows else None
+
+
+@event.listens_for(Activity.status, "set")
+def _drop_pin_off_published(act: Activity, value, _old, _initiator) -> None:
+    """状态改成「报名中」以外的任何值，急招置顶随之取消。
+
+    挂在属性上而不是写在各个截止入口里：手动截止、定时任务自动截止，以及
+    以后任何把活动挪出「报名中」的地方都走这一处。要是置顶留着，截止了的
+    活动仍占一个急招名额，恢复报名时又会不经会长团重新挂上「急招」。
+    """
+    if value != "published":
+        act.pinned_at = None
+        # 内存里本来就是 None 时赋值不算改动、不进 UPDATE。并发时别的事务可能
+        # 刚提交了置顶，这里照样要把库里那一列清掉
+        flag_modified(act, "pinned_at")
 
 
 class ApprovalEvent(Base):
