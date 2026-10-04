@@ -185,6 +185,6 @@ async function decide(accept) {
 </script>
 
 <style scoped>
-.al-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.al-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .al-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 </style>

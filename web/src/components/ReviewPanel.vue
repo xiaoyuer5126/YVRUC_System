@@ -153,8 +153,10 @@
               <div v-if="row.reply" class="dim pre">{{ row.status === 'returned' ? '理由' : '意见' }}：{{ row.reply }}</div>
             </template>
             <template v-else-if="row.status === 'pending' && vbc.can_decide">
-              <el-button size="small" link type="success" @click="openDecide(row, true)">确认</el-button>
-              <el-button size="small" link type="danger" @click="openDecide(row, false)">退回</el-button>
+              <div class="btn-row">
+                <el-button size="small" link type="success" @click="openDecide(row, true)">确认</el-button>
+                <el-button size="small" link type="danger" @click="openDecide(row, false)">退回</el-button>
+              </div>
             </template>
             <span v-else class="dim">{{ row.status === 'pending' ? '等待确认' : '—' }}</span>
           </template>

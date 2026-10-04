@@ -99,26 +99,28 @@
         </el-table-column>
         <el-table-column label="操作" width="250" fixed="right">
           <template #default="{row}">
-            <el-button size="small" type="primary" link
-                       @click="$router.push('/manage/' + row.id)">管理</el-button>
-            <el-button size="small" link @click="openCopy(row)">复制</el-button>
-            <el-popconfirm v-if="row.status === 'approved'" title="发布后学生即可报名，确认？"
-                           @confirm="transition(row, 'publish')">
-              <template #reference><el-button size="small" type="success" link>发布</el-button></template>
-            </el-popconfirm>
-            <el-popconfirm v-if="row.status === 'draft'"
-                           title="删除草稿不可恢复，确认删除？" @confirm="delActivity(row)">
-              <template #reference><el-button size="small" type="danger" link>删除</el-button></template>
-            </el-popconfirm>
-            <el-popconfirm v-if="row.status === 'published'" title="将截止报名，确认截止？"
-                           @confirm="transition(row, 'close')">
-              <template #reference><el-button size="small" type="warning" link>截止</el-button></template>
-            </el-popconfirm>
-            <el-popconfirm v-if="['published','closed'].includes(row.status)"
-                           title="结束活动后可进行时长录入，确认结束？"
-                           @confirm="transition(row, 'finish')">
-              <template #reference><el-button size="small" type="danger" link>结束</el-button></template>
-            </el-popconfirm>
+            <div class="btn-row">
+              <el-button size="small" type="primary" link
+                         @click="$router.push('/manage/' + row.id)">管理</el-button>
+              <el-button size="small" link @click="openCopy(row)">复制</el-button>
+              <el-popconfirm v-if="row.status === 'approved'" title="发布后学生即可报名，确认？"
+                             @confirm="transition(row, 'publish')">
+                <template #reference><el-button size="small" type="success" link>发布</el-button></template>
+              </el-popconfirm>
+              <el-popconfirm v-if="row.status === 'draft'"
+                             title="删除草稿不可恢复，确认删除？" @confirm="delActivity(row)">
+                <template #reference><el-button size="small" type="danger" link>删除</el-button></template>
+              </el-popconfirm>
+              <el-popconfirm v-if="row.status === 'published'" title="将截止报名，确认截止？"
+                             @confirm="transition(row, 'close')">
+                <template #reference><el-button size="small" type="warning" link>截止</el-button></template>
+              </el-popconfirm>
+              <el-popconfirm v-if="['published','closed'].includes(row.status)"
+                             title="结束活动后可进行时长录入，确认结束？"
+                             @confirm="transition(row, 'finish')">
+                <template #reference><el-button size="small" type="danger" link>结束</el-button></template>
+              </el-popconfirm>
+            </div>
           </template>
         </el-table-column>
       </el-table>

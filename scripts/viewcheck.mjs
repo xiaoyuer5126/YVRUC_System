@@ -24,11 +24,26 @@
 // 标题与正文、区块与区块本来就隔得不一样，不比。这类问题肉眼要盯着看才觉得
 // 「哪里怪」，截图里几乎看不出来：Element 给相邻两个按钮自带 12px 左外边距，
 // 和 flex 的 gap 叠成 20px，被 tooltip 的 span 包住的那个按钮又只有 8px。
+//
+// 「按钮间距」「按钮高矮」不看 DOM 怎么嵌套，只看按钮落在屏幕上的位置：页面内容区
+// 里同一排（垂直中心差不到 6px）、水平紧挨着（中间没有文字、别的按钮或输入控件）
+// 的两个 el-button，间距必须是 8px（±1px；40px 以上算 margin-left:auto 有意推开，
+// 不比），两个都不是文字按钮时高度差不能到 2px。表格、下拉面板、日期面板、分页条、
+// 按钮组（el-button-group 本来就贴在一起）不比。按钮被 tooltip、popconfirm 包了
+// 几层，只比同一个父元素的「横排」看不见它，这一条看得见。
+//
+// 桌面视口按鼠标设备模拟，手机视口按触屏模拟：样式表里电脑端和触屏的规则分别挂在
+// (hover: hover) and (pointer: fine) 和 (hover: none) and (pointer: coarse) 下。
+// 无头浏览器没有鼠标，默认两个都不成立（pointer: none），两遍测到的都不是用户
+// 看到的样子。桌面那遍用 --blink-settings 把指针设成鼠标（fine + hover），并按
+// mobile:false、不模拟触屏；手机那遍打开触屏模拟，指针成了 coarse。每遍开头打印
+// (hover: hover) and (pointer: fine) 是否成立，桌面那遍不成立直接判失败。
 import { spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 const CHROME = process.env.CHROME
   || '/home/xiaoyuer5126/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome'
 const S = process.argv[2], W = +process.argv[3], H = +process.argv[4]
+const DESKTOP = W > 860
 const ACT = readFileSync(`${S}/act.txt`, 'utf8')
 const REC = readFileSync(`${S}/record_act.txt`, 'utf8')
 const ATT = readFileSync(`${S}/attire_act.txt`, 'utf8')
@@ -69,7 +84,10 @@ const PAGES = [
 const TOK = { student: readFileSync(`${S}/tok.txt`,'utf8'), admin: readFileSync(`${S}/atok.txt`,'utf8') }
 const USR = { student: readFileSync(`${S}/suser.json`,'utf8'), admin: readFileSync(`${S}/auser.json`,'utf8') }
 const port = 9334
-const proc = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`,
+// 指针、悬停的取值是位标志：鼠标 = fine(4)，能悬停 = hover(2)
+const MOUSE = '--blink-settings=primaryPointerType=4,availablePointerTypes=4,'
+  + 'primaryHoverType=2,availableHoverTypes=2'
+const proc = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, ...(DESKTOP ? [MOUSE] : []),
   '--no-sandbox','--disable-gpu','--hide-scrollbars','about:blank'], { stdio:['ignore','ignore','inherit'] })
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 // 浏览器起来要多久看机器：本机两秒内，CI 上更久。轮询到调试端口应答为止，最多 30 秒
@@ -91,7 +109,8 @@ const send=(method,params={})=>new Promise(res=>{const i=++id
   const tm=setTimeout(()=>{pend.delete(i);res({timeout:true})},TIMEOUT_MS)
   pend.set(i,m=>{clearTimeout(tm);res(m)});ws.send(JSON.stringify({id:i,method,params}))})
 await send('Page.enable')
-await send('Emulation.setDeviceMetricsOverride',{width:W,height:H,deviceScaleFactor:2,mobile:true})
+await send('Emulation.setDeviceMetricsOverride',{width:W,height:H,deviceScaleFactor:2,mobile:!DESKTOP})
+await send('Emulation.setTouchEmulationEnabled', DESKTOP ? { enabled: false } : { enabled: true, maxTouchPoints: 5 })
 
 const PROBE = `(() => {
   const vw = document.documentElement.clientWidth;
@@ -149,7 +168,48 @@ const PROBE = `(() => {
       .filter(([a, b]) => boxy(a) && boxy(b));
     if (uneven(vg)) gapsOff.push('竖排 ' + fmt(vg));
   }
+  // 按钮间距与高矮：按屏幕位置找同一排里水平紧挨着的两个按钮，不管 DOM 嵌套
+  const root = document.querySelector('.app-main') || document.body;
+  const SKIP = '.el-table, .el-select-dropdown, .el-picker-panel, .el-pagination, .el-popper, .el-overlay';
+  const seen = el => { const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+  const btns = [...root.querySelectorAll('.el-button')].filter(b => seen(b) && !b.closest(SKIP))
+    .map(b => ({ el: b, r: b.getBoundingClientRect(), link: b.matches('.is-link, .is-text') }));
+  // 挡在两个按钮之间的，说明这两个不是紧挨着的一对：文字、输入类控件、图标图片
+  const blocks = [...root.querySelectorAll('.el-input, .el-select, .el-date-editor, .el-input-number, '
+      + '.el-switch, .el-checkbox, .el-radio-group, .el-slider, .el-avatar, svg, img, canvas')]
+    .filter(el => !el.closest('.el-button') && seen(el)).map(el => el.getBoundingClientRect());
+  const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let n; (n = tw.nextNode());) {
+    if (!n.textContent.trim() || n.parentElement.closest('.el-button')) continue;
+    const range = document.createRange(); range.selectNodeContents(n);
+    for (const r of range.getClientRects()) if (r.width > 0) blocks.push(r);
+  }
+  const between = (a, b) => blocks.some(o => o.right > a.r.right + 0.5 && o.left < b.r.left - 0.5
+    && o.bottom > Math.min(a.r.top, b.r.top) && o.top < Math.max(a.r.bottom, b.r.bottom));
+  const btnOff = [];
+  for (const a of btns) {
+    const cy = a.r.top + a.r.height / 2;
+    const b = btns.filter(x => x !== a && x.r.left >= a.r.right - 1
+        && Math.abs(x.r.top + x.r.height / 2 - cy) < 6)
+      .sort((x, y) => x.r.left - y.r.left)[0];
+    if (!b || between(a, b)) continue;
+    const grp = a.el.closest('.el-button-group');
+    if (grp && grp === b.el.closest('.el-button-group')) continue;
+    const g = b.r.left - a.r.right;
+    if (g < 40 && Math.abs(g - 8) > 1)
+      btnOff.push('按钮间距 「' + label(a.el) + '」‹' + Math.round(g) + 'px›「' + label(b.el) + '」，应为 8px');
+    if (!a.link && !b.link && Math.abs(a.r.height - b.r.height) >= 2)
+      btnOff.push('按钮高矮 「' + label(a.el) + '」' + Math.round(a.r.height) + 'px ／「'
+        + label(b.el) + '」' + Math.round(b.r.height) + 'px');
+  }
+  // 非文字按钮的高度，白色（默认类型）和带颜色的分开记，汇总在这一遍输出的末尾
+  const heights = btns.filter(b => !b.link).map(b => [
+    /el-button--(primary|success|warning|danger|info)/.test(b.el.className) ? '彩色' : '白色',
+    Math.round(b.r.height)]);
   return JSON.stringify({
+    fine: matchMedia('(hover: hover) and (pointer: fine)').matches,
+    btnOff: [...new Set(btnOff)].slice(0, 6), heights,
     // 崩掉的页面不会溢出，所以必须同时看「有没有渲染出东西」。
     // 签到/服装落地页不在主框架里，没有 .app-main，就看整页
     textLen: ((document.querySelector('.app-main') || document.body).innerText || '').trim().length,
@@ -181,7 +241,8 @@ await send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
 
 const SHOTS = `${S}/shots`
 mkdirSync(SHOTS, { recursive: true })
-let failed = 0
+let failed = 0, fine
+const heights = {}
 for (const [who, route, name, min] of PAGES) {
   await send('Page.navigate', { url: 'http://127.0.0.1:8080/' })
   await sleep(700)
@@ -193,9 +254,16 @@ for (const [who, route, name, min] of PAGES) {
   await sleep(2400)
   const r = await send('Runtime.evaluate', { expression: PROBE, returnByValue: true })
   const d = r.timeout
-    ? { textLen: 0, errors: ['页面没有响应（主线程卡死？）'], vw: 0, scrollW: 0, over: [], gapsOff: [] }
+    ? { textLen: 0, errors: ['页面没有响应（主线程卡死？）'], vw: 0, scrollW: 0, over: [], gapsOff: [],
+        btnOff: [], heights: [] }
     : JSON.parse(r.result.result.value)
+  if (fine === undefined && !r.timeout) {
+    fine = d.fine
+    console.log(`${W}×${H} ${DESKTOP ? '鼠标' : '触屏'}模拟：(hover: hover) and (pointer: fine) = ${fine}`)
+  }
+  for (const [kind, h] of d.heights) heights[`${kind} ${h}px`] = (heights[`${kind} ${h}px`] || 0) + 1
   const bad = d.scrollW > d.vw + 1 || d.textLen < min || d.errors.length || d.gapsOff.length
+    || d.btnOff.length
   if (bad) {
     failed++
     const shot = await send('Page.captureScreenshot', { format: 'png' })
@@ -207,7 +275,14 @@ for (const [who, route, name, min] of PAGES) {
     (d.textLen < min ? `（少于该有的 ${min}）` : '') +
     (d.errors.length ? `\n     JS 错误: ${d.errors[0]}` : '') +
     (d.over.length ? `\n     超宽: ${d.over.join(', ')}` : '') +
-    d.gapsOff.map(g => `\n     间距不齐: ${g}`).join(''))
+    d.gapsOff.map(g => `\n     间距不齐: ${g}`).join('') +
+    d.btnOff.map(g => `\n     ${g}`).join(''))
 }
 ws.close(); proc.kill()
+console.log('非文字按钮高度（种类 高度×个数）：' + Object.entries(heights)
+  .sort().map(([k, n]) => `${k}×${n}`).join('，'))
+if (DESKTOP && fine !== true) {
+  console.log('桌面视口下 (hover: hover) and (pointer: fine) 不成立：电脑端样式没有被测到')
+  process.exitCode = 1
+}
 if (failed) { console.log(`${W}×${H}：${failed} 页出 ✗`); process.exitCode = 1 }
