@@ -136,8 +136,10 @@
                 :title="`有 ${unwillingMoved} 人报名时选择了不接受调剂，本方案仍会调换其岗位`" />
 
       <div style="margin-top:12px;text-align:right">
-        <el-button @click="resetEdit">还原为系统建议</el-button>
-        <el-button type="primary" :loading="applying" @click="apply">确认并发布分配</el-button>
+        <div class="btn-row">
+          <el-button @click="resetEdit">还原为系统建议</el-button>
+          <el-button type="primary" :loading="applying" @click="apply">确认并发布分配</el-button>
+        </div>
         <div class="dim" style="margin-top:8px">发布后将向每人发送岗位通知</div>
       </div>
     </template>

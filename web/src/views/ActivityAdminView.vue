@@ -186,7 +186,7 @@
             <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">
               暂停报名
             </el-tag>
-            <span style="margin-left:auto">
+            <span class="btn-row" style="margin-left:auto">
               <!-- 暂停报名不用进编辑态：只管收不收新报名，不改任何人的安排 -->
               <el-button v-if="isPublic" size="small" :disabled="isOver"
                          @click="togglePause('shifts', g)">
@@ -287,22 +287,24 @@
             <el-table-column prop="training_note" label="培训内容" min-width="160" show-overflow-tooltip />
             <el-table-column label="操作" width="210">
               <template #default="{row}">
-                <el-button v-if="isPublic && !row.is_placeholder" size="small" link
-                           :type="row.enroll_paused ? 'danger' : ''" :disabled="isOver"
-                           @click="togglePause('positions', row)">
-                  {{ row.enroll_paused ? '恢复报名' : '暂停' }}
-                </el-button>
-                <el-button size="small" link type="primary" :disabled="structureLocked"
-                           @click="openStation(row, g)">编辑</el-button>
-                <el-button size="small" link :disabled="structureLocked"
-                           @click="copyStation(row, g)">复制</el-button>
-                <el-popconfirm title="删除该岗位？" @confirm="delStation(row)"
-                               :disabled="structureLocked">
-                  <template #reference>
-                    <el-button size="small" link type="danger"
-                               :disabled="structureLocked">删除</el-button>
-                  </template>
-                </el-popconfirm>
+                <div class="btn-row">
+                  <el-button v-if="isPublic && !row.is_placeholder" size="small" link
+                             :type="row.enroll_paused ? 'danger' : ''" :disabled="isOver"
+                             @click="togglePause('positions', row)">
+                    {{ row.enroll_paused ? '恢复报名' : '暂停' }}
+                  </el-button>
+                  <el-button size="small" link type="primary" :disabled="structureLocked"
+                             @click="openStation(row, g)">编辑</el-button>
+                  <el-button size="small" link :disabled="structureLocked"
+                             @click="copyStation(row, g)">复制</el-button>
+                  <el-popconfirm title="删除该岗位？" @confirm="delStation(row)"
+                                 :disabled="structureLocked">
+                    <template #reference>
+                      <el-button size="small" link type="danger"
+                                 :disabled="structureLocked">删除</el-button>
+                    </template>
+                  </el-popconfirm>
+                </div>
               </template>
             </el-table-column>
           </el-table>
@@ -322,7 +324,7 @@
               <b style="font-size:14px">{{ r.name }}</b>
               <span class="dim">{{ r.slots.length }} 个时段 · 共 {{ r.quota }} 人</span>
               <el-tag v-if="r.needs_leader" size="small" type="warning" effect="plain">设组长</el-tag>
-              <span style="margin-left:auto">
+              <span class="btn-row" style="margin-left:auto">
                 <el-button size="small" :disabled="structureLocked"
                            @click="editRole(r)">改岗位信息</el-button>
                 <el-button size="small" type="primary" plain :disabled="structureLocked"
@@ -370,7 +372,7 @@
                 {{ g.unassigned_count }} 人待分配
               </el-tag>
               <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
-              <span style="margin-left:auto">
+              <span class="btn-row" style="margin-left:auto">
                 <el-button v-if="isPublic" size="small" :disabled="isOver"
                            @click="togglePause('shifts', g)">
                   {{ g.enroll_paused ? '恢复报名' : '暂停报名' }}
@@ -404,7 +406,7 @@
           <el-tag size="small" effect="plain">{{ t.applies_text }}参加</el-tag>
           <span class="dim">已带上 {{ t.enrolled }} 人</span>
           <span v-if="t.note" class="dim">备注：{{ t.note }}</span>
-          <span style="margin-left:auto">
+          <span class="btn-row" style="margin-left:auto">
             <el-button size="small" link type="primary" :disabled="structureLocked"
                        @click="openAttached(t)">编辑</el-button>
             <el-popconfirm :title="`删除「${t.name}」？相关签到记录会同时清除`"
@@ -752,10 +754,12 @@
             <el-table-column label="操作" width="160">
               <template #default="{ row }">
                 <template v-if="row.status === 'pending'">
-                  <el-button size="small" type="primary" plain :disabled="hoursFrozen"
-                             @click="openResolve(row, true)">采纳</el-button>
-                  <el-button size="small" plain :disabled="hoursFrozen"
-                             @click="openResolve(row, false)">不采纳</el-button>
+                  <div class="btn-row">
+                    <el-button size="small" type="primary" plain :disabled="hoursFrozen"
+                               @click="openResolve(row, true)">采纳</el-button>
+                    <el-button size="small" plain :disabled="hoursFrozen"
+                               @click="openResolve(row, false)">不采纳</el-button>
+                  </div>
                 </template>
                 <span v-else class="dim pre">{{ row.reply || '—' }}</span>
               </template>
@@ -3005,14 +3009,13 @@ function toISO(v) {
             padding: 8px 0; border-top: 1px dashed #eceef1; }
 .slot-time { min-width: 0; flex: 1 1 200px; }
 .slot-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.slot-acts .el-button + .el-button { margin-left: 0; }
 /* 培训与彩排：一场一行 */
 .att-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
            padding: 8px 0; border-bottom: 1px dashed #eceef1; }
 .att-quick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 /* 名单标题行：左边标题，右边一排动作；窄屏各占一行 */
 .roster-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.roster-actions { display: inline-flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.roster-actions { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 /* 两个条件选择框并排占满一行；窄屏自动叠成两行 */
 .two-col { display: flex; gap: 8px; width: 100%; flex-wrap: wrap; }
 .two-col > * { flex: 1 1 180px; min-width: 0; }
