@@ -17,7 +17,7 @@ from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
                      UploadFile)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
@@ -1471,6 +1471,100 @@ def pause_position(position_id: str, body: PauseBody,
               summary=f"{'暂停' if body.paused else '恢复'}岗位「{s.name}」的报名")
     db.commit()
     return {"ok": True, "paused": s.enroll_paused}
+
+
+def _holder_occupants(db: OrmSession, holder: Position) -> str:
+    """「待分配」上还挂着的人，拼成一句提示；没人返回空串。
+
+    口径同 _apply_shift_mode 判 live：ACTIVE 或临期扣留。候补、待确认、
+    待筛选在 assign 场次里都排在占位岗位上，一键分配只挪正式报名的人，
+    他们得先由负责人处理掉，所以单独点出来。
+    """
+    on_holder = db.query(Enrollment).filter(Enrollment.position_id == holder.id)
+    counts = dict(on_holder.filter(Enrollment.status.in_(logic.ACTIVE))
+                  .with_entities(Enrollment.status, func.count())
+                  .group_by(Enrollment.status).all())
+    held = on_holder.filter(Enrollment.seat_held.is_(True)).count()
+    parts = []
+    if counts.get("enrolled"):
+        parts.append(f"{counts['enrolled']} 人还没分到岗位，先一键分配或手动调岗")
+    waiting = counts.get("waitlisted", 0) + counts.get("pending_confirm", 0)
+    if waiting:
+        parts.append(f"{waiting} 人在候补（含待确认转正），先手动转正、调岗或等候补处理完")
+    if counts.get("applied"):
+        parts.append(f"{counts['applied']} 人待筛选，先录取或不录取")
+    if held:
+        parts.append(f"{held} 个临期退选扣留的名额记在「待分配」上，先在名单里释放")
+    return "；".join(parts)
+
+
+@router.post("/shifts/{shift_id}/open-pick")
+def open_pick(shift_id: str, db: OrmSession = Depends(db_session),
+              user: User = Depends(require_manager)):
+    """「截止后统一分配」的场次开放选岗：转成「报名即选岗位」，之后按各岗位名额自选。
+
+    条件：已建了真实岗位，且「待分配」里一个人都不挂（正式、候补、待确认、
+    待筛选、临期扣留都算）。这时这一场的每个人都已经站在某个真实岗位上，
+    转成 pick 之后他们各自占着自己岗位的名额，账一笔不乱；剩下的空位
+    就是各岗位的「名额 − 已占」，新来的人自己挑。
+
+    和暂停报名一样不用进编辑态：它不改任何已报名的人的安排，只改新来的人
+    从哪个口子进。判定和改动都在场次锁里做，锁外读到的状态只用来早拒——
+    不在锁里再核一遍的话，判完「待分配没人」到删掉占位之间，可能正好有人
+    报进了「待分配」。
+    """
+    g = _shift(db, shift_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = _act(db, g.activity_id)
+    _pause_target_check(act)
+    if g.is_attached():
+        raise HTTPException(409, "培训/彩排跟着服务场次走，没有岗位模式")
+    db.commit()          # 还连接再排锁，理由同 enroll
+    with shift_lock(db, g.id):
+        db.refresh(g)
+        db.expire(g, ["positions"])
+        if not g.needs_assign():
+            raise HTTPException(409, f"「{g.name}」已经是「报名即选岗位」，不用再开放选岗")
+        real = g.real_positions()
+        if not real:
+            raise HTTPException(409, f"「{g.name}」还没建岗位：先在这一场下建好岗位，"
+                                     f"再开放选岗")
+        holder = g.placeholder()
+        if holder is not None:
+            busy = _holder_occupants(db, holder)
+            if busy:
+                raise HTTPException(409, f"「待分配」里还有人：{busy}")
+            if db.query(CheckinTask).filter(
+                    CheckinTask.position_id == holder.id).count():
+                raise HTTPException(409, "「待分配」上开过分岗位签到码，"
+                                         "先在签到里删掉它再开放选岗")
+            _prune_trainings(db, act, {holder.id})
+            # 报过「待分配」又退掉的历史记录（cancelled、不扣留名额）还指着它，
+            # 外键挡着删不掉。这些人退的时候还没分岗位，岗位一栏本来就该是空的：
+            # 把 position_id 置空，记录本身（谁、何时报、何时退、怎么退）原样留着
+            (db.query(Enrollment)
+             .filter(Enrollment.position_id == holder.id)
+             .update({"position_id": None}, synchronize_session=False))
+            g.positions.remove(holder)
+            db.delete(holder)
+        g.mode = "pick"
+        audit_log(db, actor=user, action="update", target_type="group",
+                  target_id=g.id, target_label=f"{act.title}·{g.name}",
+                  activity_id=act.id,
+                  summary=f"场次「{g.name}」开放选岗：改为「报名即选岗位」，"
+                          f"按 {len(real)} 个岗位的名额自选",
+                  changes=[{"field": "mode", "label": "岗位模式",
+                            "old": Shift.MODE_LABELS["assign"],
+                            "new": Shift.MODE_LABELS["pick"]}],
+                  visible=True)
+        db.commit()
+    # 名额闸门按（场次, 岗位）计数：assign 时闸门挂在占位岗位上，转成 pick
+    # 后每个真实岗位各开一个。全部作废，下一个报名按数据库重新对齐
+    if holder is not None:
+        invalidate_gates(g.id, holder.id)
+    for p in real:
+        invalidate_gates(g.id, p.id)
+    return {"ok": True, "mode": g.mode}
 
 
 @router.delete("/positions/{position_id}")
