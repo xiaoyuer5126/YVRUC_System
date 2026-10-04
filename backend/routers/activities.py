@@ -450,6 +450,9 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
             # 名单不能再用（见上面查附属场次处）
             if ledger.editing:
                 raise _editing_paused()
+            # 排锁期间这一场开放了选岗，「待分配」已经删掉
+            if ledger.gone:
+                raise HTTPException(409, f"场次「{g.name}」刚开放选岗，请刷新后选择岗位再报名")
             # 同一个人别的报名可能刚在别的场次锁下提交：持用户锁重比一遍时段。
             # 有没有冲突已经在上面那条里数过了，真撞上才去查明细拼提示
             if ledger.clash:

@@ -331,6 +331,7 @@ class EnrollLedger(NamedTuple):
     queued: int          # 岗位候补队列人数，口径同 waitlist_rows 按岗位过滤
     editing: bool        # 活动此刻是否处于编辑态
     clash: bool          # 本人已有的有效报名与 targets 里某一场时段重叠
+    gone: bool           # 要报的岗位已经不在了（锁外解析之后被删掉）
 
 
 def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
@@ -342,6 +343,10 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
     在内存里按岗位筛一遍。锁里每多一个往返，排在后面的几百人就多等一个
     往返，所以合成一次：只扫「本人这一场」和「这个岗位」两小撮行，用带
     FILTER 的聚合各数各的。
+
+    gone：锁外解析出来的岗位此刻还在不在。「开放选岗」不进编辑态、会删掉
+    「待分配」，锁外落在它上面的报名排到锁里时它可能已经没了；不看一眼就会
+    撞上外键，回一个 500。
 
     口径与下列函数逐条对齐（改其中一边要同时改另一边）：
       · 查重：status ∈ ACTIVE 或 seat_held（唯一索引 uq_enrollment_live 的口径，
@@ -370,6 +375,7 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
                           & (Shift.end_time > t.start_time)
                           for t in targets]))
              .exists())
+    gone = ~select(Position.id).where(Position.id == position_id).exists()
     row = db.execute(
         select(func.max(Enrollment.status).filter(mine & live),
                func.coalesce(func.bool_or(mine & Enrollment.seat_held), False),
@@ -379,10 +385,10 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
                func.count().filter(
                    at_pos & (Enrollment.shift_id == shift_id)
                    & Enrollment.status.in_(("waitlisted", "pending_confirm"))),
-               editing, clash)
+               editing, clash, gone)
         .where(or_(mine, seats))).one()
     return EnrollLedger(row[0], bool(row[1]), row[2], row[3], bool(row[4]),
-                        bool(row[5]))
+                        bool(row[5]), bool(row[6]))
 
 
 def paused_reason(shift: Shift, position: Position | None) -> str:
