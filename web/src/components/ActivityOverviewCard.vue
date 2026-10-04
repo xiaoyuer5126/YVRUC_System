@@ -1,10 +1,10 @@
 <template>
   <el-card shadow="never" class="ov-card">
     <div class="ov-head">
-      <b>活动概况</b>
+      <b>活动概览</b>
       <RefreshBar size="small" :load="load" :at="at" />
     </div>
-    <div v-if="!d" class="dim">{{ failed ? '概况加载失败，点「刷新」重试' : '正在加载…' }}</div>
+    <div v-if="!d" class="dim">{{ failed ? '概览加载失败，点「刷新」重试' : '正在加载…' }}</div>
     <template v-else>
       <div class="ov-kpis">
         <div v-for="k in kpis" :key="k.label" class="ov-kpi" :class="k.tone">
@@ -14,12 +14,11 @@
         </div>
       </div>
 
-      <!-- 各场次报满情况：只列服务场次，培训/彩排不招人 -->
-      <el-collapse v-if="!d.record && d.shifts.length" v-model="open" class="ov-shifts">
-        <el-collapse-item name="shifts">
-          <template #title>
-            <span>各场次报满情况（{{ fullShifts }}/{{ d.shifts.length }} 场已满）</span>
-          </template>
+      <!-- 各场次报满情况：只列服务场次，培训/彩排不招人。每场一张卡片，
+           宽屏一排三四张，手机上一列 -->
+      <div v-if="!d.record && d.shifts.length" class="ov-shifts">
+        <div class="ov-title">各场次报满情况（{{ fullShifts }}/{{ d.shifts.length }} 场已满）</div>
+        <div class="ov-grid">
           <div v-for="g in d.shifts" :key="g.id" class="ov-shift">
             <div class="ov-row">
               <span class="ov-name"><b>{{ g.name }}</b> <span class="dim">{{ g.time }}</span></span>
@@ -50,21 +49,21 @@
               </div>
             </div>
           </div>
-          <div class="dim ov-note">
-            名额占用含转正待确认与临期退选扣留的名额；截止后分配的场次按整场名额算，
-            岗位一行是已分到该岗位的人数。
-          </div>
-        </el-collapse-item>
-      </el-collapse>
+        </div>
+        <div class="dim ov-note">
+          名额占用含转正待确认与临期退选扣留的名额；截止后分配的场次按整场名额算，
+          岗位一行是已分到该岗位的人数。
+        </div>
+      </div>
     </template>
   </el-card>
 </template>
 
 <script setup>
 /**
- * 活动管理页顶上的概况卡：报名、签到、时长、违规几个数，加各场次报满情况。
+ * 活动管理页「概览」页签：报名、签到、时长、违规几个数，加各场次报满情况。
  * 口径写在后端接口上（staff_ops.activity_overview）。不自动轮询，跟页上其他
- * 现场数据一样点「刷新」才拉；切页签时父组件也会调一次 load。
+ * 现场数据一样点「刷新」才拉；每次切回这个页签时父组件也会调一次 load。
  */
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
@@ -75,7 +74,6 @@ const props = defineProps({ activityId: { type: String, required: true } })
 const d = ref(null)
 const at = ref(0)
 const failed = ref(false)
-const open = ref([])
 
 async function load() {
   try {
@@ -121,7 +119,7 @@ const kpis = computed(() => {
 </script>
 
 <style scoped>
-.ov-card { border-radius: 12px; margin-top: 8px; }
+.ov-card { border-radius: 12px; }
 .ov-head { display: flex; align-items: center; justify-content: space-between;
            gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .ov-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
@@ -129,8 +127,10 @@ const kpis = computed(() => {
 .ov-kpi.warn .ov-v { color: var(--el-color-danger); }
 .ov-v { font-size: 20px; font-weight: 700; line-height: 1.4; }
 .ov-sub { font-size: 12px; }
-.ov-shifts { margin-top: 12px; }
-.ov-shift { padding: 8px 0; border-top: 1px dashed #eceef1; }
+.ov-shifts { margin-top: 16px; }
+.ov-title { font-weight: 600; margin-bottom: 8px; }
+.ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; }
+.ov-shift { border: 1px solid #eceef1; border-radius: 8px; padding: 8px 12px; min-width: 0; }
 .ov-row { display: flex; align-items: center; justify-content: space-between;
           gap: 8px; flex-wrap: wrap; }
 .ov-name { min-width: 0; }

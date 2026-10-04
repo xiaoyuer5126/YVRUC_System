@@ -92,10 +92,12 @@
               title="正在调整岗位，学生已暂停报名与退选"
               :description="`改完点右上角「保存并发布」恢复报名并通知志愿者；${lockHours} 小时未保存会自动退出编辑。`" />
 
-    <!-- 活动概况：发布之后才有报名、签到、时长可看 -->
-    <ActivityOverviewCard v-if="isPublic" ref="overviewCard" :activity-id="activityId" />
-
     <el-tabs v-model="tab" style="margin-top:8px">
+      <!-- ============ 概览：发布之后才有报名、签到、时长可看 ============ -->
+      <el-tab-pane v-if="isPublic" label="概览" name="overview" lazy>
+        <ActivityOverviewCard ref="overviewCard" :activity-id="activityId" />
+      </el-tab-pane>
+
       <!-- ============ 岗位设置 ============ -->
       <el-tab-pane v-if="!isRecord" name="tree">
         <template #label>岗位设置
@@ -414,7 +416,7 @@
       <!-- ============ 报名与调配 ============ -->
       <el-tab-pane v-if="isPublic && !isRecord" name="roster">
         <template #label>志愿者管理
-          <el-badge v-if="pendingPromo" value="!" type="danger" />
+          <el-badge v-if="promoShiftIds.size" value="!" type="danger" />
         </template>
 
         <!-- 场次选择栏 -->
@@ -422,7 +424,8 @@
           <span>场次</span>
           <el-select v-model="currentGroupId" style="width:260px">
             <el-option v-for="g in shifts" :key="g.id"
-                       :value="g.id" :label="`${g.name}（${g.enrolled}/${g.capacity}）`" />
+                       :value="g.id"
+                       :label="`${g.name}（${g.enrolled}/${g.capacity}）${promoShiftIds.has(g.id) ? '· 有转正待确认' : ''}`" />
           </el-select>
           <el-button type="primary" plain @click="openNotify">
             <el-icon><Bell /></el-icon>&nbsp;发送通知
@@ -1701,7 +1704,8 @@ import { DAY_END, DAY_START, auth, canSee } from '../store'
 const route = useRoute()
 const act = ref(null)
 const narrow = useNarrow()
-const tab = ref(String(route.query.tab || 'tree'))   // 支持 ?tab=roster 直达页签
+// 支持 ?tab=roster 直达页签；没带时等活动加载完再定（见 loadAll）
+const tab = ref(String(route.query.tab || ''))
 // 未发布（草稿/待审批/待发布）只留 岗位设置 / 管理者 / 变更记录：那时一个报名的人
 // 都没有，名单、签到、服装、导出、签收全是空页
 const isPublic = computed(() =>
@@ -1952,12 +1956,16 @@ async function loadAll() {
       return
     }
     act.value = d
-    // 补记录活动没有「岗位设置」页签：默认落在名单导入
+    // 默认页签：发布后进概览；未发布进岗位设置，补记录活动没有岗位设置，进名单导入
+    const fallback = d.recruit_mode === 'record' ? 'records' : 'tree'
+    if (!tab.value) tab.value = isPublic.value ? 'overview' : fallback
     if (d.recruit_mode === 'record' && ['tree', 'roster', 'checkin'].includes(tab.value)) {
       tab.value = 'records'
     }
+    if (tab.value === 'overview' && !isPublic.value) tab.value = fallback
     const rosters = await Promise.all(d.shifts.map(g => api.get(`/api/staff/shifts/${g.id}/roster`)))
-    d.shifts.forEach((g, i) => {
+    // 经 act.value 写回：直接改 d 上的对象不触发依赖名单的计算属性（页签叹号）
+    act.value.shifts.forEach((g, i) => {
       g._roster = rosters[i]
       g._rosterAt = Date.now()
     })
@@ -2076,7 +2084,10 @@ const sameNameOthers = computed(() => {
   return shifts.value.flatMap(g => g.positions)
     .filter(p => !p.is_placeholder && p.name === ed.name && p.id !== ed.id)
 })
-const pendingPromo = computed(() => roster.value.waitlist.some(w => w.status === 'pending_confirm'))
+// 有候补转正待本人确认的场次：页签上的叹号看所有场次，不随下拉框变；下拉框里标出是哪几场
+const promoShiftIds = computed(() => new Set(shifts.value
+  .filter(g => g._roster?.waitlist?.some(w => w.status === 'pending_confirm'))
+  .map(g => g.id)))
 // 已经确认下来的时长条数（手动补录的也在各自那一笔里）：有账才谈得上核准
 const confirmedCount = computed(() => hours.value.filter(h => h.confirmed).length)
 
@@ -2928,10 +2939,11 @@ async function removeManager(row) {
 // 切到「时长管理」页签时自动加载时长预览（静默加载，不弹提示）。
 // ?tab=hours 直达时 tab 一开始就是它，这个 watch 不会触发——那一路由
 // loadAll 负责补上。
-// 概况跟着页签走：在名单、签到、时长页里办完事切走，顶上的数也跟着更新
+// 每次切回概览都重拉：在名单、签到、时长页里办完事，回来看到的是新数。
+// 第一次进入时组件自己在挂载时拉
 const overviewCard = ref(null)
 watch(tab, async t => {
-  overviewCard.value?.load()
+  if (t === 'overview') overviewCard.value?.load()
   if (t === 'hours') await refreshHours()
   if (t === 'acks') await loadBatches()
   if (t === 'logs') {
