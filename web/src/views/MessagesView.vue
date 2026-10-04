@@ -1,7 +1,7 @@
 <template>
   <div class="page page-narrow">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <h2 style="margin:0">消息通知</h2>
+    <div class="page-head">
+      <h2>消息通知</h2>
       <el-button @click="readAll" :disabled="!unread">全部已读</el-button>
     </div>
     <el-alert v-if="pendingAck" type="warning" :closable="false" show-icon
