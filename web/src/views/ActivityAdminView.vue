@@ -192,6 +192,20 @@
                          @click="togglePause('shifts', g)">
                 {{ g.enroll_paused ? '恢复报名' : '暂停报名' }}
               </el-button>
+              <!-- 开放选岗同样不用进编辑态：已报名的人都已在真实岗位上，安排不变 -->
+              <el-tooltip v-if="g.mode === 'assign'" placement="top"
+                          :disabled="!openPickBlock(g)" :content="openPickBlock(g)">
+                <span>
+                  <el-popconfirm :width="320" :disabled="!!openPickBlock(g)"
+                                 :title="`「${g.name}」改为报名即选岗位：「待分配」删除，之后新报名的人按各岗位剩余名额自己选岗，已分好岗位的人不动。`"
+                                 @confirm="openPick(g)">
+                    <template #reference>
+                      <el-button size="small" type="warning" plain
+                                 :disabled="!!openPickBlock(g)">开放选岗</el-button>
+                    </template>
+                  </el-popconfirm>
+                </span>
+              </el-tooltip>
               <el-button size="small" :disabled="structureLocked"
                          @click="openShift(g)">编辑</el-button>
               <el-button size="small" plain :disabled="structureLocked"
@@ -294,7 +308,7 @@
           </el-table>
           <p v-else class="dim" style="margin:8px 0 0">
             {{ g.mode === 'assign'
-               ? '截止后统一分配：学生报名只选时间；分工定下来后直接在本场次下建岗位，再到「报名与调配」一键分配或导入排班。'
+               ? '截止后统一分配：学生报名只选时间；分工定下来后直接在本场次下建岗位，再到「报名与调配」一键分配或导入排班；排完后可点「开放选岗」，剩余名额让大家按岗位自选。'
                : '还没有岗位，请先设置岗位及名额。' }}
           </p>
 
@@ -2337,6 +2351,23 @@ async function togglePause(kind, item) {
   await api.post(`/api/staff/${kind}/${item.id}/pause`, { paused })
   ElMessage.success(paused ? `已暂停「${item.name}」的报名；已报名的人不受影响`
                            : `已恢复「${item.name}」的报名`)
+  loadAll()
+}
+
+/** 「开放选岗」按钮为什么点不了；空串 = 可以点。候补、扣留这些页面上数不全的，交给后端判 */
+function openPickBlock(g) {
+  if (isOver.value) return '活动已结束'
+  if (!realPositions(g).length) return '还没建岗位：先在本场次下建好岗位'
+  if (g.unassigned_count) {
+    return `待分配里还有 ${g.unassigned_count} 人，先一键分配或手动调岗`
+  }
+  return ''
+}
+
+/** 截止后统一分配的场次排完班，转成报名即选岗位，剩余名额让大家自己选 */
+async function openPick(g) {
+  await api.post(`/api/staff/shifts/${g.id}/open-pick`)
+  ElMessage.success(`「${g.name}」已开放选岗，新报名的人按岗位名额自选`)
   loadAll()
 }
 
