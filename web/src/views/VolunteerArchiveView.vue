@@ -52,7 +52,7 @@
         </el-table-column>
       </el-table>
       <el-pagination layout="total, prev, pager, next" :total="total" :page-size="SIZE"
-                     v-model:current-page="page" @current-change="load" small
+                     v-model:current-page="page" @current-change="load" size="small"
                      style="margin-top:12px;justify-content:flex-end" />
     </el-card>
 

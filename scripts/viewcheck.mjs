@@ -1,10 +1,14 @@
 // 各视口下的页面自检：横向溢出、侧栏/汉堡切换、页面有没有真的渲染出来、
 // 同类元素的间距齐不齐。
 //
-// 用法（栈已起好、种子数据已导入）：
+// 用法（栈已起好、种子数据已导入；Node ≥ 22，要用内置 WebSocket）：
 //   python3 scripts/viewcheck-setup.py /tmp/viewcheck
 //   node scripts/viewcheck.mjs /tmp/viewcheck 390 844     # 手机
 //   node scripts/viewcheck.mjs /tmp/viewcheck 1440 900    # 桌面回归
+//
+// 浏览器取环境变量 CHROME，没设就用下面写死的本机路径。有一页出 ✗ 退出码就是 1，
+// 出 ✗ 的页面截图存到 <输出目录>/shots/。PR 改到 web/、backend/、scripts/ 时，
+// CI 的「页面自检」会自动跑这两遍，截图和输出在那次运行的附件里。
 //
 // 为什么同时看「文字长度」和「JS 错误」：崩掉的页面是空白的，
 // 而空白页永远不会横向溢出——只看溢出会把整页报错判成通过：
@@ -21,8 +25,9 @@
 // 「哪里怪」，截图里几乎看不出来：Element 给相邻两个按钮自带 12px 左外边距，
 // 和 flex 的 gap 叠成 20px，被 tooltip 的 span 包住的那个按钮又只有 8px。
 import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-const CHROME = '/home/xiaoyuer5126/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+const CHROME = process.env.CHROME
+  || '/home/xiaoyuer5126/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome'
 const S = process.argv[2], W = +process.argv[3], H = +process.argv[4]
 const ACT = readFileSync(`${S}/act.txt`, 'utf8')
 const REC = readFileSync(`${S}/record_act.txt`, 'utf8')
@@ -64,10 +69,16 @@ const TOK = { student: readFileSync(`${S}/tok.txt`,'utf8'), admin: readFileSync(
 const USR = { student: readFileSync(`${S}/suser.json`,'utf8'), admin: readFileSync(`${S}/auser.json`,'utf8') }
 const port = 9334
 const proc = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`,
-  '--no-sandbox','--disable-gpu','--hide-scrollbars','about:blank'], { stdio:'ignore' })
+  '--no-sandbox','--disable-gpu','--hide-scrollbars','about:blank'], { stdio:['ignore','ignore','inherit'] })
 const sleep = ms => new Promise(r => setTimeout(r, ms))
-await sleep(1800)
-const t = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(x=>x.type==='page')
+// 浏览器起来要多久看机器：本机两秒内，CI 上更久。轮询到调试端口应答为止，最多 30 秒
+let t
+for (let i = 0; !t && i < 60; i++) {
+  await sleep(500)
+  t = await fetch(`http://127.0.0.1:${port}/json/list`)
+    .then(r => r.json()).then(l => l.find(x => x.type === 'page')).catch(() => undefined)
+}
+if (!t) { console.error(`浏览器 30 秒内没起来：${CHROME}`); proc.kill(); process.exit(1) }
 const ws = new WebSocket(t.webSocketDebuggerUrl)
 await new Promise(r => ws.addEventListener('open', r))
 let id=0; const pend=new Map()
@@ -167,6 +178,9 @@ await send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
   };
 })()` })
 
+const SHOTS = `${S}/shots`
+mkdirSync(SHOTS, { recursive: true })
+let failed = 0
 for (const [who, route, name, min] of PAGES) {
   await send('Page.navigate', { url: 'http://127.0.0.1:8080/' })
   await sleep(700)
@@ -181,6 +195,11 @@ for (const [who, route, name, min] of PAGES) {
     ? { textLen: 0, errors: ['页面没有响应（主线程卡死？）'], vw: 0, scrollW: 0, over: [], gapsOff: [] }
     : JSON.parse(r.result.result.value)
   const bad = d.scrollW > d.vw + 1 || d.textLen < min || d.errors.length || d.gapsOff.length
+  if (bad) {
+    failed++
+    const shot = await send('Page.captureScreenshot', { format: 'png' })
+    if (shot.result) writeFileSync(`${SHOTS}/${W}-${name}.png`, Buffer.from(shot.result.data, 'base64'))
+  }
   console.log(`${bad ? '✗' : '✓'} ${name.padEnd(6)} 视口${d.vw} 内容${d.scrollW}` +
     ` | 侧栏${d.aside?'在':'收'} 汉堡${d.burger?'有':'无'}` +
     ` | 卡片${d.cards} 表格${d.tables} 文字${d.textLen}` +
@@ -190,3 +209,4 @@ for (const [who, route, name, min] of PAGES) {
     d.gapsOff.map(g => `\n     间距不齐: ${g}`).join(''))
 }
 ws.close(); proc.kill()
+if (failed) { console.log(`${W}×${H}：${failed} 页出 ✗`); process.exitCode = 1 }
