@@ -32,15 +32,18 @@
 // 按钮组（el-button-group 本来就贴在一起）不比。按钮被 tooltip、popconfirm 包了
 // 几层，只比同一个父元素的「横排」看不见它，这一条看得见。
 //
-// 桌面视口按鼠标设备模拟（mobile:false、关掉触屏模拟），手机视口按触屏模拟：
-// 样式表里电脑端和触屏的规则分别挂在 (hover: hover) and (pointer: fine) 和
-// (hover: none) and (pointer: coarse) 下，模拟错了，两遍测的就是同一套样式。
-// 每遍开头打印这个媒体查询在这一视口下是否成立；桌面那遍不成立直接判失败。
+// 桌面视口按鼠标设备模拟，手机视口按触屏模拟：样式表里电脑端和触屏的规则分别挂在
+// (hover: hover) and (pointer: fine) 和 (hover: none) and (pointer: coarse) 下。
+// 无头浏览器没有鼠标，默认两个都不成立（pointer: none），两遍测到的都不是用户
+// 看到的样子。桌面那遍用 --blink-settings 把指针设成鼠标（fine + hover），并按
+// mobile:false、不模拟触屏；手机那遍打开触屏模拟，指针成了 coarse。每遍开头打印
+// (hover: hover) and (pointer: fine) 是否成立，桌面那遍不成立直接判失败。
 import { spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 const CHROME = process.env.CHROME
   || '/home/xiaoyuer5126/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome'
 const S = process.argv[2], W = +process.argv[3], H = +process.argv[4]
+const DESKTOP = W > 860
 const ACT = readFileSync(`${S}/act.txt`, 'utf8')
 const REC = readFileSync(`${S}/record_act.txt`, 'utf8')
 const ATT = readFileSync(`${S}/attire_act.txt`, 'utf8')
@@ -81,7 +84,10 @@ const PAGES = [
 const TOK = { student: readFileSync(`${S}/tok.txt`,'utf8'), admin: readFileSync(`${S}/atok.txt`,'utf8') }
 const USR = { student: readFileSync(`${S}/suser.json`,'utf8'), admin: readFileSync(`${S}/auser.json`,'utf8') }
 const port = 9334
-const proc = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`,
+// 指针、悬停的取值是位标志：鼠标 = fine(4)，能悬停 = hover(2)
+const MOUSE = '--blink-settings=primaryPointerType=4,availablePointerTypes=4,'
+  + 'primaryHoverType=2,availableHoverTypes=2'
+const proc = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, ...(DESKTOP ? [MOUSE] : []),
   '--no-sandbox','--disable-gpu','--hide-scrollbars','about:blank'], { stdio:['ignore','ignore','inherit'] })
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 // 浏览器起来要多久看机器：本机两秒内，CI 上更久。轮询到调试端口应答为止，最多 30 秒
@@ -103,10 +109,8 @@ const send=(method,params={})=>new Promise(res=>{const i=++id
   const tm=setTimeout(()=>{pend.delete(i);res({timeout:true})},TIMEOUT_MS)
   pend.set(i,m=>{clearTimeout(tm);res(m)});ws.send(JSON.stringify({id:i,method,params}))})
 await send('Page.enable')
-const DESKTOP = W > 860
 await send('Emulation.setDeviceMetricsOverride',{width:W,height:H,deviceScaleFactor:2,mobile:!DESKTOP})
 await send('Emulation.setTouchEmulationEnabled', DESKTOP ? { enabled: false } : { enabled: true, maxTouchPoints: 5 })
-await send('Emulation.setEmitTouchEventsForMouse', { enabled: !DESKTOP, configuration: DESKTOP ? 'desktop' : 'mobile' })
 
 const PROBE = `(() => {
   const vw = document.documentElement.clientWidth;
