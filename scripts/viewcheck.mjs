@@ -47,6 +47,7 @@ const PAGES = [
   ['student', `/checkin/${CHK_TOKEN}`, '签到落地', 20],
   ['student', `/attire/${ATT_TOKEN}`, '服装落地', 20],
   ['admin', '/manage', '活动管理', 200],
+  ['admin', `/manage/${ACT}?tab=overview`, '概览', 200],
   ['admin', `/manage/${ACT}?tab=tree`, '场次岗位', 200],
   ['admin', `/manage/${ACT}?tab=roster`, '志愿者管理', 200],
   ['admin', `/manage/${ACT}?tab=checkin`, '签到管理', 200],
