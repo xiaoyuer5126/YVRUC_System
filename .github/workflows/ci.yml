@@ -1,12 +1,17 @@
-# 持续集成：PR 提交到 main 时跑一遍（合并前把关），合并进 main 后再跑一遍。
+# 持续集成：PR 提交到 main 时跑（合并前把关）；直接推到 main 的提交也跑。
 #
 # PR 上的结果就是合并前的依据：绿了才合，本地不必再跑全量，开发时只跑
-# 改动相关的几个测试文件。额度按每次约 1.5 分钟算，私有仓库每月 2000 分钟
-# 够一千多次；同一分支连推时只跑最新那次（见下面的 concurrency）。
+# 改动相关的几个测试文件。PR 合并进 main 时不再重跑：scope 查出这次推送是
+# 某个已合并 PR 带进来的，下面的 job 全部跳过。代价是 PR 开着期间 main 又进了
+# 别的提交时，合并后的组合没有再测一遍。
 #
-# 跟本地 `docker compose --profile test run --rm tests` 是同一套用例，只是
-# postgres / redis 用 Actions 的 service 容器起，依赖走默认 PyPI / npm 源
-# （Dockerfile 里的国内镜像在海外机器上反而慢）。
+# 额度：后端测试、前端构建各约 1.5 分钟；页面自检要构建镜像，约 5 分钟，只在
+# 改到 web/、backend/、scripts/、compose 或本文件时跑。私有仓库每月 2000 分钟。
+# 同一分支连推时只跑最新那次（见下面的 concurrency）。
+#
+# 后端测试跟本地 `docker compose --profile test run --rm tests` 是同一套用例，
+# 只是 postgres / redis 用 Actions 的 service 容器起，依赖走默认 PyPI / npm 源
+# （Dockerfile 里默认的国内镜像在海外机器上反而慢）。
 name: CI
 
 on:
@@ -21,9 +26,51 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
+  scope:
+    name: 判断要跑什么
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+      pages: ${{ steps.scope.outputs.pages }}
+    steps:
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # 推到 main 的提交若来自已合并的 PR，PR 上已经跑过，这里全部跳过
+          if [ "$EVENT" = push ]; then
+            merged=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+              --jq '[.[] | select(.merged_at != null)] | length')
+            if [ "$merged" != 0 ]; then
+              echo "run=false" >> "$GITHUB_OUTPUT"; echo "pages=false" >> "$GITHUB_OUTPUT"
+              echo "来自已合并的 PR，跳过"; exit 0
+            fi
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          # 页面自检只在改到页面、接口、脚本或编排时跑；直接推送和手动触发一律跑
+          pages=true
+          if [ "$EVENT" = pull_request ]; then
+            gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' > files.txt
+            grep -qE '^(web|backend|scripts)/|^docker-compose\.yml$|^\.github/workflows/ci\.yml$' files.txt \
+              || pages=false
+          fi
+          echo "pages=$pages" >> "$GITHUB_OUTPUT"
+          echo "页面自检：$pages"
+
   backend:
     name: 后端回归测试
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -73,6 +120,8 @@ jobs:
 
   web:
     name: 前端自检与构建
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -92,3 +141,59 @@ jobs:
       - name: 构建
         working-directory: web
         run: npm ci --no-audit --no-fund && npm run build
+
+  # 起全栈、导入演示数据，用 runner 自带的 Chrome 在手机和桌面两个视口各跑一遍
+  # viewcheck。任一页出 ✗ 这个 job 就红；出 ✗ 的页面截图、两遍的输出和后端日志
+  # 打包成附件 viewcheck，在这次运行的 Summary 页下载，或 `gh run download`。
+  pages:
+    name: 页面自检
+    needs: scope
+    if: needs.scope.outputs.pages == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PIP_INDEX: https://pypi.org/simple
+      NPM_REGISTRY: https://registry.npmjs.org
+    steps:
+      - uses: actions/checkout@v4
+      - name: 写 .env（口令和密钥临时生成，用完即弃）
+        run: |
+          {
+            echo "POSTGRES_PASSWORD=yvruc_ci"
+            echo "YVRUC_DEMO_PASSWORD=devpass"
+            echo "YVRUC_ID_CARD_KEY=$(python3 -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+            echo "YVRUC_WORKERS=2"
+          } > .env
+      - name: 起栈（不起 cloudflared）
+        run: docker compose up -d --build --wait postgres redis backend web
+      - name: 导入演示数据
+        run: docker compose --profile seed run --rm seed
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: viewcheck 手机 390×844 与桌面 1440×900
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: |
+          set -o pipefail
+          python3 scripts/viewcheck-setup.py /tmp/viewcheck
+          # 两遍都跑完再判，免得手机那遍红了就看不到桌面的结果
+          rc=0
+          node scripts/viewcheck.mjs /tmp/viewcheck 390 844 | tee /tmp/viewcheck/390.txt || rc=1
+          node scripts/viewcheck.mjs /tmp/viewcheck 1440 900 | tee /tmp/viewcheck/1440.txt || rc=1
+          exit $rc
+      - name: 收后端日志
+        if: failure()
+        run: |
+          mkdir -p /tmp/viewcheck
+          docker compose logs --no-color backend web > /tmp/viewcheck/compose.log 2>&1
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: viewcheck
+          path: |
+            /tmp/viewcheck/390.txt
+            /tmp/viewcheck/1440.txt
+            /tmp/viewcheck/compose.log
+            /tmp/viewcheck/shots/
+          retention-days: 7

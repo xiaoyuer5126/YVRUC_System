@@ -31,7 +31,7 @@ def main(out_dir: str) -> None:
 
     admin = call("POST", "/api/auth/demo-login",
                  {"student_id": ADMIN_ID, "password": PASSWORD})
-    users = call("GET", "/api/staff/users", token=admin["token"])
+    users = call("GET", "/api/staff/users?size=100", token=admin["token"])["items"]
     student_id = next(u["student_id"] for u in users if u["profile_complete"])
     student = call("POST", "/api/auth/demo-login",
                    {"student_id": student_id, "password": PASSWORD})

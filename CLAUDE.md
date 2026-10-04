@@ -30,8 +30,10 @@ cd web && npx vite build
 测试容器（compose 的 tests 服务）与 `tests/conftest.py` 都强制清空了学校对接参数，
 conftest 还堵住了 urllib 出网，全量 pytest 不会触达学校接口。
 
-动了页面的，再按 `scripts/viewcheck.mjs` 文件头的说明，在手机（390×844）和桌面
-（1440×900）两个视口各跑一遍。
+页面检查（`scripts/viewcheck.mjs`，手机 390×844、桌面 1440×900 两个视口）在 CI 的
+「页面自检」里跑：PR 改到 web/、backend/、scripts/ 时自动执行，出 ✗ 不合并。红了先看
+那次运行的日志，再下载附件 viewcheck（出 ✗ 页面的截图、两遍输出、后端日志）。
+本地要跑按 viewcheck.mjs 文件头的说明。
 
 ## 提交
 

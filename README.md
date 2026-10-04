@@ -331,7 +331,7 @@ YVRUC_System/
 ├── tests/                      回归测试：登录会话、报名闸门与并发、审批、分配、签到闭环、
 │                               时长与申诉、服装、材料、角色、可见范围
 ├── scripts/                    前端自检：vuecheck.py（模板里用到却没定义的标识符）、
-│                               viewcheck.mjs（各视口渲染与横向溢出）、
+│                               viewcheck.mjs（各视口渲染与横向溢出，CI 自动跑）、
 │                               spacecheck.py（间距是否还在同一套尺度上）、
 │                               shot.mjs（CDP 直连 Edge 的截图/点击，Node≥22）；
 │                               rush_bench/（抢报压测，见其 run.sh）

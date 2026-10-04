@@ -8,10 +8,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# 默认走国内镜像；海外机器（CI）构建时传 --build-arg PIP_INDEX=https://pypi.org/simple
+ARG PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+
 # 先装依赖再拷代码，充分利用层缓存
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt \
-        -i https://pypi.tuna.tsinghua.edu.cn/simple
+        -i $PIP_INDEX
 
 COPY backend/ ./backend/
 
@@ -20,7 +23,7 @@ COPY backend/ ./backend/
 FROM base AS test
 COPY requirements-dev.txt ./
 RUN pip install --no-cache-dir -r requirements-dev.txt \
-        -i https://pypi.tuna.tsinghua.edu.cn/simple
+        -i $PIP_INDEX
 COPY pytest.ini ./
 COPY tests/ ./tests/
 CMD ["python", "-m", "pytest"]
