@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import math
 import secrets
 import string
 import uuid
@@ -1022,33 +1023,71 @@ class HoursRecord(Base):
     source: Mapped[str] = mapped_column(String(12), default="checkin")
     note: Mapped[str] = mapped_column(String(256), default="")            # 手动添加时的备注
     confirmed_by: Mapped[str] = mapped_column(String(32), default="")
-    # 志愿者本人的确认：核准后到申诉截止之间，本人看过说没问题，并选定报酬方式
-    # （hours 记志愿时长 / pay 劳务，选劳务就不计入时长）。到点没表态的按
-    # 「没问题 + 志愿时长」处理，锁定时补上确认时间。
-    reward: Mapped[str] = mapped_column(String(8), default="hours")
+    # 志愿者本人的确认：核准后到申诉截止之间，本人看过说没问题，并给每一段
+    # 选定报酬方式（见 parts 的 reward）。到点没表态的按「没问题 + 全部志愿时长」
+    # 处理，锁定时补上确认时间。
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # 上一次核准时通知本人的数值：再次核准只惊动数值变过、或申诉过的人
     approved_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
-    # 这笔时长由哪几段组成：[{label 场次, time 时段, position 岗位, hours}]。
-    # 签到统计的按场次一段一段记，手动添加的就一段（备注当 label）。
-    # 补记录活动导入的也是一段（kind="import"），时段写活动时间。
+    # 这笔时长由哪几段组成：
+    #   签到算的（kind="shift"）按场次一段一段记：{label 场次, time 时段,
+    #     position 岗位名, hours, shift_id, position_id, reward?}。
+    #     reward 是本人给这一段选的报酬方式（hours 志愿时长 / pay 劳务），
+    #     只有该段岗位开了「可选劳务」（Position.pay_optional）才会是 pay；
+    #     没有这个键就是志愿时长。
+    #   手动添加的一段（kind="manual"，备注当 label），补记录活动导入的一段
+    #     （kind="import"，时段写活动时间）：都只记志愿时长。
     # 志愿者看得到自己的明细；导出时长记录的备注也从这里拼。
     parts: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
     REWARD_LABELS = {"hours": "志愿时长", "pay": "劳务"}
 
-    def parts_text(self) -> str:
-        """明细拼成一行：「09-20 08:00-12:00 东门引导；09-21 …」，不换行。"""
+    @staticmethod
+    def part_is_pay(p: dict) -> bool:
+        return p.get("kind") == "shift" and p.get("reward") == "pay"
+
+    @staticmethod
+    def split(hours: float, parts: list | None) -> tuple[float, float]:
+        """一笔时长拆成（计入志愿时长, 劳务）两个数。
+
+        劳务 = 选了劳务的那几段的小时数合计，同合计一样向上取整到 0.5，
+        且不超过合计；其余都计志愿时长。管理者改合计、申诉改判的增减
+        落在志愿时长那一边：那些改动说的是服务了多久，不是报酬怎么拿。
+        """
+        raw = sum(float(p.get("hours") or 0) for p in (parts or [])
+                  if HoursRecord.part_is_pay(p))
+        pay = min(max(0.0, hours), math.ceil(max(0.0, raw) * 2) / 2) if raw > 0 else 0.0
+        return round(hours - pay, 2), pay
+
+    def counted_hours(self) -> float:
+        """计入志愿时长的那部分。"""
+        return self.split(self.hours, self.parts)[0]
+
+    def pay_hours(self) -> float:
+        """按劳务计、不记时长的那部分。"""
+        return self.split(self.hours, self.parts)[1]
+
+    def parts_text(self, *, hours_only: bool = False) -> str:
+        """明细拼成一行：「09-20 08:00-12:00 东门引导；09-21 …」，不换行。
+        hours_only：只拼计志愿时长的那几段（导出给志愿北京的备注用）。"""
         return "；".join(" ".join(x for x in (p.get("time", ""), p.get("position", "")
                                              or p.get("label", "")) if x)
-                        for p in (self.parts or []))
+                        for p in (self.parts or [])
+                        if not (hours_only and self.part_is_pay(p)))
 
     def reward_label(self) -> str:
-        return self.REWARD_LABELS.get(self.reward, self.reward)
+        counted, pay = self.split(self.hours, self.parts)
+        if pay <= 0:
+            return "志愿时长"
+        if counted <= 0:
+            return "劳务"
+        return f"志愿时长 {counted:g}h + 劳务 {pay:g}h"
 
-    def counts_hours(self) -> bool:
-        return self.reward == "hours"
+    def clear_pay(self) -> None:
+        """各段都退回志愿时长（到点没表态时）。"""
+        self.parts = [{k: v for k, v in p.items() if k != "reward"}
+                      for p in (self.parts or [])]
 
 
 class HoursRequest(Base):

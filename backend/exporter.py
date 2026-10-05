@@ -373,17 +373,18 @@ def build_answers_workbook(db: OrmSession, activity: Activity,
 def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
     """时长记录：一人一行，姓名、学号、身份证号、时长、备注。
 
-    备注是明细拼成的一行（时段 + 岗位名，分号隔开，不换行）。
-    选了劳务的人不导：平台不给他们记时长。党校同学也不导：这张表是给志愿北京
-    录时长的，他们的时长不能同时拿去做学分认定（见 hours.PARTY_SCHOOL）。
+    只导计入志愿时长的部分：时长是 HoursRecord.counted_hours，备注只拼记志愿
+    时长的那几段（时段 + 岗位名，分号隔开，不换行）；选了劳务的段平台不给记
+    时长，整笔都选了劳务的人不导。党校同学也不导：这张表是给志愿北京录时长的，
+    他们的时长不能同时拿去做学分认定（见 hours.PARTY_SCHOOL）。
     """
     party = hours_flow.party_school_users(db, activity.id)
     rows = [(rec, u) for rec, u in (
         db.query(HoursRecord, User)
         .join(User, HoursRecord.user_id == User.id)
-        .filter(HoursRecord.activity_id == activity.id,
-                HoursRecord.reward == "hours")
-        .order_by(User.name).all()) if u.id not in party]
+        .filter(HoursRecord.activity_id == activity.id)
+        .order_by(User.name).all())
+        if u.id not in party and not (rec.pay_hours() > 0 and rec.counted_hours() <= 0)]
     wb = Workbook()
     ws = wb.active
     ws.title = "时长记录"
@@ -391,8 +392,8 @@ def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
     ws.append(header)
     _style_header(ws, len(header))
     for rec, u in rows:
-        ws.append([u.name, u.student_id, u.id_card or "", rec.hours,
-                   rec.parts_text()])
+        ws.append([u.name, u.student_id, u.id_card or "", rec.counted_hours(),
+                   rec.parts_text(hours_only=True)])
     for col, w in zip("ABCDE", (12, 14, 22, 8, 48)):
         ws.column_dimensions[col].width = w
     disarm_formulas(wb)
