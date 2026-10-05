@@ -15,8 +15,8 @@ from . import config
 from .audit import log as audit_log
 from .enroll_logic import expire_stale_promotions
 from .integrations import msgcenter
-from .models import (Activity, ApprovalEvent, Department, HoursRequest, Shift,
-                     User, VbConfirm, now)
+from .models import (Activity, ApprovalEvent, AuditLog, Department,
+                     Enrollment, HoursRequest, Shift, User, VbConfirm, now)
 from .notify import notify_checkin, notify_enrolled, notify_managers
 from .perm import activity_manager_ids
 
@@ -601,15 +601,14 @@ def send_checkin_reminders(db: OrmSession) -> int:
 # ======================= 人员变动日报 =======================
 
 def send_roster_digests(db: OrmSession) -> int:
-    """活动前几天，每天给管理者一条人员变动摘要。
+    """活动前几天，每天给管理者每个场次一条人员变动摘要。
 
     逐条推变动会被无视（报名期一天几十条），完全不推又会让老师在现场
-    才发现少人。折中：临近活动时每天一条「昨日 +2 −1，当前 18/20」，
-    真正紧急的（距开始不足 24 小时的减员）另有即时提醒。
+    才发现少人。折中：临近时每天一条「昨日 +2 −1，当前 18/20」，
+    真正紧急的（距开始不足 24 小时的服务场次减员）另有即时提醒。
+    培训/彩排的请假也只进这里：逐条即时推，彩排前一天几个人请假就是几条通知。
     """
-    from .enroll_logic import ROSTER_ACTIONS, shift_enrolled_count
-    from .models import AuditLog
-    from .notify import notify_managers
+    from .enroll_logic import shift_enrolled_count
 
     t = now()
     # 每天固定时间推一条：扫描是每分钟一跑的，不定点的话零点整就发出去了
@@ -622,37 +621,65 @@ def send_roster_digests(db: OrmSession) -> int:
               .join(Activity, Shift.activity_id == Activity.id)
               .filter(Shift.start_time > t,
                       Shift.start_time <= t + lead,
-                      Shift.kind == "service",   # 培训/彩排不单独报日报
                       Activity.status.in_(("published", "closed")))
+              .order_by(Shift.start_time)
               .all())
+    since = t - timedelta(days=1)
     sent = 0
     for g in shifts:
         if g.digest_sent_on and g.digest_sent_on >= cutoff:
             continue
-        since = t - timedelta(days=1)
-        rows = (db.query(AuditLog)
-                .filter(AuditLog.activity_id == g.activity_id,
-                        AuditLog.action.in_(tuple(ROSTER_ACTIONS)),
-                        AuditLog.created_at >= since).all())
         g.digest_sent_on = t
+        # 变动按这一场算：流水挂在报名记录上，报名记录不会换场次。
+        # 按活动算的话，同一活动的几场会收到同一组数字，看不出是哪一场少了人
+        rows = (db.query(AuditLog)
+                .join(Enrollment, AuditLog.target_id == Enrollment.id)
+                .filter(AuditLog.activity_id == g.activity_id,
+                        AuditLog.target_type == "enrollment",
+                        Enrollment.shift_id == g.id,
+                        AuditLog.action.in_(_DIGEST_JOIN + _DIGEST_LEAVE
+                                            + _DIGEST_EXCUSE),
+                        AuditLog.created_at >= since)
+                .order_by(AuditLog.created_at).all())
         if not rows:
             continue          # 没有变动就不打扰
-        joined = sum(1 for r in rows if r.action in ("enroll", "promote"))
-        left = sum(1 for r in rows if r.action in ("cancel", "abandon"))
+        joined = sum(1 for r in rows if r.action in _DIGEST_JOIN)
+        left = sum(1 for r in rows if r.action in _DIGEST_LEAVE)
+        lines = []
+        if joined or left:
+            lines.append(f"过去 24 小时：新增 {joined} 人，退出 {left} 人。")
+        excuses = [r.summary for r in rows if r.action in _DIGEST_EXCUSE]
+        if excuses:
+            lines.append("请假/销假：")
+            lines += [f"· {x}" for x in excuses]
         enrolled = shift_enrolled_count(db, g.id)
-        capacity = g.total_capacity()
+        if g.is_attached():
+            # 培训/彩排不设名额，报上服务场次就连带在册；要看的是会少几个人
+            excused = (db.query(Enrollment)
+                       .filter(Enrollment.shift_id == g.id,
+                               Enrollment.status == "enrolled",
+                               Enrollment.excused.is_(True)).count())
+            lines.append(f"当前在册 {enrolled} 人"
+                         + (f"，其中请假 {excused} 人。" if excused else "。"))
+        else:
+            capacity = g.total_capacity()
+            gap = max(0, capacity - enrolled)
+            lines.append(f"当前 {enrolled}/{capacity} 人"
+                         + (f"，缺 {gap} 人。" if gap else "，人数已满。"))
+        lines.append(f"场次开始：{g.start_time:%m-%d %H:%M}")
         act = db.get(Activity, g.activity_id)
-        gap = max(0, capacity - enrolled)
-        notify_managers(
-            db, act.id, f"[人员变动] {act.title} · {g.name}",
-            f"过去 24 小时：新增 {joined} 人，退出 {left} 人。\n"
-            f"当前 {enrolled}/{capacity} 人"
-            + (f"，缺 {gap} 人。" if gap else "，人数已满。")
-            + f"\n场次开始：{g.start_time:%m-%d %H:%M}", duty="roster", tab="roster")
+        notify_managers(db, act.id, f"[人员变动] {act.title} · {g.name}",
+                        "\n".join(lines), duty="roster", tab="roster")
         sent += 1
     if shifts:
         db.commit()
     return sent
+
+
+# 进日报的动作。候补的进出不改变到场人数，只进管理页的人员变动流水
+_DIGEST_JOIN = ("enroll", "promote")
+_DIGEST_LEAVE = ("cancel", "abandon")
+_DIGEST_EXCUSE = ("excuse", "unexcuse")
 
 
 # ======================= 清理 =======================
