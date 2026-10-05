@@ -859,7 +859,7 @@ class Enrollment(Base):
       cancelled        已退选（cancel_type: normal 正常 / late 临近 /
                                      expired 放弃候补超时 / abandoned 主动放弃候补 /
                                      shift_deleted 场次被删除 / rejected 未录取 /
-                                     not_chosen 录取到了别的场次）
+                                     not_chosen 录取时没选中的意向场次）
 
     seat_held：临期退选（开始前 24 小时内、报名已截止）**名额不再释放**，
     该记录虽已 cancelled 但仍占着一个名额，防止有人临期退了、别人补进来、
