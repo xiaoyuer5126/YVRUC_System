@@ -4,8 +4,9 @@ from __future__ import annotations
 from datetime import timedelta
 
 from backend import config, scheduled
-from backend.models import Enrollment, Notification, Position, now, uid
-from conftest import POSITION_TEXT, login
+from backend.models import (Enrollment, Notification, Position, Shift, now,
+                            uid)
+from conftest import POSITION_TEXT, editing, login, student_row
 
 
 def _enroll(client, act, g, sid, **body):
@@ -102,6 +103,131 @@ def test_日报不到点不发(client, db, open_group, take_student, monkeypatch
     fake = now().replace(hour=config.ROSTER_DIGEST_HOUR) - timedelta(hours=1)
     monkeypatch.setattr(scheduled, "now", lambda: fake)
     assert scheduled.send_roster_digests(db) == 0
+
+
+def _digest_bodies(db, act, g) -> list[str]:
+    return [n.content for n in db.query(Notification)
+            .filter(Notification.title == f"[人员变动] {act.title} · {g.name}")
+            .all()]
+
+
+def _second_shift(db, act, g, *, hours_later: float) -> Shift:
+    """同一活动里再加一场服务，岗位名额与第一场相同。"""
+    g2 = Shift(id=uid("g"), activity_id=act.id, name="第二场",
+               start_time=g.start_time + timedelta(hours=hours_later),
+               end_time=g.end_time + timedelta(hours=hours_later),
+               mode="pick", sort=1)
+    db.add(g2)
+    db.flush()
+    p = Position(id=uid("p"), shift_id=g2.id, name="测试岗位", quota=3,
+                 sort=0, **POSITION_TEXT)
+    db.add(p)
+    db.commit()
+    g2.test_position_id = p.id
+    return g2
+
+
+def _add_training(client, admin, act, *, hours: float) -> Shift:
+    start = now().replace(microsecond=0) + timedelta(hours=hours)
+    with editing(client, admin, act.id):
+        r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
+                        json={"name": "岗前培训", "kind": "training",
+                              "applies_to_positions": [], "hours_mode": "fixed",
+                              "location": "排练厅",
+                              "start_time": start.isoformat(),
+                              "end_time": (start + timedelta(hours=2)).isoformat()})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def _excuse(client, db, shift_id, sid, excused, reason=""):
+    u = student_row(db, sid)
+    enr = (db.query(Enrollment)
+           .filter(Enrollment.shift_id == shift_id, Enrollment.user_id == u.id)
+           .one())
+    r = client.post(f"/api/activities/enrollments/{enr.id}/excuse",
+                    headers=login(client, sid),
+                    json={"excused": excused, "reason": reason})
+    assert r.status_code == 200, r.text
+    return u
+
+
+def test_日报按场次分开统计(client, db, open_group, take_student, monkeypatch):
+    """同一活动两场：各报各的增减，不把整个活动的数字抄给每一场。"""
+    act, g = open_group(3, day_offset=0, start_in_hours=30)
+    g2 = _second_shift(db, act, g, hours_later=10)
+    quiet = _second_shift(db, act, g, hours_later=20)
+    for _ in range(2):
+        assert _enroll(client, act, g, take_student()).status_code == 200
+    gone = take_student()
+    enr_id = _enroll(client, act, g2, gone).json()["enrollment_id"]
+    client.delete(f"/api/activities/enrollments/{enr_id}",
+                  headers=login(client, gone))
+    assert _enroll(client, act, g2, take_student()).status_code == 200
+    monkeypatch.setattr(config, "ROSTER_DIGEST_HOUR", 0)
+
+    scheduled.send_roster_digests(db)
+    [first] = _digest_bodies(db, act, g)
+    assert "新增 2 人，退出 0 人" in first and "当前 2/3 人，缺 1 人" in first
+    [second] = _digest_bodies(db, act, g2)
+    assert "新增 2 人，退出 1 人" in second and "当前 1/3 人，缺 2 人" in second
+    assert "请假" not in first + second     # 没有请假销假就没有这一段
+    assert _digest_bodies(db, act, quiet) == [], "没变动的场次不发"
+
+
+def test_培训请假进日报(client, admin, db, open_group, take_student,
+                      monkeypatch):
+    """培训/彩排只有请假销假时，正文只列这些，不出现「新增 0 人」。"""
+    act, g = open_group(3, day_offset=0, start_in_hours=60)
+    tid = _add_training(client, admin, act, hours=30)
+    a, b, c = take_student(), take_student(), take_student()
+    for sid in (a, b, c):
+        assert _enroll(client, act, g, sid).status_code == 200
+    ua = _excuse(client, db, tid, a, True, "与专业课冲突")
+    ub = _excuse(client, db, tid, b, True, "临时有事")
+    _excuse(client, db, tid, b, False)
+    monkeypatch.setattr(config, "ROSTER_DIGEST_HOUR", 0)
+
+    scheduled.send_roster_digests(db)
+    training = db.get(Shift, tid)
+    [body] = _digest_bodies(db, act, training)
+    assert body.split("\n")[:4] == [
+        "请假/销假：",
+        f"· {ua.name}（{ua.student_id}）请假「岗前培训」：与专业课冲突",
+        f"· {ub.name}（{ub.student_id}）请假「岗前培训」：临时有事",
+        f"· {ub.name}（{ub.student_id}）销假「岗前培训」",
+    ]
+    assert "新增" not in body and "退出" not in body
+    assert "当前在册 3 人，其中请假 1 人。" in body
+    # 服务场次照常报增减，培训的请假不混进来
+    [service] = _digest_bodies(db, act, g)
+    assert "新增 3 人，退出 0 人" in service and "请假" not in service
+
+
+def test_日报没有变动不发(client, db, open_group, take_student, monkeypatch):
+    """24 小时之前的变动和候补的进出都不算。"""
+    act, g = open_group(1, day_offset=0, start_in_hours=40)
+    _enroll(client, act, g, take_student())
+    from backend.models import AuditLog
+    (db.query(AuditLog).filter(AuditLog.activity_id == act.id)
+     .update({AuditLog.created_at: now() - timedelta(days=2)}))
+    db.commit()
+    assert _enroll(client, act, g, take_student()).json()["status"] == "waitlisted"
+    monkeypatch.setattr(config, "ROSTER_DIGEST_HOUR", 0)
+
+    scheduled.send_roster_digests(db)
+    assert _digest_bodies(db, act, g) == []
+
+
+def test_请假不即时通知管理者(client, admin, db, open_group, take_student):
+    """临近开始的请假也只进第二天的日报，不逐条推。"""
+    act, g = open_group(3, day_offset=0, start_in_hours=60)
+    tid = _add_training(client, admin, act, hours=5)
+    sid = take_student()
+    assert _enroll(client, act, g, sid).status_code == 200
+    before = db.query(Notification).count()
+    _excuse(client, db, tid, sid, True, "家里有事")
+    assert db.query(Notification).count() == before
 
 
 def test_组长联系方式只给同组正式志愿者(client, admin, db, enrolled_activity,
