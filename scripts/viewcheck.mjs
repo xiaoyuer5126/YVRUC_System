@@ -32,6 +32,12 @@
 // 按钮组（el-button-group 本来就贴在一起）不比。按钮被 tooltip、popconfirm 包了
 // 几层，只比同一个父元素的「横排」看不见它，这一条看得见。
 //
+// 「顶边」：.page 和当前页签的内容区里，第一个可见的块（顺着第一个子元素往里，
+// 穿过没有上内边距、上边框的普通块）与容器内容区上沿差 1px 以上就报，写明哪个容器、
+// 差多少——标题、提示条自带的上外边距会在容器内边距之外再顶出一截。
+// 「居中」：表格里 align="center" 的单元格（td.is-center .cell）放着按钮时，按钮、
+// 标签和文字的可见边界到单元格左右两边的留白差 2px 以上就报。
+//
 // 桌面视口按鼠标设备模拟，手机视口按触屏模拟：样式表里电脑端和触屏的规则分别挂在
 // (hover: hover) and (pointer: fine) 和 (hover: none) and (pointer: coarse) 下。
 // 无头浏览器没有鼠标，默认两个都不成立（pointer: none），两遍测到的都不是用户
@@ -203,6 +209,59 @@ const PROBE = `(() => {
       btnOff.push('按钮高矮 「' + label(a.el) + '」' + Math.round(a.r.height) + 'px ／「'
         + label(b.el) + '」' + Math.round(b.r.height) + 'px');
   }
+  // 顶边：.page 和当前页签的内容区里，第一个可见的块要贴着容器内容区的上沿
+  // （容器 top + 上边框 + 上内边距），差 1px 以上报出来。外边距会穿过没有上内边距、
+  // 上边框的块继续往上叠：组件根节点是个空壳 div、里面第一个是提示条，提示条的
+  // 12px 照样把整块往下顶。所以顺着「第一个可见子元素」往里走，只穿过普通块和
+  // 竖排的 flex，走到最里面那一层再量；遇到前面先有文字、或下一层是行内元素就停。
+  // 页签量的是 .el-tabs__content：第一个块的外边距穿过 .el-tab-pane 时，挪下去的
+  // 是 pane 自己，拿 pane 当基准就看不出来
+  const px = (el, p) => parseFloat(getComputedStyle(el)[p]) || 0;
+  const BLOCKY = /^(block|flex|grid|table|flow-root|list-item)$/;
+  const leadEl = el => { for (const n of el.childNodes) {
+    if (n.nodeType === 3 && n.textContent.trim()) return null;
+    if (n.nodeType === 1 && vis(n)) return n; } return null; };
+  const passThrough = el => { const cs = getComputedStyle(el);
+    return (/^(block|flow-root|list-item)$/.test(cs.display)
+            || (cs.display === 'flex' && cs.flexDirection.startsWith('column')))
+      && px(el, 'paddingTop') === 0 && px(el, 'borderTopWidth') === 0; };
+  const topOff = [];
+  const edge = (name, box) => {
+    let el = box, k;
+    while ((k = leadEl(el)) && BLOCKY.test(getComputedStyle(k).display)) { el = k; if (!passThrough(el)) break; }
+    if (el === box) return;
+    const d = Math.round(el.getBoundingClientRect().top
+      - (box.getBoundingClientRect().top + px(box, 'borderTopWidth') + px(box, 'paddingTop')));
+    if (Math.abs(d) > 1) topOff.push('顶边 ' + name + ' 第一个元素「' + label(el) + '」离内容区上沿 ' + d + 'px');
+  };
+  for (const pg of document.querySelectorAll('.page')) if (seen(pg)) edge('.page', pg);
+  for (const tc of document.querySelectorAll('.el-tabs__content')) {
+    if (!seen(tc)) continue;
+    const tab = tc.closest('.el-tabs').querySelector('.el-tabs__item.is-active');
+    edge('页签「' + (tab ? label(tab) : '?') + '」', tc);
+  }
+  // 居中：表格里 align="center" 的单元格放着按钮时，按钮（连同旁边的标签、文字）
+  // 落在屏幕上的左右边界，到单元格内容区两边的留白要一样，差 2px 以上报出来。
+  // 单元格里套了一层撑满整格的 flex 容器时，text-align:center 管不到它的子项，
+  // 按钮就贴在左边
+  const centerOff = [];
+  for (const cell of root.querySelectorAll('.el-table td.is-center .cell')) {
+    if (!seen(cell) || !cell.querySelector('.el-button')) continue;
+    const rs = [...cell.querySelectorAll('.el-button, .el-tag, .el-input, .el-select, svg, img')]
+      .filter(seen).map(el => el.getBoundingClientRect());
+    const tw2 = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+    for (let n; (n = tw2.nextNode());) {
+      if (!n.textContent.trim()) continue;
+      const range = document.createRange(); range.selectNodeContents(n);
+      for (const r of range.getClientRects()) if (r.width > 0) rs.push(r);
+    }
+    if (!rs.length) continue;
+    const c = cell.getBoundingClientRect();
+    const dl = Math.min(...rs.map(r => r.left)) - (c.left + px(cell, 'borderLeftWidth') + px(cell, 'paddingLeft'));
+    const dr = (c.right - px(cell, 'borderRightWidth') - px(cell, 'paddingRight')) - Math.max(...rs.map(r => r.right));
+    if (Math.abs(dl - dr) > 2)
+      centerOff.push('居中 「' + label(cell) + '」左留白 ' + Math.round(dl) + 'px ／右留白 ' + Math.round(dr) + 'px');
+  }
   // 非文字按钮的高度，白色（默认类型）和带颜色的分开记，汇总在这一遍输出的末尾
   const heights = btns.filter(b => !b.link).map(b => [
     /el-button--(primary|success|warning|danger|info)/.test(b.el.className) ? '彩色' : '白色',
@@ -220,6 +279,7 @@ const PROBE = `(() => {
     cards: document.querySelectorAll('.cards .card, .mob-card, .m-shift').length,
     tables: document.querySelectorAll('.el-table').length,
     over, gapsOff: gapsOff.slice(0, 4),
+    topOff: [...new Set(topOff)].slice(0, 4), centerOff: [...new Set(centerOff)].slice(0, 4),
   });
 })()`
 
@@ -255,7 +315,7 @@ for (const [who, route, name, min] of PAGES) {
   const r = await send('Runtime.evaluate', { expression: PROBE, returnByValue: true })
   const d = r.timeout
     ? { textLen: 0, errors: ['页面没有响应（主线程卡死？）'], vw: 0, scrollW: 0, over: [], gapsOff: [],
-        btnOff: [], heights: [] }
+        btnOff: [], heights: [], topOff: [], centerOff: [] }
     : JSON.parse(r.result.result.value)
   if (fine === undefined && !r.timeout) {
     fine = d.fine
@@ -263,7 +323,7 @@ for (const [who, route, name, min] of PAGES) {
   }
   for (const [kind, h] of d.heights) heights[`${kind} ${h}px`] = (heights[`${kind} ${h}px`] || 0) + 1
   const bad = d.scrollW > d.vw + 1 || d.textLen < min || d.errors.length || d.gapsOff.length
-    || d.btnOff.length
+    || d.btnOff.length || d.topOff.length || d.centerOff.length
   if (bad) {
     failed++
     const shot = await send('Page.captureScreenshot', { format: 'png' })
@@ -276,7 +336,7 @@ for (const [who, route, name, min] of PAGES) {
     (d.errors.length ? `\n     JS 错误: ${d.errors[0]}` : '') +
     (d.over.length ? `\n     超宽: ${d.over.join(', ')}` : '') +
     d.gapsOff.map(g => `\n     间距不齐: ${g}`).join('') +
-    d.btnOff.map(g => `\n     ${g}`).join(''))
+    [...d.btnOff, ...d.topOff, ...d.centerOff].map(g => `\n     ${g}`).join(''))
 }
 ws.close(); proc.kill()
 console.log('非文字按钮高度（种类 高度×个数）：' + Object.entries(heights)
