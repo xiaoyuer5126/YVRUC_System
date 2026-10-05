@@ -1,4 +1,4 @@
-<!-- 一笔时长的明细：由哪几段组成（场次 · 时段 · 岗位 · 小时），
+<!-- 一笔时长的明细：由哪几段组成（场次 · 时段 · 岗位 · 小时，选了劳务的段带标签），
      外加管理者手动补录的那几段（kind="manual"，标签就是备注）。 -->
 <template>
   <div v-if="parts?.length" class="parts">
@@ -7,6 +7,7 @@
       <span v-if="p.time" class="dim">{{ p.time }}</span>
       <span v-if="p.position" class="dim">{{ p.position }}</span>
       <b>{{ p.hours }}h</b>
+      <el-tag v-if="p.reward === 'pay'" size="small" effect="plain" type="warning">劳务</el-tag>
       <!-- 只有管理者能删，而且只删得掉手动加的那几段：签到算出来的那些段是
            记录的依据，删了账就没了出处 -->
       <el-button v-if="removable && p.kind === 'manual'" size="small" link

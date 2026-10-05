@@ -96,20 +96,30 @@
       <el-empty v-if="!data.records.length" description="参加活动并完成服务后，将会显示时长" />
     </el-card>
 
-    <el-dialog v-model="cf.visible" title="确认时长" width="440">
+    <el-dialog v-model="cf.visible" title="确认时长" width="480">
       <p class="dim">
         「{{ cf.row?.activity_title }}」记 <b>{{ cf.row?.hours }}</b> 小时。确认后到截止前仍可改。
       </p>
-      <el-form label-width="88px">
-        <el-form-item label="报酬方式">
-          <el-radio-group v-model="cf.reward">
-            <el-radio value="hours">志愿时长</el-radio>
-            <el-radio value="pay" :disabled="!cf.row?.pay_allowed">劳务（不记时长）</el-radio>
-          </el-radio-group>
-          <div v-if="cf.row?.pay_allowed" class="dim">{{ cf.row.pay_note }}</div>
-          <div v-else class="dim">本岗位只记志愿时长</div>
-        </el-form-item>
-      </el-form>
+      <!-- 报酬方式按段选：只有岗位开了劳务的段能改，其余段只记志愿时长 -->
+      <template v-if="cf.row?.pay_allowed">
+        <div class="dim" style="margin-bottom:8px">报酬方式（选劳务的段不记志愿时长）</div>
+        <div v-for="(p, i) in cf.parts" :key="i" class="seg">
+          <div class="seg-head">
+            <span>{{ p.label || '手动补录' }}</span>
+            <span v-if="p.time" class="dim">{{ p.time }}</span>
+            <span v-if="p.position" class="dim">{{ p.position }}</span>
+            <b>{{ p.hours }}h</b>
+          </div>
+          <template v-if="p.pay_ok">
+            <el-radio-group v-model="p.reward" size="small">
+              <el-radio value="hours">志愿时长</el-radio>
+              <el-radio value="pay">劳务</el-radio>
+            </el-radio-group>
+            <div v-if="p.pay_note" class="dim">{{ p.pay_note }}</div>
+          </template>
+          <el-tag v-else size="small" effect="plain" type="success">志愿时长</el-tag>
+        </div>
+      </template>
       <template #footer>
         <el-button @click="cf.visible = false">取消</el-button>
         <el-button type="primary" :loading="cf.busy" @click="submitConfirm">确认无误</el-button>
@@ -166,16 +176,18 @@ const AppealTag = (props) => {
     : tag
 }
 
-const cf = ref({ visible: false, row: null, reward: 'hours', busy: false })
+const cf = ref({ visible: false, row: null, parts: [], busy: false })
 function openConfirm(row) {
-  cf.value = { visible: true, row, reward: row.reward || 'hours', busy: false }
+  cf.value = { visible: true, row, parts: row.parts.map(p => ({ ...p })), busy: false }
 }
 async function submitConfirm() {
   const c = cf.value
   c.busy = true
   try {
-    const d = await api.post(`/api/me/hours/${c.row.id}/confirm`, { reward: c.reward })
-    ElMessage.success(`已确认，按${d.reward_label}记`)
+    const parts = c.parts.filter(p => p.pay_ok)
+      .map(p => ({ shift_id: p.shift_id, position_id: p.position_id, reward: p.reward }))
+    const d = await api.post(`/api/me/hours/${c.row.id}/confirm`, { parts })
+    ElMessage.success(`已确认：${d.reward_label}`)
     c.visible = false
     load()
   } finally { c.busy = false }
@@ -202,7 +214,7 @@ async function submitAppeal() {
 
 // 还没核准（本人只当参考）→ 已核准待表态 / 已确认 → 已锁定，账结了
 function stateOf(row) {
-  const how = row.reward === 'pay' ? '劳务' : '志愿时长'
+  const how = row.reward_label
   if (row.locked) return { type: 'success', text: `已锁定 · ${how}` }
   if (row.approved && row.confirmed_at) return { type: 'success', text: `已确认 · ${how}` }
   if (row.approved) return { type: 'warning', text: '已核准请确认，如有异议请申诉' }
@@ -213,4 +225,8 @@ function stateOf(row) {
 <style scoped>
 .stat { text-align: center; border-radius: 14px; }
 .big { font-size: 34px; font-weight: 700; color: var(--ruc-red); }
+.seg { display: flex; flex-direction: column; gap: 4px; padding: 8px 0;
+       border-top: 1px solid var(--el-border-color-lighter); }
+.seg-head { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; font-size: 13px; }
+.seg-head b { color: var(--el-color-primary); }
 </style>
