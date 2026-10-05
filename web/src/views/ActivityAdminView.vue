@@ -2272,12 +2272,12 @@ async function saveAttached() {
   } finally { attDlg.value.busy = false }
 }
 
-// 时长表里志愿者本人那一格：确认了没、选的志愿时长还是劳务
+// 时长表里志愿者本人那一格：确认了没、哪部分记志愿时长、哪部分按劳务
 const VolunteerSide = (props) => {
   const r = props.row
   if (!r.volunteer_confirmed_at) return h('span', { class: 'dim' }, '未表态')
   return h(ElTag, { size: 'small', effect: 'plain',
-                    type: r.reward === 'pay' ? 'warning' : 'success' },
+                    type: r.pay_hours > 0 ? 'warning' : 'success' },
            () => `已确认 · ${r.reward_label}`)
 }
 

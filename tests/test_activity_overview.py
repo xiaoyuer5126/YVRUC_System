@@ -92,7 +92,8 @@ def test_概况各项数字(client, admin, db, take_student):
     db.add_all([
         HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u1.id, hours=3),
         HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u2.id, hours=2,
-                    reward="pay"),                  # 选了劳务，不计时长
+                    parts=[{"kind": "shift", "shift_id": s1.id, "hours": 2,
+                            "reward": "pay"}]),     # 选了劳务，不计时长
         HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u4.id, hours=1.5),
         ViolationRecord(id=uid("vio"), user_id=u4.id, activity_id=act.id,
                         kind="late"),

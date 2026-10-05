@@ -1106,6 +1106,11 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
     mine = {r.user_id: r for r in db.query(HoursRecord)
             .filter(HoursRecord.activity_id == act.id).all()}
     extra = {uid_: manual_parts(r) for uid_, r in mine.items()}
+    # 本人已经给哪几段选了劳务：按（场次, 岗位）认段，重算时原样带上——
+    # 不然管理者每点一次「确认全部」，本人的选择就被抹回志愿时长
+    chose_pay = {uid_: {(p.get("shift_id"), p.get("position_id"))
+                        for p in (r.parts or []) if HoursRecord.part_is_pay(p)}
+                 for uid_, r in mine.items()}
     per_user: dict[str, float] = {}
     flags: dict[str, set] = {}
     parts: dict[str, list] = {}
@@ -1132,11 +1137,17 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
                            Enrollment.user_id == rec.user_id,
                            Enrollment.status == "enrolled").first())
             pos = db.get(Position, enr.position_id) if enr and enr.position_id else None
-        parts.setdefault(rec.user_id, []).append({
+        part = {
             "label": g.name if not g.is_attached() else f"{g.name}（{g.kind_label()}）",
             "time": span_text(start, end) if start and end else g.span_text(),
             "position": pos.name if pos and not pos.is_placeholder else "",
-            "hours": round(max(0.0, hours), 2), "kind": "shift"})
+            "hours": round(max(0.0, hours), 2), "kind": "shift",
+            "shift_id": g.id, "position_id": pos.id if pos else None}
+        # 岗位后来关了劳务的，这一段回到志愿时长
+        if (pos is not None and pos.pay_optional
+                and (g.id, pos.id) in chose_pay.get(rec.user_id, ())):
+            part["reward"] = "pay"
+        parts.setdefault(rec.user_id, []).append(part)
 
     # 只有手动补录、一场都没签到过的人也要出现在表里：不然这笔账管理者看不见，
     # 也就无从核准
@@ -1189,11 +1200,11 @@ def _record_hours(db: OrmSession, act: Activity) -> list[dict]:
 
 
 def _volunteer_side(rec: HoursRecord | None) -> dict:
-    """志愿者本人那一边的表态：报酬方式与确认时间。"""
+    """志愿者本人那一边的表态：报酬方式（按段选，这里给合计）与确认时间。"""
     if rec is None:
-        return {"reward": "hours", "reward_label": "志愿时长",
+        return {"pay_hours": 0.0, "reward_label": "志愿时长",
                 "volunteer_confirmed_at": None}
-    return {"reward": rec.reward, "reward_label": rec.reward_label(),
+    return {"pay_hours": rec.pay_hours(), "reward_label": rec.reward_label(),
             "volunteer_confirmed_at": iso_of(rec.confirmed_at)}
 
 
@@ -1392,6 +1403,7 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
 
     def upsert(user_id: str, hours: float, *, force: bool = False) -> None:
         # 明细按签到算出来的段落记；管理者改的是合计，段落是它的依据。
+        # 本人给各段选的报酬方式也在 compute_hours 里按（场次, 岗位）带上了。
         # 手动补录的那几段不用在这儿保住：compute_hours 就是从这一笔的 parts
         # 里把它们读出来再拼回去的（所以这里再拼一次反而会重复一遍）。
         # 当初把手动时长拆成单独一张表，图的是「确认全部」别把它抹掉；
@@ -1484,7 +1496,8 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
       场次不进分母，否则活动进行到一半，签到率看着永远偏低。
     · 未签退：「扫码计时」场次里签了到还没签退的人次。固定计时/不计时长的
       场次本来就不用签退，算进来全是假警报。
-    · 时长：已入账（HoursRecord）且选「志愿时长」的合计；党校同学的照算
+    · 时长：已入账（HoursRecord）里计入志愿时长的合计（选了劳务的段不算，
+      见 HoursRecord.split）；党校同学的照算
       （同数据总览，那是平台自己的数），另单独给出党校部分。approved 说明
       这笔账是否已经核准。
     · 临期退选：本活动服务场次里有过临期退选（cancel_type=late）的人数。
@@ -1496,16 +1509,13 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
     act = _act(db, activity_id)
     t = now()
 
-    party = (db.query(Enrollment.user_id)
-             .filter(Enrollment.activity_id == act.id,
-                     Enrollment.source == hours_flow.PARTY_SCHOOL))
-    counts_hours = HoursRecord.reward == "hours"
-    roster, total, party_total = (
-        db.query(func.count(HoursRecord.id),
-                 func.coalesce(func.sum(HoursRecord.hours).filter(counts_hours), 0.0),
-                 func.coalesce(func.sum(HoursRecord.hours).filter(
-                     counts_hours & HoursRecord.user_id.in_(party)), 0.0))
-        .filter(HoursRecord.activity_id == act.id).one())
+    party_ids = hours_flow.party_school_users(db, act.id)
+    ledger = (db.query(HoursRecord.user_id, HoursRecord.hours, HoursRecord.parts)
+              .filter(HoursRecord.activity_id == act.id).all())
+    roster = len(ledger)
+    counted = [(u, HoursRecord.split(h, p)[0]) for u, h, p in ledger]
+    total = sum(c for _u, c in counted)
+    party_total = sum(c for u, c in counted if u in party_ids)
     violations = (db.query(func.count(ViolationRecord.id))
                   .filter(ViolationRecord.activity_id == act.id).scalar())
     out = {"record": act.is_record(),
@@ -1721,9 +1731,9 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
         if u is None:
             continue
         notified += 1
-        # 只有岗位可选劳务的人才需要选报酬方式，别人不必看到这一句
+        # 有哪一段的岗位可选劳务才需要选报酬方式，别人不必看到这一句
         pay_line = ("\n请选择报酬方式志愿时长或劳务，超时未确认默认选择志愿时长。"
-                    if hours_flow.pay_position(db, act.id, r.user_id) else "")
+                    if hours_flow.pay_positions(db, r.parts) else "")
         # 点开去「我的志愿时长」而不是活动详情：要确认/要申诉的那笔账在那儿，
         # 活动详情页上看不到本人在这个活动里有多少时长
         msgcenter.send_user(

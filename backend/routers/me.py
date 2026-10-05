@@ -283,14 +283,15 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
     rows = (db.query(HoursRecord)
             .filter(HoursRecord.user_id == user.id)
             .order_by(HoursRecord.created_at.desc()).all())
-    # 选了劳务的那次不计入时长：账上只有志愿时长。党校同学的那几场也不计入：
-    # 不能同时拿去做学分认定（见 hours.PARTY_SCHOOL），明细里照样列、带标签
+    # 选了劳务的那几段不计入时长：账上只有志愿时长（见 HoursRecord.split）。
+    # 党校同学的那几场也不计入：不能同时拿去做学分认定（见 hours.PARTY_SCHOOL），
+    # 明细里照样列、带标签
     party = hours_flow.party_school_activities(db, user.id)
-    counted = [r for r in rows if r.counts_hours() and r.activity_id not in party]
-    total = sum(r.hours for r in counted)
+    counted = [r for r in rows if r.activity_id not in party]
+    total = sum(r.counted_hours() for r in counted)
     acts = {a.id: a for a in db.query(Activity)
             .filter(Activity.id.in_([r.activity_id for r in rows] or [""])).all()}
-    locked = sum(r.hours for r in counted
+    locked = sum(r.counted_hours() for r in counted
                  if acts.get(r.activity_id) and acts[r.activity_id].hours_locked())
     appeals = {a.record_id: a for a in db.query(HoursAppeal)
                .filter(HoursAppeal.user_id == user.id)
@@ -303,14 +304,15 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
         open_window = bool(
             act and act.hours_approved_at and not act.hours_locked()
             and (act.appeal_deadline is None or now() < act.appeal_deadline))
-        pay_pos = hours_flow.pay_position(db, r.activity_id, user.id)
+        parts = hours_flow.parts_view(db, r)
         out.append({"id": r.id, "activity_title": act.title if act else "",
                     "activity_id": r.activity_id,
                     # 补记录活动不公开：前端别给它挂活动详情的链接
                     "record_only": bool(act and act.is_record()),
                     "party_school": r.activity_id in party,
-                    "hours": r.hours, "parts": r.parts or [],
-                    "reward": r.reward, "reward_label": r.reward_label(),
+                    "hours": r.hours, "parts": parts,
+                    "counted_hours": r.counted_hours(), "pay_hours": r.pay_hours(),
+                    "reward_label": r.reward_label(),
                     "confirmed_at": iso_of(r.confirmed_at),
                     "approved": bool(act and act.hours_approved_at),
                     "locked": bool(act and act.hours_locked()),
@@ -323,8 +325,8 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
                     # 数字说的，说过之后又反悔，该找负责人核对，而不是自己再点
                     "can_appeal": (open_window and r.confirmed_at is None
                                    and (a is None or a.status == "rejected")),
-                    "pay_allowed": pay_pos is not None,
-                    "pay_note": pay_pos.pay_note if pay_pos else "",
+                    # 有哪一段可选劳务，确认时才需要选报酬方式
+                    "pay_allowed": any(p["pay_ok"] for p in parts),
                     "appeal": ({"status": a.status, "label": a.status_label(),
                                 "claimed_hours": a.claimed_hours,
                                 "reason": a.reason, "reply": a.reply}
@@ -334,13 +336,18 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
 
 
 class ConfirmHoursBody(BaseModel):
-    reward: str = "hours"      # hours 记志愿时长 / pay 劳务（岗位可选劳务时才行）
+    # 各段的报酬方式 [{shift_id, position_id, reward}]，reward 为 hours 记志愿时长 /
+    # pay 劳务（该段岗位可选劳务时才行）。没列到的可劳务段按志愿时长记。
+    parts: list[dict] = []
 
 
 @router.post("/hours/{record_id}/confirm")
 def confirm_hours(record_id: str, body: ConfirmHoursBody,
                   db: OrmSession = Depends(db_session), user=Depends(current_user)):
-    """本人确认这条时长没问题，并选定报酬方式。截止前可以改主意再点一次。"""
+    """本人确认这条时长没问题，并给每一段选定报酬方式。截止前可以改主意再点一次。
+
+    报酬方式按段（场次 + 岗位）选：同一场活动里有的岗位可选劳务、有的只记
+    志愿时长，一笔账里两种可以并存。"""
     r = db.get(HoursRecord, record_id)
     if r is None or r.user_id != user.id:
         raise HTTPException(404, "时长记录不存在")
@@ -356,14 +363,35 @@ def confirm_hours(record_id: str, body: ConfirmHoursBody,
             .filter(HoursAppeal.record_id == r.id,
                     HoursAppeal.status == "pending").first()):
         raise HTTPException(409, "您的申诉正在处理中，处理完成后会重新核准")
-    if body.reward not in HoursRecord.REWARD_LABELS:
-        raise HTTPException(400, "报酬方式只能是 志愿时长 / 劳务")
-    if body.reward == "pay" and hours_flow.pay_position(db, act.id, user.id) is None:
-        raise HTTPException(400, "您的岗位没有开放劳务，只能记志愿时长")
-    r.reward = body.reward
+    pay_ok = hours_flow.pay_positions(db, r.parts)
+    segs = {(p.get("shift_id"), p.get("position_id")): p for p in (r.parts or [])
+            if p.get("kind") == "shift"}
+    chosen: dict[tuple, str] = {}
+    for it in body.parts:
+        key = (it.get("shift_id"), it.get("position_id"))
+        reward = it.get("reward")
+        if reward not in HoursRecord.REWARD_LABELS:
+            raise HTTPException(400, "报酬方式只能是 志愿时长 / 劳务")
+        seg = segs.get(key)
+        if seg is None:
+            raise HTTPException(400, "这笔时长里没有这一段")
+        if reward == "pay" and key[1] not in pay_ok:
+            raise HTTPException(400, f"「{seg.get('label')}」"
+                                     f"{seg.get('position') or ''}的岗位没有开放劳务，"
+                                     f"只能记志愿时长")
+        chosen[key] = reward
+    parts = []
+    for p in r.parts or []:
+        p = {k: v for k, v in p.items() if k != "reward"}
+        if chosen.get((p.get("shift_id"), p.get("position_id"))) == "pay" \
+                and p.get("kind") == "shift":
+            p["reward"] = "pay"
+        parts.append(p)
+    r.parts = parts
     r.confirmed_at = now()
     db.commit()
-    return {"ok": True, "reward": r.reward, "reward_label": r.reward_label()}
+    return {"ok": True, "counted_hours": r.counted_hours(),
+            "pay_hours": r.pay_hours(), "reward_label": r.reward_label()}
 
 
 class AppealBody(BaseModel):
