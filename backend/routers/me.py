@@ -128,7 +128,7 @@ def my_enrollments(db: OrmSession = Depends(db_session),
     for r in rows:
         if r.shift_id in seen and r.status == "cancelled":
             continue
-        # 筛选时录到了别的场次：那几条意向记录没有信息量，不列
+        # 筛选录取时没选中的意向场次：那几条意向记录没有信息量，不列
         if r.cancel_type == "not_chosen":
             continue
         if r.status != "cancelled":

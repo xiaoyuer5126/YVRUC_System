@@ -127,7 +127,8 @@ def test_一位录取一位不录取_结论不会被后提交的盖掉(client, a
     def decide(accept):
         return lambda c: c.post(
             f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
-            json={"application_ids": [app_id], "accept": accept, "shift_id": ids[0]})
+            json={"application_ids": [app_id], "accept": accept,
+                  "targets": [{"shift_id": ids[0]}]})
     first, second = _race(decide(True), decide(False))
 
     assert first.status_code == 200, first.text
@@ -137,6 +138,42 @@ def test_一位录取一位不录取_结论不会被后提交的盖掉(client, a
     statuses = {e.status for e in db.query(Enrollment)
                 .filter(Enrollment.activity_id == act_id)}
     assert "enrolled" in statuses and "applied" not in statuses
+
+
+def test_两位管理者同时把两个人录到同一批场次_最后一个名额只给一人(
+        client, admin, db, take_student, monkeypatch):
+    """两份申请都录到第 1、2 场，第 2 场只剩一个名额。两个请求锁的是同一批场次
+    （按 id 排序加锁），只会一先一后：后到的看得见先到的那一个，整份拦下。"""
+    from backend.models import Shift
+    act_id, ids, q = _create_screened(client, admin, db)
+    db.get(Shift, ids[1]).placeholder().quota = 1
+    db.commit()
+    for _ in range(2):
+        r = client.post(f"/api/activities/{act_id}/apply",
+                        headers=login(client, take_student()),
+                        json={"position_ids": _holders(db, ids), "answers": _answers(q)})
+        assert r.status_code == 200, r.text
+    app_ids = [a["id"] for a in client.get(
+        f"/api/staff/activities/{act_id}/applications",
+        headers=admin).json()["applications"]]
+    _slow_once(monkeypatch, screening, "audit_log")
+
+    def decide(app_id, order):
+        return lambda c: c.post(
+            f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
+            json={"application_ids": [app_id], "accept": True,
+                  "picks": {app_id: [{"shift_id": ids[i]} for i in order]}})
+    first, second = _race(decide(app_ids[0], (0, 1)), decide(app_ids[1], (1, 0)))
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 409 and "名额" in second.json()["detail"], second.text
+    db.expire_all()
+    assert db.get(Application, app_ids[1]).status == "applied"
+    enrolled = (db.query(Enrollment)
+                .filter(Enrollment.activity_id == act_id,
+                        Enrollment.status == "enrolled").all())
+    assert sorted(e.shift_id for e in enrolled) == sorted(ids)
+    assert {e.user_id for e in enrolled} == {db.get(Application, app_ids[0]).user_id}
 
 
 def test_外联同时确认和退回只保留先提交的结论(client, admin, db, liaison,

@@ -490,17 +490,60 @@ def list_applications(activity_id: str, db: OrmSession = Depends(db_session),
 
 
 class Pick(BaseModel):
-    shift_id: str = ""
-    position_id: str = ""
+    shift_id: str
+    position_id: str = ""     # 空 = 用他自己在这一场勾的意向岗位
 
 
 class DecideBody(BaseModel):
     application_ids: list[str]
     accept: bool
-    shift_id: str = ""        # 整批录取到哪一场；空 = 各自的第一意向
-    position_id: str = ""     # 整批定岗位；空 = 用他自己勾的意向岗位
-    # 逐人指定，优先于上面两项：申请 id → {场次, 岗位}
-    picks: dict[str, Pick] = {}
+    # 整批录取到哪几场、每场什么岗位；空 = 各自的第一意向
+    targets: list[Pick] = []
+    # 逐人指定，优先于整批：申请 id → 录到的那几场
+    picks: dict[str, list[Pick]] = {}
+
+
+def _accept_targets(db: OrmSession, u: User, rows: list[Enrollment],
+                    picks: list[Pick]) -> list[tuple[Enrollment, Shift, Pick]]:
+    """这份申请录到哪几场：每场对上他的那条意向记录。没给就取第一意向。"""
+    if not picks:
+        if not rows:
+            raise HTTPException(409, f"{u.name} 的申请没有可用的场次")
+        return [(rows[0], db.get(Shift, rows[0].shift_id),
+                 Pick(shift_id=rows[0].shift_id))]
+    out = []
+    for pick in picks:
+        target = next((e for e in rows if e.shift_id == pick.shift_id), None)
+        if target is None:
+            raise HTTPException(400, f"{u.name} 没有申请这个场次")
+        if any(t.id == target.id for t, _g, _p in out):
+            raise HTTPException(400, f"{u.name} 的同一场次只能录到一个岗位")
+        out.append((target, db.get(Shift, target.shift_id), pick))
+    return out
+
+
+def _ensure_no_clash(db: OrmSession, u: User, rows: list[Enrollment],
+                     chosen: list[Shift]) -> None:
+    """选中的几场之间、以及和他在库里其他有效报名之间，时段都不能重叠。
+
+    申请时意向之间可以重叠（他只是说这几场都能来），录取时一个人不能同时在
+    两个地方，撞了就整份拦下，让管理者少选一场。他这份申请自己的意向记录
+    不算：没选中的马上作废，选中的就是要录的这几场。
+    """
+    for i, a in enumerate(chosen):
+        for b in chosen[i + 1:]:
+            if logic.overlaps(a.start_time, a.end_time, b.start_time, b.end_time):
+                raise HTTPException(
+                    409, f"{u.name} 选中的「{a.name}」（{a.span_text()}）与"
+                         f"「{b.name}」（{b.span_text()}）时间重叠，不能同时录取")
+    own = {e.id for e in rows}
+    others = [r for r in logic.active_rows(db, u) if r[0].id not in own]
+    for g in chosen:
+        clashes = logic.conflicts_among(others, g.id, g.start_time, g.end_time)
+        if clashes:
+            raise HTTPException(
+                409, f"{u.name} 的「{g.name}」与其已报名的活动时间冲突："
+                     f"{logic.conflict_message(clashes)}")
 
 
 @router.post("/staff/activities/{activity_id}/applications/decide")
@@ -509,9 +552,10 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
            user: User = Depends(require_manager)):
     """批量录取或不录取。
 
-    录取：「报名即选岗位」的场次落到他勾的那个岗位（也可以在这里统一改成
-    别的岗位），「截止后统一分配」的场次落到占位岗位上等一键分配。名额不够
-    就拦下，让管理者先扩人数上限。其余意向场次作废。
+    录取：一份申请可以录到他意向里的一场或几场。「报名即选岗位」的场次落到
+    他勾的那个岗位（也可以在这里改成别的岗位），「截止后统一分配」的场次落到
+    占位岗位上等一键分配。逐场判名额，哪一场不够就整批拦下，让管理者先扩
+    人数上限；选中的几场时段重叠也整批拦下。没选中的意向场次当场作废。
     不录取：意向场次全部作废，通知一句留余地的话；档案里不留痕迹。
     """
     ensure_activity_manager(db, user, activity_id)
@@ -525,7 +569,8 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
     if not pending:
         raise HTTPException(409, "所选申请都已经处理过了")
 
-    # 录取要占名额：涉及的场次整批先锁上，判名额、落库、留痕同一个事务提交。
+    # 录取要占名额：涉及的场次（这批人全部意向场次，录到的那几场必在其中）
+    # 整批先锁上，判名额、落库、留痕同一个事务提交。
     # 锁要一直持有到提交：要是只包住「判名额 + 改状态」、提交在放锁之后，中间
     # 别人看到的还是旧人数。场次锁随事务走，正好一直持有到下面那次 commit。
     # 一次锁多个场次按 id 排序（shift_lock 里做），两位管理者同时批量录取时
@@ -551,6 +596,11 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
             # 录取是整批判名额的，混着已处理的人继续会让结果和管理者看到的不一致
             names = "、".join(db.get(User, a.user_id).name for a in handled)
             raise HTTPException(409, f"{names} 的申请已被其他管理者处理，请刷新后重新选择")
+        if body.accept:
+            # 录取要跟各人在别处的报名比时段：按人 id 排序拿用户锁，两位管理者
+            # 录同一批人时顺序一致。拿完不再等任何场次锁，见 locks 的「用户锁」
+            for who in sorted({a.user_id for a in pending}):
+                user_lock(db, who)
         done = []
         for app in pending:
             u = db.get(User, app.user_id)
@@ -559,61 +609,61 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                             Enrollment.user_id == app.user_id,
                             Enrollment.status == "applied").all())
             if body.accept:
-                pick = body.picks.get(app.id) or Pick()
-                want_shift = pick.shift_id or body.shift_id
-                target = None
-                if want_shift:
-                    target = next((e for e in rows if e.shift_id == want_shift), None)
-                    if target is None:
-                        raise HTTPException(400, f"{u.name} 没有申请这个场次")
-                else:
-                    target = rows[0] if rows else None
-                if target is None:
-                    raise HTTPException(409, f"{u.name} 的申请没有可用的场次")
-                g = db.get(Shift, target.shift_id)
-                position = _accept_position(db, g, target,
-                                            pick.position_id or body.position_id)
-                # 条件不满足照样录得进去：筛选本来就是人的判断。但要留痕，
-                # 名单上也跟着标出来，别让「怎么排了个不符合条件的人」成为悬案
-                unmet = logic.unmet_requirements(u, position)
-                if not logic.has_room(db, g, position):
-                    raise HTTPException(
-                        409, f"「{g.name}·{position.name}」名额已满"
-                             f"（{position.quota} 人），请先调整名额或更换岗位")
-                # 截止后统一分配的场次，直接录到真实岗位也占这一场的招募名额
-                holder = g.placeholder()
-                if holder is not None and position is not holder \
-                        and not logic.has_room(db, g, holder):
-                    raise HTTPException(
-                        409, f"「{g.name}」已招满（{holder.quota} 人），请先调整人数上限")
-                target.status = "enrolled"
-                target.leader_willing = app.leader_willing
-                target.position_id = position.id
-                target.assigned_at = now()
-                target.assigned_by = user.id
-                target.assign_forced = bool(unmet)
+                if app.id in body.picks and not body.picks[app.id]:
+                    raise HTTPException(400, f"{u.name} 没有选录取到哪一场")
+                chosen = _accept_targets(db, u, rows,
+                                         body.picks.get(app.id) or body.targets)
+                _ensure_no_clash(db, u, rows, [g for _t, g, _p in chosen])
+                lines, placed = [], []
+                for target, g, pick in chosen:
+                    position = _accept_position(db, g, target, pick.position_id)
+                    # 条件不满足照样录得进去：筛选本来就是人的判断。但要留痕，
+                    # 名单上也跟着标出来，别让「怎么排了个不符合条件的人」成为悬案
+                    unmet = logic.unmet_requirements(u, position)
+                    if not logic.has_room(db, g, position):
+                        raise HTTPException(
+                            409, f"「{g.name}·{position.name}」名额已满"
+                                 f"（{position.quota} 人），请先调整名额或更换岗位")
+                    # 截止后统一分配的场次，直接录到真实岗位也占这一场的招募名额
+                    holder = g.placeholder()
+                    if holder is not None and position is not holder \
+                            and not logic.has_room(db, g, holder):
+                        raise HTTPException(
+                            409, f"「{g.name}」已招满（{holder.quota} 人），请先调整人数上限")
+                    target.status = "enrolled"
+                    target.leader_willing = app.leader_willing
+                    target.position_id = position.id
+                    target.assigned_at = now()
+                    target.assigned_by = user.id
+                    target.assign_forced = bool(unmet)
+                    # 立即落库：同一批后面的人判名额时要数得到他
+                    db.flush()
+                    lines.append(f"{g.name}（{g.span_text()}）· "
+                                 + ("具体岗位将于稍后公布" if position.is_placeholder
+                                    else f"岗位：{position.name}"))
+                    placed.append(f"{g.name}·{position.name}"
+                                  + (f"（不满足：{'；'.join(unmet)}）" if unmet else ""))
+                taken = {t.id for t, _g, _p in chosen}
                 for e in rows:
-                    if e.id != target.id:
+                    if e.id not in taken:
                         e.status, e.cancel_type = "cancelled", "not_chosen"
                 app.status = "accepted"
                 app.decided_by, app.decided_at = user.id, now()
                 db.flush()
-                logic.sync_attached(db, target)
+                # 培训/彩排看的是他在本活动全部正式报名，几场都录完再同步
+                for target, _g, _p in chosen:
+                    logic.sync_attached(db, target)
                 msgcenter.send_user(db, u, "application_accepted",
-                                data={"activity_id": act.id},
-                                activity=act.title, shift=g.name, time=g.span_text(),
-                                detail=("岗位：" + position.name
-                                        if not position.is_placeholder
-                                        else "具体岗位将于稍后公布"))
-                done.append(f"{u.name}→{g.name}·{position.name}"
-                            + (f"（不满足：{'；'.join(unmet)}）" if unmet else ""))
+                                    data={"activity_id": act.id},
+                                    activity=act.title, arrangement="\n".join(lines))
+                done.append(f"{u.name}→{'、'.join(placed)}")
             else:
                 for e in rows:
                     e.status, e.cancel_type = "cancelled", "rejected"
                 app.status = "rejected"
                 app.decided_by, app.decided_at = user.id, now()
                 msgcenter.send_user(db, u, "application_rejected",
-                                data={"activity_id": act.id}, activity=act.title)
+                                    data={"activity_id": act.id}, activity=act.title)
                 done.append(u.name)
         audit_log(db, actor=user, action="assign", target_type="activity",
                   target_id=act.id, target_label=act.title, activity_id=act.id,

@@ -42,7 +42,7 @@
 
       <template v-if="step === 1">
         <p class="dim" style="margin:0 0 8px">
-          可以跨场次勾多个，同一场次也可以勾几个岗位；录取时由负责人定其中一个。
+          可以跨场次勾多个，同一场次也可以勾几个岗位；负责人可录取其中一场或几场，每场定一个岗位。
         </p>
         <el-checkbox-group v-model="form.position_ids">
           <div v-for="g in openShifts" :key="g.id" class="shift-block">

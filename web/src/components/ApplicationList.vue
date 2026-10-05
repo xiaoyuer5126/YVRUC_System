@@ -8,17 +8,20 @@
         <el-button size="small" link type="primary" @click="load">刷新</el-button>
         <el-button size="small" link type="primary" @click="exportXlsx">导出 Excel</el-button>
         <span class="al-actions">
-          <el-select v-model="targetShift" clearable size="small" style="width:230px"
-                     placeholder="录取到：各自的第一意向" @change="targetPosition = ''">
+          <el-select v-model="targetShifts" multiple clearable collapse-tags
+                     collapse-tags-tooltip size="small" style="width:260px"
+                     placeholder="录取到：各自的第一意向">
             <el-option v-for="g in shifts" :key="g.id" :value="g.id"
                        :label="`${g.name}（${g.enrolled}/${g.capacity}）`" />
           </el-select>
           <!-- 选岗位的场次可以在这里统一改岗位；不选就用各人勾的意向岗位 -->
-          <el-select v-if="targetPositions.length" v-model="targetPosition" clearable
-                     size="small" style="width:200px" placeholder="岗位：按各人意向">
-            <el-option v-for="p in targetPositions" :key="p.id" :value="p.id"
-                       :label="`${p.name}（${p.quota} 人）`" />
-          </el-select>
+          <template v-for="g in targetPickShifts" :key="g.id">
+            <el-select v-model="targetPositions[g.id]" clearable size="small"
+                       style="width:200px" :placeholder="`${g.name}：按各人意向`">
+              <el-option v-for="p in g.positions" :key="p.id" :value="p.id"
+                         :label="`${g.name} · ${p.name}（${p.quota} 人）`" />
+            </el-select>
+          </template>
           <el-button type="success" size="small" :disabled="!selected.length"
                      :loading="busy" @click="decide(true)">录取</el-button>
           <el-button type="danger" size="small" plain :disabled="!selected.length"
@@ -27,7 +30,8 @@
       </div>
     </template>
     <p class="dim" style="margin:0 0 8px">
-      录取的人先落在所选场次的「待分配」，再分配岗位；不录取只发送通知，不留记录。
+      一个人可以录到他意向里的一场或几场（时间不能重叠），没选中的意向场次随即作废。
+      统一分配的场次先落在「待分配」，再分配岗位；不录取只发送通知，不留记录。
       场次开始时仍未处理的申请会自动落选并通知志愿者。
     </p>
     <el-table :data="apps" size="small" row-key="id" @selection-change="onSelect">
@@ -67,23 +71,28 @@
           </el-tag>
         </template>
       </el-table-column>
-      <!-- 录取到哪：默认他的第一意向，逐人可改；上面那对下拉只是批量默认值 -->
+      <!-- 录取到哪：默认他的第一意向，逐人可改成一场或几场、每场定岗位；
+           上面那排下拉只是批量默认值 -->
       <el-table-column label="录取到" width="330">
         <template #default="{ row }">
           <template v-if="row.status === 'applied'">
-            <el-select :model-value="pickOf(row).shift_id" size="small"
-                       style="width:150px" placeholder="场次"
-                       @update:model-value="v => setShift(row, v)">
+            <el-select :model-value="pickOf(row).map(p => p.shift_id)" multiple
+                       size="small" style="width:100%" placeholder="场次"
+                       @update:model-value="v => setShifts(row, v)">
               <el-option v-for="w in row.wanted.filter(x => x.status === 'applied')"
                          :key="w.shift_id" :value="w.shift_id"
                          :label="shiftName(w.shift_id)" />
             </el-select>
-            <el-select :model-value="pickOf(row).position_id" size="small" clearable
-                       style="width:160px;margin-left:8px" placeholder="岗位（按意向）"
-                       @update:model-value="v => setPosition(row, v)">
-              <el-option v-for="p in positionsFor(row)" :key="p.id" :value="p.id"
-                         :label="`${p.name}（${p.quota} 人）`" />
-            </el-select>
+            <div v-for="p in pickOf(row).filter(x => positionsOf(x.shift_id).length)"
+                 :key="p.shift_id" class="al-pick">
+              <span class="dim">{{ shiftName(p.shift_id) }}</span>
+              <el-select :model-value="p.position_id" size="small" clearable
+                         style="width:160px" placeholder="岗位（按意向）"
+                         @update:model-value="v => setPosition(row, p.shift_id, v)">
+                <el-option v-for="o in positionsOf(p.shift_id)" :key="o.id" :value="o.id"
+                           :label="`${o.name}（${o.quota} 人）`" />
+              </el-select>
+            </div>
           </template>
           <span v-else class="dim">—</span>
         </template>
@@ -112,33 +121,37 @@ const STATUS_TYPE = { applied: 'primary', accepted: 'success', rejected: 'info',
 const apps = ref([])
 const shifts = ref([])
 const selected = ref([])
-const targetShift = ref('')
-const targetPosition = ref('')
-const targetPositions = computed(
-  () => shifts.value.find(g => g.id === targetShift.value)?.positions || [])
-// 逐人指定的录取去向：只存改过的人，其余跟批量下拉走
+// 整批录取到哪几场；选岗位的场次再各定一个整批岗位（场次 id → 岗位 id）
+const targetShifts = ref([])
+const targetPositions = ref({})
+const targetPickShifts = computed(() => shifts.value
+  .filter(g => targetShifts.value.includes(g.id) && g.positions.length))
+// 逐人指定的录取去向（[{shift_id, position_id}]）：只存改过的人，其余跟批量下拉走
 const picks = ref({})   // vuecheck: script-only，模板只通过 pickOf 读它
 const shiftName = id => shifts.value.find(g => g.id === id)?.name || id
+const positionsOf = id => shifts.value.find(g => g.id === id)?.positions || []
+const batchTargets = () => targetShifts.value
+  .map(id => ({ shift_id: id, position_id: targetPositions.value[id] || '' }))
 function pickOf(row) {
   const hit = picks.value[row.id]
   if (hit) return hit
-  const wanted = row.wanted.find(w => w.status === 'applied') || row.wanted[0] || {}
-  const shift_id = targetShift.value || wanted.shift_id || ''
-  const wantedPos = row.wanted.find(w => w.shift_id === shift_id)
-  return { shift_id,
-           position_id: targetPosition.value
-             || positionIdByName(shift_id, wantedPos?.position_name) }
+  const wanted = row.wanted.find(w => w.status === 'applied') || row.wanted[0]
+  const chosen = targetShifts.value.length ? batchTargets()
+    : (wanted ? [{ shift_id: wanted.shift_id, position_id: '' }] : [])
+  return chosen.map(p => ({ ...p, position_id: p.position_id || wantedPositionId(row, p.shift_id) }))
 }
-const positionIdByName = (shiftId, name) => (name
-  ? shifts.value.find(g => g.id === shiftId)?.positions
-      .find(p => p.name === name)?.id || '' : '')
-const positionsFor = row =>
-  shifts.value.find(g => g.id === pickOf(row).shift_id)?.positions || []
-function setShift(row, v) {
-  picks.value[row.id] = { shift_id: v, position_id: '' }
+// 他在这一场勾的意向岗位；名单只给岗位名，按名字对回 id
+function wantedPositionId(row, shiftId) {
+  const name = row.wanted.find(w => w.shift_id === shiftId)?.position_name
+  return (name && positionsOf(shiftId).find(p => p.name === name)?.id) || ''
 }
-function setPosition(row, v) {
-  picks.value[row.id] = { ...pickOf(row), position_id: v || '' }
+function setShifts(row, ids) {
+  const before = Object.fromEntries(pickOf(row).map(p => [p.shift_id, p.position_id]))
+  picks.value[row.id] = ids.map(id => ({ shift_id: id, position_id: before[id] || '' }))
+}
+function setPosition(row, shiftId, v) {
+  picks.value[row.id] = pickOf(row)
+    .map(p => (p.shift_id === shiftId ? { ...p, position_id: v || '' } : p))
 }
 const loading = ref(false)
 const busy = ref(false)
@@ -163,17 +176,22 @@ async function load() {
 onMounted(load)
 
 async function decide(accept) {
+  const empty = selected.value.filter(a => !pickOf(a).length)
+  if (accept && empty.length) {
+    ElMessage.warning(`${empty.map(a => a.user.name).join('、')} 还没选录取到哪一场`)
+    return
+  }
   const names = selected.value.map(a => a.user.name).join('、')
-  const target = shifts.value.find(g => g.id === targetShift.value)
+  const target = targetShifts.value.map(shiftName).join('」「')
   await ElMessageBox.confirm(
-    accept ? `录取 ${names} 到「${target ? target.name : '各自的第一意向场次'}」？通知将立即发送。`
+    accept ? `录取 ${names} 到「${target || '各自的第一意向场次'}」？逐人改过的按各人所选。通知将立即发送。`
            : `不录取 ${names}？将发送通知，不留记录。`,
     accept ? '确认录取' : '确认不录取', { type: accept ? 'success' : 'warning' })
   busy.value = true
   try {
     const d = await api.post(`/api/staff/activities/${props.activityId}/applications/decide`,
       { application_ids: selected.value.map(a => a.id), accept,
-        shift_id: targetShift.value || '', position_id: targetPosition.value || '',
+        targets: batchTargets(),
         picks: Object.fromEntries(selected.value
           .filter(a => picks.value[a.id])
           .map(a => [a.id, picks.value[a.id]])) })
@@ -186,5 +204,6 @@ async function decide(accept) {
 
 <style scoped>
 .al-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.al-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.al-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.al-pick { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 </style>

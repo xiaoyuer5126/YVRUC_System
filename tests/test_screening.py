@@ -148,9 +148,9 @@ def test_录取时逐人指定岗位(client, admin, db, take_student):
     first, second = apps[0]["id"], apps[1]["id"]
     r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
                     json={"application_ids": [first, second], "accept": True,
-                          "shift_id": gid, "position_id": pids[0],
-                          "picks": {second: {"shift_id": gid,
-                                             "position_id": pids[1]}}})
+                          "targets": [{"shift_id": gid, "position_id": pids[0]}],
+                          "picks": {second: [{"shift_id": gid,
+                                              "position_id": pids[1]}]}})
     assert r.status_code == 200, r.text
     assert _placed(client, admin, act_id) == {first: ["引导"], second: ["登记"]}
 
@@ -172,8 +172,8 @@ def test_录取到不满足条件的岗位会留痕(client, admin, db, take_stud
                         headers=admin).json()["applications"][0]["id"]
     r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
                     json={"application_ids": [app_id], "accept": True,
-                          "picks": {app_id: {"shift_id": gid,
-                                             "position_id": pids[1]}}})
+                          "picks": {app_id: [{"shift_id": gid,
+                                              "position_id": pids[1]}]}})
     assert r.status_code == 200, r.text
     row = (db.query(Enrollment)
            .filter(Enrollment.activity_id == act_id,
@@ -375,7 +375,7 @@ def test_录取与未录取(client, admin, db, take_student):
     # 录取前两人到第二场；第三人不录取
     r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
                     json={"application_ids": app_ids[:2], "accept": True,
-                          "shift_id": ids[1]})
+                          "targets": [{"shift_id": ids[1]}]})
     assert r.status_code == 200 and r.json()["count"] == 2
     r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
                     json={"application_ids": app_ids[2:], "accept": False})
@@ -393,9 +393,10 @@ def test_录取与未录取(client, admin, db, take_student):
     assert by_shift[ids[1]].position_id is not None      # 落在占位岗位上
     assert by_shift[ids[0]].status == "cancelled"
     assert by_shift[ids[0]].cancel_type == "not_chosen"
-    assert (db.query(Notification)
-            .filter(Notification.user_id == u0.id,
-                    Notification.title.like("志愿活动录取通知｜%")).count() == 1)
+    n = (db.query(Notification)
+         .filter(Notification.user_id == u0.id,
+                 Notification.title.like("志愿活动录取通知｜%")).one())
+    assert "第2场（" in n.content and "具体岗位将于稍后公布" in n.content
 
     # 录取的人：我的报名里只剩录到的那一场，联络群二维码随时点得开
     mine = client.get("/api/me/enrollments", headers=login(client, sids[0])).json()
@@ -437,6 +438,135 @@ def test_录取名额不够先拦下(client, admin, db, take_student):
     lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
     assert [a["status"] for a in lst["applications"]] == ["applied", "applied"]
     assert _placed(client, admin, act_id) == {a: [] for a in app_ids}
+
+
+def _decide(client, admin, act_id, app_id, picks):
+    return client.post(f"/api/staff/activities/{act_id}/applications/decide",
+                       headers=admin,
+                       json={"application_ids": [app_id], "accept": True,
+                             "picks": {app_id: picks}})
+
+
+def _accept_note(db, user_id):
+    return (db.query(Notification)
+            .filter(Notification.user_id == user_id,
+                    Notification.title.like("志愿活动录取通知｜%")).one())
+
+
+def test_一份申请录到多个场次_没选中的意向作废(client, admin, db, take_student):
+    from backend.models import Shift
+    act_id, ids, q = _create_screened(client, admin, db, status="draft", shifts=3)
+    gid, pids = _pick_shift(client, admin, act_id)
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+    sid = take_student()
+    r = client.post(f"/api/activities/{act_id}/apply", headers=login(client, sid),
+                    json={"position_ids": _holders(db, ids) + [pids[0]],
+                          "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+    app_id = client.get(f"/api/staff/activities/{act_id}/applications",
+                        headers=admin).json()["applications"][0]["id"]
+
+    # 统一分配的第 1 场 + 选岗场（改到「登记」），其余两场意向作废
+    r = _decide(client, admin, act_id, app_id,
+                [{"shift_id": ids[0]}, {"shift_id": gid, "position_id": pids[1]}])
+    assert r.status_code == 200, r.text
+    assert sorted(_placed(client, admin, act_id)[app_id]) == ["待分配", "登记"]
+    u = db.query(User).filter(User.student_id == sid).one()
+    by_shift = {e.shift_id: e for e in db.query(Enrollment)
+                .filter(Enrollment.activity_id == act_id, Enrollment.user_id == u.id)}
+    assert by_shift[ids[0]].status == by_shift[gid].status == "enrolled"
+    for other in ids[1:]:
+        assert (by_shift[other].status, by_shift[other].cancel_type) \
+            == ("cancelled", "not_chosen")
+    assert db.get(Application, app_id).status == "accepted"
+    # 我的报名里只列录到的两场
+    mine = [r for r in client.get("/api/me/enrollments", headers=login(client, sid)).json()
+            if r["activity"]["id"] == act_id]
+    assert sorted(r["status"] for r in mine) == ["enrolled", "enrolled"]
+
+    # 通知只有一条，逐场写实际岗位
+    g0, gp = db.get(Shift, ids[0]), db.get(Shift, gid)
+    n = _accept_note(db, u.id)
+    assert f"{g0.name}（{g0.span_text()}）· 具体岗位将于稍后公布" in n.content
+    assert f"{gp.name}（{gp.span_text()}）· 岗位：登记" in n.content
+    assert "以负责人后续分配为准" not in n.content
+    assert db.get(Shift, ids[1]).name not in n.content
+    assert "联络群二维码" in n.content
+
+
+def test_录取时选中的场次时间重叠整份拦下(client, admin, db, take_student):
+    """申请时意向可以重叠（他只是说这几场都能来）；录取时一个人不能同时在两处。"""
+    from backend.models import Shift
+    act_id, ids, q = _create_screened(client, admin, db, shifts=2)
+    a, b = db.get(Shift, ids[0]), db.get(Shift, ids[1])
+    b.start_time = a.start_time + timedelta(hours=1)
+    b.end_time = a.end_time + timedelta(hours=1)
+    db.commit()
+    sid = take_student()
+    u, app = _apply(client, db, act_id, q, sid, ids)
+
+    r = _decide(client, admin, act_id, app.id,
+                [{"shift_id": ids[0]}, {"shift_id": ids[1]}])
+    assert r.status_code == 409
+    assert "「第1场」" in r.json()["detail"] and "「第2场」" in r.json()["detail"]
+    db.refresh(app)
+    assert app.status == "applied"
+    assert {e.status for e in db.query(Enrollment)
+            .filter(Enrollment.activity_id == act_id)} == {"applied"}
+
+    # 只录一场就行：他自己另一场的意向记录不算冲突
+    r = _decide(client, admin, act_id, app.id, [{"shift_id": ids[1]}])
+    assert r.status_code == 200, r.text
+    n = _accept_note(db, u.id)
+    assert "第2场" in n.content and "第1场" not in n.content
+
+
+def test_录取时和已报名的其他活动冲突也拦(client, admin, db, enrolled_activity):
+    from backend.models import Shift
+    _act, shift, u = enrolled_activity
+    act_id, ids, q = _create_screened(client, admin, db, shifts=2)
+    _u, app = _apply(client, db, act_id, q, u.student_id, ids)
+    # 申请之后场次改了时间，撞上他已报名的那一场
+    g = db.get(Shift, ids[0])
+    g.start_time, g.end_time = shift.start_time, shift.end_time
+    db.commit()
+
+    r = _decide(client, admin, act_id, app.id, [{"shift_id": ids[0]}])
+    assert r.status_code == 409 and "时间冲突" in r.json()["detail"]
+    r = _decide(client, admin, act_id, app.id,
+                [{"shift_id": ids[0]}, {"shift_id": ids[1]}])
+    assert r.status_code == 409
+    r = _decide(client, admin, act_id, app.id, [{"shift_id": ids[1]}])
+    assert r.status_code == 200, r.text
+
+
+def test_多场次录取其中一场名额不足整份拦下(client, admin, db, take_student):
+    from backend.models import Shift
+    act_id, ids, q = _create_screened(client, admin, db, shifts=2)
+    db.get(Shift, ids[1]).placeholder().quota = 1
+    db.commit()
+    _ua, first = _apply(client, db, act_id, q, take_student(), ids[1:])
+    ub, second = _apply(client, db, act_id, q, take_student(), ids)
+    assert _decide(client, admin, act_id, first.id,
+                   [{"shift_id": ids[1]}]).status_code == 200
+
+    r = _decide(client, admin, act_id, second.id,
+                [{"shift_id": ids[0]}, {"shift_id": ids[1]}])
+    assert r.status_code == 409 and "第2场" in r.json()["detail"]
+    # 不是录一场算一场：第 1 场也没落库，申请还在待筛选，没有通知
+    db.refresh(second)
+    assert second.status == "applied"
+    assert {e.status for e in db.query(Enrollment)
+            .filter(Enrollment.user_id == ub.id)} == {"applied"}
+    assert (db.query(Notification).filter(Notification.user_id == ub.id).count()) == 0
+
+    # 同一场次给两次、没选场次，都说清楚
+    r = _decide(client, admin, act_id, second.id,
+                [{"shift_id": ids[0]}, {"shift_id": ids[0]}])
+    assert r.status_code == 400 and "同一场次" in r.json()["detail"]
+    r = _decide(client, admin, act_id, second.id, [])
+    assert r.status_code == 400
 
 
 def test_公开后报名问卷锁定(client, admin, db):
@@ -535,7 +665,7 @@ def test_报名问卷结果导出excel(client, admin, db, take_student):
     assert [a["seq"] for a in lst["applications"]] == [1, 2]
     client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
                 json={"application_ids": [lst["applications"][0]["id"]],
-                      "accept": True, "shift_id": ids[0]})
+                      "accept": True, "targets": [{"shift_id": ids[0]}]})
 
     r = client.get(f"/api/staff/activities/{act_id}/applications.xlsx", headers=admin)
     assert r.status_code == 200
@@ -781,7 +911,7 @@ def test_多场次先开场的只作废那一场_晚的还能录取(client, admi
     # 已开场那一场录不进去了；晚的那一场照样能录
     r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
                     json={"application_ids": [app_a.id], "accept": True,
-                          "shift_id": ids[0]})
+                          "targets": [{"shift_id": ids[0]}]})
     assert r.status_code == 400
     r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
                     json={"application_ids": [app_a.id], "accept": True})

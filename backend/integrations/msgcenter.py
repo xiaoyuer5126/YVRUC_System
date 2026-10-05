@@ -51,8 +51,8 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "\n感谢您的参与！"),
     "application_accepted": (
         "志愿活动录取通知｜{activity}",
-        "恭喜！您已被「{activity}」录取，安排在 {shift}（{time}）。"
-        "\n具体岗位以负责人后续分配为准。请到「我的报名」查看志愿者联络群二维码，"
+        "恭喜！您已被「{activity}」录取，安排如下：\n{arrangement}"
+        "\n请到「我的报名」查看志愿者联络群二维码，"
         "入群后请把群昵称改为「姓名+电话」。"),
     # 措辞留余地：这一次没排上不代表什么，也不留任何记录
     "application_rejected": (
