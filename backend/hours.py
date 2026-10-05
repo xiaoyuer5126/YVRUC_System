@@ -3,7 +3,7 @@
 
 一场活动的账一起结，状态记在活动上（hours_approved_at / appeal_deadline /
 hours_locked_at）；每个人的表态记在自己那条 HoursRecord 上（confirmed_at /
-reward）。这里放接口与定时任务都要用的那几步，免得两边各写一份。
+parts 里每段的 reward）。这里放接口与定时任务都要用的那几步，免得两边各写一份。
 """
 from __future__ import annotations
 
@@ -70,31 +70,46 @@ def default_appeal_deadline() -> datetime:
     return t.replace(hour=12, minute=0, second=0, microsecond=0)
 
 
-def pay_position(db: OrmSession, activity_id: str, user_id: str) -> Position | None:
-    """这个人在本活动里正式报名的岗位中，第一个标了「可选劳务」的。
-    没有就是只能记志愿时长。"""
-    rows = (db.query(Position)
-            .join(Enrollment, Enrollment.position_id == Position.id)
-            .filter(Enrollment.activity_id == activity_id,
-                    Enrollment.user_id == user_id,
-                    Enrollment.status == "enrolled",
-                    Position.pay_optional.is_(True))
-            .order_by(Position.sort).all())
-    return rows[0] if rows else None
+def pay_positions(db: OrmSession, parts: list | None) -> dict[str, Position]:
+    """这些段落里开了「可选劳务」的岗位，按岗位 id。
+
+    按岗位现在的设置判断：管理者在核准后才给岗位开劳务，本人照样能选。"""
+    ids = {p.get("position_id") for p in (parts or [])
+           if p.get("kind") == "shift" and p.get("position_id")}
+    if not ids:
+        return {}
+    return {p.id: p for p in db.query(Position)
+            .filter(Position.id.in_(ids), Position.pay_optional.is_(True))}
+
+
+def parts_view(db: OrmSession, rec: HoursRecord) -> list[dict]:
+    """给本人看的明细：每段带上能不能选劳务（pay_ok）、劳务说明和眼下记的
+    报酬方式（reward，同 HoursRecord.split 的口径，跟合计对得上）。"""
+    pay = pay_positions(db, rec.parts)
+    out = []
+    for p in rec.parts or []:
+        pos = pay.get(p.get("position_id")) if p.get("kind") == "shift" else None
+        out.append({**p, "pay_ok": pos is not None,
+                    "pay_note": pos.pay_note if pos else "",
+                    "reward": "pay" if rec.part_is_pay(p) else "hours"})
+    return out
 
 
 def result_text(rec: HoursRecord) -> str:
-    """通知里的一句话：记几小时，还是按劳务计。"""
-    if rec.counts_hours():
+    """通知里的一句话：记几小时，有没有按劳务计的部分。"""
+    counted, pay = rec.split(rec.hours, rec.parts)
+    if pay <= 0:
         return f"本次记 {rec.hours:g} 小时"
-    return "本次按劳务计，不记入志愿时长"
+    if counted <= 0:
+        return "本次按劳务计，不记入志愿时长"
+    return f"本次记 {counted:g} 小时志愿时长，另有 {pay:g} 小时按劳务计"
 
 
 def lock_hours(db: OrmSession, act: Activity, actor: User | None,
                reason: str, *, to_liaison: bool = True) -> int:
     """锁定这场活动的时长，逐个通知本人。不提交事务。
 
-    没表态的人按「没问题 + 志愿时长」处理，锁定时补上确认时间；
+    没表态的人按「没问题 + 各段都记志愿时长」处理，锁定时补上确认时间；
     这样锁定之后每条记录都有本人（或视同本人）的确认。
     锁定还不是终点：活动落「待外联确认」，管理者提交时长审核时填的志愿北京
     活动名称推给对外联络部，外联在志愿北京核对并确认后才算「已完成」
@@ -108,7 +123,7 @@ def lock_hours(db: OrmSession, act: Activity, actor: User | None,
     for r in rows:
         if r.confirmed_at is None:
             r.confirmed_at = t
-            r.reward = "hours"
+            r.clear_pay()
     act.hours_locked_at = t
     act.status = "vb_pending" if to_liaison else "completed"
     audit_log(db, actor=actor, action="hours_confirm", target_type="hours",
