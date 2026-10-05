@@ -650,9 +650,18 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
                 app.status = "accepted"
                 app.decided_by, app.decided_at = user.id, now()
                 db.flush()
-                # 培训/彩排看的是他在本活动全部正式报名，几场都录完再同步
-                for target, _g, _p in chosen:
-                    logic.sync_attached(db, target)
+                # 培训/彩排看的是他在本活动全部正式报名，几场都录完再同步，
+                # 而且只同步一次：几场共用同一场培训时，逐场各同步一遍的话
+                # 后一遍查不到前一遍刚加的报名（会话不自动 flush），又插一条，
+                # 撞上 uq_enrollment_live。这里取各场不按岗位过滤的培训并集，
+                # 按岗位圈不圈得到由 sync_attached 看他全部正式岗位来定
+                attached: dict[str, Shift] = {}
+                for _t, g, _p in chosen:
+                    for s in logic.attached_shifts(db, g.id):
+                        attached.setdefault(s.id, s)
+                logic.sync_attached(db, chosen[0][0],
+                                    sorted(attached.values(),
+                                           key=lambda s: s.start_time))
                 msgcenter.send_user(db, u, "application_accepted",
                                     data={"activity_id": act.id},
                                     activity=act.title, arrangement="\n".join(lines))

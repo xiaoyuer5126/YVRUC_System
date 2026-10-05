@@ -1,17 +1,25 @@
 import { reactive } from 'vue'
 
+// 当前身份视角只记在本标签页（sessionStorage）：刷新时沿用刚才切到的视角，
+// 重新打开页面则回到按身份算出的默认视角。要是记在 localStorage，青协同学
+// 某次点通知进了个人页、被切到学生视角，之后每次打开都落在学生视角，
+// 工作台得自己再切回去
+const IDENTITY_KEY = 'yvruc_active_identity'
+const storedUser = JSON.parse(localStorage.getItem('yvruc_user') || 'null')
+
 export const auth = reactive({
   token: localStorage.getItem('yvruc_token') || '',
-  user: JSON.parse(localStorage.getItem('yvruc_user') || 'null'),
+  user: storedUser,
   // 当前身份视角（在持有的身份之间切换；决定菜单与默认落地页）
-  activeIdentity: localStorage.getItem('yvruc_active_identity') || '',
+  activeIdentity: '',
 })
 
-// 自校验：本地残留的视角不在当前用户持有的身份里（如换号登录、身份被调整）→ 回退默认
-if (auth.user && auth.activeIdentity &&
-    !(auth.user.roles || []).includes(auth.activeIdentity)) {
-  auth.activeIdentity = ''
-}
+// 本标签页切到过、且仍持有的视角就沿用；否则（新开页面、换号登录、身份被调整）
+// 按身份取默认
+const storedIdentity = sessionStorage.getItem(IDENTITY_KEY) || ''
+auth.activeIdentity = storedUser && (storedUser.roles || []).includes(storedIdentity)
+  ? storedIdentity
+  : (storedUser ? pickDefaultIdentity(storedUser) : '')
 
 export function setAuth(token, user) {
   auth.token = token
@@ -19,20 +27,20 @@ export function setAuth(token, user) {
   auth.activeIdentity = pickDefaultIdentity(user)
   localStorage.setItem('yvruc_token', token)
   localStorage.setItem('yvruc_user', JSON.stringify(user))
-  localStorage.setItem('yvruc_active_identity', auth.activeIdentity)
+  sessionStorage.setItem(IDENTITY_KEY, auth.activeIdentity)
 }
 
 export function setActiveIdentity(role) {
   auth.activeIdentity = role
-  localStorage.setItem('yvruc_active_identity', role)
+  sessionStorage.setItem(IDENTITY_KEY, role)
 }
 
-// 登录后落在哪个视角：管理员进管理端；青协只有会长团和部长默认进青协视角，
-// 骨干和成员平时就是来报名的学生，要办事再自己切
+// 默认落在哪个视角：管理员进管理端；青协的会长团、部长、骨干默认进青协视角，
+// 部门成员平时就是来报名的学生，要学着办事再自己切
 function pickDefaultIdentity(user) {
   const roles = user?.roles || []
   if (roles.includes('admin')) return 'admin'
-  if (roles.includes('qingxie') && ['council', 'head'].includes(user.qingxie_post)) return 'qingxie'
+  if (roles.includes('qingxie') && ['council', 'head', 'core'].includes(user.qingxie_post)) return 'qingxie'
   if (roles.includes('initiator')) return 'initiator'
   return 'student'
 }
@@ -43,7 +51,7 @@ export function clearAuth() {
   auth.activeIdentity = ''
   localStorage.removeItem('yvruc_token')
   localStorage.removeItem('yvruc_user')
-  localStorage.removeItem('yvruc_active_identity')
+  sessionStorage.removeItem(IDENTITY_KEY)
 }
 
 export const ROLE_LABELS = {

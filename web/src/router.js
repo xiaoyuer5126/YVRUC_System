@@ -9,8 +9,10 @@ const routes = [
   {
     path: '/',
     component: () => import('./layouts/MainLayout.vue'),
+    // 根地址不设子路由重定向：重定向在守卫之前就生效，守卫看到的已经是
+    // /square，下面「首页按视角分流」就轮不到，工作台视角的人一进首页
+    // 就被「个人页切学生视角」那条切走。根地址由守卫按视角分流
     children: [
-      { path: '', redirect: '/square' },
       // —— 学生端（个人） ——
       { path: 'square', component: () => import('./views/SquareView.vue') },
       { path: 'activity/:id', component: () => import('./views/ActivityDetailView.vue') },
@@ -73,11 +75,17 @@ router.beforeEach((to) => {
     return { path: '/login', query: { next: to.fullPath } }
   }
   const manageView = ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity)
+  const home = manageView ? '/manage' : '/square'
+
+  // 已登录再打开登录页（收藏的链接、后退回来）：不再登一遍，带 next 就去 next，
+  // 否则去当前视角的首页
+  if (to.path === '/login' && auth.token) {
+    const next = String(to.query.next || '')
+    return /^\/(?!\/|login)/.test(next) ? next : home
+  }
 
   // 首页按视角分流：工作台视角落地活动管理，学生视角落地活动广场
-  if (to.path === '/') {
-    return manageView ? '/manage' : '/square'
-  }
+  if (to.path === '/') return home
 
   // 工作台视角不显示个人板块，个人页只在学生视角下进。直接打开个人页（多半是
   // 点了通知，比如企业微信里「时长已核准」的卡片）时，持有学生身份就切过去

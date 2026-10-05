@@ -8,13 +8,13 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .models import IDENTITY_FIELD, Activity, AuditLog, uid
+from .models import AFFECTED_FIELD, IDENTITY_FIELD, Activity, AuditLog, uid
 
 
 def log(db: OrmSession, *, actor, action: str, target_type: str,
         target_id: str = "", target_label: str = "", activity_id: str | None = None,
         summary: str = "", changes: list[dict] | None = None,
-        visible: bool = False) -> AuditLog:
+        visible: bool = False, affected: list[str] | None = None) -> AuditLog:
     """记一条审计。
 
     visible 默认 **False**：留痕里什么都有——签到码、他人学号、信用分处分——
@@ -22,6 +22,10 @@ def log(db: OrmSession, *, actor, action: str, target_type: str,
     学生不到现场也能签到。
     需要对志愿者公开的，显式传 visible=True，且只限「谁动了我的岗位」
     这类结构性变更：活动信息、场次、岗位的增删改。
+
+    affected：这次改动影响到、但事后从库里查不出来的人（删场次时被取消报名的
+    人）。编辑态结束时按人汇总的变更通知（notify.notify_edit_changes）靠它找到
+    这些人。
     """
     # 活动公开之前的改动一律不进志愿者的「变更记录」。筹备期的每一次试错
     # ——建了又删的场次、改来改去的名额——学生从来没见过那些东西，摆出来
@@ -31,10 +35,13 @@ def log(db: OrmSession, *, actor, action: str, target_type: str,
         act = db.get(Activity, activity_id)
         if act is not None and act.status in ("draft", "pending", "approved"):
             visible = False
-    # 以哪个身份操作的（前端的 X-Identity）。没有专门的列——线上没有迁移，
-    # 加列要手工 ALTER——就挂在 changes 末尾一条带下划线字段名的记录上，
-    # AuditLog.out() 把它摘出来单独给，不会混进变更明细
+    # 以哪个身份操作的（前端的 X-Identity）、影响到哪些人。没有专门的列——
+    # 线上没有迁移，加列要手工 ALTER——就挂在 changes 末尾带下划线字段名的
+    # 记录上，AuditLog.out() 把它们摘掉，不会混进变更明细
     changes = list(changes or [])
+    if affected:
+        changes.append({"field": AFFECTED_FIELD, "label": "受影响的人",
+                        "old": "", "new": ",".join(sorted(set(affected)))})
     view = getattr(actor, "view", lambda: None)()
     if view:
         changes.append({"field": IDENTITY_FIELD, "label": "操作身份",
