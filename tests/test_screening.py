@@ -948,3 +948,33 @@ def test_已处理的申请开场时不受影响(client, admin, db, take_student
     assert app_a.status == "accepted" and app_b.status == "rejected"
     # 手动不录取那一条只有当初那一次通知
     assert _rejected_notes(db, ua.id) == 0 and _rejected_notes(db, ub.id) == 1
+
+
+def test_录取到两场共用同一培训_培训只报一次(client, admin, db, take_student):
+    """两场都叫同一场培训：录取两场后培训只该有一条报名，整批不能报错。"""
+    act_id, ids, q = _create_screened(client, admin, db, status="draft", shifts=2)
+    start = now().replace(microsecond=0) + timedelta(days=4)
+    r = client.post(f"/api/staff/activities/{act_id}/shifts", headers=admin,
+                    json={"name": "岗前培训", "kind": "training",
+                          "applies_to_positions": [], "hours_mode": "none",
+                          "location": "排练厅",
+                          "start_time": start.isoformat(),
+                          "end_time": (start + timedelta(hours=2)).isoformat()})
+    assert r.status_code == 200, r.text
+    training = r.json()["id"]
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+    sid = take_student()
+    r = client.post(f"/api/activities/{act_id}/apply", headers=login(client, sid),
+                    json={"position_ids": _holders(db, ids), "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+    app_id = client.get(f"/api/staff/activities/{act_id}/applications",
+                        headers=admin).json()["applications"][0]["id"]
+
+    r = _decide(client, admin, act_id, app_id,
+                [{"shift_id": ids[0]}, {"shift_id": ids[1]}])
+    assert r.status_code == 200, r.text
+    u = db.query(User).filter(User.student_id == sid).one()
+    rows = (db.query(Enrollment)
+            .filter(Enrollment.shift_id == training, Enrollment.user_id == u.id).all())
+    assert [e.status for e in rows] == ["enrolled"]

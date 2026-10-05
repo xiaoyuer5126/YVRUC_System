@@ -309,7 +309,7 @@ for (const [who, route, name, min] of PAGES) {
   await send('Runtime.evaluate', { expression: `
     localStorage.setItem('yvruc_token', ${JSON.stringify(TOK[who])});
     localStorage.setItem('yvruc_user', ${JSON.stringify(USR[who])});
-    localStorage.setItem('yvruc_active_identity', ${JSON.stringify(who)});
+    sessionStorage.setItem('yvruc_active_identity', ${JSON.stringify(who)});
     location.assign(${JSON.stringify(route)});` })
   await sleep(2400)
   const r = await send('Runtime.evaluate', { expression: PROBE, returnByValue: true })

@@ -172,3 +172,123 @@ def test_已截止的活动也能进编辑态建岗位(client, admin, db, enroll
     assert client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
                        json={"name": "整理岗", "quota": 3,
                               **POSITION_TEXT}).status_code == 200
+
+
+# ======================= 编辑期间的改动按人汇总通知 =======================
+
+def _changed(db, user_id, act):
+    """这个人收到的本活动「活动变更提醒」。按标题筛：活动名每个用例唯一。"""
+    db.expire_all()
+    return (db.query(Notification)
+            .filter(Notification.user_id == user_id,
+                    Notification.title == f"活动变更提醒｜{act.title}")
+            .all())
+
+
+def _second_position(db, shift, take_student, name="检录"):
+    """同一场次再开一个岗位，放一个人进去。"""
+    from backend.models import Position, uid
+    from conftest import student_row
+    pos = Position(id=uid("p"), shift_id=shift.id, name=name, quota=5,
+                   waitlist_quota=2, sort=1, **POSITION_TEXT)
+    db.add(pos)
+    db.flush()
+    v = student_row(db, take_student())
+    db.add(Enrollment(id=uid("enr"), activity_id=shift.activity_id,
+                      shift_id=shift.id, user_id=v.id, position_id=pos.id,
+                      status="enrolled", joined_at=now()))
+    db.commit()
+    return pos, v
+
+
+def test_编辑期间不发通知_发布后每人一条只写跟他有关的(client, admin, db,
+                                                  enrolled_activity,
+                                                  take_student):
+    act, shift, u = enrolled_activity
+    pos = shift.positions[0]
+    _pos2, v = _second_position(db, shift, take_student)
+
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                     json={"location": "南门"})
+    assert r.status_code == 200, r.text
+    r = client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
+                     json={"note": "改到 8 点集合"})
+    assert r.status_code == 200, r.text
+    assert _changed(db, u.id, act) == [] and _changed(db, v.id, act) == []
+    assert not (db.query(Notification)
+                .filter(Notification.user_id == u.id,
+                        Notification.template_key == "assignment").count())
+
+    r = client.post(f"/api/staff/activities/{act.id}/publish-changes",
+                    headers=admin)
+    assert r.status_code == 200, r.text
+
+    mine = _changed(db, u.id, act)
+    assert len(mine) == 1
+    assert "岗位「" in mine[0].content and "北门→南门" in mine[0].content
+    assert "→改到 8 点集合" in mine[0].content
+    # 别的岗位的人只收到场次那一条，看不到引导岗改了地点
+    theirs = _changed(db, v.id, act)
+    assert len(theirs) == 1
+    assert "→改到 8 点集合" in theirs[0].content and "南门" not in theirs[0].content
+
+
+def test_删掉有报名的场次_发布时告诉被取消的人(client, admin, db,
+                                          enrolled_activity, take_student):
+    from datetime import timedelta as td
+    from backend.models import Position, Shift, uid
+    from conftest import student_row
+    act, shift, _u = enrolled_activity
+    extra = Shift(id=uid("s"), activity_id=act.id, name="下午场",
+                  start_time=shift.start_time + td(hours=5),
+                  end_time=shift.end_time + td(hours=5), mode="pick", sort=1)
+    db.add(extra)
+    db.flush()
+    p = Position(id=uid("p"), shift_id=extra.id, name="引导", quota=5,
+                 waitlist_quota=2, sort=0, **POSITION_TEXT)
+    db.add(p)
+    db.flush()
+    w = student_row(db, take_student())
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=extra.id,
+                      user_id=w.id, position_id=p.id, status="enrolled",
+                      joined_at=now()))
+    db.commit()
+    extra_id = extra.id
+
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    r = client.delete(f"/api/staff/shifts/{extra_id}?force=1", headers=admin)
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert not db.query(Enrollment).filter(Enrollment.shift_id == extra_id).count()
+    assert _changed(db, w.id, act) == []
+
+    client.post(f"/api/staff/activities/{act.id}/publish-changes", headers=admin)
+    got = _changed(db, w.id, act)
+    assert len(got) == 1 and "删除场次「下午场」" in got[0].content
+
+
+def test_超时自动解冻也按人发出改动(client, admin, db, enrolled_activity):
+    act, shift, u = enrolled_activity
+    pos = shift.positions[0]
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    db.expire_all()
+    row = db.get(Activity, act.id)
+    row.editing_since = now() - timedelta(hours=config.EDIT_LOCK_HOURS + 1)
+    db.commit()
+    client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                 json={"location": "西门"})
+    assert _changed(db, u.id, act) == []
+
+    scheduled.release_stale_edit_locks(db)
+    got = _changed(db, u.id, act)
+    assert len(got) == 1 and "北门→西门" in got[0].content
+
+
+def test_不在编辑态改活动信息照样即时通知(client, admin, db, enrolled_activity):
+    act, _shift, u = enrolled_activity
+    r = client.patch(f"/api/staff/activities/{act.id}", headers=admin,
+                     json={"location": "明德楼"})
+    assert r.status_code == 200, r.text
+    got = _changed(db, u.id, act)
+    assert len(got) == 1 and "明德楼" in got[0].content

@@ -90,8 +90,10 @@ ROLE_LABELS = {"admin": "管理员", "qingxie": "青协",
                "initiator": "活动发起方", "student": "学生"}
 # 可被设为活动管理者的身份（发起方 / 青协；管理员天然全权）
 MANAGER_ROLES = ("initiator", "qingxie")
-# 审计里记「以哪个身份操作」的那条 changes 的字段名（见 audit.log）
+# 审计 changes 里不对外展示的附注，字段名都以下划线开头（见 audit.log）：
+# 以哪个身份操作的；这次改动影响到的人（逗号分隔的用户 id）
 IDENTITY_FIELD = "_identity"
+AFFECTED_FIELD = "_affected"
 
 
 class User(Base):
@@ -1246,7 +1248,7 @@ class AuditLog(Base):
         # 那一条就在页面上露出英文
         from .audit import ACTION_LABELS
         changes = [c for c in (self.changes or [])
-                   if c.get("field") != IDENTITY_FIELD]
+                   if not str(c.get("field", "")).startswith("_")]
         identity = next((c.get("new", "") for c in (self.changes or [])
                          if c.get("field") == IDENTITY_FIELD), "")
         return {

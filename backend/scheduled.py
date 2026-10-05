@@ -17,7 +17,8 @@ from .enroll_logic import expire_stale_promotions
 from .integrations import msgcenter
 from .models import (Activity, ApprovalEvent, AuditLog, Department,
                      Enrollment, HoursRequest, Shift, User, VbConfirm, now)
-from .notify import notify_checkin, notify_enrolled, notify_managers
+from .notify import (notify_checkin, notify_edit_changes, notify_enrolled,
+                     notify_managers)
 from .perm import activity_manager_ids
 
 logger = logging.getLogger(__name__)
@@ -553,8 +554,12 @@ def release_stale_edit_locks(db: OrmSession) -> int:
                     Activity.editing_since < deadline).all())
     for act in rows:
         who = db.get(User, act.editing_by) if act.editing_by else None
+        since = act.editing_since
         act.editing_since = None
         act.editing_by = None
+        # 改到一半的东西也已经生效了：和「保存并发布」一样按人告诉志愿者
+        if act.status != "draft":
+            notify_edit_changes(db, act, since)
         audit_log(db, actor=None, action="update", target_type="activity",
                   target_id=act.id, target_label=act.title, activity_id=act.id,
                   summary=f"编辑态超过 {config.EDIT_LOCK_HOURS} 小时未保存，"
