@@ -365,6 +365,14 @@ def _served_pay_position(db, act):
            .filter(Shift.activity_id == act.id).first())
     pos.pay_optional, pos.pay_note = True, "按校内标准，活动后一周内发放"
     db.commit()
+    return pos
+
+
+def _choose(client, h, rec, reward):
+    """给这笔时长里每一段签到算出来的段都选同一种报酬方式。"""
+    return client.post(f"/api/me/hours/{rec['id']}/confirm", headers=h, json={
+        "parts": [{"shift_id": p["shift_id"], "position_id": p["position_id"],
+                   "reward": reward} for p in rec["parts"] if p["kind"] == "shift"]})
 
 
 def test_确认无误并选劳务就不记时长(client, admin, db, served):
@@ -374,16 +382,15 @@ def test_确认无误并选劳务就不记时长(client, admin, db, served):
     _confirm(client, admin, act)
     stu = login(client, u.student_id)
     rec = _record(client, stu)
-    assert rec["can_confirm"] and rec["pay_allowed"] and "校内标准" in rec["pay_note"]
-    r = client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu,
-                    json={"reward": "pay"})
-    assert r.status_code == 200 and r.json()["reward"] == "pay"
+    assert rec["can_confirm"] and rec["pay_allowed"]
+    assert rec["parts"][0]["pay_ok"] and "校内标准" in rec["parts"][0]["pay_note"]
+    r = _choose(client, stu, rec, "pay")
+    assert r.status_code == 200 and r.json()["pay_hours"] == 4.0
     d = client.get("/api/me/hours", headers=stu).json()
     assert d["total"] == 0 and d["records"][0]["reward_label"] == "劳务"
     assert d["records"][0]["confirmed_at"]
     # 截止前可以改主意
-    client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu,
-                json={"reward": "hours"})
+    _choose(client, stu, rec, "hours")
     assert client.get("/api/me/hours", headers=stu).json()["total"] == 4.0
 
 
@@ -392,12 +399,10 @@ def test_岗位没开劳务就选不了(client, admin, db, served):
     _confirm(client, admin, act)
     stu = login(client, u.student_id)
     rec = _record(client, stu)
-    assert not rec["pay_allowed"]
-    r = client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu,
-                    json={"reward": "pay"})
+    assert not rec["pay_allowed"] and not rec["parts"][0]["pay_ok"]
+    r = _choose(client, stu, rec, "pay")
     assert r.status_code == 400 and "没有开放劳务" in r.json()["detail"]
-    assert client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu,
-                       json={"reward": "hours"}).status_code == 200
+    assert _choose(client, stu, rec, "hours").status_code == 200
 
 
 def test_到点未表态视同确认并按志愿时长记(client, admin, db, served):
@@ -408,12 +413,11 @@ def test_到点未表态视同确认并按志愿时长记(client, admin, db, ser
     _approve_lock(client, admin, act)
     db.expire_all()
     rec = db.query(HoursRecord).filter(HoursRecord.activity_id == act.id).one()
-    assert rec.confirmed_at is not None and rec.reward == "hours"
+    assert rec.confirmed_at is not None and rec.pay_hours() == 0
     stu = login(client, u.student_id)
     assert client.get("/api/me/hours", headers=stu).json()["locked"] == 4.0
     # 锁定之后改不了主意
-    assert client.post(f"/api/me/hours/{rec.id}/confirm", headers=stu,
-                       json={"reward": "pay"}).status_code == 409
+    assert _choose(client, stu, _record(client, stu), "pay").status_code == 409
 
 
 def test_再次核准只惊动申诉过或数值变过的人(client, admin, db, served, take_student):
@@ -430,7 +434,7 @@ def test_再次核准只惊动申诉过或数值变过的人(client, admin, db, 
     o = login(client, other.student_id)
     orec = _record(client, o)
     assert client.post(f"/api/me/hours/{orec['id']}/confirm", headers=o,
-                       json={"reward": "hours"}).status_code == 200
+                       json={}).status_code == 200
 
     stu = login(client, u.student_id)
     rec = _record(client, stu)
@@ -474,8 +478,11 @@ def test_时长带明细且导出时长记录(client, admin, db, served, take_st
 
     stu = login(client, u.student_id)
     rec = _record(client, stu)
+    pos = db.query(Position).filter(Position.shift_id == g.id).one()
     assert rec["parts"] == [{"label": "服务场", "time": g.span_text(),
-                             "position": "引导", "hours": 4.0, "kind": "shift"}]
+                             "position": "引导", "hours": 4.0, "kind": "shift",
+                             "shift_id": g.id, "position_id": pos.id,
+                             "pay_ok": False, "pay_note": "", "reward": "hours"}]
 
     r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
     assert r.status_code == 200
@@ -492,7 +499,7 @@ def test_时长带明细且导出时长记录(client, admin, db, served, take_st
     # 选了劳务的不导
     _served_pay_position(db, act)
     client.post(f"/api/staff/activities/{act.id}/hours/approve", headers=admin, json={})
-    client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu, json={"reward": "pay"})
+    _choose(client, stu, rec, "pay")
     r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
     names = [r_[0] for r_ in list(load_workbook(BytesIO(r.content)).active.values)[1:]]
     assert u.name not in names and other.name in names
@@ -657,8 +664,7 @@ def test_确认无误之后就不能再申诉(client, admin, db, served):
     rec = _record(client, stu)
     assert rec["can_appeal"] is True
 
-    client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu,
-                json={"reward": "hours"})
+    client.post(f"/api/me/hours/{rec['id']}/confirm", headers=stu, json={})
     after = _record(client, stu)
     assert after["can_appeal"] is False
     assert after["can_confirm"] is True            # 还能改报酬方式
