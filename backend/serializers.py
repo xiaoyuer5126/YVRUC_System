@@ -25,12 +25,6 @@ def iso_of(dt):
     return iso(dt)
 
 
-def display_status(act: Activity) -> tuple[str, str]:
-    """展示状态：按**时间**算，而不是只看数据库里的 status。"""
-    return display_status_of(act.status, act.reg_start, act.reg_end,
-                             act.time_span(), act.last_shift_start())
-
-
 def reg_started(reg_start, t) -> bool:
     """报名开始了没有。
 
