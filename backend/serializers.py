@@ -25,12 +25,6 @@ def iso_of(dt):
     return iso(dt)
 
 
-def display_status(act: Activity) -> tuple[str, str]:
-    """展示状态：按**时间**算，而不是只看数据库里的 status。"""
-    return display_status_of(act.status, act.reg_start, act.reg_end,
-                             act.time_span())
-
-
 def reg_started(reg_start, t) -> bool:
     """报名开始了没有。
 
@@ -43,7 +37,7 @@ def reg_started(reg_start, t) -> bool:
 
 
 def display_status_of(status: str, reg_start, reg_end,
-                      span, t=None) -> tuple[str, str]:
+                      span, last_start=None, t=None) -> tuple[str, str]:
     """按状态与时间算展示状态。
 
     状态流转由定时任务每分钟推进，中间那一分钟里 status 还没跟上；报名开始
@@ -51,6 +45,12 @@ def display_status_of(status: str, reg_start, reg_end,
     只看 status 就会显示「报名中」，学生点进去才发现报不了。
 
         筹备中 → 未开始报名 → 报名中 → 已截止 → 进行中 → 已结束
+
+    报名中和进行中可以同时成立：场次排在好几天里，第一场开过了、后面的
+    还收人（每场在自己开场时才截止，见 enroll_logic.enroll_deadline）。
+    这时显示「报名中」——广场默认只看报名中，标成进行中，还能报的场次就
+    没人看得见了。last_start 是最晚一个服务场次的开始时间，过了它就一场
+    也报不进去了。没填报名截止的活动在第一场开场时由定时任务截止，不算。
 
     拆成不吃 Activity 的一版：广场列表筛状态时手上只有几个字段，不能为了
     算状态把每个活动的场次都加载一遍。
@@ -68,6 +68,9 @@ def display_status_of(status: str, reg_start, reg_end,
 
     if span and t > span[1]:
         return "finished", "已结束"
+    if (status == "published" and reg_started(reg_start, t)
+            and reg_end and t <= reg_end and last_start and t <= last_start):
+        return "published", "报名中"
     if span and span[0] <= t <= span[1]:
         return "ongoing", "进行中"
 
@@ -191,7 +194,8 @@ def _time_basis(act: Activity, *, shifts: bool) -> dict:
     span = act.time_span()
     out = {"status": act.status,
            "reg_start": _ts(act.reg_start), "reg_end": _ts(act.reg_end),
-           "span": [_ts(span[0]), _ts(span[1])] if span else None}
+           "span": [_ts(span[0]), _ts(span[1])] if span else None,
+           "last_start": _ts(act.last_shift_start())}
     if shifts:
         # [场次, 开始, 结束, 本场截止]，按 act.shifts 的顺序、含培训/彩排——
         # 时段冲突要逐场比，培训那晚撞了别的活动也得提示
@@ -207,7 +211,8 @@ def with_times(out: dict, t=None) -> dict:
     reg_start = _dt(basis["reg_start"])
     span = basis["span"] and (_dt(basis["span"][0]), _dt(basis["span"][1]))
     code, label = display_status_of(basis["status"], reg_start,
-                                    _dt(basis["reg_end"]), span, t)
+                                    _dt(basis["reg_end"]), span,
+                                    _dt(basis["last_start"]), t)
     ms = opens_in_ms(reg_start, t)
     out.update({"display_status": code, "display_label": label,
                 "opens_in_ms": ms, "opens_in": math.ceil(ms / 1000)})
