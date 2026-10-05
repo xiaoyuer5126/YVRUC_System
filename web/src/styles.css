@@ -51,6 +51,9 @@ body {
 .el-collapse-item__content > :first-child,
 .el-tab-pane > :first-child,
 .page > :first-child { margin-top: 0; }
+/* 页签里常常整页就是一个面板组件，根节点只是个包装 div，第一个提示条在它里面：
+   提示条的外边距穿过这层 div 照样把整块往下顶，所以往里再管一层 */
+.el-tab-pane > :first-child > :first-child { margin-top: 0; }
 
 /* 一排按钮：全站按钮之间一律 8px，只由所在容器的 gap 给出。
    Element 给相邻两个按钮自带 12px 左外边距，这里去掉：它只认「紧挨着的两个
