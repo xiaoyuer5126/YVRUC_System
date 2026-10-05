@@ -545,6 +545,7 @@ def set_excuse(enrollment_id: str, body: ExcuseBody,
 
     只对附属场次开放：服务场次不来就是退选，那条路有信用分规则，不能靠请假绕过。
     开始之后不能再改——人已经到没到，现场说了算。
+    管理者在场次开始前几天的人员变动日报里看到请假和销假（scheduled.send_roster_digests）。
     """
     enr = db.get(Enrollment, enrollment_id)
     if enr is None or enr.user_id != user.id:
@@ -560,21 +561,12 @@ def set_excuse(enrollment_id: str, body: ExcuseBody,
     if body.excused and len(reason) < 2:
         raise HTTPException(400, "请简单说明无法参加的原因")
 
-    act = db.get(Activity, enr.activity_id)
     enr.excused = body.excused
     enr.excuse_reason = reason if body.excused else ""
     enr.excused_at = now() if body.excused else None
     logic.record_change(db, user, enr,
                         "excuse" if body.excused else "unexcuse",
                         reason if body.excused else "")
-    # 临近才请假的要立刻让管理者知道：现场少一个人是要补位的
-    hours_left = (g.start_time - now()).total_seconds() / 3600
-    if body.excused and hours_left < config.LATE_CANCEL_HOURS:
-        notify.notify_managers(
-            db, act.id, f"[{g.kind_label()}请假] {act.title}",
-            f"{user.name}（{user.student_id}）无法参加「{g.name}」"
-            f"（{g.span_text()}），距开始不足 {config.LATE_CANCEL_HOURS} 小时。\n"
-            f"事由：{reason}", duty="roster", tab="roster")
     db.commit()
     return {"ok": True, "excused": enr.excused}
 
