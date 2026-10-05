@@ -134,11 +134,12 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
                          func.coalesce(Activity.pinned_at,
                                        Activity.created_at).desc()).all()
 
-    spans = dict(
-        (aid, (lo, hi)) for aid, lo, hi in
+    # {活动: ((最早开始, 最晚结束), 最晚开始)}，只算服务场次（同 Activity.time_span）
+    spans = {
+        aid: ((lo, hi), last_start) for aid, lo, hi, last_start in
         db.query(Shift.activity_id, func.min(Shift.start_time),
-                 func.max(Shift.end_time))
-        .filter(Shift.kind == "service").group_by(Shift.activity_id).all())
+                 func.max(Shift.end_time), func.max(Shift.start_time))
+        .filter(Shift.kind == "service").group_by(Shift.activity_id).all()}
     # 招募范围外的活动不上广场：看得见报不了，只会多一次被拦的失望。
     # 报过名的人不受此限（范围是后来缩的），自己管的活动同样照常显示——
     # 管理者要从这里进详情核对志愿者看到的样子。
@@ -147,7 +148,8 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
 
     ids = []
     for aid, st, reg_start, reg_end, campuses, stages, colleges in rows:
-        code, _label = display_status_of(st, reg_start, reg_end, spans.get(aid))
+        span, last_start = spans.get(aid, (None, None))
+        code, _label = display_status_of(st, reg_start, reg_end, span, last_start)
         if status and code != status:
             continue
         if (managed is None or aid in managed or aid in involved

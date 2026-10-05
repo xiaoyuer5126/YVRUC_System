@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, isNavigationFailure, NavigationFailureType } from 'vue-router'
 import { auth, canSee, setActiveIdentity, hasIdentity, isManager } from './store'
 
 const routes = [
@@ -41,7 +41,29 @@ export const router = createRouter({
 
 // 页面守卫：未登录去登录页；当前身份视角不够但持有对应身份时自动切换放行；
 // 确实不持有则回对应首页（工作台视角→活动管理，学生视角→活动广场）。
+// 切换身份视角：先去新视角的首页，离开当前页的拦截都放行了才换视角。
+// 要是先换，拦截框（活动管理页「改动还没发布」）里点「保存并发布」带的就是
+// 新视角，后端按新视角拒掉，跳转被中止，人留在原页而视角已经变了。
+// 换视角放在下面守卫的最前头：守卫在离开拦截之后才跑，又得按新视角判断
+// 去向——不然它会按旧视角自作主张换成另一个身份，新页面按那个身份加载。
+// 拦截里选了留下，守卫根本不跑，视角原样不动
+let pendingIdentity = ''
+export async function switchIdentity(role) {
+  pendingIdentity = role
+  try {
+    const failure = await router.push(role === 'student' ? '/square' : '/manage')
+    // 已经在目标页上：没有离开这回事，守卫也不跑，直接换
+    if (isNavigationFailure(failure, NavigationFailureType.duplicated)) setActiveIdentity(role)
+  } finally {
+    pendingIdentity = ''
+  }
+}
+
 router.beforeEach((to) => {
+  if (pendingIdentity) {
+    setActiveIdentity(pendingIdentity)
+    pendingIdentity = ''
+  }
   // 统一身份认证回调要**最先**拦下来：CAS 回到的是根地址，不先转走的话，
   // 下面那条「没令牌就去登录页」会把人直接踢走，授权码白回来一趟。
   if (to.path !== '/sso-callback' && to.query.code) {
