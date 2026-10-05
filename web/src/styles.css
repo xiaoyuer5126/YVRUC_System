@@ -93,6 +93,10 @@ p { margin: 8px 0; }
 .el-card__body { padding: 16px; }
 .el-card__header { padding: 12px 16px; }
 .el-table .cell { line-height: 1.5; }
+/* 居中的列（align="center"）：单元格靠 text-align 居中，管得到行内的东西，管不到
+   里面撑满整格的 flex 排（报名按钮 PositionAction 就是一个），那一排的按钮会贴在
+   左边。flex 排自己也居中 */
+.el-table .is-center .cell > * { justify-content: center; }
 /* 三段选择器是为了压过 Element 自己的同名规则 */
 .el-descriptions__body .el-descriptions__table .el-descriptions__cell { line-height: 1.5; }
 
