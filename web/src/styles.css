@@ -22,7 +22,10 @@ body {
   color: #303133;
 }
 
-.page { max-width: 1200px; margin: 0 auto; padding: 16px 24px 32px; }
+/* 主框架里的页面靠左：标题总在内容区左上角，宽页（.page-wide）和普通页切换时
+   位置不跳。居中的话，窗口一宽标题就飘到中间，两种宽度的页面标题也不在一处。
+   扫码落地页不在主框架里，自己居中（.scan-wrap） */
+.page { max-width: 1200px; padding: 16px 24px 32px; }
 .page-wide { max-width: 1440px; }
 
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
@@ -39,10 +42,14 @@ body {
 /* 工具条：搜索框、筛选、按钮并排的那一行 */
 .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 
-/* 卡片、对话框、页面的第一个元素不带上外边距：标题的默认 margin 会
-   在容器已有的内边距之外再顶出一截 */
+/* 容器的第一个元素不带上外边距：标题、提示条的默认 margin 会在容器已有的
+   内边距（页签是页签栏的下外边距）之外再顶出一截。卡片、对话框、抽屉、页面、
+   页签内容区、折叠面板都一样 */
 .el-card__body > :first-child,
 .el-dialog__body > :first-child,
+.el-drawer__body > :first-child,
+.el-collapse-item__content > :first-child,
+.el-tab-pane > :first-child,
 .page > :first-child { margin-top: 0; }
 
 /* 一排按钮：全站按钮之间一律 8px，只由所在容器的 gap 给出。
