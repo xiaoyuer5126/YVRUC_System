@@ -860,7 +860,7 @@ class Enrollment(Base):
       pending_confirm  候补转正，等待用户在 confirm_deadline 前确认
       cancelled        已退选（cancel_type: normal 正常 / late 临近 /
                                      expired 放弃候补超时 / abandoned 主动放弃候补 /
-                                     shift_deleted 场次被删除 / rejected 未录取 /
+                                     rejected 未录取 /
                                      not_chosen 录取时没选中的意向场次）
 
     seat_held：临期退选（开始前 24 小时内、报名已截止）**名额不再释放**，

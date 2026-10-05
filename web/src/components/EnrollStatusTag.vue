@@ -20,7 +20,7 @@ const props = defineProps({ row: { type: Object, required: true } })
 
 const CANCEL_LABELS = {
   normal: '已退选', abandoned: '已放弃候补', expired: '确认超时',
-  shift_deleted: '场次已取消', rejected: '未录取',
+  rejected: '未录取',
 }
 
 const cancelLabel = computed(() => CANCEL_LABELS[props.row.cancel_type] || '已取消')

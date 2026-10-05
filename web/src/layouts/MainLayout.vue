@@ -103,7 +103,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { isNavigationFailure, NavigationFailureType, useRoute, useRouter } from 'vue-router'
 import { ArrowDown, Bell, ChatDotRound, Check, Fold } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { auth, clearAuth, isTrainee, ROLE_LABELS } from '../store'
@@ -174,9 +174,17 @@ async function onCommand(cmd) {
   // 里面点「保存并发布」要带着令牌请求后端）。先注销的话那一下必定 401，
   // 跳转被中止，人卡在一个已经退出了的页面上。拦截里选了留下，就什么都不做
   if (cmd === 'logout') {
-    if (await router.push('/login')) return
+    // 先离开当前页、再注销：离开时页面可能要拦一下（活动管理页「改动还没发布」，
+    // 里面点「保存并发布」要带着令牌请求后端）。先注销的话那一下必定 401，
+    // 跳转被中止，人卡在一个已经退出了的页面上。
+    // 只有被拦下（aborted）才算「留下」：人就在首页时，这条跳转会被守卫按
+    // 「已登录访问登录页 → 回首页」打回（duplicated），那不是拦截，照常注销；
+    // 注销后再补一次跳转，让人落在登录页，而不是一个登录态没了的旧页面
+    const failure = await router.push('/login')
+    if (isNavigationFailure(failure, NavigationFailureType.aborted)) return
     try { await api.post('/api/auth/logout', {}) } catch { /* 忽略 */ }
     clearAuth()
+    router.push('/login')
     return
   }
   if (cmd === 'profile') {

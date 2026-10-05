@@ -1199,6 +1199,12 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
+    # 签到记录挂在场次上（checkin_records / checkin_geos 都随签到任务走），
+    # 场次没了它们没处安放：生成过签到码的场次一律不删，签到历史不能跟着没
+    if db.query(CheckinTask).filter(CheckinTask.shift_id == g.id).first():
+        raise HTTPException(
+            409, "该场次已经生成过签到码，签到记录挂在场次上，不能删除。"
+                 "如确定这一场不作数，请在签到面板停用签到码，场次保留即可")
     if not g.is_attached():
         _prune_trainings(db, act, {p.id for p in g.positions})
     n_active = db.query(Enrollment).filter(

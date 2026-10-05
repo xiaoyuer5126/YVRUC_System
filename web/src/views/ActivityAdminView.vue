@@ -1956,7 +1956,7 @@ async function loadLogs() {
   } finally { logsLoading.value = false }
 }
 const cancelType = x => ({ normal: '退选', late: '临近扣分', expired: '确认超时',
-                           abandoned: '放弃候补', shift_deleted: '场次取消' }[x.cancel_type] || '取消')
+                           abandoned: '放弃候补' }[x.cancel_type] || '取消')
 
 let activityId = ''
 

@@ -292,3 +292,17 @@ def test_不在编辑态改活动信息照样即时通知(client, admin, db, enr
     assert r.status_code == 200, r.text
     got = _changed(db, u.id, act)
     assert len(got) == 1 and "明德楼" in got[0].content
+
+
+def test_生成过签到码的场次不能删(client, admin, db, enrolled_activity):
+    """签到记录挂在场次上，删了它没处安放：生成过签到码就拒删（force 也不行）。"""
+    from backend.models import CheckinTask, Shift, new_checkin_token, uid
+    act, shift, u = enrolled_activity
+    db.add(CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=shift.id,
+                       mode="shift", token=new_checkin_token(), created_by=u.id))
+    db.commit()
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    r = client.delete(f"/api/staff/shifts/{shift.id}?force=1", headers=admin)
+    assert r.status_code == 409 and "签到码" in r.json()["detail"], r.text
+    db.expire_all()
+    assert db.get(Shift, shift.id) is not None
