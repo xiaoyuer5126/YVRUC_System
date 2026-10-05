@@ -27,7 +27,7 @@ from ..audit import diff_changes, log as audit_log
 from ..database import db_session
 from ..deps import require_council, require_manager
 from ..locks import invalidate_gates, shift_lock, urgent_lock
-from ..notify import notify_enrolled
+from ..notify import notify_edit_changes, notify_enrolled
 from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, managed_activity_ids,
                      remove_manager)
@@ -453,8 +453,9 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
     if not changes:
         return {"ok": True, "changes": []}
 
-    # 活动变更警告（带前后对比摘要），对已报名志愿者推送
-    if act.status != "draft":
+    # 活动变更警告（带前后对比摘要），对已报名志愿者推送。编辑态下不单发：
+    # 保存并发布时和场次、岗位的改动一起按人汇总（见 finish_editing）
+    if act.status != "draft" and act.editing_since is None:
         summary = "；".join(f"{c['label']}：{c['old']}→{c['new']}"
                             for c in changes[:6])
         bg.add_task(_notify_activity_bg, act.id, "activity_changed",
@@ -597,17 +598,29 @@ def finish_editing(activity_id: str, bg: BackgroundTasks,
                     AuditLog.created_at >= since,
                     AuditLog.visible.is_(True))
             .order_by(AuditLog.created_at).all())
-    summary = "；".join(r.summary for r in rows[:8]) or "无实质改动"
+    summary = "；".join(r.summary for r in rows) or "无实质改动"
     audit_log(db, actor=user, action="update", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"结束编辑并发布改动：{summary}")
     db.commit()
     promoted = _fill_vacancies(db, act)
     if rows and act.status != "draft":
-        bg.add_task(_notify_activity_bg, act.id, "activity_changed",
-                    activity=act.title, change_summary=summary)
+        bg.add_task(_notify_edit_changes_bg, act.id, since)
     return {"ok": True, "editing": False, "changes": len(rows),
             "promoted": promoted, "summary": summary}
+
+
+def _notify_edit_changes_bg(activity_id: str, since: datetime):
+    """后台把编辑期间的改动按人汇总发出去，见 notify.notify_edit_changes。"""
+    from ..database import SessionLocal
+    db = SessionLocal()
+    try:
+        act = db.get(Activity, activity_id)
+        if act is not None:
+            notify_edit_changes(db, act, since)
+            db.commit()
+    finally:
+        db.close()
 
 
 def _fill_vacancies(db: OrmSession, act: Activity) -> int:
@@ -1116,9 +1129,6 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
     if g.is_attached():
         _resync_training(db, act, g)
     db.commit()
-    if act.status != "draft":
-        bg.add_task(_notify_activity_bg, act.id, "activity_changed",
-                    activity=act.title, change_summary=summary)
     return {"id": g.id}
 
 
@@ -1171,13 +1181,6 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
     changes = diff_changes({k: fmt(v) for k, v in before_raw.items()},
                            {k: fmt(getattr(g, k)) for k in SHIFT_FIELDS},
                            SHIFT_FIELDS)
-    time_or_place = any(c["field"] in ("start_time", "end_time", "name", "note")
-                        for c in changes)
-    if changes and act.status != "draft" and time_or_place:
-        summary = "；".join(f"{c['label']}：{c['old']}→{c['new']}" for c in changes)
-        bg.add_task(_notify_activity_bg, act.id, "activity_changed",
-                    activity=act.title,
-                    change_summary=f"{g.name} 场次调整：{summary}")
     audit_log(db, actor=user, action="update", target_type="group",
               target_id=g.id, target_label=f"{act.title}·{g.name}",
               activity_id=act.id,
@@ -1205,22 +1208,26 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
         raise HTTPException(409, f"该场次已有 {n_active} 人有效报名，"
                                  f"删除需强制执行（force=1），全部记录将被取消")
     db.flush()
-    if n_active and force:
-        # 场次没了，扣留的占位名额也一并失效——这不是志愿者的责任
-        (db.query(Enrollment).filter(Enrollment.shift_id == g.id)
-         .update({"status": "cancelled", "cancel_type": "shift_deleted",
-                  "seat_held": False},
-                 synchronize_session=False))
-        bg.add_task(_notify_activity_bg, act.id, "activity_changed",
-                    activity=act.title,
-                    change_summary=f"场次「{g.name}」已被取消，相关报名记录失效")
+    # 报名记录挂在场次和它的岗位上，场次删掉它们也留不住（外键），连同已经
+    # 退选的一起删。还有效的那些人记进留痕：保存并发布时按人汇总的变更通知
+    # 从库里已经查不到他们，只能靠这份名单告诉他们这一场没了。
+    # 他们的培训/彩排按剩下的正式报名重新算：只因为这一场才去的培训一起退掉
+    rows = db.query(Enrollment).filter(Enrollment.shift_id == g.id).all()
+    affected = [e.user_id for e in rows if e.status in logic.ACTIVE]
+    for e in rows:
+        was_on = e.status == "enrolled"
+        e.status = "cancelled"
+        if was_on and not g.is_attached():
+            logic.sync_attached(db, e)
+        db.delete(e)
+    db.flush()
     label = f"{act.title}·{g.name}"
     db.delete(g)
     audit_log(db, actor=user, action="delete", target_type="group",
               target_id=g.id, target_label=label, activity_id=act.id,
               summary=f"删除场次「{g.name}」" +
                       (f"（强制，含{n_active}条报名记录）" if n_active else ""),
-              visible=True)
+              visible=True, affected=affected)
     db.commit()
     return {"ok": True}
 
@@ -1390,20 +1397,6 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
     changes = diff_changes({k: fmt(k, v) for k, v in before_raw.items()},
                            {k: fmt(k, getattr(s, k)) for k in POSITION_FIELDS},
                            POSITION_FIELDS)
-    if changes and act.status != "draft":
-        affected = (db.query(Enrollment.user_id)
-                    .filter(Enrollment.position_id == s.id,
-                            Enrollment.status == "enrolled").all())
-        for (uid_,) in affected:
-            bg.add_task(_notify_assignment_bg,
-                        [{"user_id": uid_, "position_id": s.id,
-                          "shift_id": g.id}])
-        summary = "；".join(f"{c['label']}：{c['old']}→{c['new']}"
-                            for c in changes if c["field"] != "requirement_tags")
-        if summary:
-            bg.add_task(_notify_activity_bg, act.id, "activity_changed",
-                        activity=act.title,
-                        change_summary=f"岗位「{s.name}」调整：{summary}")
     audit_log(db, actor=user, action="update", target_type="position",
               target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
               activity_id=act.id,
