@@ -111,9 +111,9 @@ def _digest_bodies(db, act, g) -> list[str]:
             .all()]
 
 
-def _second_shift(db, act, g, *, hours_later: float) -> Shift:
+def _second_shift(db, act, g, name: str, *, hours_later: float) -> Shift:
     """同一活动里再加一场服务，岗位名额与第一场相同。"""
-    g2 = Shift(id=uid("g"), activity_id=act.id, name="第二场",
+    g2 = Shift(id=uid("g"), activity_id=act.id, name=name,
                start_time=g.start_time + timedelta(hours=hours_later),
                end_time=g.end_time + timedelta(hours=hours_later),
                mode="pick", sort=1)
@@ -155,8 +155,8 @@ def _excuse(client, db, shift_id, sid, excused, reason=""):
 def test_日报按场次分开统计(client, db, open_group, take_student, monkeypatch):
     """同一活动两场：各报各的增减，不把整个活动的数字抄给每一场。"""
     act, g = open_group(3, day_offset=0, start_in_hours=30)
-    g2 = _second_shift(db, act, g, hours_later=10)
-    quiet = _second_shift(db, act, g, hours_later=20)
+    g2 = _second_shift(db, act, g, "第二场", hours_later=10)
+    quiet = _second_shift(db, act, g, "第三场", hours_later=20)
     for _ in range(2):
         assert _enroll(client, act, g, take_student()).status_code == 200
     gone = take_student()
