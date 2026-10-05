@@ -90,7 +90,7 @@
 
     <el-alert v-if="act.editing" type="warning" :closable="false" show-icon
               title="正在调整岗位，学生已暂停报名与退选"
-              :description="`改完点右上角「保存并发布」恢复报名并通知志愿者；${lockHours} 小时未保存会自动退出编辑。`" />
+              :description="`改完点页面顶部的「保存并发布」恢复报名并通知志愿者；${lockHours} 小时未保存会自动退出编辑。`" />
 
     <el-tabs v-model="tab" style="margin-top:8px">
       <!-- ============ 概览：发布之后才有报名、签到、时长可看 ============ -->

@@ -106,7 +106,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, Bell, ChatDotRound, Check, Fold } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { auth, canSee, clearAuth, isTrainee, setActiveIdentity, ROLE_LABELS } from '../store'
+import { auth, clearAuth, isTrainee, ROLE_LABELS } from '../store'
+import { switchIdentity } from '../router'
 import { useNarrow } from '../composables/useNarrow'
 import FeedbackDialog from '../components/FeedbackDialog.vue'
 import ProfileDialog from '../components/ProfileDialog.vue'
@@ -169,10 +170,13 @@ onMounted(() => {
 onUnmounted(() => clearInterval(timer))
 
 async function onCommand(cmd) {
+  // 先离开当前页、再注销：离开时页面可能要拦一下（活动管理页「改动还没发布」，
+  // 里面点「保存并发布」要带着令牌请求后端）。先注销的话那一下必定 401，
+  // 跳转被中止，人卡在一个已经退出了的页面上。拦截里选了留下，就什么都不做
   if (cmd === 'logout') {
+    if (await router.push('/login')) return
     try { await api.post('/api/auth/logout', {}) } catch { /* 忽略 */ }
     clearAuth()
-    router.push('/login')
     return
   }
   if (cmd === 'profile') {
@@ -180,8 +184,7 @@ async function onCommand(cmd) {
     return
   }
   if (cmd.startsWith('identity:')) {
-    setActiveIdentity(cmd.split(':')[1])
-    router.push(canSee.manage() ? '/manage' : '/square')
+    switchIdentity(cmd.split(':')[1])
     return
   }
   router.push('/' + cmd)
