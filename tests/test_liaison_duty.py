@@ -119,16 +119,16 @@ def test_审批通知只发值班人_没人值班回落部长(client, admin, db,
     aid = make_draft(client, admin)
     assert _submit(client, admin, aid, liaison.id)["assignee"] == "林骁"
     title = db.get(Activity, aid).title
-    assert inbox(db, LIAISON_CORE, f"待审批｜{title}")
-    assert not inbox(db, LIAISON_HEAD, f"待审批｜{title}")
+    assert inbox(db, LIAISON_CORE, f"志愿活动待审批｜{title}")
+    assert not inbox(db, LIAISON_HEAD, f"志愿活动待审批｜{title}")
 
     # 撤下值班：下一条回到部长
     assert _set_duty(client, head, liaison.id, "").status_code == 200
     aid2 = make_draft(client, admin)
     assert _submit(client, admin, aid2, liaison.id)["assignee"] == "周砚"
     title2 = db.get(Activity, aid2).title
-    assert inbox(db, LIAISON_HEAD, f"待审批｜{title2}")
-    assert not inbox(db, LIAISON_CORE, f"待审批｜{title2}")
+    assert inbox(db, LIAISON_HEAD, f"志愿活动待审批｜{title2}")
+    assert not inbox(db, LIAISON_CORE, f"志愿活动待审批｜{title2}")
 
 
 def test_转交给部门也通知值班人(client, admin, db, liaison):

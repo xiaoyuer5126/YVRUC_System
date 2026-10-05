@@ -150,7 +150,7 @@ def submit_lock_when_due(db: OrmSession) -> int:
             if act.stamped_reminded_at is None or act.stamped_reminded_at < since:
                 act.stamped_reminded_at = t
                 notify_managers(
-                    db, act.id, f"请上传盖章材料｜{act.title}",
+                    db, act.id, f"志愿活动请上传材料｜{act.title}",
                     f"「{act.title}」的确认/申诉期已满，本该自动提交时长审核，"
                     f"但这是对外联络部归口的活动，还没有上传{'、'.join(missing)}。\n"
                     f"请到活动管理的「审核」页签上传，上传后系统会自动提交。",

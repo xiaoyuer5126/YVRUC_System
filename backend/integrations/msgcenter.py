@@ -33,13 +33,13 @@ SEND_PATH = "com.sudytech.msgcenter/ucp/_web/_apps/ucpmsg/api/v3/sendMessage.rst
 # 模板库：key → (标题模板, 正文模板)。{xx} 为占位符。
 TEMPLATES: dict[str, tuple[str, str]] = {
     "signup_success": (
-        "报名成功｜{activity}",
+        "志愿活动报名成功｜{activity}",
         "您已成功报名「{activity}」· {shift}。\n时间：{time}\n{detail}"
-        "\n\n如无法参加，请于活动开始前24小时退选，临期退选将被记录。"),
+        "\n\n如无法参加，请于活动开始前24小时以上退选，临期退选将被记录。"),
     "waitlist_queued": (
         "已加入候补｜{activity}",
         "「{activity}」· {shift} 名额已满，您已报名候补，当前队列第 {pos} 位。"
-        "\n有名额时将通知您确认。"),
+        "\n有名额时将通知您确认，需于转正通知2小时内确认。"),
     "hours_approved": (
         "志愿时长已核准｜{activity}",
         "「{activity}」的志愿时长已核准：您本次记 {hours} 小时。"
@@ -50,15 +50,15 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "「{activity}」的志愿时长已锁定，{result}。"
         "\n感谢您的参与！"),
     "application_accepted": (
-        "录取通知｜{activity}",
+        "志愿活动录取通知｜{activity}",
         "恭喜！您已被「{activity}」录取，安排在 {shift}（{time}）。"
         "\n具体岗位以负责人后续分配为准。请到「我的报名」查看志愿者联络群二维码，"
         "入群后请把群昵称改为「姓名+电话」。"),
     # 措辞留余地：这一次没排上不代表什么，也不留任何记录
     "application_rejected": (
-        "报名结果｜{activity}",
-        "感谢您报名「{activity}」。本次名额有限，暂未能安排您参加，"
-        "期待下次活动再见。"),
+        "志愿活动报名结果｜{activity}",
+        "感谢您报名「{activity}」。本次名额有限，暂未能安排您参加。"
+        "\n让有爱者有力，让奉献者发光，期待与同学一起参与更多丰富多彩的志愿活动。"),
     "waitlist_promoted": (
         "候补转正待确认｜{activity}",
         "「{activity}」· {shift} 有名额释放，您已按候补顺序转正！\n"
@@ -73,7 +73,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "「{activity}」信息变更：\n{change_summary}\n\n请留意最新安排。"),
     "leader_appointed": (
         "您已成为岗位组长｜{activity}",
-        "您在「{activity}」已被老师选为岗位「{position}」组长。\n"
+        "您在「{activity}」已被负责人选为岗位「{position}」组长。\n"
         "时间：{position_time}\n地点：{position_loc}\n"
         "请提前与负责人对接现场安排。"),
     # 补招：管理者把人直接加进场次。场次还没结束是叫他来，结束了是事后补登记
@@ -87,13 +87,13 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "负责人已将您补记为「{activity}」· {shift} 的志愿者。\n"
         "时间：{time}\n时长以负责人登记为准，录入后可在「我的志愿时长」查看。"),
     "checkin_reminder": (
-        "签到提醒｜{activity}",
+        "志愿活动签到提醒｜{activity}",
         "您报名的「{activity}」· {shift} 即将开始。\n"
         "岗位：{position}\n地点：{loc}\n"
-        "请按要求到岗并扫码签到；服务结束后记得签退。"),
+        "请按要求到岗并签到，服务结束后记得签退。"),
     # 催签收：本身不要签收，否则催一次就多一条待办，5 个人的批次会变成 10 条
     "ack_reminder": (
-        "待签收提醒｜{title}",
+        "志愿通知待签收提醒｜{title}",
         "您有一条通知未签收：\n「{title}」\n"
         "请到消息中心点击「我已知悉」，方便统计签收情况。"),
     "custom": (

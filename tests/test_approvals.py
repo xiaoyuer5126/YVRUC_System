@@ -426,7 +426,7 @@ def test_待审批的通知指向审批页_不要签收(client, admin, db, draft
     r = client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
                     json={"department_id": dept.id})
     assert r.status_code == 200, r.text
-    notes = _my_notes(client, login(client, QINGXIE_HEAD), draft, "待审批")
+    notes = _my_notes(client, login(client, QINGXIE_HEAD), draft, "志愿活动待审批")
     assert len(notes) == 1 and notes[0]["page"] == "/approvals"
     assert notes[0]["need_ack"] is False
 

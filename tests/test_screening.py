@@ -395,7 +395,7 @@ def test_录取与未录取(client, admin, db, take_student):
     assert by_shift[ids[0]].cancel_type == "not_chosen"
     assert (db.query(Notification)
             .filter(Notification.user_id == u0.id,
-                    Notification.title.like("录取通知｜%")).count() == 1)
+                    Notification.title.like("志愿活动录取通知｜%")).count() == 1)
 
     # 录取的人：我的报名里只剩录到的那一场，联络群二维码随时点得开
     mine = client.get("/api/me/enrollments", headers=login(client, sids[0])).json()
@@ -407,7 +407,7 @@ def test_录取与未录取(client, admin, db, take_student):
     u2 = db.query(User).filter(User.student_id == sids[2]).one()
     n = (db.query(Notification)
          .filter(Notification.user_id == u2.id,
-                 Notification.title.like("报名结果｜%")).one())
+                 Notification.title.like("志愿活动报名结果｜%")).one())
     assert "暂未能" in n.content
     rows2 = client.get("/api/me/enrollments", headers=login(client, sids[2])).json()
     assert {r["cancel_type"] for r in rows2 if r["activity"]["id"] == act_id} == {"rejected"}
@@ -702,7 +702,7 @@ def _start_now(db, shift_id):
 def _rejected_notes(db, user_id):
     return (db.query(Notification)
             .filter(Notification.user_id == user_id,
-                    Notification.title.like("报名结果｜%")).count())
+                    Notification.title.like("志愿活动报名结果｜%")).count())
 
 
 def _apply(client, db, act_id, q, sid, shift_ids):
@@ -732,7 +732,7 @@ def test_单场次开场仍未处理自动落选_只通知一次(client, admin, 
     assert app.status == "rejected" and app.decided_by is None
     assert _rejected_notes(db, u.id) == 1
     n = (db.query(Notification).filter(Notification.user_id == u.id,
-                                       Notification.title.like("报名结果｜%")).one())
+                                       Notification.title.like("志愿活动报名结果｜%")).one())
     assert "暂未能" in n.content
     e = db.query(Enrollment).filter(Enrollment.activity_id == act_id,
                                     Enrollment.user_id == u.id).one()

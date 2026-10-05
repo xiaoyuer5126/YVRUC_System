@@ -300,7 +300,7 @@ GEO_RADIUS_MAX_M = 3000
 
 # 活动开始前多少天起，每天给管理者推一条人员变动摘要；几点推
 ROSTER_DIGEST_DAYS = 3
-ROSTER_DIGEST_HOUR = 6
+ROSTER_DIGEST_HOUR = 9
 # 值班日报：每晚这个点给启用值班的部门的部长发一份当天的审批汇总（本地时间）
 DUTY_DIGEST_HOUR = 21
 # 志愿北京名称被对外联络部退回、满这么多天管理者还没重提，每天这个点起
