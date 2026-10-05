@@ -247,7 +247,7 @@ def test_手动报批时长要盖章立项书和结项书(client, admin, db, lia
 
 def test_自动报批缺盖章材料_每轮提醒一次(client, admin, db, liaison):
     act = _external_due(db, liaison)
-    title = f"请上传盖章材料｜{act.title}"
+    title = f"志愿活动请上传材料｜{act.title}"
 
     def requests():
         db.expire_all()
@@ -293,7 +293,7 @@ def test_非对外活动自动报批不受影响(client, admin, db, liaison):
     db.expire_all()
     assert db.query(HoursRequest).filter(HoursRequest.activity_id == act.id).count() == 1
     assert not (db.query(Notification)
-                .filter(Notification.title.startswith(f"请上传盖章材料｜{act.title}"))
+                .filter(Notification.title.startswith(f"志愿活动请上传材料｜{act.title}"))
                 .count())
 
 

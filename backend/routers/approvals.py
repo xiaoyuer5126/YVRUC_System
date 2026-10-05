@@ -277,7 +277,7 @@ def submit(activity_id: str, body: SubmitBody,
     audit_log(db, actor=user, action="submit", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"提交「{dept.name}」审批（审批人 {head.name}{via}）")
-    _notify(db, contact, f"待审批｜{act.title}",
+    _notify(db, contact, f"志愿活动待审批｜{act.title}",
             f"{user.name} 提交了「{act.title}」，组织单位：{act.organizer}。\n"
             f"归口部门：{dept.name}。\n"
             + (f"备注：{body.note.strip()}\n" if body.note.strip() else "")

@@ -676,7 +676,7 @@ def main() -> None:
                "「校运动会开幕式志愿服务」· 上午场 名额已满，您已加入候补队列，当前第 2 位。",
                dt(days=-1))
         for u in students[3:6]:
-            notify(u, "signup_success", "报名成功｜校运动会开幕式志愿服务",
+            notify(u, "signup_success", "志愿活动报名成功｜校运动会开幕式志愿服务",
                    "您已成功报名「校运动会开幕式志愿服务」，时段已锁定。\n"
                    "如无法参加请提前24小时退选。", dt(days=-2, hours=-3),
                    read=bool(random.random() < 0.5))
