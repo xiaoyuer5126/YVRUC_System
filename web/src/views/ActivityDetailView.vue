@@ -110,8 +110,7 @@
         <div v-if="detailView === 'role'" class="m-shifts">
           <el-card v-for="r in roles" :key="r.name" shadow="never" class="m-shift">
             <div class="m-shift-head">
-              <el-link class="m-shift-name" type="primary" underline="never"
-                       @click="showStationDetail(r.slots[0].g, r.slots[0].p)">{{ r.name }}</el-link>
+              <b @click="showStationDetail(r.slots[0].g, r.slots[0].p)">{{ r.name }}</b>
               <el-tag v-if="r.slots[0].p.needs_leader" size="small" type="warning"
                       effect="plain">设组长</el-tag>
               <el-tag v-if="r.slots[0].p.attire !== 'none'" size="small" type="primary"
@@ -145,8 +144,7 @@
           <el-card v-for="g in act.shifts.filter(x => x.needs_assign)" :key="g.id"
                    shadow="never" class="m-shift">
             <div class="m-shift-head">
-              <el-link class="m-shift-name" type="primary" underline="never"
-                       @click="showGroupDetail(g)">{{ g.name }}</el-link>
+              <b @click="showGroupDetail(g)">{{ g.name }}</b>
               <el-tag size="small" type="warning" effect="plain">按时间报名</el-tag>
               <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
             </div>
@@ -169,8 +167,7 @@
         <div v-else-if="narrow" class="m-shifts">
           <el-card v-for="g in act.shifts" :key="g.id" shadow="never" class="m-shift">
             <div class="m-shift-head">
-              <el-link class="m-shift-name" type="primary" underline="never"
-                       @click="showGroupDetail(g)">{{ g.name }}</el-link>
+              <b @click="showGroupDetail(g)">{{ g.name }}</b>
               <el-tag size="small" effect="plain"
                       :type="g.mode === 'assign' ? 'warning' : 'info'">
                 {{ g.mode_label }}
@@ -218,7 +215,7 @@
               <div v-for="s in g.positions" :key="s.id" class="m-pos"
                    :class="{ mine: myStationId(g) === s.id, blocked: s.eligible === false }">
                 <div class="m-pos-head">
-                  <!-- 能点开详情的名字一律是 el-link：普通粗体字看不出能点 -->
+                  <!-- 桌面端是 el-link，手机端原来是普通文本，看不出能点 -->
                   <el-link class="m-pos-name" type="primary" underline="never"
                            @click="showStationDetail(g, s)">{{ s.display_name }}</el-link>
                   <span class="dim">{{ s.enrolled }}/{{ s.quota }}</span>
@@ -1081,7 +1078,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .m-shifts { display: flex; flex-direction: column; gap: 12px; }
 .m-shift :deep(.el-card__body) { padding: 14px; }
 .m-shift-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.m-shift-name, .m-shift-name :deep(.el-link__inner) { font-size: 15px; font-weight: 600; }
+.m-shift-head b { font-size: 15px; color: var(--el-color-primary); }
 .m-quota { margin: 8px 0 4px; font-size: 13px; }
 .m-pos {
   border: 1px solid #e4e7ed; border-radius: 8px; padding: 10px 12px; margin-top: 8px;
