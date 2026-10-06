@@ -367,8 +367,12 @@ async function runBatch(dry) {
       action: b.action, role: b.role, qingxie_post: b.post,
       department_id: b.deptId || '', supervisor_id: b.supervisorId || '',
       student_ids: batchIds.value, dry_run: dry })
-    b.preview = d
-    if (!dry) {
+    if (dry) {
+      b.preview = d
+    } else {
+      // 执行完就关掉：留着那份预览的话「确认执行」还能再点一次，而这批人
+      // 身份已经改好了，再点全部落进「跳过·已经是这个身份」，看着像出错
+      b.visible = false
       ElMessage.success(`已调整 ${d.updated.length} 人`
         + (d.skipped.length ? `，跳过 ${d.skipped.length} 人` : '')
         + (d.not_found.length ? `，${d.not_found.length} 个学号没找到` : ''))

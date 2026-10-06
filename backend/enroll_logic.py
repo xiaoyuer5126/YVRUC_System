@@ -480,6 +480,17 @@ def group_needs_leader(positions: list[Position]) -> bool:
     return any(p.needs_leader for p in positions)
 
 
+def group_leader_task(positions: list[Position]) -> str:
+    """这个组的组长任务。一个组共用一名组长，任务也只有一份。
+
+    保存岗位时会把它对齐到全组（见 staff_activities._sync_group_leader_task），
+    所以正常情况下组里几个岗位写的是同一句；这里按 sort 取第一个非空的，
+    让「念给组长听的是哪一份」不取决于他恰好占了组里哪个岗位。
+    """
+    return next((p.leader_task for p in positions
+                 if (p.leader_task or "").strip()), "")
+
+
 def notify_leader_vacancy(db: OrmSession, position: Position) -> bool:
     """本组需要组长却没有了，提醒管理者去指定。返回是否真的空缺。
 

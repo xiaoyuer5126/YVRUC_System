@@ -1439,8 +1439,12 @@
     <!-- 岗位对话框 -->
     <el-dialog v-model="positionDlg.visible" :title="positionDlg.editing ? '编辑岗位' : '新建岗位'" width="560">
       <el-form label-width="100px">
-        <el-form-item label="岗位名称" required><el-input v-model="stationForm.name" placeholder="如：东门引导" /></el-form-item>
+        <!-- maxlength 跟着库里这几列的长度：不在这儿拦，超长要到保存那一下
+             才被后端打回来 -->
+        <el-form-item label="岗位名称" required><el-input v-model="stationForm.name"
+                    maxlength="128" placeholder="如：东门引导" /></el-form-item>
         <el-form-item label="服务地点"><el-input v-model="stationForm.location"
+                    maxlength="128"
                     placeholder="如：世纪馆北门（留空则用活动地点）" /></el-form-item>
         <el-form-item label="名额" required>
           <el-input-number v-model="stationForm.quota" :min="1" />
@@ -1451,7 +1455,7 @@
         </el-form-item>
         <el-form-item label="岗位组">
           <el-input v-model="stationForm.group_name" style="width:220px"
-                    placeholder="如：东门片区（选填）" />
+                    maxlength="64" placeholder="如：东门片区（选填）" />
           <div class="dim">岗位组共用一名组长，留空则本岗位自成一组</div>
         </el-form-item>
         <el-form-item label="志愿服装">
@@ -1464,7 +1468,7 @@
         </el-form-item>
         <!-- 三处备注出现即必填：左侧红星，saveStation 与后端各拦一道 -->
         <el-form-item v-if="stationForm.attire !== 'none'" label="服装备注" required>
-          <el-input v-model="stationForm.attire_note"
+          <el-input v-model="stationForm.attire_note" maxlength="256" show-word-limit
                     :placeholder="stationForm.attire === 'issued'
                       ? '领取/归还方式：如 活动前一天 8:00 在 学活124 领取'
                       : '样式要求：如 白色上衣、深色长裤、运动鞋'" />
@@ -1474,7 +1478,7 @@
           <div class="dim">按需勾选。若勾选，志愿者确认时长时选择报酬方式，劳务与时长二选一</div>
         </el-form-item>
         <el-form-item v-if="stationForm.pay_optional" label="劳务备注" required>
-          <el-input v-model="stationForm.pay_note"
+          <el-input v-model="stationForm.pay_note" maxlength="256" show-word-limit
                     placeholder="标准与发放方式：如 60元/小时，活动后一周内发放" />
         </el-form-item>
         <el-form-item label="组长">
@@ -1482,8 +1486,11 @@
           <div class="dim">在「志愿者管理」页面指定，报名时志愿者可表态供你参考。</div>
         </el-form-item>
         <el-form-item v-if="stationForm.needs_leader" label="组长任务" required>
-          <el-input v-model="stationForm.leader_task"
+          <el-input v-model="stationForm.leader_task" maxlength="256" show-word-limit
                     placeholder="组长要带队做什么：如 带队进场、清点人数、结束后对账" />
+          <div v-if="stationForm.group_name?.trim()" class="dim">
+            一个岗位组共用一名组长，也共用这一份任务：保存时会同步到同组其他岗位
+          </div>
         </el-form-item>
         <el-form-item label="条件要求">
           <div class="two-col">
@@ -1824,7 +1831,9 @@ async function saveAndPublish() {
         : '已恢复报名（本次没有实质改动）')
         + (d.promoted ? `；已通知 ${d.promoted} 位候补确认转正` : ''))
     }
-    loadAll()
+    // 等刷完再返回：离开本页的拦截里会先 await 它，编辑态还没刷掉的话，
+    // 那一跳要是又走一遍拦截，人就被问第二遍
+    await loadAll()
   } finally { lockBusy.value = false }
 }
 
