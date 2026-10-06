@@ -1634,11 +1634,28 @@ def delete_position(position_id: str,
     if s.is_placeholder:
         raise HTTPException(409, "「待分配」是这一场报名的入口，不能删；"
                                  "名额改在场次的「人数上限」里")
+    # 报名和签到记录都挂在这个岗位上（enrollments.position_id、
+    # checkin_tasks.position_id 都是外键）：删了它们没处安放。
+    # 有人已报名先让他把人调走；退选、未录取这类历史记录也照样挡着——
+    # 岗位就只能保留，不再用的话暂停报名即可
+    n_enrolled = db.query(Enrollment).filter(
+        Enrollment.position_id == s.id,
+        Enrollment.status == "enrolled").count()
+    if n_enrolled:
+        raise HTTPException(409, f"该岗位仍有 {n_enrolled} 人已报名，"
+                                 "请先在分配面板调整")
+    n_ref = db.query(Enrollment).filter(Enrollment.position_id == s.id).count()
+    n_task = db.query(CheckinTask).filter(CheckinTask.position_id == s.id).count()
+    if n_ref or n_task:
+        parts = []
+        if n_ref:
+            parts.append(f"{n_ref} 条报名历史（含已退选/未录取的）")
+        if n_task:
+            parts.append(f"{n_task} 个签到码")
+        raise HTTPException(409, f"该岗位还挂着{'、'.join(parts)}，"
+                                 "删除会把这些记录一起弄丢，不能删；"
+                                 "不再用的话暂停报名即可")
     _prune_trainings(db, act, {s.id})
-    n = db.query(Enrollment).filter(Enrollment.position_id == s.id,
-                                    Enrollment.status == "enrolled").count()
-    if n:
-        raise HTTPException(409, f"该岗位仍有 {n} 人已报名，请先在分配面板调整")
     label = f"{act.title}·{g.name}·{s.name}"
     db.delete(s)
     audit_log(db, actor=user, action="delete", target_type="position",

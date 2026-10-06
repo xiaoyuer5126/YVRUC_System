@@ -354,3 +354,31 @@ def test_生成过签到码的场次不能删(client, admin, db, enrolled_activi
     assert r.status_code == 409 and "签到码" in r.json()["detail"], r.text
     db.expire_all()
     assert db.get(Shift, shift.id) is not None
+
+
+def test_有报名历史的岗位不能删(client, admin, db, enrolled_activity):
+    """报名记录（退选过的也算）与签到码都挂在 position_id 上（外键）：
+    有引用就不给删，删了这些记录就要跟着丢；不再用的话保留岗位、暂停报名即可。"""
+    from backend.models import CheckinTask, Position, new_checkin_token, uid
+    act, shift, u = enrolled_activity
+    pos = shift.positions[0]
+    enr = (db.query(Enrollment)
+           .filter(Enrollment.user_id == u.id, Enrollment.shift_id == shift.id)
+           .one())
+    assert client.delete(f"/api/activities/enrollments/{enr.id}",
+                         headers=login(client, u.student_id)).status_code == 200
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    r = client.delete(f"/api/staff/positions/{pos.id}", headers=admin)
+    assert r.status_code == 409 and "报名历史" in r.json()["detail"], r.text
+    db.expire_all()
+    assert db.get(Position, pos.id) is not None
+
+    # 签到码是另一道：把报名历史摘掉、只剩码，也照样拒删
+    (db.query(Enrollment).filter(Enrollment.position_id == pos.id)
+     .update({"position_id": None}, synchronize_session=False))
+    db.add(CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=shift.id,
+                       position_id=pos.id, mode="position",
+                       token=new_checkin_token(), created_by=u.id))
+    db.commit()
+    r = client.delete(f"/api/staff/positions/{pos.id}", headers=admin)
+    assert r.status_code == 409 and "签到码" in r.json()["detail"], r.text

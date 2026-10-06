@@ -9,7 +9,7 @@
               :style="fabStyle" :aria-label="title"
               @pointerdown="onDown" @pointermove="onMove"
               @pointerup="onUp" @pointercancel="onUp" @click="onClick">
-        <img :src="aiIcon" alt="" />
+        <img :src="aiIcon" alt="" draggable="false" />
       </button>
     </el-tooltip>
     <el-drawer v-model="open" :title="title" :size="narrow ? '100%' : '560px'" append-to-body>
@@ -173,7 +173,11 @@ defineExpose({ reset })
   display: flex; align-items: center; justify-content: center;
 }
 .ai-fab.grabbing { transition: none; cursor: grabbing; }
+/* 图标不参与指针事件：按住中心时按下的是按钮本身，不会触发浏览器
+   「拖图片」的原生拖拽——那一下会把 pointer 序列打断（pointercancel），
+   按钮就跟不住手了 */
 .ai-fab img { width: 26px; height: 26px; display: block;
+              pointer-events: none; -webkit-user-drag: none;
               filter: brightness(0) invert(1); }
 .ai-fab:hover { background: linear-gradient(135deg, #dc6b80 0%, #c00e35 78%); }
 </style>
