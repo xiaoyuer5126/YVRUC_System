@@ -91,6 +91,38 @@ def test_任命组长通知带上组长任务(client, admin, db, enrolled_activi
     assert row["is_leader"] and row["leader_task"] == "带队进场、清点人数"
 
 
+def test_组长任务全组共用一份(client, admin, db, enrolled_activity, take_student):
+    """一个组一名组长，任务也只有一份：写在哪个岗位上都对齐到全组，
+    念给组长听的也是这一份，不看他占的是组里哪个岗位。"""
+    from conftest import editing
+
+    act, shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,
+                                   take_student)
+    with editing(client, admin, act.id):
+        r = client.patch(f"/api/staff/positions/{p2.id}", headers=admin,
+                         json={"leader_task": "带队进场、清点人数"})
+        assert r.status_code == 200, r.text
+        # 同组另一个岗位跟着对齐，留痕里写明动了几个
+        db.expire_all()
+        assert db.get(Position, p1.id).leader_task == "带队进场、清点人数"
+        # 新加进这个组、自己没写任务的岗位沿用组里那一份
+        r = client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
+                        json={"name": "东门医疗点", "quota": 2,
+                              "group_name": p1.group_name,
+                              "needs_leader": True, **POSITION_TEXT})
+        assert r.status_code == 200, r.text
+        p3 = db.get(Position, r.json()["id"])
+        assert p3.leader_task == "带队进场、清点人数"
+
+    # 组长占的是 p1，念的是组里那一份
+    head = _make_leader(client, admin, db, p1)
+    u = db.get(User, head.user_id)
+    h = login(client, u.student_id)
+    notes = client.get("/api/me/notifications", headers=h).json()["items"]
+    n = next(x for x in notes if x["title"] == f"您已成为岗位组长｜{act.title}")
+    assert "组长任务：带队进场、清点人数" in n["content"]
+
+
 def test_报名不会自动产生组长(client, admin, db, enrolled_activity, take_student):
     """组长只由管理者指定。四个人都勾了愿意，也一个都不自动上。"""
     act, shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,

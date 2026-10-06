@@ -547,6 +547,10 @@ def _notify_activity_bg(activity_id: str, template: str, **kw):
 
 # ======================= 编辑冻结 =======================
 
+# 「结束编辑并发布改动」那条留痕里最多摘几项改动，见 finish_editing
+EDIT_SUMMARY_MAX = 8
+
+
 @router.post("/activities/{activity_id}/edit-lock")
 def start_editing(activity_id: str, db: OrmSession = Depends(db_session),
                   user: User = Depends(require_manager)):
@@ -598,7 +602,11 @@ def finish_editing(activity_id: str, bg: BackgroundTasks,
                     AuditLog.created_at >= since,
                     AuditLog.visible.is_(True))
             .order_by(AuditLog.created_at).all())
-    summary = "；".join(r.summary for r in rows) or "无实质改动"
+    # 只摘前几条：编辑期间改几十处是常事，整摞拼进来这条留痕会长到没法读，
+    # 而且它还要原样回给前端提示。完整的明细本来就一条一条记在上面那些留痕里
+    summary = "；".join(r.summary for r in rows[:EDIT_SUMMARY_MAX]) or "无实质改动"
+    if len(rows) > EDIT_SUMMARY_MAX:
+        summary += f"；等共 {len(rows)} 项"
     audit_log(db, actor=user, action="update", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"结束编辑并发布改动：{summary}")
@@ -1242,21 +1250,26 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
 
 class PositionBody(BaseModel):
     """岗位没有时间——时间随场次。名额、候补、条件、组长都在这一层。"""
+    # 带 max_length 的几项对着库里 String(n) 的长度：不拦下来就是插入时报错，
+    # 管理者看到的是一个 500。service_task 这些是 Text，不限
     name: str = Field(max_length=128)
-    location: str = ""
+    location: str = Field(default="", max_length=128)
     quota: int = Field(gt=0)
     waitlist_quota: int = Field(default=3, ge=0)
-    group_name: str = ""
+    group_name: str = Field(default="", max_length=64)
     requirement_tags: dict = {}
     service_task: str = ""
     position_requirement: str = ""       # 选填
     training_note: str = ""
     needs_leader: bool = False
-    leader_task: str = ""                # 需要组长时必填：组长要带队做什么
+    # 需要组长时必填：组长要带队做什么
+    leader_task: str = Field(default="", max_length=256)
     attire: str = "none"                 # none / issued / own
-    attire_note: str = ""                # 统一发放或自备时必填
+    # 统一发放或自备时必填
+    attire_note: str = Field(default="", max_length=256)
     pay_optional: bool = False           # 可选劳务
-    pay_note: str = ""                   # 可选劳务时必填：标准与发放方式
+    # 可选劳务时必填：标准与发放方式
+    pay_note: str = Field(default="", max_length=256)
     copy_from: str = ""                  # 复制自哪个岗位：学习材料跟着带过来
 
 
@@ -1287,9 +1300,40 @@ def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:
     return act
 
 
+# 库里这几列是 String(n)：超了要到插入那一刻才报错，管理者看到的是一个 500。
+# 新建走 PositionBody 的 max_length，改岗位是 PATCH 任意字段，所以这里再拦一道
+_POSITION_MAX = {"name": 128, "location": 128, "group_name": 64,
+                 "leader_task": 256, "attire_note": 256, "pay_note": 256}
+
+
+def _sync_group_leader_task(db: OrmSession, s: Position) -> int:
+    """岗位组共用一名组长，组长任务也只有一份：把它对齐到全组。
+
+    这个岗位没写就沿用组里已有的那份，写了就覆盖全组。否则同组各写一份，
+    任命通知只念得到其中一个，另几份白写。不分组的岗位自成一组，不用管。
+    返回跟着改了几个岗位。
+    """
+    if not (s.group_name or "").strip():
+        return 0
+    siblings = [p for p in logic.group_positions(db, s) if p.id != s.id]
+    if not siblings:
+        return 0
+    task = (s.leader_task or "").strip()
+    if not task:
+        s.leader_task = logic.group_leader_task(siblings)
+        return 0
+    changed = [p for p in siblings if (p.leader_task or "") != task]
+    for p in changed:
+        p.leader_task = task
+    return len(changed)
+
+
 def _require_position_text(s: Position) -> None:
     """服务任务是志愿者到岗前唯一必看的一句话；地点留空用活动地点，
     培训内容可以之后再补。"""
+    for key, limit in _POSITION_MAX.items():
+        if len(getattr(s, key) or "") > limit:
+            raise HTTPException(400, f"「{POSITION_FIELDS[key]}」最多 {limit} 个字")
     if not (s.service_task or "").strip():
         raise HTTPException(400, f"请填写岗位「{s.name}」的服务任务")
     if s.attire not in Position.ATTIRE_LABELS:
@@ -1343,6 +1387,8 @@ def create_position(shift_id: str, body: PositionBody,
                 training_note=body.training_note.strip(),
                 sort=len(g.positions))
     _validate_position(db, g, s)
+    # 加进已有的岗位组时，没写组长任务就沿用这个组已有的那份
+    _sync_group_leader_task(db, s)
     _require_position_text(s)
     db.add(s)
     db.flush()   # 让 group 关系可用，供 time_text() 使用
@@ -1386,6 +1432,7 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
         else:
             setattr(s, key, body[key])
     _validate_position(db, g, s)
+    synced = _sync_group_leader_task(db, s)
     _require_position_text(s)
 
     # 组长开关变化要落到人身上：关掉了还留着组长标记，导出表和大屏就会
@@ -1413,7 +1460,9 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
               target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
               activity_id=act.id,
               summary=f"修改岗位「{s.name}」："
-                      f"{'、'.join(c['label'] for c in changes) or '无实质变化'}",
+                      f"{'、'.join(c['label'] for c in changes) or '无实质变化'}"
+                      + (f"（组长任务已同步到同组另 {synced} 个岗位）"
+                         if synced else ""),
               changes=changes,
               visible=True)
     db.commit()
@@ -2145,7 +2194,8 @@ def set_leader(enrollment_id: str, body: LeaderBody,
                         position=scope,
                         position_time=position.time_text(),
                         position_loc=position.location or "待定",
-                        leader_task=position.leader_task or "请与负责人确认")
+                        leader_task=(logic.group_leader_task(siblings)
+                                     or "请与负责人确认"))
     else:
         enr.is_leader = False
         summary = f"取消 {target.name} 的岗位「{position.name}」组长身份"

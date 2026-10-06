@@ -48,23 +48,31 @@ def notify_enrolled(db: OrmSession, act: Activity, template: str, **kw) -> int:
 # 不受影响，存的又是一串结构化数据，原样念给人听只会让人看不懂
 _QUIET_FIELDS = {"requirement_tags"}
 _WHERE = {"group": "场次", "position": "岗位"}
+# 一条通知里最多写几项改动。编辑期间改几十处是常事，整摞念完没人看得下去，
+# 剩下的让他到活动页的变更记录里看
+_MAX_LINES = 8
+
+
+def _where(act: Activity, row: AuditLog) -> str:
+    if row.target_type == "activity":
+        return "活动信息"
+    name = row.target_label.removeprefix(f"{act.title}·")
+    return f"{_WHERE.get(row.target_type, '')}「{name}」"
 
 
 def _change_line(act: Activity, row: AuditLog) -> str | None:
-    """一条留痕在通知里的那一句：有字段明细就逐项写「旧→新」，新建、删除
-    这类没有明细的用摘要。只动了不念的字段、或者根本没动（「无实质变化」）
-    的不写。"""
+    """一条留痕在通知里的那一句：有字段明细就逐项写「旧→新」，新建的用摘要。
+    只动了不念的字段、或者根本没动（「无实质变化」）的不写。"""
+    # 删除另外成句，不用留痕的摘要：那句是给管理者看的，带着「（强制，含 N
+    # 条报名记录）」这类对内口径，照原文发给志愿者不合适
+    if row.action == "delete":
+        return _where(act, row) + "已取消"
     shown = [c for c in row.changes or []
              if not str(c.get("field", "")).startswith("_")
              and c.get("field") not in _QUIET_FIELDS]
     if not shown:
         return None if row.action == "update" else row.summary
-    if row.target_type == "activity":
-        where = "活动信息"
-    else:
-        name = row.target_label.removeprefix(f"{act.title}·")
-        where = f"{_WHERE.get(row.target_type, '')}「{name}」"
-    return where + "：" + "；".join(
+    return _where(act, row) + "：" + "；".join(
         f"{c['label']}：{c['old'] or '（空）'}→{c['new'] or '（空）'}" for c in shown)
 
 
@@ -125,9 +133,12 @@ def notify_edit_changes(db: OrmSession, act: Activity, since: datetime) -> int:
         u = db.get(User, uid_)
         if u is None:
             continue
+        shown, rest = mine[:_MAX_LINES], len(mine) - _MAX_LINES
+        if rest > 0:
+            shown.append(f"……另有 {rest} 项改动，详见活动页的变更记录")
         msgcenter.send_user(db, u, "activity_changed",
                             data={"activity_id": act.id},
-                            activity=act.title, change_summary="\n".join(mine))
+                            activity=act.title, change_summary="\n".join(shown))
         n += 1
     return n
 

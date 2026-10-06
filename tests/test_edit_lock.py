@@ -265,7 +265,9 @@ def test_删掉有报名的场次_发布时告诉被取消的人(client, admin, 
 
     client.post(f"/api/staff/activities/{act.id}/publish-changes", headers=admin)
     got = _changed(db, w.id, act)
-    assert len(got) == 1 and "删除场次「下午场」" in got[0].content
+    # 发出去的是志愿者口径，不是留痕那句带「（强制，含 N 条报名记录）」的摘要
+    assert len(got) == 1 and "场次「下午场」已取消" in got[0].content
+    assert "强制" not in got[0].content and "报名记录" not in got[0].content
 
 
 def test_超时自动解冻也按人发出改动(client, admin, db, enrolled_activity):
@@ -292,6 +294,52 @@ def test_不在编辑态改活动信息照样即时通知(client, admin, db, enr
     assert r.status_code == 200, r.text
     got = _changed(db, u.id, act)
     assert len(got) == 1 and "明德楼" in got[0].content
+
+
+def test_改动太多时通知只写前几项(client, admin, db, enrolled_activity):
+    """编辑期间改几十处，一条通知念不完：只写前 8 项，余下指到变更记录。"""
+    from backend.notify import _MAX_LINES
+    act, shift, u = enrolled_activity
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    n = _MAX_LINES + 3
+    for i in range(n):
+        r = client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
+                         json={"note": f"第 {i} 次调整"})
+        assert r.status_code == 200, r.text
+    r = client.post(f"/api/staff/activities/{act.id}/publish-changes",
+                    headers=admin)
+    assert r.status_code == 200, r.text
+
+    got = _changed(db, u.id, act)
+    assert len(got) == 1
+    lines = got[0].content.splitlines()
+    body = [x for x in lines if x.startswith("场次「")]
+    assert len(body) == _MAX_LINES, got[0].content
+    assert f"另有 {n - _MAX_LINES} 项改动" in got[0].content
+    # 「结束编辑并发布」那条留痕也不该把全部改动拼进去
+    assert f"等共 {n} 项" in r.json()["summary"]
+
+
+def test_岗位字段超长被拦下(client, admin, db, enrolled_activity):
+    """库里是 String(256)：不拦就是插入时报错，管理者看到一个 500。"""
+    act, shift, _u = enrolled_activity
+    pos = shift.positions[0]
+    with editing(client, admin, act.id):
+        r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                         json={"needs_leader": True, "leader_task": "带" * 257})
+        assert r.status_code == 400 and "组长任务" in r.json()["detail"], r.text
+        r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                         json={"attire": "own", "attire_note": "白" * 257})
+        assert r.status_code == 400 and "服装备注" in r.json()["detail"], r.text
+        r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                         json={"name": "岗" * 129})
+        assert r.status_code == 400 and "岗位名" in r.json()["detail"], r.text
+        # 新建这条路由走 PositionBody 的 max_length，422
+        r = client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
+                        json={"name": "检录", "quota": 2,
+                              "pay_optional": True, "pay_note": "元" * 257,
+                              **POSITION_TEXT})
+        assert r.status_code == 422, r.text
 
 
 def test_生成过签到码的场次不能删(client, admin, db, enrolled_activity):

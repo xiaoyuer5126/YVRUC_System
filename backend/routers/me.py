@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import config
+from .. import enroll_logic as logic
 from .. import hours as hours_flow
 from ..database import db_session
 from ..deps import current_user
@@ -101,8 +102,10 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "excused": enr.excused, "excuse_reason": enr.excuse_reason,
         "seat_held": enr.seat_held,
         "is_leader": enr.is_leader,
-        # 组长任务：任命通知里发过一次，这里随时能翻回来
-        "leader_task": (st.leader_task if (enr.is_leader and st) else ""),
+        # 组长任务：任命通知里发过一次，这里随时能翻回来。一个岗位组共用一名
+        # 组长、也共用一份任务，所以按组取，不看他占的是组里哪个岗位
+        "leader_task": (logic.group_leader_task(logic.group_positions(db, st))
+                        if (enr.is_leader and st) else ""),
         "allow_reassign": enr.allow_reassign,
         "joined_at": iso_of(enr.joined_at),
         "confirm_deadline": iso_of(enr.confirm_deadline),

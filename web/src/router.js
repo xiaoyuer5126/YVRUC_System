@@ -78,8 +78,12 @@ router.beforeEach((to) => {
   const home = manageView ? '/manage' : '/square'
 
   // 已登录再打开登录页（收藏的链接、后退回来）：不再登一遍，带 next 就去 next，
-  // 否则去当前视角的首页
-  if (to.path === '/login' && auth.token) {
+  // 否则去当前视角的首页。
+  // signout 是注销自己发起的那一跳（见 MainLayout.onCommand）：那时令牌还没清
+  // 掉——先离开当前页再注销，不然页面拦截里点「保存并发布」必定 401。不放它
+  // 过去，这一跳会被重定向到首页，而重定向要以首页为新目标重走一遍导航，
+  // 失活页面的离开拦截就跑第二遍，弹窗弹两次
+  if (to.path === '/login' && auth.token && !to.query.signout) {
     const next = String(to.query.next || '')
     return /^\/(?!\/|login)/.test(next) ? next : home
   }

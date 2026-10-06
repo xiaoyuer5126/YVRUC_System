@@ -170,21 +170,19 @@ onMounted(() => {
 onUnmounted(() => clearInterval(timer))
 
 async function onCommand(cmd) {
-  // 先离开当前页、再注销：离开时页面可能要拦一下（活动管理页「改动还没发布」，
-  // 里面点「保存并发布」要带着令牌请求后端）。先注销的话那一下必定 401，
-  // 跳转被中止，人卡在一个已经退出了的页面上。拦截里选了留下，就什么都不做
   if (cmd === 'logout') {
     // 先离开当前页、再注销：离开时页面可能要拦一下（活动管理页「改动还没发布」，
     // 里面点「保存并发布」要带着令牌请求后端）。先注销的话那一下必定 401，
     // 跳转被中止，人卡在一个已经退出了的页面上。
-    // 只有被拦下（aborted）才算「留下」：人就在首页时，这条跳转会被守卫按
-    // 「已登录访问登录页 → 回首页」打回（duplicated），那不是拦截，照常注销；
-    // 注销后再补一次跳转，让人落在登录页，而不是一个登录态没了的旧页面
-    const failure = await router.push('/login')
+    // 带 signout 让守卫放这一跳直接去登录页：不带的话它会被「已登录访问登录页
+    // → 回首页」重定向，而重定向要重走一遍导航，离开拦截跑第二遍、弹窗弹两次。
+    // 只有被拦下（aborted）才算人选了「留下」，这时什么都不做
+    const failure = await router.push({ path: '/login', query: { signout: '1' } })
     if (isNavigationFailure(failure, NavigationFailureType.aborted)) return
     try { await api.post('/api/auth/logout', {}) } catch { /* 忽略 */ }
     clearAuth()
-    router.push('/login')
+    // 令牌清掉之后那个标记就没用了，从地址栏去掉
+    router.replace({ path: '/login' })
     return
   }
   if (cmd === 'profile') {
