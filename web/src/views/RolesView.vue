@@ -22,6 +22,8 @@
       <el-input v-model="q" placeholder="按姓名或学号搜索"
                 style="width:280px" clearable @keyup.enter="reload" @clear="reload" />
       <el-button type="primary" @click="reload">查询</el-button>
+      <!-- 批量：学号一行一个，添加/移除身份；骨干用不上（他们只认领成员） -->
+      <el-button v-if="!coreOnly" @click="openBatch">批量调整</el-button>
       <RefreshBar :load="load" :at="loadedAt" />
       <span class="dim">{{ coreOnly ? '只列本部门的成员' : headOnly ? '不搜索时只列本部门的人，添加新成员请搜索学号' : '不搜索时只列已有管理类身份的人' }}</span>
     </div>
@@ -148,6 +150,87 @@
         <el-button type="primary" :loading="dlg.busy" @click="save">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="bd.visible" title="批量调整身份" width="560">
+      <el-form label-width="88px">
+        <el-form-item label="操作">
+          <el-radio-group v-model="bd.action" @change="bd.preview = null">
+            <el-radio value="add">添加身份</el-radio>
+            <el-radio value="remove">移除身份</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="身份">
+          <el-radio-group v-model="bd.role" @change="bd.preview = null">
+            <el-radio value="qingxie">青协</el-radio>
+            <el-radio v-if="!headOnly" value="initiator">活动发起方</el-radio>
+          </el-radio-group>
+          <div class="dim">管理员与「学生」不批量：管理员逐个交接，学生由统一身份认证下发</div>
+        </el-form-item>
+        <template v-if="bd.action === 'add' && bd.role === 'qingxie'">
+          <el-form-item label="青协层级">
+            <el-radio-group v-model="bd.post" @change="bd.preview = null">
+              <el-radio value="member">部门成员</el-radio>
+              <el-radio value="core">部门骨干</el-radio>
+              <el-radio value="council" :disabled="headOnly">会长团</el-radio>
+            </el-radio-group>
+            <div class="dim">部长每个部门只有一位，请逐个设置</div>
+          </el-form-item>
+          <el-form-item v-if="bd.post !== 'council'" label="所属部门" required>
+            <el-select v-model="bd.deptId" placeholder="选择部门" style="width:100%"
+                       :disabled="headOnly">
+              <el-option v-for="d in depts" :key="d.id" :value="d.id" :label="d.name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="bd.post === 'member'" label="归属骨干" required>
+            <el-select v-model="bd.supervisorId" placeholder="选择本部门的骨干"
+                       style="width:100%" :disabled="!bd.deptId">
+              <el-option v-for="c in bdCores" :key="c.id" :value="c.id"
+                         :label="`${c.name}（${c.student_id}）`" />
+            </el-select>
+            <div v-if="bd.deptId && !bdCores.length" class="dim">
+              该部门还没有骨干，请先设置一位。
+            </div>
+          </el-form-item>
+        </template>
+        <el-form-item label="学号" required>
+          <el-input v-model="bd.text" type="textarea" :rows="6"
+                    placeholder="一行一个学号" />
+          <div class="dim">已识别 {{ batchIds.length }} 个学号（重复的按一个算）</div>
+        </el-form-item>
+      </el-form>
+      <!-- 预览结果：执行前先看一遍谁会变、谁会被跳过及原因 -->
+      <template v-if="bd.preview">
+        <div class="batch-out">
+          <div><b>将调整 {{ bd.preview.updated.length }} 人</b></div>
+          <div v-for="x in bd.preview.updated.slice(0, 8)" :key="x.student_id" class="dim">
+            · {{ x.name }}（{{ x.student_id }}）：{{ x.change }}
+          </div>
+          <div v-if="bd.preview.updated.length > 8" class="dim">
+            …其余 {{ bd.preview.updated.length - 8 }} 人
+          </div>
+          <template v-if="bd.preview.skipped.length">
+            <div><b>跳过 {{ bd.preview.skipped.length }} 人</b></div>
+            <div v-for="x in bd.preview.skipped.slice(0, 8)" :key="x.student_id" class="dim">
+              · {{ x.name }}（{{ x.student_id }}）：{{ x.reason }}
+            </div>
+            <div v-if="bd.preview.skipped.length > 8" class="dim">
+              …其余 {{ bd.preview.skipped.length - 8 }} 人
+            </div>
+          </template>
+          <template v-if="bd.preview.not_found.length">
+            <div><b>没找到 {{ bd.preview.not_found.length }} 个学号</b></div>
+            <div class="dim">· {{ bd.preview.not_found.slice(0, 12).join('、') }}</div>
+          </template>
+        </div>
+      </template>
+      <template #footer>
+        <el-button @click="bd.visible = false">取消</el-button>
+        <el-button :loading="bd.busy" @click="runBatch(true)">预览</el-button>
+        <el-button type="primary" :loading="bd.busy"
+                   :disabled="!bd.preview || !bd.preview.updated.length"
+                   @click="runBatch(false)">确认执行</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -249,7 +332,55 @@ async function save() {
     load()
   } finally { d.busy = false }
 }
+
+// —— 批量调整：学号一行一个，先预览（不落库）再执行 ——
+// 逐人校验在服务端：没有权限、会变成孤儿活动的记进「跳过」并写明原因，
+// 不连累同批其他人；执行时逐人写审计
+const bd = ref({ visible: false, action: 'add', role: 'qingxie', post: 'member',
+                 deptId: '', supervisorId: '', text: '', busy: false, preview: null })
+const batchIds = computed(() =>
+  bd.value.text.split('\n').map(s => s.trim()).filter(Boolean))
+
+const bdCores = ref([])
+async function loadBdCores() {
+  bdCores.value = bd.value.deptId
+    ? await api.get(`/api/staff/roles/cores?department_id=${bd.value.deptId}`)
+    : []
+}
+watch(() => bd.value.deptId, loadBdCores)
+watch(() => bd.value.text, () => { bd.value.preview = null })
+
+function openBatch() {
+  bd.value = { visible: true, action: 'add', role: 'qingxie', post: 'member',
+               // 部长只能设本部门：部门就是他自己的，不用选
+               deptId: headOnly.value ? (auth.user?.department_id || '') : '',
+               supervisorId: '', text: '', busy: false, preview: null }
+  loadBdCores()
+}
+
+async function runBatch(dry) {
+  const b = bd.value
+  if (!batchIds.value.length) return ElMessage.warning('请粘贴学号，一行一个')
+  b.busy = true
+  try {
+    const d = await api.post('/api/staff/roles/batch', {
+      action: b.action, role: b.role, qingxie_post: b.post,
+      department_id: b.deptId || '', supervisor_id: b.supervisorId || '',
+      student_ids: batchIds.value, dry_run: dry })
+    b.preview = d
+    if (!dry) {
+      ElMessage.success(`已调整 ${d.updated.length} 人`
+        + (d.skipped.length ? `，跳过 ${d.skipped.length} 人` : '')
+        + (d.not_found.length ? `，${d.not_found.length} 个学号没找到` : ''))
+      load()
+    }
+  } finally { b.busy = false }
+}
 </script>
 
 <style scoped>
+.batch-out {
+  margin-top: 8px; padding-top: 8px; line-height: 1.7;
+  border-top: 1px dashed var(--el-border-color-lighter);
+}
 </style>

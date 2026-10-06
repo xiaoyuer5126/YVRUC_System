@@ -233,3 +233,95 @@ def test_改身份要留痕(client, admin, db, take_student):
     assert row is not None and "调整身份" in row.summary
     assert "活动发起方" in row.summary
     assert row.visible is False, "权限变更不对志愿者公开"
+
+
+# ======================= 批量调整身份 =======================
+
+def test_批量添加与移除青协身份(client, admin, db, take_student):
+    """预览不落库；执行时身份、层级、部门、归属骨干一次落全；撤下时清干净。"""
+    dept = db.query(Department).first()
+    boss = student_row(db, take_student())
+    boss.roles, boss.qingxie_post, boss.department_id = \
+        ["student", "qingxie"], "core", dept.id
+    db.commit()
+    s1, s2 = take_student(), take_student()
+    body = {"action": "add", "role": "qingxie", "qingxie_post": "member",
+            "department_id": dept.id, "supervisor_id": boss.id,
+            "student_ids": [s1, s2, "9999999999"]}
+
+    r = client.post("/api/staff/roles/batch", headers=admin,
+                    json={**body, "dry_run": True})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert {x["student_id"] for x in d["updated"]} == {s1, s2}
+    assert d["not_found"] == ["9999999999"] and d["skipped"] == []
+    db.expire_all()
+    assert "qingxie" not in (student_row(db, s1).roles or []), "预览不落库"
+
+    r = client.post("/api/staff/roles/batch", headers=admin, json=body)
+    assert r.status_code == 200 and len(r.json()["updated"]) == 2, r.text
+    db.expire_all()
+    u1 = student_row(db, s1)
+    assert set(u1.roles) == {"student", "qingxie"}
+    assert (u1.qingxie_post, u1.department_id, u1.supervisor_id) == \
+        ("member", dept.id, boss.id)
+
+    r = client.post("/api/staff/roles/batch", headers=admin,
+                    json={"action": "remove", "role": "qingxie",
+                          "student_ids": [s1, s2]})
+    assert r.status_code == 200 and len(r.json()["updated"]) == 2
+    db.expire_all()
+    u1 = student_row(db, s1)
+    assert u1.roles == ["student"] and u1.department_id is None
+
+
+def test_批量调整的边界(client, admin, db, take_student):
+    """管理员/学生不批量，部长不批量；部长批量时越界的人跳过并写明原因。"""
+    dept = db.query(Department).first()
+    r = client.post("/api/staff/roles/batch", headers=admin,
+                    json={"action": "add", "role": "admin", "student_ids": ["x"]})
+    assert r.status_code == 400 and "批量只支持" in r.json()["detail"]
+    assert client.post("/api/staff/roles/batch", headers=admin,
+                       json={"action": "eat", "role": "initiator",
+                             "student_ids": ["x"]}).status_code == 400
+    assert client.post("/api/staff/roles/batch", headers=admin,
+                       json={"action": "add", "role": "qingxie",
+                             "student_ids": []}).status_code == 400
+    # 批量设部长：一个部门只有一位，谁顶谁说不清，逐个来
+    r = client.post("/api/staff/roles/batch", headers=admin,
+                    json={"action": "add", "role": "qingxie", "qingxie_post": "head",
+                          "department_id": dept.id, "student_ids": ["x"]})
+    assert r.status_code == 400 and "逐个设置" in r.json()["detail"]
+
+    head_dept = db.query(Department).filter(Department.name == "对外联络部").one()
+    head = db.query(User).filter(User.department_id == head_dept.id,
+                                 User.qingxie_post == "head").one()
+    core = db.query(User).filter(User.department_id == head_dept.id,
+                                 User.qingxie_post == "core").first()
+    assert core is not None
+    outsider = student_row(db, take_student())
+    outsider.roles, outsider.qingxie_post = ["student", "qingxie"], "member"
+    outsider.department_id = db.query(Department).filter(
+        Department.id != head_dept.id).first().id
+    db.commit()
+
+    h = login(client, head.student_id)
+    fresh = take_student()
+    r = client.post("/api/staff/roles/batch", headers=h,
+                    json={"action": "add", "role": "qingxie", "qingxie_post": "member",
+                          "department_id": head_dept.id, "supervisor_id": core.id,
+                          "student_ids": [fresh]})
+    assert r.status_code == 200 and len(r.json()["updated"]) == 1, r.text
+    db.expire_all()
+    assert student_row(db, fresh).department_id == head_dept.id
+
+    r = client.post("/api/staff/roles/batch", headers=h,
+                    json={"action": "remove", "role": "qingxie",
+                          "student_ids": [outsider.student_id, fresh]})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert [x["student_id"] for x in d["updated"]] == [fresh]
+    assert d["skipped"][0]["student_id"] == outsider.student_id
+    assert "别的部门" in d["skipped"][0]["reason"]
+    db.expire_all()
+    assert "qingxie" in student_row(db, outsider.student_id).roles, "跳过的人不动"

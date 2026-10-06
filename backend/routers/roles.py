@@ -133,6 +133,26 @@ def _check_supervisor(db: OrmSession, target: User, body: "RoleBody",
     return boss.id
 
 
+def _audit_role_change(db: OrmSession, actor: User, target: User,
+                       before: tuple, after: tuple,
+                       *, prefix: str = "调整身份：") -> None:
+    """身份、层级、部门有变化就留一条审计；没变化不写。"""
+    if before == after:
+        return
+    label = lambda rs: "、".join(ROLE_LABELS.get(r, r) for r in rs) or "无"
+    parts = [f"身份 {label(before[0])} → {label(after[0])}"]
+    if before[1] != after[1]:
+        parts.append(f"青协层级 {User.POST_LABELS.get(before[1], before[1])}"
+                     f" → {User.POST_LABELS.get(after[1], after[1])}")
+    if before[2] != after[2]:
+        names = {d.id: d.name for d in db.query(Department).all()}
+        parts.append(f"部门 {names.get(before[2], '无')} → {names.get(after[2], '无')}")
+    audit_log(db, actor=actor, action="update", target_type="user",
+              target_id=target.id,
+              target_label=f"{target.name}（{target.student_id}）",
+              summary=prefix + "；".join(parts))
+
+
 def _row(u: User, me: User, depts: dict[str, str]) -> dict:
     return {
         "id": u.id, "student_id": u.student_id, "name": u.name,
@@ -278,19 +298,145 @@ def set_roles(user_id: str, body: RoleBody,
         target.supervisor_id = None
 
     after = (target.roles, target.qingxie_post, target.department_id)
-    if before != after:
-        label = lambda rs: "、".join(ROLE_LABELS.get(r, r) for r in rs) or "无"
-        parts = [f"身份 {label(before[0])} → {label(after[0])}"]
-        if before[1] != after[1]:
-            parts.append(f"青协层级 {User.POST_LABELS.get(before[1], before[1])}"
-                         f" → {User.POST_LABELS.get(after[1], after[1])}")
-        if before[2] != after[2]:
-            names = {d.id: d.name for d in db.query(Department).all()}
-            parts.append(f"部门 {names.get(before[2], '无')} → "
-                         f"{names.get(after[2], '无')}")
-        audit_log(db, actor=user, action="update", target_type="user",
-                  target_id=target.id,
-                  target_label=f"{target.name}（{target.student_id}）",
-                  summary="调整身份：" + "；".join(parts))
+    _audit_role_change(db, user, target, before, after)
     db.commit()
     return {"ok": True}
+
+
+# ======================= 批量调整身份 =======================
+
+BATCH_MAX = 200
+# 批量能设的青协层级：部长每个部门只有一位，批量设谁顶掉谁说不清，逐个来
+BATCH_GRANTABLE_POSTS = ("council", "core", "member")
+
+
+class BatchRoleBody(BaseModel):
+    action: str                     # add / remove
+    role: str                       # qingxie / initiator
+    qingxie_post: str = "member"    # 添加青协时：council / core / member
+    department_id: str = ""
+    supervisor_id: str = ""         # 添加成员时：归属哪位骨干
+    student_ids: list[str] = []
+    dry_run: bool = False           # 预览：走一遍全部检查，不落库
+
+
+def _batch_change(db: OrmSession, actor: User, target: User,
+                  body: BatchRoleBody) -> tuple[tuple, tuple]:
+    """算出批量给这个人的目标状态，并过一遍单条编辑的全部校验。
+
+    校验不过抛 HTTPException——调用方记成「跳过」并写明原因，不连累同批
+    其他人。返回 (before, after)，after 的第四项是归属骨干（None = 无）。
+    """
+    roles = list(target.roles or [])
+    if body.action == "add":
+        if body.role in roles:
+            raise HTTPException(400, f"已经是「{ROLE_LABELS.get(body.role)}」身份")
+        roles.append(body.role)
+    else:
+        if body.role not in roles:
+            raise HTTPException(400, f"没有「{ROLE_LABELS.get(body.role)}」身份")
+        roles = [r for r in roles if r != body.role]
+        if not roles:
+            raise HTTPException(400, "至少要保留一个身份，先给他别的身份再撤")
+    post = target.qingxie_post or "member"
+    dept_id = target.department_id or None
+    supervisor = target.supervisor_id or None
+    if body.role == "qingxie" and body.action == "add":
+        post = body.qingxie_post
+        dept_id = None if post == "council" else (body.department_id.strip() or None)
+        supervisor = ((body.supervisor_id.strip() or None)
+                      if post == "member" else None)
+    elif body.role == "qingxie":
+        # 撤下青协：层级、部门、归属一并清掉（同单条编辑）
+        post, dept_id, supervisor = "member", None, None
+
+    _guard_self_demotion(actor, target, roles)
+    _guard_head_scope(actor, target, roles, post, dept_id)
+    rb = RoleBody(roles=roles, qingxie_post=post,
+                  department_id=dept_id or "", supervisor_id=supervisor or "")
+    _guard_core_scope(actor, target, rb)
+    if body.role == "qingxie" and body.action == "add" and post == "member":
+        supervisor = _check_supervisor(db, target, rb, dept_id)
+    orphans = _orphaned_activities(db, target, roles, post)
+    if orphans:
+        raise HTTPException(
+            409, "还是这些未结束活动里唯一能操作的管理者："
+                 + "、".join(orphans[:3])
+                 + (f" 等 {len(orphans)} 个" if len(orphans) > 3 else "")
+                 + "。请先为它们添加其他管理者")
+    before = (list(target.roles or []), target.qingxie_post, target.department_id)
+    return before, (roles, post, dept_id, supervisor)
+
+
+def _batch_text(body: BatchRoleBody, after: tuple, names: dict) -> str:
+    """预览里一行「将怎么变」。"""
+    _roles, post, dept_id, _sup = after
+    if body.action == "remove":
+        return f"撤下「{ROLE_LABELS.get(body.role)}」"
+    if body.role == "initiator":
+        return "添加「活动发起方」"
+    text = f"添加「青协」· {User.POST_LABELS.get(post, post)}"
+    if dept_id:
+        text += f" · {names.get(dept_id, '')}"
+    return text
+
+
+@router.post("/roles/batch")
+def batch_roles(body: BatchRoleBody, db: OrmSession = Depends(db_session),
+                user: User = Depends(require_role_manager)):
+    """按学号批量添加 / 移除身份，一行一个学号。
+
+    先预览（dry_run=true）再执行，两次都逐人过单条编辑的同一套校验：
+    不满足条件的（跨部门、目标是部长、会变成孤儿活动等）记进 skipped 并写明
+    原因，不连累同批其他人；执行时逐人写审计，同一个事务提交。
+    """
+    if body.action not in ("add", "remove"):
+        raise HTTPException(400, "操作只能是 添加 / 移除")
+    if body.role not in ("qingxie", "initiator"):
+        raise HTTPException(400, "批量只支持「青协」与「活动发起方」两个身份；"
+                                 "管理员、学生不批量")
+    ids = list(dict.fromkeys(s.strip() for s in body.student_ids if s.strip()))
+    if not ids:
+        raise HTTPException(400, "请填写学号，一行一个")
+    if len(ids) > BATCH_MAX:
+        raise HTTPException(400, f"一次最多 {BATCH_MAX} 个学号（收到 {len(ids)} 个）")
+    if body.action == "add" and body.role == "qingxie":
+        if body.qingxie_post not in BATCH_GRANTABLE_POSTS:
+            raise HTTPException(400, "批量只能设 会长团 / 骨干 / 成员；"
+                                     "部长每个部门只有一位，请逐个设置")
+        dept_id = body.department_id.strip() or None
+        if body.qingxie_post != "council" and not dept_id:
+            raise HTTPException(400, "请选择部门")
+        if dept_id and db.get(Department, dept_id) is None:
+            raise HTTPException(404, "部门不存在")
+
+    users = {u.student_id: u for u in
+             db.query(User).filter(User.student_id.in_(ids)).all()}
+    names = {d.id: d.name for d in db.query(Department).all()}
+    updated, skipped = [], []
+    for sid in ids:
+        u = users.get(sid)
+        if u is None:
+            continue
+        try:
+            before, after = _batch_change(db, user, u, body)
+        except HTTPException as e:
+            skipped.append({"student_id": sid, "name": u.name,
+                            "reason": str(e.detail)})
+            continue
+        if not body.dry_run:
+            roles, post, dept_id, supervisor = after
+            u.roles = roles
+            if "qingxie" in roles:
+                u.qingxie_post, u.department_id = post, dept_id
+                u.supervisor_id = supervisor
+            else:
+                u.qingxie_post, u.department_id, u.supervisor_id = "member", None, None
+            _audit_role_change(db, user, u, before, after[:3],
+                               prefix="批量调整身份：")
+        updated.append({"student_id": sid, "name": u.name,
+                        "change": _batch_text(body, after, names)})
+    if not body.dry_run:
+        db.commit()
+    return {"updated": updated, "skipped": skipped,
+            "not_found": [s for s in ids if s not in users]}
