@@ -135,7 +135,7 @@
             <div class="dim" style="margin-top:4px">已签退 {{ board.checked_out }} 人</div>
             <div v-if="board.excused" class="dim">已请假 {{ board.excused }} 人（不计入应到岗）</div>
             <el-progress type="circle" :percentage="pct" :width="86"
-                         :color="pct === 100 ? '#67c23a' : '#9e2235'" style="margin-top:8px" />
+                         :color="pct === 100 ? '#67c23a' : '#ae0b2a'" style="margin-top:8px" />
           </el-card>
         </el-col>
         <el-col :span="18">
@@ -151,7 +151,7 @@
                 </div>
                 <el-progress :percentage="Math.min(100, Math.round(s.checked / Math.max(1, s.expected) * 100))"
                              :stroke-width="7" :show-text="false"
-                             :color="s.checked >= s.expected ? '#67c23a' : '#9e2235'" />
+                             :color="s.checked >= s.expected ? '#67c23a' : '#ae0b2a'" />
               </div>
             </div>
           </el-card>

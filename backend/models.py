@@ -675,6 +675,9 @@ class Position(Base):
     training_note: Mapped[str] = mapped_column(Text, default="")
     # 需要组长：由管理者在名单里指定；报名时志愿者可表态愿意担任，供参考
     needs_leader: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 组长任务：组长要带队做什么（带队进场、清点人数……）。勾了「需要组长」
+    # 的岗位必填，指定组长时随任命通知一起发给他
+    leader_task: Mapped[str] = mapped_column(String(256), default="")
     # 志愿服装：none 不需要 / issued 统一发放（进领取归还台账）/ own 志愿者自备。
     # 后两种必须带备注（发放地点时间，或自备的样式要求），报名时就要让人看到。
     attire: Mapped[str] = mapped_column(String(8), default="none")

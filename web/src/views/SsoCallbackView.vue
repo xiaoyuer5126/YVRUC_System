@@ -65,7 +65,7 @@ function backToLogin() { router.replace('/login') }
 .cb-wrap {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
   background:
-    radial-gradient(1000px 500px at 15% -10%, rgba(158,34,53,.18), transparent),
+    radial-gradient(1000px 500px at 15% -10%, rgba(174,11,42,.18), transparent),
     radial-gradient(900px 500px at 110% 110%, rgba(31,90,168,.12), transparent),
     #f5f6f8;
 }

@@ -150,7 +150,7 @@ onMounted(() => {
   if (props.radius) {
     circle = L.circle([props.lat, props.lng], {
       radius: props.radius,
-      color: '#9e2235', weight: 1.5, fillColor: '#9e2235', fillOpacity: 0.12,
+      color: '#ae0b2a', weight: 1.5, fillColor: '#ae0b2a', fillOpacity: 0.12,
     }).addTo(map)
   }
   if (props.pickable) {

@@ -1,14 +1,14 @@
 /* 志愿服务管理平台 · 全局样式（人大红主题） */
 :root {
-  --ruc-red: #9e2235;
-  --ruc-red-light: #c04a5c;
-  --el-color-primary: #9e2235;
-  --el-color-primary-light-3: #b45263;
-  --el-color-primary-light-5: #cc808d;
-  --el-color-primary-light-7: #e3adb6;
-  --el-color-primary-light-8: #eec7cd;
-  --el-color-primary-light-9: #f7e3e7;
-  --el-color-primary-dark-2: #7e1b2a;
+  --ruc-red: #ae0b2a;
+  --ruc-red-light: #c6546a;
+  --el-color-primary: #ae0b2a;
+  --el-color-primary-light-3: #c6546a;
+  --el-color-primary-light-5: #d78595;
+  --el-color-primary-light-7: #e7b6bf;
+  --el-color-primary-light-8: #efced4;
+  --el-color-primary-light-9: #f7e7ea;
+  --el-color-primary-dark-2: #8b0922;
   /* 宽屏上最小的一档字号往上提一号：12px 的辅助文字（标签、小号表格、
      dim 说明）在桌面浏览器里偏小。窄屏保持 12px，那边寸土寸金。 */
   --el-font-size-extra-small: 13px;
@@ -134,7 +134,7 @@ p { margin: 8px 0; }
 .act-card:hover { box-shadow: 0 8px 24px rgba(31,35,41,.10); transform: translateY(-2px); }
 .act-cover {
   height: 96px; position: relative; color: #fff; padding: 14px 18px;
-  background: linear-gradient(120deg, var(--h1, #9e2235), var(--h2, #c04a5c));
+  background: linear-gradient(120deg, var(--h1, #ae0b2a), var(--h2, #c6546a));
 }
 .act-cover .title { font-size: 17px; font-weight: 600; line-height: 1.35;
   text-shadow: 0 1px 2px rgba(0,0,0,.15);
@@ -144,7 +144,7 @@ p { margin: 8px 0; }
   font-size: 13px; margin-top: 8px; }
 .quota-bar { margin-top: 4px; }
 
-.hue-0 { --h1:#9e2235; --h2:#c04a5c; }
+.hue-0 { --h1:#ae0b2a; --h2:#c6546a; }
 .hue-1 { --h1:#1f5aa8; --h2:#3f7fd1; }
 .hue-2 { --h1:#1e7a52; --h2:#33a173; }
 .hue-3 { --h1:#7a4bb3; --h2:#9a70cc; }

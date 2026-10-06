@@ -149,7 +149,7 @@ async function doCheckin() {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
   padding: 16px;
   background:
-    radial-gradient(800px 400px at 80% -10%, rgba(158,34,53,.15), transparent), #f5f6f8;
+    radial-gradient(800px 400px at 80% -10%, rgba(174,11,42,.15), transparent), #f5f6f8;
 }
 .scan-card { width: 420px; max-width: 100%; border-radius: 16px;
              text-align: center; padding: 8px; }

@@ -5,7 +5,10 @@
 <template>
   <template v-if="enabled">
     <el-tooltip :content="title" placement="left">
-      <button type="button" class="ai-fab" :aria-label="title" @click="open = true">
+      <button type="button" class="ai-fab" :class="{ grabbing: isDragging }"
+              :style="fabStyle" :aria-label="title"
+              @pointerdown="onDown" @pointermove="onMove"
+              @pointerup="onUp" @pointercancel="onUp" @click="onClick">
         <img :src="aiIcon" alt="" />
       </button>
     </el-tooltip>
@@ -44,7 +47,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { AI_FILE_ACCEPT, AI_FILE_LIMIT, AI_FILE_TIP, aiEnabled } from '../ai'
 import { useNarrow } from '../composables/useNarrow'
@@ -65,7 +68,80 @@ const files = ref([])          // el-upload 的文件列表，真正的 File 在
 const busy = ref(false)
 const result = ref(null)
 
-onMounted(async () => { enabled.value = await aiEnabled() })
+// —— 悬浮按钮：可拖到不挡事的位置，松手吸附到最近的一侧 ——
+// 固定在一个角上会压住底下的按钮（手机上尤其明显）。位置记在本机，
+// 换页、刷新都还在；窗口缩放时按边界收回可视区
+const SIZE = 48
+const POS_KEY = 'yvruc_ai_fab'
+const pos = ref(null)         // vuecheck: script-only，按钮的 left/top（px）；模板只通过 fabStyle 读
+const isDragging = ref(false)
+let drag = null               // 按下时的起点；松手清空
+let dragEndAt = 0             // 刚拖完的那一下不算点击
+
+const margin = () => (window.innerWidth <= 860 ? 16 : 24)
+const clamp = (p) => {
+  const m = margin()
+  return { x: Math.min(Math.max(p.x, m), window.innerWidth - SIZE - m),
+           y: Math.min(Math.max(p.y, m), window.innerHeight - SIZE - m) }
+}
+const corner = () => {
+  const m = margin()
+  return { x: window.innerWidth - SIZE - m, y: window.innerHeight - SIZE - m }
+}
+const stored = () => {
+  try {
+    const p = JSON.parse(localStorage.getItem(POS_KEY) || 'null')
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) return p
+  } catch { /* 存坏了就用默认角 */ }
+  return null
+}
+const fabStyle = computed(() => {
+  const p = pos.value || corner()
+  return { left: `${p.x}px`, top: `${p.y}px` }
+})
+
+function onDown(e) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  const cur = pos.value || corner()
+  drag = { id: e.pointerId, px: e.clientX, py: e.clientY, x: cur.x, y: cur.y, moved: false }
+  e.currentTarget.setPointerCapture?.(e.pointerId)
+}
+
+function onMove(e) {
+  if (!drag || e.pointerId !== drag.id) return
+  const dx = e.clientX - drag.px, dy = e.clientY - drag.py
+  if (!drag.moved && Math.hypot(dx, dy) < 4) return   // 手一抖不算拖
+  if (!drag.moved) { drag.moved = true; isDragging.value = true }
+  pos.value = clamp({ x: drag.x + dx, y: drag.y + dy })
+}
+
+function onUp(e) {
+  if (!drag || e.pointerId !== drag.id) return
+  const moved = drag.moved
+  drag = null
+  isDragging.value = false
+  if (!moved) return
+  // 松手吸附到左右最近的一侧，纵向保持
+  const m = margin()
+  pos.value = { x: pos.value.x + SIZE / 2 < window.innerWidth / 2
+                   ? m : window.innerWidth - SIZE - m, y: pos.value.y }
+  localStorage.setItem(POS_KEY, JSON.stringify(pos.value))
+  dragEndAt = Date.now()
+}
+
+function onClick() {
+  if (Date.now() - dragEndAt < 300) return   // 刚拖完的那一下不打开抽屉
+  open.value = true
+}
+
+function onResize() { pos.value = clamp(pos.value || corner()) }
+
+onMounted(async () => {
+  pos.value = clamp(stored() || corner())
+  window.addEventListener('resize', onResize)
+  enabled.value = await aiEnabled()
+})
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
 async function go() {
   busy.value = true
@@ -87,17 +163,17 @@ defineExpose({ reset })
 
 <style scoped>
 .ai-fab {
-  position: fixed; right: 24px; bottom: 24px; z-index: 1000;
-  width: 48px; height: 48px; border-radius: 50%; border: none; cursor: pointer;
+  position: fixed; z-index: 1000;   /* left/top 由拖拽逻辑给 */
+  width: 48px; height: 48px; border-radius: 50%; border: none; cursor: grab;
+  touch-action: none; user-select: none;
+  transition: left .18s ease, top .18s ease;   /* 松手吸附的那一下 */
   /* 人大红为主、左上角亮一档的渐变；图标原图是浅灰线稿，滤镜提成纯白才衬得住 */
   background: linear-gradient(135deg, #d05a70 0%, var(--ruc-red) 78%);
-  box-shadow: 0 4px 12px rgba(158, 34, 53, .35);
+  box-shadow: 0 4px 12px rgba(174, 11, 42, .35);
   display: flex; align-items: center; justify-content: center;
 }
+.ai-fab.grabbing { transition: none; cursor: grabbing; }
 .ai-fab img { width: 26px; height: 26px; display: block;
               filter: brightness(0) invert(1); }
-.ai-fab:hover { background: linear-gradient(135deg, #dc6b80 0%, #b02540 78%); }
-@media (max-width: 860px) {
-  .ai-fab { right: 16px; bottom: 16px; }
-}
+.ai-fab:hover { background: linear-gradient(135deg, #dc6b80 0%, #c00e35 78%); }
 </style>

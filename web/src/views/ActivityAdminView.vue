@@ -446,7 +446,7 @@
           <el-button type="primary" plain @click="openNotify">
             <el-icon><Bell /></el-icon>&nbsp;发送通知
           </el-button>
-          <!-- 用主题色（人大红）而不是 danger：平台把 primary 覆盖成了 #9e2235，
+          <!-- 用主题色（人大红）而不是 danger：平台把 primary 覆盖成了 #ae0b2a，
                danger 那个亮红在这一屏里显得突兀 -->
           <el-button v-if="formCount" type="primary" plain @click="openAnswersExport"
                      style="margin-left:auto">
@@ -1460,23 +1460,30 @@
             <el-radio value="issued">统一发放</el-radio>
             <el-radio value="own">志愿者自备</el-radio>
           </el-radio-group>
-          <el-input v-if="stationForm.attire !== 'none'" v-model="stationForm.attire_note"
-                    style="margin-top:8px"
-                    :placeholder="stationForm.attire === 'issued'
-                      ? '领取/归还方式（必填）：如 活动前一天 8:00 在 学活124 领取'
-                      : '服装备注（必填）：如 白色上衣、深色长裤、运动鞋'" />
           <div class="dim">统一发放可在「志愿服装」页扫码或手动登记领取与归还</div>
+        </el-form-item>
+        <!-- 三处备注出现即必填：左侧红星，saveStation 与后端各拦一道 -->
+        <el-form-item v-if="stationForm.attire !== 'none'" label="服装备注" required>
+          <el-input v-model="stationForm.attire_note"
+                    :placeholder="stationForm.attire === 'issued'
+                      ? '领取/归还方式：如 活动前一天 8:00 在 学活124 领取'
+                      : '样式要求：如 白色上衣、深色长裤、运动鞋'" />
         </el-form-item>
         <el-form-item label="报酬方式">
           <el-checkbox v-model="stationForm.pay_optional">本岗位可选劳务</el-checkbox>
-          <el-input v-if="stationForm.pay_optional" v-model="stationForm.pay_note"
-                    style="margin-top:8px"
-                    placeholder="劳务备注（必填）：如 60元/小时，活动后一周内发放" />
           <div class="dim">按需勾选。若勾选，志愿者确认时长时选择报酬方式，劳务与时长二选一</div>
+        </el-form-item>
+        <el-form-item v-if="stationForm.pay_optional" label="劳务备注" required>
+          <el-input v-model="stationForm.pay_note"
+                    placeholder="标准与发放方式：如 60元/小时，活动后一周内发放" />
         </el-form-item>
         <el-form-item label="组长">
           <el-checkbox v-model="stationForm.needs_leader">本组需要一名组长</el-checkbox>
           <div class="dim">在「志愿者管理」页面指定，报名时志愿者可表态供你参考。</div>
+        </el-form-item>
+        <el-form-item v-if="stationForm.needs_leader" label="组长任务" required>
+          <el-input v-model="stationForm.leader_task"
+                    placeholder="组长要带队做什么：如 带队进场、清点人数、结束后对账" />
         </el-form-item>
         <el-form-item label="条件要求">
           <div class="two-col">
@@ -2380,6 +2387,7 @@ function openStation(st, g) {
   stationForm.value = st ? {
     name: st.name, location: st.location, quota: st.quota,
     waitlist_quota: st.waitlist_quota, needs_leader: st.needs_leader,
+    leader_task: st.leader_task || '',
     attire: st.attire || 'none', attire_note: st.attire_note || '',
     pay_optional: !!st.pay_optional, pay_note: st.pay_note || '',
     group_name: st.group_name || '',
@@ -2389,6 +2397,7 @@ function openStation(st, g) {
     training_note: st.training_note,
   } : {
     name: '', location: '', quota: 2, waitlist_quota: 3, needs_leader: false,
+    leader_task: '',
     attire: 'none', attire_note: '',
     pay_optional: false, pay_note: '',
     group_name: '',
@@ -2416,6 +2425,7 @@ async function saveStation() {
     return ElMessage.warning('请填写服装备注')
   }
   if (f.pay_optional && !f.pay_note?.trim()) return ElMessage.warning('请填写劳务备注')
+  if (f.needs_leader && !f.leader_task?.trim()) return ElMessage.warning('请填写组长任务')
   savingStation.value = true
   try {
     const tags = {}
@@ -2424,6 +2434,7 @@ async function saveStation() {
     const body = {
       name: f.name, quota: f.quota, location: f.location,
       waitlist_quota: f.waitlist_quota, needs_leader: f.needs_leader,
+      leader_task: f.needs_leader ? f.leader_task : '',
       attire: f.attire, attire_note: f.attire === 'none' ? '' : f.attire_note,
       pay_optional: !!f.pay_optional, pay_note: f.pay_optional ? f.pay_note : '',
       group_name: f.group_name || '',

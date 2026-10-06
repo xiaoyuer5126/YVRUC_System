@@ -113,7 +113,7 @@ function extras(p) {
     p.location && `地点：${p.location}`,
     p.position_requirement && `岗位要求：${p.position_requirement}`,
     p.training_note && `培训：${p.training_note}`,
-    p.needs_leader && '需要组长',
+    p.needs_leader && `组长任务：${p.leader_task}`,
     p.attire !== 'none' && `志愿服装：${ATTIRE[p.attire]}（${p.attire_note}）`,
     p.pay_optional && `报酬方式：可选劳务（${p.pay_note}）`,
     tagText(p.requirement_tags) && `条件：${tagText(p.requirement_tags)}`,
@@ -143,6 +143,7 @@ function problem() {
     for (const p of g.positions) {
       if (!p.name.trim()) return `「${g.name}」里有岗位没写名字`
       if (!p.service_task.trim()) return `请填写岗位「${p.name}」的服务任务`
+      if (p.needs_leader && !p.leader_task?.trim()) return `请给岗位「${p.name}」写组长任务`
     }
     for (const a of g.attached) {
       if (!a.name.trim()) return `「${g.name}」里有培训/彩排没写名字`

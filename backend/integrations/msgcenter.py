@@ -75,6 +75,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "您已成为岗位组长｜{activity}",
         "您在「{activity}」已被负责人选为岗位「{position}」组长。\n"
         "时间：{position_time}\n地点：{position_loc}\n"
+        "组长任务：{leader_task}\n"
         "请提前与负责人对接现场安排。"),
     # 补招：管理者把人直接加进场次。场次还没结束是叫他来，结束了是事后补登记
     "walkin_added": (

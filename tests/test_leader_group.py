@@ -1,7 +1,7 @@
 """岗位组：同组岗位共用一名组长。"""
 from __future__ import annotations
 
-from backend.models import Enrollment, Position, uid
+from backend.models import Enrollment, Position, User, uid
 from conftest import ADMIN, POSITION_TEXT, login
 
 
@@ -53,6 +53,42 @@ def _enrolled(db, *positions):
             .filter(Enrollment.position_id.in_([p.id for p in positions]),
                     Enrollment.status == "enrolled")
             .order_by(Enrollment.joined_at).all())
+
+
+def test_需要组长就必须写组长任务(client, admin, db, open_group):
+    """任务说明是发给组长的：勾了不写，等于让他自己猜。"""
+    from conftest import editing
+
+    act, g = open_group(2)
+    pos_id = g.test_position_id
+    with editing(client, admin, act.id):
+        r = client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
+                         json={"needs_leader": True})
+        assert r.status_code == 400 and "组长任务" in r.json()["detail"]
+        r = client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
+                         json={"needs_leader": True,
+                               "leader_task": "带队进场、清点人数"})
+        assert r.status_code == 200, r.text
+
+
+def test_任命组长通知带上组长任务(client, admin, db, enrolled_activity,
+                                 take_student):
+    """任命时把任务一并告诉他；「我的报名」里也留一份随时能翻回来。"""
+    act, shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,
+                                   take_student)
+    for pos in (p1, p2):
+        pos.leader_task = "带队进场、清点人数"
+    db.commit()
+    head = next(r for r in _enrolled(db, p1, p2) if r.leader_willing)
+    assert _appoint(client, admin, head.id).status_code == 200
+    u = db.get(User, head.user_id)
+    h = login(client, u.student_id)
+    notes = client.get("/api/me/notifications", headers=h).json()["items"]
+    n = next(x for x in notes if x["title"] == f"您已成为岗位组长｜{act.title}")
+    assert "组长任务：带队进场、清点人数" in n["content"]
+    row = next(r for r in client.get("/api/me/enrollments", headers=h).json()
+               if r["id"] == head.id)
+    assert row["is_leader"] and row["leader_task"] == "带队进场、清点人数"
 
 
 def test_报名不会自动产生组长(client, admin, db, enrolled_activity, take_student):

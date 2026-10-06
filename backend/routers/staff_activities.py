@@ -1252,6 +1252,7 @@ class PositionBody(BaseModel):
     position_requirement: str = ""       # 选填
     training_note: str = ""
     needs_leader: bool = False
+    leader_task: str = ""                # 需要组长时必填：组长要带队做什么
     attire: str = "none"                 # none / issued / own
     attire_note: str = ""                # 统一发放或自备时必填
     pay_optional: bool = False           # 可选劳务
@@ -1262,6 +1263,7 @@ class PositionBody(BaseModel):
 POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
                    "group_name": "岗位组",
                    "waitlist_quota": "候补名额", "needs_leader": "需要组长",
+                   "leader_task": "组长任务",
                    "attire": "志愿服装", "attire_note": "服装备注",
                    "pay_optional": "可选劳务", "pay_note": "劳务备注",
                    "requirement_tags": "条件要求",
@@ -1298,6 +1300,9 @@ def _require_position_text(s: Position) -> None:
     if s.pay_optional and not (s.pay_note or "").strip():
         raise HTTPException(400, f"请填写岗位「{s.name}」的劳务备注"
                                  "（标准与发放方式）")
+    if s.needs_leader and not (s.leader_task or "").strip():
+        raise HTTPException(400, f"请填写岗位「{s.name}」的组长任务"
+                                 "（组长要带队做什么，任命时告诉他）")
 
 
 def _validate_position(db: OrmSession, g: Shift, s: Position):
@@ -1328,6 +1333,7 @@ def create_position(shift_id: str, body: PositionBody,
                 location=body.location.strip(), quota=body.quota,
                 waitlist_quota=body.waitlist_quota,
                 needs_leader=body.needs_leader,
+                leader_task=body.leader_task.strip(),
                 attire=body.attire, attire_note=body.attire_note.strip(),
                 pay_optional=body.pay_optional, pay_note=body.pay_note.strip(),
                 group_name=body.group_name.strip(),
@@ -2138,7 +2144,8 @@ def set_leader(enrollment_id: str, body: LeaderBody,
                         activity=db.get(Activity, enr.activity_id).title,
                         position=scope,
                         position_time=position.time_text(),
-                        position_loc=position.location or "待定")
+                        position_loc=position.location or "待定",
+                        leader_task=position.leader_task or "请与负责人确认")
     else:
         enr.is_leader = False
         summary = f"取消 {target.name} 的岗位「{position.name}」组长身份"

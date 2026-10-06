@@ -367,6 +367,8 @@ def _position_public(p: Position, siblings: list[Position], occ: Occupancy,
         "service_task": p.service_task,
         "position_requirement": p.position_requirement,
         "group_name": p.group_name,
+        # 组长任务：指名组长时要告诉他做什么（任命通知里也带一份）
+        "leader_task": p.leader_task,
         "is_placeholder": p.is_placeholder,
         "enroll_paused": p.enroll_paused,
         # 占位岗位不是一个岗位，是「这一场怎么报」的说明，所以换个说法

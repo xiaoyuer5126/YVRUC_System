@@ -149,6 +149,27 @@ def test_场次草稿_岗位字段收拾好(client, admin, db, model):
     assert "上午场" in calls[0]["body"]["messages"][0]["content"]
 
 
+def test_场次草稿_组长任务跟组长一起读(client, admin, db, model):
+    """要组长就要写任务，写不出任务就当没要组长——落库时后端会拦。"""
+    calls, replies = model
+    aid = make_draft(client, admin)
+    replies.append((200, json.dumps({"shifts": [{
+        "name": "开幕式当天", "start_time": "2026-10-18 07:30", "end_time": "不知道",
+        "positions": [
+            {"name": "带队", "quota": 3, "service_task": "带队入场",
+             "needs_leader": True, "leader_task": "带队进场、清点人数、结束后对账"},
+            {"name": "引导", "quota": 3, "service_task": "引导入座",
+             "needs_leader": True},                        # 要组长却没写任务：按不需要组长放
+        ]}], "notes": []}, ensure_ascii=False)))
+    r = client.post(f"/api/staff/ai/activities/{aid}/structure-draft", headers=admin,
+                    data={"text": TEXT})
+    assert r.status_code == 200, r.text
+    p1, p2 = r.json()["shifts"][0]["positions"]
+    assert p1["needs_leader"] is True
+    assert p1["leader_task"] == "带队进场、清点人数、结束后对账"
+    assert p2["needs_leader"] is False and p2["leader_task"] == ""
+
+
 def test_场次草稿_培训彩排挂在场次下(client, admin, model):
     _calls, replies = model
     aid = make_draft(client, admin)

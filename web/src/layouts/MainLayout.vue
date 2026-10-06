@@ -206,7 +206,7 @@ async function onCommand(cmd) {
 .app-body { height: calc(100vh - 56px); }
 .app-main { height: 100%; overflow-y: auto; padding: 0; }
 .topbar {
-  background: linear-gradient(90deg, #7e1b2a, var(--ruc-red));
+  background: var(--ruc-red);
   color: #fff; display: flex; align-items: center; justify-content: space-between;
   padding: 0 22px; position: sticky; top: 0; z-index: 100;
   flex-shrink: 0; gap: 8px;
@@ -242,7 +242,7 @@ async function onCommand(cmd) {
 
 .drawer-head {
   display: flex; gap: 12px; align-items: center; padding: 16px;
-  background: linear-gradient(90deg, #7e1b2a, var(--ruc-red)); color: #fff;
+  background: var(--ruc-red); color: #fff;
 }
 .drawer-sub { font-size: 12px; opacity: .8; margin-top: 4px; }
 .drawer-foot { padding: 8px 12px; border-top: 1px dashed #eceef1; }

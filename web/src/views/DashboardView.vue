@@ -59,7 +59,7 @@ const pieEl = ref()
 
 const cards = computed(() => d.value ? [
   { label: '注册学生', value: d.value.cards.students, color: '#1f5aa8' },
-  { label: '报名中活动', value: d.value.cards.activities_published, color: '#9e2235' },
+  { label: '报名中活动', value: d.value.cards.activities_published, color: '#ae0b2a' },
   { label: '活动总数', value: d.value.cards.activities_all, color: '#606266' },
   { label: '有效报名', value: d.value.cards.active_enrollments, color: '#1e7a52' },
   { label: '候补中', value: d.value.cards.waitlisted, color: '#e6a23c' },
@@ -75,7 +75,7 @@ function draw() {
     yAxis: { type: 'value', minInterval: 1 },
     series: [{ type: 'line', smooth: true, areaStyle: { opacity: .12 },
                data: d.value.enroll_trend.map(x => x.count),
-               itemStyle: { color: '#9e2235' } }],
+               itemStyle: { color: '#ae0b2a' } }],
     ...axis,
   })
   echarts.init(pieEl.value).setOption({

@@ -225,7 +225,8 @@ STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草�
       "service_task": "服务任务：到岗做什么，一两句话，必须写",
       "position_requirement": "岗位特有的要求（身高、外语、经验等），没有就空",
       "training_note": "到岗前要知道的培训内容、集合安排，没有就空",
-      "needs_leader": true 或 false（人多、需要有人带队时 true）,
+      "needs_leader": true 或 false（人多、需要有人带队时 true；true 时必须写 leader_task）,
+      "leader_task": "组长任务：组长要带队做什么，如「带队进场、清点人数、结束后对账」；needs_leader 为 false 时空",
       "attire": "none / issued / own：不需要统一服装、统一发放、志愿者自备",
       "attire_note": "服装说明：发放的写领取和归还方式，自备的写样式；attire 为 none 时空",
       "pay_optional": true 或 false（原文说志愿者可以选领劳务报酬的写 true，其余写 false）,
@@ -295,6 +296,11 @@ def _position(p: dict) -> dict:
     # 说了可选劳务却没写标准和发放方式：后端会拦，同上先按只记时长放
     if not pay_note:
         pay = False
+    leader = p.get("needs_leader") is True
+    leader_task = _text(p.get("leader_task"), 256) if leader else ""
+    # 说了要组长却没写任务：后端会拦，同上先按不需要组长放
+    if not leader_task:
+        leader = False
     return {
         "name": _text(p.get("name"), 128) or "志愿者",
         "quota": quota,
@@ -303,7 +309,7 @@ def _position(p: dict) -> dict:
         "service_task": _text(p.get("service_task"), 1000),
         "position_requirement": _text(p.get("position_requirement"), 1000),
         "training_note": _text(p.get("training_note"), 1000),
-        "needs_leader": p.get("needs_leader") is True,
+        "needs_leader": leader, "leader_task": leader_task,
         "attire": attire, "attire_note": attire_note,
         "pay_optional": pay, "pay_note": pay_note,
         "requirement_tags": _tags(p.get("requirement_tags"), POSITION_TAGS),

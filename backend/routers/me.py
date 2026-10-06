@@ -101,6 +101,8 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "excused": enr.excused, "excuse_reason": enr.excuse_reason,
         "seat_held": enr.seat_held,
         "is_leader": enr.is_leader,
+        # 组长任务：任命通知里发过一次，这里随时能翻回来
+        "leader_task": (st.leader_task if (enr.is_leader and st) else ""),
         "allow_reassign": enr.allow_reassign,
         "joined_at": iso_of(enr.joined_at),
         "confirm_deadline": iso_of(enr.confirm_deadline),

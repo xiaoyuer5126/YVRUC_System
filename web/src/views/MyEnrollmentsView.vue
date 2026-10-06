@@ -28,6 +28,9 @@
           <span class="dim"> {{ row.position.location }}</span>
         </div>
         <div v-else-if="row.status === 'enrolled'" class="dim">岗位待分配</div>
+        <div v-if="row.is_leader && row.leader_task" class="dim">
+          组长任务：{{ row.leader_task }}
+        </div>
         <div class="mob-line">
           <span class="dim">岗位调剂：</span>
           <template v-if="isActive(row) && !row.shift.attached">
@@ -93,6 +96,9 @@
             <span class="dim"> {{ row.position.time_text }} · {{ row.position.location }}</span>
           </div>
           <div v-else-if="row.status === 'enrolled'" class="dim">岗位待分配</div>
+          <div v-if="row.is_leader && row.leader_task" class="dim">
+            组长任务：{{ row.leader_task }}
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="岗位调剂" width="160">
