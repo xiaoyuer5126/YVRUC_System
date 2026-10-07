@@ -43,7 +43,8 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("hours_lock_requests", submit_lock_when_due),
                       ("unlocked", release_stale_edit_locks),
                       ("sessions", purge_expired_sessions),
-                      ("orphan_files", purge_orphan_attachments)):
+                      ("orphan_files", purge_orphan_attachments),
+                      ("oplogs", purge_oplogs)):
         try:
             result[name] = job(db)
         except Exception:  # noqa: BLE001
@@ -736,4 +737,18 @@ def purge_orphan_attachments(db: OrmSession) -> int:
     if n:
         db.commit()
         logger.info("清理无人引用的问卷附件 %d 个", n)
+    return n
+
+
+def purge_oplogs(db: OrmSession) -> int:
+    """删掉超过保留期（config.OPLOG_RETAIN_DAYS）的操作日志文件。
+
+    按文件名里的日期判断，一个文件就是一个进程一天的日志。每轮都查一遍，
+    只是列一下目录；到了日子当天就删，不必等到某个钟点。
+    """
+    from . import oplog
+
+    n = oplog.purge(now().date())
+    if n:
+        logger.info("清理过期操作日志 %d 个文件", n)
     return n

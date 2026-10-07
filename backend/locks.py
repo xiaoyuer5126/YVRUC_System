@@ -133,6 +133,17 @@ def note_rate(key: str, window_seconds: int) -> None:
         pass
 
 
+def claim_once(key: str, ttl: int) -> bool:
+    """几个进程里只让第一个做某件事（每天一次的告警之类）：占到了回 True。
+
+    Redis 不可用时回 True：宁可多发一遍告警，也不能一遍都不发。
+    """
+    try:
+        return bool(_client.set(f"yvruc:once:{key}", "1", nx=True, ex=ttl))
+    except redis.RedisError:
+        return True
+
+
 # —— OAuth state ——
 #
 # 授权回调是「带着 ?code=..&state=.. 从外部跳回来」的入口。不校验 state，

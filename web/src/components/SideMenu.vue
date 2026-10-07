@@ -10,7 +10,6 @@
       <el-menu-item v-if="canSee.approvals()" index="/approvals">
         <el-icon><Stamp /></el-icon>活动审批
       </el-menu-item>
-      <el-menu-item index="/audit"><el-icon><Document /></el-icon>审计日志</el-menu-item>
       <el-menu-item v-if="canSee.volunteers()" index="/volunteers">
         <el-icon><UserFilled /></el-icon>志愿者档案
       </el-menu-item>
@@ -20,9 +19,17 @@
       <el-menu-item v-if="canSee.integrations()" index="/integrations">
         <el-icon><Link /></el-icon>集成设置
       </el-menu-item>
+      <el-menu-item v-if="canSee.announcement()" index="/announcement">
+        <el-icon><Promotion /></el-icon>平台公告
+      </el-menu-item>
+      <el-menu-item v-if="canSee.oplogs()" index="/oplogs">
+        <el-icon><List /></el-icon>操作日志
+      </el-menu-item>
       <el-menu-item v-if="canSee.feedback()" index="/feedback">
         <el-icon><ChatDotRound /></el-icon>意见反馈
       </el-menu-item>
+      <!-- 审计日志排在消息通知前面，作为工作台菜单的倒数第二项 -->
+      <el-menu-item index="/audit"><el-icon><Document /></el-icon>审计日志</el-menu-item>
     </template>
     <template v-else>
       <div class="menu-cap">志愿服务</div>
@@ -36,8 +43,8 @@
 
 <script setup>
 import {
-  Bell, Calendar, ChatDotRound, Clock, Compass, Document, Key, Link, Odometer, Stamp,
-  Tickets, UserFilled,
+  Bell, Calendar, ChatDotRound, Clock, Compass, Document, Key, Link, List, Odometer,
+  Promotion, Stamp, Tickets, UserFilled,
 } from '@element-plus/icons-vue'
 import { auth, canSee, ROLE_LABELS } from '../store'
 
