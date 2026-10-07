@@ -102,17 +102,18 @@ def export_oplogs(start: str = "", end: str = "", person: str = "",
     wb = Workbook()
     ws = wb.active
     ws.title = "操作日志"
-    header = ["时间", "学号", "姓名", "身份", "IP", "操作类型", "操作",
+    header = ["时间", "学号", "姓名", "身份", "IP", "操作类型", "操作", "说明",
               "方法", "接口", "活动", "结果", "耗时(毫秒)"]
     ws.append(header)
     for r in rows:
         ws.append([r["t"].replace("T", " "), r.get("sid", ""), r.get("name", ""),
                    r.get("identity", ""), r.get("ip", ""),
                    oplog.KIND_LABELS.get(r.get("kind"), ""), r.get("label", ""),
+                   r.get("note", ""),
                    r.get("method", ""), r.get("path", ""),
                    titles.get(r.get("activity_id") or "", r.get("activity_id", "")),
                    r.get("status", ""), r.get("ms", "")])
-    for col, w in zip("ABCDEFGHIJKL", (24, 14, 10, 10, 16, 10, 24, 8, 48, 24, 8, 10)):
+    for col, w in zip("ABCDEFGHIJKLM", (24, 14, 10, 10, 16, 10, 24, 26, 8, 48, 24, 8, 10)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
     disarm_formulas(wb)

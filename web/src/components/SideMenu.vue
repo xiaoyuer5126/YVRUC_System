@@ -28,7 +28,6 @@
       <el-menu-item v-if="canSee.feedback()" index="/feedback">
         <el-icon><ChatDotRound /></el-icon>意见反馈
       </el-menu-item>
-      <!-- 审计日志排在消息通知前面，作为工作台菜单的倒数第二项 -->
       <el-menu-item index="/audit"><el-icon><Document /></el-icon>审计日志</el-menu-item>
     </template>
     <template v-else>

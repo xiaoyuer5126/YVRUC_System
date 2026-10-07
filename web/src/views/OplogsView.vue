@@ -25,6 +25,7 @@
       <DataCards v-if="narrow" :rows="items" title-key="label" v-loading="loading"
                  :fields="[{ key: 'who', label: '操作人' },
                            { key: 't', label: '时间', format: fmtTime },
+                           { key: 'note', label: '说明', hideEmpty: true },
                            { key: 'activity_title', label: '活动' },
                            { key: 'path', label: '接口' },
                            { key: 'ip', label: 'IP' }]"
@@ -52,6 +53,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="label" label="操作" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="note" label="说明" min-width="140" show-overflow-tooltip />
         <el-table-column label="接口" min-width="260" show-overflow-tooltip>
           <template #default="{ row }"><span class="mono">{{ row.method }} {{ row.path }}</span></template>
         </el-table-column>

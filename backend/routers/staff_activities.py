@@ -1379,7 +1379,7 @@ def _validate_position(db: OrmSession, g: Shift, s: Position):
     """
     if s.quota <= 0:
         raise HTTPException(400, "岗位名额必须大于 0")
-    # 同上：只跟已报名的真人比。扣留的空位不该挡住与名额无关的修改
+    # 同上：只跟已报名的真人比。空着没填的位子不该挡住与名额无关的修改
     enrolled = logic.position_enrolled_count(db, s.id) if s.id else 0
     if s.quota < enrolled:
         raise HTTPException(400, f"岗位名额不能小于已报名的 {enrolled} 人")
@@ -1705,7 +1705,7 @@ def open_pick(shift_id: str, db: OrmSession = Depends(db_session),
                 raise HTTPException(409, "「待分配」上开过分岗位签到码，"
                                          "先在签到里删掉它再开放选岗")
             _prune_trainings(db, act, {holder.id})
-            # 报过「待分配」又退掉的历史记录（cancelled、不扣留名额）还指着它，
+            # 报过「待分配」又退掉的历史记录（cancelled 不占名额）还指着它，
             # 外键挡着删不掉。这些人退的时候还没分岗位，岗位一栏本来就该是空的：
             # 把 position_id 置空，记录本身（谁、何时报、何时退、怎么退）原样留着
             (db.query(Enrollment)

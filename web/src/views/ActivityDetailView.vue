@@ -795,7 +795,7 @@ function deadlineTs(g) {
   return new Date(g.my_enrollment.confirm_deadline.replace(' ', 'T').slice(0, 19)).getTime()
 }
 // 我在这个场次的岗位对象（报名后才有；统一分配的场次分配前为 null）
-// 培训/彩排请假：服务场次不来是退选（有名额扣留规则），这里只管附属时段
+// 培训/彩排请假：服务场次不来是退选（名单锁定后退出会记一次），这里只管附属时段
 async function toggleExcuse(s) {
   if (s.excused) {
     await api.post(`/api/activities/enrollments/${s.my_enrollment_id}/excuse`,

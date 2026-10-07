@@ -56,6 +56,22 @@ def test_请求正文不进日志文件(client, take_student):
         assert "QX-OPLOG-SECRET" not in path.read_text(encoding="utf-8")
 
 
+def test_调剂意愿记下改成了什么(client, open_group, take_student):
+    since = _since()
+    act, g = open_group(1)
+    sid = take_student()
+    me = login(client, sid)
+    eid = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                      json={"position_id": g.test_position_id},
+                      headers=me).json()["enrollment_id"]
+    client.patch(f"/api/activities/enrollments/{eid}/reassign-pref",
+                 json={"allow_reassign": False}, headers=me)
+
+    rows = _logs(client, login(client, ADMIN), since, person=sid)
+    row = next(r for r in rows if r["path"].endswith("/reassign-pref"))
+    assert row["note"] == "不接受调剂" and row["status"] == 200
+
+
 def test_登录失败也记下填的学号(client):
     since = _since()
     r = client.post("/api/auth/demo-login",

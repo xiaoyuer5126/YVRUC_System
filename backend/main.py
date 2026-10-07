@@ -96,6 +96,8 @@ async def lifespan(_app: FastAPI):
             await task
         # 交还主位：不交，下一个进程要等租期到期才接手（重启一次白停五分钟）
         locks.release_sweeper_lease(token)
+    # 队列里可能还压着几条操作日志，退出前写完（见 oplog.close）
+    oplog.close()
 
 
 def create_app() -> FastAPI:

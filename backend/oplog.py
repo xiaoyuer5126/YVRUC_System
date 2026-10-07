@@ -9,7 +9,7 @@
   · 每个进程每天一个文件 `YYYY-MM-DD-<pid>.jsonl`，只追加。几个进程各写各的，
     不需要跨进程加锁，也不做重命名轮转（轮转时别的进程还拿着旧文件）。
   · 请求线程只把一条记录放进内存队列，写盘由本进程的后台线程批量做——抢报
-    时几百个报名请求同时到，谁都不该等磁盘。
+    时几百个报名请求同时到，谁都不该等磁盘；进程退出前由 close() 把队列写完。
   · 请求正文一律不记：报名问卷、个人资料里有身份证号、手机号。
   · 磁盘剩余空间低于 OPLOG_MIN_FREE_BYTES 时停写，站内通知管理员（每天一次）：
     日志把磁盘写满，数据库也就写不进去了。
@@ -54,6 +54,7 @@ _write_lock = threading.Lock()
 _writer: threading.Thread | None = None
 _writer_pid = 0
 _start_lock = threading.Lock()
+_stopping = threading.Event()
 _dropped = 0
 _disk_ok = True
 _disk_checked_at = 0.0
@@ -87,6 +88,15 @@ def mark_login(request, *, student_id: str = "", user=None) -> None:
 def mark_download(request) -> None:
     """直链下载（导出、附件）：GET 请求里只有这一类要记。"""
     request.state.oplog_download = True
+
+
+def mark_note(request, text: str) -> None:
+    """附一句说明：这次操作改成了什么值、选了哪一项。
+
+    请求正文一律不记，所以「把调剂意愿改成了什么」这类信息得由处理函数
+    自己报上来。只放一句人话，不进数据库的记录也不该塞大段内容。
+    """
+    request.state.oplog_note = text.strip()[:200]
 
 
 # 文档串第一句读起来不像操作名的，在这里写明
@@ -166,7 +176,7 @@ def _entry(scope, at: datetime, status: int, ms: int) -> dict | None:
         "ip": client[0] if client else "",
         "method": method, "path": scope["path"],
         "action": handler, "label": _label(endpoint) if endpoint else "",
-        "kind": kind,
+        "kind": kind, "note": state.get("oplog_note", ""),
         "activity_id": str(params.pop("activity_id", "") or ""),
         "target": {k: str(v) for k, v in params.items()},
         "status": status, "ms": ms,
@@ -202,7 +212,12 @@ def _ensure_writer() -> None:
 
 def _run() -> None:
     while True:
-        batch = [_queue.get(), *_drain(BATCH_MAX - 1)]
+        try:
+            # 平时阻塞等（不轮询）；close() 之后再空等一秒就退出
+            first = _queue.get(timeout=1.0 if _stopping.is_set() else None)
+        except queue.Empty:
+            return
+        batch = [first, *_drain(BATCH_MAX - 1)]
         try:
             _write(batch)
         except Exception:  # noqa: BLE001
@@ -245,6 +260,16 @@ def flush() -> None:
     """
     _write_pending()
     _queue.join()
+
+
+def close() -> None:
+    """进程退出前把队列里的记录写完（见 main.lifespan）。
+
+    写盘线程是守护线程，进程退出不等它；这里由调用线程把队列里剩的写掉，
+    它手上正写的那一批也落在同一把写锁里，会被等到。
+    """
+    _stopping.set()
+    _write_pending()
 
 
 def _write(batch: list[dict]) -> None:

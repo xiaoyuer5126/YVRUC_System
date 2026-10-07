@@ -7,7 +7,7 @@ from sqlalchemy import case, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, enroll_logic as logic
+from .. import config, enroll_logic as logic, oplog
 from ..database import db_session
 from ..deps import current_user
 from .. import notify
@@ -572,7 +572,7 @@ class ReassignPrefBody(BaseModel):
 
 
 @router.patch("/enrollments/{enrollment_id}/reassign-pref")
-def set_reassign_pref(enrollment_id: str, body: ReassignPrefBody,
+def set_reassign_pref(enrollment_id: str, body: ReassignPrefBody, request: Request,
                       db: OrmSession = Depends(db_session),
                       user: User = Depends(current_user)):
     """志愿者改自己的调剂意愿。只是给管理者的参考，活动开始前随时可改。"""
@@ -583,6 +583,8 @@ def set_reassign_pref(enrollment_id: str, body: ReassignPrefBody,
         raise HTTPException(409, "该报名记录已失效")
     if enr.status == "waitlisted":
         raise HTTPException(409, "候补期间必须接受岗位调剂")
+    # 请求正文不进操作日志，改成了什么由这里报一句（见 oplog.mark_note）
+    oplog.mark_note(request, "接受调剂" if body.allow_reassign else "不接受调剂")
     enr.allow_reassign = body.allow_reassign
     db.commit()
     return {"ok": True, "allow_reassign": enr.allow_reassign}

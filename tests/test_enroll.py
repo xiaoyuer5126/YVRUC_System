@@ -1,4 +1,4 @@
-"""报名闸门：名额、候补、时段冲突、临期退选占位、并发抢报。"""
+"""报名闸门：名额、候补、时段冲突、并发抢报。"""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
