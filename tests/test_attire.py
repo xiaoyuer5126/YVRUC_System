@@ -145,7 +145,8 @@ def test_催领取服装与签收(client, admin, db, attire_activity):
     assert client.get(url, headers=admin).json()["not_taken"] == 1
 
     r = client.post(f"{url}/remind", headers=admin,
-                    json={"action": "take", "need_ack": True})
+                    json={"action": "take", "need_ack": True,
+                          "note": "还到学生活动中心 102"})
     assert r.status_code == 200 and r.json()["count"] == 1
     batch = r.json()["batch_id"]
     assert batch
@@ -154,6 +155,8 @@ def test_催领取服装与签收(client, admin, db, attire_activity):
          .filter(Notification.user_id == a.id,
                  Notification.title.like("请领取志愿服装%")).one())
     assert n.need_ack and n.batch_id == batch
+    # 发送时填的备注跟着提醒一起发出去
+    assert n.content.endswith("备注：还到学生活动中心 102")
 
     # 领了之后就不在催领取的名单里了
     client.post(f"{url}/batch", headers=admin,

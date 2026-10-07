@@ -98,6 +98,11 @@
             <el-option v-for="c in campuses" :key="c" :value="c" :label="c" />
           </el-select>
         </el-form-item>
+        <!-- 现场的事常在提醒里补一句：还到哪间屋、几点之前 -->
+        <el-form-item label="备注">
+          <el-input v-model="rm.note" maxlength="100" show-word-limit
+                    placeholder="选填，跟着这条提醒一起发出去" />
+        </el-form-item>
       </el-form>
       <el-checkbox v-model="rm.needAck">要求志愿者点「我已知悉」</el-checkbox>
       <div class="dim">勾选后可在「签收情况」查看并一键提醒。</div>
@@ -193,10 +198,10 @@ async function one(action, row) {
 }
 
 const rm = ref({ visible: false, action: 'return', shiftIds: [], campuses: [],
-                 needAck: false, busy: false })
+                 needAck: false, note: '', busy: false })
 const openRemind = action => {
   rm.value = { visible: true, action, shiftIds: [], campuses: [],
-               needAck: false, busy: false }
+               needAck: false, note: '', busy: false }
 }
 
 async function remind() {
@@ -204,7 +209,8 @@ async function remind() {
   try {
     const d = await api.post(`/api/staff/activities/${props.activityId}/attire/remind`,
       { action: rm.value.action, shift_ids: rm.value.shiftIds,
-        campuses: rm.value.campuses, need_ack: rm.value.needAck })
+        campuses: rm.value.campuses, need_ack: rm.value.needAck,
+        note: rm.value.note })
     ElMessage.success(`已提醒 ${d.count} 位志愿者（${d.scope}）`
       + (d.batch_id ? '，要求签收' : ''))
     rm.value.visible = false

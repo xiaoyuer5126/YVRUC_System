@@ -246,8 +246,8 @@ def notify_locked_dropout(db: OrmSession, enr, user: User) -> None:
     notify_managers(
         db, act.id,
         f"[锁定后减员] {act.title}",
-        f"{user.name}（{user.student_id}）在名单锁定后退出了「{where}」，"
-        f"候补不会自动顶上，需要补人请在候补名单上点「转正」。\n"
+        f"{user.name}（{user.student_id}）退出了「{where}」，因名单已锁定，"
+        f"停止候补自动转正，如需补人，请在志愿者管理页面手动转正。\n"
         f"该场次当前 {enrolled}/{capacity} 人"
         + (f"，缺 {gap} 人。" if gap else "，人数已满。"),
         duty="roster", tab="roster")

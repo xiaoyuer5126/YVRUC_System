@@ -447,7 +447,7 @@ def appeal_hours(record_id: str, body: AppealBody,
                     f"{user.name}（{user.student_id}）对时长提出异议：\n"
                     f"{r.hours:g}h → 申报 {body.claimed_hours:g}h\n"
                     f"理由：{reason}\n"
-                    f"有申诉在处理中，时长不会自动锁定——"
+                    f"申诉待处理，时长不会自动锁定，"
                     f"请到活动的「时长管理」页处理。", duty="hours", tab="hours")
     db.commit()
     return {"ok": True}

@@ -153,9 +153,10 @@ def submit_lock_when_due(db: OrmSession) -> int:
                 act.stamped_reminded_at = t
                 notify_managers(
                     db, act.id, f"志愿活动请上传材料｜{act.title}",
-                    f"「{act.title}」的确认/申诉期已满，本该自动提交时长审核，"
-                    f"但这是对外联络部归口的活动，还没有上传{'、'.join(missing)}。\n"
-                    f"请到活动管理的「审核」页签上传，上传后系统会自动提交。",
+                    f"「{act.title}」的时长确认已结束，本该自动提交时长审核，"
+                    f"但该活动由对外联络部审批，还没有上传{'、'.join(missing)}。\n"
+                    f"请到活动管理的「审核」页签上传，上传后最多一分钟内系统会自动"
+                    f"提交；也可以直接点「提交时长审核」。",
                     duty="hours", tab="review")
                 reminded += 1
             continue
@@ -164,10 +165,10 @@ def submit_lock_when_due(db: OrmSession) -> int:
                 act.vb_names_reminded_at = t
                 notify_managers(
                     db, act.id, f"请填写志愿北京活动名称｜{act.title}",
-                    f"「{act.title}」的确认/申诉期已满，本该自动提交时长审核，"
+                    f"「{act.title}」的时长确认已结束，本该自动提交时长审核，"
                     f"但还没有填写志愿北京上的活动名称。\n"
-                    f"请到活动管理的「审核」页签填写（可填多个），"
-                    f"保存后系统会自动提交；也可以在「时长管理」直接提交时长审核。",
+                    f"请到活动管理的「审核」页签填写（可填多个），保存后最多一分钟内"
+                    f"系统会自动提交；也可以在「时长管理」直接提交时长审核。",
                     duty="hours", tab="review")
                 reminded += 1
             continue
@@ -223,7 +224,7 @@ def notify_managers_to_assign(db: OrmSession, act: Activity) -> None:
                     f"「{act.title}」报名已截止，还有场次没排完：\n"
                     f"{lines}\n"
                     f"请进入活动管理的「岗位设置」补齐岗位，"
-                    f"再到「志愿者管理」运行一键分配岗位。", duty="roster", tab="tree")
+                    f"再到「志愿者管理」分配岗位。", duty="roster", tab="tree")
     logger.info("活动「%s」已截止，提醒管理者排岗：%s", act.title, "；".join(gaps))
 
 

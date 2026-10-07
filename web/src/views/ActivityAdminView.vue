@@ -1162,7 +1162,8 @@
           <el-input-number v-model="groupForm.lock_hours" :min="0" :max="72" />
           <span class="dim" style="margin-left:8px">小时自动锁定</span>
           <div class="dim" style="margin-top:4px">
-            锁定后不再接受新报名，候补不会自动顶上，此时退出的志愿者会被记录。
+            锁定后不再接受新报名，停止候补自动转正，此时退出的志愿者会被记录；
+            如需补人请在志愿者管理页面手动转正。
             0 = 不自动锁定，随时可以在岗位设置里手动锁定、解锁。
           </div>
         </el-form-item>
@@ -2386,7 +2387,7 @@ async function toggleLock(kind, item, locked) {
   if (locked) {
     try {
       await ElMessageBox.confirm(
-        '锁定后志愿者名单视为基本敲定：不再接受新报名，此时退出的志愿者会被记录，候补不会自动顶上。',
+        '锁定后志愿者名单视为基本敲定：不再接受新报名，停止候补自动转正，此时退出的志愿者会被记录；如需补人请在志愿者管理页面手动转正。',
         `锁定「${item.name}」的名单`, { confirmButtonText: '锁定', type: 'warning' })
     } catch { return }
   }

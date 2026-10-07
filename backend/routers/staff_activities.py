@@ -2177,14 +2177,14 @@ def _promote_stop_reason(g: Shift) -> str:
     if now() >= g.start_time:
         return "场次已开始，候补不再自动顶上，需要补人请手动转正"
     if logic.shift_locked(g):
-        return "名单已锁定，候补不会自动顶上，需要补人请手动转正"
+        return "因名单已锁定，停止候补自动转正，如需补人请在志愿者管理页面手动转正"
     if g.enroll_paused:
         return "报名暂停中，候补暂不顶上，恢复报名时按顺序补齐空位"
     locked = [p.name for p in g.positions if p.list_locked]
     paused = [p.name for p in g.positions if p.enroll_paused and not p.list_locked]
     parts = []
     if locked:
-        parts.append(f"岗位{'、'.join(locked)}名单已锁定，需要补人请手动转正")
+        parts.append(f"岗位{'、'.join(locked)}名单已锁定，停止候补自动转正，需要补人请手动转正")
     if paused:
         parts.append(f"岗位{'、'.join(paused)}暂停中，恢复时按顺序补齐")
     return "；".join(parts)

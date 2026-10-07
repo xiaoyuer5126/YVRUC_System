@@ -11,7 +11,7 @@ from __future__ import annotations
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as OrmSession
 
 from ..audit import log as audit_log
@@ -273,6 +273,7 @@ class AttireRemindBody(BaseModel):
     shift_ids: list[str] = []       # 空 = 全部场次
     campuses: list[str] = []        # 空 = 全部校区
     need_ack: bool = False
+    note: str = Field(default="", max_length=100)   # 随提醒带一句，如「还到学活 102」
 
 
 @staff.post("/activities/{activity_id}/attire/remind")
@@ -332,6 +333,11 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
         title = f"请领取志愿服装｜{act.title}"
         text = (f"您在「{act.title}」的岗位由平台统一发放志愿服装，尚无领取记录。\n"
                 f"请到指定地点扫「领取码」领取，并按要求归还。")
+
+    # 现场的事常在提醒里补一句（还到哪间屋、几点前），作为正文最后一行
+    note = body.note.strip()
+    if note:
+        text += f"\n备注：{note}"
 
     targets = [u for u in targets if u is not None and in_scope(u.id)]
     scope = _scope_text(db, activity_id, body)
