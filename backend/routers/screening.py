@@ -340,7 +340,7 @@ def _wanted_positions(db: OrmSession, act: Activity,
             raise HTTPException(400, "岗位不属于本活动")
         if g.needs_assign() and not p.is_placeholder:
             raise HTTPException(400, f"「{g.name}」的岗位截止后统一分配，只能勾「待分配」")
-        why = logic.paused_reason(g, p)
+        why = logic.closed_reason(g, p)
         if why:
             raise HTTPException(409, f"{why}，请勾选别的场次或岗位")
         out.setdefault(g, []).append(p)

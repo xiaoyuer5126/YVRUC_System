@@ -53,11 +53,13 @@
             <!-- 截止后统一分配的场次只能勾「待分配」：真实岗位由负责人分 -->
             <div v-for="p in choosable(g)" :key="p.id" class="pos-line">
               <el-checkbox :value="p.id"
-                           :disabled="p.eligible === false || g.enroll_paused || p.enroll_paused">
+                           :disabled="p.eligible === false || g.enroll_paused || p.enroll_paused
+                                      || g.locked || p.list_locked">
                 {{ p.display_name }}
                 <span class="dim">{{ p.is_placeholder ? '' : `（${p.enrolled}/${p.quota}）` }}</span>
               </el-checkbox>
-              <span v-if="g.enroll_paused || p.enroll_paused" class="dim">暂停报名</span>
+              <span v-if="g.locked || p.list_locked" class="dim">名单已锁定</span>
+              <span v-else-if="g.enroll_paused || p.enroll_paused" class="dim">暂停报名</span>
               <span v-else-if="p.eligible === false" class="dim">
                 不符合条件：{{ p.ineligible_reason }}
               </span>

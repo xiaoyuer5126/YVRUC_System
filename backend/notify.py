@@ -227,20 +227,16 @@ def notify_managers(db: OrmSession, activity_id: str, title: str,
     return n
 
 
-def notify_late_dropout(db: OrmSession, enr, user: User) -> None:
-    """临近活动的减员立刻告诉管理者。
+def notify_locked_dropout(db: OrmSession, enr, user: User) -> None:
+    """名单锁定后的减员立刻告诉管理者：候补不会自动顶上，得他来决定补不补。
 
-    只在距开始不足 LATE_CANCEL_HOURS 时推：报名期每天几十条变动，
-    逐条推等于让老师关掉通知。正文带当前人数，老师一眼知道缺不缺人。
+    只在锁定后推：报名期每天几十条变动，逐条推等于让老师关掉通知。
+    正文带当前人数，老师一眼知道缺不缺人。
     """
-    from . import config
     from .enroll_logic import shift_enrolled_count
-    from .models import Activity, Position, Shift, now
+    from .models import Activity, Position, Shift
 
     shift = db.get(Shift, enr.shift_id)
-    hours_left = (shift.start_time - now()).total_seconds() / 3600
-    if hours_left < 0 or hours_left >= config.LATE_CANCEL_HOURS:
-        return
     act = db.get(Activity, enr.activity_id)
     position = db.get(Position, enr.position_id) if enr.position_id else None
     where = f"{shift.name}·{position.name}" if position else shift.name
@@ -249,9 +245,9 @@ def notify_late_dropout(db: OrmSession, enr, user: User) -> None:
     gap = max(0, capacity - enrolled)
     notify_managers(
         db, act.id,
-        f"[临近减员] {act.title}",
-        f"{user.name}（{user.student_id}）退出了「{where}」，"
-        f"距开始不足 {config.LATE_CANCEL_HOURS} 小时。\n"
+        f"[锁定后减员] {act.title}",
+        f"{user.name}（{user.student_id}）在名单锁定后退出了「{where}」，"
+        f"候补不会自动顶上，需要补人请在候补名单上点「转正」。\n"
         f"该场次当前 {enrolled}/{capacity} 人"
         + (f"，缺 {gap} 人。" if gap else "，人数已满。"),
         duty="roster", tab="roster")

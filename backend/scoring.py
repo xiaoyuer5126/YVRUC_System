@@ -9,13 +9,13 @@
 [SCORE_MIN, SCORE_BASE] 里——满分时加的分不会「存」起来抵后面的扣分：
 
 - 违规：一条扣一次 VIOLATION_WEIGHTS[kind]，时间 = 登记时间；
-- 临期退选：同一活动不管退了几个场次只扣一次 LATE_CANCEL_WEIGHT，
-  时间 = 该活动最早一次临期退选；
+- 锁定后退出：同一活动不管退了几个场次只扣一次 LOCKED_QUIT_WEIGHT，
+  时间 = 该活动最早一次锁定后退出；
 - 顺利参与：该活动至少签到过一次（扫码或管理者补签都算）、没有违规记录、
-  没有临期退选，加一次 SCORE_PER_ACTIVITY；时间 = 他报的主场次里最后
+  没有锁定后退出，加一次 SCORE_PER_ACTIVITY；时间 = 他报的主场次里最后
   一个的结束时间，还没到就先不加。
   补记录活动（不公开招募）没有报名和签到：**导入名单即视为参与**，没有违规
-  记录就加一次；时间 = 活动结束时间（held_end）。它不可能有临期退选。
+  记录就加一次；时间 = 活动结束时间（held_end）。它不可能有锁定后退出。
 
 分数自己能长回来——不能让人因为一次失误就永远挂着感叹号。
 """
@@ -35,7 +35,7 @@ from .models import (Activity, CheckinRecord, Enrollment, HoursRecord, Shift,
 class _Event:
     at: datetime
     delta: int
-    label: str            # 违规类型 / 临期退选 / 顺利参与
+    label: str            # 违规类型 / 锁定后退出 / 顺利参与
     activity_title: str
     ref: str              # 违规记录 id 或活动 id，只用来让排序稳定
 
@@ -69,7 +69,7 @@ def _events_many(db: OrmSession, user_ids: list[str]) -> dict[str, list[_Event]]
     checked = set(db.query(CheckinRecord.user_id, CheckinRecord.activity_id)
                   .filter(CheckinRecord.user_id.in_(ids)).distinct().all())
 
-    # (user, activity) → 活动名、最早一次临期退选、报的主场次里最晚的结束时间。
+    # (user, activity) → 活动名、最早一次锁定后退出、报的主场次里最晚的结束时间。
     # 只看主场次：培训/彩排跟着主场次报、跟着主场次退，算进来会重复
     titles: dict[tuple[str, str], str] = {}
     late: dict[tuple[str, str], datetime] = {}
@@ -81,14 +81,14 @@ def _events_many(db: OrmSession, user_ids: list[str]) -> dict[str, list[_Event]]
                                   Shift.kind == "service").all()):
         key = (e.user_id, e.activity_id)
         titles[key] = title
-        if e.cancel_type == "late":
+        if e.cancel_type == "locked":
             at = e.cancelled_at or end       # 没记退选时间的，按场次结束兜底
             late[key] = min(at, late.get(key, at))
         if e.status == "enrolled":
             last_end[key] = max(end, last_end.get(key, end))
 
     for (uid, aid), at in late.items():
-        out[uid].append(_Event(at, -config.LATE_CANCEL_WEIGHT, "临期退选",
+        out[uid].append(_Event(at, -config.LOCKED_QUIT_WEIGHT, "锁定后退出",
                                titles[(uid, aid)], aid))
     t = now()
     for key, end in last_end.items():

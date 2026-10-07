@@ -217,6 +217,7 @@ STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草�
     "start_time": "开始时间",
     "end_time": "结束时间",
     "requirement_tags": {{"校区": ["只能从这些里选：{campuses}"], "学段": ["只能从这些里选：{stages}"]}},
+    "lock_hours": 开场前多少小时锁定名单（0～{lock_max} 的整数）。原文说了「提前多久确定名单 / 之后不能退出」就按原文换算成小时，如「活动前一天」写 24；没说写 {lock_default},
     "positions": [{{
       "name": "岗位名",
       "quota": 名额（正整数，原文没写就按分工合理估一个）,
@@ -332,6 +333,17 @@ def _attached(a: dict, names: list[str]) -> dict:
     }
 
 
+def _lock_hours(v) -> int:
+    """开场前多少小时锁定名单：不是 0～LOCK_HOURS_MAX 的整数就用默认值。"""
+    if isinstance(v, bool):
+        return config.LOCK_HOURS_DEFAULT
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return config.LOCK_HOURS_DEFAULT
+    return n if 0 <= n <= config.LOCK_HOURS_MAX else config.LOCK_HOURS_DEFAULT
+
+
 def _structure_missing(shifts: list[dict]) -> list[str]:
     """缺的起止时间、服务任务。岗位多了只报个数：预览里缺服务任务的已经标红。"""
     out = []
@@ -350,7 +362,9 @@ def _structure_missing(shifts: list[dict]) -> list[str]:
 def structure_draft(act: Activity, text: str, images: list[str] = ()) -> dict:
     data = _chat(STRUCTURE_PROMPT.format(today=_today(), activity=_activity_brief(act),
                                          campuses="、".join(config.CAMPUSES),
-                                         stages="、".join(config.STAGES)),
+                                         stages="、".join(config.STAGES),
+                                         lock_default=config.LOCK_HOURS_DEFAULT,
+                                         lock_max=config.LOCK_HOURS_MAX),
                  text, images)
     shifts, lost = [], []
     for g in _list(data.get("shifts"))[:20]:
@@ -371,6 +385,7 @@ def structure_draft(act: Activity, text: str, images: list[str] = ()) -> dict:
             "start_time": _when(g.get("start_time")),
             "end_time": _when(g.get("end_time")),
             "requirement_tags": _tags(g.get("requirement_tags"), SHIFT_TAGS),
+            "lock_hours": _lock_hours(g.get("lock_hours")),
             "positions": positions,
             "attached": attached,
         })

@@ -1,4 +1,4 @@
-"""人员变动：流水、临期减员提醒、日报，以及组长联系方式的可见范围。"""
+"""人员变动：流水、锁定后减员提醒、日报，以及组长联系方式的可见范围。"""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -57,17 +57,19 @@ def test_候补与转正也记流水(client, admin, db, open_group, take_student
 
 def _late_dropout_notices(db, act) -> int:
     return (db.query(Notification)
-            .filter(Notification.title == f"[临近减员] {act.title}").count())
+            .filter(Notification.title == f"[锁定后减员] {act.title}").count())
 
 
-def test_临期退选立刻提醒管理者(client, db, admin, open_group, take_student):
+def test_锁定后退出立刻提醒管理者(client, db, admin, open_group, take_student):
     act, g = open_group(3, day_offset=0, start_in_hours=5)
     sid = take_student()
     enr_id = _enroll(client, act, g, sid).json()["enrollment_id"]
+    db.get(Shift, g.id).list_locked = True
+    db.commit()
     client.delete(f"/api/activities/enrollments/{enr_id}",
                   headers=login(client, sid))
     assert _late_dropout_notices(db, act) == 1, \
-        "距开始不足 24 小时的减员要立刻推给管理者"
+        "名单锁定后的减员要立刻推给管理者：候补不会自动顶上"
 
 
 def test_报名期的退选不打扰管理者(client, db, open_group, take_student):

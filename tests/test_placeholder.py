@@ -189,26 +189,6 @@ def test_一键分配不动已在岗位上的人(client, admin, db, published, t
     assert len(d["plan"]) == 2 and not d["unassigned"]
 
 
-def test_扣留的位子一键分配不用(client, admin, db, published, take_student):
-    from backend.models import Enrollment, User
-    aid, g = published
-    for _ in range(2):
-        t = login(client, take_student())
-        assert client.post(f"/api/activities/{aid}/shifts/{g.id}/enroll",
-                           headers=t, json={}).status_code == 200
-    with editing(client, admin, aid):
-        a = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
-                        json={"name": "甲", "quota": 2, **POSITION_TEXT}).json()["id"]
-    gone = db.query(User).filter(User.student_id == take_student()).one()
-    db.add(Enrollment(id=uid("enr"), activity_id=aid, shift_id=g.id, user_id=gone.id,
-                      status="cancelled", cancel_type="late", seat_held=True,
-                      position_id=a, joined_at=now()))
-    db.commit()
-    d = client.post(f"/api/staff/shifts/{g.id}/assign/preview", headers=admin, json={}).json()
-    assert d["position_stats"][0]["held"] == 1
-    assert len(d["plan"]) == 1 and len(d["unassigned"]) == 1
-
-
 def test_不需要排班时直接说(client, admin, db, published, open_group, take_student):
     aid, g = published
     # 截止后分配的场次还没建岗位

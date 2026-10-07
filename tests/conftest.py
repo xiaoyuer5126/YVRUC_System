@@ -155,6 +155,8 @@ def open_group(db, open_group_days):
     每次调用把场次往后挪一天（整个会话内递增）：场次不能重叠，否则同一个
     学生在别处占的时段会把这里的报名挡掉。需要重叠的用例自己指定 day_offset。
     reg_end 默认给得很远，需要「报名已截止」的用例自己改。
+    场次默认不自动锁定名单（lock_hours=0）：不少用例的场次就在几小时后开场，
+    按默认的 12 小时会一建好就锁上。测锁定的用例自己传 lock_hours。
     """
     from datetime import timedelta
     from backend.models import (Activity, ActivityManager, Position, Shift,
@@ -163,7 +165,8 @@ def open_group(db, open_group_days):
 
     def _make(capacity: int, *, mode: str = "pick", waitlist_quota: int = 3,
               day_offset: int | None = None, start_in_hours: float = 4,
-              requirement_tags: dict | None = None, needs_leader: bool = False):
+              requirement_tags: dict | None = None, needs_leader: bool = False,
+              lock_hours: int = 0):
         start = timedelta(days=day_offset if day_offset is not None
                           else next(seq), hours=start_in_hours)
         admin = db.query(User).filter(User.student_id == ADMIN).one()
@@ -180,7 +183,7 @@ def open_group(db, open_group_days):
         g = Shift(id=uid("g"), activity_id=act.id, name="测试场次",
                   start_time=now() + start,
                   end_time=now() + start + timedelta(hours=3),
-                  mode=mode, sort=0)
+                  mode=mode, sort=0, lock_hours=lock_hours)
         db.add(g)
         db.flush()
         # 名额一律在岗位上。assign 模式的场次带的是「待分配」占位岗位——

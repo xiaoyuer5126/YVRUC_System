@@ -452,42 +452,6 @@ def test_场次都开过了就不能恢复报名(client, admin, db):
     assert r.status_code == 409 and "所有场次都已开始" in r.json()["detail"]
 
 
-def test_扣留的名额不挡住岗位的其它修改(client, admin, db, open_group, take_student):
-    """一个人临期退选，不该把整个岗位锁死。
-
-    扣留是一条已取消的记录占着位子，管理者本来就有「释放」按钮；
-    拿它挡住改培训内容，等于名额一被占满就再也改不了。
-    """
-    # day_offset=0 才是「今天再过 5 小时」；不给的话场次会排到 30 天后
-    act, g = open_group(2, day_offset=0, start_in_hours=5)
-    pos_id = g.test_position_id
-    for _ in range(2):
-        h = login(client, take_student())
-        r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
-                        headers=h, json={"position_id": pos_id})
-        assert r.status_code == 200, r.text
-    # 报上名之后才截止报名：扣留额外要求「报名已截止」
-    act.reg_end = now() - timedelta(hours=1)
-    db.commit()
-
-    enr = (db.query(Enrollment)
-           .filter(Enrollment.position_id == pos_id,
-                   Enrollment.status == "enrolled").first())
-    who = db.get(User, enr.user_id)
-    assert client.delete(f"/api/activities/enrollments/{enr.id}",
-                         headers=login(client, who.student_id)
-                         ).json()["effect"] == "held"
-
-    # 名额 2 / 已报名 1 / 已占用 2：改培训内容不该被拦
-    with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
-                         json={"training_note": "换个说法"})
-        assert r.status_code == 200, r.text
-        # 降到已报名人数以下仍然要拦
-        assert client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
-                            json={"quota": 0}).status_code == 400
-
-
 def test_删除草稿要连带清干净引用(client, admin, db):
     """草稿身上至少永远挂着一条创建者的共管记录，不清就撞外键报 500。"""
     from backend.models import ActivityManager, ApprovalEvent
@@ -547,8 +511,8 @@ def test_删除草稿要连带清干净引用(client, admin, db):
 def test_管理者分工只筛通知不限操作(client, admin, db, open_group, take_student):
     """分了工的人只收自己那摊的通知；没分工的照收全部，操作权限一点不变。
 
-    用真实的「临近减员」提醒来验（它属于「志愿者管理」那一摊）：5 小时后
-    开始的场次里有人退选，就会通知管理者。
+    用真实的「锁定后减员」提醒来验（它属于「志愿者管理」那一摊）：名单锁定
+    之后有人退出，就会通知管理者。
     """
     act, g = open_group(2, day_offset=0, start_in_hours=5)
     other = student_row(db, take_student())
@@ -573,15 +537,18 @@ def test_管理者分工只筛通知不限操作(client, admin, db, open_group, 
     def dropouts(headers):
         items = client.get("/api/me/notifications", headers=headers).json()["items"]
         return [n for n in items
-                if n["title"] == f"[临近减员] {act.title}"]
+                if n["title"] == f"[锁定后减员] {act.title}"]
 
     def late_dropout():
         h = login(client, take_student())
         enr_id = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                              headers=h, json={"position_id": g.test_position_id}
                              ).json()["enrollment_id"]
+        lock = f"/api/staff/shifts/{g.id}/lock"
+        assert client.post(lock, headers=admin, json={"locked": True}).status_code == 200
         assert client.delete(f"/api/activities/enrollments/{enr_id}",
                              headers=h).status_code == 200
+        assert client.post(lock, headers=admin, json={"locked": False}).status_code == 200
 
     # 只管时长的人收不到减员提醒；没分工的管理者照收
     late_dropout()

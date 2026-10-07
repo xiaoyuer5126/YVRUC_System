@@ -20,9 +20,8 @@ from backend.main import app
 from backend.models import Activity, Application, Enrollment, VbConfirm
 from backend.routers import liaison as liaison_router, screening, staff_activities
 from conftest import login
-from test_promote_cutoff import _fill_and_queue, _raise_quota
+from test_list_lock import _fill_and_queue, _raise_quota
 from test_screening import _create_screened, _answers, _holders
-from test_seat_hold import _cancel, _one_seat
 from test_vb_confirm import _approved_act, _lock, _office, _pending_confirm
 
 HOLD = 0.6        # 先到的请求在锁里多待这么久
@@ -62,8 +61,7 @@ def _race(first, second):
 def test_两位管理者同时手动转正只开一次确认窗(client, admin, db, open_group,
                                          take_student, monkeypatch):
     act, g, _queued, wl_id = _fill_and_queue(client, db, open_group, take_student,
-                                             day_offset=0, start_in_hours=10,
-                                             reg_end_in_hours=-1)
+                                             lock=True)
     _raise_quota(client, admin, act, g, 2)
     _slow_once(monkeypatch, staff_activities, "audit_log")
 
@@ -80,8 +78,7 @@ def test_两位管理者同时手动转正只开一次确认窗(client, admin, d
 def test_本人刚退出候补时管理者转正不会再给他开确认窗(client, admin, db, open_group,
                                             take_student, monkeypatch):
     act, g, queued, wl_id = _fill_and_queue(client, db, open_group, take_student,
-                                            day_offset=0, start_in_hours=10,
-                                            reg_end_in_hours=-1)
+                                            lock=True)
     _raise_quota(client, admin, act, g, 2)
     stu = login(client, queued)
     # 本人的退出在锁里多待一会儿；管理者这时读到的还是「候补中」
@@ -96,21 +93,6 @@ def test_本人刚退出候补时管理者转正不会再给他开确认窗(clie
     db.expire_all()
     row = db.get(Enrollment, wl_id)
     assert row.status == "cancelled" and row.confirm_deadline is None
-
-
-def test_两位管理者同时释放扣留名额只释放一次(client, admin, db, open_group,
-                                         take_student, monkeypatch):
-    act, g, taker, enr_id, _wl = _one_seat(client, db, open_group, take_student,
-                                           reg_end_in_hours=-1)
-    assert _cancel(client, taker, enr_id).json()["effect"] == "held"
-    _slow_once(monkeypatch, staff_activities, "audit_log")
-
-    def release(c):
-        return c.post(f"/api/staff/enrollments/{enr_id}/release-seat", headers=admin)
-    first, second = _race(release, release)
-
-    assert first.status_code == 200, first.text
-    assert second.status_code == 409 and "已被释放" in second.json()["detail"]
 
 
 def test_一位录取一位不录取_结论不会被后提交的盖掉(client, admin, db, take_student,

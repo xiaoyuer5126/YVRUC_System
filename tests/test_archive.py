@@ -1,27 +1,27 @@
 """志愿者档案：只记不罚。
 
-青协能看到一个人参与过的活动、违规记录、临期退选次数；平台不据此拦任何人。
+青协能看到一个人参与过的活动、违规记录、锁定后退出次数；平台不据此拦任何人。
 """
 from __future__ import annotations
 
 from datetime import timedelta
 
 from backend import config
-from backend.models import Enrollment, User, now
+from backend.models import Enrollment, Shift, User, now
 from conftest import login, student_row
 
 HEAD, CORE, MEMBER = "2025004", "2025005", "2025006"
 
 
-def _late_cancel(client, db, open_group, take_student):
-    """造一次「临期退选」：报名已截止、距开场不足 24 小时。"""
-    act, g = open_group(2, day_offset=0, start_in_hours=5)
+def _locked_quit(client, db, open_group, take_student):
+    """造一次「锁定后退出」：报上名之后这一场锁定了名单，再退出。"""
+    act, g = open_group(2)
     sid = take_student()
     t = login(client, sid)
     assert client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                        headers=t, json={"position_id": g.test_position_id}
                        ).status_code == 200
-    act.reg_end = now() - timedelta(minutes=1)
+    db.get(Shift, g.id).list_locked = True
     db.commit()
     enr = (db.query(Enrollment)
            .filter(Enrollment.shift_id == g.id,
@@ -31,16 +31,16 @@ def _late_cancel(client, db, open_group, take_student):
     return act, sid, r.json()
 
 
-def test_临期退选只扣留名额不处罚志愿者(client, admin, db, open_group, take_student):
-    """对志愿者：只是那个名额被扣留，不提分数、不拦报名。
-    对青协：内部提示分按临期退选的权重掉一截，供排人时参考。"""
-    act, sid, body = _late_cancel(client, db, open_group, take_student)
-    assert body["effect"] == "held"
+def test_锁定后退出只记录不处罚志愿者(client, admin, db, open_group, take_student):
+    """对志愿者：只说这次退出被记录了，不提分数、不拦报名。
+    对青协：内部提示分按锁定后退出的权重掉一截，供排人时参考。"""
+    act, sid, body = _locked_quit(client, db, open_group, take_student)
+    assert body["effect"] == "locked"
     assert "分" not in body["message"]
     u = student_row(db, sid)
     d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
     # 新建的学生没有别的记录，扣的就只有这一次
-    assert d["score"]["score"] == config.SCORE_BASE - config.LATE_CANCEL_WEIGHT
+    assert d["score"]["score"] == config.SCORE_BASE - config.LOCKED_QUIT_WEIGHT
     # 之后照样能报别的活动
     act2, g2 = open_group(3)
     assert client.post(f"/api/activities/{act2.id}/shifts/{g2.id}/enroll",
@@ -48,12 +48,12 @@ def test_临期退选只扣留名额不处罚志愿者(client, admin, db, open_g
                        json={"position_id": g2.test_position_id}).status_code == 200
 
 
-def test_档案里数得出临期退选次数(client, admin, db, open_group, take_student):
-    act, sid, _ = _late_cancel(client, db, open_group, take_student)
+def test_档案里数得出锁定后退出次数(client, admin, db, open_group, take_student):
+    act, sid, _ = _locked_quit(client, db, open_group, take_student)
     u = student_row(db, sid)
     d = client.get(f"/api/staff/users/{u.id}/archive", headers=admin).json()
-    assert d["late_cancel_count"] == 1
-    assert any(h["activity_id"] == act.id and h["cancel_type"] == "late"
+    assert d["locked_quit_count"] == 1
+    assert any(h["activity_id"] == act.id and h["cancel_type"] == "locked"
                for h in d["history"])
 
 

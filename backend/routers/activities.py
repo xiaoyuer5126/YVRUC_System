@@ -365,10 +365,10 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
     else:
         raise HTTPException(400, "请选择具体岗位")
 
-    # 暂停报名排在闸门前面：停了就不该占闸门的号
-    why = logic.paused_reason(g, position)
+    # 暂停、锁定排在闸门前面：停了就不该占闸门的号
+    why = logic.closed_reason(g, position)
     if why:
-        raise HTTPException(409, f"{why}，请过一会儿再来看看")
+        raise HTTPException(409, why)
 
     # ★ 名额闸门排在资格校验**前面**，这是它存在的全部意义：几百个请求同一瞬间
     # 到的时候，抢不到的那些只花一次 Redis 往返就被挡回去，下面那十来条资格
@@ -439,10 +439,6 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
             ledger = logic.enroll_ledger(db, act.id, g.id, position.id, user.id,
                                          [g] + attached,
                                          whole_shift=position.is_placeholder)
-            if ledger.mine_held:
-                raise HTTPException(
-                    409, "您此前在该场次临期退选，名额已按规则扣留，无法再次报名；"
-                         "如确有需要请联系负责人")
             if ledger.mine is not None:
                 label = {"enrolled": "已报名为正式成员", "waitlisted": "已在候补队列中",
                          "pending_confirm": "有候补转正待确认"}.get(
@@ -652,33 +648,27 @@ def cancel_enroll(enrollment_id: str,
             raise HTTPException(409, "活动已开始，无法退选；如有特殊情况请联系负责人。")
 
         hours_left = (g.start_time - t).total_seconds() / 3600
-        late = hours_left < config.LATE_CANCEL_HOURS
-        # 临期退选记一笔（青协在档案里能看到次数），但名额只在报名已经关掉
-        # 之后才扣留：报名还开着说明平台仍在招人，把位子废掉自相矛盾——
-        # 新人能报、候补能转正，唯独这个位子空着谁都不能用。
-        # 判「报名是否还开着」而不是「过没过 reg_end」：管理者可以提前点
-        # 「截止报名」，那时 reg_end 还在未来，但招人确实已经停了。
-        reg_open = (act.status == "published"
-                    and act.reg_end is not None and t <= act.reg_end)
-        hold_seat = late and not reg_open
+        # 名单锁定（整场或他所在的岗位）后退出记一笔「锁定后退出」，青协在档案里
+        # 看得到次数；空出的位子不自动给候补，由管理者手动转正
+        position = db.get(Position, enr.position_id) if enr.position_id else None
+        locked = logic.position_locked(g, position)
 
         vacated, was_leader = enr.position_id, enr.is_leader
         enr.status = "cancelled"
-        enr.cancel_type = "late" if late else "normal"
+        enr.cancel_type = "locked" if locked else "normal"
         enr.cancelled_at = t
-        enr.seat_held = hold_seat
         enr.is_leader = False
         logic.sync_attached(db, enr)     # 培训/彩排跟着退掉
 
         logic.record_change(
             db, user, enr, "cancel",
-            f"距开始 {hours_left:.1f} 小时"
-            + ("，临期退选并扣留名额" if hold_seat else "，临期退选" if late else ""))
+            f"距开始 {hours_left:.1f} 小时" + ("，名单锁定后退出" if locked else ""))
         db.flush()                       # 同上：只 flush，和递补一起提交
 
-        notify.notify_late_dropout(db, enr, user)
-        if not hold_seat:
-            logic.promote_all(db, g)     # 名额放回去，候补按顺序递补
+        if locked:
+            notify.notify_locked_dropout(db, enr, user)
+        # 名额放回去，候补按顺序递补；暂停、锁定时 promote_all 原地不动
+        logic.promote_all(db, g)
         if was_leader:
             logic.on_leader_vacated(db, vacated)
         db.commit()
@@ -686,12 +676,10 @@ def cancel_enroll(enrollment_id: str,
         # 作废计数器，下一个报名按数据库重新对齐，别让刚放出来的位子被挡住
         invalidate_gates(g.id, _seat_gate_id(g, vacated))
 
-    if hold_seat:
-        return {"ok": True, "effect": "held",
-                "message": f"距开始不足{config.LATE_CANCEL_HOURS}小时且报名已截止，"
-                           f"该名额已按规则扣留，如需补人请联系负责人。"}
-    return {"ok": True, "effect": "released",
-            "message": "退选成功，名额已释放给候补队列。"}
+    if locked:
+        return {"ok": True, "effect": "locked",
+                "message": "已退出。名单已锁定，本次退出已记录。"}
+    return {"ok": True, "effect": "released", "message": "退选成功。"}
 
 
 @router.post("/enrollments/{enrollment_id}/confirm-promotion")

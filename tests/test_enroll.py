@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.database import SessionLocal
 from backend.main import app
-from backend.models import Activity, Enrollment, Position, now, uid
+from backend.models import Enrollment, Position, now, uid
 from conftest import POSITION_TEXT, editing, login, student_row
 
 
@@ -49,22 +49,6 @@ def test_waitlisted_group_also_locks_the_slot(client, open_group, take_student):
     h = login(client, queued)
     assert enroll(client, h, act1, g1).json()["status"] == "waitlisted"
     assert enroll(client, h, act2, g2).status_code == 409
-
-
-def test_扣留期间本人不能把位子拿回去(client, admin, db, open_group, take_student):
-    """报名若被老师重新打开，扣留的约束仍然对本人有效。"""
-    act, g = open_group(1, day_offset=0, start_in_hours=5)
-    h = login(client, take_student())
-    enr_id = enroll(client, h, act, g).json()["enrollment_id"]
-    db.get(Activity, act.id).reg_end = now() - timedelta(hours=1)
-    db.commit()
-    assert client.delete(f"/api/activities/enrollments/{enr_id}",
-                         headers=h).json()["effect"] == "held"
-
-    db.get(Activity, act.id).reg_end = now() + timedelta(days=1)   # 又开放报名
-    db.commit()
-    r = enroll(client, h, act, g)
-    assert r.status_code == 409 and "扣留" in r.json()["detail"]
 
 
 def test_normal_cancel_promotes_waitlist_head(client, db, open_group,

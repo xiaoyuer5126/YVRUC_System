@@ -15,8 +15,8 @@
       <div class="stats">
         <div class="stat"><b>{{ served }}</b><span class="dim">次到岗</span></div>
         <div class="stat"><b>{{ d.history.length }}</b><span class="dim">次报名</span></div>
-        <div class="stat" :class="{ warn: d.late_cancel_count }">
-          <b>{{ d.late_cancel_count }}</b><span class="dim">次临期退选</span>
+        <div class="stat" :class="{ warn: d.locked_quit_count }">
+          <b>{{ d.locked_quit_count }}</b><span class="dim">次锁定后退出</span>
         </div>
         <div class="stat" :class="{ warn: d.cancels.recent_count >= 3 }">
           <b>{{ d.cancels.recent_count }}</b>
@@ -43,7 +43,7 @@
         </div>
       </div>
       <p class="dim" style="margin:4px 0 0">
-        低于 {{ d.score.alert_below }} 分时名单上会标出提示。每个签到过、无违规也无临期退选的活动，
+        低于 {{ d.score.alert_below }} 分时名单上会标出提示。每个签到过、无违规也无锁定后退出的活动，
         结束后加 {{ d.score.per_activity }} 分，满分封顶不累积。不对志愿者公开，也不影响报名。
       </p>
 
@@ -62,7 +62,7 @@
         <template #title="{ row }">{{ row.activity_title }} · {{ row.shift_name }}</template>
         <template #extra="{ row }">
           <el-tag size="small" effect="plain"
-                  :type="row.cancel_type === 'late' ? 'danger' : 'info'">
+                  :type="row.cancel_type === 'locked' ? 'danger' : 'info'">
             {{ CANCEL_LABELS[row.cancel_type] || row.cancel_type }}
           </el-tag>
         </template>
@@ -74,7 +74,7 @@
         <el-table-column label="类型" width="100">
           <template #default="{ row }">
             <el-tag size="small" effect="plain"
-                    :type="row.cancel_type === 'late' ? 'danger' : 'info'">
+                    :type="row.cancel_type === 'locked' ? 'danger' : 'info'">
               {{ CANCEL_LABELS[row.cancel_type] || row.cancel_type }}
             </el-tag>
           </template>
@@ -133,7 +133,7 @@ const d = ref(null)
 
 const served = computed(() => d.value ? d.value.history.filter(h => h.checked_in).length : 0)
 
-const CANCEL_LABELS = { normal: '退选', late: '临期退选', expired: '确认超时',
+const CANCEL_LABELS = { normal: '退选', locked: '锁定后退出', expired: '确认超时',
                         abandoned: '放弃候补' }
 // 报名到退选的间隔：几小时的看小时，长了看天，太长了没必要精确
 function gapText(h) {
@@ -153,12 +153,12 @@ defineExpose({ open })
 function tagText(h) {
   if (h.status === 'enrolled') return h.checked_in ? '已到岗' : '已报名'
   if (h.status === 'waitlisted' || h.status === 'pending_confirm') return '候补中'
-  return { late: '临期退选', normal: '已退选', expired: '确认超时',
+  return { locked: '锁定后退出', normal: '已退选', expired: '确认超时',
            abandoned: '放弃候补' }[h.cancel_type] || '已退选'
 }
 function tagType(h) {
   if (h.status === 'enrolled') return h.checked_in ? 'success' : 'primary'
-  if (h.cancel_type === 'late') return 'warning'
+  if (h.cancel_type === 'locked') return 'warning'
   return 'info'
 }
 </script>

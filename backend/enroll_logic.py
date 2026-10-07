@@ -3,10 +3,11 @@
 关键机制：
   · 时段冲突：只比场次的时间区间，重叠即拦截（跨活动，含候补中的场次——
     排了队就等于预留了这段时间）；
-  · 名额账本：已报名 + 候补转正待确认（确认窗内位子给他留着）+ 临期退选占位
-    （seat_held，不释放给任何人）；
-  · 候补按 joined_at 排队，正常退选释放名额 → 队首转正，2 小时确认窗口
-    （夜间 23:00–8:00 不计时，且不晚于场次开始，见 promote_confirm_deadline）。
+  · 名额账本：已报名 + 候补转正待确认（确认窗内位子给他留着）；
+  · 候补按 joined_at 排队，退选释放名额 → 队首转正，2 小时确认窗口
+    （夜间 23:00–8:00 不计时，且不晚于场次开始，见 promote_confirm_deadline）；
+  · 暂停、名单锁定时候补不自动顶上（见 promotion_blocked）：暂停是在调岗，
+    期间名单不动，恢复时补齐；锁定是名单已敲定，空位由管理者手动转正。
 
 调用容量相关函数前必须持有 locks.shift_lock(db, shift_id)，且判定与落库在同一个
 事务里（锁随事务结束而放，见 locks.py）。
@@ -179,11 +180,10 @@ def shift_enrolled_count(db: OrmSession, shift_id: str) -> int:
 
 
 def shift_occupied_count(db: OrmSession, shift_id: str) -> int:
-    """场次已消耗的名额 = 正式报名 + 待确认 + 临期退选占位。"""
+    """场次已消耗的名额 = 正式报名 + 待确认。"""
     return db.query(Enrollment).filter(
         Enrollment.shift_id == shift_id,
-        or_(Enrollment.status.in_(("enrolled", "pending_confirm")),
-            Enrollment.seat_held.is_(True))).count()
+        Enrollment.status.in_(("enrolled", "pending_confirm"))).count()
 
 
 def position_enrolled_count(db: OrmSession, position_id: str) -> int:
@@ -200,23 +200,15 @@ def position_occupied_count(db: OrmSession, position_id: str) -> int:
     """
     return db.query(Enrollment).filter(
         Enrollment.position_id == position_id,
-        or_(Enrollment.status.in_(("enrolled", "pending_confirm")),
-            Enrollment.seat_held.is_(True))).count()
-
-
-def position_held_count(db: OrmSession, position_id: str) -> int:
-    """岗位上被临期退选扣留的名额数。"""
-    return db.query(Enrollment).filter(
-        Enrollment.position_id == position_id,
-        Enrollment.seat_held.is_(True)).count()
+        Enrollment.status.in_(("enrolled", "pending_confirm"))).count()
 
 
 class Occupancy:
     """一个活动里各场次/岗位的人数，**一次查完**。
 
-    展示页要列十几个岗位的「已报 / 占用 / 占位 / 候补」，一个岗位一条 count
+    展示页要列十几个岗位的「已报 / 占用 / 候补」，一个岗位一条 count
     就是几十条 SQL（实测：一个活动详情页 80 条，大头在这儿）。这里按
-    (场次, 岗位, 状态, 是否占位) 分组取回来，之后都在内存里加。
+    (场次, 岗位, 状态) 分组取回来，之后都在内存里加。
 
     只给展示路径用；报名、抢名额那些地方仍走单条 count——那里要的是此刻
     这一刻的准确值，缓存下来反而危险。
@@ -226,14 +218,13 @@ class Occupancy:
         n = lambda: defaultdict(int)                       # noqa: E731
         self._shift = {"enrolled": n(), "occupied": n(), "wait": n(),
                        "excused": n(), "unplaced": n()}
-        self._pos = {"enrolled": n(), "occupied": n(), "held": n(), "wait": n()}
+        self._pos = {"enrolled": n(), "occupied": n(), "wait": n()}
         rows = (db.query(Enrollment.shift_id, Enrollment.position_id,
-                         Enrollment.status, Enrollment.seat_held,
-                         Enrollment.excused)
+                         Enrollment.status, Enrollment.excused)
                 .filter(Enrollment.activity_id == activity_id).all())
-        for sid, pid, status, held, excused in rows:
+        for sid, pid, status, excused in rows:
             enr = status == "enrolled"
-            occ = held or status in ("enrolled", "pending_confirm")
+            occ = status in ("enrolled", "pending_confirm")
             wait = status in ("waitlisted", "pending_confirm")
             if enr:
                 self._shift["enrolled"][sid] += 1
@@ -251,8 +242,6 @@ class Occupancy:
                 self._shift["wait"][sid] += 1
                 if pid:
                     self._pos["wait"][pid] += 1
-            if held and pid:
-                self._pos["held"][pid] += 1
 
     def shift_enrolled(self, shift_id: str) -> int:
         return self._shift["enrolled"][shift_id]
@@ -278,9 +267,6 @@ class Occupancy:
     def position_occupied(self, position_id: str) -> int:
         return self._pos["occupied"][position_id]
 
-    def position_held(self, position_id: str) -> int:
-        return self._pos["held"][position_id]
-
     def position_wait(self, position_id: str) -> int:
         return self._pos["wait"][position_id]
 
@@ -296,8 +282,7 @@ def shift_counts(db: OrmSession,
     if not activity_ids:
         return {}
     enrolled = Enrollment.status == "enrolled"
-    occupied = or_(Enrollment.status.in_(("enrolled", "pending_confirm")),
-                   Enrollment.seat_held.is_(True))
+    occupied = Enrollment.status.in_(("enrolled", "pending_confirm"))
     waiting = Enrollment.status.in_(("waitlisted", "pending_confirm"))
     rows = (db.query(Enrollment.shift_id,
                      func.count(case((enrolled, 1))),
@@ -326,7 +311,6 @@ def has_room(db: OrmSession, shift: Shift, position=None) -> bool:
 class EnrollLedger(NamedTuple):
     """报名锁里要的全部账目，见 enroll_ledger。"""
     mine: str | None     # 本人在这一场的有效记录的状态（没有为 None）
-    mine_held: bool      # 本人在这一场有一条临期退选占位
     occupied: int        # 岗位已消耗的名额，口径同 position_occupied_count
     queued: int          # 岗位候补队列人数，口径同 waitlist_rows 按岗位过滤
     editing: bool        # 活动此刻是否处于编辑态
@@ -349,9 +333,9 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
     撞上外键，回一个 500。
 
     口径与下列函数逐条对齐（改其中一边要同时改另一边）：
-      · 查重：status ∈ ACTIVE 或 seat_held（唯一索引 uq_enrollment_live 的口径，
-        所以最多一行，max/bool_or 取到的就是那一行）；
-      · 名额：position_occupied_count——正式 + 待确认 + 临期退选占位；
+      · 查重：status ∈ ACTIVE（唯一索引 uq_enrollment_live 的口径，
+        所以最多一行，max 取到的就是那一行）；
+      · 名额：position_occupied_count——正式 + 待确认；
         whole_shift（报的是占位岗位）时按整场数，同 has_room；
       · 候补：waitlist_rows——waitlisted + pending_confirm，限本场次本岗位。
         待确认既占名额又在队列里，两边都算；
@@ -360,7 +344,7 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
         这里只要「有没有」；真有的话调用方再走 active_rows 拼出详细的提示，
         那是少见的路径，常见路径省下一个往返。
     """
-    live = or_(Enrollment.status.in_(ACTIVE), Enrollment.seat_held.is_(True))
+    live = Enrollment.status.in_(ACTIVE)
     mine = (Enrollment.shift_id == shift_id) & (Enrollment.user_id == user_id)
     at_pos = Enrollment.position_id == position_id
     seats = (Enrollment.shift_id == shift_id) if whole_shift else at_pos
@@ -378,26 +362,94 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
     gone = ~select(Position.id).where(Position.id == position_id).exists()
     row = db.execute(
         select(func.max(Enrollment.status).filter(mine & live),
-               func.coalesce(func.bool_or(mine & Enrollment.seat_held), False),
-               func.count().filter(seats & or_(
-                   Enrollment.status.in_(("enrolled", "pending_confirm")),
-                   Enrollment.seat_held.is_(True))),
+               func.count().filter(
+                   seats & Enrollment.status.in_(("enrolled", "pending_confirm"))),
                func.count().filter(
                    at_pos & (Enrollment.shift_id == shift_id)
                    & Enrollment.status.in_(("waitlisted", "pending_confirm"))),
                editing, clash, gone)
         .where(or_(mine, seats))).one()
-    return EnrollLedger(row[0], bool(row[1]), row[2], row[3], bool(row[4]),
-                        bool(row[5]), bool(row[6]))
+    return EnrollLedger(row[0], row[1], row[2], bool(row[3]), bool(row[4]),
+                        bool(row[5]))
 
 
-def paused_reason(shift: Shift, position: Position | None) -> str:
-    """这一场 / 这个岗位是不是被管理者暂停了报名；没暂停返回空串。"""
+# ======================= 暂停与名单锁定 =======================
+
+def lock_at(shift: Shift) -> datetime | None:
+    """这一场自动锁定名单的时刻；不自动锁定（N = 0）为 None。"""
+    if not shift.lock_hours:
+        return None
+    return shift.start_time - timedelta(hours=shift.lock_hours)
+
+
+def auto_locked(shift: Shift, t: datetime | None = None) -> bool:
+    """到了自动锁定时刻、且这次自动锁定还没被管理者手动解锁过。"""
+    at = lock_at(shift)
+    return (not shift.auto_lock_spent and at is not None
+            and (t or now()) >= at)
+
+
+def shift_locked(shift: Shift, t: datetime | None = None) -> bool:
+    """这一场的名单此刻是否锁定：手动锁着，或到了自动锁定时刻。
+
+    自动锁定不靠定时任务落库，每次用到时按时刻算：报名、退选、递补拿到的
+    都是这一刻的准确状态，不会因为定时任务慢了一分钟让人钻进来。
+    """
+    return shift.list_locked or auto_locked(shift, t)
+
+
+def position_locked(shift: Shift, position: Position | None) -> bool:
+    """这个岗位的名单是否锁定：岗位自己锁着，或整场锁着。"""
+    return shift_locked(shift) or (position is not None and position.list_locked)
+
+
+def closed_reason(shift: Shift, position: Position | None) -> str:
+    """这一场 / 这个岗位此刻为什么不收新报名、新候补；收的话返回空串。
+
+    已开场的不在这里拦：那时锁没锁都报不进去，由报名窗口那一关说「已开场」。
+    """
+    if now() >= shift.start_time:
+        return ""
+    if shift_locked(shift):
+        return f"场次「{shift.name}」名单已锁定，不再接受报名"
+    if position is not None and position.list_locked:
+        return f"岗位「{position.name}」名单已锁定，不再接受报名"
     if shift.enroll_paused:
-        return f"场次「{shift.name}」暂停报名"
+        return f"场次「{shift.name}」暂停报名，请过一会儿再来看看"
     if position is not None and position.enroll_paused:
-        return f"岗位「{position.name}」暂停报名"
+        return f"岗位「{position.name}」暂停报名，请过一会儿再来看看"
     return ""
+
+
+def promotion_blocked(shift: Shift, position: Position | None) -> bool:
+    """候补此刻能不能自动顶上：暂停或锁定（场次或这个岗位）时都不能。
+
+    暂停是在调岗，期间名单不动，恢复时 fill_vacancies 补齐；锁定是名单已敲定，
+    空位由管理者手动转正。两者都解除才补，见 staff_activities 的暂停、锁定接口。
+    """
+    return (shift.enroll_paused or position_locked(shift, position)
+            or (position is not None and position.enroll_paused))
+
+
+def set_lock_hours(shift: Shift, hours: int) -> None:
+    """改这一场的自动锁定小时数。
+
+    改之前先把此刻的锁定状态落实下来：已经自动锁上的，N 改小也不会自己解开
+    （要解锁就手动点）。自动锁定按新的 N 重新生效：新锁定点已经过了的，立即锁定。
+    """
+    shift.list_locked = shift_locked(shift)
+    shift.lock_hours = hours
+    shift.auto_lock_spent = False
+
+
+def set_shift_locked(shift: Shift, locked: bool) -> None:
+    """手动锁定 / 解锁这一场。
+
+    过了自动锁定时刻再解锁，这次自动锁定就算用掉了：不然下一秒又被锁回去。
+    """
+    shift.list_locked = locked
+    if not locked and auto_locked(shift):
+        shift.auto_lock_spent = True
 
 
 # ======================= 硬性条件（场次与岗位共用） =======================
@@ -602,29 +654,15 @@ def waitlist_position(db: OrmSession, enr: Enrollment) -> int:
     return 0
 
 
-def auto_promote_deadline(db: OrmSession, shift: Shift) -> datetime:
-    """自动候补转正的截止点：报名截止时间与「活动开始前 24 小时」取更晚的那个。
-
-    过了这个点还自动转正是坑人：转正的人只剩不到一天准备，而他此时再退选
-    就要按临期退选扣分。之后要不要补人由负责人看着办，手动转。
-    """
-    act = db.get(Activity, shift.activity_id)
-    cutoff = shift.start_time - timedelta(hours=config.LATE_CANCEL_HOURS)
-    if act is not None and act.reg_end and act.reg_end > cutoff:
-        cutoff = act.reg_end
-    # 再晚也不能晚于活动开始——报名截止时间填到活动之后时兜住
-    return min(cutoff, shift.start_time)
-
-
 def promote_head(db: OrmSession, shift: Shift,
                  position: Position | None = None) -> Enrollment | None:
     """有名额释放时，把候补队首转为「待确认」，开确认窗（2 小时，夜间不计时）并通知。
 
-    只在确实空出名额时才提升：临期退选是占位不释放的，队列原地不动。
     pick 模式下队列是按岗位分的，只提升该岗位的队首。
-    过了自动转正截止点就不再自动提升，改由管理者手动转。
+    暂停、锁定时不自动提升（见 promotion_blocked）；场次开场后也不再自动提升，
+    开场后再进来的人赶不上，要不要补人由管理者手动转。
     """
-    if now() > auto_promote_deadline(db, shift):
+    if promotion_blocked(shift, position) or now() >= shift.start_time:
         return None
     if not has_room(db, shift, position):
         return None
@@ -704,9 +742,14 @@ def start_confirm(db: OrmSession, enr: Enrollment, shift: Shift) -> Enrollment:
 
 def _settle_position(db: OrmSession, enr: Enrollment, user: User,
                      shift: Shift) -> None:
-    """转正后落实岗位并通知：assign 模式候补时没选岗位，这里挑一个。"""
+    """转正后落实岗位并通知：assign 模式候补时没选岗位，这里挑一个。
+
+    暂停、锁定的岗位不挑：那里的名单此刻不该有变动。
+    """
     if not enr.position_id and shift.positions:
-        ok = [p for p in shift.positions if not unmet_requirements(user, p)]
+        ok = [p for p in shift.positions
+              if not unmet_requirements(user, p)
+              and not p.enroll_paused and not p.list_locked]
         if ok:
             best = max(ok, key=lambda p: p.quota - position_occupied_count(db, p.id))
             enr.position_id = best.id
@@ -782,7 +825,7 @@ def promote_all(db: OrmSession, shift: Shift) -> int:
     """把该场次所有空出名额的队列各提升一位。
 
     pick 模式下队列按岗位分，得逐个岗位看；assign 模式只有一条队。
-    过了自动转正截止点整个不动（见 auto_promote_deadline）。
+    暂停、锁定的场次或岗位不动（见 promotion_blocked）。
     """
     if shift.needs_assign():
         # 队列排在占位岗位上，名额按整场数（见 has_room）

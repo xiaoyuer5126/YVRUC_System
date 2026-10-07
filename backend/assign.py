@@ -15,22 +15,13 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .enroll_logic import (group_needs_leader, group_positions, position_held_count,
+from .enroll_logic import (group_needs_leader, group_positions,
                            position_occupied_count, unmet_requirements)
 from .models import Enrollment, Position, Shift, User, now
 
 
 def _eligible_positions(user: User, positions: list[Position]) -> list[str]:
     return [p.id for p in positions if not unmet_requirements(user, p)]
-
-
-def _held_seats(db: OrmSession, positions: list[Position]) -> dict[str, int]:
-    """各岗位被临期退选扣留的名额数。
-
-    扣留的位子不释放给任何人，分配同样不能用：不减掉的话，方案会把它当空位
-    分出去，等于绕开了扣留规则。
-    """
-    return {p.id: position_held_count(db, p.id) for p in positions}
 
 
 def match(candidates: list[tuple[str, list[str]]],
@@ -105,7 +96,7 @@ def _plan_row(r: Enrollment, u: User, target: str | None, continuity: bool) -> d
 
 
 def _position_stats(db: OrmSession, positions: list[Position], plan: list[dict]) -> list[dict]:
-    """各岗位的名额、已在岗、扣留、本次排入。本次方案里要挪走的人不算「已在岗」。"""
+    """各岗位的名额、已在岗、本次排入。本次方案里要挪走的人不算「已在岗」。"""
     moving = {x["enrollment_id"] for x in plan}
     out = []
     for p in positions:
@@ -115,7 +106,6 @@ def _position_stats(db: OrmSession, positions: list[Position], plan: list[dict])
                            Enrollment.id.notin_(moving or {""})).count())
         out.append({
             "position_id": p.id, "name": p.name, "quota": p.quota,
-            "held": position_held_count(db, p.id),
             "existing": staying,
             "location": p.location,
             "requirement_desc": p.requirement_desc() or "不限",
@@ -155,8 +145,7 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
     users = {r.id: db.get(User, r.user_id) for r in rows}
     candidates = [(r.id, _eligible_positions(users[r.id], positions))
                   for r in rows]
-    # 空位 = 名额 − 已占（在岗 + 待确认 + 临期退选扣留）。扣留的位子不释放给
-    # 任何人，分配同样不能用，否则等于绕开了扣留规则
+    # 空位 = 名额 − 已占（在岗 + 待确认）
     quota = {p.id: max(0, p.quota - position_occupied_count(db, p.id)) for p in positions}
     prefer: dict[str, str] = {}
     if continuity:
@@ -318,9 +307,7 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
         rows.append((enr, positions.get(pid), bool(row.get("force"))))
 
     # 名额：把本次方案与未列入方案的既有分配合并起来算。
-    # 扣留的名额先扣掉——它们不释放给任何人，分配也不能用。
     planned = {enr.id for enr, _p, _f in rows}
-    held = _held_seats(db, list(positions.values()))
     counts: dict[str, int] = {}
     for enr in (db.query(Enrollment)
                 .filter(Enrollment.shift_id == shift.id,
@@ -332,7 +319,7 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
             continue
         counts[position.id] = counts.get(position.id, 0) + 1
     for pid, n in counts.items():
-        room = positions[pid].quota - held[pid]
+        room = positions[pid].quota
         if n > room:
             raise ValueError(f"岗位「{positions[pid].name}」超出名额"
                              f"（{n}>{room}），"

@@ -17,7 +17,7 @@ from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
                      UploadFile)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
@@ -907,7 +907,7 @@ def reopen(activity_id: str, body: ReopenBody,
                       if old_end else f"恢复报名，报名截止 {new_end:%m-%d %H:%M}",
               visible=True)
     db.commit()
-    # 截止期间自动递补是停着的，恢复报名等于名额又能动了，先把队伍消一遍
+    # 恢复报名前先把空着的名额按候补顺序补齐，别让新来的人抢在排队的人前面
     promoted = _fill_vacancies(db, act)
     return {"ok": True, "reg_end": iso(act.reg_end), "promoted": promoted}
 
@@ -979,6 +979,20 @@ class ShiftBody(BaseModel):
     applies_to_positions: list[str] = []
     # 场次级硬性条件：{"校区": [...], "学段": [...]}，空 = 不限
     requirement_tags: dict = {}
+    # 开场前多少小时自动锁定名单，0 = 不自动锁定
+    lock_hours: int = Field(default=config.LOCK_HOURS_DEFAULT, ge=0,
+                            le=config.LOCK_HOURS_MAX)
+
+
+def _clean_lock_hours(v) -> int:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "自动锁定时间必须是整数小时") from None
+    if not 0 <= n <= config.LOCK_HOURS_MAX:
+        raise HTTPException(400, f"自动锁定时间要在 0～{config.LOCK_HOURS_MAX} 小时之间"
+                                 f"（0 = 不自动锁定）")
+    return n
 
 
 def _validate_shift_times(start: datetime, end: datetime):
@@ -1069,7 +1083,7 @@ def _sync_placeholder(db: OrmSession, g: Shift, capacity: int,
 
 
 def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
-    """切换场次模式：只在这一场一个人都没报（含候补、临期占位）时允许。
+    """切换场次模式：只在这一场一个人都没报（含候补）时允许。
 
     两种场次的人记在不同的账上：pick 的人各自占着自己选的岗位；assign 的人
     都从占位岗位进来、名额按整场数，分到真实岗位后仍算这一场的名额。有人
@@ -1086,8 +1100,7 @@ def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
         return
     if g.id:
         rows = db.query(Enrollment).filter(Enrollment.shift_id == g.id)
-        live = rows.filter(or_(Enrollment.status.in_(logic.ACTIVE),
-                               Enrollment.seat_held.is_(True))).count()
+        live = rows.filter(Enrollment.status.in_(logic.ACTIVE)).count()
         if live:
             raise HTTPException(
                 409, f"「{g.name}」已有 {live} 人报名，不能再切换岗位模式；"
@@ -1116,7 +1129,7 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
     g = Shift(id=uid("g"), activity_id=act.id, name=body.name.strip(),
                       start_time=start, end_time=end,
                       note=body.note.strip(), sort=len(act.shifts),
-                      location=body.location.strip())
+                      location=body.location.strip(), lock_hours=body.lock_hours)
     _apply_shift_mode(db, g, body.mode)
     _apply_attachment(db, g, body, act)
     db.add(g)
@@ -1144,7 +1157,7 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
 SHIFT_FIELDS = {"name": "场次名", "start_time": "开始时间", "end_time": "结束时间",
                 "mode": "岗位模式", "note": "备注",
                 "location": "地点", "hours_mode": "时长认定",
-                "requirement_tags": "条件要求"}
+                "requirement_tags": "条件要求", "lock_hours": "开场前自动锁定（小时）"}
 
 
 @router.patch("/shifts/{shift_id}")
@@ -1155,8 +1168,17 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
     before_raw = {k: getattr(g, k) for k in SHIFT_FIELDS}
+    # 锁定时刻跟着 N 和开场时间走，两者真变了才重算：先按改之前的时刻把锁定
+    # 状态落实下来，已经锁上的不会因为锁定点往后挪而自己解开；新锁定点已过的
+    # 立即锁定（见 logic.set_lock_hours）。只改了名字之类的不碰，不然手动解锁过的
+    # 场次一保存又被锁回去
+    new_hours = (_clean_lock_hours(body["lock_hours"]) if "lock_hours" in body
+                 else g.lock_hours)
+    new_start = _parse_dt(body["start_time"]) if "start_time" in body else g.start_time
+    if new_hours != g.lock_hours or new_start != g.start_time:
+        logic.set_lock_hours(g, new_hours)
     for key in SHIFT_FIELDS:
-        if key not in body:
+        if key not in body or key == "lock_hours":
             continue
         v = body[key]
         if key in ("start_time", "end_time"):
@@ -1478,59 +1500,152 @@ class PauseBody(BaseModel):
     paused: bool
 
 
+class LockBody(BaseModel):
+    locked: bool
+
+
 def _pause_target_check(act: Activity) -> None:
-    """暂停 / 恢复报名不用进编辑态：它只管收不收新报名，不改任何人的安排。"""
+    """暂停、锁定不用进编辑态：它们只管收不收新报名、候补顶不顶上，不改任何人的安排。"""
     ensure_not_finished(act)
     if act.is_record():
         raise HTTPException(409, "补记录活动不接受报名")
 
 
-@router.post("/shifts/{shift_id}/pause")
-def pause_shift(shift_id: str, body: PauseBody,
-                db: OrmSession = Depends(db_session),
-                user: User = Depends(require_manager)):
-    """暂停 / 恢复一个场次的报名（含它下面所有岗位）。"""
+def _toggle_target(db: OrmSession, user: User, shift_id: str | None = None,
+                   position_id: str | None = None) -> tuple[Activity, Shift, Position | None]:
+    """暂停、锁定接口共用的取对象与校验。岗位接口传 position_id。"""
+    s = None
+    if position_id is not None:
+        s = db.get(Position, position_id)
+        if s is None:
+            raise HTTPException(404, "岗位不存在")
+        shift_id = s.shift_id
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = _act(db, g.activity_id)
     _pause_target_check(act)
     if g.is_attached():
         raise HTTPException(400, "培训/彩排跟着服务场次走，没有单独的报名")
-    g.enroll_paused = body.paused
-    audit_log(db, actor=user, action="update", target_type="group",
-              target_id=g.id, target_label=f"{act.title}·{g.name}", activity_id=act.id,
-              summary=f"{'暂停' if body.paused else '恢复'}场次「{g.name}」的报名")
+    if s is not None and s.is_placeholder:
+        raise HTTPException(400, "「待分配」是整场的报名入口，请对整个场次操作")
+    return act, g, s
+
+
+def _reopened(db: OrmSession, g: Shift, s: Position | None) -> dict:
+    """解除暂停或锁定之后：两者都解除了就按候补顺序补齐空位；还有一项没解除，
+    候补就不动，有人在排队时提醒管理者为什么没人顶上。
+
+    调用方持有场次锁，补位和状态变化在同一个事务里提交。
+    """
+    if not logic.promotion_blocked(g, s):
+        return {"promoted": logic.fill_vacancies(db, g), "hint": ""}
+    queue = logic.waitlist_rows(db, g.id)
+    if s is not None:
+        queue = [e for e in queue if e.position_id == s.id]
+    if not any(e.status == "waitlisted" for e in queue):
+        return {"promoted": 0, "hint": ""}
+    if logic.shift_locked(g):
+        why = "这一场仍在锁定中"
+    elif g.enroll_paused:
+        why = "这一场仍在暂停中"
+    else:
+        why = f"岗位「{s.name}」仍在{'锁定' if s.list_locked else '暂停'}中"
+    return {"promoted": 0,
+            "hint": f"{why}，候补要等暂停和锁定都解除后才会补位。"}
+
+
+def _toggle_done(db: OrmSession, user: User, act: Activity, g: Shift,
+                 s: Position | None, reopened: bool, summary: str) -> dict:
+    """留痕、补位、提交、作废闸门计数。场次锁随 commit 放掉。"""
+    if s is None:
+        audit_log(db, actor=user, action="update", target_type="group",
+                  target_id=g.id, target_label=f"{act.title}·{g.name}",
+                  activity_id=act.id, summary=summary)
+    else:
+        audit_log(db, actor=user, action="update", target_type="position",
+                  target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
+                  activity_id=act.id, summary=summary)
+    db.flush()
+    out = _reopened(db, g, s) if reopened else {"promoted": 0, "hint": ""}
     db.commit()
-    return {"ok": True, "paused": g.enroll_paused}
+    for p in ([s] if s is not None else g.positions):
+        invalidate_gates(g.id, p.id)
+    return out
+
+
+@router.post("/shifts/{shift_id}/pause")
+def pause_shift(shift_id: str, body: PauseBody,
+                db: OrmSession = Depends(db_session),
+                user: User = Depends(require_manager)):
+    """暂停 / 恢复一个场次的报名（含它下面所有岗位）。
+
+    暂停用来调整岗位：不收新报名、新候补，候补也不自动顶上，期间名单不动；
+    已报的人可以退出，不记录。恢复时按候补顺序把空位补齐。
+    """
+    act, g, _ = _toggle_target(db, user, shift_id=shift_id)
+    db.commit()          # 还连接再排锁，理由同 enroll
+    with shift_lock(db, g.id):
+        db.refresh(g)
+        g.enroll_paused = body.paused
+        out = _toggle_done(db, user, act, g, None, not body.paused,
+                           f"{'暂停' if body.paused else '恢复'}场次「{g.name}」的报名")
+    return {"ok": True, "paused": g.enroll_paused, **out}
 
 
 @router.post("/positions/{position_id}/pause")
 def pause_position(position_id: str, body: PauseBody,
                    db: OrmSession = Depends(db_session),
                    user: User = Depends(require_manager)):
-    """暂停 / 恢复一个岗位的报名。「待分配」就是整场的报名入口，暂停整个场次。"""
-    s = db.get(Position, position_id)
-    if s is None:
-        raise HTTPException(404, "岗位不存在")
-    g = _shift(db, s.shift_id)
-    ensure_activity_manager(db, user, g.activity_id)
-    act = _act(db, g.activity_id)
-    _pause_target_check(act)
-    if s.is_placeholder:
-        raise HTTPException(400, "「待分配」是整场的报名入口，请暂停整个场次")
-    s.enroll_paused = body.paused
-    audit_log(db, actor=user, action="update", target_type="position",
-              target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
-              activity_id=act.id,
-              summary=f"{'暂停' if body.paused else '恢复'}岗位「{s.name}」的报名")
+    """暂停 / 恢复一个岗位的报名，口径同 pause_shift。"""
+    act, g, s = _toggle_target(db, user, position_id=position_id)
     db.commit()
-    return {"ok": True, "paused": s.enroll_paused}
+    with shift_lock(db, g.id):
+        db.refresh(s)
+        s.enroll_paused = body.paused
+        out = _toggle_done(db, user, act, g, s, not body.paused,
+                           f"{'暂停' if body.paused else '恢复'}岗位「{s.name}」的报名")
+    return {"ok": True, "paused": s.enroll_paused, **out}
+
+
+@router.post("/shifts/{shift_id}/lock")
+def lock_shift(shift_id: str, body: LockBody,
+               db: OrmSession = Depends(db_session),
+               user: User = Depends(require_manager)):
+    """手动锁定 / 解锁一个场次的名单。
+
+    锁定后名单视为基本敲定：不收新报名、新候补，候补不自动顶上（管理者手动
+    转正），此时退出的志愿者记一次「锁定后退出」。解锁时按候补顺序补齐空位；
+    报名没截止的话，同时重新收新报名和新候补。不进编辑态、不发通知。
+    """
+    act, g, _ = _toggle_target(db, user, shift_id=shift_id)
+    db.commit()
+    with shift_lock(db, g.id):
+        db.refresh(g)
+        logic.set_shift_locked(g, body.locked)
+        out = _toggle_done(db, user, act, g, None, not body.locked,
+                           f"{'锁定' if body.locked else '解锁'}场次「{g.name}」的名单")
+    return {"ok": True, "locked": logic.shift_locked(g), **out}
+
+
+@router.post("/positions/{position_id}/lock")
+def lock_position(position_id: str, body: LockBody,
+                  db: OrmSession = Depends(db_session),
+                  user: User = Depends(require_manager)):
+    """手动锁定 / 解锁一个岗位的名单，口径同 lock_shift。岗位没有自动锁定。"""
+    act, g, s = _toggle_target(db, user, position_id=position_id)
+    db.commit()
+    with shift_lock(db, g.id):
+        db.refresh(s)
+        s.list_locked = body.locked
+        out = _toggle_done(db, user, act, g, s, not body.locked,
+                           f"{'锁定' if body.locked else '解锁'}岗位「{s.name}」的名单")
+    return {"ok": True, "locked": s.list_locked, **out}
 
 
 def _holder_occupants(db: OrmSession, holder: Position) -> str:
     """「待分配」上还挂着的人，拼成一句提示；没人返回空串。
 
-    口径同 _apply_shift_mode 判 live：ACTIVE 或临期扣留。候补、待确认、
+    口径同 _apply_shift_mode 判 live：ACTIVE。候补、待确认、
     待筛选在 assign 场次里都排在占位岗位上，一键分配只挪正式报名的人，
     他们得先由负责人处理掉，所以单独点出来。
     """
@@ -1538,7 +1653,6 @@ def _holder_occupants(db: OrmSession, holder: Position) -> str:
     counts = dict(on_holder.filter(Enrollment.status.in_(logic.ACTIVE))
                   .with_entities(Enrollment.status, func.count())
                   .group_by(Enrollment.status).all())
-    held = on_holder.filter(Enrollment.seat_held.is_(True)).count()
     parts = []
     if counts.get("enrolled"):
         parts.append(f"{counts['enrolled']} 人还没分到岗位，先一键分配或手动调岗")
@@ -1547,8 +1661,6 @@ def _holder_occupants(db: OrmSession, holder: Position) -> str:
         parts.append(f"{waiting} 人在候补（含待确认转正），先手动转正、调岗或等候补处理完")
     if counts.get("applied"):
         parts.append(f"{counts['applied']} 人待筛选，先录取或不录取")
-    if held:
-        parts.append(f"{held} 个临期退选扣留的名额记在「待分配」上，先在名单里释放")
     return "；".join(parts)
 
 
@@ -1558,7 +1670,7 @@ def open_pick(shift_id: str, db: OrmSession = Depends(db_session),
     """「截止后统一分配」的场次开放选岗：转成「报名即选岗位」，之后按各岗位名额自选。
 
     条件：已建了真实岗位，且「待分配」里一个人都不挂（正式、候补、待确认、
-    待筛选、临期扣留都算）。这时这一场的每个人都已经站在某个真实岗位上，
+    待筛选都算）。这时这一场的每个人都已经站在某个真实岗位上，
     转成 pick 之后他们各自占着自己岗位的名额，账一笔不乱；剩下的空位
     就是各岗位的「名额 − 已占」，新来的人自己挑。
 
@@ -1975,17 +2087,13 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
         db.query(FormQuestion).filter(FormQuestion.activity_id == act.id)
         .order_by(FormQuestion.sort).all())
 
-    # 四组名单先都取出来，再一次性取用户与评分。一行一条 SQL 的话，29 个人的
+    # 三组名单先都取出来，再一次性取用户与评分。一行一条 SQL 的话，29 个人的
     # 名单就是 88 条（实测），而这里只需要个位数——名单端点是这一页最重的请求
     groups = {
         "enrolled": (db.query(Enrollment)
                      .filter(Enrollment.shift_id == g.id,
                              Enrollment.status == "enrolled")
                      .order_by(Enrollment.joined_at).all()),
-        "held": (db.query(Enrollment)
-                 .filter(Enrollment.shift_id == g.id,
-                         Enrollment.seat_held.is_(True))
-                 .order_by(Enrollment.joined_at).all()),
         "cancelled": (db.query(Enrollment)
                       .filter(Enrollment.shift_id == g.id,
                               Enrollment.status == "cancelled")
@@ -2020,7 +2128,6 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
             "confirm_deadline": iso(e.confirm_deadline),
             "status": e.status,
             "cancel_type": e.cancel_type,
-            "seat_held": e.seat_held,
         }
 
     enrolled = [user_row(e) for e in groups["enrolled"]]
@@ -2030,9 +2137,7 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
         # 队列按岗位分，名次也要按岗位算（见 logic.waitlist_position）
         row["queue_position"] = logic.waitlist_position(db, e)
         waitlist.append(row)
-    held = [user_row(e) for e in groups["held"]]
     cancelled = [user_row(e) for e in groups["cancelled"]]
-    deadline = logic.auto_promote_deadline(db, g)
     # 人员变动流水：活动前一天少了几个人，得看得见是谁、什么时候退的
     changes = (db.query(AuditLog)
                .filter(AuditLog.activity_id == act.id,
@@ -2046,8 +2151,8 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
             "who": c.actor_name, "summary": c.summary,
             "created_at": iso(c.created_at),
         } for c in changes],
-        "auto_promote_deadline": iso(deadline),
-        "auto_promote_over": now() > deadline,
+        # 候补为什么此刻不会自动顶上；空串 = 照常递补
+        "auto_promote_stop": _promote_stop_reason(g),
         "shift": {"id": g.id, "name": g.name, "time_text": g.span_text(),
                   "capacity": g.total_capacity(), "needs_assign": g.needs_assign(),
                   "mode": g.mode, "mode_label": g.mode_label(),
@@ -2062,10 +2167,27 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
                       for p in positions],
         "enrolled": enrolled,
         "waitlist": waitlist,
-        "held": held,
         "cancelled": cancelled,
         "checked_in_count": len(checked_ids),
     }
+
+
+def _promote_stop_reason(g: Shift) -> str:
+    """名单页上告诉管理者：这一场的候补此刻为什么不会自动顶上。空串 = 照常递补。"""
+    if now() >= g.start_time:
+        return "场次已开始，候补不再自动顶上，需要补人请手动转正"
+    if logic.shift_locked(g):
+        return "名单已锁定，候补不会自动顶上，需要补人请手动转正"
+    if g.enroll_paused:
+        return "报名暂停中，候补暂不顶上，恢复报名时按顺序补齐空位"
+    locked = [p.name for p in g.positions if p.list_locked]
+    paused = [p.name for p in g.positions if p.enroll_paused and not p.list_locked]
+    parts = []
+    if locked:
+        parts.append(f"岗位{'、'.join(locked)}名单已锁定，需要补人请手动转正")
+    if paused:
+        parts.append(f"岗位{'、'.join(paused)}暂停中，恢复时按顺序补齐")
+    return "；".join(parts)
 
 
 def _status_label(enr: Enrollment) -> str:
@@ -2074,60 +2196,13 @@ def _status_label(enr: Enrollment) -> str:
             "applied": "申请中"}.get(enr.status, enr.status)
 
 
-@router.post("/enrollments/{enrollment_id}/release-seat")
-def release_held_seat(enrollment_id: str, db: OrmSession = Depends(db_session),
-                      user: User = Depends(require_manager)):
-    """把临期退选扣留的名额放回去。
-
-    扣留是对退选者的约束（他自己也不能再报），但位子空着与否是现场需求——
-    补不补人由负责人判断。放回后候补队列按顺序递补。
-    岗位名额本身不受影响：扣留从来不改老师填的数字，只是让一条已取消的
-    记录占着位子。
-    """
-    enr = db.get(Enrollment, enrollment_id)
-    if enr is None:
-        raise HTTPException(404, "报名记录不存在")
-    ensure_activity_manager(db, user, enr.activity_id)
-    ensure_not_finished(_act(db, enr.activity_id))
-    if not enr.seat_held:
-        raise HTTPException(409, "该记录没有扣留名额")
-    g = _shift(db, enr.shift_id)
-    target = db.get(User, enr.user_id)
-    db.commit()          # 还连接再排锁，理由同 enroll
-    # 放名额与递补同一个事务提交：场次锁在 commit 时就放了，分两次提交的话
-    # 中间那一瞬放出来的位子会被新报名抢走，候补队首反倒轮不上
-    with shift_lock(db, g.id):
-        # 锁外读到的可能已经旧了：另一位管理者刚释放过（会话不会自己重读）
-        db.refresh(enr)
-        if not enr.seat_held:
-            raise HTTPException(409, "该名额已被释放（可能是其他管理者刚操作过），请刷新")
-        enr.seat_held = False
-        audit_log(db, actor=user, action="update", target_type="enrollment",
-                  target_id=enr.id, target_label=target.name,
-                  activity_id=enr.activity_id,
-                  summary=f"释放 {target.name} 临期退选扣留的名额"
-                          f"（{db.get(Position, enr.position_id).name if enr.position_id else g.name}）")
-        db.flush()                       # 递补按落库后的人数算（会话不自动 flush）
-        promoted = logic.promote_all(db, g)
-        db.commit()
-    # 过了自动转正截止点，放出来的位子不会自动被候补占上——老师释放名额
-    # 多半就是为了补人，这里要说清楚还差一步，否则位子会一直空着。
-    over = now() > logic.auto_promote_deadline(db, g)
-    return {"ok": True, "promoted": promoted, "auto_promote_over": over,
-            "message": ("名额已释放，候补队首已转为待确认。" if promoted
-                        else ("名额已释放；已过自动转正时间，"
-                              "请在候补名单中手动转正。" if over
-                              else "名额已释放，但当前没有候补在排队。"))}
-
-
 @router.post("/enrollments/{enrollment_id}/promote")
 def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
                      user: User = Depends(require_manager)):
     """管理者手动为候补开确认窗。
 
-    自动转正在「报名截止」与「活动开始前 24 小时」的较晚者之后就停了——
-    那之后转正的人只剩不到一天准备，且他再退选还要扣分。要不要补人由
-    负责人判断，但来不来仍由本人定：和自动递补一样开确认窗
+    名单锁定、暂停报名时候补不会自动顶上（见 enroll_logic.promotion_blocked），
+    要不要补人由负责人判断，但来不来仍由本人定：和自动递补一样开确认窗
     （2 小时、夜间不计时，不晚于场次开始，见 enroll_logic.promote_confirm_deadline）。
     """
     enr = db.get(Enrollment, enrollment_id)
@@ -2337,12 +2412,9 @@ def add_walkin(shift_id: str, body: dict,
     with shift_lock(db, g.id, user_id=u.id):
         live = (db.query(Enrollment)
                 .filter(Enrollment.shift_id == g.id, Enrollment.user_id == u.id)
-                .filter((Enrollment.status.in_(logic.ACTIVE))
-                        | (Enrollment.seat_held.is_(True))).first())
+                .filter(Enrollment.status.in_(logic.ACTIVE)).first())
         if live is not None:
-            raise HTTPException(
-                409, f"{u.name} 在该场次已有记录"
-                     f"（{'临期退选占位' if live.seat_held else live.status}）")
+            raise HTTPException(409, f"{u.name} 在该场次已有记录（{_status_label(live)}）")
 
         # 名额要按落点算：pick 模式下名额在岗位上，不传岗位一律判「满」，
         # 补招任何按岗位报名的场次都会被要求勾强制。

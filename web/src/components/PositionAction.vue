@@ -31,6 +31,7 @@
       {{ ctx.queuedHere(g, s) ? '排队中…' : (s.remaining > 0 ? '选中' : '候补') }}
     </el-button>
     <el-button v-else-if="s.eligible === false" size="small" disabled>不符合条件</el-button>
+    <el-button v-else-if="g.locked || s.list_locked" size="small" disabled>名单已锁定</el-button>
     <el-button v-else-if="ctx.paused.value || g.enroll_paused || s.enroll_paused"
                size="small" disabled>报名暂停</el-button>
     <el-button v-else-if="ctx.openFor(g)" size="small" type="primary" plain

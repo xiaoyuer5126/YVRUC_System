@@ -9,7 +9,7 @@
                 :value="deadlineTs">
     <template #prefix><el-tag type="danger">转正确认剩</el-tag>&nbsp;</template>
   </el-countdown>
-  <el-tag v-else-if="row.cancel_type === 'late'" type="danger">临期退选</el-tag>
+  <el-tag v-else-if="row.cancel_type === 'locked'" type="danger">锁定后退出</el-tag>
   <el-tag v-else type="info">{{ cancelLabel }}</el-tag>
 </template>
 

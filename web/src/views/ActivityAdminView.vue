@@ -186,11 +186,17 @@
             <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">
               暂停报名
             </el-tag>
+            <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
+            <span v-else-if="g.lock_hours" class="dim">开场前 {{ g.lock_hours }} 小时锁定名单</span>
             <span class="btn-row" style="margin-left:auto">
-              <!-- 暂停报名不用进编辑态：只管收不收新报名，不改任何人的安排 -->
+              <!-- 暂停、锁定都不用进编辑态：只管收不收新报名、候补顶不顶上，不改任何人的安排 -->
               <el-button v-if="isPublic" size="small" :disabled="isOver"
                          @click="togglePause('shifts', g)">
                 {{ g.enroll_paused ? '恢复报名' : '暂停报名' }}
+              </el-button>
+              <el-button v-if="isPublic" size="small" :disabled="isOver"
+                         @click="toggleLock('shifts', g, !g.locked)">
+                {{ g.locked ? '解锁名单' : '锁定名单' }}
               </el-button>
               <!-- 开放选岗同样不用进编辑态：已报名的人都已在真实岗位上，安排不变 -->
               <el-tooltip v-if="g.mode === 'assign'" placement="top"
@@ -235,11 +241,17 @@
               </el-tag>
               <el-tag v-if="row.needs_leader" size="small" type="warning" effect="plain">组长</el-tag>
               <el-tag v-if="row.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
+              <el-tag v-if="row.list_locked" size="small" type="info">名单已锁定</el-tag>
             </template>
             <template #actions="{ row }">
               <el-button v-if="isPublic && !row.is_placeholder" size="small" plain
                          :disabled="isOver" @click="togglePause('positions', row)">
                 {{ row.enroll_paused ? '恢复报名' : '暂停' }}
+              </el-button>
+              <el-button v-if="isPublic && !row.is_placeholder" size="small" plain
+                         :disabled="isOver || g.locked"
+                         @click="toggleLock('positions', row, !row.list_locked)">
+                {{ row.list_locked ? '解锁' : '锁定' }}
               </el-button>
               <el-button size="small" type="primary" plain :disabled="structureLocked"
                          @click="openStation(row, g)">编辑</el-button>
@@ -269,6 +281,8 @@
                          @click="showStationDetail(g, row)">{{ row.name }}</el-link>
                 <el-tag v-if="row.is_placeholder" size="small" type="warning" effect="plain"
                         style="margin-left:8px">默认</el-tag>
+                <el-tag v-if="row.list_locked" size="small" type="info"
+                        style="margin-left:8px">名单已锁定</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="服务地点" min-width="120">
@@ -285,13 +299,18 @@
               </template>
             </el-table-column>
             <el-table-column prop="training_note" label="培训内容" min-width="160" show-overflow-tooltip />
-            <el-table-column label="操作" width="210">
+            <el-table-column label="操作" width="250">
               <template #default="{row}">
                 <div class="btn-row">
                   <el-button v-if="isPublic && !row.is_placeholder" size="small" link
                              :type="row.enroll_paused ? 'danger' : ''" :disabled="isOver"
                              @click="togglePause('positions', row)">
                     {{ row.enroll_paused ? '恢复报名' : '暂停' }}
+                  </el-button>
+                  <el-button v-if="isPublic && !row.is_placeholder" size="small" link
+                             :disabled="isOver || g.locked"
+                             @click="toggleLock('positions', row, !row.list_locked)">
+                    {{ row.list_locked ? '解锁' : '锁定' }}
                   </el-button>
                   <el-button size="small" link type="primary" :disabled="structureLocked"
                              @click="openStation(row, g)">编辑</el-button>
@@ -342,10 +361,15 @@
               </el-tag>
               <el-tag v-if="x.g.enroll_paused || x.p.enroll_paused" size="small" type="danger"
                       effect="plain">暂停报名</el-tag>
+              <el-tag v-if="x.g.locked || x.p.list_locked" size="small" type="info">名单已锁定</el-tag>
               <span class="slot-acts">
                 <el-button v-if="isPublic" size="small" link :disabled="isOver"
                            @click="togglePause('positions', x.p)">
                   {{ x.p.enroll_paused ? '恢复报名' : '暂停' }}
+                </el-button>
+                <el-button v-if="isPublic" size="small" link :disabled="isOver || x.g.locked"
+                           @click="toggleLock('positions', x.p, !x.p.list_locked)">
+                  {{ x.p.list_locked ? '解锁' : '锁定' }}
                 </el-button>
                 <el-button size="small" link type="primary" :disabled="structureLocked"
                            @click="openStation(x.p, x.g)">编辑这个时段</el-button>
@@ -372,10 +396,15 @@
                 {{ g.unassigned_count }} 人待分配
               </el-tag>
               <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
+              <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
               <span class="btn-row" style="margin-left:auto">
                 <el-button v-if="isPublic" size="small" :disabled="isOver"
                            @click="togglePause('shifts', g)">
                   {{ g.enroll_paused ? '恢复报名' : '暂停报名' }}
+                </el-button>
+                <el-button v-if="isPublic" size="small" :disabled="isOver"
+                           @click="toggleLock('shifts', g, !g.locked)">
+                  {{ g.locked ? '解锁名单' : '锁定名单' }}
                 </el-button>
                 <el-button size="small" :disabled="structureLocked"
                            @click="openShift(g)">编辑场次</el-button>
@@ -624,43 +653,12 @@
             </template>
             </el-col>
 
-            <!-- 右栏（窄）：扣留的名额、候补队列、退选记录，块与块之间统一 12px -->
+            <!-- 右栏（窄）：候补队列、退选记录，块与块之间统一 12px -->
             <el-col :xs="24" :md="8" class="side-stack">
-            <!-- 临期退选扣留的名额：不列出来老师根本找不到它 -->
-            <div v-if="roster.held?.length">
-              <div class="section-title">
-                临期退选扣留的名额（{{ roster.held.length }}）
-                <span class="dim" style="font-weight:400">
-                  防止影响活动安排，临期退选占用名额，可手动释放递补
-                </span>
-              </div>
-              <DataCards :rows="roster.held" title-key="user.name"
-                         row-key="enrollment_id"
-                         :fields="[{ key: 'user.student_id', label: '学号' },
-                                   { key: 'position_name', label: '岗位',
-                                     format: v => v || '未分配' }]">
-                <template #actions="{ row }">
-                  <el-popconfirm title="确认释放该名额？" :disabled="isOver"
-                                 @confirm="releaseSeat(row)">
-                    <template #reference>
-                      <el-button size="small" type="primary" plain
-                                 :disabled="isOver">释放名额</el-button>
-                    </template>
-                  </el-popconfirm>
-                </template>
-              </DataCards>
-            </div>
             <el-card shadow="never" class="wl-card">
               <template #header><b>候补队列</b></template>
-              <el-alert v-if="roster.auto_promote_over" type="warning" show-icon
-                        :closable="false">
-                <template #title>
-                  自动递补已停止（{{ fmtDT(roster.auto_promote_deadline) }} 起）
-                </template>
-                <div style="line-height:1.6">
-                  离活动开始不足 24 小时，且报名已截止，停止自动递补，确需补人请手动「转正」通知本人确认
-                </div>
-              </el-alert>
+              <el-alert v-if="roster.auto_promote_stop" type="warning" show-icon
+                        :closable="false" :title="roster.auto_promote_stop" />
               <div v-for="w in roster.waitlist" :key="w.enrollment_id" class="wl-row">
                 <el-tag size="small" circle>{{ w.queue_position }}</el-tag>
                 {{ w.user.name }}
@@ -1159,6 +1157,15 @@
             <span class="dim" style="margin-left:12px">0 = 不设候补</span>
           </el-form-item>
         </template>
+        <el-form-item label="锁定名单">
+          <span class="dim" style="margin-right:8px">开场前</span>
+          <el-input-number v-model="groupForm.lock_hours" :min="0" :max="72" />
+          <span class="dim" style="margin-left:8px">小时自动锁定</span>
+          <div class="dim" style="margin-top:4px">
+            锁定后不再接受新报名，候补不会自动顶上，此时退出的志愿者会被记录。
+            0 = 不自动锁定，随时可以在岗位设置里手动锁定、解锁。
+          </div>
+        </el-form-item>
         <el-form-item label="条件要求">
           <div class="two-col">
             <el-select v-model="groupForm.campusReq" multiple clearable collapse-tags
@@ -1601,8 +1608,6 @@
         <el-descriptions-item label="场次模式">{{ gdData.mode_label }}</el-descriptions-item>
         <el-descriptions-item label="时间">{{ gdData.time_text }}</el-descriptions-item>
         <el-descriptions-item label="人数">已报名 {{ gdData.enrolled }} / {{ gdData.capacity }}
-          <span v-if="gdData.held_seats" style="color:#e6a23c">
-            · {{ gdData.held_seats }} 个名额因临期退选被扣留（不再释放）</span>
           <span class="dim">（候补 {{ gdData.waitlist_count }} 人）</span></el-descriptions-item>
         <el-descriptions-item label="说明">{{ gdData.note || '—' }}</el-descriptions-item>
       </el-descriptions>
@@ -2142,11 +2147,12 @@ function openShift(g) {
     end_time: new Date(g.end_time.replace(' ', 'T')),
     capacity: g.capacity, mode: g.mode || 'pick', note: g.note,
     waitlist_quota: g.waitlist_quota ?? 3,
+    lock_hours: g.lock_hours ?? 12,
     campusReq: g.requirement_tags?.校区 || [],
     stageReq: g.requirement_tags?.学段 || [],
   } : { name: '', start_time: '', end_time: '', capacity: 10, note: '',
         mode: act.value.recruit_mode === 'screened' ? 'assign' : 'pick',   // 筛选活动多半先不定岗
-        waitlist_quota: 3, campusReq: [], stageReq: [] }
+        waitlist_quota: 3, lock_hours: 12, campusReq: [], stageReq: [] }
   shiftDlg.value.visible = true
 }
 const screened = computed(() => act.value?.recruit_mode === 'screened')
@@ -2168,7 +2174,7 @@ async function saveShift() {
   try {
     const body = {
       name: f.name, capacity: f.capacity, mode: f.mode, note: f.note,
-      waitlist_quota: f.waitlist_quota ?? 3,
+      waitlist_quota: f.waitlist_quota ?? 3, lock_hours: f.lock_hours ?? 12,
       start_time: toISO(f.start_time), end_time: toISO(f.end_time),
       requirement_tags: scopeTags(f.campusReq, f.stageReq),
     }
@@ -2365,16 +2371,37 @@ async function copyPoster() {
 
 const materialMgr = ref(null)
 
-/** 暂停 / 恢复一个场次或岗位的报名。已报的人照常，候补照常递补 */
+/** 暂停 / 恢复一个场次或岗位的报名。暂停期间名单不动：不收新报名，候补也不顶上，
+ *  恢复时按候补顺序补齐空位 */
 async function togglePause(kind, item) {
   const paused = !item.enroll_paused
-  await api.post(`/api/staff/${kind}/${item.id}/pause`, { paused })
-  ElMessage.success(paused ? `已暂停「${item.name}」的报名；已报名的人不受影响`
-                           : `已恢复「${item.name}」的报名`)
+  const d = await api.post(`/api/staff/${kind}/${item.id}/pause`, { paused })
+  reopenedMessage(d, paused ? `已暂停「${item.name}」的报名，期间候补不会顶上`
+                            : `已恢复「${item.name}」的报名`)
   loadAll()
 }
 
-/** 「开放选岗」按钮为什么点不了；空串 = 可以点。候补、扣留这些页面上数不全的，交给后端判 */
+/** 锁定 / 解锁一个场次或岗位的名单。锁定前说清楚它意味着什么 */
+async function toggleLock(kind, item, locked) {
+  if (locked) {
+    try {
+      await ElMessageBox.confirm(
+        '锁定后志愿者名单视为基本敲定：不再接受新报名，此时退出的志愿者会被记录，候补不会自动顶上。',
+        `锁定「${item.name}」的名单`, { confirmButtonText: '锁定', type: 'warning' })
+    } catch { return }
+  }
+  const d = await api.post(`/api/staff/${kind}/${item.id}/lock`, { locked })
+  reopenedMessage(d, locked ? `已锁定「${item.name}」的名单` : `已解锁「${item.name}」的名单`)
+  loadAll()
+}
+
+/** 解除暂停或锁定之后：补上了几位候补，或者为什么还没补 */
+function reopenedMessage(d, done) {
+  if (d.hint) ElMessage.warning(`${done}。${d.hint}`)
+  else ElMessage.success(d.promoted ? `${done}，${d.promoted} 位候补已转为待确认` : done)
+}
+
+/** 「开放选岗」按钮为什么点不了；空串 = 可以点。候补这些页面上数不全的，交给后端判 */
 function openPickBlock(g) {
   if (isOver.value) return '活动已结束'
   if (!realPositions(g).length) return '还没建岗位：先在本场次下建好岗位'
@@ -2900,13 +2927,6 @@ async function refreshRoster() {
 function canBeLeader(row) {
   const p = roster.value?.positions?.find(x => x.id === row.position_id)
   return !!p?.needs_leader
-}
-
-async function releaseSeat(row) {
-  const d = await api.post(
-    `/api/staff/enrollments/${row.enrollment_id}/release-seat`)
-  ElMessage.success(d.message)
-  loadAll()
 }
 
 const assignPanel = ref(null)

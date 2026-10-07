@@ -17,7 +17,7 @@ from backend.models import (Activity, ActivityManager, CheckinRecord, CheckinTas
 from conftest import ADMIN, student_row
 
 W = config.VIOLATION_WEIGHTS
-PLUS, LATE = config.SCORE_PER_ACTIVITY, config.LATE_CANCEL_WEIGHT
+PLUS, LOCKED = config.SCORE_PER_ACTIVITY, config.LOCKED_QUIT_WEIGHT
 
 
 def _activity(db, *ends, title="提示分测试"):
@@ -113,22 +113,22 @@ def test_满分时加分不累积(db, take_student):
     assert scoring.brief(db, u.id)["score_alert"] is True
 
 
-def test_有违规或临期退选的活动不加分(db, take_student):
+def test_有违规或锁定后退出的活动不加分(db, take_student):
     u = student_row(db, take_student())
     _violate(db, u, _day(60), "leave")                  # 先压到 85，看得出加没加
     # 签过到但登记了违规：只扣不加
     act = _served(db, u, _day(40))
     _violate(db, u, _day(39), "other", act)
-    # 一场签过到、另一场临期退了：只扣临期退选，不加
+    # 一场签过到、另一场锁定后退了：只扣锁定后退出，不加
     act2, (g1, g2) = _activity(db, _day(30), _day(29))
     _enroll(db, u, act2, g1)
     _checkin(db, u, act2, g1)
-    _enroll(db, u, act2, g2, cancel_type="late", cancelled_at=_day(31))
+    _enroll(db, u, act2, g2, cancel_type="locked", cancelled_at=_day(31))
     db.commit()
 
     d = scoring.detail(db, u)
-    assert [it["label"] for it in d["items"]] == ["无故请假", "其他", "临期退选"]
-    assert d["score"] == config.SCORE_BASE - W["leave"] - W["other"] - LATE
+    assert [it["label"] for it in d["items"]] == ["无故请假", "其他", "锁定后退出"]
+    assert d["score"] == config.SCORE_BASE - W["leave"] - W["other"] - LOCKED
 
 
 def test_多场次只加一次也只扣一次(db, take_student):
@@ -139,18 +139,18 @@ def test_多场次只加一次也只扣一次(db, take_student):
     for g in (g1, g2):
         _enroll(db, u, act, g)
         _checkin(db, u, act, g)
-    # 三场都临期退了：扣一次，时间是最早那次退选
+    # 三场都锁定后退了：扣一次，时间是最早那次退选
     act2, gs = _activity(db, _day(20), _day(19), _day(18))
     cancels = [_day(21), _day(22), _day(21.5)]
     for g, at in zip(gs, cancels):
-        _enroll(db, u, act2, g, cancel_type="late", cancelled_at=at)
+        _enroll(db, u, act2, g, cancel_type="locked", cancelled_at=at)
     db.commit()
 
     items = scoring.detail(db, u)["items"]
-    assert [it["delta"] for it in items] == [-W["leave"], PLUS, -LATE]
+    assert [it["delta"] for it in items] == [-W["leave"], PLUS, -LOCKED]
     assert items[1]["at"] == iso(g2.end_time)
     assert items[2]["at"] == iso(cancels[1])
-    assert scoring.score_of(db, u.id) == config.SCORE_BASE - W["leave"] + PLUS - LATE
+    assert scoring.score_of(db, u.id) == config.SCORE_BASE - W["leave"] + PLUS - LOCKED
 
 
 def test_没签到或活动没结束不加分(db, take_student):
