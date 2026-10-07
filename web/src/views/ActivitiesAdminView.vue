@@ -65,27 +65,27 @@
         </template>
       </DataCards>
       <el-table v-else :data="list" v-loading="loading">
+        <!-- 一场活动占两行：活动名与状态在第一行，时间与地点在第二行。状态、时间
+             各占一列的话，活动名被挤成窄窄一条，得横着扫三段才对得上一场活动 -->
         <el-table-column label="活动" min-width="240">
           <template #default="{row}">
-            <el-tag v-if="row.urgent" size="small" type="danger" effect="dark"
-                    style="margin-right:8px">急招</el-tag>
-            <b>{{ row.title }}</b>
-            <div class="dim">{{ row.location || '待定' }}</div>
+            <div class="act-head">
+              <el-tag v-if="row.urgent" size="small" type="danger" effect="dark">急招</el-tag>
+              <b>{{ row.title }}</b>
+              <el-tag size="small" :type="statusType(row.status)">{{ row.status_label }}</el-tag>
+            </div>
+            <div class="dim">{{ row.time_text }} · {{ row.location || '待定' }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="130">
+        <!-- 列宽按最长的那条类型标签定：「不公开招募（补记录）」在 small 标签里约 134px，
+             加上单元格左右各 12px 的内边距，窄了标签就折行 -->
+        <el-table-column label="类型" width="170">
           <template #default="{row}">
             <el-tag size="small" effect="plain" :color="modeColor(row.recruit_mode)" style="border:none;color:#fff">
               {{ row.recruit_label }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{row}">
-            <el-tag size="small" :type="statusType(row.status)">{{ row.status_label }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="场次/时间" min-width="170" prop="time_text" />
         <el-table-column label="报名" width="150">
           <template #default="{row}">
             <!-- 补记录活动不收报名，人数在「名单导入」里 -->
@@ -339,6 +339,10 @@ async function delActivity(row) {
 </script>
 
 <style scoped>
+/* 活动这一列的第一行：活动名与状态。活动名长了在自己这一格里换行，
+   状态标签留在同一行，不跟着掉到时间那一行去 */
+.act-head { display: flex; align-items: center; gap: 8px; }
+.act-head b { min-width: 0; }
 .contacts-box { width: 100%; }
 .contact-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
 .qr-preview { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }

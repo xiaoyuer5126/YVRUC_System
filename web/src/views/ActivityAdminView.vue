@@ -22,7 +22,7 @@
     <ViolationDialog ref="violationDlg" :activity-id="activityId" @saved="loadAll" />
 
     <el-page-header @back="$router.push('/manage')" title="返回列表">
-      <!-- 窄屏下标题与副信息各占一行：一行挤不下活动名+状态+时间地点 -->
+      <!-- 标题与副信息各占一行：一行挤不下活动名+状态+时间地点 -->
       <template #content>
         <div class="hd-title">
           <b>{{ act.title }}</b>
@@ -32,7 +32,7 @@
           <el-tag v-if="act.urgent" size="small" type="danger" effect="dark">急招</el-tag>
           <el-tag v-if="isRecord" size="small" type="info" effect="plain">不公开·补记录</el-tag>
         </div>
-        <div class="hd-meta dim">{{ act.time_text }} · {{ act.location }}</div>
+        <div class="hd-meta dim">{{ act.time_text }} · {{ act.location || '待定' }}</div>
       </template>
       <template #extra>
         <!-- 「调整岗位」只在岗位设置那一页出现一次，页头不重复放 -->
@@ -3069,13 +3069,10 @@ function toISO(v) {
   .recruit-qr { width: 100%; }
 }
 
-/* 页头：宽屏一行排开，窄屏由 styles.css 的媒体查询拆成多行 */
-.hd-title { display: inline-flex; align-items: center; gap: 8px; vertical-align: middle; }
-.hd-meta { display: inline; margin-left: 12px; }
-@media (max-width: 860px) {
-  .hd-title { display: flex; flex-wrap: wrap; font-size: 16px; }
-  .hd-meta { display: block; margin: 4px 0 0; }
-}
+/* 页头两行：第一行活动名与状态，第二行时间与地点。挤在一行里时，长活动名会把
+   状态、时间地点一起往右推，整块跟着溢出去 */
+.hd-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.hd-meta { margin-top: 4px; }
 
 .needs-positions { border-color: var(--el-color-danger) !important; }
 .group-card { border:1px solid #eceef1; border-radius:12px; padding:12px 14px; margin-bottom:12px; background:#fff; }

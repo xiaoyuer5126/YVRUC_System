@@ -176,8 +176,5 @@ defineExpose({ open })
 .reply { background: #f5f7fa; border-radius: 6px; padding: 8px 12px; margin-top: 8px; }
 @media (max-width: 860px) {
   .kinds { grid-template-columns: 1fr; }
-  /* 这里只有两个标签，窄屏也放得下。全局那条「← 左右滑动查看更多功能 →」
-     （styles.css 给所有 el-tabs 加的）在这一行是错的提示，去掉 */
-  :deep(.el-tabs__header)::after { display: none; }
 }
 </style>

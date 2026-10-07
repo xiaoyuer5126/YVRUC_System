@@ -32,17 +32,17 @@
             <el-link type="primary" underline="never" @click="openArchive(row)">{{ row.name }}</el-link>
           </template>
         </el-table-column>
-        <el-table-column prop="student_id" label="学号" width="110" />
-        <el-table-column prop="gender" label="性别" width="60" />
+        <el-table-column prop="student_id" label="学号" width="100" />
+        <el-table-column prop="gender" label="性别" width="50" />
         <el-table-column prop="college" label="学院" min-width="120" />
-        <el-table-column label="校区 / 学段" min-width="150">
+        <el-table-column label="校区 / 学段" min-width="160">
           <template #default="{row}">{{ row.campus || '—' }} / {{ row.stage || '—' }}</template>
         </el-table-column>
-        <el-table-column prop="phone" label="手机号" width="120" />
-        <el-table-column label="微信号" width="120">
+        <el-table-column prop="phone" label="手机号" width="110" />
+        <el-table-column label="微信号" min-width="180">
           <template #default="{row}"><span class="mono">{{ row.wechat || '—' }}</span></template>
         </el-table-column>
-        <el-table-column prop="id_card_masked" label="身份证（脱敏）" width="146">
+        <el-table-column prop="id_card_masked" label="身份证（脱敏）" width="160">
           <template #default="{row}"><span class="mono dim">{{ row.id_card_masked || '—' }}</span></template>
         </el-table-column>
         <el-table-column label="操作" width="100" fixed="right">

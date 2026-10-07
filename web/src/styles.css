@@ -63,7 +63,19 @@ body {
    表格操作列里的一串文字按钮也包一层 .btn-row，否则字挨着字 */
 .el-button + .el-button { margin-left: 0; }
 .btn-row { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.el-page-header__extra { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.el-page-header__extra { display: flex; align-items: center; flex-wrap: nowrap;
+                         flex-shrink: 0; gap: 8px; }
+/* 页头一行：返回 + 标题 + 按钮排。按钮排始终是一排——活动名长了，让标题在自己
+   那一侧换行，不要把按钮挤成两排短行。三件事缺一不可：
+   - 按钮排不收缩（flex-shrink: 0）：flex 默认按基准宽度等比例收缩，标题一长，
+     按钮排跟着被压掉一截，照样折行；
+   - 标题那一侧 flex: 1 1 0（含 min-width: 0）：基准宽度是 0，先给按钮排让出位置，
+     自己再占剩下的，长了就在剩下的宽度里换行；
+   - 页头允许换行：窗口窄到连按钮排自己都放不下时，整排挪到第二行，
+     好过横向顶出去 */
+.el-page-header__header { flex-wrap: wrap; }
+.el-page-header__left { flex: 1 1 0; min-width: 0; }
+.el-page-header__content { min-width: 0; }
 /* Element 自己的几处按钮排：对话框、抽屉底部，确认框，气泡确认框，日期面板底部 */
 .el-dialog__footer, .el-drawer__footer, .el-popconfirm__action, .el-picker-panel__footer {
   display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px;
@@ -245,14 +257,29 @@ p { margin: 8px 0; }
   .el-page-header__left .el-divider--vertical { display: none; }
   .el-page-header__back { margin-right: 0; }
   .el-page-header__content { margin-top: 8px; font-size: 16px; line-height: 1.5; }
-  .el-page-header__extra { margin-top: 12px; text-align: left; }
+  .el-page-header__extra { flex-wrap: wrap; margin-top: 12px; text-align: left; }
 
-  /* 标签栏在窄屏是横滑的，但看不出来——在这一行下面补一句提示。
-     用伪元素是因为 el-tabs 的 header 与 content 之间插不进真实节点。 */
-  .el-tabs__header::after {
-    content: '← 左右滑动查看更多功能 →';
-    display: block; text-align: center;
-    font-size: 12px; color: #a8abb2; padding: 2px 0 6px;
+  /* 页签栏在窄屏是横滑的，边上还有页签时那一端淡出，配合 Element 自带的
+     左右箭头，看得出来还能滑。滑到头的那一端不淡：正好停在边上的那个页签
+     会被抹掉一截。箭头被禁用就说明那个方向没有内容了，拿它当条件——
+     页签自身没有表示滚动位置的类名。
+     淡出用遮罩，不盖一层渐变：遮罩不带颜色，页签铺在浅灰页面底上和白色
+     对话框里都不用另配底色。 */
+  .el-tabs__nav-prev:not(.is-disabled) ~ .el-tabs__nav-scroll {
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px);
+    mask-image: linear-gradient(90deg, transparent, #000 24px);
+  }
+  .el-tabs__nav-next:not(.is-disabled) ~ .el-tabs__nav-scroll {
+    -webkit-mask-image: linear-gradient(270deg, transparent, #000 24px);
+    mask-image: linear-gradient(270deg, transparent, #000 24px);
+  }
+  /* 两头都有：写进同一条里，后一条的 mask-image 会把前一条整个换掉 */
+  .el-tabs__nav-prev:not(.is-disabled) ~ .el-tabs__nav-next:not(.is-disabled)
+      ~ .el-tabs__nav-scroll {
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px,
+                                        #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 24px,
+                                #000 calc(100% - 24px), transparent);
   }
 
   /* 工具条里的东西不许被压扁，宁可换行 */
