@@ -584,9 +584,19 @@ class Shift(Base):
     # 规则（见 enroll_logic.unmet_for_tags），报名时直接拦截。
     requirement_tags: Mapped[dict] = mapped_column(JSON, default=dict)
     note: Mapped[str] = mapped_column(String(512), default="")
-    # 管理者暂停这一场的报名：不收新报名、新申请、新候补；已报的人照常，
-    # 有人退选时候补照常递补（那是暂停前排的队）。不用进编辑态就能切
+    # 管理者暂停这一场的报名（调整岗位用）：不收新报名、新申请、新候补，
+    # 候补也不自动顶上，期间名单不动；已报的人可以退出，不记录。恢复时按
+    # 候补顺序补齐空位。不用进编辑态就能切
     enroll_paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    # —— 名单锁定（见 enroll_logic.shift_locked）——
+    # 开场前 lock_hours 小时自动锁定，0 = 不自动锁定，只靠手动。
+    # 锁定后不收新报名、新候补，候补不自动顶上（管理者手动转正），
+    # 已报的人退出记一次「锁定后退出」。
+    lock_hours: Mapped[int] = mapped_column(Integer, default=config.LOCK_HOURS_DEFAULT)
+    # 手动锁定，或改 N 时落实下来的锁定
+    list_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 自动锁定已经生效过：管理者过了锁定点再手动解锁，不会被自动锁回去
+    auto_lock_spent: Mapped[bool] = mapped_column(Boolean, default=False)
     sort: Mapped[int] = mapped_column(Integer, default=0)
     # 签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
     reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -693,6 +703,8 @@ class Position(Base):
     is_placeholder: Mapped[bool] = mapped_column(Boolean, default=False)
     # 暂停这个岗位的报名，口径同 Shift.enroll_paused
     enroll_paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 手动锁定这个岗位的名单，口径同场次锁定；岗位没有自动锁定
+    list_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     sort: Mapped[int] = mapped_column(Integer, default=0)
 
     shift: Mapped[Shift] = relationship(back_populates="positions")
@@ -861,23 +873,18 @@ class Enrollment(Base):
       enrolled         正式报名（即选即得 / 候补转正确认 / 筛选录取 / 管理员添加）
       waitlisted       候补排队（按 joined_at 先后）
       pending_confirm  候补转正，等待用户在 confirm_deadline 前确认
-      cancelled        已退选（cancel_type: normal 正常 / late 临近 /
+      cancelled        已退选（cancel_type: normal 正常 / locked 名单锁定后退出 /
                                      expired 放弃候补超时 / abandoned 主动放弃候补 /
                                      rejected 未录取 /
                                      not_chosen 录取时没选中的意向场次）
-
-    seat_held：临期退选（开始前 24 小时内、报名已截止）**名额不再释放**，
-    该记录虽已 cancelled 但仍占着一个名额，防止有人临期退了、别人补进来、
-    再退一次，把现场人数搅乱。
     """
     __tablename__ = "enrollments"
     __table_args__ = (
-        # 一人在一个场次只能有一条有效记录（含占位不释放的临期退选记录）。
+        # 一人在一个场次只能有一条有效记录。
         # 这是并发抢报的兜底：哪条路径漏了加场次锁也插不进第二条。
         Index("uq_enrollment_live", "shift_id", "user_id", unique=True,
               postgresql_where=text(
-                  "status IN ('applied', 'enrolled', 'waitlisted', 'pending_confirm')"
-                  " OR seat_held")),
+                  "status IN ('applied', 'enrolled', 'waitlisted', 'pending_confirm')")),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -887,7 +894,6 @@ class Enrollment(Base):
 
     status: Mapped[str] = mapped_column(String(24), default="enrolled", index=True)
     cancel_type: Mapped[str] = mapped_column(String(16), default="")
-    seat_held: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     # 联络群二维码只弹一次：报名成功/转正/录取后弹过就记下来，之后在
     # 「我的报名」里自己点开看
 
@@ -1206,7 +1212,7 @@ class ViolationRecord(Base):
     """违规记录：活动结束后由管理者在名单里登记的一行。
 
     只是记录，不产生任何后果——平台不对志愿者做任何限制。青协工作人员在
-    志愿者档案里能看到这些记录、他参与过的活动和临期退选的次数，仅此而已。
+    志愿者档案里能看到这些记录、他参与过的活动和锁定后退出的次数，仅此而已。
     """
     __tablename__ = "violation_records"
 

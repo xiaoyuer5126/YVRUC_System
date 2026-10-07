@@ -21,6 +21,11 @@
           <DateTimeField v-model="g.end_time" placeholder="结束时间"
                          :default-time="DAY_END" />
         </div>
+        <div class="ai-head">
+          <span class="dim">开场前</span>
+          <el-input-number v-model="g.lock_hours" :min="0" :max="72" style="width:120px" />
+          <span class="dim">小时锁定名单（0 = 不自动锁定）</span>
+        </div>
         <div v-if="tagText(g.requirement_tags)" class="dim">
           场次条件：{{ tagText(g.requirement_tags) }}
         </div>
@@ -172,7 +177,7 @@ async function create(close) {
       if (!g.createdId) {
         g.createdId = (await api.post(`/api/staff/activities/${props.activityId}/shifts`, {
           name: g.name.trim(), start_time: g.start_time, end_time: g.end_time,
-          mode: 'pick', requirement_tags: g.requirement_tags,
+          mode: 'pick', requirement_tags: g.requirement_tags, lock_hours: g.lock_hours,
         })).id
         shifts += 1
       }

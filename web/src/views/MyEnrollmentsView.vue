@@ -8,6 +8,7 @@
         <div class="mob-head">
           <b>{{ row.activity.title }}</b>
           <EnrollStatusTag :row="row" />
+          <el-tag v-if="row.status === 'enrolled' && row.list_locked" size="small" type="info">名单已锁定</el-tag>
         </div>
         <div class="dim">{{ row.activity.location }}</div>
         <div class="mob-line">
@@ -119,7 +120,10 @@
         </template>
       </el-table-column>
       <el-table-column label="状态" width="190">
-        <template #default="{ row }"><EnrollStatusTag :row="row" /></template>
+        <template #default="{ row }">
+          <EnrollStatusTag :row="row" />
+          <el-tag v-if="row.status === 'enrolled' && row.list_locked" size="small" type="info">名单已锁定</el-tag>
+        </template>
       </el-table-column>
       <el-table-column label="签到" width="120">
         <template #default="{ row }">
@@ -153,7 +157,8 @@
 
     <el-alert type="info" :closable="false">
       <p style="margin:0;font-size:12.5px;line-height:1.6">
-        退选规则：开始前 <b>24 小时内</b>且报名已截止时退选，名额将被扣留不再释放，且记录一次临期退选。
+        退选规则：每个场次开场前一段时间会锁定名单（活动页上写着几小时），负责人也可能提前锁定；
+        名单锁定后退出会被记录一次。
       </p>
     </el-alert>
 
@@ -344,14 +349,12 @@ async function toggleReassign(row) {
 }
 
 async function cancel(row) {
-  const g = row.shift
-  const start = new Date(g.start_time.replace(' ', 'T'))
-  const late = Date.now() > start.getTime() - 24 * 3600e3
+  const locked = row.status === 'enrolled' && row.list_locked
   await ElMessageBox.confirm(
-    late ? '距开始不足24小时，将记录一次临期退选。确定退选吗？' : '确定退选吗？',
+    locked ? '名单已锁定，此时退出会被记录一次。确定退出吗？' : '确定退选吗？',
     '退选确认', { type: 'warning', confirmButtonText: '确定' })
   const d = await api.del(`/api/activities/enrollments/${row.id}`)
-  ElMessage[d.effect === 'held' ? 'warning' : 'success'](d.message)
+  ElMessage[d.effect === 'locked' ? 'warning' : 'success'](d.message)
   load()
 }
 </script>

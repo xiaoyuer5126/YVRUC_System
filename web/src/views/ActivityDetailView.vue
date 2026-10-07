@@ -149,8 +149,10 @@
                        @click="showGroupDetail(g)">{{ g.name }}</el-link>
               <el-tag size="small" type="warning" effect="plain">按时间报名</el-tag>
               <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
+              <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
             </div>
             <div class="dim">{{ g.time_text }} · 岗位在报名截止后统一分配</div>
+            <div v-if="lockText(g)" class="dim">{{ lockText(g) }}</div>
             <div v-for="p in g.positions.filter(x => x.is_placeholder || myStationId(g) === x.id)"
                  :key="p.id" class="m-pos" :class="{ mine: myStationId(g) === p.id }">
               <div class="m-pos-head">
@@ -177,8 +179,10 @@
               </el-tag>
               <el-tag v-if="g.started" size="small" type="info" effect="plain">已开场</el-tag>
               <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
+              <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
             </div>
             <div class="dim">{{ g.time_text }}</div>
+            <div v-if="lockText(g)" class="dim">{{ lockText(g) }}</div>
             <div v-if="act.status === 'published' && !act.opens_in && !g.enroll_open"
                  class="dim">
               本场报名已于 {{ fmtDT(g.enroll_deadline) }} 结束
@@ -528,6 +532,9 @@
                 </el-tag>
                 <el-tag v-if="row.enroll_paused" size="small" type="danger" effect="plain"
                         style="margin-left:8px">暂停报名</el-tag>
+                <el-tag v-if="row.locked" size="small" type="info"
+                        style="margin-left:8px">名单已锁定</el-tag>
+                <div v-if="lockText(row)" class="dim">{{ lockText(row) }}</div>
                 <!-- 每个场次在自己开场时就停止收人，活动整体可能还在报名期 -->
                 <div v-if="act.status === 'published' && !act.opens_in && !row.enroll_open"
                      class="dim">
@@ -582,8 +589,6 @@
         <el-descriptions-item label="人数">
           已报名 {{ groupDetail.data.enrolled }} / {{ groupDetail.data.capacity }}
           <span v-if="groupDetail.data.waitlist_count" class="dim">（候补 {{ groupDetail.data.waitlist_count }} 人）</span>
-          <span v-if="groupDetail.data.held_seats" class="dim">
-            · 另有 {{ groupDetail.data.held_seats }} 个名额因临期退选被扣留，不再释放</span>
         </el-descriptions-item>
         <el-descriptions-item label="剩余名额">{{ groupDetail.data.remaining }}</el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ groupDetail.data.requirement_desc }}</el-descriptions-item>
@@ -861,6 +866,16 @@ function myStationName(g) {
 function canCancel(g) {
   return new Date(g.start_time.replace(' ', 'T')) > new Date()
 }
+/** 「开场前 N 小时锁定名单」：还没锁、会自动锁的场次给志愿者提个醒 */
+function lockText(g) {
+  if (g.locked || !g.lock_hours || g.kind !== 'service') return ''
+  return `开场前 ${g.lock_hours} 小时锁定名单`
+}
+/** 我报的这一场（或我的岗位）名单是否已锁定：此时退出会被记录 */
+function myListLocked(g) {
+  const sid = myStationId(g)
+  return g.locked || !!g.positions.find(p => p.id === sid)?.list_locked
+}
 /** 这一场现在还收不收人。
  *
  * 活动整体在报名期还不够：每个场次在**自己开场时**就关闸（enroll_open 由后端
@@ -1033,14 +1048,14 @@ async function toggleReassign(g) {
 
 async function cancelEnroll(g) {
   const enrId = g.my_enrollment.enrollment_id
-  const late = !canCancel(g)
+  const locked = g.my_enrollment.status === 'enrolled' && myListLocked(g)
   try {
     await ElMessageBox.confirm(
-      late ? '距开始不足24小时，将记录一次临期退选。确定退选吗？' : '确定退选吗？',
+      locked ? '名单已锁定，此时退出会被记录一次。确定退出吗？' : '确定退选吗？',
       '确认退选', { type: 'warning', confirmButtonText: '确定', cancelButtonText: '取消' })
   } catch { return }
   const d = await api.del(`/api/activities/enrollments/${enrId}`)
-  ElMessage[d.effect === 'held' ? 'warning' : 'success'](d.message)
+  ElMessage[d.effect === 'locked' ? 'warning' : 'success'](d.message)
   load()
 }
 

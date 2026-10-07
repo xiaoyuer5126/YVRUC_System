@@ -231,9 +231,10 @@ THREADS = int(os.environ.get("YVRUC_THREADS", "100"))
 TICKET_WAIT_SECONDS = float(os.environ.get("YVRUC_TICKET_WAIT_SECONDS", "30"))
 
 # —— 业务规则常量 ——
-# 平台不对志愿者做任何限制：没有准入名单，也不拦任何人报名。临期退选只影响
-# 那个名额（报名已截止时扣留不释放），并记一次「临期退选」供青协查看。
-LATE_CANCEL_HOURS = 24     # 「临近」阈值（小时）
+# 平台不对志愿者做任何限制：没有准入名单，也不拦任何人报名。名单锁定后退出
+# 只记一次「锁定后退出」供青协查看（见 enroll_logic.shift_locked）。
+LOCK_HOURS_DEFAULT = 12    # 场次开场前多少小时自动锁定名单
+LOCK_HOURS_MAX = 72        # 管理者能填的上限；0 = 不自动锁定
 # 急招：同时处于「报名中」且置顶的活动最多几个。挂多了广场首屏全是急招，
 # 学生分不出哪个真缺人
 URGENT_LIMIT = 5
@@ -245,9 +246,9 @@ URGENT_LIMIT = 5
 SCORE_BASE = 100            # 起始分，也是上限
 SCORE_MIN = 0
 SCORE_ALERT_BELOW = 80      # 低于它，名单上姓名旁挂感叹号
-SCORE_PER_ACTIVITY = 5      # 每顺利参与一个活动（签到过、无违规、无临期退选）加的分
+SCORE_PER_ACTIVITY = 5      # 每顺利参与一个活动（签到过、无违规、无锁定后退出）加的分
                             # 补记录活动没有签到：导入名单即视为参与（见 scoring）
-LATE_CANCEL_WEIGHT = 5      # 一个活动有临期退选扣多少（退几个场次都只扣一次）
+LOCKED_QUIT_WEIGHT = 5      # 一个活动有锁定后退出扣多少（退几个场次都只扣一次）
 VIOLATION_WEIGHTS = {       # 一次违规扣多少，最重一档 15
     "late": 10,       # 迟到早退
     "leave": 15,      # 无故请假

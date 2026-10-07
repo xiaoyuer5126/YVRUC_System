@@ -60,15 +60,15 @@ def _checkin(db, act, g, task, u, out=False):
 def test_概况各项数字(client, admin, db, take_student):
     u1, u2, u3, u4, u5, u6, u7 = (student_row(db, take_student()) for _ in range(7))
     act = _activity(db)
-    # 已开始的「报名即选岗位」场次：岗位甲 2 人满、岗位乙暂停报名
+    # 已开始的「报名即选岗位」场次：岗位甲 2 人满、岗位乙暂停报名并锁定名单
     s1 = _shift(db, act, "上午场", now() - timedelta(hours=1), mode="pick", sort=0)
     pa = _pos(db, s1, "岗位甲", 2, sort=0)
-    pb = _pos(db, s1, "岗位乙", 3, sort=1, enroll_paused=True)
+    pb = _pos(db, s1, "岗位乙", 3, sort=1, enroll_paused=True, list_locked=True)
     _enr(db, act, s1, pa, u1)
     _enr(db, act, s1, pa, u2)
     _enr(db, act, s1, pa, u3, "waitlisted")
     _enr(db, act, s1, pb, u4, source="party_school")
-    _enr(db, act, s1, pb, u5, "cancelled", cancel_type="late", seat_held=True)
+    _enr(db, act, s1, pb, u5, "cancelled", cancel_type="locked")
     # 还没开始的「截止后分配」场次：整场 4 个名额，另有一个 2 人的真实岗位
     day = next(_days)
     s2 = _shift(db, act, "下午场", now() + timedelta(days=day), mode="assign", sort=1)
@@ -104,22 +104,23 @@ def test_概况各项数字(client, admin, db, take_student):
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["record"] is False
-    assert d["enroll"] == {"count": 5, "people": 4, "capacity": 9, "occupied": 7,
+    assert d["enroll"] == {"count": 5, "people": 4, "capacity": 9, "occupied": 6,
                            "waitlist": 2, "applied": 0}
     assert d["checkin"] == {"due": 3, "arrived": 2, "rate": 0.6667,
                             "not_checked_out": 1}
     assert d["hours"] == {"total": 4.5, "party_school": 1.5, "records": 3,
                           "approved": False, "locked": False}
-    assert d["violations"] == 1 and d["late_cancel"] == 1
+    assert d["violations"] == 1 and d["locked_quit"] == 1
 
     assert [g["name"] for g in d["shifts"]] == ["上午场", "下午场"]
     g1, g2 = d["shifts"]
     assert (g1["enrolled"], g1["occupied"], g1["capacity"], g1["waitlist"],
-            g1["full"], g1["started"]) == (3, 4, 5, 1, False, True)
+            g1["full"], g1["started"]) == (3, 3, 5, 1, False, True)
     by = {p["name"]: p for p in g1["positions"]}
     assert (by["岗位甲"]["occupied"], by["岗位甲"]["quota"], by["岗位甲"]["full"],
             by["岗位甲"]["waitlist"]) == (2, 2, True, 1)
-    assert by["岗位乙"]["paused"] is True and by["岗位乙"]["occupied"] == 2
+    assert by["岗位乙"]["paused"] is True and by["岗位乙"]["occupied"] == 1
+    assert by["岗位乙"]["locked"] is True and by["岗位甲"]["locked"] is False
     assert by["岗位乙"]["full"] is False
     assert (g2["capacity"], g2["occupied"], g2["unassigned"], g2["full"],
             g2["started"]) == (4, 3, 1, False, False)

@@ -35,7 +35,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "signup_success": (
         "志愿活动报名成功｜{activity}",
         "您已成功报名「{activity}」· {shift}。\n时间：{time}\n{detail}"
-        "\n\n如无法参加，请于活动开始前24小时以上退选，临期退选将被记录。"),
+        "\n\n如无法参加，请尽早退选；场次名单锁定后退出将被记录。"),
     "waitlist_queued": (
         "已加入候补｜{activity}",
         "「{activity}」· {shift} 名额已满，您已报名候补，当前队列第 {pos} 位。"

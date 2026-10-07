@@ -25,6 +25,7 @@
               <span class="ov-tags">
                 <el-tag v-if="g.full" size="small" type="success">已满</el-tag>
                 <el-tag v-if="g.paused" size="small" type="warning">暂停报名</el-tag>
+                <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
                 <el-tag v-if="g.waitlist" size="small" type="info">候补 {{ g.waitlist }}</el-tag>
                 <el-tag v-if="g.unassigned" size="small" type="info" effect="plain">
                   待分配 {{ g.unassigned }}
@@ -40,6 +41,7 @@
               <span class="ov-pname">
                 {{ p.group ? p.group + ' · ' : '' }}{{ p.name }}
                 <el-tag v-if="p.paused" size="small" type="warning" effect="plain">暂停</el-tag>
+                <el-tag v-if="p.locked" size="small" type="info" effect="plain">锁定</el-tag>
                 <span v-if="p.waitlist" class="dim">候补 {{ p.waitlist }}</span>
               </span>
               <div class="ov-bar">
@@ -51,7 +53,7 @@
           </div>
         </div>
         <div class="dim ov-note">
-          名额占用含转正待确认与临期退选扣留的名额；截止后分配的场次按整场名额算，
+          名额占用含转正待确认的名额；截止后分配的场次按整场名额算，
           岗位一行是已分到该岗位的人数。
         </div>
       </div>
@@ -113,7 +115,7 @@ const kpis = computed(() => {
     { label: '未签退', value: c.not_checked_out, tone: c.not_checked_out ? 'warn' : '' },
     hours,
     vio,
-    { label: '临期退选', value: x.late_cancel, tone: x.late_cancel ? 'warn' : '' },
+    { label: '锁定后退出', value: x.locked_quit, tone: x.locked_quit ? 'warn' : '' },
   ]
 })
 </script>

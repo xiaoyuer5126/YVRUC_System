@@ -100,7 +100,9 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
                      "location": st.location} if st else None),
         "status": enr.status, "cancel_type": enr.cancel_type,
         "excused": enr.excused, "excuse_reason": enr.excuse_reason,
-        "seat_held": enr.seat_held,
+        # 名单已锁定（整场或他的岗位）：此时退出会记一次「锁定后退出」
+        "list_locked": logic.position_locked(g, st),
+        "lock_hours": g.lock_hours,
         "is_leader": enr.is_leader,
         # 组长任务：任命通知里发过一次，这里随时能翻回来。一个岗位组共用一名
         # 组长、也共用一份任务，所以按组取，不看他占的是组里哪个岗位

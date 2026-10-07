@@ -15,7 +15,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 from . import pubcache
 from .enroll_logic import (Occupancy, active_rows, applies_to_shift, conflicts_among,
-                           enroll_deadline, group_leader_task, group_needs_leader,
+                           enroll_deadline, group_leader_task, group_needs_leader, lock_at,
                            shift_counts, unmet_for_tags, waitlist_position)
 from .models import (Activity, Application, Attachment, AuditLog, Enrollment,
                      FormQuestion, Position, Shift, User, iso, now)
@@ -175,7 +175,7 @@ def opens_in(act: Activity, t=None) -> int:
 #
 # 与「此刻」有关的字段同样不进缓存，按原始时间每次现算（_with_times）：
 #   display_status / display_label / opens_in / opens_in_ms，
-#   场次的 enroll_open / started / closes_in_ms。
+#   场次的 enroll_open / started / closes_in_ms / locked（到点自动锁定名单）。
 # 否则报名开始那一刻缓存里的「未开始」会再挂 3 秒，按钮刷新后又灰回去。
 #
 # 私密内容（培训内容、材料列表、组长）**根本不经过缓存**，而不是存进去再挑着
@@ -197,10 +197,13 @@ def _time_basis(act: Activity, *, shifts: bool) -> dict:
            "span": [_ts(span[0]), _ts(span[1])] if span else None,
            "last_start": _ts(act.last_shift_start())}
     if shifts:
-        # [场次, 开始, 结束, 本场截止]，按 act.shifts 的顺序、含培训/彩排——
-        # 时段冲突要逐场比，培训那晚撞了别的活动也得提示
+        # [场次, 开始, 结束, 本场截止, 自动锁定时刻]，按 act.shifts 的顺序、含
+        # 培训/彩排——时段冲突要逐场比，培训那晚撞了别的活动也得提示。
+        # 自动锁定被管理者手动解锁用掉了的，锁定时刻给 None（见 enroll_logic.auto_locked）
         out["shifts"] = [[g.id, _ts(g.start_time), _ts(g.end_time),
-                          _ts(enroll_deadline(act, g))] for g in act.shifts]
+                          _ts(enroll_deadline(act, g)),
+                          None if g.auto_lock_spent else _ts(lock_at(g))]
+                         for g in act.shifts]
     return out
 
 
@@ -217,11 +220,13 @@ def with_times(out: dict, t=None) -> dict:
     out.update({"display_status": code, "display_label": label,
                 "opens_in_ms": ms, "opens_in": math.ceil(ms / 1000)})
     if "shifts" in out:
-        times = {sid: (_dt(start), _dt(dl))
-                 for sid, start, _end, dl in basis["shifts"]}
+        times = {sid: (_dt(start), _dt(dl), _dt(auto_at))
+                 for sid, start, _end, dl, auto_at in basis["shifts"]}
         started = reg_started(reg_start, t)
         for g in out["shifts"]:
-            start, deadline = times[g["id"]]
+            start, deadline, auto_at = times[g["id"]]
+            # 名单锁定：手动锁着，或到了自动锁定时刻。口径同 enroll_logic.shift_locked
+            g["locked"] = g["list_locked"] or (auto_at is not None and t >= auto_at)
             # 本场次的报名闸门，与报名接口的判断逐字相同（见 reg_started）：
             # 前端据此灰按钮，别让人点了才知道这一场已经开过了，或者报名
             # 压根还没开始——「活动已发布」不等于「现在能报」
@@ -276,7 +281,6 @@ def _brief_public(act: Activity, counts: dict) -> dict:
         "intro": act.intro[:120], "cover_hue": act.cover_hue,
         "shifts_count": len(shifts),
         "total_capacity": total_cap, "total_enrolled": total_conf,
-        # 剩余名额扣掉临期退选扣留的占位，不然广场上显示有位、点进去报不了
         "remaining": max(0, total_cap - total_used),
         "time_text": (f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}"
                       if span else "待定"),
@@ -354,8 +358,6 @@ def _position_public(p: Position, siblings: list[Position], occ: Occupancy,
         "enrolled": occ.shift_enrolled(p.shift_id) if whole else occ.position_enrolled(p.id),
         "remaining": max(0, p.quota - (occ.shift_occupied(p.shift_id) if whole
                                        else occ.position_occupied(p.id))),
-        # 临期退选扣留的名额：不发出去的话，「已报名 8/10、剩余 0」没人看得懂
-        "held_seats": occ.position_held(p.id),
         "waitlist_quota": p.waitlist_quota,
         "waitlist_count": occ.position_wait(p.id),
         "attire": p.attire, "attire_label": p.attire_label(),
@@ -372,6 +374,7 @@ def _position_public(p: Position, siblings: list[Position], occ: Occupancy,
         "leader_task": group_leader_task(siblings),
         "is_placeholder": p.is_placeholder,
         "enroll_paused": p.enroll_paused,
+        "list_locked": p.list_locked,
         # 占位岗位不是一个岗位，是「这一场怎么报」的说明，所以换个说法
         "display_name": PLACEHOLDER_LABEL if p.is_placeholder else p.name,
         "sort": p.sort,
@@ -451,9 +454,13 @@ def _shift_public(g: Shift, occ: Occupancy, n_materials: dict) -> dict:
         "capacity": capacity,
         "enrolled": occ.shift_enrolled(g.id),
         "remaining": max(0, capacity - occ.shift_occupied(g.id)),
-        "held_seats": sum(occ.position_held(p.id) for p in g.positions),
         "needs_assign": g.needs_assign(),
         "enroll_paused": g.enroll_paused,
+        # 名单锁定：志愿者端写「开场前 N 小时锁定名单」，锁了标「名单已锁定」
+        "lock_hours": g.lock_hours,
+        "lock_at": iso_of(lock_at(g)),
+        # 手动锁定的标记；此刻锁没锁（含自动锁定）是 locked，见 with_times
+        "list_locked": g.list_locked,
         "mode": g.mode,
         "mode_label": g.mode_label(),
         "location": g.location,
@@ -669,7 +676,7 @@ def _for_viewer(db: OrmSession, act: Activity, out: dict, user,
     if user is not None:
         rows = active_rows(db, user)
         clashes = []
-        for sid, start, end, _deadline in basis["shifts"]:
+        for sid, start, end, _deadline, _lock in basis["shifts"]:
             clashes.extend(conflicts_among(rows, sid, _dt(start), _dt(end)))
         out["my_time_conflicts"] = clashes
     return with_times(out)

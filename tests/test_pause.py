@@ -1,10 +1,11 @@
 """暂停报名：管理者停掉某个场次 / 岗位的新报名，不用进编辑态。
 
-已报名的人照常，可以退选；有人退选时候补照常递补——那是暂停前排的队。
+暂停是在调整岗位：已报名的人可以退选、不记录，候补不自动顶上，恢复时补齐
+（见 test_list_lock）。
 """
 from __future__ import annotations
 
-from backend.models import Enrollment, Position, Shift, uid
+from backend.models import Position, Shift, uid
 from conftest import POSITION_TEXT, login
 from test_screening import _answers, _create_screened, _holders
 
@@ -33,25 +34,11 @@ def test_暂停岗位与场次都拦新报名(client, admin, db, open_group, tak
     assert _enroll(client, act, g, take_student(), pid).status_code == 200
 
 
-def test_暂停期间候补照常递补(client, admin, db, open_group, take_student):
-    act, g = open_group(1)
-    pid = g.test_position_id
-    a, b = take_student(), take_student()
-    first = _enroll(client, act, g, a, pid).json()["enrollment_id"]
-    queued = _enroll(client, act, g, b, pid).json()["enrollment_id"]
-    assert db.get(Enrollment, queued).status == "waitlisted"
-    client.post(f"/api/staff/positions/{pid}/pause", headers=admin, json={"paused": True})
-    r = client.delete(f"/api/activities/enrollments/{first}", headers=login(client, a))
-    assert r.status_code == 200, r.text
-    db.expire_all()
-    assert db.get(Enrollment, queued).status == "pending_confirm"
-
-
 def test_待分配与培训不单独暂停_学生不能切(client, admin, db, open_group, take_student):
     act, g = open_group(3, mode="assign")
     r = client.post(f"/api/staff/positions/{g.placeholder().id}/pause", headers=admin,
                     json={"paused": True})
-    assert r.status_code == 400 and "暂停整个场次" in r.json()["detail"]
+    assert r.status_code == 400 and "整个场次" in r.json()["detail"]
     att = Shift(id=uid("g"), activity_id=act.id, name="彩排", kind="rehearsal",
                 start_time=g.start_time, end_time=g.end_time, sort=1)
     db.add(att)

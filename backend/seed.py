@@ -217,7 +217,7 @@ def main() -> None:
         sport = Activity(id=uid("act"), title="校运动会开幕式志愿服务", organizer="校青年志愿者协会",
                          recruit_mode="instant", cover_hue=350,
                          intro="全校秋季运动会开幕式需要大量志愿者支持，涉及引导、检录、礼仪、医疗辅助等岗位。"
-                               "请仔细核对时间后报名；如无法参加请提前 24 小时退选。",
+                               "请仔细核对时间后报名；如无法参加请在名单锁定前退选。",
                          location="世纪馆田径场",
                          location_point={"lat": 39.96785, "lng": 116.30905},
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"},
@@ -268,10 +268,8 @@ def main() -> None:
                 return u
             raise RuntimeError("演示人数不够了")
 
-        # 上午场：东门满8 / 检录 6+1扣留=满7 / 礼仪3（女）/ 医疗2
-        # 检录只放 6 个人：下面那位临期退选的占掉第 7 个位子。
-        # 放满 7 再加一条扣留，就成了「已占用 8 > 名额 7」——真实流程走不出
-        # 这种状态（要先报上名才谈得上扣留），演示数据不该自己造一个。
+        # 上午场：东门满8 / 检录 6（名额 7，下面那位锁定后退出空出 1 个）/
+        # 礼仪3（女）/ 医疗2
         for _ in range(8):
             enr(take(), sport, m1, 3, position=s_gate)
         for _ in range(6):
@@ -290,13 +288,12 @@ def main() -> None:
         e_pc.promoted_at = dt(hours=-1)
         e_pc.confirm_deadline = dt(hours=1)   # 演示：还有1小时确认窗口
 
-        # 一名临期退选：扣分且名额被扣留不释放（roster 里显示为占位）
+        # 一名锁定后退出：扣分，空出的位子等管理者手动转正
         late_user = take()
         late_enr = enr(late_user, sport, m1, 1, status="cancelled",
                        position=s_check, assigned=False)
-        late_enr.cancel_type = "late"
+        late_enr.cancel_type = "locked"
         late_enr.cancelled_at = dt(hours=-3)
-        late_enr.seat_held = True
 
         # 下午场 13人
         for _ in range(6):
@@ -678,7 +675,7 @@ def main() -> None:
         for u in students[3:6]:
             notify(u, "signup_success", "志愿活动报名成功｜校运动会开幕式志愿服务",
                    "您已成功报名「校运动会开幕式志愿服务」，时段已锁定。\n"
-                   "如无法参加请提前24小时退选。", dt(days=-2, hours=-3),
+                   "如无法参加请在名单锁定前退选。", dt(days=-2, hours=-3),
                    read=bool(random.random() < 0.5))
         db.commit()
         # 演示数据里不许出现真人联调用的那个号：学号是认人的唯一凭据，

@@ -21,7 +21,7 @@ from ..database import db_session
 from ..deps import require_manager, require_manager_download
 from ..exporter import (build_activity_workbook, build_answers_workbook,
                         build_application_workbook, build_hours_workbook)
-from ..enroll_logic import Occupancy
+from ..enroll_logic import Occupancy, shift_locked
 from ..perm import ensure_activity_manager
 from ..qrcodes import trusted_root
 from ..integrations import msgcenter
@@ -1500,7 +1500,7 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
       见 HoursRecord.split）；党校同学的照算
       （同数据总览，那是平台自己的数），另单独给出党校部分。approved 说明
       这笔账是否已经核准。
-    · 临期退选：本活动服务场次里有过临期退选（cancel_type=late）的人数。
+    · 锁定后退出：本活动服务场次里有过锁定后退出（cancel_type=locked）的人数。
     补记录活动没有场次与报名，只给名单人数、时长和违规。
 
     全部是按活动聚合的几条查询，条数不随人数、岗位数涨。
@@ -1534,11 +1534,11 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
     occ = Occupancy(db, act.id)
     service = and_(Enrollment.shift_id == Shift.id, Shift.kind == "service")
     enrolled = Enrollment.status == "enrolled"
-    people, applied, late = (
+    people, applied, locked_quit = (
         db.query(func.count(func.distinct(Enrollment.user_id)).filter(enrolled),
                  func.count(Enrollment.id).filter(Enrollment.status == "applied"),
                  func.count(func.distinct(Enrollment.user_id))
-                 .filter(Enrollment.cancel_type == "late"))
+                 .filter(Enrollment.cancel_type == "locked"))
         .join(Shift, service).filter(Enrollment.activity_id == act.id).one())
     # 应到：已开始的服务场次里的正式报名；签到记录按（人, 场次）对上
     signed = and_(CheckinRecord.shift_id == Enrollment.shift_id,
@@ -1568,6 +1568,7 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
                               "occupied": n, "quota": p.quota,
                               "waitlist": occ.position_wait(p.id),
                               "paused": p.enroll_paused,
+                              "locked": p.list_locked,
                               "full": n >= p.quota})
         rows.append({"id": g.id, "name": g.name, "time": g.span_text(),
                      "mode": g.mode, "started": g.start_time <= t,
@@ -1575,6 +1576,7 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
                      "occupied": occ.shift_occupied(g.id),
                      "capacity": cap, "waitlist": occ.shift_wait(g.id),
                      "paused": g.enroll_paused,
+                     "locked": shift_locked(g),
                      "full": cap > 0 and occ.shift_occupied(g.id) >= cap,
                      # 截止后分配的场次：还在占位岗位里、没分到岗位的人
                      "unassigned": occ.position_enrolled(holder.id) if holder else 0,
@@ -1588,7 +1590,7 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
         "checkin": {"due": due, "arrived": arrived,
                     "rate": round(arrived / due, 4) if due else None,
                     "not_checked_out": open_out},
-        "late_cancel": late,
+        "locked_quit": locked_quit,
         "shifts": rows})
     return out
 

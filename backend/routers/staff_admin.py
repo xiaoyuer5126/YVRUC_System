@@ -145,7 +145,7 @@ def list_users(q: str = "", college: str = "",
 # ======================= 志愿者档案 =======================
 
 # 本人主动退出的几种。未录取、录到别的场次、场次被删都不是他的行为，不算
-SELF_CANCELS = ("normal", "late", "abandoned", "expired")
+SELF_CANCELS = ("normal", "locked", "abandoned", "expired")
 CANCEL_WINDOW_DAYS = 90
 
 
@@ -194,7 +194,7 @@ def _archive(db: OrmSession, u: User) -> dict:
                                     else u.masked_id_card())},
         "history": history,
         "score": scoring.detail(db, u),
-        "late_cancel_count": sum(1 for h in history if h["cancel_type"] == "late"),
+        "locked_quit_count": sum(1 for h in history if h["cancel_type"] == "locked"),
         "cancels": cancels,
         "violations": [{
             "id": v.id, "activity_id": v.activity_id,
@@ -208,7 +208,7 @@ def _archive(db: OrmSession, u: User) -> dict:
 def _cancel_profile(db: OrmSession, u: User, rows) -> dict:
     """退选画像：近 90 天退了几次，每次是报名多久之后退的。
 
-    间隔短说明报了就退（占位、试手），间隔长而且卡在临期，是另一种问题。
+    间隔短说明报了就退（占位、试手），间隔长而且卡在名单锁定之后，是另一种问题。
     早于 cancelled_at 这一列存在的旧记录没有时间，间隔给 None，不参与统计。
     """
     since = now() - timedelta(days=CANCEL_WINDOW_DAYS)

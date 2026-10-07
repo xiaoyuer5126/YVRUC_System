@@ -42,12 +42,7 @@
           </template>
         </el-table-column>
         <el-table-column label="名额" width="110">
-          <template #default="{row}">
-            {{ row.quota }}
-            <el-tooltip v-if="row.held" content="临期退选扣留的名额，分配不占用">
-              <span class="dim">（扣留 {{ row.held }}）</span>
-            </el-tooltip>
-          </template>
+          <template #default="{row}">{{ row.quota }}</template>
         </el-table-column>
         <el-table-column label="已在岗" width="80">
           <template #default="{row}">{{ row.existing }}</template>
@@ -249,8 +244,7 @@ function overQuota(row) {
   return s ? s.remaining <= 0 : false
 }
 
-// 缺口按「可用名额」算：扣留的位子填不进人，不该算成缺口
-const gap = row => row.quota - row.held - row.existing - row.planned
+const gap = row => row.quota - row.existing - row.planned
 
 /** 点了之前先看要不要：报名即选岗位的场次人人自己选好了；截止后分配的场次
  *  没人在待分配，也就没什么可排的。后端同样拦，这里先给一句好懂的话。 */

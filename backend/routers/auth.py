@@ -264,7 +264,8 @@ def constants(user: User = Depends(current_user)):
         "stages": config.STAGES,
         "volunteer_benefit_default": config.DEFAULT_VOLUNTEER_BENEFIT,
         "rules": {
-            "late_cancel_hours": config.LATE_CANCEL_HOURS,
+            "lock_hours_default": config.LOCK_HOURS_DEFAULT,
+            "lock_hours_max": config.LOCK_HOURS_MAX,
             "confirm_hours": config.PROMOTE_CONFIRM_HOURS,
             # 确认窗夜间不计时的起止整点，[23, 8] 即 23:00–次日 8:00
             "confirm_quiet": [config.PROMOTE_QUIET_START, config.PROMOTE_QUIET_END],

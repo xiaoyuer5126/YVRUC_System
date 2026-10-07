@@ -8,7 +8,7 @@ import pytest
 
 from backend.enroll_logic import confirm_deadline_from, promote_confirm_deadline
 from backend.models import Enrollment
-from test_promote_cutoff import _fill_and_queue, _raise_quota
+from test_list_lock import _fill_and_queue, _raise_quota
 
 
 def D(day, hh, mm=0, ss=0):
@@ -60,7 +60,7 @@ def _manual_promote(client, admin, db, open_group, take_student, start_in_hours)
     act, g, _queued, wl_id = _fill_and_queue(client, db, open_group, take_student,
                                              day_offset=0,
                                              start_in_hours=start_in_hours,
-                                             reg_end_in_hours=-1)
+                                             lock=True)
     _raise_quota(client, admin, act, g, 2)
     r = client.post(f"/api/staff/enrollments/{wl_id}/promote", headers=admin)
     assert r.status_code == 200, r.text
