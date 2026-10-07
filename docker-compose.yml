@@ -110,6 +110,8 @@ services:
       - yvruc_materials:/app/data/materials # 学习材料、立项书与反馈截图持久化
       # 天地图瓦片的磁盘缓存：重建容器不丢，免得重新花每天 10000 次的额度
       - yvruc_tiles:/app/data/tiles
+      # 操作日志（JSON Lines 文件，见 backend/oplog.py）：和数据库、上传件分开放
+      - yvruc_oplog:/app/data/oplog
     depends_on:
       postgres:
         condition: service_healthy
@@ -202,3 +204,4 @@ volumes:
   yvruc_uploads:
   yvruc_materials:
   yvruc_tiles:
+  yvruc_oplog:

@@ -1313,6 +1313,24 @@ class IntegrationConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
 
 
+class Announcement(Base):
+    """平台弹窗公告：只有一行（id 固定为 CURRENT），管理员改它、开关它。
+
+    用户每次登录后进入平台时弹一次（前端在登录成功时打一个标记，见
+    web/src/store.js 的 setAuth）。已登录的人不会因为公告改了而再弹。
+    """
+    __tablename__ = "announcements"
+
+    CURRENT = "current"
+
+    id: Mapped[str] = mapped_column(String(16), primary_key=True)
+    title: Mapped[str] = mapped_column(String(60), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 # ======================= 意见反馈 =======================
 
 class Feedback(Base):

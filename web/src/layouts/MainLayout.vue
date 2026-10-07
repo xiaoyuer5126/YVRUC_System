@@ -98,6 +98,9 @@
     <ProfileDialog ref="profileDialog" />
     <!-- 意见反馈：任何身份都能提，入口在右上角菜单与窄屏抽屉 -->
     <FeedbackDialog ref="feedbackDialog" />
+    <!-- 平台公告：登录后第一次进平台时弹一次 -->
+    <AnnouncementDialog v-model="announcing" :title="announcement.title"
+                        :body="announcement.body" />
   </el-container>
 </template>
 
@@ -106,9 +109,10 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { isNavigationFailure, NavigationFailureType, useRoute, useRouter } from 'vue-router'
 import { ArrowDown, Bell, ChatDotRound, Check, Fold } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { auth, clearAuth, isTrainee, ROLE_LABELS } from '../store'
+import { auth, clearAuth, isTrainee, ROLE_LABELS, takeAnnouncementTurn } from '../store'
 import { switchIdentity } from '../router'
 import { useNarrow } from '../composables/useNarrow'
+import AnnouncementDialog from '../components/AnnouncementDialog.vue'
 import FeedbackDialog from '../components/FeedbackDialog.vue'
 import ProfileDialog from '../components/ProfileDialog.vue'
 import SideMenu from '../components/SideMenu.vue'
@@ -159,9 +163,23 @@ async function refreshUser() {
   } catch { /* 静默：401 由 api 层处理 */ }
 }
 
+const announcing = ref(false)
+const announcement = ref({ title: '', body: '' })
+async function showAnnouncement() {
+  if (!auth.token || !takeAnnouncementTurn()) return
+  try {
+    const d = await api.get('/api/announcement', { silent: true })
+    if (d.announcement) {
+      announcement.value = d.announcement
+      announcing.value = true
+    }
+  } catch { /* 静默：公告取不到不影响用平台 */ }
+}
+
 onMounted(() => {
   poll(); timer = setInterval(poll, 30000)
   if (auth.token) refreshUser()
+  showAnnouncement()
   // 学生资料未完善 → 强制弹出（不可关闭），补全前不可报名
   if (auth.token && auth.user?.user_type === 'student' && !auth.user.profile_complete) {
     openProfileDialog(true)

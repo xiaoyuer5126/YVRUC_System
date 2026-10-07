@@ -5,6 +5,9 @@ import { reactive } from 'vue'
 // 某次点通知进了个人页、被切到学生视角，之后每次打开都落在学生视角，
 // 工作台得自己再切回去
 const IDENTITY_KEY = 'yvruc_active_identity'
+// 平台公告只在登录时弹一次：登录成功打上这个标记，主框架弹过就清掉。
+// 放 sessionStorage：登录完刷新页面还没看到也照样弹，开新标签页不会再弹
+const ANNOUNCE_KEY = 'yvruc_announce_pending'
 const storedUser = JSON.parse(localStorage.getItem('yvruc_user') || 'null')
 
 export const auth = reactive({
@@ -28,6 +31,14 @@ export function setAuth(token, user) {
   localStorage.setItem('yvruc_token', token)
   localStorage.setItem('yvruc_user', JSON.stringify(user))
   sessionStorage.setItem(IDENTITY_KEY, auth.activeIdentity)
+  sessionStorage.setItem(ANNOUNCE_KEY, '1')
+}
+
+/** 这次登录还没弹过公告：返回 true 并清掉标记，同一次登录只弹一次。 */
+export function takeAnnouncementTurn() {
+  if (!sessionStorage.getItem(ANNOUNCE_KEY)) return false
+  sessionStorage.removeItem(ANNOUNCE_KEY)
+  return true
 }
 
 export function setActiveIdentity(role) {
@@ -52,6 +63,7 @@ export function clearAuth() {
   localStorage.removeItem('yvruc_token')
   localStorage.removeItem('yvruc_user')
   sessionStorage.removeItem(IDENTITY_KEY)
+  sessionStorage.removeItem(ANNOUNCE_KEY)
 }
 
 export const ROLE_LABELS = {
@@ -82,6 +94,8 @@ export const canSee = {
   // 对外联络部的骨干有值班资格：要看得到谁在班、轮到自己时接得了班、处理得了审批
   approvals: () => full() || qx('head') || (qx('core') && !!auth.user?.duty_eligible),
   integrations: () => auth.activeIdentity === 'admin',
+  announcement: () => auth.activeIdentity === 'admin',
+  oplogs: () => auth.activeIdentity === 'admin',      // 会长团不行
   feedback: () => auth.activeIdentity === 'admin',   // 意见反馈的处理端；提交入口人人都有
   personal: () => true,
   pin: () => full(),          // 置顶急招：全校层面的调度，会长团/管理员

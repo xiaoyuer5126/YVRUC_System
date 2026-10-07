@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, crypto, locks, scheduled
+from . import config, crypto, locks, oplog, scheduled
 from .database import SessionLocal, init_db
 from .routers import all_routers
 
@@ -106,6 +106,8 @@ def create_app() -> FastAPI:
     init_db()
     for r in all_routers:
         app.include_router(r)
+    # 操作日志：改数据的请求、登录、导出下载，响应发出后记一条（见 oplog.py）
+    app.add_middleware(oplog.OplogMiddleware)
 
     # async 不是随手写的：同步的 def 接口要占一条线程池的线程，而线程池是**每个
     # 进程共用、有上限的**（config.THREADS）。抢报那种几百个请求一起到的时候，线程全
