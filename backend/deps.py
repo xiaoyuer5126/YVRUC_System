@@ -126,6 +126,8 @@ TRAINEE_DENIED_READS = {
     "export_answers", "export_answer_attachment_count", "export_answer_attachments",
     "export_applications", "export_application_attachment_count",
     "export_application_attachments",
+    # 操作日志导出本来只给管理员，列在这里是让「导出都点了名」这件事没有例外
+    "export_oplogs",
 }
 TRAINEE_READONLY = "TRAINEE_READONLY"
 
