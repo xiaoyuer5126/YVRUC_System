@@ -28,7 +28,7 @@ from datetime import timedelta
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session as OrmSession
 
-from . import config, locks
+from . import config, locks, oplog
 from .database import db_session
 from .models import Session, User, now
 
@@ -76,23 +76,29 @@ def _identity(request: Request) -> str:
     return request.headers.get("X-Identity", "").strip()
 
 
-def _viewed(user: User, identity: str) -> User:
+def _viewed(request: Request, user: User, identity: str) -> User:
     user.set_view(identity)
+    oplog.mark_actor(request, user)
     return user
 
 
 def current_user(request: Request,
                  db: OrmSession = Depends(db_session)) -> User:
-    return _release(db, _viewed(_authorize(db, _bearer(request)),
+    return _release(db, _viewed(request, _authorize(db, _bearer(request)),
                                 _identity(request)))
 
 
 def current_user_download(request: Request,
                           db: OrmSession = Depends(db_session)) -> User:
-    """浏览器直链下载：认 Authorization 头，或一次性票据 ?ticket=。"""
+    """浏览器直链下载：认 Authorization 头，或一次性票据 ?ticket=。
+
+    走这个依赖的都是导出和附件下载，操作日志要记下来。
+    """
+    oplog.mark_download(request)
     token = _bearer(request)
     if token:
-        return _release(db, _viewed(_authorize(db, token), _identity(request)))
+        return _release(db, _viewed(request, _authorize(db, token),
+                                    _identity(request)))
     ticket = request.query_params.get("ticket", "").strip()
     redeemed = locks.redeem_ticket(ticket, request.url.path)
     if redeemed is None:
@@ -102,7 +108,7 @@ def current_user_download(request: Request,
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(401, "用户不存在")
-    return _release(db, _viewed(user, identity))
+    return _release(db, _viewed(request, user, identity))
 
 
 # 部门成员的学习权限：非 GET 一律拦，下面两张表是例外。
@@ -120,6 +126,8 @@ TRAINEE_DENIED_READS = {
     "export_answers", "export_answer_attachment_count", "export_answer_attachments",
     "export_applications", "export_application_attachment_count",
     "export_application_attachments",
+    # 操作日志导出本来只给管理员，列在这里是让「导出都点了名」这件事没有例外
+    "export_oplogs",
 }
 TRAINEE_READONLY = "TRAINEE_READONLY"
 
@@ -164,6 +172,13 @@ def require_manager_download(request: Request,
 
 def require_admin(user: User = Depends(current_user)) -> User:
     """仅系统管理员：集成设置。"""
+    if not user.is_admin():
+        raise HTTPException(403, "需要管理员身份")
+    return user
+
+
+def require_admin_download(user: User = Depends(current_user_download)) -> User:
+    """仅系统管理员的直链下载：操作日志导出。"""
     if not user.is_admin():
         raise HTTPException(403, "需要管理员身份")
     return user

@@ -80,6 +80,16 @@ TIANDITU_DAILY_LIMIT = int(os.environ.get("YVRUC_TIANDITU_DAILY_LIMIT", "").stri
 TIANDITU_WARN_AT = TIANDITU_DAILY_LIMIT * 9 // 10
 TILE_CACHE_DIR = DATA_DIR / "tiles"
 TILE_CACHE_DAYS = 30
+
+# —— 操作日志（见 oplog.py）——
+# 日志文件放在单独的目录，compose 给它挂单独的卷，和数据库、上传件分开
+OPLOG_DIR = Path(os.environ.get("YVRUC_OPLOG_DIR", "").strip()
+                 or DATA_DIR / "oplog")
+OPLOG_RETAIN_DAYS = 180
+# 磁盘剩余低于这个数就停写：日志写满磁盘，数据库也就写不进去了
+OPLOG_MIN_FREE_BYTES = 1024 ** 3
+# 「操作日志」页一次最多查多少天：每次查询都要把这几天的文件整个读一遍
+OPLOG_QUERY_MAX_DAYS = 31
 # 服务器向天地图取一张瓦片最多等几秒。给短：地图是锦上添花，一张瓦片卡住
 # 就让它灰着，别占着线程池的线程。
 TILE_UPSTREAM_TIMEOUT = 5

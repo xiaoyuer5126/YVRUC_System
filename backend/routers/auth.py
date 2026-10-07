@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, school_id
+from .. import config, oplog, school_id
 from ..database import db_session
 from ..deps import create_session, current_token, current_user
 from ..integrations import sso
@@ -77,6 +77,8 @@ def demo_login(body: DemoLoginBody, request: Request,
                db: OrmSession = Depends(db_session)):
     if not demo_login_enabled():
         raise HTTPException(404, "演示登录未启用，请通过学校统一身份认证登录")
+    # 先记下填的学号：口令错、查无此人的失败登录也要留痕
+    oplog.mark_login(request, student_id=body.student_id.strip())
 
     source = f"login:{request.client.host if request.client else 'unknown'}"
     if failure_count(source) >= MAX_FAILED_ATTEMPTS:
@@ -92,6 +94,7 @@ def demo_login(body: DemoLoginBody, request: Request,
     if user is None:
         raise HTTPException(404, f"平台没有学号 {sid} 的档案")
     clear_failures(source)
+    oplog.mark_login(request, user=user)
     return {"token": create_session(db, user), "user": session_user(db, user),
             "mode": "demo"}
 
@@ -124,9 +127,10 @@ class SsoCallbackBody(BaseModel):
 
 
 @router.post("/sso-callback")
-def sso_callback(body: SsoCallbackBody,
+def sso_callback(body: SsoCallbackBody, request: Request,
                  db: OrmSession = Depends(db_session)):
     """统一身份认证回调：用授权码换身份，换到谁就给谁开会话。"""
+    oplog.mark_login(request)
     if sso.mode() == "mock":
         raise HTTPException(409, "统一身份认证尚未接通")
     try:
@@ -140,12 +144,14 @@ def sso_callback(body: SsoCallbackBody,
     sid = (info.get("student_id") or "").strip()
     if not sid:
         raise HTTPException(502, "统一身份认证未返回学号")
+    oplog.mark_login(request, student_id=sid)
 
     user = db.query(User).filter(User.student_id == sid).first()
     if user is None:
         user = _provision(db, info)
     else:
         _sync_from_school(db, user, info)
+    oplog.mark_login(request, user=user)
     return {"token": create_session(db, user), "user": session_user(db, user),
             "mode": sso.mode(), "next": info.get("next") or ""}
 

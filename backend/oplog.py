@@ -1,0 +1,374 @@
+"""操作日志：谁、什么时候、从哪、调了哪个接口、结果如何。
+
+和审计日志（audit.py）分工不同：审计日志是业务代码在关键动作上写的一句人话，
+进数据库、对志愿者展示变更；操作日志是在请求入口统一采集的流水，覆盖所有改
+数据的请求（POST/PUT/PATCH/DELETE）和登录、导出、附件下载，用来事后追溯。
+
+存储是文件，不进数据库：日志和业务库分开放，库出了问题留痕还在，日志量也
+不会拖慢业务表。格式是 JSON Lines，一行一条：
+  · 每个进程每天一个文件 `YYYY-MM-DD-<pid>.jsonl`，只追加。几个进程各写各的，
+    不需要跨进程加锁，也不做重命名轮转（轮转时别的进程还拿着旧文件）。
+  · 请求线程只把一条记录放进内存队列，写盘由本进程的后台线程批量做——抢报
+    时几百个报名请求同时到，谁都不该等磁盘。
+  · 请求正文一律不记：报名问卷、个人资料里有身份证号、手机号。
+  · 磁盘剩余空间低于 OPLOG_MIN_FREE_BYTES 时停写，站内通知管理员（每天一次）：
+    日志把磁盘写满，数据库也就写不进去了。
+  · 超过 OPLOG_RETAIN_DAYS 天的文件由定时任务删掉（scheduled.purge_oplogs）。
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import queue
+import re
+import shutil
+import threading
+import time
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+from . import config
+
+logger = logging.getLogger(__name__)
+
+WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+# 记了也没用的写请求：下载票据只是换一张一分钟的票，真正的下载另记一条
+SKIP_HANDLERS = {"download_ticket"}
+
+# 操作类型：页面上按它筛
+KIND_LABELS = {"login": "登录", "download": "导出/下载", "create": "提交",
+               "update": "修改", "delete": "删除"}
+_METHOD_KIND = {"POST": "create", "PUT": "update", "PATCH": "update",
+                "DELETE": "delete"}
+
+# 请求线程往这里放、后台线程从这里取。上限防的是磁盘卡住时内存一直涨：
+# 满了就丢新来的，并记一句警告
+QUEUE_MAX = 20000
+BATCH_MAX = 500
+DISK_CHECK_SECONDS = 30
+
+_queue: queue.Queue = queue.Queue(maxsize=QUEUE_MAX)
+_write_lock = threading.Lock()
+_writer: threading.Thread | None = None
+_writer_pid = 0
+_start_lock = threading.Lock()
+_dropped = 0
+_disk_ok = True
+_disk_checked_at = 0.0
+
+FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-\d+\.jsonl$")
+
+
+# ======================= 采集 =======================
+
+def mark_actor(request, user) -> None:
+    """记下这次请求是谁发的。鉴权依赖在认出人之后调用。
+
+    当场把学号、姓名、身份抄下来：请求结束时 ORM 对象可能已经脱离会话。
+    """
+    request.state.oplog_actor = {
+        "uid": user.id, "sid": user.student_id, "name": user.name,
+        "identity": user.view() or "",
+    }
+
+
+def mark_login(request, *, student_id: str = "", user=None) -> None:
+    """登录接口标出这次登录是谁。失败时没有 user，只记填的（或认证返回的）学号。"""
+    request.state.oplog_login = True
+    if user is not None:
+        mark_actor(request, user)
+    elif student_id:
+        request.state.oplog_actor = {"uid": "", "sid": student_id[:32],
+                                     "name": "", "identity": ""}
+
+
+def mark_download(request) -> None:
+    """直链下载（导出、附件）：GET 请求里只有这一类要记。"""
+    request.state.oplog_download = True
+
+
+# 文档串第一句读起来不像操作名的，在这里写明
+LABELS = {"demo_login": "登录（演示口令）", "sso_callback": "登录（统一身份认证）",
+          "logout": "退出登录"}
+
+
+def _label(endpoint) -> str:
+    """接口的中文说明：处理函数文档串的第一句，没有就用函数名。"""
+    name = getattr(endpoint, "__name__", "")
+    if name in LABELS:
+        return LABELS[name]
+    doc = (getattr(endpoint, "__doc__", "") or "").strip()
+    if not doc:
+        return getattr(endpoint, "__name__", "")
+    first = doc.splitlines()[0].strip()
+    return re.split(r"[。：:（(]", first, maxsplit=1)[0][:40] or first[:40]
+
+
+class OplogMiddleware:
+    """纯 ASGI 中间件：在响应发出后拼一条记录放进队列。
+
+    不用 BaseHTTPMiddleware：那一层会把每个请求包进额外的任务和流，抢报时
+    白白多出一份开销。
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not scope["path"].startswith("/api/"):
+            await self.app(scope, receive, send)
+            return
+        started = time.perf_counter()
+        at = datetime.now()
+        status = {"code": 500}
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                status["code"] = message["status"]
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            try:
+                entry = _entry(scope, at, status["code"],
+                               int((time.perf_counter() - started) * 1000))
+                if entry is not None:
+                    record(entry)
+            except Exception:  # noqa: BLE001
+                logger.exception("操作日志采集出错")
+
+
+def _entry(scope, at: datetime, status: int, ms: int) -> dict | None:
+    state = scope.get("state") or {}
+    method = scope["method"]
+    endpoint = scope.get("endpoint")
+    handler = getattr(endpoint, "__name__", "")
+    if state.get("oplog_login"):
+        kind = "login"
+    elif method in WRITE_METHODS:
+        if handler in SKIP_HANDLERS:
+            return None
+        kind = _METHOD_KIND[method]
+    elif state.get("oplog_download"):
+        kind = "download"
+    else:
+        return None
+    actor = state.get("oplog_actor") or {}
+    params = dict(scope.get("path_params") or {})
+    client = scope.get("client")
+    return {
+        "t": at.isoformat(timespec="milliseconds"),
+        "uid": actor.get("uid", ""), "sid": actor.get("sid", ""),
+        "name": actor.get("name", ""), "identity": actor.get("identity", ""),
+        "ip": client[0] if client else "",
+        "method": method, "path": scope["path"],
+        "action": handler, "label": _label(endpoint) if endpoint else "",
+        "kind": kind,
+        "activity_id": str(params.pop("activity_id", "") or ""),
+        "target": {k: str(v) for k, v in params.items()},
+        "status": status, "ms": ms,
+    }
+
+
+def record(entry: dict) -> None:
+    global _dropped
+    _ensure_writer()
+    try:
+        _queue.put_nowait(entry)
+    except queue.Full:
+        _dropped += 1
+        if _dropped % 1000 == 1:
+            logger.warning("操作日志队列已满，已丢弃 %d 条", _dropped)
+
+
+# ======================= 写盘 =======================
+
+def _ensure_writer() -> None:
+    """每个进程起一条写盘线程。按进程号判断，多进程部署各起各的。"""
+    global _writer, _writer_pid
+    pid = os.getpid()
+    if _writer is not None and _writer_pid == pid and _writer.is_alive():
+        return
+    with _start_lock:
+        if _writer is not None and _writer_pid == pid and _writer.is_alive():
+            return
+        _writer = threading.Thread(target=_run, name="oplog-writer", daemon=True)
+        _writer_pid = pid
+        _writer.start()
+
+
+def _run() -> None:
+    while True:
+        batch = [_queue.get(), *_drain(BATCH_MAX - 1)]
+        try:
+            _write(batch)
+        except Exception:  # noqa: BLE001
+            logger.exception("操作日志写盘出错")
+        finally:
+            _done(len(batch))
+
+
+def _done(n: int) -> None:
+    for _ in range(n):
+        _queue.task_done()
+
+
+def _drain(limit: int) -> list[dict]:
+    out = []
+    while len(out) < limit:
+        try:
+            out.append(_queue.get_nowait())
+        except queue.Empty:
+            break
+    return out
+
+
+def _write_pending() -> None:
+    """把队列里还没写的记录当场写掉。"""
+    while True:
+        batch = _drain(BATCH_MAX)
+        if not batch:
+            break
+        try:
+            _write(batch)
+        finally:
+            _done(len(batch))
+
+
+def flush() -> None:
+    """写完队列里的记录，并等后台线程手上那一批也写完。
+
+    只给测试用：线上请求不停地进队列，等「全部写完」可能一直等下去。
+    """
+    _write_pending()
+    _queue.join()
+
+
+def _write(batch: list[dict]) -> None:
+    with _write_lock:
+        if not _disk_has_room():
+            return
+        by_day: dict[str, list[str]] = {}
+        for e in batch:
+            by_day.setdefault(e["t"][:10], []).append(
+                json.dumps(e, ensure_ascii=False))
+        config.OPLOG_DIR.mkdir(parents=True, exist_ok=True)
+        pid = os.getpid()
+        for day, lines in by_day.items():
+            with open(config.OPLOG_DIR / f"{day}-{pid}.jsonl", "a",
+                      encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+
+
+def _disk_has_room() -> bool:
+    """剩余空间够不够。DISK_CHECK_SECONDS 内只查一次。"""
+    global _disk_ok, _disk_checked_at
+    t = time.monotonic()
+    if t - _disk_checked_at < DISK_CHECK_SECONDS and _disk_checked_at:
+        return _disk_ok
+    _disk_checked_at = t
+    config.OPLOG_DIR.mkdir(parents=True, exist_ok=True)
+    free = shutil.disk_usage(config.OPLOG_DIR).free
+    ok = free >= config.OPLOG_MIN_FREE_BYTES
+    if not ok:
+        logger.error("磁盘剩余 %.2f GB，低于下限，操作日志停写", free / 1024 ** 3)
+        _alert_disk_low(free)
+    _disk_ok = ok
+    return ok
+
+
+def _alert_disk_low(free: int) -> None:
+    """站内通知全体管理员。几个进程都会走到这里，用 Redis 占位保证每天只发一次。"""
+    from sqlalchemy import Text, cast
+
+    from . import locks
+    from .database import SessionLocal
+    from .models import User
+    from .notify import notify
+
+    if not locks.claim_once(f"oplog:disk-alert:{date.today().isoformat()}",
+                            2 * 86400):
+        return
+    db = SessionLocal()
+    try:
+        admins = (db.query(User)
+                  .filter(cast(User.roles, Text).like('%"admin"%')).all())
+        gb = free / 1024 ** 3
+        for u in admins:
+            if u.has_role("admin", real=True):
+                notify(db, u, "服务器磁盘空间不足",
+                       f"服务器磁盘只剩 {gb:.2f} GB，操作日志已暂停记录。"
+                       "请尽快清理磁盘，空间恢复后自动继续记录。")
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("通知管理员磁盘不足失败")
+    finally:
+        db.close()
+
+
+# ======================= 清理 =======================
+
+def purge(today: date) -> int:
+    """删掉超过保留期的日志文件，返回删了几个。"""
+    if not config.OPLOG_DIR.is_dir():
+        return 0
+    cutoff = (today - timedelta(days=config.OPLOG_RETAIN_DAYS)).isoformat()
+    n = 0
+    for path in config.OPLOG_DIR.iterdir():
+        m = FILE_RE.match(path.name)
+        if m and m.group(1) < cutoff:
+            path.unlink(missing_ok=True)
+            n += 1
+    return n
+
+
+# ======================= 读取 =======================
+
+def _files_between(start: date, end: date) -> list[Path]:
+    if not config.OPLOG_DIR.is_dir():
+        return []
+    lo, hi = start.isoformat(), end.isoformat()
+    out = []
+    for path in config.OPLOG_DIR.iterdir():
+        m = FILE_RE.match(path.name)
+        if m and lo <= m.group(1) <= hi:
+            out.append(path)
+    return out
+
+
+def query(start: datetime, end: datetime, *, person: str = "",
+          activity_ids: set[str] | None = None, kind: str = "") -> list[dict]:
+    """读出 [start, end] 之间符合条件的记录，新的在前。
+
+    person 匹配学号或姓名（包含即可）；activity_ids 为 None 表示不按活动筛。
+    """
+    # 刚发生的请求可能还在队列里，先写掉，查得到才像实时
+    _write_pending()
+    lo = start.isoformat(timespec="milliseconds")
+    hi = end.isoformat(timespec="milliseconds")
+    person = person.strip()
+    rows = []
+    for path in _files_between(start.date(), end.date()):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue      # 进程被杀时可能留下半行
+                if not (lo <= e.get("t", "") <= hi):
+                    continue
+                if kind and e.get("kind") != kind:
+                    continue
+                if person and person not in e.get("sid", "") \
+                        and person not in e.get("name", ""):
+                    continue
+                if activity_ids is not None \
+                        and e.get("activity_id") not in activity_ids:
+                    continue
+                rows.append(e)
+    rows.sort(key=lambda e: e["t"], reverse=True)
+    return rows
