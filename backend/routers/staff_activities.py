@@ -588,9 +588,13 @@ def finish_editing(activity_id: str, bg: BackgroundTasks,
 
     改动里常有扩容——加名额、加岗位。名额空出来就该轮到候补，否则队伍
     一直排着、位子一直空着，得等下一个人退选才动。
+
+    活动行加锁：两位管理者同时点发布，或者撞上定时任务的超时解冻，只有一边
+    解冻并发出汇总，另一边看到「不在编辑态」，志愿者不会收到两份。
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
+    db.refresh(act, with_for_update=True)
     if act.editing_since is None:
         raise HTTPException(409, "本活动不在编辑态")
     since = act.editing_since
@@ -611,11 +615,14 @@ def finish_editing(activity_id: str, bg: BackgroundTasks,
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"结束编辑并发布改动：{summary}")
     db.commit()
-    promoted = _fill_vacancies(db, act)
+    # 编辑态已经解除，这次的汇总只有这一次机会发：先排上，再去补位。
+    # 补位要逐场拿场次锁，哪一场排不上会跳过而不是让请求报错（见 _fill_vacancies），
+    # 请求报错的话排好的后台任务也会跟着作废
     if rows and act.status != "draft":
         bg.add_task(_notify_edit_changes_bg, act.id, since)
+    promoted, busy = _fill_vacancies(db, act)
     return {"ok": True, "editing": False, "changes": len(rows),
-            "promoted": promoted, "summary": summary}
+            "promoted": promoted, "busy": busy, "summary": summary}
 
 
 def _notify_edit_changes_bg(activity_id: str, since: datetime):
@@ -631,17 +638,32 @@ def _notify_edit_changes_bg(activity_id: str, since: datetime):
         db.close()
 
 
-def _fill_vacancies(db: OrmSession, act: Activity) -> int:
-    """活动下所有场次各自补齐名额，返回通知了多少位候补去确认。"""
+def _fill_vacancies(db: OrmSession, act: Activity) -> tuple[int, list[str]]:
+    """活动下所有场次各自补齐名额，返回（通知了多少位候补去确认, 没补成的场次名）。
+
+    调用方都是先提交了「恢复报名」再来补，这时正是抢报的时候：哪一场的锁
+    一时排不上就跳过，接着补别的场次。整个请求报 503 的话，报名其实已经恢复，
+    管理者却以为没成功，再点一次只会被拒（已经不在编辑态 / 已经在报名中），
+    排好的变更汇总也跟着作废。跳过的场次名回给前端，提醒管理者稍后到名单里
+    手动转正。
+    """
     total = 0
+    busy: list[str] = []
     for g in act.shifts:
         if g.is_attached():
             continue      # 培训/彩排跟着主场次走，没有自己的队列
         # 一个场次一个事务：锁随 commit 放掉，下一个场次重新拿
-        with shift_lock(db, g.id):
-            total += logic.fill_vacancies(db, g)
-            db.commit()
-    return total
+        try:
+            with shift_lock(db, g.id):
+                logic.reload_shift(db, g)
+                total += logic.fill_vacancies(db, g)
+                db.commit()
+        except HTTPException as exc:
+            if exc.status_code != 503:
+                raise
+            db.rollback()
+            busy.append(g.name)
+    return total, busy
 
 
 # ======================= 复制 =======================
@@ -908,8 +930,9 @@ def reopen(activity_id: str, body: ReopenBody,
               visible=True)
     db.commit()
     # 恢复报名前先把空着的名额按候补顺序补齐，别让新来的人抢在排队的人前面
-    promoted = _fill_vacancies(db, act)
-    return {"ok": True, "reg_end": iso(act.reg_end), "promoted": promoted}
+    promoted, busy = _fill_vacancies(db, act)
+    return {"ok": True, "reg_end": iso(act.reg_end), "promoted": promoted,
+            "busy": busy}
 
 
 @router.post("/activities/{activity_id}/finish")
@@ -1113,6 +1136,11 @@ def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
                          f"如确需调整请新建场次")
             g.positions.remove(holder)
             db.delete(holder)
+        if mode == "assign":
+            # 暂停、锁定在 assign 场次里只按整场算（见 _toggle_target），
+            # 岗位上留着的开关没有入口能关掉
+            for p in g.positions:
+                p.enroll_paused = p.list_locked = False
     g.mode = mode
 
 
@@ -1235,6 +1263,9 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
         raise HTTPException(
             409, "该场次已经生成过签到码，签到记录挂在场次上，不能删除。"
                  "如确定这一场不作数，请在签到面板停用签到码，场次保留即可")
+    # 这一场的培训/彩排先查出来再修剪范围：修剪完它们就不再圈这一场的岗位，
+    # attached_shifts 查不回来，下面重算时只因这一场才去的那些就退不掉了
+    attached = [] if g.is_attached() else logic.attached_shifts(db, g.id)
     if not g.is_attached():
         _prune_trainings(db, act, {p.id for p in g.positions})
     n_active = db.query(Enrollment).filter(
@@ -1254,7 +1285,7 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
         was_on = e.status == "enrolled"
         e.status = "cancelled"
         if was_on and not g.is_attached():
-            logic.sync_attached(db, e)
+            logic.sync_attached(db, e, attached)
         db.delete(e)
     db.flush()
     label = f"{act.title}·{g.name}"
@@ -1526,8 +1557,12 @@ def _toggle_target(db: OrmSession, user: User, shift_id: str | None = None,
     _pause_target_check(act)
     if g.is_attached():
         raise HTTPException(400, "培训/彩排跟着服务场次走，没有单独的报名")
-    if s is not None and s.is_placeholder:
-        raise HTTPException(400, "「待分配」是整场的报名入口，请对整个场次操作")
+    # 「截止后统一分配」的场次报名、候补都是整场一条队（排在「待分配」上），
+    # 真实岗位上只有分过去的人：单锁一个岗位，空出的位子照样被整场的候补顶上，
+    # 和「锁定后候补不自动转正」对不上
+    if s is not None and g.needs_assign():
+        raise HTTPException(400, "「截止后统一分配」的场次报名和候补都是整场一条队，"
+                                 "请对整个场次暂停或锁定")
     return act, g, s
 
 
@@ -1585,7 +1620,7 @@ def pause_shift(shift_id: str, body: PauseBody,
     act, g, _ = _toggle_target(db, user, shift_id=shift_id)
     db.commit()          # 还连接再排锁，理由同 enroll
     with shift_lock(db, g.id):
-        db.refresh(g)
+        logic.reload_shift(db, g)
         g.enroll_paused = body.paused
         out = _toggle_done(db, user, act, g, None, not body.paused,
                            f"{'暂停' if body.paused else '恢复'}场次「{g.name}」的报名")
@@ -1600,7 +1635,7 @@ def pause_position(position_id: str, body: PauseBody,
     act, g, s = _toggle_target(db, user, position_id=position_id)
     db.commit()
     with shift_lock(db, g.id):
-        db.refresh(s)
+        logic.reload_shift(db, g)
         s.enroll_paused = body.paused
         out = _toggle_done(db, user, act, g, s, not body.paused,
                            f"{'暂停' if body.paused else '恢复'}岗位「{s.name}」的报名")
@@ -1620,7 +1655,7 @@ def lock_shift(shift_id: str, body: LockBody,
     act, g, _ = _toggle_target(db, user, shift_id=shift_id)
     db.commit()
     with shift_lock(db, g.id):
-        db.refresh(g)
+        logic.reload_shift(db, g)
         logic.set_shift_locked(g, body.locked)
         out = _toggle_done(db, user, act, g, None, not body.locked,
                            f"{'锁定' if body.locked else '解锁'}场次「{g.name}」的名单")
@@ -1635,7 +1670,7 @@ def lock_position(position_id: str, body: LockBody,
     act, g, s = _toggle_target(db, user, position_id=position_id)
     db.commit()
     with shift_lock(db, g.id):
-        db.refresh(s)
+        logic.reload_shift(db, g)
         s.list_locked = body.locked
         out = _toggle_done(db, user, act, g, s, not body.locked,
                            f"{'锁定' if body.locked else '解锁'}岗位「{s.name}」的名单")
@@ -2362,6 +2397,7 @@ def assign_apply(shift_id: str, body: ApplyPlanBody, bg: BackgroundTasks,
     # 甲岗的候补队首要马上顶上；分开提交的话，中间那一瞬放出来的位子会被
     # 新报名的人抢走，排着队的人反倒轮不上
     with shift_lock(db, g.id):
+        logic.reload_shift(db, g)
         try:
             result = assign.apply_plan(db, g, user, body.plan,
                                        source=body.source,

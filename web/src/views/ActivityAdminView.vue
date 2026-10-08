@@ -244,11 +244,11 @@
               <el-tag v-if="row.list_locked" size="small" type="info">名单已锁定</el-tag>
             </template>
             <template #actions="{ row }">
-              <el-button v-if="isPublic && !row.is_placeholder" size="small" plain
+              <el-button v-if="isPublic && g.mode !== 'assign'" size="small" plain
                          :disabled="isOver" @click="togglePause('positions', row)">
                 {{ row.enroll_paused ? '恢复报名' : '暂停' }}
               </el-button>
-              <el-button v-if="isPublic && !row.is_placeholder" size="small" plain
+              <el-button v-if="isPublic && g.mode !== 'assign'" size="small" plain
                          :disabled="isOver || g.locked"
                          @click="toggleLock('positions', row, !row.list_locked)">
                 {{ row.list_locked ? '解锁' : '锁定' }}
@@ -302,12 +302,12 @@
             <el-table-column label="操作" width="250">
               <template #default="{row}">
                 <div class="btn-row">
-                  <el-button v-if="isPublic && !row.is_placeholder" size="small" link
+                  <el-button v-if="isPublic && g.mode !== 'assign'" size="small" link
                              :type="row.enroll_paused ? 'danger' : ''" :disabled="isOver"
                              @click="togglePause('positions', row)">
                     {{ row.enroll_paused ? '恢复报名' : '暂停' }}
                   </el-button>
-                  <el-button v-if="isPublic && !row.is_placeholder" size="small" link
+                  <el-button v-if="isPublic && g.mode !== 'assign'" size="small" link
                              :disabled="isOver || g.locked"
                              @click="toggleLock('positions', row, !row.list_locked)">
                     {{ row.list_locked ? '解锁' : '锁定' }}
@@ -363,11 +363,12 @@
                       effect="plain">暂停报名</el-tag>
               <el-tag v-if="x.g.locked || x.p.list_locked" size="small" type="info">名单已锁定</el-tag>
               <span class="slot-acts">
-                <el-button v-if="isPublic" size="small" link :disabled="isOver"
-                           @click="togglePause('positions', x.p)">
+                <el-button v-if="isPublic && x.g.mode !== 'assign'" size="small" link
+                           :disabled="isOver" @click="togglePause('positions', x.p)">
                   {{ x.p.enroll_paused ? '恢复报名' : '暂停' }}
                 </el-button>
-                <el-button v-if="isPublic" size="small" link :disabled="isOver || x.g.locked"
+                <el-button v-if="isPublic && x.g.mode !== 'assign'" size="small" link
+                           :disabled="isOver || x.g.locked"
                            @click="toggleLock('positions', x.p, !x.p.list_locked)">
                   {{ x.p.list_locked ? '解锁' : '锁定' }}
                 </el-button>
@@ -684,7 +685,8 @@
               <template #header><b>退选记录（近20条）</b></template>
               <div v-for="x in roster.cancelled" :key="x.enrollment_id" class="wl-row dim">
                 {{ x.user.name }}
-                <el-tag size="small" type="info" effect="plain">{{ cancelType(x) }}</el-tag>
+                <el-tag size="small" :type="x.cancel_type === 'locked' ? 'warning' : 'info'"
+                        effect="plain">{{ cancelType(x) }}</el-tag>
               </div>
             </el-card>
             </el-col>
@@ -1836,6 +1838,7 @@ async function saveAndPublish() {
         ? `已恢复报名，${d.changes} 项改动已通知志愿者`
         : '已恢复报名（本次没有实质改动）')
         + (d.promoted ? `；已通知 ${d.promoted} 位候补确认转正` : ''))
+      warnBusy(d.busy)
     }
     // 等刷完再返回：离开本页的拦截里会先 await 它，编辑态还没刷掉的话，
     // 那一跳要是又走一遍拦截，人就被问第二遍
@@ -1977,8 +1980,10 @@ async function loadLogs() {
     logs.value = d.items || []
   } finally { logsLoading.value = false }
 }
-const cancelType = x => ({ normal: '退选', late: '临近扣分', expired: '确认超时',
-                           abandoned: '放弃候补' }[x.cancel_type] || '取消')
+// 口径同 models.Enrollment 的 cancel_type；空串是负责人那边取消的
+const cancelType = x => ({ normal: '退选', locked: '锁定后退出', expired: '确认超时',
+                           abandoned: '放弃候补', rejected: '未录取',
+                           not_chosen: '未选中' }[x.cancel_type] || '取消')
 
 let activityId = ''
 
@@ -2708,6 +2713,14 @@ async function doSubmit() {
 const reopenDlg = ref({ visible: false, regEnd: '', busy: false })
 const openReopen = () => { reopenDlg.value = { visible: true, regEnd: '', busy: false } }
 
+/** 恢复报名后补位时，有的场次正被抢报、锁一时排不上，那几场的候补没补上 */
+function warnBusy(names) {
+  if (!names?.length) return
+  ElMessage({ type: 'warning', duration: 8000, showClose: true,
+              message: `${names.map(n => `「${n}」`).join('、')}此刻报名的人多，`
+                + '空出的名额没来得及给候补，请稍后到名单里手动转正' })
+}
+
 async function doReopen() {
   const d = reopenDlg.value
   if (!d.regEnd) return ElMessage.warning('请选择新的报名截止时间')
@@ -2717,6 +2730,7 @@ async function doReopen() {
                              { reg_end: toISO(d.regEnd) })
     ElMessage.success('已恢复报名'
       + (r.promoted ? `；已通知 ${r.promoted} 位候补确认转正` : ''))
+    warnBusy(r.busy)
     d.visible = false
     loadAll()
   } finally { d.busy = false }

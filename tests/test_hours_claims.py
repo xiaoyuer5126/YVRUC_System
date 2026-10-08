@@ -11,7 +11,7 @@ from openpyxl import load_workbook
 
 from backend import config
 from backend.models import Attachment, AuditLog, HoursClaim
-from conftest import LIAISON_HEAD, dl_url, inbox, login, student_row
+from conftest import LIAISON_CORE, LIAISON_HEAD, dl_url, inbox, login, student_row
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 PDF = b"%PDF-1.4\n" + b"\x00" * 64
@@ -186,7 +186,8 @@ def test_待审批可撤回_通过后只能由外联撤销(client, db, liaison, 
     r = client.post(f"/api/staff/hours-claims/{cid2}/revoke", headers=head,
                     json={"reason": "材料系伪造，已与主办方核实"})
     assert r.status_code == 200 and r.json()["status"] == "revoked"
-    assert len(inbox(db, sid, "时长补登已撤销")) == 1
+    [note] = inbox(db, sid, "时长补登已撤销")
+    assert "原计入的 3 小时不再计入" in note.content
     assert client.get("/api/me/hours-claims", headers=me).json()["counted_total"] == 0
 
 
@@ -201,6 +202,49 @@ def test_材料只有本人与审批线上的人能看(client, db, liaison, take
     # 通用的材料下载接口不给补登的附件：拿到 id 也绕不过上面这套权限
     assert client.get(f"/api/materials/{claim['files']['proofs'][0]['id']}",
                       headers=me).status_code == 404
+
+
+def test_队列和材料只给审批补登的人(client, db, liaison, take_student):
+    claim = _submit(client, login(client, take_student()),
+                    title="只给审批人看的那条").json()
+    # 不在班的骨干进得了「活动审批」页，但拍不了补登：队列是空的，材料看不了
+    core = login(client, LIAISON_CORE)
+    r = client.get("/api/staff/hours-claims", headers=core)
+    assert r.status_code == 200, r.text
+    assert r.json()["items"] == [] and r.json()["can_decide"] is False
+    assert client.get(claim["files"]["proofs"][0]["url"], headers=core).status_code == 404
+    head = login(client, LIAISON_HEAD)
+    d = client.get("/api/staff/hours-claims?status=pending", headers=head).json()
+    assert d["can_decide"] and claim["id"] in [x["id"] for x in d["items"]]
+
+
+def test_审批人自己的补登要由别人批(client, db, liaison, extra_core):
+    from backend import scheduled
+    from backend.models import now
+
+    liaison.duty_user_id = extra_core.id
+    db.commit()
+    sid = extra_core.student_id
+    me = login(client, sid)
+    claim = _submit(client, me, title="值班人自己的校外服务").json()
+    # 轮到的值班人就是提交人：通知往上找部长，不发给他自己
+    assert len(inbox(db, LIAISON_HEAD, "[时长补登] 值班人自己的校外服务")) == 1
+    assert inbox(db, sid, "[时长补登]") == []
+
+    mine = [x for x in client.get("/api/staff/hours-claims", headers=me).json()["items"]
+            if x["id"] == claim["id"]]
+    assert mine and mine[0]["mine"] is True
+    url = f"/api/staff/hours-claims/{claim['id']}/decide"
+    r = client.post(url, headers=me, json={"approve": True})
+    assert r.status_code == 403 and "其他人" in r.json()["detail"]
+    assert client.post(url, headers=login(client, LIAISON_HEAD),
+                       json={"approve": True}).status_code == 200
+
+    # 部长的值班日报里看得到这一条：谁提交、谁批的
+    day = now().replace(hour=0, minute=0, second=0, microsecond=0)
+    new, done, _ = scheduled._duty_digest_lines(db, liaison, day)
+    assert any("值班人自己的校外服务" in x for x in new)
+    assert any("值班人自己的校外服务" in x and "周砚" in x for x in done)
 
 
 def test_导出把通过的补登写成一行(client, db, liaison, take_student):

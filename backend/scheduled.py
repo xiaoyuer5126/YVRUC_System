@@ -16,7 +16,8 @@ from .audit import log as audit_log
 from .enroll_logic import expire_stale_promotions
 from .integrations import msgcenter
 from .models import (Activity, ApprovalEvent, AuditLog, Department,
-                     Enrollment, HoursRequest, Shift, User, VbConfirm, now)
+                     Enrollment, HoursClaim, HoursRequest, Shift, User, VbConfirm,
+                     now)
 from .notify import (notify_checkin, notify_edit_changes, notify_enrolled,
                      notify_managers)
 from .perm import activity_manager_ids
@@ -282,7 +283,6 @@ def remind_stale_claims(db: OrmSession) -> int:
     from sqlalchemy import update
 
     from . import liaison
-    from .models import HoursClaim
     from .routers.staff_ops import council_members
 
     t = now()
@@ -303,8 +303,11 @@ def remind_stale_claims(db: OrmSession) -> int:
         if not claimed:
             continue
         waited = int((t - claim.submitted_at).total_seconds() // 3600)
-        contacts = liaison.vb_contacts(db)
-        copied = {u.id for u in contacts}
+        # 提交人自己批不了自己的，催他没用，抄送也跳过他
+        submitter = db.get(User, claim.user_id)
+        contacts = (liaison.claim_contacts(db, submitter) if submitter
+                    else liaison.vb_contacts(db))
+        copied = {u.id for u in contacts} | {claim.user_id}
         for u in contacts + [p for p in council_members(db) if p.id not in copied]:
             msgcenter.send_user(
                 db, u, "custom", data={"route": "approvals"},
@@ -524,7 +527,7 @@ def _duty_digest_lines(db: OrmSession, dept: Department, since
     """日报的三栏：今日新增 / 今日处理 / 尚未处理，各是一串人话。
 
     这个部门的审批 = 归口它的活动审批与时长锁定/解锁；对外联络部另加志愿北京
-    外联确认（不分活动归口哪个部门，都由对外联络部确认）。
+    外联确认（不分活动归口哪个部门，都由对外联络部确认）和校外时长补登。
     """
     from . import liaison
 
@@ -585,6 +588,20 @@ def _duty_digest_lines(db: OrmSession, dept: Department, since
             done.append(f"{what}{v.status_label()}（{name(v.handled_by)}）")
         if v.status == "pending":
             waiting.append(f"{what}（{v.submitted_at:%m-%d %H:%M} 推送）")
+
+    # 校外时长补登：值班人提交的自己那条，部长在这里也看得到谁批的
+    for c in (db.query(HoursClaim)
+              .filter((HoursClaim.submitted_at >= since)
+                      | (HoursClaim.handled_at >= since)
+                      | (HoursClaim.status == "pending"))
+              .order_by(HoursClaim.submitted_at).all()):
+        what = f"时长补登「{c.title}」"
+        if c.submitted_at >= since:
+            new.append(f"{what}（{name(c.user_id)} 提交）")
+        if c.handled_at and c.handled_at >= since:
+            done.append(f"{what}{c.status_label()}（{name(c.handled_by)}）")
+        if c.status == "pending":
+            waiting.append(f"{what}（{c.submitted_at:%m-%d %H:%M} 提交）")
     return new, done, waiting
 
 
@@ -597,9 +614,12 @@ def release_stale_edit_locks(db: OrmSession) -> int:
     没有任何外部表现——除了学生以为活动黄了。
     """
     deadline = now() - timedelta(hours=config.EDIT_LOCK_HOURS)
+    # 行锁同「保存并发布」（staff_activities.finish_editing）：管理者恰好这时
+    # 点了发布就让给他，跳过这一行，志愿者不会收到两份汇总
     rows = (db.query(Activity)
             .filter(Activity.editing_since.isnot(None),
-                    Activity.editing_since < deadline).all())
+                    Activity.editing_since < deadline)
+            .with_for_update(skip_locked=True).all())
     for act in rows:
         who = db.get(User, act.editing_by) if act.editing_by else None
         since = act.editing_since

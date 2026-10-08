@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import Text, cast
@@ -94,7 +95,9 @@ async def submit_feedback(content: str = Form(""),
               summary=f"提交意见反馈（{len(text)} 字，截图 {len(images)} 张）")
     db.commit()
     locks.note_rate(rate_key, RATE_WINDOW_SECONDS)
-    _notify_admins(db, fb, user)
+    # 提交之后的推送是同步外呼（一条最多等 8 秒），放到线程池里做：
+    # 这是 async 处理函数，直接调会把整个事件循环卡住，同一进程的请求全跟着等
+    await run_in_threadpool(_notify_admins, db, fb, user)
     return _out(fb, _shots(db, [fb.id])[fb.id])
 
 

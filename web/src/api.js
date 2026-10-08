@@ -45,7 +45,16 @@ async function request(method, url, body, opts = {}) {
   })
   const ct = resp.headers.get('content-type') || ''
   if (!ct.includes('application/json')) {
-    if (!resp.ok) throw new Error(`请求失败(${resp.status})`)
+    if (!resp.ok) {
+      // nginx 自己回的错误页（413 太大、502 后端没起来）不是 JSON，也要提示：
+      // 不然表单点了提交毫无反应
+      const msg = resp.status === 413 ? '上传的文件太大了，请压缩或少传几份再试'
+        : `请求失败(${resp.status})`
+      if (!opts.silent && !opts.skipErrorToast) ElMessage.error(msg)
+      const err = new Error(msg)
+      err.status = resp.status
+      throw err
+    }
     return resp
   }
   const data = await resp.json().catch(() => ({}))

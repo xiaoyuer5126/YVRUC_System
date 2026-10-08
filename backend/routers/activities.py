@@ -451,6 +451,12 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
             # 排锁期间这一场开放了选岗，「待分配」已经删掉
             if ledger.gone:
                 raise HTTPException(409, f"场次「{g.name}」刚开放选岗，请刷新后选择岗位再报名")
+            # 排锁期间负责人点了暂停、锁定，或者过了自动锁定时刻：锁外那一关
+            # 已经过时，按锁里读到的再判一次，不然暂停期间名单还在动
+            logic.take_flags(g, position, ledger)
+            why = logic.closed_reason(g, position)
+            if why:
+                raise HTTPException(409, why)
             # 同一个人别的报名可能刚在别的场次锁下提交：持用户锁重比一遍时段。
             # 有没有冲突已经在上面那条里数过了，真撞上才去查明细拼提示
             if ledger.clash:
@@ -617,8 +623,10 @@ def cancel_enroll(enrollment_id: str,
     with shift_lock(db, g.id):
         # 锁外读到的状态可能已经旧了（连点两下退选：第一下在锁里退掉、放出名额、
         # 候补顶上；第二下拿到锁时手里的 enr 还是「已报名」）。会话是
-        # expire_on_commit=False，不重读就会照着旧状态再退一遍
+        # expire_on_commit=False，不重读就会照着旧状态再退一遍。
+        # 场次和岗位也重读：锁没锁、停没停决定记不记「锁定后退出」、给不给候补
         db.refresh(enr)
+        logic.reload_shift(db, g)
         if enr.status not in ("pending_confirm", "waitlisted", "enrolled"):
             raise HTTPException(400, "该记录已退选")
         if enr.status == "pending_confirm":

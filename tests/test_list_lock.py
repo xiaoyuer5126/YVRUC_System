@@ -314,6 +314,82 @@ def test_待分配与培训不单独锁定_学生不能锁(client, admin, db, op
     assert r.status_code == 403
 
 
+def test_截止后分配的真实岗位不单独暂停锁定(client, admin, db, open_group):
+    """assign 场次的候补是整场一条队，单锁一个真实岗位，空位照样被候补顶上。"""
+    act, g = open_group(3, mode="assign")
+    real = Position(id=uid("p"), shift_id=g.id, name="检录", quota=2, sort=0,
+                    **POSITION_TEXT)
+    db.add(real)
+    db.commit()
+    for kind, body in (("lock", {"locked": True}), ("pause", {"paused": True})):
+        r = client.post(f"/api/staff/positions/{real.id}/{kind}", headers=admin,
+                        json=body)
+        assert r.status_code == 400 and "整个场次" in r.json()["detail"]
+
+
+def test_排锁期间被暂停_锁里再判一次(client, db, open_group, take_student, monkeypatch):
+    """锁外判过「还收报名」，排到锁里时负责人刚点了暂停：照样要拦下。"""
+    from backend import enroll_logic as logic
+    from backend.database import SessionLocal
+
+    act, g = open_group(3)
+    real = logic.closed_reason
+    calls = []
+
+    def pause_right_after(shift, position):
+        if calls:
+            return real(shift, position)
+        calls.append(1)
+        # 锁外这一关刚判完，另一个会话把这一场暂停了：请求手里的对象还是旧的
+        s = SessionLocal()
+        try:
+            s.get(Shift, shift.id).enroll_paused = True
+            s.commit()
+        finally:
+            s.close()
+        return ""
+
+    monkeypatch.setattr(logic, "closed_reason", pause_right_after)
+    r = _enroll(client, act, g, take_student())
+    assert r.status_code == 409 and "暂停报名" in r.json()["detail"]
+    db.expire_all()
+    assert db.query(Enrollment).filter(Enrollment.shift_id == g.id).count() == 0
+
+
+def test_发布时补位排不上锁_汇总照发并提示(client, admin, db, open_group, take_student,
+                                  monkeypatch):
+    """恢复报名正是抢报的时候：补位拿不到场次锁就跳过那一场，不让请求报错——
+    编辑态已经解除，报错的话这次的变更汇总就再没人发了。"""
+    from backend.locks import _busy
+    from backend.models import Notification, User
+    from backend.routers import staff_activities
+
+    act, g = open_group(1)
+    first = take_student()
+    assert _enroll(client, act, g, first).json()["status"] == "enrolled"
+    assert _enroll(client, act, g, take_student()).json()["status"] == "waitlisted"
+    assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
+                       headers=admin).status_code == 200
+    assert client.patch(f"/api/staff/positions/{g.test_position_id}", headers=admin,
+                        json={"quota": 2}).status_code == 200
+
+    def busy(*_a, **_k):
+        raise _busy()
+
+    monkeypatch.setattr(staff_activities, "shift_lock", busy)
+    r = client.post(f"/api/staff/activities/{act.id}/publish-changes", headers=admin)
+    assert r.status_code == 200, r.text
+    assert r.json()["promoted"] == 0 and r.json()["busy"] == [g.name]
+    db.expire_all()
+    u = db.query(User).filter(User.student_id == first).one()
+    assert db.query(Notification).filter(
+        Notification.user_id == u.id,
+        Notification.title == f"活动变更提醒｜{act.title}").count() == 1
+    # 再点一次：已经不在编辑态，不会再发一份
+    assert client.post(f"/api/staff/activities/{act.id}/publish-changes",
+                       headers=admin).status_code == 409
+
+
 # ======================= 手动转正 =======================
 
 def test_锁定后管理者手动转正仍要本人确认(client, admin, db, open_group, take_student):

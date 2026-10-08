@@ -6,8 +6,10 @@ HoursRecord——那条路是「一场活动一起结账」，核准、确认/�
 通过的条目按时间范围导出给志愿北京录入（见 exporter.build_claims_workbook）。
 
 审批人是「外联那摊事」的同一批：对外联络部的值班人与部长，会长团与管理员
-（liaison.vb_decider），逐条通知也走 vb_contacts——同一件事换个人做，不再长出
-第二套权限表。证明材料与活动照片挂 Attachment（owner_type=claim_proof /
+（liaison.vb_decider），逐条通知也按 vb_contacts 那套找人——同一件事换个人做，
+不再长出第二套权限表。队列和证明材料也只给这批人看：材料里有手机号、本人照片。
+审批人自己的补登要由别人批，通知轮到他时往上找一层（见 decide_claim、
+liaison.claim_contacts）。证明材料与活动照片挂 Attachment（owner_type=claim_proof /
 claim_photo，activity_id 留空），跟反馈截图一样不属于任何活动。
 """
 from __future__ import annotations
@@ -17,6 +19,7 @@ from datetime import datetime
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as OrmSession
@@ -24,9 +27,8 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import config, liaison, locks, uploads
 from ..audit import log as audit_log
 from ..database import db_session
-from ..deps import (current_user, current_user_download, may_enter_approvals,
-                    require_approver, require_claim_decider,
-                    require_claim_decider_download)
+from ..deps import (current_user, current_user_download, require_approver,
+                    require_claim_decider, require_claim_decider_download)
 from ..exporter import build_claims_workbook
 from ..models import (Attachment, HoursClaim, User, iso, now, parse_local_dt,
                       span_text, uid)
@@ -72,7 +74,8 @@ def _out(claim: HoursClaim, files: dict, *, viewer: User | None = None,
          "handled_at": iso(claim.handled_at),
          "files": files}
     if viewer is not None:
-        d["can_withdraw"] = claim.status == "pending" and claim.user_id == viewer.id
+        d["mine"] = claim.user_id == viewer.id
+        d["can_withdraw"] = claim.status == "pending" and d["mine"]
     if submitter is not None:
         d["user"] = {"name": submitter.name, "student_id": submitter.student_id,
                      "college": submitter.college or "",
@@ -111,7 +114,7 @@ def _notify_pending(db: OrmSession, claim: HoursClaim, submitter: User) -> None:
     补登已经提交在先，不能让本人看到「提交失败」再填一遍。
     """
     try:
-        for u in liaison.vb_contacts(db):
+        for u in liaison.claim_contacts(db, submitter):
             notify(db, u, f"[时长补登] {claim.title}",
                    f"{submitter.name}（{submitter.student_id}）提交了一条校外时长补登：\n"
                    f"活动时间：{span_text(claim.start_at, claim.end_at)}\n"
@@ -213,7 +216,9 @@ async def submit_claim(title: str = Form(""), start_at: str = Form(""),
                       f"证明 {len(proofs_read)} 份、照片 {len(photos_read)} 张）")
     db.commit()
     locks.note_rate(rate_key, RATE_WINDOW_SECONDS)
-    _notify_pending(db, claim, user)
+    # 提交之后的推送是同步外呼（一条最多等 8 秒），放到线程池里做：
+    # 这是 async 处理函数，直接调会把整个事件循环卡住，同一进程的请求全跟着等
+    await run_in_threadpool(_notify_pending, db, claim, user)
     return _out(claim, _files(db, [claim.id])[claim.id], viewer=user)
 
 
@@ -233,8 +238,10 @@ def my_claims(db: OrmSession = Depends(db_session),
 def withdraw_claim(claim_id: str, db: OrmSession = Depends(db_session),
                    user: User = Depends(current_user)):
     """撤回还没审批的那条（连证明材料一起删）。审批过的不能自己撤——改数要走
-    外联，留痕在审计里。"""
-    claim = db.get(HoursClaim, claim_id)
+    外联，留痕在审计里。
+
+    行锁和审批互斥：不锁的话撤回撞上通过，会把刚通过的那条连材料一起删掉。"""
+    claim = db.get(HoursClaim, claim_id, with_for_update=True)
     if claim is None or claim.user_id != user.id:
         raise HTTPException(404, "补登记录不存在")
     if claim.status != "pending":
@@ -254,11 +261,11 @@ def withdraw_claim(claim_id: str, db: OrmSession = Depends(db_session),
 @router.get("/me/hours-claims/files/{attachment_id}")
 def claim_file(attachment_id: str, db: OrmSession = Depends(db_session),
                user: User = Depends(current_user_download)):
-    """看证明材料与照片：提交人本人和能进「活动审批」页的人。别人一律 404。"""
+    """看证明材料与照片：提交人本人和审批补登的人（liaison.vb_decider）。别人一律 404。"""
     row = db.get(Attachment, attachment_id)
     if row is None or row.owner_type not in (PROOF, PHOTO):
         raise HTTPException(404, "文件不存在")
-    if row.uploaded_by != user.id and not may_enter_approvals(db, user):
+    if row.uploaded_by != user.id and not liaison.vb_decider(db, user):
         raise HTTPException(404, "文件不存在")
     path = config.MATERIAL_DIR / row.stored_name
     if not path.is_file():
@@ -276,7 +283,11 @@ def claim_file(attachment_id: str, db: OrmSession = Depends(db_session),
 def list_claims(status: str = "", page: int = 1, size: int = 20,
                 db: OrmSession = Depends(db_session),
                 user: User = Depends(require_approver)):
-    """队列给能进「活动审批」页的人看；拍板另有更严的一道（见 decide）。"""
+    """待审批的补登，挂在「活动审批」页上；只给审批补登的人看（同 /api/vb-confirms），
+    别的能进审批页的人拿到空表。"""
+    if not liaison.vb_decider(db, user):
+        return {"items": [], "total": 0, "page": page, "size": size, "pending": 0,
+                "can_decide": False}
     q = db.query(HoursClaim)
     if status:
         if status not in HoursClaim.STATUS_LABELS:
@@ -289,9 +300,10 @@ def list_claims(status: str = "", page: int = 1, size: int = 20,
               .filter(User.id.in_([r.user_id for r in rows] or [""])).all()}
     files = _files(db, [r.id for r in rows])
     pending = (db.query(HoursClaim).filter(HoursClaim.status == "pending").count())
-    return {"items": [_out(r, files[r.id], submitter=people.get(r.user_id))
-                      for r in rows],
-            "total": total, "page": page, "size": size, "pending": pending}
+    return {"items": [_out(r, files[r.id], viewer=user,
+                           submitter=people.get(r.user_id)) for r in rows],
+            "total": total, "page": page, "size": size, "pending": pending,
+            "can_decide": True}
 
 
 class DecideBody(BaseModel):
@@ -304,10 +316,16 @@ class DecideBody(BaseModel):
 def decide_claim(claim_id: str, body: DecideBody,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(require_claim_decider)):
-    """通过（可核定一个不一样的时长）或驳回（必须写理由）。"""
-    claim = db.get(HoursClaim, claim_id)
+    """通过（可核定一个不一样的时长）或驳回（必须写理由）。
+
+    行锁：两个审批人同时点开同一条，一个通过一个驳回，不锁的话两边都提交，
+    本人先后收到「已通过」「未通过」。审批人自己的补登要由别人批。
+    """
+    claim = db.get(HoursClaim, claim_id, with_for_update=True)
     if claim is None:
         raise HTTPException(404, "补登记录不存在")
+    if claim.user_id == user.id:
+        raise HTTPException(403, "本人提交的补登要由对外联络部的其他人审批")
     if claim.status != "pending":
         raise HTTPException(409, f"这条已经「{claim.status_label()}」了")
     reply = body.reply.strip()
@@ -352,7 +370,7 @@ def revoke_claim(claim_id: str, body: RevokeBody,
     已经计进时长的部分随之作废（这条台账只有 admin 与审批线上的人看得到），
     本人会收到通知，理由进审计。
     """
-    claim = db.get(HoursClaim, claim_id)
+    claim = db.get(HoursClaim, claim_id, with_for_update=True)
     if claim is None:
         raise HTTPException(404, "补登记录不存在")
     if claim.status != "approved":
@@ -360,6 +378,7 @@ def revoke_claim(claim_id: str, body: RevokeBody,
     reason = body.reason.strip()
     if len(reason) < 2:
         raise HTTPException(400, "撤销要写明理由")
+    counted = claim.counted_hours()     # 改成已撤销之后就是 0 了，先记下
     claim.status, claim.reply = "revoked", reason[:512]
     claim.handled_by, claim.handled_at = user.id, now()
     audit_log(db, actor=user, action="hours_claim", target_type="hours_claim",
@@ -369,7 +388,7 @@ def revoke_claim(claim_id: str, body: RevokeBody,
     _notify_owner(db, claim, f"时长补登已撤销｜{claim.title}",
                   f"您登记的「{claim.title}」"
                   f"（{span_text(claim.start_at, claim.end_at)}）已被撤销，"
-                  f"原计入的 {claim.counted_hours():g} 小时不再计入。\n理由：{reason}",
+                  f"原计入的 {counted:g} 小时不再计入。\n理由：{reason}",
                   claim.user_id)
     return _out(claim, _files(db, [claim.id])[claim.id])
 

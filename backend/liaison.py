@@ -265,6 +265,21 @@ def vb_contacts(db: OrmSession) -> list[User]:
             if u.is_council(real=True)]
 
 
+def claim_contacts(db: OrmSession, submitter: User) -> list[User]:
+    """校外时长补登逐条通知谁：同 vb_contacts，只是补登是提交人自己的事，
+    他批不了自己的（见 hours_claims.decide_claim）。轮到的正好是提交人时往上
+    找一层：值班人往部长，部长往会长团——不然这一条只通知了一个拍不了板的人。"""
+    out = [u for u in vb_contacts(db) if u.id != submitter.id]
+    if out:
+        return out
+    dept = liaison_dept(db)
+    head = dept_head(db, dept.id) if dept else None
+    if head is not None and head.id != submitter.id:
+        return [head]
+    return [u for u in db.query(User).filter(User.qingxie_post == "council").all()
+            if u.is_council(real=True) and u.id != submitter.id]
+
+
 def latest_vb_confirm(db: OrmSession, activity_id: str) -> VbConfirm | None:
     return (db.query(VbConfirm).filter(VbConfirm.activity_id == activity_id)
             .order_by(VbConfirm.submitted_at.desc()).first())

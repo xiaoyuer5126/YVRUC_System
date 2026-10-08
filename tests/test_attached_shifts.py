@@ -298,6 +298,24 @@ def test_删岗位删场次_只叫它们的培训要先处理(client, admin, db,
     assert db.get(Shift, both).applies_to_positions == [check.id], "删掉的岗位从范围里拿掉"
 
 
+def test_强制删场次_只因这一场才去的培训跟着退(client, admin, db, act_with_positions,
+                                       take_student):
+    act, g, east, check = act_with_positions
+    g2, check2 = _second_shift(db, act, g)
+    tid = _add_attached(client, admin, act, g, positions=[check.id, check2.id])
+    only_g, both = take_student(), take_student()
+    _enroll(client, only_g, act, g, check)
+    _enroll(client, both, act, g, check)
+    _enroll(client, both, act, g2, check2)
+    assert set(_roster(client, admin, tid)) == {only_g, both}
+
+    with editing(client, admin, act.id):
+        r = client.delete(f"/api/staff/shifts/{g.id}?force=1", headers=admin)
+        assert r.status_code == 200, r.text
+    # 只报了被删那一场的人退掉培训；第二天还有检录台的人照样要来
+    assert set(_roster(client, admin, tid)) == {both}
+
+
 def test_复制出的时段也叫原岗位的培训_圈外岗位不收(client, admin, db, act_with_positions):
     act, g, east, check = act_with_positions
     g2, _check2 = _second_shift(db, act, g)

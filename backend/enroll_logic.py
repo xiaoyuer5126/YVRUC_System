@@ -20,6 +20,7 @@ from typing import NamedTuple
 
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from . import config
 from .integrations import msgcenter
@@ -316,6 +317,13 @@ class EnrollLedger(NamedTuple):
     editing: bool        # 活动此刻是否处于编辑态
     clash: bool          # 本人已有的有效报名与 targets 里某一场时段重叠
     gone: bool           # 要报的岗位已经不在了（锁外解析之后被删掉）
+    shift_flags: tuple   # 场次此刻的暂停、锁定开关，按 SHIFT_FLAGS 的顺序
+    position_flags: tuple  # 岗位此刻的暂停、锁定开关，按 POSITION_FLAGS 的顺序
+
+
+# 决定「收不收报名」的那几列（见 closed_reason）：报名锁里随 enroll_ledger 重读一遍
+SHIFT_FLAGS = ("enroll_paused", "list_locked", "lock_hours", "auto_lock_spent")
+POSITION_FLAGS = ("enroll_paused", "list_locked")
 
 
 def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
@@ -331,6 +339,10 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
     gone：锁外解析出来的岗位此刻还在不在。「开放选岗」不进编辑态、会删掉
     「待分配」，锁外落在它上面的报名排到锁里时它可能已经没了；不看一眼就会
     撞上外键，回一个 500。
+
+    shift_flags / position_flags：暂停、锁定也不进编辑态，锁外判过的「还收报名」
+    排到锁里可能已经不成立了（负责人刚点了暂停，或者过了自动锁定时刻），
+    交给 take_flags 写回对象后再判一次。
 
     口径与下列函数逐条对齐（改其中一边要同时改另一边）：
       · 查重：status ∈ ACTIVE（唯一索引 uq_enrollment_live 的口径，
@@ -360,6 +372,10 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
                           for t in targets]))
              .exists())
     gone = ~select(Position.id).where(Position.id == position_id).exists()
+    flags = ([select(getattr(Shift, c)).where(Shift.id == shift_id).scalar_subquery()
+              for c in SHIFT_FLAGS]
+             + [select(getattr(Position, c)).where(Position.id == position_id)
+                .scalar_subquery() for c in POSITION_FLAGS])
     row = db.execute(
         select(func.max(Enrollment.status).filter(mine & live),
                func.count().filter(
@@ -367,10 +383,23 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
                func.count().filter(
                    at_pos & (Enrollment.shift_id == shift_id)
                    & Enrollment.status.in_(("waitlisted", "pending_confirm"))),
-               editing, clash, gone)
+               editing, clash, gone, *flags)
         .where(or_(mine, seats))).one()
+    n = len(SHIFT_FLAGS)
     return EnrollLedger(row[0], row[1], row[2], bool(row[3]), bool(row[4]),
-                        bool(row[5]))
+                        bool(row[5]), tuple(row[6:6 + n]), tuple(row[6 + n:]))
+
+
+def take_flags(shift: Shift, position: Position, ledger: EnrollLedger) -> None:
+    """把报名锁里读到的暂停、锁定开关写回对象，closed_reason 判的就是此刻的状态。
+
+    按「库里的值」写回（set_committed_value），不算改动：提交时不会被当成
+    这次报名改了场次、岗位而写回去。
+    """
+    for name, value in zip(SHIFT_FLAGS, ledger.shift_flags):
+        set_committed_value(shift, name, value)
+    for name, value in zip(POSITION_FLAGS, ledger.position_flags):
+        set_committed_value(position, name, value)
 
 
 # ======================= 暂停与名单锁定 =======================
@@ -419,6 +448,20 @@ def closed_reason(shift: Shift, position: Position | None) -> str:
     if position is not None and position.enroll_paused:
         return f"岗位「{position.name}」暂停报名，请过一会儿再来看看"
     return ""
+
+
+def reload_shift(db: OrmSession, shift: Shift) -> None:
+    """在场次锁里重读这一场和它的全部岗位。
+
+    会话是 expire_on_commit=False，锁外读到的暂停、锁定开关到锁里可能已经
+    旧了：负责人刚解锁时有人退出，拿旧的开关会把他记成「锁定后退出」、
+    空出的位子也不给候补；反过来暂停中的岗位会被自动递补。凡是锁里要判
+    「锁没锁、停没停」的地方，拿到锁先调它。
+    """
+    db.refresh(shift)
+    (db.query(Position).filter(Position.shift_id == shift.id)
+     .populate_existing().all())
+    db.expire(shift, ["positions"])
 
 
 def promotion_blocked(shift: Shift, position: Position | None) -> bool:

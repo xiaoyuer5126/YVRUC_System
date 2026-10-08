@@ -1,8 +1,9 @@
 <!-- 校外时长补登的审批队列：对外联络部核对证明材料后通过或驳回。
      审批人是「外联那摊事」的同一批（值班人/部长 + 会长团/管理员），见后端
-     hours_claims._ensure_decider；通过可核定一个不一样的时长，已通过的能撤销。 -->
+     liaison.vb_decider；别的能进审批页的人后端回空表，这块整个不显示。
+     通过可核定一个不一样的时长，已通过的能撤销；自己的补登要由别人批。 -->
 <template>
-  <el-card shadow="never" style="margin-top:16px">
+  <el-card v-if="canDecide" shadow="never" style="margin-top:16px">
     <template #header>
       <b>校外时长补登</b>
       <el-tag v-if="pending" type="danger" size="small" style="margin-left:8px">
@@ -99,7 +100,10 @@
         <div class="section-title">活动照片（{{ cur.files.photos.length }}）</div>
         <FeedbackShots :images="cur.files.photos" />
 
-        <template v-if="cur.status === 'pending'">
+        <div v-if="cur.status === 'pending' && cur.mine" class="dim" style="margin-top:12px">
+          这是您本人提交的补登，要由对外联络部的其他人审批。
+        </div>
+        <template v-else-if="cur.status === 'pending'">
           <div class="section-title">审批</div>
           <el-form label-width="72px">
             <el-form-item label="核定">
@@ -145,6 +149,7 @@ const pending = ref(0)
 const page = ref(1)
 const size = 20
 const loading = ref(false)
+const canDecide = ref(false)
 const drawer = ref(false)
 const cur = ref(null)
 const decide = ref({ hours: 1, reply: '', busy: false })
@@ -161,6 +166,7 @@ async function load() {
     const q = new URLSearchParams({ status: status.value, page: page.value,
                                     size: String(size) })
     const d = await api.get(`/api/staff/hours-claims?${q}`)
+    canDecide.value = d.can_decide
     items.value = d.items
     total.value = d.total
     pending.value = d.pending
