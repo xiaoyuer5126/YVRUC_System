@@ -37,6 +37,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("digests", send_roster_digests),
                       ("approvals", remind_stale_approvals),
                       ("hours_approvals", remind_stale_hours_requests),
+                      ("hours_claims", remind_stale_claims),
                       ("vb_confirms", remind_stale_vb_confirms),
                       ("vb_resubmit", remind_vb_resubmit),
                       ("duty_digests", send_duty_digests),
@@ -272,8 +273,53 @@ def remind_stale_approvals(db: OrmSession) -> int:
     return len(rows)
 
 
+def remind_stale_claims(db: OrmSession) -> int:
+    """时长补登放着没人审批：催对外联络部的对接人，抄送会长团。
+
+    时限与别处的催办同源（config.APPROVAL_REMIND_HOURS）。每条只催一次，
+    先用条件更新把 reminded_at 占下来再发，多进程也只发一遍。
+    """
+    from sqlalchemy import update
+
+    from . import liaison
+    from .models import HoursClaim
+    from .routers.staff_ops import council_members
+
+    t = now()
+    deadline = t - timedelta(hours=config.APPROVAL_REMIND_HOURS)
+    rows = (db.query(HoursClaim)
+            .filter(HoursClaim.status == "pending",
+                    HoursClaim.submitted_at < deadline,
+                    HoursClaim.reminded_at.is_(None)).all())
+    sent = 0
+    for claim in rows:
+        claimed = db.execute(
+            update(HoursClaim)
+            .where(HoursClaim.id == claim.id,
+                   HoursClaim.status == "pending",
+                   HoursClaim.reminded_at.is_(None))
+            .values(reminded_at=t)).rowcount
+        db.commit()
+        if not claimed:
+            continue
+        waited = int((t - claim.submitted_at).total_seconds() // 3600)
+        contacts = liaison.vb_contacts(db)
+        copied = {u.id for u in contacts}
+        for u in contacts + [p for p in council_members(db) if p.id not in copied]:
+            msgcenter.send_user(
+                db, u, "custom", data={"route": "approvals"},
+                title=f"时长补登已等待 {waited} 小时｜{claim.title}",
+                content=(f"「{claim.title}」的校外时长补登已提交 {waited} 小时"
+                         f"未审批。\n请到「活动审批」核对证明材料后通过或驳回。"))
+        db.commit()
+        sent += 1
+        logger.info("时长补登「%s」超时未审批，已提醒", claim.title)
+    return sent
+
+
 def remind_stale_hours_requests(db: OrmSession) -> int:
     """时长锁定/解锁审批放太久没人处理：催归口部门的对接人，抄送会长团。
+
     每条只催一次，**永不自动通过**。
 
     时长审批平时只通知对接人（见 staff_ops._hours_notify_targets），会长团

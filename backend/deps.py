@@ -126,6 +126,8 @@ TRAINEE_DENIED_READS = {
     "export_answers", "export_answer_attachment_count", "export_answer_attachments",
     "export_applications", "export_application_attachment_count",
     "export_application_attachments",
+    # 校外时长补登表：含身份证号，只有对外联络部那几个人能导
+    "export_claims",
     # 操作日志导出本来只给管理员，列在这里是让「导出都点了名」这件事没有例外
     "export_oplogs",
 }
@@ -191,13 +193,35 @@ def require_council(user: User = Depends(current_user)) -> User:
     return user
 
 
-def require_approver(user: User = Depends(current_user),
-                     db: OrmSession = Depends(db_session)) -> User:
-    """能进「活动审批」页的人：管理员 / 会长团 / 部长，加上启用值班的部门里
+def may_enter_approvals(db: OrmSession, user: User) -> bool:
+    """能不能进「活动审批」页：管理员 / 会长团 / 部长，加上启用值班的部门里
     有值班资格的骨干（不在班时列表是空的，但要看得到现在谁在班、接得了班）。"""
     from .liaison import duty_eligible
-    if not (user.has_full_access() or user.is_head() or duty_eligible(db, user)):
+    return bool(user.has_full_access() or user.is_head() or duty_eligible(db, user))
+
+
+def require_approver(user: User = Depends(current_user),
+                     db: OrmSession = Depends(db_session)) -> User:
+    if not may_enter_approvals(db, user):
         raise HTTPException(403, "需要 管理员/会长团/部长 身份")
+    return user
+
+
+def require_claim_decider(user: User = Depends(current_user),
+                          db: OrmSession = Depends(db_session)) -> User:
+    """审批校外时长补登：对外联络部那摊事的同一批人（值班人/部长 + 会长团/管理员）。"""
+    from .liaison import vb_decider
+    if not vb_decider(db, user):
+        raise HTTPException(403, "需要 对外联络部（值班人或部长）身份")
+    return user
+
+
+def require_claim_decider_download(user: User = Depends(current_user_download),
+                                   db: OrmSession = Depends(db_session)) -> User:
+    """同上的直链下载版：补登表导出走 <a>，带不了 Authorization 头。"""
+    from .liaison import vb_decider
+    if not vb_decider(db, user):
+        raise HTTPException(403, "需要 对外联络部（值班人或部长）身份")
     return user
 
 

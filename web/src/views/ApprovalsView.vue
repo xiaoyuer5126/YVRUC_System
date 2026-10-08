@@ -4,7 +4,6 @@
     <el-alert type="info" :closable="false">
       通过可以附意见（选填），驳回、退回与转交须写明理由；意见随通知发给申请人，审核页签里也看得到。
     </el-alert>
-
     <!-- 值班：对外联络部的审批通知只发给值班的人，没人值班才发部长。
          部长在这里指定，在班的人在这里交班 -->
     <el-card v-for="d in duties" :key="d.dept_id" shadow="never" class="item duty">
@@ -22,8 +21,8 @@
         </el-link>
       </div>
       <div class="dim" style="margin-top:8px">
-        本部门的活动审批、时长锁定/解锁与志愿北京外联确认由值班人处理，部长随时可以直接处理；
-        部长每晚 21 点收到当天的汇总。
+        本部门的活动审批、时长锁定/解锁、志愿北京外联确认与校外时长补登由值班人处理，
+        部长随时可以直接处理；部长每晚 21 点收到当天的汇总。
       </div>
       <div v-if="d.can_assign || d.can_handover" class="toolbar" style="margin:8px 0 0">
         <el-select v-model="d.pick" :placeholder="d.can_assign ? '选择值班人' : '交班给'"
@@ -192,6 +191,9 @@
       </div>
     </el-card>
 
+    <!-- 校外时长补登：志愿者本人在校外参加的活动，由对外联络部核对材料后审批 -->
+    <HoursClaimQueue />
+
     <!-- 部门与部长：换届、增设或撤销部门时管理员在这里改 -->
     <template v-if="isAdmin">
       <div class="section-title">
@@ -299,6 +301,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
 import ApprovalCommentDialog from '../components/ApprovalCommentDialog.vue'
+import HoursClaimQueue from '../components/HoursClaimQueue.vue'
 import ProjectFileSlot from '../components/ProjectFileSlot.vue'
 import { closingApproved, closingRejected, projectApproved, projectRejected, vbConfirmed }
   from '../replyTemplates'

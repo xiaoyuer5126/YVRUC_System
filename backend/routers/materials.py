@@ -26,7 +26,7 @@ from ..stage import ensure_not_finished
 
 router = APIRouter(prefix="/api", tags=["materials"])
 
-MATERIAL_DIR = config.DATA_DIR / "materials"
+MATERIAL_DIR = config.MATERIAL_DIR
 EXT_TYPES = {
     "pdf": "application/pdf",
     "doc": "application/msword",

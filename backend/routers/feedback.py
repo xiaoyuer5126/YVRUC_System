@@ -10,8 +10,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -19,33 +17,20 @@ from pydantic import BaseModel
 from sqlalchemy import Text, cast
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, locks
+from .. import config, locks, uploads
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import current_user, current_user_download, require_admin
 from ..models import Attachment, Feedback, User, iso, now, uid
 from ..notify import notify
-from .materials import MATERIAL_DIR
+from ..uploads import IMAGE_TYPES
 
 router = APIRouter(prefix="/api", tags=["feedback"])
 log = logging.getLogger(__name__)
 
 OWNER = "feedback"
 RATE_WINDOW_SECONDS = 3600
-IMAGE_TYPES = {"png": "image/png", "jpg": "image/jpeg",
-               "jpeg": "image/jpeg", "webp": "image/webp"}
-
-
-def _is_image(ext: str, data: bytes) -> bool:
-    """看文件头，不光看扩展名：改个后缀的 html 当图片存下来，下载时按图片类型
-    回给浏览器问题不大，但「仅图片」就该名副其实。"""
-    if ext == "png":
-        return data.startswith(b"\x89PNG\r\n\x1a\n")
-    if ext in ("jpg", "jpeg"):
-        return data.startswith(b"\xff\xd8\xff")
-    if ext == "webp":
-        return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
-    return False
+MATERIAL_DIR = config.MATERIAL_DIR
 
 
 def _shots(db: OrmSession, ids: list[str]) -> dict[str, list[dict]]:
@@ -90,37 +75,20 @@ async def submit_feedback(content: str = Form(""),
         raise HTTPException(400, f"反馈内容不能超过 {config.FEEDBACK_MAX_CHARS} 字")
     # 空文件名的是表单里没选文件时浏览器带上的空占位
     files = [f for f in files if f.filename]
-    if len(files) > config.FEEDBACK_MAX_IMAGES:
-        raise HTTPException(400, f"截图最多 {config.FEEDBACK_MAX_IMAGES} 张")
     rate_key = f"feedback:{user.id}"
     if locks.rate_count(rate_key) >= config.FEEDBACK_PER_HOUR:
         raise HTTPException(429, f"每小时最多提交 {config.FEEDBACK_PER_HOUR} 条反馈，"
                                  f"请稍后再试")
 
-    # 先把每张图读完、校验完，再落盘：第三张不合格时前两张不该已经写在磁盘上
-    images: list[tuple[str, str, bytes]] = []
-    limit_mb = config.FEEDBACK_MAX_IMAGE_BYTES // (1024 * 1024)
-    for f in files:
-        ext = Path(f.filename or "").suffix.lower().lstrip(".")
-        # 多读一个字节就够判断超没超，不必把一个超大文件整个读进内存
-        data = await f.read(config.FEEDBACK_MAX_IMAGE_BYTES + 1)
-        if ext not in IMAGE_TYPES or not _is_image(ext, data):
-            raise HTTPException(400, f"截图只支持 {'/'.join(IMAGE_TYPES)} 格式的图片")
-        if len(data) > config.FEEDBACK_MAX_IMAGE_BYTES:
-            raise HTTPException(400, f"单张截图不能超过 {limit_mb}MB")
-        images.append((ext, (f.filename or f"截图.{ext}")[:160], data))
+    images = await uploads.read_files(files, label="截图", exts=IMAGE_TYPES,
+                                     max_count=config.FEEDBACK_MAX_IMAGES,
+                                     max_bytes=config.FEEDBACK_MAX_IMAGE_BYTES)
 
     fb = Feedback(id=uid("fb"), user_id=user.id, content=text)
     db.add(fb)
-    if images:
-        MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
-    for ext, title, data in images:
-        stored = f"{uuid4().hex}.{ext}"
-        (MATERIAL_DIR / stored).write_bytes(data)
-        # activity_id 留空：反馈不属于任何活动
-        db.add(Attachment(id=uid("att"), owner_type=OWNER, owner_id=fb.id,
-                          activity_id="", kind="file", title=title,
-                          stored_name=stored, size=len(data), uploaded_by=user.id))
+    # activity_id 留空：反馈不属于任何活动
+    uploads.save_files(db, images, owner_type=OWNER, owner_id=fb.id,
+                       uploaded_by=user.id)
     audit_log(db, actor=user, action="feedback", target_type="feedback",
               target_id=fb.id, target_label=text[:40],
               summary=f"提交意见反馈（{len(text)} 字，截图 {len(images)} 张）")

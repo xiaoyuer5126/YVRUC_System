@@ -19,6 +19,8 @@ from urllib.parse import urlparse
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+# 附件目录：学习材料、立项书、报名问卷附件、反馈截图、时长补登的证明材料
+MATERIAL_DIR = DATA_DIR / "materials"
 
 # —— 基础设施 ——
 DATABASE_URL = os.environ["YVRUC_DATABASE_URL"]
@@ -329,6 +331,18 @@ FEEDBACK_MAX_CHARS = 2000
 FEEDBACK_MAX_IMAGES = 3
 FEEDBACK_MAX_IMAGE_BYTES = 5 * 1024 * 1024
 FEEDBACK_PER_HOUR = 5
+
+# 校外时长补登（本人申报、对外联络部审批）：单条时长上限、每小时条数、
+# 服务描述字数、证明材料与照片的份数与单份大小。
+# 时长上限比补记录名单（RECORD_WARN_HOURS 只提示不拦）严：那边是管理者整理
+# 的整批名单，这边是本人一条条填的，填错一个 0 就是几十小时。
+CLAIM_HOURS_MAX = 24
+CLAIM_PER_HOUR = 3
+CLAIM_DESC_MIN = 20
+CLAIM_DESC_MAX = 1000
+CLAIM_MAX_PROOFS = 3
+CLAIM_MAX_PHOTOS = 3
+CLAIM_MAX_FILE_BYTES = 5 * 1024 * 1024
 
 # 报名问卷的文件题：一个人在一个活动里最多存着几份没提交的附件、总共多大。
 # 传了不提交的文件不会自己消失，不设上限就是一条把磁盘写满的路。

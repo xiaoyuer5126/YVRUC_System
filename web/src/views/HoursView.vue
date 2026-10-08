@@ -4,8 +4,9 @@
     <el-row :gutter="16" style="margin-bottom:16px">
       <el-col :span="8">
         <el-card shadow="never" class="stat">
-          <div class="big">{{ data.total }}</div>
+          <div class="big">{{ totalHours }}</div>
           <div class="dim">累计时长（小时）</div>
+          <div v-if="claimsTotal" class="dim">其中校外补登 {{ claimsTotal }} 小时</div>
           <div v-if="data.records.some(r => r.party_school)" class="dim">党校的时长不计入</div>
         </el-card>
       </el-col>
@@ -96,6 +97,9 @@
       <el-empty v-if="!data.records.length" description="参加活动并完成服务后，将会显示时长" />
     </el-card>
 
+    <!-- 校外自行报名的活动单独一条账：没有场次、报名和签到，见后端 hours_claims -->
+    <HoursClaims @total="claimsTotal = $event" />
+
     <el-dialog v-model="cf.visible" title="确认时长" width="480">
       <p class="dim">
         「{{ cf.row?.activity_title }}」记 <b>{{ cf.row?.hours }}</b> 小时。确认后到截止前仍可改。
@@ -151,17 +155,24 @@
 </template>
 
 <script setup>
-import { h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref } from 'vue'
 import { ElMessage, ElTag, ElTooltip } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
 import HoursParts from '../components/HoursParts.vue'
+import HoursClaims from '../components/HoursClaims.vue'
 
 const narrow = useNarrow()
 const data = ref(null)
 const load = async () => { data.value = await api.get('/api/me/hours') }
 onMounted(load)
+
+// 累计 = 平台活动的时长 + 已通过的校外补登。补登单独一条账（见 HoursClaims），
+// 这里只把它的合计加进来，明细仍在下面那一节里看
+const claimsTotal = ref(0)
+const totalHours = computed(
+  () => Math.round(((data.value?.total || 0) + claimsTotal.value) * 10) / 10)
 
 // 申诉状态标签：三种状态各一句话，鼠标悬停看老师的答复
 const TYPES = { pending: 'info', accepted: 'success', rejected: 'danger' }

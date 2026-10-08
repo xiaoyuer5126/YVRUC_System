@@ -23,9 +23,10 @@ from sqlalchemy.orm import Session as OrmSession
 
 from . import config, hours as hours_flow, scoring
 from .models import (Activity, Attachment, CheckinRecord, Enrollment,
-                     FormQuestion, HoursRecord, Position, Shift, User, now)
+                     FormQuestion, HoursClaim, HoursRecord, Position, Shift,
+                     User, now, span_text)
 
-MATERIAL_DIR = config.DATA_DIR / "materials"
+MATERIAL_DIR = config.MATERIAL_DIR
 
 
 def disarm_formulas(wb) -> None:
@@ -395,6 +396,36 @@ def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         ws.append([u.name, u.student_id, u.id_card or "", rec.counted_hours(),
                    rec.parts_text(hours_only=True)])
     for col, w in zip("ABCDE", (12, 14, 22, 8, 48)):
+        ws.column_dimensions[col].width = w
+    disarm_formulas(wb)
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def build_claims_workbook(db: OrmSession, claims: list[HoursClaim]) -> BytesIO:
+    """校外时长补登：给志愿北京录时长用，一条一行。
+
+    只导通过的（已撤销的不再计入时长）。活动名称、活动时间、服务描述、备注都
+    带上，录的时候能跟本人交的那条对上；身份证号取档案里的，提交就要求资料完整，
+    所以不会缺。
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "校外时长补登"
+    header = ["姓名", "学号", "学院", "身份证号", "活动名称", "活动时间",
+              "时长", "服务描述", "备注"]
+    ws.append(header)
+    _style_header(ws, len(header))
+    for c in claims:
+        u = db.get(User, c.user_id)
+        if u is None:
+            continue
+        ws.append([u.name, u.student_id, u.college or "", u.id_card or "",
+                   c.title, span_text(c.start_at, c.end_at), c.counted_hours(),
+                   c.service_desc, c.note])
+    for col, w in zip("ABCDEFGHI", (12, 14, 16, 22, 28, 24, 8, 48, 20)):
         ws.column_dimensions[col].width = w
     disarm_formulas(wb)
     buf = BytesIO()

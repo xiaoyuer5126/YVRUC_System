@@ -1208,6 +1208,50 @@ class HoursAppeal(Base):
         return self.STATUS_LABELS.get(self.status, self.status)
 
 
+class HoursClaim(Base):
+    """校外自行报名活动的时长补登：本人申报，对外联络部审批。
+
+    不进 HoursRecord：校外活动在平台上没有场次、没有报名、没有签到，塞进
+    「一场活动一起结账」那一套（核准 → 确认/申诉 → 提交审核 → 外联确认），
+    会让活动的每一条判断都得为它开一个岔路。补登自己一条台账，通过的条目
+    单独导出给志愿北京录入（见 exporter.build_claims_workbook）。
+
+    证明材料与活动照片挂在 Attachment 上（owner_type=claim_proof / claim_photo，
+    activity_id 留空），跟反馈截图一样不属于任何活动。
+    """
+    __tablename__ = "hours_claims"
+
+    STATUS_LABELS = {"pending": "待审批", "approved": "已通过",
+                     "rejected": "已驳回", "revoked": "已撤销"}
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    title: Mapped[str] = mapped_column(String(128))          # 活动名称
+    start_at: Mapped[datetime] = mapped_column(DateTime)     # 活动时间（起）
+    end_at: Mapped[datetime] = mapped_column(DateTime)       # 活动时间（止）
+    hours: Mapped[float] = mapped_column(Float)              # 本人申报的时长
+    # 审批核定的时长：外联可能核减，默认等于申报值。计入时长的是它
+    approved_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
+    service_desc: Mapped[str] = mapped_column(String(1000))
+    note: Mapped[str] = mapped_column(String(256), default="")   # 备注，选填
+    status: Mapped[str] = mapped_column(String(12), default="pending", index=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    reply: Mapped[str] = mapped_column(String(512), default="")
+    handled_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 放太久没人审批就催一次，催过记下时间，只催这一次
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    def status_label(self) -> str:
+        return self.STATUS_LABELS.get(self.status, self.status)
+
+    def counted_hours(self) -> float:
+        """计入志愿时长的小时数：通过了才算，按核定值。"""
+        if self.status != "approved":
+            return 0.0
+        return self.approved_hours if self.approved_hours is not None else self.hours
+
+
 class ViolationRecord(Base):
     """违规记录：活动结束后由管理者在名单里登记的一行。
 

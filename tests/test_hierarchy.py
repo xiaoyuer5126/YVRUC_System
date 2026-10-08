@@ -67,7 +67,9 @@ def _staff_write_routes():
 # 那一道就被拦下，轮不到学习权限出场。点名列出：新接口不在表里就必须是学习权限拦的。
 STRICTER_GATE = {"create_department", "update_department", "delete_department",
                  "pin", "put_integration", "set_roles", "batch_roles",
-                 "handle_feedback", "put_announcement"}
+                 "handle_feedback", "put_announcement",
+                 # 校外时长补登的拍板：对外联络部值班人/部长 + 会长团/管理员
+                 "decide_claim", "revoke_claim"}
 
 
 def test_部门成员对每一个写接口都被拦在写库之前(client):
