@@ -73,11 +73,15 @@ def staff_form(activity_id: str, db: OrmSession = Depends(db_session),
     act = _act(db, activity_id, screened=False)
     return {"editable": act.status in EDITABLE_FORM_STATUSES,
             "questions": [q.out() for q in _questions(db, activity_id)],
-            # 出题时要挑「这道题问哪些岗位的人」，把岗位按场次给出来
+            # 出题时要挑「这道题问哪些岗位的人」，把岗位按场次给出来。
+            # 只列真实岗位：占位岗位（「待分配」）是 assign 场次里装「还没安排的
+            # 人」的桶，开放选岗、切回「报名即选岗位」时会被删掉，题目挂在它上面
+            # 就成了悬空的 id（见 save_form）
             "shifts": [{"id": g.id, "name": g.name,
                         "positions": [{"id": p.id, "name": p.name}
                                       for p in sorted(g.positions,
-                                                      key=lambda x: x.sort)]}
+                                                      key=lambda x: x.sort)
+                                      if not p.is_placeholder]}
                        for g in sorted(act.main_shifts(), key=lambda x: x.sort)]}
 
 
@@ -93,7 +97,8 @@ def save_form(activity_id: str, body: FormBody,
     if act.status not in EDITABLE_FORM_STATUSES:
         raise HTTPException(409, "活动已公开，报名问卷不能再改")
     existing = {q.id: q for q in _questions(db, activity_id)}
-    known_positions = {p.id for g in act.shifts for p in g.positions}
+    # 本题能挂的岗位：本活动现在还有的岗位，按 id 取
+    positions = {p.id: p for g in act.shifts for p in g.positions}
     keep: set[str] = set()
     # 显示条件只能挂在前面的选择题上：往后指会绕成环，答一道题跳一道题就说不清了
     earlier: dict[str, list[str]] = {}
@@ -107,10 +112,7 @@ def save_form(activity_id: str, body: FormBody,
         if q.kind in ("single", "multi") and len(options) < 2:
             raise HTTPException(400, f"「{title}」至少要有两个选项")
         show_if = _clean_show_if(q.show_if, earlier, title)
-        scope = [p for p in dict.fromkeys(q.applies_to_positions)
-                 if p in known_positions]
-        if q.applies_to_positions and not scope:
-            raise HTTPException(400, f"「{title}」的适用岗位不属于本活动")
+        scope = _clean_scope(positions, q.applies_to_positions, title)
         row = existing.get(q.id) if q.id else None
         if row is None:
             row = FormQuestion(id=uid("q"), activity_id=activity_id, kind=q.kind)
@@ -145,18 +147,45 @@ def _clean_show_if(raw: dict, earlier: dict[str, list[str]], title: str) -> dict
     return {"question_id": qid, "values": values}
 
 
+def _clean_scope(positions: dict[str, Position], raw: list[str],
+                 title: str) -> list[str]:
+    """校验一道题的适用岗位，返回去重后的岗位 id。空 = 人人都答。
+
+    两种坏引用分开报：岗位已经被删（id 悬空）、挂到了占位岗位上。后者是
+    assign 场次里装「还没安排的人」的桶，开放选岗、切回「报名即选岗位」时
+    会连同它一起被删——挂上去等于给这道题埋一个悬空的 id，只收真实岗位。
+    """
+    out: list[str] = []
+    for pid in dict.fromkeys(raw):
+        p = positions.get(pid)
+        if p is None:
+            raise HTTPException(400, f"「{title}」的适用岗位已被删除，请重新选")
+        if p.is_placeholder:
+            raise HTTPException(
+                400, f"「{title}」的适用岗位不能选「{p.name}」："
+                     f"「{p.name}」不是真岗位，请选具体岗位")
+        out.append(pid)
+    return out
+
+
 def visible_questions(questions: list[FormQuestion], answers: dict,
                       positions: list[str] | None = None) -> list[FormQuestion]:
     """按已选岗位与已填答案算出这份表当前该显示哪几道题。
 
     两层筛：先看岗位——挂了适用岗位的题，只问选了那些岗位的人；再看显示条件。
-    题目按 sort 排，条件只指向前面的题，所以一遍扫下来就够了：
+    positions 是这个人当前的岗位，None 表示调用方要整份表（列表预览用），
+    此时不做岗位过滤。题目按 sort 排，条件只指向前面的题，所以一遍扫下来就够了：
     被条件挡掉的题，挂在它下面的题也跟着挡掉。
     """
     chosen = set(positions or [])
     shown, out = set(), []
     for q in questions:
         scope = q.applies_to_positions or []
+        # 适用岗位是管理者圈定的一小撮岗位，与已选岗位没有交集就不问这个人。
+        # 圈里的岗位被删掉（占位岗位被清理、岗位被删）时，这道题的 scope 和谁都
+        # 不相交，于是对所有人都问不到——这道题就此失效，而不是退化成人人都答：
+        # 范围是管理者圈的，圈里的岗位没了不能替他放大到全体。这种题在出题界面
+        # 一保存就被拦下要求重选（见 _clean_scope）。
         if scope and positions is not None and not (chosen & set(scope)):
             continue
         cond = q.show_if or {}

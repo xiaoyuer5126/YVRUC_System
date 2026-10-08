@@ -123,6 +123,25 @@ def test_组长任务全组共用一份(client, admin, db, enrolled_activity, ta
     assert "组长任务：带队进场、清点人数" in n["content"]
 
 
+def test_改组长任务时组长在兄弟岗位上也收得到(client, admin, db,
+                                          enrolled_activity, take_student):
+    """组长任务全组共用一份，留痕却挂在被编辑的那个岗位上：组长占的是组里另一个
+    岗位，只按岗位发他就收不到这条变更提醒。"""
+    from conftest import editing
+
+    act, _shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,
+                                    take_student)
+    head = _make_leader(client, admin, db, p1)
+    h = login(client, db.get(User, head.user_id).student_id)
+    with editing(client, admin, act.id):
+        r = client.patch(f"/api/staff/positions/{p2.id}", headers=admin,
+                         json={"leader_task": "带队进场、清点人数"})
+        assert r.status_code == 200, r.text
+    notes = client.get("/api/me/notifications", headers=h).json()["items"]
+    n = next(x for x in notes if x["title"] == f"活动变更提醒｜{act.title}")
+    assert "组长任务" in n["content"] and "带队进场、清点人数" in n["content"]
+
+
 def test_报名不会自动产生组长(client, admin, db, enrolled_activity, take_student):
     """组长只由管理者指定。四个人都勾了愿意，也一个都不自动上。"""
     act, shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,

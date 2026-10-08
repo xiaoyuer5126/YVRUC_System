@@ -1,11 +1,13 @@
-"""操作日志：记什么、不记什么、谁能看、筛选、导出、清理、磁盘不足停写。"""
+"""操作日志：记什么、不记什么、谁能看、筛选、分页、导出、清理、磁盘不足停写。"""
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from io import BytesIO
 from urllib.parse import urlencode
 
 import pytest
+from openpyxl import load_workbook
 
 from backend import config, locks, oplog, scheduled
 from backend.models import now
@@ -13,16 +15,38 @@ from conftest import ADMIN, INITIATOR, QINGXIE, dl_url, inbox, login
 
 
 def _since() -> str:
-    """本用例开始的时刻：只看这之后的记录，别的用例留下的不掺进来。"""
-    return (now() - timedelta(seconds=1)).isoformat(timespec="seconds")
+    """本用例开始的时刻，精确到毫秒：只看这之后的记录。
+
+    不能减一秒再按秒截断——用例跑得快，一秒里能过好几个，上一个用例留下的记录
+    会被算进来（管理员是所有用例共用的操作人，按人筛不掉）。
+    """
+    return now().isoformat(timespec="milliseconds")
+
+
+def _page(client, headers, since: str, *, page: int = 1, size: int = 20,
+          **filters) -> dict:
+    """取一页操作日志，连 total 一起回。"""
+    oplog.flush()
+    query = urlencode({"start": since, "page": page, "size": size, **filters})
+    r = client.get(f"/api/staff/oplogs?{query}", headers=headers)
+    assert r.status_code == 200, r.text
+    return r.json()
 
 
 def _logs(client, headers, since: str, **filters) -> list[dict]:
-    oplog.flush()
-    query = urlencode({"start": since, "size": 100, **filters})
-    r = client.get(f"/api/staff/oplogs?{query}", headers=headers)
-    assert r.status_code == 200, r.text
-    return r.json()["items"]
+    return _page(client, headers, since, size=100, **filters)["items"]
+
+
+def _three_edits(client, admin: dict, acts: list) -> list:
+    """让三个活动依次进编辑态：三条带活动编号、分得清谁先谁后的管理端记录。
+
+    活动先建好再调这个函数：建活动、建场次岗位也各记一条 create，落在同一个
+    时间窗口里就把「三条」搅成十几条。
+    """
+    for act in acts:
+        r = client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+        assert r.status_code == 200, r.text
+    return acts
 
 
 def test_写请求与登录都记下且带操作人(client, take_student):
@@ -112,6 +136,85 @@ def test_按活动和类型筛选(client, open_group):
     assert rows[0]["activity_title"] == act.title
     assert _logs(client, admin, since, activity=act.title, kind="delete") == []
     assert _logs(client, admin, since, activity="不存在的活动名") == []
+
+
+def test_分页按时间倒序且总数不受分页影响(client, open_group):
+    acts = [open_group(1)[0] for _ in range(3)]
+    since = _since()
+    admin = login(client, ADMIN)
+    _three_edits(client, admin, acts)
+    only = {"person": ADMIN, "kind": "create"}
+
+    first = _page(client, admin, since, page=1, size=2, **only)
+    assert first["total"] == 3
+    assert [r["activity_id"] for r in first["items"]] == [acts[2].id, acts[1].id]
+
+    second = _page(client, admin, since, page=2, size=2, **only)
+    assert second["total"] == 3
+    assert [r["activity_id"] for r in second["items"]] == [acts[0].id]
+    assert second["items"][0]["t"] <= first["items"][-1]["t"]   # 接在第一页后面
+
+    empty = _page(client, admin, since, page=3, size=2, **only)
+    assert empty["items"] == [] and empty["total"] == 3
+    assert _page(client, admin, since, page=9, size=2, **only)["items"] == []
+
+    # 各页按序拼起来，就是不分页时的那一份
+    assert _logs(client, admin, since, **only) == first["items"] + second["items"]
+
+
+def test_同一天多个进程的文件按时间归并(monkeypatch, tmp_path):
+    """一天里几个进程各写一个文件，读出来照样是从早到晚，分页留下的才是最新的。"""
+    monkeypatch.setattr(config, "OPLOG_DIR", tmp_path)
+    day = "2020-01-02"
+    for pid, secs in ((11, (0, 2, 4)), (22, (1, 3, 5))):
+        (tmp_path / f"{day}-{pid}.jsonl").write_text(
+            "".join(json.dumps({"t": f"{day}T09:00:0{s}.000", "sid": str(s)}) + "\n"
+                    for s in secs), encoding="utf-8")
+    lo, hi = datetime(2020, 1, 2), datetime(2020, 1, 3)
+    assert [r["sid"] for r in oplog.iter_rows(lo, hi)] == ["0", "1", "2",
+                                                           "3", "4", "5"]
+    rows, total = oplog.page_rows(lo, hi, page=1, size=2)
+    assert total == 6 and [r["sid"] for r in rows] == ["5", "4"]
+    rows, total = oplog.page_rows(lo, hi, page=2, size=2)
+    assert total == 6 and [r["sid"] for r in rows] == ["3", "2"]
+
+
+def test_同一毫秒的几条翻页时不重不漏(monkeypatch, tmp_path):
+    """时间只精确到毫秒，同一毫秒的几条翻页时既不能重复也不能漏掉。"""
+    monkeypatch.setattr(config, "OPLOG_DIR", tmp_path)
+    day = "2020-01-02"
+    (tmp_path / f"{day}-1.jsonl").write_text(
+        "".join(json.dumps({"t": f"{day}T09:00:00.000", "sid": f"s{i}"}) + "\n"
+                for i in range(7)), encoding="utf-8")
+    lo, hi = datetime(2020, 1, 2), datetime(2020, 1, 3)
+    got = []
+    for page in (1, 2, 3):
+        rows, total = oplog.page_rows(lo, hi, page=page, size=3)
+        assert total == 7
+        got += [r["sid"] for r in rows]
+    assert sorted(got) == [f"s{i}" for i in range(7)]
+
+
+def test_导出新的在前且超上限回绝(client, open_group, monkeypatch):
+    acts = [open_group(1)[0] for _ in range(3)]
+    since = _since()
+    admin = login(client, ADMIN)
+    _three_edits(client, admin, acts)
+    query = urlencode({"start": since, "person": ADMIN, "kind": "create"})
+
+    # 上限调小到 2，三条记录就够触发，不必真造五万条
+    monkeypatch.setattr(config, "OPLOG_EXPORT_MAX_ROWS", 2)
+    r = client.get(dl_url(client, admin, f"/api/staff/oplogs.xlsx?{query}"))
+    assert r.status_code == 400
+    assert "缩短时间段" in r.json()["detail"]
+
+    monkeypatch.setattr(config, "OPLOG_EXPORT_MAX_ROWS", 100)
+    r = client.get(dl_url(client, admin, f"/api/staff/oplogs.xlsx?{query}"))
+    assert r.status_code == 200
+    ws = load_workbook(BytesIO(r.content)).active
+    assert ws.max_row == 4                        # 表头 + 三条
+    assert [ws.cell(row=i, column=11).value for i in range(2, 5)] == [
+        acts[2].title, acts[1].title, acts[0].title]
 
 
 def test_只有管理员能看(client):

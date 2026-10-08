@@ -355,7 +355,10 @@ def confirm_hours(record_id: str, body: ConfirmHoursBody,
 
     报酬方式按段（场次 + 岗位）选：同一场活动里有的岗位可选劳务、有的只记
     志愿时长，一笔账里两种可以并存。"""
-    r = db.get(HoursRecord, record_id)
+    # 确认要按段重写 parts（整列覆盖）：先把这一行锁住再读改写，否则和
+    # 管理端的手动加减、名单导入、申诉改值并发时，后提交的那次会把对方
+    # 刚写进去的段与报酬选择一起盖上
+    r = db.get(HoursRecord, record_id, with_for_update=True)
     if r is None or r.user_id != user.id:
         raise HTTPException(404, "时长记录不存在")
     act = db.get(Activity, r.activity_id)

@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import enroll_logic as logic
 from .. import assign, config, copying, hours as hours_flow, scoring
 from ..stage import ensure_hours_editable, ensure_not_finished
-from ..audit import diff_changes, log as audit_log
+from ..audit import diff_changes, log as audit_log, value_text
 from ..database import db_session
 from ..deps import require_council, require_manager
 from ..locks import invalidate_gates, shift_lock, urgent_lock
@@ -456,8 +456,9 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
     # 活动变更警告（带前后对比摘要），对已报名志愿者推送。编辑态下不单发：
     # 保存并发布时和场次、岗位的改动一起按人汇总（见 finish_editing）
     if act.status != "draft" and act.editing_since is None:
-        summary = "；".join(f"{c['label']}：{c['old']}→{c['new']}"
-                            for c in changes[:6])
+        summary = "；".join(
+            f"{c['label']}：{value_text(c['old']) or '（空）'}"
+            f"→{value_text(c['new']) or '（空）'}" for c in changes[:6])
         bg.add_task(_notify_activity_bg, act.id, "activity_changed",
                     activity=act.title, change_summary=summary)
     audit_log(db, actor=user, action="update", target_type="activity",
@@ -1105,6 +1106,22 @@ def _sync_placeholder(db: OrmSession, g: Shift, capacity: int,
     holder.waitlist_quota = waitlist_quota
 
 
+def _refuse_if_questions_scope(db: OrmSession, act_id: str, s: Position) -> None:
+    """岗位被题目的「适用岗位」引用着就先别删。
+
+    删了以后这道题对谁都匹配不上（对被问的人直接消失——空 scope 才是「人人都答」，
+    所以不能靠清空来「修」），保存整份问卷时也会被拦下要求重选。
+    """
+    hits = [q.title for q in db.query(FormQuestion)
+            .filter(FormQuestion.activity_id == act_id).all()
+            if s.id in set(q.applies_to_positions or [])]
+    if hits:
+        raise HTTPException(409, f"问卷里有题目的「适用岗位」是「{s.name}」："
+                                 f"{'、'.join(hits[:3])}"
+                                 + (f" 等 {len(hits)} 题" if len(hits) > 3 else "")
+                                 + "，请先改掉那些题再删这个岗位")
+
+
 def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
     """切换场次模式：只在这一场一个人都没报（含候补）时允许。
 
@@ -1134,6 +1151,7 @@ def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
                 raise HTTPException(
                     409, f"「{g.name}」有过报名记录，不能再改成「报名即选岗位」；"
                          f"如确需调整请新建场次")
+            _refuse_if_questions_scope(db, g.activity_id, holder)
             g.positions.remove(holder)
             db.delete(holder)
         if mode == "assign":
@@ -1517,6 +1535,11 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
                       + (f"（组长任务已同步到同组另 {synced} 个岗位）"
                          if synced else ""),
               changes=changes,
+              # 组长任务改的是「这一组」的事，留痕却挂在被编辑的那个岗位上
+              # （兄弟岗位是静默同步的）。组长可能正好在兄弟岗位上，按岗位发
+              # 他就收不到，把他的 id 记进 affected，通知那一层照发
+              affected=([lead.user_id]
+                        if synced and (lead := logic.group_leader(db, s)) else None),
               visible=True)
     db.commit()
     if (s.quota, s.waitlist_quota) != (before_raw["quota"],
@@ -1739,13 +1762,21 @@ def open_pick(shift_id: str, db: OrmSession = Depends(db_session),
                     CheckinTask.position_id == holder.id).count():
                 raise HTTPException(409, "「待分配」上开过分岗位签到码，"
                                          "先在签到里删掉它再开放选岗")
+            _refuse_if_questions_scope(db, act.id, holder)
             _prune_trainings(db, act, {holder.id})
-            # 报过「待分配」又退掉的历史记录（cancelled 不占名额）还指着它，
-            # 外键挡着删不掉。这些人退的时候还没分岗位，岗位一栏本来就该是空的：
-            # 把 position_id 置空，记录本身（谁、何时报、何时退、怎么退）原样留着
+            # 报过「待分配」又退掉（或落选）的历史记录还指着它，外键挡着删不掉。
+            # 这些人本来就没分到岗位，岗位一栏该是空的：把 position_id 置空，
+            # 记录本身（谁、何时报、何时退、怎么退）原样留着。
+            # 只动已经结束的那些：问卷申请那条路不拿场次锁，上面判完「待分配没人」
+            # 到这里之间可能正好有人报进来，不加状态条件就会把一条待筛选的报名
+            # 静默清掉。清完再核一遍，多出来的人宁可让他重试
             (db.query(Enrollment)
-             .filter(Enrollment.position_id == holder.id)
+             .filter(Enrollment.position_id == holder.id,
+                     Enrollment.status.notin_(logic.ACTIVE))
              .update({"position_id": None}, synchronize_session=False))
+            if db.query(Enrollment).filter(
+                    Enrollment.position_id == holder.id).count():
+                raise HTTPException(409, "「待分配」里刚有人报了名，请稍后重试")
             g.positions.remove(holder)
             db.delete(holder)
         g.mode = "pick"
@@ -1802,6 +1833,7 @@ def delete_position(position_id: str,
         raise HTTPException(409, f"该岗位还挂着{'、'.join(parts)}，"
                                  "删除会把这些记录一起弄丢，不能删；"
                                  "不再用的话暂停报名即可")
+    _refuse_if_questions_scope(db, act.id, s)
     _prune_trainings(db, act, {s.id})
     label = f"{act.title}·{g.name}·{s.name}"
     db.delete(s)

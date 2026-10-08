@@ -54,17 +54,16 @@ def _activity_ids(db: OrmSession, activity: str) -> set[str] | None:
     return {r.id for r in rows}
 
 
-def _rows(db: OrmSession, start: str, end: str, person: str, activity: str,
-          kind: str) -> list[dict]:
+def _filters(db: OrmSession, start: str, end: str, activity: str,
+             kind: str) -> tuple[datetime, datetime, set[str] | None]:
+    """校验操作类型与时间段，把活动名解析成活动编号集合。"""
     if kind and kind not in oplog.KIND_LABELS:
         raise HTTPException(400, "未知操作类型")
     lo, hi = _window(start, end)
-    return oplog.query(lo, hi, person=person,
-                       activity_ids=_activity_ids(db, activity), kind=kind)
+    return lo, hi, _activity_ids(db, activity)
 
 
-def _titles(db: OrmSession, rows: list[dict]) -> dict[str, str]:
-    ids = {r["activity_id"] for r in rows if r.get("activity_id")}
+def _titles(db: OrmSession, ids: set[str]) -> dict[str, str]:
     if not ids:
         return {}
     return dict(db.query(Activity.id, Activity.title)
@@ -76,6 +75,17 @@ def _out(row: dict, titles: dict[str, str]) -> dict:
             "activity_title": titles.get(row.get("activity_id") or "", "")}
 
 
+def _excel_row(row: dict, titles: dict[str, str]) -> list:
+    """一条记录摊平成表格的一行，顺序与表头一致。"""
+    return [row["t"].replace("T", " "), row.get("sid", ""), row.get("name", ""),
+            row.get("identity", ""), row.get("ip", ""),
+            oplog.KIND_LABELS.get(row.get("kind"), ""), row.get("label", ""),
+            row.get("note", ""),
+            row.get("method", ""), row.get("path", ""),
+            titles.get(row.get("activity_id") or "", row.get("activity_id", "")),
+            row.get("status", ""), row.get("ms", "")]
+
+
 @router.get("/api/staff/oplogs")
 def list_oplogs(start: str = "", end: str = "", person: str = "",
                 activity: str = "", kind: str = "",
@@ -83,10 +93,11 @@ def list_oplogs(start: str = "", end: str = "", person: str = "",
                 db: OrmSession = Depends(db_session),
                 user: User = Depends(require_admin)):
     """操作日志列表：按人（学号或姓名）、时间段、活动、操作类型筛选，新的在前。"""
-    rows = _rows(db, start, end, person, activity, kind)
-    items = rows[(page - 1) * size: page * size]
-    titles = _titles(db, items)
-    return {"total": len(rows), "items": [_out(r, titles) for r in items],
+    lo, hi, activity_ids = _filters(db, start, end, activity, kind)
+    rows, total = oplog.page_rows(lo, hi, page=page, size=size, person=person,
+                                  activity_ids=activity_ids, kind=kind)
+    titles = _titles(db, {r["activity_id"] for r in rows if r.get("activity_id")})
+    return {"total": total, "items": [_out(r, titles) for r in rows],
             "kinds": oplog.KIND_LABELS,
             "max_days": config.OPLOG_QUERY_MAX_DAYS}
 
@@ -96,23 +107,36 @@ def export_oplogs(start: str = "", end: str = "", person: str = "",
                   activity: str = "", kind: str = "",
                   db: OrmSession = Depends(db_session),
                   user: User = Depends(require_admin_download)):
-    """导出操作日志：筛选条件与列表相同，全部符合条件的记录。"""
-    rows = _rows(db, start, end, person, activity, kind)
-    titles = _titles(db, rows)
+    """导出操作日志：筛选条件与列表相同，全部符合条件的记录，新的在前。"""
+    lo, hi, activity_ids = _filters(db, start, end, activity, kind)
+    # 先空走一遍数出条数：每行的落点要从最后一行往上算，新的才能在最上面。
+    # 超上限的也在这里就回绝，不必为一份导不出去的表格建工作簿
+    total = 0
+    ids: set[str] = set()
+    for r in oplog.iter_rows(lo, hi, person=person, activity_ids=activity_ids,
+                             kind=kind):
+        total += 1
+        if total > config.OPLOG_EXPORT_MAX_ROWS:
+            raise HTTPException(
+                400, f"这段时间的日志超过 {config.OPLOG_EXPORT_MAX_ROWS} 条，"
+                     "请缩短时间段再导")
+        if r.get("activity_id"):
+            ids.add(r["activity_id"])
+    titles = _titles(db, ids)
     wb = Workbook()
     ws = wb.active
     ws.title = "操作日志"
     header = ["时间", "学号", "姓名", "身份", "IP", "操作类型", "操作", "说明",
               "方法", "接口", "活动", "结果", "耗时(毫秒)"]
     ws.append(header)
-    for r in rows:
-        ws.append([r["t"].replace("T", " "), r.get("sid", ""), r.get("name", ""),
-                   r.get("identity", ""), r.get("ip", ""),
-                   oplog.KIND_LABELS.get(r.get("kind"), ""), r.get("label", ""),
-                   r.get("note", ""),
-                   r.get("method", ""), r.get("path", ""),
-                   titles.get(r.get("activity_id") or "", r.get("activity_id", "")),
-                   r.get("status", ""), r.get("ms", "")])
+    # 再读一遍，边读边写到算好的行号上：最早的一条落在最后一行，内存里只有
+    # 当前这一条
+    for i, r in enumerate(oplog.iter_rows(lo, hi, person=person,
+                                          activity_ids=activity_ids, kind=kind)):
+        if i >= total:
+            break     # 两趟之间又写进了记录：只导数过的那批，行号和总数才对得上
+        for col, value in enumerate(_excel_row(r, titles), start=1):
+            ws.cell(row=total + 1 - i, column=col, value=value)
     for col, w in zip("ABCDEFGHIJKLM", (24, 14, 10, 10, 16, 10, 24, 26, 8, 48, 24, 8, 10)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"

@@ -23,9 +23,10 @@ def log(db: OrmSession, *, actor, action: str, target_type: str,
     需要对志愿者公开的，显式传 visible=True，且只限「谁动了我的岗位」
     这类结构性变更：活动信息、场次、岗位的增删改。
 
-    affected：这次改动影响到、但事后从库里查不出来的人（删场次时被取消报名的
-    人）。编辑态结束时按人汇总的变更通知（notify.notify_edit_changes）靠它找到
-    这些人。
+    affected：这次改动影响到、但按留痕的 target 找不到的人：删场次时被取消报名的
+    人（库里已经没有他名下的报名），或者改的是全组共用一份的字段、而组长站在同组
+    另一个岗位上（见 staff_activities.update_position 的组长任务）。编辑态结束时
+    按人汇总的变更通知（notify.notify_edit_changes）靠它找到这些人。
     """
     # 活动公开之前的改动一律不进志愿者的「变更记录」。筹备期的每一次试错
     # ——建了又删的场次、改来改去的名额——学生从来没见过那些东西，摆出来
@@ -79,12 +80,37 @@ ACTION_LABELS = {
 
 
 def diff_changes(before: dict, after: dict, labels: dict[str, str] | None = None) -> list[dict]:
-    """对比新旧字段值，生成 changes 列表。"""
+    """对比新旧字段值，生成 changes 列表。值按人话写（见 value_text）：
+    存进去的是字符串，改完再想还原成「王（139…）」就晚了。"""
     out = []
     for key, old in (before or {}).items():
         new = (after or {}).get(key)
         if old != new:
             out.append({"field": key, "label": (labels or {}).get(key, key),
-                        "old": "" if old is None else str(old),
-                        "new": "" if new is None else str(new)})
+                        "old": value_text(old), "new": value_text(new)})
     return out
+
+
+def value_text(v) -> str:
+    """留痕里的字段值拼成人话。
+
+    联系人、招募范围这些字段存的是列表/字典，str() 出来是
+    [{'name': '王', 'phone': '139…'}] 或 ['苏州校区']，念给人听等于没写。
+    空值返回空串，由各处自己决定写「（空）」还是「空」。
+    """
+    if v is None or v == "" or v == [] or v == {}:
+        return ""
+    if isinstance(v, dict):
+        return _one_value(v)
+    if isinstance(v, (list, tuple)):
+        return "、".join(_one_value(x) for x in v)
+    return str(v)
+
+
+def _one_value(x) -> str:
+    if isinstance(x, dict):
+        if x.get("name"):        # 联系人：写「姓名（电话）」，键名不必念出来
+            phone = x.get("phone")
+            return f"{x['name']}（{phone}）" if phone else str(x["name"])
+        return "、".join(f"{k}：{value_text(val) or '（空）'}" for k, val in x.items())
+    return str(x)

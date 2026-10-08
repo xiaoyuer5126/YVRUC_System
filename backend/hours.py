@@ -70,6 +70,19 @@ def default_appeal_deadline() -> datetime:
     return t.replace(hour=12, minute=0, second=0, microsecond=0)
 
 
+def lock_records(db: OrmSession, activity_id: str) -> list[HoursRecord]:
+    """锁住这场活动的时长记录并返回它们，按 id 顺序取锁。
+
+    要改 parts 的路径先过这一步：parts 是整列覆盖，读出来改完再写回，中间被
+    别人插一脚就丢了对方刚写的段与报酬选择（手动加减、本人选报酬方式、锁定
+    时清掉未表态的报酬，都是这种）。**锁在读之前**，整段「读 → 改 → 写回」
+    才排他；锁到手也顺带取库里的最新值（populate_existing），不用会话里的旧
+    快照。按 id 排序是为了让并发进来的两个批量操作取锁顺序一致。
+    """
+    return (db.query(HoursRecord).filter(HoursRecord.activity_id == activity_id)
+            .populate_existing().with_for_update().order_by(HoursRecord.id).all())
+
+
 def pay_positions(db: OrmSession, parts: list | None) -> dict[str, Position]:
     """这些段落里开了「可选劳务」的岗位，按岗位 id。
 
@@ -119,7 +132,11 @@ def lock_hours(db: OrmSession, act: Activity, actor: User | None,
     from . import liaison
 
     t = now()
-    rows = db.query(HoursRecord).filter(HoursRecord.activity_id == act.id).all()
+    # 没表态的那些段要清掉报酬选择（clear_pay 整列重写 parts）：先锁住这场活动
+    # 的记录行再读改写。名单导入/编辑是先拿活动行锁再拿记录行锁，但那条路要求
+    # 「没有待审批的锁定申请」，而走到这里时申请还挂着（同一事务里才改成已通过）：
+    # 两边不会成环
+    rows = lock_records(db, act.id)
     for r in rows:
         if r.confirmed_at is None:
             r.confirmed_at = t

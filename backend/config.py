@@ -92,6 +92,9 @@ OPLOG_RETAIN_DAYS = 180
 OPLOG_MIN_FREE_BYTES = 1024 ** 3
 # 「操作日志」页一次最多查多少天：每次查询都要把这几天的文件整个读一遍
 OPLOG_QUERY_MAX_DAYS = 31
+# 导出上限：符合条件的记录要全写进一份工作簿，条数太多这份表格自己也就打不开了，
+# 超了这个数就让人把时间段缩短（见 routers/platform.py）
+OPLOG_EXPORT_MAX_ROWS = 50000
 # 服务器向天地图取一张瓦片最多等几秒。给短：地图是锦上添花，一张瓦片卡住
 # 就让它灰着，别占着线程池的线程。
 TILE_UPSTREAM_TIMEOUT = 5

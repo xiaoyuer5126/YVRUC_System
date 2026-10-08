@@ -91,6 +91,32 @@ def test_排完班开放选岗_之后按岗位名额自选(client, admin, db, pu
     assert r.status_code == 200 and r.json()["status"] == "waitlisted", r.text
 
 
+def test_判完之后才报进来的待筛选报名不被清掉(client, admin, db, published,
+                                       take_student, monkeypatch):
+    """问卷申请那条路不拿场次锁：判「待分配没人」到删占位之间可能正好有人报进来。
+    锁里再核一遍状态，宁可让他重试，也不把一条待筛选的报名静默清掉。"""
+    from backend.models import Enrollment, uid
+    from backend.routers import staff_activities as sa
+    from conftest import student_row
+
+    aid, g = published
+    holder = g.placeholder().id
+    sid = take_student()
+    u = student_row(db, sid)
+    enr_id = uid("e")
+    db.add(Enrollment(id=enr_id, activity_id=aid, shift_id=g.id, user_id=u.id,
+                      position_id=holder, status="applied"))
+    db.commit()
+    _position(client, admin, aid, g, "甲", 2)
+    # 把锁内那道检查伪装成「已经判过、没人」：检查与更新之间有人报了名就是这个样子
+    monkeypatch.setattr(sa, "_holder_occupants", lambda _db, _holder: "")
+
+    r = _open(client, admin, g)
+    assert r.status_code == 409 and "刚有人报了名" in r.json()["detail"], r.text
+    db.expire_all()
+    assert db.get(Enrollment, enr_id).position_id == holder, "待筛选的报名被清掉了"
+
+
 def test_待分配还有人_409(client, admin, db, published, take_student):
     aid, g = published
     _position(client, admin, aid, g, "甲", 3)

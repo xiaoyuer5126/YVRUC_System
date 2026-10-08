@@ -1,10 +1,16 @@
-"""短码撞码：固定签到码、服装码、动态签到码生成时撞上已有的码要换一个。"""
+"""短码撞码：固定签到码、服装码、动态签到码生成时撞上已有的码要换一个。
+
+另一头也要钉住：码列之外的完整性错误不算撞码，换码重试没有意义。
+"""
 from __future__ import annotations
 
 import secrets
 
-from backend import locks
-from backend.models import Position, uid
+import pytest
+from sqlalchemy.exc import IntegrityError
+
+from backend import codes, locks
+from backend.models import CheckinTask, Position, uid
 from backend.routers import attire, staff_ops
 from conftest import POSITION_TEXT
 
@@ -104,6 +110,31 @@ def test_服装码撞上已有的会换一个(client, admin, open_group, monkeyp
     again = client.post(f"/api/staff/activities/{act1.id}/attire-tasks",
                         headers=admin, json={}).json()
     assert again == first
+
+
+# ======================= 码列之外的完整性错误 =======================
+
+def test_别的完整性错误不当成撞码吞掉(db, open_group):
+    """外键这类错误换个码也一样插不进去：当场抛出，不重试到「连续撞码」503。
+
+    只有「码列上的唯一约束被撞」才是撞码——那张码别人刚抽中，换一张就好。
+    """
+    act, _g = open_group(5)
+    tried = []
+
+    def gen() -> str:
+        tried.append(1)
+        return _fresh()
+
+    with pytest.raises(IntegrityError) as err:
+        codes.insert_with_unique_code(
+            db, CheckinTask.token, gen,
+            lambda code: CheckinTask(id=uid("tsk"), activity_id=act.id,
+                                     shift_id=uid("g"),     # 没有这个场次：撞外键
+                                     mode="shift", token=code, created_by="u"))
+    assert len(tried) == 1, "不是撞码就不该再抽一张码重试"
+    # 这条错误得确实是「别的约束」：它要是被认成撞码，上面就已经变成 503 了
+    assert not codes._is_code_collision(err.value, CheckinTask.token)
 
 
 # ======================= 动态签到码 =======================

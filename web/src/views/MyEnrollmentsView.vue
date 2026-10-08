@@ -349,7 +349,14 @@ async function toggleReassign(row) {
 }
 
 async function cancel(row) {
-  const locked = row.status === 'enrolled' && row.list_locked
+  // 锁定状态按时刻算（后端 position_locked）：页面可能是几分钟前打开的，
+  // 跨过自动锁定时刻后那句「退出会被记录一次」就漏了。点之前重取一次
+  let fresh = row
+  try {
+    const list = await api.get('/api/me/enrollments')
+    fresh = list.find(r => r.id === row.id) || row
+  } catch { /* 取不到就按页面上这份算，服务端仍会按锁后的规矩处理 */ }
+  const locked = fresh.status === 'enrolled' && fresh.list_locked
   await ElMessageBox.confirm(
     locked ? '名单已锁定，此时退出会被记录一次。确定退出吗？' : '确定退选吗？',
     '退选确认', { type: 'warning', confirmButtonText: '确定' })

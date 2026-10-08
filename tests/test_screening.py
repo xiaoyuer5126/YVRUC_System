@@ -278,6 +278,149 @@ def test_题目按适用岗位出现(client, admin, db, take_student):
     assert app.answers[extra["id"]] == "用过"
 
 
+# ======================= 适用岗位：占位岗位与被删掉的岗位 =======================
+
+def _form_with(q, extra):
+    """整份表：原有题目原样带上，末尾再加一道新题。"""
+    return [{"id": x["id"], "kind": x["kind"], "title": x["title"],
+             "options": x["options"], "required": x["required"],
+             "show_if": x["show_if"]} for x in q] + [extra]
+
+
+def _save_form(client, admin, act_id, q, extra):
+    return client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
+                      json={"questions": _form_with(q, extra)})
+
+
+def _my_answers(db, act_id, sid):
+    u = db.query(User).filter(User.student_id == sid).one()
+    return (db.query(Application)
+            .filter(Application.activity_id == act_id,
+                    Application.user_id == u.id).one()).answers
+
+
+def test_出题不能挂待分配占位岗位(client, admin, db):
+    """占位岗位迟早会被删（开放选岗、切回「报名即选岗位」都删它），
+    题目挂上去就是给以后埋一个悬空的 id：出题下拉不给它，保存时也拦下来。"""
+    act_id, ids, q = _create_screened(client, admin, db, status="draft", shifts=1)
+    gid, pids = _pick_shift(client, admin, act_id)
+    holder = _holders(db, ids)[0]
+
+    base = client.get(f"/api/staff/activities/{act_id}/form", headers=admin).json()
+    by_shift = {g["id"]: [p["id"] for p in g["positions"]] for g in base["shifts"]}
+    assert by_shift[ids[0]] == [], "统一分配的场次只列真实岗位，占位岗位不出现"
+    assert by_shift[gid] == pids
+
+    r = _save_form(client, admin, act_id, q,
+                   {"kind": "text", "title": "只在待分配的人答", "required": False,
+                    "applies_to_positions": [holder]})
+    assert r.status_code == 400, r.text
+    detail = r.json()["detail"]
+    assert "待分配" in detail and "不是真岗位" in detail and "请选具体岗位" in detail
+    # 整份表都没落库：还是原来那几道题
+    assert [x["title"] for x in client.get(
+        f"/api/staff/activities/{act_id}/form", headers=admin).json()["questions"]] \
+        == [x["title"] for x in q]
+
+
+def test_挂真实岗位的题目只问那个岗位的人(client, admin, db, take_student):
+    act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
+    _gid, pids = _pick_shift(client, admin, act_id)
+    extra = {"kind": "text", "title": "有无扩音器使用经验",
+             "applies_to_positions": [pids[0]]}
+    r = _save_form(client, admin, act_id, q, extra)
+    assert r.status_code == 200, r.text
+    saved = next(x for x in r.json()["questions"] if x["title"] == extra["title"])
+    assert saved["applies_to_positions"] == [pids[0]]
+
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+    # 只勾另一个岗位的人：这道题不出现，不填也交得了
+    sid = take_student()
+    d = client.get(f"/api/activities/{act_id}/form?positions={pids[1]}",
+                   headers=login(client, sid)).json()
+    assert saved["id"] not in [x["id"] for x in d["questions"]]
+    r = client.post(f"/api/activities/{act_id}/apply", headers=login(client, sid),
+                    json={"position_ids": [pids[1]], "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+    assert saved["id"] not in _my_answers(db, act_id, sid)
+    # 勾了这个岗位的人：这道题是必填，答了才存
+    sid2 = take_student()
+    t2 = login(client, sid2)
+    d = client.get(f"/api/activities/{act_id}/form?positions={pids[0]}",
+                   headers=t2).json()
+    assert saved["id"] in [x["id"] for x in d["questions"]]
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t2,
+                    json={"position_ids": [pids[0]], "answers": _answers(q)})
+    assert r.status_code == 400 and extra["title"] in r.json()["detail"]
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t2,
+                    json={"position_ids": [pids[0]],
+                          "answers": {**_answers(q), saved["id"]: "用过"}})
+    assert r.status_code == 200, r.text
+    assert _my_answers(db, act_id, sid2)[saved["id"]] == "用过"
+
+
+def test_挂了题目的岗位不能删(client, admin, db):
+    """岗位被题目的「适用岗位」引用着就先别删：删了这题对谁都匹配不上，
+    而清空 scope 等于「人人都答」，不能靠那样「修」。改掉那些题再删。"""
+    act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
+    _gid, pids = _pick_shift(client, admin, act_id)
+    extra = {"kind": "text", "title": "有无扩音器使用经验",
+             "applies_to_positions": [pids[0]]}
+    assert _save_form(client, admin, act_id, q, extra).status_code == 200
+
+    r = client.delete(f"/api/staff/positions/{pids[0]}", headers=admin)
+    assert r.status_code == 409, r.text
+    assert "有无扩音器使用经验" in r.json()["detail"] and "先改掉" in r.json()["detail"]
+
+    # 去掉那道题之后就能删
+    keep = [{"id": x["id"], "kind": x["kind"], "title": x["title"],
+             "options": x["options"], "required": x["required"],
+             "show_if": x["show_if"]} for x in q]
+    assert client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
+                      json={"questions": keep}).status_code == 200
+    assert client.delete(f"/api/staff/positions/{pids[0]}",
+                         headers=admin).status_code == 200
+
+
+def test_适用岗位被删的题目拦下重选_对谁都不展示(client, admin, db, take_student):
+    """岗位被删掉后，挂着它的题目成了一个悬空的引用：保存整份表时拦下来让管理
+    者重选，在这之前它对谁也不显示，更不会退化成人人都答。"""
+    from backend.models import Position
+
+    act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
+    _gid, pids = _pick_shift(client, admin, act_id,
+                             positions=("引导", "登记", "医疗点"))
+    extra = {"kind": "text", "title": "只问医疗点", "required": True,
+             "applies_to_positions": [pids[2]]}
+    r = _save_form(client, admin, act_id, q, extra)
+    assert r.status_code == 200, r.text
+    saved = next(x for x in r.json()["questions"] if x["title"] == extra["title"])
+
+    # 直接改库造出「岗位已经不在」的库状态
+    db.delete(db.get(Position, pids[2]))
+    db.commit()
+
+    r = _save_form(client, admin, act_id, q, extra)
+    assert r.status_code == 400, r.text
+    detail = r.json()["detail"]
+    assert extra["title"] in detail and "已被删除" in detail and "重新选" in detail
+
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+    # 这题对谁也不显示：勾哪个真实岗位都看不到它，也不拦着交表
+    sid = take_student()
+    t = login(client, sid)
+    for pid in pids[:2]:
+        d = client.get(f"/api/activities/{act_id}/form?positions={pid}",
+                       headers=t).json()
+        assert saved["id"] not in [x["id"] for x in d["questions"]]
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"position_ids": [pids[0]], "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+    assert saved["id"] not in _my_answers(db, act_id, sid)
+
+
 def test_填表申请_必填校验_只能填一次(client, admin, db, take_student):
     act_id, ids, q = _create_screened(client, admin, db)
     t = login(client, take_student())

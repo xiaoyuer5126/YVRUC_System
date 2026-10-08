@@ -9,6 +9,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session as OrmSession
 
+from .audit import value_text
 from .integrations import msgcenter
 from .models import (AFFECTED_FIELD, Activity, Attachment, AuditLog,
                      CheckinRecord, Enrollment, Shift, Position, User)
@@ -73,7 +74,8 @@ def _change_line(act: Activity, row: AuditLog) -> str | None:
     if not shown:
         return None if row.action == "update" else row.summary
     return _where(act, row) + "：" + "；".join(
-        f"{c['label']}：{c['old'] or '（空）'}→{c['new'] or '（空）'}" for c in shown)
+        f"{c['label']}：{value_text(c['old']) or '（空）'}"
+        f"→{value_text(c['new']) or '（空）'}" for c in shown)
 
 
 def _audience(db: OrmSession, row: AuditLog, everyone: set[str]) -> set[str]:
@@ -133,9 +135,12 @@ def notify_edit_changes(db: OrmSession, act: Activity, since: datetime) -> int:
         u = db.get(User, uid_)
         if u is None:
             continue
-        shown, rest = mine[:_MAX_LINES], len(mine) - _MAX_LINES
+        # 留**最新**的几条：志愿者要知道的是「现在是什么安排」，
+        # 留下最早几条的话，最后改成什么样反而看不见了
+        shown = mine[-_MAX_LINES:]
+        rest = len(mine) - len(shown)
         if rest > 0:
-            shown.append(f"……另有 {rest} 项改动，详见活动页的变更记录")
+            shown.insert(0, f"……另有更早的 {rest} 项改动，详见活动页的变更记录")
         msgcenter.send_user(db, u, "activity_changed",
                             data={"activity_id": act.id},
                             activity=act.title, change_summary="\n".join(shown))

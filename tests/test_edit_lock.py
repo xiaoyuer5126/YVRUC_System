@@ -296,8 +296,9 @@ def test_不在编辑态改活动信息照样即时通知(client, admin, db, enr
     assert len(got) == 1 and "明德楼" in got[0].content
 
 
-def test_改动太多时通知只写前几项(client, admin, db, enrolled_activity):
-    """编辑期间改几十处，一条通知念不完：只写前 8 项，余下指到变更记录。"""
+def test_改动太多时通知只写最新几项(client, admin, db, enrolled_activity):
+    """编辑期间改几十处，一条通知念不完：只写最后 8 项，更早的指到变更记录。
+    留最早那几项的话，最后改成什么样反而看不见。"""
     from backend.notify import _MAX_LINES
     act, shift, u = enrolled_activity
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
@@ -315,9 +316,23 @@ def test_改动太多时通知只写前几项(client, admin, db, enrolled_activi
     lines = got[0].content.splitlines()
     body = [x for x in lines if x.startswith("场次「")]
     assert len(body) == _MAX_LINES, got[0].content
-    assert f"另有 {n - _MAX_LINES} 项改动" in got[0].content
+    assert f"另有更早的 {n - _MAX_LINES} 项改动" in got[0].content
+    assert f"第 {n - 1} 次调整" in got[0].content, got[0].content
+    assert "第 0 次调整" not in got[0].content, got[0].content
     # 「结束编辑并发布」那条留痕也不该把全部改动拼进去
     assert f"等共 {n} 项" in r.json()["summary"]
+
+
+def test_联系人改动按人话写(client, admin, db, enrolled_activity):
+    """联系人存的是 [{'name': …}] 这种结构化数据，照 str() 发出去志愿者看不懂。"""
+    act, _shift, u = enrolled_activity
+    r = client.patch(f"/api/staff/activities/{act.id}", headers=admin,
+                     json={"contacts": [{"name": "王老师", "phone": "13900000000"}]})
+    assert r.status_code == 200, r.text
+    got = _changed(db, u.id, act)
+    assert len(got) == 1, got
+    assert "王老师（13900000000）" in got[0].content, got[0].content
+    assert "'name'" not in got[0].content and "{" not in got[0].content
 
 
 def test_岗位字段超长被拦下(client, admin, db, enrolled_activity):

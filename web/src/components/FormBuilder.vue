@@ -153,7 +153,12 @@ async function load() {
   try {
     const d = await api.get(`/api/staff/activities/${props.activityId}/form`)
     questions.value = d.questions.map(toRow)
-    positionGroups.value = (d.shifts || []).filter(g => g.positions.length)
+    // 占位岗位（「待分配」）不是真岗位，随时会被删掉（开放选岗、切回「报名即选
+    // 岗位」），题目挂上去就悬空了，所以不列进下拉；一场真实岗位都没建的场次也
+    // 不占一组
+    positionGroups.value = (d.shifts || [])
+      .map(g => ({ ...g, positions: g.positions.filter(p => !p.is_placeholder) }))
+      .filter(g => g.positions.length)
     emit('count', questions.value.length)
   } finally { loading.value = false }
 }

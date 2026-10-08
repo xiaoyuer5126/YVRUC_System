@@ -177,13 +177,14 @@
           </el-form-item>
           <el-form-item v-if="bd.post !== 'council'" label="所属部门" required>
             <el-select v-model="bd.deptId" placeholder="选择部门" style="width:100%"
-                       :disabled="headOnly">
+                       :disabled="headOnly" @change="bd.preview = null">
               <el-option v-for="d in depts" :key="d.id" :value="d.id" :label="d.name" />
             </el-select>
           </el-form-item>
           <el-form-item v-if="bd.post === 'member'" label="归属骨干" required>
             <el-select v-model="bd.supervisorId" placeholder="选择本部门的骨干"
-                       style="width:100%" :disabled="!bd.deptId">
+                       style="width:100%" :disabled="!bd.deptId"
+                       @change="bd.preview = null">
               <el-option v-for="c in bdCores" :key="c.id" :value="c.id"
                          :label="`${c.name}（${c.student_id}）`" />
             </el-select>

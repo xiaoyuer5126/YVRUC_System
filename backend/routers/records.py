@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config
+from .. import config, hours as hours_flow
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import require_manager
@@ -200,8 +200,10 @@ def import_rows(db: OrmSession, act: Activity, user: User,
     """逐行导入。能导的照常导，其余逐条说明原因；找不到的学号单列。不提交事务。"""
     if len(rows) > MAX_ROSTER_ROWS:
         raise HTTPException(400, f"一次最多导入 {MAX_ROSTER_ROWS} 行，请分批导入")
-    existing = {r.user_id: r for r in db.query(HoursRecord)
-                .filter(HoursRecord.activity_id == act.id).all()}
+    # 覆盖的是整列 parts：先锁住这场活动的记录行再读改写（见 lock_records，
+    # 按 id 顺序取锁、取库里的最新值）。调用方已持有活动行锁（_record_act
+    # for_update），顺序是活动 → 时长记录，不回头拿活动锁
+    existing = {r.user_id: r for r in hours_flow.lock_records(db, act.id)}
     rows = [(n, c) for n, c in rows if not _is_header(c)]
     sids = {(c[0] if c else "").strip() for _n, c in rows} - {""}
     users = {u.student_id: u for u in db.query(User)
@@ -412,8 +414,12 @@ class RecordEditBody(BaseModel):
     note: str | None = None
 
 
-def _record_of(db: OrmSession, act: Activity, record_id: str) -> HoursRecord:
-    rec = db.get(HoursRecord, record_id)
+def _record_of(db: OrmSession, act: Activity, record_id: str, *,
+               for_update: bool = False) -> HoursRecord:
+    """名单里的这一条。for_update：要重写它的 parts 时先锁住这一行。"""
+    rec = ((db.query(HoursRecord).filter(HoursRecord.id == record_id)
+            .populate_existing().with_for_update().one_or_none())
+           if for_update else db.get(HoursRecord, record_id))
     if rec is None or rec.activity_id != act.id:
         raise HTTPException(404, "名单里没有这条记录")
     return rec
@@ -426,7 +432,9 @@ def edit_record(activity_id: str, record_id: str, body: RecordEditBody,
     """改一个人的时长或备注。数值变了，本人之前的确认作废（同手动加减）。"""
     act = _record_act(db, user, activity_id, for_update=True)
     _ensure_importable(db, act)
-    rec = _record_of(db, act, record_id)
+    # 这一段明细是整列重写：活动行锁之后接着锁这一条记录，顺序是
+    # 活动 → 时长记录（同 import_rows），不回头拿活动锁
+    rec = _record_of(db, act, record_id, for_update=True)
     try:
         hours = parse_hours(body.hours)
     except ValueError as e:

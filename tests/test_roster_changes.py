@@ -107,6 +107,26 @@ def test_日报不到点不发(client, db, open_group, take_student, monkeypatch
     assert scheduled.send_roster_digests(db) == 0
 
 
+def test_放弃候补转正不算退出(client, db, open_group, take_student, monkeypatch):
+    """待确认的人放弃转正：他从没进过名单，不进「退出」那一栏，单列一行。"""
+    act, g = open_group(1, day_offset=0, start_in_hours=40)
+    first, queued = take_student(), take_student()
+    enr_id = _enroll(client, act, g, first).json()["enrollment_id"]
+    wl_id = _enroll(client, act, g, queued).json()["enrollment_id"]
+    # 正式那位退选 → 候补顶上待确认 → 他放弃转正
+    client.delete(f"/api/activities/enrollments/{enr_id}", headers=login(client, first))
+    r = client.delete(f"/api/activities/enrollments/{wl_id}", headers=login(client, queued))
+    assert r.json()["effect"] == "abandoned", r.text
+    monkeypatch.setattr(config, "ROSTER_DIGEST_HOUR", 0)
+
+    scheduled.send_roster_digests(db)
+    [body] = _digest_bodies(db, act, g)
+    # 正式那位退选算「退出」；放弃转正的那位从没进过名单，只进自己那一行
+    assert "新增 1 人，退出 1 人" in body, body
+    assert "放弃候补转正：1 人。" in body, body
+    assert "当前 0/1 人，缺 1 人。" in body, body
+
+
 def _digest_bodies(db, act, g) -> list[str]:
     return [n.content for n in db.query(Notification)
             .filter(Notification.title == f"[人员变动] {act.title} · {g.name}")

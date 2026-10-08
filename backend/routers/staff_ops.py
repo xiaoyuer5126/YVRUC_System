@@ -1267,6 +1267,10 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
     ensure_hours_editable(db, act)
     if not body.items:
         raise HTTPException(400, "空列表")
+    # 这一批要往 parts 里加段（整列覆盖）：先把这场活动的记录行按 id 顺序都
+    # 锁住，再读改写。锁在读之前，中间插进来的「确认全部」「本人选报酬方式」
+    # 就不会被这次覆盖掉
+    hours_flow.lock_records(db, act.id)
     added = []
     for it in body.items:
         u = db.query(User).filter(
@@ -1341,7 +1345,8 @@ def hours_manual_delete(activity_id: str, record_id: str, part_id: str,
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    rec = db.get(HoursRecord, record_id)
+    # 删一段要重写 parts（整列覆盖）与合计：锁住这一行再读改写
+    rec = db.get(HoursRecord, record_id, with_for_update=True)
     if rec is None or rec.activity_id != act.id:
         raise HTTPException(404, "时长记录不存在")
     ensure_hours_editable(db, act)
@@ -1396,6 +1401,11 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
         raise HTTPException(409, "补记录活动的时长以导入的名单为准，无需确认；"
                                  "如需修改请到「名单导入」里改")
     ensure_hours_editable(db, act)
+
+    # 重算要读现有的手动段与本人选的报酬方式，写回又是整列覆盖 parts：先按 id
+    # 顺序把这场活动的记录行都锁住，让「读 → 重算 → 写回」整段排他。锁在读之前，
+    # 不然这中间插进来的手动加减、本人确认会被这次重算抹掉
+    hours_flow.lock_records(db, act.id)
 
     kept: list[str] = []
     items = compute_hours(db, act)
@@ -1645,6 +1655,9 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
     who = db.get(User, a.user_id)
 
     if body.accept:
+        # 采纳要改这一笔的合计与明细（补记录的一笔改的就是 parts，整列覆盖）：
+        # 先把这一行锁住再读改写，免得和本人确认、名单导入互相盖掉刚写的段
+        db.refresh(rec, with_for_update=True)
         hours = a.claimed_hours if body.hours is None else round(body.hours, 2)
         if hours <= 0:
             raise HTTPException(400, "时长必须大于 0")

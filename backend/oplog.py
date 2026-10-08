@@ -25,7 +25,10 @@ import re
 import shutil
 import threading
 import time
+from collections import deque
 from datetime import date, datetime, timedelta
+from heapq import merge
+from itertools import groupby
 from pathlib import Path
 
 from . import config
@@ -354,6 +357,10 @@ def purge(today: date) -> int:
 # ======================= 读取 =======================
 
 def _files_between(start: date, end: date) -> list[Path]:
+    """窗口内的日志文件，按日期从早到晚排好。
+
+    文件名以日期开头，按它排就是按天；同一天的几个文件由 iter_rows 按时间归并。
+    """
     if not config.OPLOG_DIR.is_dir():
         return []
     lo, hi = start.isoformat(), end.isoformat()
@@ -362,13 +369,27 @@ def _files_between(start: date, end: date) -> list[Path]:
         m = FILE_RE.match(path.name)
         if m and lo <= m.group(1) <= hi:
             out.append(path)
+    out.sort()
     return out
 
 
-def query(start: datetime, end: datetime, *, person: str = "",
-          activity_ids: set[str] | None = None, kind: str = "") -> list[dict]:
-    """读出 [start, end] 之间符合条件的记录，新的在前。
+def _records(path: Path):
+    """一个文件里的记录，按写入顺序。"""
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            try:
+                yield json.loads(line)
+            except ValueError:
+                continue      # 进程被杀时可能留下半行
 
+
+def iter_rows(start: datetime, end: datetime, *, person: str = "",
+              activity_ids: set[str] | None = None, kind: str = ""):
+    """逐个吐出 [start, end] 之间符合条件的记录，从早到晚。
+
+    边读边吐：调用方要一条、这里才往下读一行，整窗的记录不会同时待在内存里。
+    一天里有几个进程就有几个文件，同一天的几个文件按时间归并着读——直接接起来
+    读到的不是时间顺序；归并时手上只压着每个文件当前的那一条。
     person 匹配学号或姓名（包含即可）；activity_ids 为 None 表示不按活动筛。
     """
     # 刚发生的请求可能还在队列里，先写掉，查得到才像实时
@@ -376,24 +397,41 @@ def query(start: datetime, end: datetime, *, person: str = "",
     lo = start.isoformat(timespec="milliseconds")
     hi = end.isoformat(timespec="milliseconds")
     person = person.strip()
-    rows = []
-    for path in _files_between(start.date(), end.date()):
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                try:
-                    e = json.loads(line)
-                except ValueError:
-                    continue      # 进程被杀时可能留下半行
-                if not (lo <= e.get("t", "") <= hi):
-                    continue
-                if kind and e.get("kind") != kind:
-                    continue
-                if person and person not in e.get("sid", "") \
-                        and person not in e.get("name", ""):
-                    continue
-                if activity_ids is not None \
-                        and e.get("activity_id") not in activity_ids:
-                    continue
-                rows.append(e)
-    rows.sort(key=lambda e: e["t"], reverse=True)
-    return rows
+    by_day = groupby(_files_between(start.date(), end.date()),
+                     key=lambda p: FILE_RE.match(p.name).group(1))
+    for _day, paths in by_day:
+        for e in merge(*[_records(p) for p in paths],
+                       key=lambda e: e.get("t", "")):
+            if not (lo <= e.get("t", "") <= hi):
+                continue
+            if kind and e.get("kind") != kind:
+                continue
+            if person and person not in e.get("sid", "") \
+                    and person not in e.get("name", ""):
+                continue
+            if activity_ids is not None \
+                    and e.get("activity_id") not in activity_ids:
+                continue
+            yield e
+
+
+def page_rows(start: datetime, end: datetime, *, page: int, size: int,
+              person: str = "", activity_ids: set[str] | None = None,
+              kind: str = "") -> tuple[list[dict], int]:
+    """一页记录（新的在前）和符合条件的总条数，一趟扫描同时得出。
+
+    记录是追加写的，从早到晚读到最后，定长 deque 兜住的最后 page*size 条就是
+    最新的那一批；总数顺手数出来，不用为了分页再走一遍。驻留的记录跟窗口多长
+    无关，最多一页。同一毫秒的几条按读到的先后（也就是写入的先后）排，翻页时
+    边界上才不会重复或漏掉记录。
+    """
+    latest: deque[tuple[int, dict]] = deque(maxlen=page * size)
+    total = 0
+    for e in iter_rows(start, end, person=person, activity_ids=activity_ids,
+                       kind=kind):
+        total += 1
+        latest.append((total, e))
+    rows = [e for _, e in sorted(latest, key=lambda x: (x[1]["t"], x[0]),
+                                 reverse=True)]
+    begin = (page - 1) * size
+    return rows[begin:begin + size], total

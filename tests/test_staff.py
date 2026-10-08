@@ -452,6 +452,38 @@ def test_场次都开过了就不能恢复报名(client, admin, db):
     assert r.status_code == 409 and "所有场次都已开始" in r.json()["detail"]
 
 
+def test_岗位名额不能降到已报名人数以下(client, admin, db, open_group,
+                                        take_student):
+    """名额是留给还没报上的人的位子，不能反过来把已经报上名的人挤掉。
+
+    已报名 3 人：名额降到 3 以下拦下；等于 3、或往上加都要能改——报名人数
+    是「下限」，不是「上限」，加名额、原样保存都不该被这条挡着。
+    """
+    act, g = open_group(3)
+    pos_id = g.test_position_id
+    for _ in range(3):
+        h = login(client, take_student())
+        r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                        headers=h, json={"position_id": pos_id})
+        assert r.status_code == 200, r.text
+
+    with editing(client, admin, act.id):
+        r = client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
+                         json={"quota": 2})
+        assert r.status_code == 400, r.text
+        assert "已报名的 3 人" in r.json()["detail"]
+        # 被拦下的那次没有落库
+        db.expire_all()
+        assert db.get(Position, pos_id).quota == 3
+        for quota in (3, 4):
+            r = client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
+                             json={"quota": quota})
+            assert r.status_code == 200, r.text
+
+    db.expire_all()
+    assert db.get(Position, pos_id).quota == 4
+
+
 def test_删除草稿要连带清干净引用(client, admin, db):
     """草稿身上至少永远挂着一条创建者的共管记录，不清就撞外键报 500。"""
     from backend.models import ActivityManager, ApprovalEvent
