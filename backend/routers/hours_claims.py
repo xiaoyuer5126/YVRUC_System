@@ -15,6 +15,7 @@ claim_photo，activity_id 留空），跟反馈截图一样不属于任何活动
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from urllib.parse import quote
 
@@ -101,6 +102,9 @@ def _parse_hours(raw) -> float:
         hours = round(float(raw), 2)
     except (TypeError, ValueError):
         raise HTTPException(400, "时长请填数字") from None
+    # nan / inf 要先挡住：它们和 0、上限的比较恒为假，会一路混到下面的 round() 上炸成 500
+    if not math.isfinite(hours):
+        raise HTTPException(400, "时长请填数字")
     if hours <= 0 or hours > config.CLAIM_HOURS_MAX:
         raise HTTPException(400, f"时长要在 0～{config.CLAIM_HOURS_MAX} 小时之间")
     if abs(hours * 2 - round(hours * 2)) > 1e-6:
@@ -271,10 +275,11 @@ def claim_file(attachment_id: str, db: OrmSession = Depends(db_session),
     if not path.is_file():
         raise HTTPException(404, "文件已丢失，请联系对外联络部")
     ext = row.stored_name.rsplit(".", 1)[-1]
-    # 内联返回：前端直接当图片/PDF 显示，不弹下载
+    # 图片内联：前端当缩略图显示。PDF 走下载：内联返回会让浏览器把当前页面换成
+    # PDF 阅读器，材料看到一半就找不回审批页了（材料下载接口也是这个口径）
     return FileResponse(path, media_type=uploads.EXT_TYPES.get(
         ext, "application/octet-stream"), filename=row.title,
-        content_disposition_type="inline")
+        content_disposition_type="attachment" if ext == "pdf" else "inline")
 
 
 # ======================= 对外联络部：队列、审批、撤销、导出 =======================
@@ -286,8 +291,11 @@ def list_claims(status: str = "", page: int = 1, size: int = 20,
     """待审批的补登，挂在「活动审批」页上；只给审批补登的人看（同 /api/vb-confirms），
     别的能进审批页的人拿到空表。"""
     if not liaison.vb_decider(db, user):
-        return {"items": [], "total": 0, "page": page, "size": size, "pending": 0,
-                "can_decide": False}
+        return {"items": [], "total": 0, "page": max(1, page),
+                "size": max(1, min(size, 100)), "pending": 0, "can_decide": False}
+    # 分页参数照别的列表接口夹一下：page=0 会拼出 OFFSET -20，Postgres 直接报错 500
+    page = max(1, page)
+    size = max(1, min(size, 100))
     q = db.query(HoursClaim)
     if status:
         if status not in HoursClaim.STATUS_LABELS:
@@ -336,6 +344,10 @@ def decide_claim(claim_id: str, body: DecideBody,
     claim.handled_at = now()
     if body.approve:
         hours = claim.hours if body.hours is None else _parse_hours(body.hours)
+        # 只能往下核：往上加等于给「给自己人加时长」留一条路，要加就走驳回让本人改后重提
+        if hours > claim.hours:
+            raise HTTPException(400, f"核定不能高于本人申报的 {claim.hours:g} 小时，"
+                                     f"确实更多请驳回让他改后重新提交")
         claim.status, claim.approved_hours = "approved", hours
         summary = f"通过校外时长补登「{claim.title}」，核定 {hours:g} 小时"
         title, text = (f"时长补登已通过｜{claim.title}",

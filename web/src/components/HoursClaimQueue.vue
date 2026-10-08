@@ -15,7 +15,7 @@
     </template>
 
     <div class="toolbar">
-      <el-radio-group v-model="status" @change="load">
+      <el-radio-group v-model="status" @change="reload">
         <el-radio-button value="pending">待审批</el-radio-button>
         <el-radio-button value="">全部</el-radio-button>
         <el-radio-button value="approved">已通过</el-radio-button>
@@ -64,7 +64,7 @@
                    background :current-page="page" :page-size="size"
                    :total="total" @current-change="goPage" />
 
-    <el-drawer v-model="drawer" title="校外时长补登" size="520px">
+    <el-drawer v-model="drawer" title="校外时长补登" :size="narrow ? '100%' : '520px'">
       <template v-if="cur">
         <el-descriptions :column="1" border>
           <el-descriptions-item label="提交人">
@@ -107,9 +107,9 @@
           <div class="section-title">审批</div>
           <el-form label-width="72px">
             <el-form-item label="核定">
-              <el-input-number v-model="decide.hours" :min="0.5" :max="24" :step="0.5" />
+              <el-input-number v-model="decide.hours" :min="0.5" :max="cur.hours" :step="0.5" />
               <span class="dim" style="margin-left:12px">
-                小时，与申报不一致时以核定为准
+                小时，只能核减（不高于申报的 {{ cur.hours }}），要加请驳回让他改后重提
               </span>
             </el-form-item>
             <el-form-item label="意见">
@@ -138,10 +138,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
+import { useNarrow } from '../composables/useNarrow'
 import FeedbackShots from './FeedbackShots.vue'
 
 const STATUS_TYPES = { pending: 'warning', approved: 'success',
                        rejected: 'danger', revoked: 'info' }
+const narrow = useNarrow()
 const status = ref('pending')
 const items = ref([])
 const total = ref(0)
@@ -176,6 +178,12 @@ onMounted(load)
 
 function goPage(p) {
   page.value = p
+  load()
+}
+
+// 换筛选条件回第 1 页：停在第 3 页多半是空的，看着像「没有这一类补登」
+function reload() {
+  page.value = 1
   load()
 }
 

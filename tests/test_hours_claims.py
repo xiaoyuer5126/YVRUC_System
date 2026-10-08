@@ -61,8 +61,9 @@ def test_字段校验(client, take_student):
     # 结束早于开始
     assert _submit(client, me, start="2026-03-05 12:00",
                    end="2026-03-05 09:00").status_code == 400
-    # 时长：0、超过上限、不是 0.5 的倍数
-    for bad in ("0", "-1", str(config.CLAIM_HOURS_MAX + 1), "1.2"):
+    # 时长：0、负数、超过上限、不是 0.5 的倍数、NaN/inf（与 0 和上限的比较对它们恒为假，
+    # 不先挡住就会一路混到 round() 上炸成 500）
+    for bad in ("0", "-1", str(config.CLAIM_HOURS_MAX + 1), "1.2", "nan", "inf"):
         assert _submit(client, me, hours=bad).status_code == 400, bad
     # 名称与服务描述
     assert _submit(client, me, title="短").status_code == 400
@@ -102,6 +103,16 @@ def test_同名同天不能重复提交(client, take_student):
     # 隔一天、或换个名字，可以再提
     assert _submit(client, me, start="2026-03-06 09:00",
                    end="2026-03-06 12:00").status_code == 200
+
+
+def test_分页参数越界不会打成_500(client, liaison, take_student):
+    """page=0 会拼出 OFFSET -20，Postgres 直接报错 500；照别的列表接口夹在 1 起。"""
+    head = login(client, LIAISON_HEAD)
+    for q in ("page=0", "page=-3", "size=0", "size=-1", "size=9999"):
+        r = client.get(f"/api/staff/hours-claims?{q}", headers=head)
+        assert r.status_code == 200, f"{q} → {r.status_code}"
+    me = login(client, take_student())
+    assert client.get("/api/me/hours-claims", headers=me).status_code == 200
 
 
 def test_每小时条数上限(client, take_student):
@@ -144,6 +155,22 @@ def test_通过可核定不一样的时长(client, db, liaison, take_student):
     assert client.post(f"/api/staff/hours-claims/{cid2}/decide", headers=head,
                        json={"approve": True,
                              "hours": config.CLAIM_HOURS_MAX + 1}).status_code == 400
+    # 也不能高于本人申报的（文档写的是「核减」）：往上加等于给「给自己人加时长」留一条路
+    r = client.post(f"/api/staff/hours-claims/{cid2}/decide", headers=head,
+                    json={"approve": True, "hours": 4})
+    assert r.status_code == 400 and "申报" in r.json()["detail"]
+    assert client.post(f"/api/staff/hours-claims/{cid2}/decide", headers=head,
+                       json={"approve": True, "hours": 3}).status_code == 200
+
+
+def test_材料图片内联_PDF走下载(client, take_student):
+    """PDF 不能内联：浏览器会把当前页面换成 PDF 阅读器，审批到一半找不回审批页。"""
+    me = login(client, take_student())
+    claim = _submit(client, me).json()
+    pdf = client.get(claim["files"]["proofs"][0]["url"], headers=me)
+    png = client.get(claim["files"]["photos"][0]["url"], headers=me)
+    assert "attachment" in pdf.headers["content-disposition"]
+    assert "inline" in png.headers["content-disposition"]
 
 
 def test_驳回要写理由并通知本人(client, db, liaison, take_student):
@@ -245,6 +272,19 @@ def test_审批人自己的补登要由别人批(client, db, liaison, extra_core
     new, done, _ = scheduled._duty_digest_lines(db, liaison, day)
     assert any("值班人自己的校外服务" in x for x in new)
     assert any("值班人自己的校外服务" in x and "周砚" in x for x in done)
+
+
+def test_部长自己提交的补登通知会长团(client, db, liaison):
+    """往上找一层的最后一环：值班人和部长都是提交人时轮到会长团，
+    不然这一条只通知了一个拍不了板的人（见 liaison.claim_contacts）。"""
+    from backend import liaison as liaison_mod
+    from backend.liaison import claim_contacts
+
+    head = student_row(db, LIAISON_HEAD)
+    assert [u.id for u in liaison_mod.vb_contacts(db)] == [head.id]   # 没人值班发部长
+    contacts = claim_contacts(db, head)
+    assert contacts and all(u.id != head.id for u in contacts)
+    assert all(u.is_council(real=True) for u in contacts)
 
 
 def test_导出把通过的补登写成一行(client, db, liaison, take_student):
