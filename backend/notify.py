@@ -232,8 +232,19 @@ def notify_managers(db: OrmSession, activity_id: str, title: str,
     return n
 
 
-def notify_locked_dropout(db: OrmSession, enr, user: User) -> None:
-    """名单锁定后的减员立刻告诉管理者：候补不会自动顶上，得他来决定补不补。
+# 锁定后「位子空出来、递补又停了」的三种来路：退选、放弃转正、转正确认超时。
+# 同一批收件人、同一句「停下来手动补」，只是开头说清这个位子是怎么空的
+_LOCKED_DROPOUT = {
+    "quit": "退出了「{where}」",
+    "abandon": "放弃了「{where}」的候补转正",
+    "expire": "在「{where}」的候补转正确认超时",
+}
+
+
+def notify_locked_dropout(db: OrmSession, enr, user: User, *,
+                          what: str = "quit") -> None:
+    """锁定后有人离开（退选、放弃转正、转正超时）立刻告诉管理者：
+    候补不会自动顶上，得他来决定补不补。
 
     只在锁定后推：报名期每天几十条变动，逐条推等于让老师关掉通知。
     正文带当前人数，老师一眼知道缺不缺人。
@@ -251,8 +262,26 @@ def notify_locked_dropout(db: OrmSession, enr, user: User) -> None:
     notify_managers(
         db, act.id,
         f"[锁定后减员] {act.title}",
-        f"{user.name}（{user.student_id}）退出了「{where}」，因名单已锁定，"
+        f"{user.name}（{user.student_id}）"
+        f"{_LOCKED_DROPOUT[what].format(where=where)}，因名单已锁定，"
         f"停止候补自动转正，如需补人，请在志愿者管理页面手动转正。\n"
         f"该场次当前 {enrolled}/{capacity} 人"
         + (f"，缺 {gap} 人。" if gap else "，人数已满。"),
         duty="roster", tab="roster")
+
+
+def notify_locked_dropout_if_locked(db: OrmSession, enr, user: User, *,
+                                    what: str = "quit") -> bool:
+    """锁定了才发那条减员通知（整场锁，或他所在岗位单独锁），返回发没发。
+
+    没锁定时空位会自动补给候补，不必打扰管理者。
+    """
+    from .enroll_logic import position_locked
+    from .models import Position, Shift
+
+    shift = db.get(Shift, enr.shift_id)
+    position = db.get(Position, enr.position_id) if enr.position_id else None
+    if not position_locked(shift, position):
+        return False
+    notify_locked_dropout(db, enr, user, what=what)
+    return True

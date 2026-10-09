@@ -637,6 +637,8 @@ def cancel_enroll(enrollment_id: str,
             enr.confirm_deadline = None
             logic.record_change(db, user, enr, "abandon")
             db.flush()                   # 递补按落库后的人数算，但先不提交（见上）
+            # 锁定后这个位子不会自动补上：和退选同一个口径告诉管理者
+            notify.notify_locked_dropout_if_locked(db, enr, user, what="abandon")
             logic.promote_all(db, g)
             db.commit()
             invalidate_gates(g.id, _seat_gate_id(g, enr.position_id))

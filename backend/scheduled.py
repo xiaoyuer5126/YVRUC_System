@@ -711,7 +711,8 @@ def send_roster_digests(db: OrmSession) -> int:
                         AuditLog.target_type == "enrollment",
                         Enrollment.shift_id == g.id,
                         AuditLog.action.in_(_DIGEST_JOIN + _DIGEST_LEAVE
-                                            + _DIGEST_ABANDON + _DIGEST_EXCUSE),
+                                            + _DIGEST_ABANDON + _DIGEST_EXPIRE
+                                            + _DIGEST_EXCUSE),
                         AuditLog.created_at >= since)
                 .order_by(AuditLog.created_at).all())
         if not rows:
@@ -724,6 +725,9 @@ def send_roster_digests(db: OrmSession) -> int:
         abandoned = sum(1 for r in rows if r.action in _DIGEST_ABANDON)
         if abandoned:
             lines.append(f"放弃候补转正：{abandoned} 人。")
+        expired = sum(1 for r in rows if r.action in _DIGEST_EXPIRE)
+        if expired:
+            lines.append(f"候补转正超时未确认：{expired} 人。")
         excuses = [r.summary for r in rows if r.action in _DIGEST_EXCUSE]
         if excuses:
             lines.append("请假/销假：")
@@ -753,10 +757,11 @@ def send_roster_digests(db: OrmSession) -> int:
 
 
 # 进日报的动作。候补的进出不改变到场人数，只进管理页的人员变动流水；
-# 「放弃候补转正」不是退出——那个人从来没进过名单，单列一行
+# 「放弃候补转正」和「转正超时」不是退出——那两个人从来没进过名单，各占一行
 _DIGEST_JOIN = ("enroll", "promote")
 _DIGEST_LEAVE = ("cancel",)
 _DIGEST_ABANDON = ("abandon",)
+_DIGEST_EXPIRE = ("expire",)
 _DIGEST_EXCUSE = ("excuse", "unexcuse")
 
 

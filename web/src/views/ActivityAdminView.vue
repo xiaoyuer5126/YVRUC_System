@@ -641,10 +641,10 @@
               <el-timeline>
                 <el-timeline-item v-for="(c, i) in roster.roster_changes" :key="i"
                                   :timestamp="fmtDT(c.created_at)" placement="top"
-                                  :type="['cancel','abandon'].includes(c.action)
+                                  :type="['cancel','abandon','expire'].includes(c.action)
                                          ? 'danger' : 'primary'">
                   <el-tag size="small" effect="plain"
-                          :type="['cancel','abandon'].includes(c.action)
+                          :type="['cancel','abandon','expire'].includes(c.action)
                                  ? 'danger' : 'success'">
                     {{ c.action_label }}
                   </el-tag>

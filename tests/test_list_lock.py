@@ -179,6 +179,56 @@ def test_没锁定时退出不记录_候补照常顶上(client, admin, db, open_
     assert inbox(db, "2025001", f"[锁定后减员] {act.title}") == []
 
 
+def test_锁定后放弃候补转正也通知管理者(client, admin, db, open_group, take_student):
+    """待确认的人放弃转正，位子同样空出来、递补同样停着：和退选一个口径。"""
+    act, g = open_group(1, day_offset=0, start_in_hours=40)
+    taker, queued = take_student(), take_student()
+    enr_id = _enroll(client, act, g, taker).json()["enrollment_id"]
+    wl_id = _enroll(client, act, g, queued).json()["enrollment_id"]
+    # 还没锁定：正式那位退选，候补照常顶上待确认，这一步不该有减员通知
+    assert _cancel(client, taker, enr_id).json()["effect"] == "released"
+    db.expire_all()
+    assert _status(db, wl_id) == "pending_confirm"
+    assert inbox(db, "2025001", f"[锁定后减员] {act.title}") == []
+
+    _lock(client, admin, "shifts", g.id)
+    r = _cancel(client, queued, wl_id)
+    assert r.status_code == 200 and r.json()["effect"] == "abandoned", r.text
+    msgs = inbox(db, "2025001", f"[锁定后减员] {act.title}")
+    assert len(msgs) == 1, msgs
+    assert "放弃了" in msgs[0].content and "停止候补自动转正" in msgs[0].content
+
+
+def test_锁定后转正超时也通知管理者_日报也计(client, admin, db, open_group, take_student,
+                                        monkeypatch):
+    """超时未确认同样空出一个位子；这条顺带补上留痕，日报里也数得出来。"""
+    from backend import config, enroll_logic, scheduled
+    from backend.models import Notification
+
+    act, g = open_group(1, day_offset=0, start_in_hours=40)
+    taker, queued = take_student(), take_student()
+    enr_id = _enroll(client, act, g, taker).json()["enrollment_id"]
+    wl_id = _enroll(client, act, g, queued).json()["enrollment_id"]
+    assert _cancel(client, taker, enr_id).json()["effect"] == "released"
+    _lock(client, admin, "shifts", g.id)
+
+    # 把确认窗拨到过去，再跑一次超时扫描
+    db.get(Enrollment, wl_id).confirm_deadline = now() - timedelta(minutes=1)
+    db.commit()
+    assert enroll_logic.expire_stale_promotions(db) == 1
+    db.expire_all()
+    assert db.get(Enrollment, wl_id).cancel_type == "expired"
+    msgs = inbox(db, "2025001", f"[锁定后减员] {act.title}")
+    assert len(msgs) == 1 and "确认超时" in msgs[0].content, msgs
+
+    # 日报也数这一条
+    monkeypatch.setattr(config, "ROSTER_DIGEST_HOUR", 0)
+    scheduled.send_roster_digests(db)
+    notes = (db.query(Notification)
+             .filter(Notification.title == f"[人员变动] {act.title} · {g.name}").all())
+    assert notes and "候补转正超时未确认：1 人。" in notes[-1].content, notes
+
+
 def test_报名截止后锁定前候补照常递补(client, admin, db, open_group, take_student):
     from backend.models import Activity
     act, g = open_group(1)

@@ -657,6 +657,7 @@ def record_change(db: OrmSession, user: User, enr: Enrollment, action: str,
 ROSTER_ACTIONS = {
     "enroll": "报名", "waitlist": "加入候补", "cancel": "退选",
     "quit_queue": "退出候补", "abandon": "放弃候补转正",
+    "expire": "候补转正超时未确认",
     "promote": "候补转正",
     "excuse": "请假", "unexcuse": "销假",
 }
@@ -827,6 +828,7 @@ def expire_stale_promotions(db: OrmSession) -> int:
     由 main.py 的后台协程每分钟调用；学生打开「我的报名」时也会顺手触发一次，
     让页面上看到的状态和实际一致。
     """
+    from . import notify
     from .locks import shift_lock
 
     expired = (db.query(Enrollment)
@@ -845,7 +847,7 @@ def expire_stale_promotions(db: OrmSession) -> int:
     n = 0
     for sid, ids in by_shift.items():
         with shift_lock(db, sid):
-            hit = 0
+            left: list[Enrollment] = []
             for enr_id in ids:
                 fresh = db.get(Enrollment, enr_id)
                 db.refresh(fresh)
@@ -855,12 +857,20 @@ def expire_stale_promotions(db: OrmSession) -> int:
                 fresh.status = "cancelled"
                 fresh.cancel_type = "expired"
                 fresh.cancelled_at = now()
-                hit += 1
-            if hit:
+                # 超时没有操作人：留痕挂在本人名下，记的是他的报名变动
+                record_change(db, db.get(User, fresh.user_id), fresh, "expire")
+                left.append(fresh)
+            if left:
                 db.flush()        # 递补要按落库后的人数算（会话不自动 flush）
-                promote_all(db, db.get(Shift, sid))
+                shift = db.get(Shift, sid)
+                reload_shift(db, shift)     # 锁里要判「锁没锁、停没停」，先重读
+                for enr in left:
+                    # 锁定后这个位子不会自动补上：和退选同一个口径告诉管理者
+                    notify.notify_locked_dropout_if_locked(
+                        db, enr, db.get(User, enr.user_id), what="expire")
+                promote_all(db, shift)
             db.commit()
-            n += hit
+            n += len(left)
     return n
 
 
