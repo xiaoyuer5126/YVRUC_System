@@ -27,6 +27,11 @@
         <el-option value="" label="全部组织单位" />
         <el-option v-for="o in organizers" :key="o" :value="o" :label="o" />
       </el-select>
+      <!-- 时间范围：找「这段时间我有空」的活动。跨天的活动沾到任一天就出现 -->
+      <el-date-picker v-model="dateRange" type="daterange" value-format="YYYY-MM-DD"
+                      :shortcuts="DATE_SHORTCUTS" start-placeholder="开始日期"
+                      end-placeholder="结束日期" :clearable="true"
+                      :style="{ width: narrow ? '100%' : '260px' }" @change="reload" />
     </div>
 
     <div v-if="list.length" class="card-grid">
@@ -58,7 +63,8 @@
         </div>
       </div>
     </div>
-    <el-empty v-else description="暂无活动" />
+    <el-empty v-else
+              :description="f.start || f.end ? '这个时间范围内没有活动，换个范围试试' : '暂无活动'" />
 
     <el-pagination v-if="total > f.size" class="pager" layout="prev, pager, next"
                    background :current-page="f.page" :page-size="f.size"
@@ -67,13 +73,15 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import { MODE_COLORS } from '../store'
+import { useNarrow } from '../composables/useNarrow'
 
 const route = useRoute()
 const router = useRouter()
+const narrow = useNarrow()
 const STATUS_OPTIONS = [
   { value: 'published', label: '报名中' },
   { value: 'upcoming', label: '未开始报名' },
@@ -88,9 +96,40 @@ const f = reactive({
   status: route.query.status ?? 'published',
   mode: route.query.mode || '',
   organizer: route.query.organizer || '',
+  start: route.query.start || '',
+  end: route.query.end || '',
   page: Number(route.query.page) || 1,
   size: 12,
 })
+
+/** 时间范围选择器 ↔ f.start / f.end（日期串，空 = 不限） */
+const dateRange = computed({
+  get: () => (f.start && f.end ? [f.start, f.end] : null),
+  set: v => {
+    f.start = v?.[0] || ''
+    f.end = v?.[1] || ''
+  },
+})
+
+function _plusDays(n) {
+  const d = new Date()
+  d.setDate(d.getDate() + n)
+  return d
+}
+// 本周末按「最近的周六到周日」算：今天就是周六时，周末是今明两天
+function _thisWeekend() {
+  const d = new Date()
+  const sat = _plusDays((6 - d.getDay() + 7) % 7)
+  const sun = new Date(sat)
+  sun.setDate(sat.getDate() + 1)
+  return [sat, sun]
+}
+const DATE_SHORTCUTS = [
+  { text: '今天', value: () => [new Date(), new Date()] },
+  { text: '本周末', value: _thisWeekend },
+  { text: '未来 7 天', value: () => [new Date(), _plusDays(6)] },
+  { text: '未来 30 天', value: () => [new Date(), _plusDays(29)] },
+]
 const list = ref([])
 const organizers = ref([])
 const total = ref(0)
@@ -133,7 +172,7 @@ onBeforeUnmount(() => clearTimeout(refreshTimer))
 async function load() {
   const query = new URLSearchParams({
     q: f.q, status: f.status, mode: f.mode, organizer: f.organizer,
-    page: f.page, size: f.size,
+    start: f.start, end: f.end, page: f.page, size: f.size,
   })
   const d = await api.get(`/api/activities?${query}`)
   const at = Date.now()
@@ -147,6 +186,7 @@ async function load() {
   router.replace({ query: {
     ...(f.q ? { q: f.q } : {}), ...(f.mode ? { mode: f.mode } : {}),
     ...(f.organizer ? { organizer: f.organizer } : {}),
+    ...(f.start ? { start: f.start } : {}), ...(f.end ? { end: f.end } : {}),
     ...(f.status === 'published' ? {} : { status: f.status }),
     ...(f.page > 1 ? { page: f.page } : {}),
   } })

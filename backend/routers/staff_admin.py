@@ -9,8 +9,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
@@ -18,11 +20,13 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import config, scoring
 from ..audit import log as audit_log
 from ..database import db_session
-from ..deps import (require_admin, require_archive_page, require_council, require_manager)
+from ..deps import (require_admin, require_archive_page, require_council,
+                    require_council_download, require_manager)
+from ..exporter import build_activities_summary_workbook
 from ..integrations import all_configs, save_config
 from ..models import (Activity, AuditLog, CheckinRecord, Enrollment,
                       HoursRecord, Shift, User, ViolationRecord, iso,
-                      like_pattern, now, span_text, uid)
+                      like_pattern, now, parse_local_dt, span_text, uid)
 from ..perm import ensure_activity_manager, managed_activity_ids
 
 router = APIRouter(prefix="/api/staff", tags=["staff-admin"])
@@ -90,6 +94,43 @@ def overview(db: OrmSession = Depends(db_session),
         "colleges": colleges,
         "recent_logs": [l.out() for l in logs],
     }
+
+
+@router.get("/activities-summary.xlsx")
+def export_activities_summary(start: str = "", end: str = "",
+                              db: OrmSession = Depends(db_session),
+                              user: User = Depends(require_council_download)):
+    """数据总览页的「导出活动汇总」：一场活动一行，末行合计。
+
+    start / end 是 YYYY-MM-DD，能只给一个，都不给就是不限。区间按活动的
+    结束时间算，end 含当天整天（口径见 exporter.build_activities_summary_workbook）。
+    """
+    lo = hi = None
+    if start:
+        try:
+            lo = parse_local_dt(start)
+        except ValueError:
+            raise HTTPException(400, "开始时间格式不对") from None
+    if end:
+        try:
+            hi = parse_local_dt(end)
+        except ValueError:
+            raise HTTPException(400, "截止时间格式不对") from None
+    buf, count = build_activities_summary_workbook(db, lo, hi)
+    # 文件名按解析后的日期拼，不照抄查询串：不然手写地址栏里带的斜杠、
+    # 引号会原样进 Content-Disposition
+    bounds = ("_".join(f"{x:%Y-%m-%d}" for x in (lo, hi) if x) or "全部")
+    filename = f"活动汇总_{bounds}.xlsx"
+    audit_log(db, actor=user, action="export", target_type="export",
+              target_id="", target_label="活动汇总",
+              summary=f"导出活动汇总《{filename}》，{count} 个活动")
+    db.commit()
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument"
+                   ".spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f"attachment; filename*=UTF-8''{quote(filename)}"})
 
 
 # ======================= 审计日志中心 =======================

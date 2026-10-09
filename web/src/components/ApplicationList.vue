@@ -7,6 +7,12 @@
         <span class="dim">{{ pendingCount }} 人待筛选 · 共 {{ apps.length }} 人</span>
         <el-button size="small" link type="primary" @click="load">刷新</el-button>
         <el-button size="small" link type="primary" @click="exportXlsx">导出 Excel</el-button>
+        <!-- 默认停在「只看待处理」：进这个页面多半就是把这一批处理掉 -->
+        <el-radio-group v-model="pendingOnly" size="small" @change="onFilterChange">
+          <el-radio-button :value="true">只看待处理</el-radio-button>
+          <el-radio-button :value="false">全部</el-radio-button>
+        </el-radio-group>
+        <span class="dim">导出仍是全部申请</span>
         <span class="al-actions">
           <el-select v-model="targetShifts" multiple clearable collapse-tags
                      collapse-tags-tooltip size="small" style="width:260px"
@@ -34,7 +40,9 @@
       统一分配的场次先落在「待分配」，再分配岗位；不录取只发送通知，不留记录。
       场次开始时仍未处理的申请会自动落选并通知志愿者。
     </p>
-    <el-table :data="apps" size="small" row-key="id" @selection-change="onSelect">
+    <el-table ref="tableRef" :data="shown" size="small" row-key="id"
+              :empty-text="pendingOnly ? '没有待处理的申请' : '还没有人申请'"
+              @selection-change="onSelect">
       <el-table-column type="selection" width="36" :selectable="selectable" />
       <el-table-column type="expand" width="30">
         <template #default="{ row }">
@@ -43,18 +51,25 @@
       </el-table-column>
       <!-- 先来后到：序号是第几个交的申请，提交时间紧跟在姓名后面，不用拖到最右边看 -->
       <el-table-column label="序号" prop="seq" width="56" />
+      <!-- 状态紧挨着序号：列多了一屏放不下，处理没处理要能一眼看见 -->
+      <el-table-column label="状态" width="90">
+        <template #default="{ row }">
+          <el-tag size="small" :type="STATUS_TYPE[row.status]">{{ row.status_label }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="姓名" width="110">
         <template #default="{ row }">
           <ScoreAlert :user="row.user" />
           <el-link type="primary" underline="never" @click="$emit('archive', row.user)">
             {{ row.user.name }}
           </el-link>
+          <!-- 学号跟在名字下面一行，省下的这一列宽度留给状态 -->
+          <div class="dim">{{ row.user.student_id }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="提交时间" width="130">
+      <el-table-column label="提交时间" width="110">
         <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column label="学号" prop="user.student_id" width="110" />
       <el-table-column label="学院" prop="user.college" min-width="120" />
       <el-table-column label="组长意愿" width="90">
         <template #default="{ row }">
@@ -73,7 +88,7 @@
       </el-table-column>
       <!-- 录取到哪：默认他的第一意向，逐人可改成一场或几场、每场定岗位；
            上面那排下拉只是批量默认值 -->
-      <el-table-column label="录取到" width="330">
+      <el-table-column label="录取到" width="280">
         <template #default="{ row }">
           <template v-if="row.status === 'applied'">
             <el-select :model-value="pickOf(row).map(p => p.shift_id)" multiple
@@ -95,11 +110,6 @@
             </div>
           </template>
           <span v-else class="dim">—</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }">
-          <el-tag size="small" :type="STATUS_TYPE[row.status]">{{ row.status_label }}</el-tag>
         </template>
       </el-table-column>
     </el-table>
@@ -156,8 +166,17 @@ function setPosition(row, shiftId, v) {
 const loading = ref(false)
 const busy = ref(false)
 const pendingCount = computed(() => apps.value.filter(a => a.status === 'applied').length)
+const pendingOnly = ref(true)
+const shown = computed(() => (pendingOnly.value
+  ? apps.value.filter(a => a.status === 'applied') : apps.value))
+const tableRef = ref()
 const selectable = row => row.status === 'applied'
 const onSelect = rows => { selected.value = rows }
+// 切开关要清勾选：行被筛掉以后，留着勾选会把看不见的人也一起提交
+function onFilterChange() {
+  tableRef.value?.clearSelection()
+  selected.value = []
+}
 
 // 只下 Excel；有上传的文件时再问要不要一起下附件包
 function exportXlsx() {

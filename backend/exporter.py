@@ -6,6 +6,7 @@
     答案一题一列，上传的文件按「场次/岗位」分文件夹另打附件包。
   · 报名问卷结果（build_application_workbook）：报名后筛选的全部报名者。
   · 时长记录（build_hours_workbook）：给志愿北京录时长。
+  · 活动汇总（build_activities_summary_workbook）：一场活动一行，给校青协做统计。
 
 每次下载都记审计（见 routers/staff_ops 的导出接口）。
 """
@@ -13,13 +14,16 @@ from __future__ import annotations
 
 import re
 import zipfile
+from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.orm import selectinload
 
 from . import config, hours as hours_flow, scoring
 from .models import (Activity, Attachment, CheckinRecord, Enrollment,
@@ -485,3 +489,91 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
     for i in range(len(header) - len(questions) + 1, len(header) + 1):
         ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = 26
     return ex
+
+
+# 进汇总表的状态：报名中、已截止、已结束，加上走完外联流程的两个终态
+# （待外联确认、已完成）——那也是办完的活动，漏掉等于长期统计少一块。
+# 草稿与审批线上的还没办，列进去等于把没发生的事算成数据。
+SUMMARY_STATUSES = ("published", "closed", "finished", "vb_pending", "completed")
+SUMMARY_HEADER = ("活动编号", "活动名称", "组织单位", "时间", "状态",
+                  "志愿者人数", "人次", "志愿时数", "劳务时数")
+
+
+def build_activities_summary_workbook(
+        db: OrmSession, start: datetime | None = None,
+        end: datetime | None = None) -> tuple[BytesIO, int]:
+    """活动级汇总：一场活动一行，末行合计，给校青协做统计。
+
+    进表的是 SUMMARY_STATUSES 那三个状态的活动，含不公开招募（补记录）活动：
+    它们没有场次、不收报名，时长靠导入名单，统计时同样算数。
+    区间按活动**结束时间**落在里头算（end 含当天整天），不按两段有没有交集：
+    一场跨月办完的活动只归到它结束的那一侧。没排场次的没有时间可归，跳过。
+    人数是报名记录按人去重后的个数，人次是报名记录的条数——一个人报两个场次，
+    人数算一个、人次算两个。时数按 HoursRecord.split 拆成志愿时长与劳务两半
+    分别合计。
+    返回工作簿和进表的活动数：条数要写进导出留痕。
+    """
+    picked: list[tuple[tuple[datetime, datetime], Activity]] = []
+    # 场次一次带出来：time_span() 要用，逐场活动再去取就是一场一条 SQL，
+    # 全库导出时条数跟着活动数涨
+    acts = (db.query(Activity).options(selectinload(Activity.shifts))
+            .filter(Activity.status.in_(SUMMARY_STATUSES)))
+    for act in acts:
+        span = act.time_span()
+        if span is None:
+            continue
+        if start is not None and span[1] < start:
+            continue
+        if end is not None and span[1] >= end + timedelta(days=1):
+            continue
+        picked.append((span, act))
+    picked.sort(key=lambda x: (x[0][1], x[1].title))
+
+    ids = [act.id for _span, act in picked]
+    counts: dict[str, tuple[int, int]] = {}
+    volunteer: dict[str, float] = {}
+    pay: dict[str, float] = {}
+    if ids:
+        counts = {aid: (people, seats) for aid, people, seats in
+                  db.query(Enrollment.activity_id,
+                           func.count(func.distinct(Enrollment.user_id)),
+                           func.count(Enrollment.id))
+                  .join(Shift, Shift.id == Enrollment.shift_id)
+                  .filter(Enrollment.activity_id.in_(ids),
+                          Enrollment.status == "enrolled",
+                          # 只数服务场次：培训/彩排的报名是跟着服务场次自动挂上的，
+                          # 同一个人会被再算一次
+                          Shift.kind == "service")
+                  .group_by(Enrollment.activity_id)}
+        for aid, h, parts in (db.query(HoursRecord.activity_id, HoursRecord.hours,
+                                       HoursRecord.parts)
+                              .filter(HoursRecord.activity_id.in_(ids))):
+            counted, paid = HoursRecord.split(h, parts)
+            volunteer[aid] = volunteer.get(aid, 0.0) + counted
+            pay[aid] = pay.get(aid, 0.0) + paid
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "活动汇总"
+    ws.append(list(SUMMARY_HEADER))
+    _style_header(ws, len(SUMMARY_HEADER))
+    seats_total, volunteer_total, pay_total = 0, 0.0, 0.0
+    for span, act in picked:
+        people, seats = counts.get(act.id, (0, 0))
+        counted, paid = volunteer.get(act.id, 0.0), pay.get(act.id, 0.0)
+        ws.append([act.id, act.title, act.organizer, span_text(*span),
+                   act.label_status(), people, seats,
+                   round(counted, 1), round(paid, 1)])
+        seats_total += seats
+        volunteer_total += counted
+        pay_total += paid
+    # 合计行：人数不去重就没有意义，只合计人次与时数
+    ws.append(["合计", "", "", "", "", "", seats_total,
+               round(volunteer_total, 1), round(pay_total, 1)])
+    for col, w in zip("ABCDEFGHI", (20, 32, 22, 26, 12, 12, 8, 10, 10)):
+        ws.column_dimensions[col].width = w
+    disarm_formulas(wb)
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf, len(picked)

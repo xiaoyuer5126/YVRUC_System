@@ -68,6 +68,31 @@ def test_normal_cancel_promotes_waitlist_head(client, db, open_group,
                        headers=h2).status_code == 200
 
 
+def test_候补也按本人勾的调剂意愿(client, db, open_group, take_student):
+    """候补不再强制接受调剂：那个勾选框是本人的意愿（默认接受），不接受也存得下——
+    排班时它只用来提示与留痕，不拦分配（见 assign.apply_plan）。"""
+    act, g = open_group(1)
+    assert enroll(client, login(client, take_student()), act, g).status_code == 200
+
+    sid = take_student()
+    r = enroll(client, login(client, sid), act, g, allow_reassign=False)
+    assert r.status_code == 200 and r.json()["status"] == "waitlisted", r.text
+    db.expire_all()
+    enr = (db.query(Enrollment)
+           .filter(Enrollment.shift_id == g.id,
+                   Enrollment.user_id == student_row(db, sid).id).one())
+    assert enr.allow_reassign is False
+
+    # 不传就是默认接受
+    sid2 = take_student()
+    assert enroll(client, login(client, sid2), act, g).status_code == 200
+    db.expire_all()
+    enr2 = (db.query(Enrollment)
+            .filter(Enrollment.shift_id == g.id,
+                    Enrollment.user_id == student_row(db, sid2).id).one())
+    assert enr2.allow_reassign is True
+
+
 def test_concurrent_enroll_does_not_oversell(open_group, take_student):
     """20 人同时抢 5 个名额：确认的必须正好 5 个，其余的都是明确的「满了」。
 

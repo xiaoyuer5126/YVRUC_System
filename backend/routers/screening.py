@@ -296,6 +296,8 @@ class ApplyBody(BaseModel):
     position_ids: list[str]
     answers: dict = {}
     leader_willing: bool = False
+    # 接受岗位调剂（与即选即得报名同一个字段、同一个默认）：排班时用来提示与留痕
+    allow_reassign: bool = True
 
 
 @router.post("/activities/{activity_id}/apply")
@@ -344,7 +346,8 @@ def apply(activity_id: str, body: ApplyBody,
     for g, plist in picked.items():
         db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
                           user_id=user.id, status="applied", joined_at=now(),
-                          position_id=plist[0].id, allow_reassign=True))
+                          position_id=plist[0].id,
+                          allow_reassign=body.allow_reassign))
     db.flush()
     audit_log(db, actor=user, action="enroll", target_type="enrollment",
               target_id=app.id, target_label=user.name, activity_id=act.id,

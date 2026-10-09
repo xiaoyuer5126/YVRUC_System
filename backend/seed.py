@@ -201,10 +201,9 @@ def main() -> None:
                            position_id=position.id if position else None,
                            status=status, source="self",
                            # 约四分之一的人不接受调剂，分配面板上能看到提示
-                           allow_reassign=(True if status != "enrolled"
-                                           else (random.random() > 0.25
-                                                 if allow_reassign is None
-                                                 else allow_reassign)),
+                           allow_reassign=(random.random() > 0.25
+                                           if allow_reassign is None
+                                           else allow_reassign),
                            leader_willing=random.random() > 0.6,
                            joined_at=dt(days=-days_ago,
                                         minutes=random.randint(-50, 50)))

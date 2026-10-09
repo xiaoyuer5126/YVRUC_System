@@ -1,6 +1,8 @@
 """学生端：活动浏览与报名（冲突检测 / 候补 / 退选 / 转正确认）。"""
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import case, func
@@ -17,7 +19,7 @@ from ..locks import (GATE_FULL, GATE_OK, invalidate_gates, may_recheck_gate,
                      new_gate_ticket, settle_gate, shift_lock,
                      sync_and_take_gate, take_gate)
 from ..models import (Activity, Application, Enrollment, Shift, Position,
-                      User, like_pattern, now, uid)
+                      User, like_pattern, now, parse_local_dt, uid)
 from ..perm import is_activity_manager, managed_activity_ids
 from ..qrcodes import page_qr
 from .. import pubcache
@@ -104,16 +106,38 @@ def _get_group(db: OrmSession, shift_id: str) -> Shift:
     return g
 
 
+def _date_range(start: str, end: str) -> tuple[datetime | None, datetime | None]:
+    """广场的时间范围：两个 YYYY-MM-DD，返回 [起, 止)，end 含当天整天。
+
+    志愿者找的是「这段时间有空的」，所以按服务场次的跨度与区间**有交集**算：
+    跨天的活动沾到任一天就出现。
+    """
+    lo = hi = None
+    if start.strip():
+        try:
+            lo = parse_local_dt(start)
+        except ValueError:
+            raise HTTPException(400, "开始日期格式不对") from None
+    if end.strip():
+        try:
+            hi = parse_local_dt(end) + timedelta(days=1)
+        except ValueError:
+            raise HTTPException(400, "结束日期格式不对") from None
+    return lo, hi
+
+
 @router.get("")
 def list_activities(q: str = "", mode: str = "", organizer: str = "",
-                    status: str = "", page: int = 1, size: int = 12,
+                    status: str = "", start: str = "", end: str = "",
+                    page: int = 1, size: int = 12,
                     db: OrmSession = Depends(db_session),
                     user: User = Depends(current_user)):
-    """广场列表：按标题/类型/组织单位/展示状态筛，分页返回。
+    """广场列表：按标题/类型/组织单位/展示状态/时间范围筛，分页返回。
 
-    重活（数场次、数报名）只对当页的十几条做。筛选与排序尽量交给 SQL，
-    只有两件事留在 Python 里：展示状态要按时间算（场次跨度用一条分组查询
-    取回来，不逐个加载场次），招募范围要按人算。
+    重活（数场次、数报名）只对当页的十几条做。筛选与排序尽量交给 SQL：候选集是
+    「全部公开活动」，活动攒到几千条时每个请求都要把它拉一遍，所以时间范围和
+    「报名中 / 未开始 / 已截止 / 进行中」先用一条宽松的条件把候选行砍下来。
+    SQL 只做预筛，最终展示状态仍按 display_status_of 按时间算，口径不变。
     """
     rows = db.query(Activity.id, Activity.status, Activity.reg_start,
                     Activity.reg_end, Activity.recruit_campuses,
@@ -127,6 +151,20 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
         rows = rows.filter(Activity.recruit_mode == mode)
     if organizer:
         rows = rows.filter(Activity.organizer == organizer)
+    # 时间范围：与服务场次的跨度有交集的活动才可能入选（培训/彩排跟着服务场次走）
+    lo, hi = _date_range(start, end)
+    if lo is not None or hi is not None:
+        hit = db.query(Shift.activity_id).filter(Shift.kind == "service")
+        if lo is not None:
+            hit = hit.filter(Shift.end_time >= lo)
+        if hi is not None:
+            hit = hit.filter(Shift.start_time < hi)
+        rows = rows.filter(Activity.id.in_(hit))
+    # 状态预筛：这几种展示状态只可能从这几个业务状态里出来，先把历史活动砍掉
+    if status in ("published", "upcoming"):
+        rows = rows.filter(Activity.status == "published")
+    elif status in ("ongoing", "closed"):
+        rows = rows.filter(Activity.status.in_(("published", "closed")))
     # 急招的排最前（后置顶的更靠前），其余按创建时间
     urgent = case((Activity.pinned_at.isnot(None)
                    & (Activity.status == "published"), 0), else_=1)
@@ -134,12 +172,14 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
                          func.coalesce(Activity.pinned_at,
                                        Activity.created_at).desc()).all()
 
-    # {活动: ((最早开始, 最晚结束), 最晚开始)}，只算服务场次（同 Activity.time_span）
-    spans = {
-        aid: ((lo, hi), last_start) for aid, lo, hi, last_start in
-        db.query(Shift.activity_id, func.min(Shift.start_time),
-                 func.max(Shift.end_time), func.max(Shift.start_time))
-        .filter(Shift.kind == "service").group_by(Shift.activity_id).all()}
+    # {活动: ((最早开始, 最晚结束), 最晚开始)}，只算服务场次（同 Activity.time_span）。
+    # 只查筛出来的这些活动：候选集小了，这条分组查询也跟着小
+    cand = [r[0] for r in rows]
+    spans = {aid: ((first, last), last_start) for aid, first, last, last_start in
+             db.query(Shift.activity_id, func.min(Shift.start_time),
+                      func.max(Shift.end_time), func.max(Shift.start_time))
+             .filter(Shift.kind == "service", Shift.activity_id.in_(cand))
+             .group_by(Shift.activity_id).all()} if cand else {}
     # 招募范围外的活动不上广场：看得见报不了，只会多一次被拦的失望。
     # 报过名的人不受此限（范围是后来缩的），自己管的活动同样照常显示——
     # 管理者要从这里进详情核对志愿者看到的样子。
@@ -482,9 +522,8 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                 # 与 logic.waitlist_position 按 joined_at 排出来的名次一致
                 wl_pos = ledger.queued + 1
                 enr.status = "waitlisted"
-                # 候补必须接受调剂：管理者要能把排队的人调到还有空位的岗位，
-                # 否则队列会卡在一个岗位上，别处空着没人。
-                enr.allow_reassign = True
+                # 调剂意愿是本人勾的（默认接受），候补也一样：排班时只用来提示和
+                # 留痕，不拦分配（不接受的人被调换时点名，见 assign.apply_plan）
             db.add(enr)
             db.flush()
             logic.record_change(db, user, enr,
@@ -527,7 +566,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         "waitlist_position": wl_pos,
         "is_leader": enr.is_leader,
         "message": ("报名成功，名额已锁定。" if enr.status == "enrolled"
-                    else "名额已满，已为您加入候补队列（候补默认接受岗位调剂）。"),
+                    else "名额已满，已为您加入候补队列。"),
         # 报上了就把联络群给到本人；候补的等转正再给
         "contact_group_qr": (act.contact_group_qr
                              if enr.status == "enrolled" else ""),
@@ -581,14 +620,16 @@ class ReassignPrefBody(BaseModel):
 def set_reassign_pref(enrollment_id: str, body: ReassignPrefBody, request: Request,
                       db: OrmSession = Depends(db_session),
                       user: User = Depends(current_user)):
-    """志愿者改自己的调剂意愿。只是给管理者的参考，活动开始前随时可改。"""
+    """志愿者改自己的调剂意愿。只是给管理者的参考，活动开始前随时可改。
+
+    候补也照本人勾的来：这个字段不拦分配，只在排班时提示与留痕（不接受的人被
+    调换时点名，见 assign.apply_plan）。
+    """
     enr = db.get(Enrollment, enrollment_id)
     if enr is None or enr.user_id != user.id:
         raise HTTPException(404, "报名记录不存在")
     if enr.status not in logic.ACTIVE:
         raise HTTPException(409, "该报名记录已失效")
-    if enr.status == "waitlisted":
-        raise HTTPException(409, "候补期间必须接受岗位调剂")
     # 请求正文不进操作日志，改成了什么由这里报一句（见 oplog.mark_note）
     oplog.mark_note(request, "接受调剂" if body.allow_reassign else "不接受调剂")
     enr.allow_reassign = body.allow_reassign

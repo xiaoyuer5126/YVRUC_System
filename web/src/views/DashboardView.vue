@@ -1,6 +1,14 @@
 <template>
   <div class="page page-wide">
     <h2>数据总览</h2>
+    <div class="toolbar">
+      <el-date-picker v-model="range" type="daterange" value-format="YYYY-MM-DD"
+                      :shortcuts="shortcuts" start-placeholder="开始日期"
+                      end-placeholder="结束日期"
+                      :style="{ width: narrow ? '100%' : '320px' }" />
+      <el-button type="primary" @click="exportSummary">导出活动汇总</el-button>
+      <span class="dim">按活动结束时间筛，含不公开招募（补记录）的活动；留空即不限</span>
+    </div>
     <el-row :gutter="16" v-if="d">
       <el-col :span="3" v-for="c in cards" :key="c.label">
         <el-card shadow="never" class="kpi">
@@ -48,14 +56,43 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
 import * as echarts from 'echarts'
-import { api, fmtDT } from '../api'
+import { api, download, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
 
 const narrow = useNarrow()
 const d = ref(null)
+const range = ref([])          // 导出的时间跨度，空 = 不限
 const trendEl = ref()
 const pieEl = ref()
+
+/** 快捷跨度：本月、上个月、近 3 个月，都算到本月这天为止。 */
+const shortcuts = [
+  { text: '本月', value: () => {
+      const t = new Date()
+      return [new Date(t.getFullYear(), t.getMonth(), 1), t]
+    } },
+  { text: '上个月', value: () => {
+      const t = new Date()
+      return [new Date(t.getFullYear(), t.getMonth() - 1, 1),
+              new Date(t.getFullYear(), t.getMonth(), 0)]
+    } },
+  { text: '近 3 个月', value: () => {
+      const t = new Date()
+      return [new Date(t.getFullYear(), t.getMonth() - 2, 1), t]
+    } },
+]
+
+// 走 download 而不是 downloadExport：后者先问一次 attachments 有几个附件，
+// 这张汇总表没有附件接口，那一问会落空，表也就下不来了
+function exportSummary() {
+  const [start, end] = range.value || []
+  const q = new URLSearchParams()
+  if (start) q.set('start', start)
+  if (end) q.set('end', end)
+  const query = q.toString()
+  download(`/api/staff/activities-summary.xlsx${query ? `?${query}` : ''}`)
+}
 
 const cards = computed(() => d.value ? [
   { label: '注册学生', value: d.value.cards.students, color: '#1f5aa8' },

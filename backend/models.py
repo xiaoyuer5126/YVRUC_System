@@ -898,7 +898,7 @@ class Enrollment(Base):
     # 「我的报名」里自己点开看
 
     # 是否接受管理者把自己调到别的岗位。**只是参考**——管理者依然可以调，
-    # 界面上会提示「本人不接受调剂」。候补必须接受调剂（报名时强制为真）。
+    # 界面上会提示「本人不接受调剂」。报名时默认勾上，候补也一样由本人决定。
     allow_reassign: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # —— 组长 ——

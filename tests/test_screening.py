@@ -457,6 +457,36 @@ def test_填表申请_必填校验_只能填一次(client, admin, db, take_stude
                for r in rows if r["activity"]["id"] == act_id)
 
 
+def test_申请也带调剂意愿_默认接受(client, admin, db, take_student):
+    """申请表单新增的勾选（默认勾上）：传 false 就存 false，不传按接受——
+    和即选即得报名同一个字段，排班时用来提示与留痕。"""
+    act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
+    _gid, pids = _pick_shift(client, admin, act_id)
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+
+    sid = take_student()
+    r = client.post(f"/api/activities/{act_id}/apply", headers=login(client, sid),
+                    json={"position_ids": [pids[0]], "answers": _answers(q),
+                          "allow_reassign": False})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    mine = (db.query(Enrollment)
+            .filter(Enrollment.activity_id == act_id,
+                    Enrollment.user_id == student_row(db, sid).id).all())
+    assert [e.allow_reassign for e in mine] == [False]
+
+    sid2 = take_student()
+    r = client.post(f"/api/activities/{act_id}/apply", headers=login(client, sid2),
+                    json={"position_ids": [pids[1]], "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    other = (db.query(Enrollment)
+             .filter(Enrollment.activity_id == act_id,
+                     Enrollment.user_id == student_row(db, sid2).id).all())
+    assert [e.allow_reassign for e in other] == [True]
+
+
 def test_申请时就拦时段冲突(client, admin, db, enrolled_activity, take_student):
     act, shift, u = enrolled_activity
     mine = login(client, u.student_id)

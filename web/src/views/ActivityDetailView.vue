@@ -679,11 +679,11 @@
         </el-form>
 
         <div class="reassign-box">
-          <el-checkbox v-model="enrollDlg.allowReassign" :disabled="willWaitlist">
+          <el-checkbox v-model="enrollDlg.allowReassign">
             接受岗位调剂
           </el-checkbox>
           <div v-if="willWaitlist" class="dim" style="margin-top:4px">
-            候补须接受调剂，负责人可调至空缺岗位
+            候补可能被调到有空缺的岗位；负责人会看到你的意愿
           </div>
           <div v-else class="dim" style="margin-top:4px">
             仅在名额不足时可能进行调剂，负责人可看到你的意愿。

@@ -81,6 +81,8 @@
                           :upload-url="`/api/activities/${act.id}/apply/upload`" />
           <el-form-item>
             <el-checkbox v-model="form.leader_willing">愿意担任组长（如岗位需要）</el-checkbox>
+            <el-checkbox v-model="form.allow_reassign">接受岗位调剂</el-checkbox>
+            <div class="dim">仅在名额不足时可能被调到有空缺的岗位；负责人会看到你的意愿。</div>
           </el-form-item>
         </el-form>
         <div class="btn-row">
@@ -130,7 +132,8 @@ const closedText = computed(() => {
   return props.act.opens_in ? '未开始报名' : '报名已截止'
 })
 
-const form = reactive({ position_ids: [], answers: {}, leader_willing: false })
+const form = reactive({ position_ids: [], answers: {}, leader_willing: false,
+                        allow_reassign: true })
 const fields = ref(null)
 const step = ref(1)
 const stepQuestions = ref([])
@@ -174,7 +177,8 @@ async function submit() {
   try {
     const d = await api.post(`/api/activities/${props.act.id}/apply`,
                              { position_ids: form.position_ids, answers,
-                               leader_willing: form.leader_willing })
+                               leader_willing: form.leader_willing,
+                               allow_reassign: form.allow_reassign })
     ElMessage.success(d.message)
     emit('changed')
   } finally { submitting.value = false }

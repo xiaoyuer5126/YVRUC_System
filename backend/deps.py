@@ -130,6 +130,8 @@ TRAINEE_DENIED_READS = {
     "export_claims",
     # 操作日志导出本来只给管理员，列在这里是让「导出都点了名」这件事没有例外
     "export_oplogs",
+    # 活动汇总：数据总览那一页的导出，只给管理员/会长团，同样点名
+    "export_activities_summary",
 }
 TRAINEE_READONLY = "TRAINEE_READONLY"
 
@@ -188,6 +190,13 @@ def require_admin_download(user: User = Depends(current_user_download)) -> User:
 
 def require_council(user: User = Depends(current_user)) -> User:
     """管理员 / 会长团：数据总览、部门维护。"""
+    if not user.has_full_access():
+        raise HTTPException(403, "需要 管理员/会长团 身份")
+    return user
+
+
+def require_council_download(user: User = Depends(current_user_download)) -> User:
+    """同上的直链下载版：数据总览的活动汇总导出走 <a>，带不了 Authorization 头。"""
     if not user.has_full_access():
         raise HTTPException(403, "需要 管理员/会长团 身份")
     return user
