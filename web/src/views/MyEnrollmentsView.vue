@@ -74,13 +74,13 @@
     </div>
 
     <el-table v-else :data="rows" style="width:100%" v-loading="loading">
-      <el-table-column label="活动" min-width="200">
+      <el-table-column label="活动" min-width="260">
         <template #default="{ row }">
           <b>{{ row.activity.title }}</b>
           <div class="dim">{{ row.activity.location }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="场次 / 岗位" min-width="180">
+      <el-table-column label="场次 / 岗位" min-width="240">
         <template #default="{ row }">
           <el-tag v-if="row.shift.attached" size="small" effect="dark"
                   :type="row.shift.kind === 'training' ? 'success' : 'warning'">
@@ -94,7 +94,8 @@
           </div>
           <div v-if="row.position">
             <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
-            <span class="dim"> {{ row.position.time_text }} · {{ row.position.location }}</span>
+            <!-- 时段跟场次那行重复：这里只留岗位地点（手机端也是这么显示的） -->
+            <span v-if="row.position.location" class="dim"> {{ row.position.location }}</span>
           </div>
           <div v-else-if="row.status === 'enrolled'" class="dim">岗位待分配</div>
           <div v-if="row.is_leader && row.leader_task" class="dim">
@@ -102,7 +103,7 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="岗位调剂" width="160">
+      <el-table-column label="岗位调剂" width="120">
         <template #default="{ row }">
           <!-- 状态归状态、操作归操作：点标签切换太隐蔽，也容易误触 -->
           <template v-if="isActive(row) && !row.shift.attached">
@@ -119,7 +120,7 @@
           <span v-else class="dim">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="190">
+      <el-table-column label="状态" width="150">
         <template #default="{ row }">
           <EnrollStatusTag :row="row" />
           <el-tag v-if="row.status === 'enrolled' && row.list_locked" size="small" type="info">名单已锁定</el-tag>
