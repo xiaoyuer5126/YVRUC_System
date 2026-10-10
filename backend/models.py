@@ -923,7 +923,8 @@ class Enrollment(Base):
 
     # self 自己报名 / admin 负责人补招 / party_school 补招的党校同学（见 hours.PARTY_SCHOOL）
     source: Mapped[str] = mapped_column(String(16), default="self")
-    joined_at: Mapped[datetime] = mapped_column(DateTime, default=now)  # 排队/报名时间
+    joined_at: Mapped[datetime] = mapped_column(DateTime, default=now,
+                                                index=True)  # 排队/报名时间
     # 退选时间。和 joined_at 一起就是「报了多久之后退的」——退选画像要这个，
     # 从留痕里按文本翻是翻得出来，但那不是能拿来统计的东西
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -1050,6 +1051,10 @@ class HoursRecord(Base):
     #     （kind="import"，时段写活动时间）：都只记志愿时长。
     # 志愿者看得到自己的明细；导出时长记录的备注也从这里拼。
     parts: Mapped[list] = mapped_column(JSON, default=list)
+    # 两半合计的缓存列：总览、导出这类统计要按活动/按时间求和，不能再把明细拉进
+    # Python 逐行拆。真值仍是 split()（见 sync_totals），这两列跟着它走
+    hours_counted: Mapped[float] = mapped_column(Float, default=0.0)
+    hours_paid: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
     REWARD_LABELS = {"hours": "志愿时长", "pay": "劳务"}
@@ -1099,6 +1104,21 @@ class HoursRecord(Base):
         """各段都退回志愿时长（到点没表态时）。"""
         self.parts = [{k: v for k, v in p.items() if k != "reward"}
                       for p in (self.parts or [])]
+
+@event.listens_for(HoursRecord.hours, "set")
+def _sync_totals_on_hours(rec, value, _old, _initiator) -> None:
+    """合计改了：按新的合计与当前明细重算两列缓存。"""
+    rec.hours_counted, rec.hours_paid = HoursRecord.split(value or 0.0, rec.parts)
+
+
+@event.listens_for(HoursRecord.parts, "set")
+def _sync_totals_on_parts(rec, value, _old, _initiator) -> None:
+    """明细改了：按当前合计与新的明细重算两列缓存。
+
+    写 parts 的地方有八处，逐处手写迟早漏一处，漏了就是永久对不上，所以在模型上
+    挂钩子。set 事件在属性落值之前触发，要重算的那个值只能取事件给的 value。
+    """
+    rec.hours_counted, rec.hours_paid = HoursRecord.split(rec.hours or 0.0, value)
 
 
 class HoursRequest(Base):

@@ -16,13 +16,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.orm import selectinload
 
 from .. import config, scoring
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import (require_admin, require_archive_page, require_council,
                     require_council_download, require_manager)
-from ..exporter import build_activities_summary_workbook
+from ..exporter import SUMMARY_STATUSES, build_activities_summary_workbook
 from ..integrations import all_configs, save_config
 from ..models import (Activity, AuditLog, CheckinRecord, Enrollment,
                       HoursRecord, Shift, User, ViolationRecord, iso,
@@ -33,27 +34,72 @@ router = APIRouter(prefix="/api/staff", tags=["staff-admin"])
 
 
 @router.get("/overview")
-def overview(db: OrmSession = Depends(db_session),
+def overview(start: str = "", end: str = "",
+             db: OrmSession = Depends(db_session),
              user: User = Depends(require_council)):
+    """数据总览。start / end 是 YYYY-MM-DD、end 含当天整天，只改四张
+    「这段时间的量」的卡：活动总数、有效报名、累计时长、报名学院分布。
+    此刻的状态卡（注册学生、报名中活动、候补中、24 小时签到、近 14 天报名趋势、
+    最近操作留痕）与该区间无关，参数怎么改都不动。
+    """
     t = now()
+    lo = hi = None
+    if start:
+        try:
+            lo = parse_local_dt(start)
+        except ValueError:
+            raise HTTPException(400, "开始时间格式不对") from None
+    if end:
+        try:
+            hi = parse_local_dt(end) + timedelta(days=1)
+        except ValueError:
+            raise HTTPException(400, "截止时间格式不对") from None
+    ranged = lo is not None or hi is not None
+
     total_students = (db.query(func.count(User.id))
                       .filter(User.user_type == "student").scalar() or 0)
     act_rows = db.query(Activity.status, func.count(Activity.id)).group_by(
         Activity.status).all()
     by_status = {s: n for s, n in act_rows}
-    active_enroll = (db.query(func.count(Enrollment.id))
-                     .filter(Enrollment.status.in_(("enrolled", "waitlisted",
-                                                    "pending_confirm")))
-                     .scalar() or 0)
+    # 有效报名：不填区间是此刻在册的（含候补与待确认），填了就是区间内新产生的
+    enroll_q = (db.query(func.count(Enrollment.id))
+                .filter(Enrollment.status.in_(("enrolled", "waitlisted",
+                                               "pending_confirm"))))
+    if lo is not None:
+        enroll_q = enroll_q.filter(Enrollment.joined_at >= lo)
+    if hi is not None:
+        enroll_q = enroll_q.filter(Enrollment.joined_at < hi)
+    active_enroll = enroll_q.scalar() or 0
     waitlisted = (db.query(func.count(Enrollment.id))
                   .filter(Enrollment.status.in_(("waitlisted", "pending_confirm")))
                   .scalar() or 0)
     checked_today = (db.query(func.count(func.distinct(CheckinRecord.user_id)))
                      .filter(CheckinRecord.checkin_at >= t - timedelta(days=1))
                      .scalar() or 0)
-    # 选了劳务的段不计时长，按段拆分（见 HoursRecord.split）
-    hours_total = sum(HoursRecord.split(h, p)[0] for h, p in
-                      db.query(HoursRecord.hours, HoursRecord.parts))
+
+    # 区间内的活动：办过的（状态同活动汇总导出），按活动的**结束时间**落区间，
+    # 与导出同一口径，跨月的活动只归一侧。没填区间就是全部活动
+    if ranged:
+        ids = []
+        q = (db.query(Activity).options(selectinload(Activity.shifts))
+             .filter(Activity.status.in_(SUMMARY_STATUSES)))
+        for act in q:
+            span = act.time_span()
+            if span is None:
+                continue
+            if lo is not None and span[1] < lo:
+                continue
+            if hi is not None and span[1] >= hi:
+                continue
+            ids.append(act.id)
+        activities_all = len(ids)
+        hours_q = (db.query(func.coalesce(func.sum(HoursRecord.hours_counted), 0.0))
+                   .filter(HoursRecord.activity_id.in_(ids)))
+    else:
+        activities_all = sum(by_status.values())
+        hours_q = db.query(func.coalesce(func.sum(HoursRecord.hours_counted), 0.0))
+    # 两半的合计是缓存列（见 HoursRecord.sync_totals）：求和交给 SQL
+    hours_total = hours_q.scalar() or 0.0
 
     # 近 14 天报名趋势：拉出来在内存按天聚合（演示规模无性能问题，
     # 且 SQLite/PG 的日期函数差异就不用管了）
@@ -68,11 +114,15 @@ def overview(db: OrmSession = Depends(db_session),
     for item in trend:
         item["count"] = counts.get(item["date"], 0)
 
-    # 学院分布（有效报名）
-    college_rows = (db.query(User.college, func.count(Enrollment.id))
-                    .join(Enrollment, Enrollment.user_id == User.id)
-                    .filter(Enrollment.status == "enrolled")
-                    .group_by(User.college).all())
+    # 学院分布：区间内新产生的在册报名；不填区间就是全部在册报名
+    college_q = (db.query(User.college, func.count(Enrollment.id))
+                 .join(Enrollment, Enrollment.user_id == User.id)
+                 .filter(Enrollment.status == "enrolled"))
+    if lo is not None:
+        college_q = college_q.filter(Enrollment.joined_at >= lo)
+    if hi is not None:
+        college_q = college_q.filter(Enrollment.joined_at < hi)
+    college_rows = college_q.group_by(User.college).all()
     colleges = [{"college": c or "未填写", "count": n}
                 for c, n in sorted(college_rows, key=lambda x: -x[1])[:8]]
 
@@ -83,13 +133,12 @@ def overview(db: OrmSession = Depends(db_session),
         "cards": {
             "students": total_students,
             "activities_published": by_status.get("published", 0),
-            "activities_all": sum(by_status.values()),
+            "activities_all": activities_all,
             "active_enrollments": active_enroll,
             "waitlisted": waitlisted,
             "checked_recent": checked_today,
             "hours_total": round(hours_total or 0.0, 1),
         },
-        "activity_status": by_status,
         "enroll_trend": trend,
         "colleges": colleges,
         "recent_logs": [l.out() for l in logs],
