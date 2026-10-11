@@ -15,10 +15,14 @@ data/
 *.db
 *.sqlite3
 
-# ===== 环境变量与密钥（.env.example 为模板，允许提交）=====
+# ===== 环境变量与密钥（*.example 为模板，允许提交）=====
 .env
 .env.*
 !.env.example
+!.env.example.*
+# caddy 的域名与 Cloudflare 令牌：本机那份永不入库，模板是 caddy.env.example
+caddy.env
+!caddy.env.example
 
 # ===== 日志 / 临时文件 =====
 *.log
