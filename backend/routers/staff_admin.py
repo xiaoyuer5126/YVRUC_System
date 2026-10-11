@@ -16,15 +16,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
-from sqlalchemy.orm import selectinload
 
 from .. import config, scoring
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import (require_admin, require_archive_page, require_council,
                     require_council_download, require_manager)
-from ..exporter import (SUMMARY_STATUSES, build_activities_summary_workbook,
-                        record_settlements)
+from ..exporter import (build_activities_summary_workbook, record_settlements,
+                        service_activity_ids)
 from ..integrations import all_configs, save_config
 from ..models import (Activity, AuditLog, CheckinRecord, Enrollment,
                       HoursRecord, Shift, User, ViolationRecord, iso,
@@ -42,8 +41,9 @@ def overview(start: str = "", end: str = "",
     「这段时间的量」的卡：活动总数、有效报名、累计时长、报名学院分布。
     此刻的状态卡（注册学生、报名中活动、候补中、24 小时签到、近 14 天报名趋势、
     最近操作留痕）与该区间无关，参数怎么改都不动。
-    累计时长按段的服务日期挑每一笔（见 exporter.record_settlements）：一笔账
-    整笔算在它最后一次服务那一天所属的区间里，办完再补录的时长照样算得进来。
+    活动总数与累计时长都按服务日期（见 exporter.service_activity_ids 与
+    record_settlements）：一笔账整笔算在它最后一次服务那一天所属的区间里，
+    办完再补录的时长照样算得进来。
     """
     t = now()
     lo = hi = None
@@ -80,28 +80,15 @@ def overview(start: str = "", end: str = "",
                      .filter(CheckinRecord.checkin_at >= t - timedelta(days=1))
                      .scalar() or 0)
 
-    # 区间内的活动：办过的（状态同活动汇总导出），按活动的**结束时间**落区间，
-    # 跨月的活动只归一侧——这张卡数的是这段时间办完的活动，跟时长那张各按各的
-    # 日期算。没填区间就是全部活动
+    # 区间内的活动与时长都按服务日期算，和活动汇总导出同一口径（见
+    # exporter.service_activity_ids / record_settlements）：这里数出几场，导出
+    # 表就有几行。没填区间就是全部活动（含草稿与还没办的）
     if ranged:
-        ids = []
-        q = (db.query(Activity).options(selectinload(Activity.shifts))
-             .filter(Activity.status.in_(SUMMARY_STATUSES)))
-        for act in q:
-            span = act.time_span()
-            if span is None:
-                continue
-            if lo is not None and span[1] < lo:
-                continue
-            if hi is not None and span[1] >= hi:
-                continue
-            ids.append(act.id)
-        activities_all = len(ids)
+        activities_all = len(service_activity_ids(db, start=lo, before=hi))
     else:
         activities_all = sum(by_status.values())
-    # 累计时长：区间内各笔结算的志愿时数之和，按段的服务日期归属（见 exporter）。
-    # 不跟着上面那张「活动总数」的 id 走：一张卡说的是这段时间的服务量，一笔账
-    # 的段记的是服务当天，活动办完再补录的时长也要算在服务发生的那个区间里
+    # 累计时长：区间内各笔结算的志愿时数之和，每一笔整笔归属到它最后一次服务
+    # 的日期，活动办完再补录的时长也算在服务发生的那个区间里
     hours_total = sum(counted for _aid, _day, counted, _pay
                       in record_settlements(db, start=lo, before=hi))
 
@@ -155,8 +142,8 @@ def export_activities_summary(start: str = "", end: str = "",
                               user: User = Depends(require_council_download)):
     """数据总览页的「导出活动汇总」：一场活动一行，末行合计。
 
-    start / end 是 YYYY-MM-DD，能只给一个，都不给就是不限。区间按活动的
-    结束时间算，end 含当天整天（口径见 exporter.build_activities_summary_workbook）。
+    start / end 是 YYYY-MM-DD，能只给一个，都不给就是不限。区间按服务日期
+    算，end 含当天整天（口径见 exporter.build_activities_summary_workbook）。
     """
     lo = hi = None
     if start:

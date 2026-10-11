@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from backend.models import (Activity, ActivityManager, CheckinRecord, CheckinTask,
                             Enrollment, HoursRecord, Position, Shift,
-                            ViolationRecord, now, uid)
+                            ViolationRecord, day_of, now, uid)
 from conftest import ADMIN, POSITION_TEXT, login, student_row
 from test_query_budget import sql_of
 
@@ -57,6 +57,16 @@ def _checkin(db, act, g, task, u, out=False):
                          checkout_at=now() if out else None))
 
 
+
+def _hours(db, act, u, hours, *, kind="manual", reward="", shift_id=None):
+    """一笔时长，只有一段。"""
+    rec = HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id,
+                      source="import" if kind == "import" else "checkin")
+    db.add(rec)
+    rec.add_segment(kind=kind, date=day_of(now()), hours=hours, reward=reward,
+                    shift_id=shift_id)
+    return rec
+
 def test_概况各项数字(client, admin, db, take_student):
     u1, u2, u3, u4, u5, u6, u7 = (student_row(db, take_student()) for _ in range(7))
     act = _activity(db)
@@ -89,15 +99,11 @@ def test_概况各项数字(client, admin, db, take_student):
     _checkin(db, act, s1, task, u1)               # 签了到没签退
     _checkin(db, act, s1, task, u2, out=True)
     _checkin(db, act, tr, task, u3)               # 培训的签到不算
-    db.add_all([
-        HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u1.id, hours=3),
-        HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u2.id, hours=2,
-                    parts=[{"kind": "shift", "shift_id": s1.id, "hours": 2,
-                            "reward": "pay"}]),     # 选了劳务，不计时长
-        HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u4.id, hours=1.5),
-        ViolationRecord(id=uid("vio"), user_id=u4.id, activity_id=act.id,
-                        kind="late"),
-    ])
+    _hours(db, act, u1, 3)
+    _hours(db, act, u2, 2, kind="shift", reward="pay", shift_id=s1.id)  # 选了劳务，不计时长
+    _hours(db, act, u4, 1.5)
+    db.add(ViolationRecord(id=uid("vio"), user_id=u4.id, activity_id=act.id,
+                           kind="late"))
     db.commit()
 
     r = client.get(f"/api/staff/activities/{act.id}/overview", headers=admin)
@@ -141,14 +147,10 @@ def test_概况的权限(client, admin, initiator, db, take_student):
 def test_补记录活动只给名单时长违规(client, admin, db, take_student):
     u1, u2 = (student_row(db, take_student()) for _ in range(2))
     act = _activity(db, recruit_mode="record")
-    db.add_all([
-        HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u1.id, hours=4,
-                    source="import"),
-        HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u2.id, hours=2.5,
-                    source="import"),
-        ViolationRecord(id=uid("vio"), user_id=u2.id, activity_id=act.id,
-                        kind="other"),
-    ])
+    _hours(db, act, u1, 4, kind="import")
+    _hours(db, act, u2, 2.5, kind="import")
+    db.add(ViolationRecord(id=uid("vio"), user_id=u2.id, activity_id=act.id,
+                           kind="other"))
     db.commit()
     d = client.get(f"/api/staff/activities/{act.id}/overview", headers=admin).json()
     assert d["record"] is True and d["roster"] == 2
@@ -172,8 +174,7 @@ def _crowd(db, take_student, n: int) -> str:
             _enr(db, act, g, p, a)
             _enr(db, act, g, p, b, "waitlisted")
             _checkin(db, act, g, task, a)
-            db.add(HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=a.id,
-                               hours=1))
+            _hours(db, act, a, 1)
             db.add(ViolationRecord(id=uid("vio"), user_id=a.id,
                                    activity_id=act.id, kind="late"))
     db.commit()

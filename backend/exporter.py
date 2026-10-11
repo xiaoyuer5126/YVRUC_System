@@ -500,8 +500,9 @@ SUMMARY_HEADER = ("活动编号", "活动名称", "组织单位", "联合主办�
 # 表底的口径说明：拿到表的人不必回头问人数怎么算、时数为什么不是整数。
 # 写在合计行下面空一行处，表头与数据行的位置不因此挪动（见 _rows 用例）
 SUMMARY_NOTES = (
-    "说明：人数、人次按报名岗位数计；补记录活动与没有报名岗位的补录只有时长。",
-    "时长按 0.5 小时向上取整，归属到该笔最后一次服务的日期。",
+    "说明：统计按服务日期：区间内有服务场次、或有时长归属在区间内的活动进表；"
+    "人数、人次只数区间内开始的服务场次的报名，补记录活动只有时长。",
+    "时长按 0.5 小时向上取整，一人一场整笔归属到他最后一次服务的日期。",
 )
 
 
@@ -537,6 +538,38 @@ def record_settlements(db: OrmSession, *, start: datetime | None = None,
             for aid, day, volunteer, paid in q]
 
 
+def service_activity_ids(db: OrmSession, *, start: datetime | None = None,
+                         before: datetime | None = None) -> list[str]:
+    """区间内有服务的活动（SUMMARY_STATUSES 那几个状态），按服务日期认：
+
+    · 有服务场次在区间内开始（人数、人次也按这个日期数）；
+    · 补记录活动没有场次，活动开始在区间内；
+    · 有一笔时长归属在区间内（见 record_settlements：办完再补录的时长落在
+      它记的服务日期上）。
+
+    数据总览的「活动总数」与活动汇总导出的行都用它：同一个区间里，总览数出
+    几场，导出表就有几行。start 起（含）、before 止（不含），都不给就是不限。
+    """
+    def ranged(q, col):
+        if start is not None:
+            q = q.filter(col >= start)
+        if before is not None:
+            q = q.filter(col < before)
+        return q
+
+    by_shift = ranged(db.query(Shift.activity_id)
+                      .filter(Shift.kind == "service"), Shift.start_time)
+    by_record = ranged(db.query(Activity.id)
+                       .filter(Activity.recruit_mode == config.RECORD_MODE),
+                       Activity.held_start)
+    ids = ({aid for (aid,) in by_shift} | {aid for (aid,) in by_record}
+           | {aid for aid, *_ in record_settlements(db, start=start, before=before)})
+    if not ids:
+        return []
+    return [aid for (aid,) in db.query(Activity.id)
+            .filter(Activity.id.in_(ids), Activity.status.in_(SUMMARY_STATUSES))]
+
+
 def build_activities_summary_workbook(
         db: OrmSession, start: datetime | None = None,
         end: datetime | None = None) -> tuple[BytesIO, int]:
@@ -544,13 +577,12 @@ def build_activities_summary_workbook(
 
     进表的是 SUMMARY_STATUSES 那几个状态的活动，含不公开招募（补记录）活动：
     它们没有场次、不收报名，时长靠导入名单，统计时同样算数。
-    一场活动进表，是因为区间内有段落在这个区间里（不是活动结束在区间里）：
-    段记的是服务当天，办完再补录的时长照样落在服务发生的那个区间，跨月的一笔
-    整笔算在最后一次服务那一侧（见 record_settlements）。
+    一律按服务日期：哪些活动进表见 service_activity_ids；人数、人次只数区间内
+    开始的服务场次的报名；时长按每一笔归属的服务日期（跨月的一笔整笔算在最后
+    一次服务那一侧，见 record_settlements）。
     人数是报名记录按人去重后的个数，人次是报名记录的条数——一个人报两个场次，
-    人数算一个、人次算两个；日期取报名所在场次的开始那天（Shift.start_time），
-    也就是本人哪天来服务。补记录活动没有场次、不收报名，人数与人次都是 0，
-    只有时长。时数在一笔之内取整到 0.5（HoursRecord.ceil_half），各笔再相加。
+    人数算一个、人次算两个。补记录活动没有场次、不收报名，人数与人次都是 0，
+    只有时长。时数在一笔之内结算（HoursRecord.settle_sums），各笔再相加。
     end 含当天整天。
     返回工作簿和进表的活动数：条数要写进导出留痕。
     """
@@ -563,12 +595,12 @@ def build_activities_summary_workbook(
         pair[1] += paid
 
     picked: list[tuple[tuple[datetime, datetime] | None, Activity]] = []
-    if hours:
+    wanted = service_activity_ids(db, start=start, before=before)
+    if wanted:
         # 场次一次带出来：time_span() 要用，逐场活动再去取就是一场一条 SQL，
         # 全库导出时条数跟着活动数涨
         acts = (db.query(Activity).options(selectinload(Activity.shifts))
-                .filter(Activity.status.in_(SUMMARY_STATUSES),
-                        Activity.id.in_(list(hours))))
+                .filter(Activity.id.in_(wanted)))
         for act in acts:
             # time_span() 为空的（排不出场次的）时间那格留空，排在排了场次的后面
             picked.append((act.time_span(), act))

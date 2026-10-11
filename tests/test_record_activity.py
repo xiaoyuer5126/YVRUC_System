@@ -180,7 +180,7 @@ def test_导入名单_成功与跳过清单(client, admin, db, approved, take_st
     db.expire_all()
     rec = db.query(HoursRecord).filter(HoursRecord.activity_id == approved,
                                        HoursRecord.user_id == student_row(db, b).id).one()
-    assert rec.source == "import" and rec.parts[0]["kind"] == "import"
+    assert rec.source == "import" and [s.kind for s in rec.segments] == ["import"]
 
     # 再导一次：新人追加，已在名单的按新时长覆盖（列出旧值→新值），没变的不动
     r = _import(client, admin, approved, f"{a} 5\n{c} 1.5\n{b} 3")
@@ -192,7 +192,7 @@ def test_导入名单_成功与跳过清单(client, admin, db, approved, take_st
     db.expire_all()
     rec = db.query(HoursRecord).filter(HoursRecord.activity_id == approved,
                                        HoursRecord.user_id == student_row(db, a).id).one()
-    assert rec.hours == 5 and rec.parts[0]["hours"] == 5 and len(rec.parts) == 1
+    assert rec.hours == 5 and [s.hours for s in rec.segments] == [5]
 
     # 留痕
     logs = db.query(AuditLog).filter(AuditLog.activity_id == approved,

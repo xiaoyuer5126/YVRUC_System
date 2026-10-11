@@ -1,12 +1,13 @@
-"""活动汇总导出的段口径：行 = 区间内有服务段落入的活动，一笔整笔归到它最后
-一次服务那一天所属的区间。
+"""活动汇总导出按服务日期：行 = 区间内有服务场次、或有时长归属在区间内的
+活动，一笔整笔归到它最后一次服务那一天所属的区间。
 
-四种情形：
+五种情形：
   ① 一笔跨月（两段分别在两个月）：整笔算在最后一次服务那一侧，各区间之和 ==
      这一笔的结算数，取整的零头不会算丢；
   ② 补记录活动没有场次、不收报名：人数与人次是 0，只有时长；
   ③ 人数与人次按报名口径落区间，日期取报名所在场次的开始那天，培训场次不算；
-  ④ 口径说明写在合计行下面的表底，数据行仍旧从第 2 行开始。
+  ④ 口径说明写在合计行下面的表底，数据行仍旧从第 2 行开始；
+  ⑤ 数据总览的活动总数、累计时长与导出表同一口径。
 
 造数与读表都用 test_export_summary 里那套助手：两个文件量的是同一张口径，
 助手只有一份，改了不会各说各的。
@@ -131,3 +132,30 @@ def test_口径说明写在合计行下面的表底(client, db, take_student):
     assert act.id in [row[0] for row in rows]
     assert sheet[-4][0] == "合计" and not any(sheet[-3])
     assert [row[0] for row in sheet[-2:]] == [notes[0][0], notes[1][0]]
+
+
+def test_总览与导出同一口径_都按服务日期(client, db, take_student):
+    """同一个区间：总览数出几场活动、多少时长，导出表就有几行、合计多少。
+
+    还没记时长的活动只要区间内有服务场次就进表（有人数、没时长）；时长按服务
+    日期归属，场次在上个月、补录记在这个月的那一笔算这个月。
+    """
+    council = login(client, COUNCIL)
+    query = {"start": "2018-03-01", "end": "2018-03-31"}
+    no_hours, g1 = _activity(db, "三月未记时长", datetime(2018, 3, 5, 9),
+                             datetime(2018, 3, 5, 12))
+    _enroll(db, no_hours, g1, take_student())
+    late, g2 = _activity(db, "二月场三月补录", datetime(2018, 2, 26, 9),
+                         datetime(2018, 2, 26, 12))
+    _enroll(db, late, g2, take_student())
+    _hours(db, late, take_student(),
+           _seg(1.5, datetime(2018, 3, 2, 9), kind="manual", label="补录"))
+
+    _r, _h, rows, total, _n = _rows(
+        client, council, f"?start={query['start']}&end={query['end']}")
+    assert [(r[1], r[6], r[7], r[8]) for r in rows] == [
+        ("二月场三月补录", 0, 0, 1.5), ("三月未记时长", 1, 1, 0.0)]
+    cards = client.get("/api/staff/overview", headers=council,
+                       params=query).json()["cards"]
+    assert cards["activities_all"] == len(rows) == 2
+    assert cards["hours_total"] == total[8] == 1.5
