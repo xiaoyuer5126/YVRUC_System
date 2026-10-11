@@ -1198,7 +1198,7 @@ class HoursRecord(Base):
 
         会话把删掉的对象留在集合里（delete 之后没 flush 的、已经 flush 过的都在），
         读的时候不排掉它，合计数会多、差额也会按一段已经不存在的时长去补
-        （见 set_total）。删段一律走 drop_segment（它把段从集合里摘掉），这里再
+        （见 settle_to）。删段一律走 drop_segment（它把段从集合里摘掉），这里再
         兜一道，别的写法也错不了账。
         """
         db = object_session(self)

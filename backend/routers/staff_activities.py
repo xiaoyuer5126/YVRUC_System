@@ -1117,7 +1117,8 @@ def _sync_placeholder(db: OrmSession, g: Shift, capacity: int,
     holder.waitlist_quota = waitlist_quota
 
 
-def _prune_questions(db: OrmSession, act_id: str, s: Position) -> None:
+def _prune_questions(db: OrmSession, act_id: str, s: Position,
+                     successors: list[str] | None = None) -> None:
     """岗位要删了：把它从报名问卷题目的「适用岗位」里拿掉。
 
     发布后问卷不能改，不能指望管理者先去改题，所以这里直接修剪。题目还圈着
@@ -1125,12 +1126,19 @@ def _prune_questions(db: OrmSession, act_id: str, s: Position) -> None:
     都答」，清空等于替管理者把范围放大到全体。留下的 id 和谁都对不上，这道题
     对谁都不显示（见 screening.visible_questions），和删掉整个场次时
     圈着那一场岗位的题一样。
+
+    successors：「待分配」占位岗位退场时，这一场的报名改由这些真实岗位接着收，
+    圈着「待分配」的题换成圈这些岗位——问的还是报这一场的人。
     """
     for q in (db.query(FormQuestion)
               .filter(FormQuestion.activity_id == act_id).all()):
         scope = q.applies_to_positions or []
-        if s.id in scope and len(scope) > 1:
-            q.applies_to_positions = [i for i in scope if i != s.id]
+        if s.id not in scope:
+            continue
+        left = [i for i in scope if i != s.id]
+        left += [i for i in successors or [] if i not in left]
+        if left:
+            q.applies_to_positions = left
 
 
 def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
@@ -1162,7 +1170,8 @@ def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
                 raise HTTPException(
                     409, f"「{g.name}」有过报名记录，不能再改成「报名即选岗位」；"
                          f"如确需调整请新建场次")
-            _prune_questions(db, g.activity_id, holder)
+            _prune_questions(db, g.activity_id, holder,
+                             [p.id for p in g.real_positions()])
             g.positions.remove(holder)
             db.delete(holder)
         if mode == "assign":
@@ -1773,7 +1782,7 @@ def open_pick(shift_id: str, db: OrmSession = Depends(db_session),
                     CheckinTask.position_id == holder.id).count():
                 raise HTTPException(409, "「待分配」上开过分岗位签到码，"
                                          "先在签到里删掉它再开放选岗")
-            _prune_questions(db, act.id, holder)
+            _prune_questions(db, act.id, holder, [p.id for p in real])
             _prune_trainings(db, act, {holder.id})
             # 报过「待分配」又退掉（或落选）的历史记录还指着它，外键挡着删不掉。
             # 这些人本来就没分到岗位，岗位一栏该是空的：把 position_id 置空，

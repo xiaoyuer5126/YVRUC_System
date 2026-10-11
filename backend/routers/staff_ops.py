@@ -1878,7 +1878,7 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
 
     「通知过」看每条记录的 approved_hours（通知时记下的数值）：补记录活动
     改名单会撤销活动级核准，但留着没改到的人的 approved_hours（见
-    records._invalidate_hours_approval），重新核准时同样只通知变了的人。
+    hours.revoke_approval），重新核准时同样只通知变了的人。
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id, for_update=True)
