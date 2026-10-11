@@ -47,7 +47,7 @@
           <el-tag v-if="a.urgent" size="small" type="danger" effect="dark" class="urgent">急招</el-tag>
           {{ a.title }}
         </div>
-        <div v-if="a.organizer" class="meta-row"><el-icon><OfficeBuilding /></el-icon>{{ a.organizer }}</div>
+        <div v-if="a.organizer_text" class="meta-row"><el-icon><OfficeBuilding /></el-icon>{{ a.organizer_text }}</div>
         <div class="meta-row"><el-icon><Clock /></el-icon>{{ a.time_text }}</div>
         <div class="meta-row"><el-icon><Location /></el-icon>{{ a.location || '待定' }}</div>
         <div class="meta-row">

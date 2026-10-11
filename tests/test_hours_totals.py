@@ -1,83 +1,131 @@
-"""时长两半的缓存列：hours_counted / hours_paid 必须始终等于 split() 的结果。
+"""时长的统计口径：一笔的结算数由这一笔的各段算出来，统计侧按笔汇总。
 
-它们只是缓存，真值仍在 hours + parts 上；有了这两列，总览与导出才能把求和交给
-SQL，不用把整张台账拉进 Python 逐行拆明细。
+  · 一笔的合计（hours）恒等于各段之和（原始值，见 models 的 before_flush 钩子）；
+  · 结算（志愿时长 / 劳务）在一笔之内两半各自向上取整到 0.5（HoursRecord.split）：
+    先把两半各自求和再取整，逐段取整会把每一段的零头都攒上去；
+  · 数据总览的「累计时长」= 各笔的志愿时数之和，一笔一笔取整之后再相加，
+    与活动汇总导出同一口径（见 exporter.record_settlements）。
+
+段本身的口径（三种段、写入顺序、删段、并发）见 test_hours_segments.py。
 """
 from __future__ import annotations
 
-from backend.models import HoursRecord, User, now, uid
-from conftest import ADMIN, login
+from datetime import datetime, timedelta
+
+from backend.models import Activity, HoursRecord, now, uid
+from conftest import ADMIN, login, student_row
+
+# 段的服务日期：本地 0 点，2019 年里挑一天，离别的用例的活动都远
+DAY = datetime(2019, 9, 20)
 
 
-def _record(db, user_id, hours, parts=None):
-    rec = HoursRecord(id=uid("hrs"), activity_id=uid("act"), user_id=user_id,
-                      hours=hours, parts=parts or [])
+def _activity(db) -> Activity:
+    """笔要挂在真活动上：段的 activity_id 是指向 activities 的外键。"""
+    act = Activity(id=uid("act"), title=f"时长口径 {uid('t')}", intro="用例生成",
+                   location="世纪馆", contact_group_qr="x",
+                   contacts=[{"name": "测试", "phone": "13900000000"}],
+                   status="finished", reg_start=now() - timedelta(days=10),
+                   reg_end=now() - timedelta(days=5),
+                   created_by=student_row(db, ADMIN).id)
+    db.add(act)
+    db.commit()
+    return act
+
+
+def _seg(kind: str, hours: float, **kw) -> dict:
+    """一段明细：字段名就是列名；hours 是原始值，不取整到 0.5。"""
+    return {"kind": kind, "date": DAY, "hours": hours, "time_text": "09-20",
+            "label": kind, **kw}
+
+
+def _record(db, act, u, *segs) -> HoursRecord:
+    """一笔账：段一段段加进去，合计算出来的（见 models 的 before_flush 钩子）。"""
+    rec = HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id)
     db.add(rec)
+    for fields in segs:
+        rec.add_segment(**fields)
     db.commit()
     return rec
 
 
-PAY_PART = {"kind": "shift", "label": "上午场", "time": "09-20 08:00-12:00",
-            "position": "引导", "hours": 2, "reward": "pay"}
-HOURS_PART = {"kind": "shift", "label": "上午场", "time": "09-20 08:00-12:00",
-              "position": "引导", "hours": 3}
+def _card(client, headers) -> float:
+    r = client.get("/api/staff/overview", headers=headers)
+    assert r.status_code == 200, r.text
+    return r.json()["cards"]["hours_total"]
 
 
-def test_新建时就跟着_split走(client, db, take_student):
-    from conftest import student_row
+def _want(db) -> float:
+    """库里每一笔的志愿时数之和：结算只此一处（HoursRecord.split）。"""
+    return sum(rec.counted_hours() for rec in db.query(HoursRecord))
 
+
+def test_一笔之内两半各取一次整(db, take_student):
+    """志愿那一半 0.75 取整到 1.0：逐段取整会得到 1.5，零头是这么攒出来的。"""
+    act = _activity(db)
     u = student_row(db, take_student())
-    plain = _record(db, u.id, 3)
-    assert (plain.hours_counted, plain.hours_paid) == (3.0, 0.0)
-    mixed = _record(db, u.id, 4.5, [PAY_PART, HOURS_PART])
-    # 4.5 小时里选了劳务的 2 小时向上取整到 0.5 仍是 2
-    assert HoursRecord.split(4.5, [PAY_PART, HOURS_PART]) == (2.5, 2.0)
-    assert (mixed.hours_counted, mixed.hours_paid) == (2.5, 2.0)
+    rec = _record(db, act, u, _seg("shift", 0.25), _seg("shift", 0.25),
+                  _seg("shift", 0.25), _seg("shift", 1.2, reward="pay"))
+
+    assert rec.hours == 1.95                       # 段上留原始值
+    assert rec.counted_hours() == 1.0
+    assert rec.pay_hours() == 1.5
+    assert rec.settled_hours() == 2.5
 
 
-def test_改明细与改合计都会重算(client, db, take_student):
-    from conftest import student_row
+def test_总览的累计时长等于各笔结算之和(client, db, take_student):
+    """总览那张卡另写一套算法就会与逐笔结算对不上，这条会红。"""
+    admin = login(client, ADMIN)
+    base = _card(client, admin)
+    act = _activity(db)
+    _record(db, act, student_row(db, take_student()),
+            _seg("shift", 0.25), _seg("shift", 0.25))          # 结算 0.5
+    _record(db, act, student_row(db, take_student()),
+            _seg("shift", 3, reward="pay"), _seg("manual", 2))  # 劳务不计，结算 2.0
 
+    assert round(_card(client, admin) - base, 1) == 2.5
+    assert _card(client, admin) == round(_want(db), 1)
+
+
+def test_总览按笔取整_不把几笔的零头并到一起(client, db, take_student):
+    """两笔各 0.5 结算 1.0；把几笔的段并起来只取整一次会算成 0.5。"""
+    admin = login(client, ADMIN)
+    base = _card(client, admin)
+    act = _activity(db)
+    for _ in range(2):
+        _record(db, act, student_row(db, take_student()),
+                _seg("shift", 0.25), _seg("shift", 0.25))
+
+    assert round(_card(client, admin) - base, 1) == 1.0
+
+
+def test_段一改结算就跟着重算(db, take_student):
+    act = _activity(db)
     u = student_row(db, take_student())
-    rec = _record(db, u.id, 4, [HOURS_PART])
-    assert (rec.hours_counted, rec.hours_paid) == (4.0, 0.0)
-    # 给这一段选上劳务：3 小时的段选了劳务，4 小时里就有 3 小时算劳务
-    rec.parts = [{**HOURS_PART, "reward": "pay"}]
-    db.commit()
-    assert (rec.hours_counted, rec.hours_paid) == (1.0, 3.0)
-    # 管理者改合计：增减落在志愿时长那边
-    rec.hours = 5
-    db.commit()
-    assert (rec.hours_counted, rec.hours_paid) == (2.0, 3.0)
-    # 到点没表态：各段退回志愿时长
+    rec = _record(db, act, u, _seg("shift", 2, reward="pay"))
+    assert (rec.counted_hours(), rec.pay_hours()) == (0.0, 2.0)
+
+    # 本人把这一段退回志愿时长：合计不变，结算跟着变
     rec.clear_pay()
     db.commit()
-    assert (rec.hours_counted, rec.hours_paid) == (5.0, 0.0)
+    assert rec.hours == 2.0
+    assert (rec.counted_hours(), rec.pay_hours()) == (2.0, 0.0)
+
+    # 管理者手动补一段：合计重算，取整仍旧只发生在结算那一步
+    rec.add_segment(**_seg("manual", 1.7, label="场外搬运"))
+    db.commit()
+    assert rec.hours == 3.7
+    assert rec.counted_hours() == 4.0
+    assert rec.pay_hours() == 0.0
 
 
-def test_总览的累计时长等于逐条_split之和(client, db, take_student):
-    """缓存列与真值对不上时，这条会红。"""
-    admin = login(client, ADMIN)
-    from conftest import student_row
-
+def test_导入段与手动段都只记志愿时长(db, take_student):
+    """只有 kind=shift 且选了劳务的段算劳务（见 models.part_is_pay）：
+    补记录名单导入与手动补录都是人交进来的账，不按劳务计。"""
+    act = _activity(db)
     u = student_row(db, take_student())
-    _record(db, u.id, 3)
-    _record(db, u.id, 4.5, [PAY_PART, HOURS_PART])
+    rec = _record(db, act, u,
+                  _seg("import", 3, reward="pay", label="补记录"),
+                  _seg("manual", 1.2, reward="pay", label="现场加时"))
 
-    want = sum(HoursRecord.split(h, p)[0] for h, p in
-               db.query(HoursRecord.hours, HoursRecord.parts))
-    got = client.get("/api/staff/overview", headers=admin).json()["cards"]["hours_total"]
-    assert got == round(want, 1)
-
-
-def test_补记录与手动加的段都算志愿时长(client, db, take_student):
-    """只有 kind=shift 且选了 pay 的段算劳务，导入段与手动段全算志愿时长。"""
-    from conftest import student_row
-
-    u = student_row(db, take_student())
-    rec = _record(db, u.id, 3, [
-        {"kind": "import", "label": "补记录", "time": "09-20 08:00-11:00",
-         "hours": 3, "reward": "pay"},
-        {"kind": "manual", "label": "现场加时", "hours": 0},
-    ])
-    assert (rec.hours_counted, rec.hours_paid) == (3.0, 0.0)
+    assert rec.hours == 4.2                        # 段上的原始值照记
+    assert (rec.counted_hours(), rec.pay_hours()) == (4.5, 0.0)

@@ -324,6 +324,8 @@ def pending_vb_confirms(db: OrmSession = Depends(db_session),
                 .order_by(VbConfirm.submitted_at.desc()).first())
         out.append({**_vbc_out(db, r), "activity_title": act.title if act else "",
                     "organizer": act.organizer if act else "",
+                    "co_organizer": (act.co_organizer or "") if act else "",
+                    "organizer_text": act.organizer_text() if act else "",
                     "locked_at": iso(act.hours_locked_at) if act else "",
                     "last_return": prev.reply if prev else ""})
     return out

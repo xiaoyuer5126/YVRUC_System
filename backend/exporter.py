@@ -21,14 +21,14 @@ from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import selectinload
 
 from . import config, hours as hours_flow, scoring
 from .models import (Activity, Attachment, CheckinRecord, Enrollment,
-                     FormQuestion, HoursClaim, HoursRecord, Position, Shift,
-                     User, now, span_text)
+                     FormQuestion, HoursClaim, HoursRecord, HoursSegment,
+                     Position, Shift, User, now, span_text)
 
 MATERIAL_DIR = config.MATERIAL_DIR
 
@@ -495,62 +495,103 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
 # （待外联确认、已完成）——那也是办完的活动，漏掉等于长期统计少一块。
 # 草稿与审批线上的还没办，列进去等于把没发生的事算成数据。
 SUMMARY_STATUSES = ("published", "closed", "finished", "vb_pending", "completed")
-SUMMARY_HEADER = ("活动编号", "活动名称", "组织单位", "时间", "状态",
+SUMMARY_HEADER = ("活动编号", "活动名称", "组织单位", "联合主办方", "时间", "状态",
                   "志愿者人数", "人次", "志愿时数", "劳务时数")
+# 表底的口径说明：拿到表的人不必回头问人数怎么算、时数为什么不是整数。
+# 写在合计行下面空一行处，表头与数据行的位置不因此挪动（见 _rows 用例）
+SUMMARY_NOTES = (
+    "说明：人数、人次按报名岗位数计；补记录活动与没有报名岗位的补录只有时长。",
+    "时长按 0.5 小时向上取整，归属到该笔最后一次服务的日期。",
+)
+
+
+def record_settlements(db: OrmSession, *, start: datetime | None = None,
+                       before: datetime | None = None
+                       ) -> list[tuple[str, datetime, float, float]]:
+    """各笔账的（活动 id, 归属日期, 志愿时数, 劳务时数），一笔一条。
+
+    一笔的归属日期 = 这一笔所有段里最晚的那个服务日期。一笔账可能横跨两个月
+    （这个月签到算出两段、下个月又补录一段），整笔的结算数都算在最后那次服务
+    所属的区间里：要是不这样、把两半各归各的那一天，各区间之和就对不上单笔结算
+    数——两半各自向上取整到 0.5，取整一旦落到按段拆分之后，每一段的零头都要
+    多出 0.5 来。
+
+    取整走 HoursRecord.ceil_half 一处，不在这儿另写一个：两处各写一个取整，
+    界面上看到的和导出去的迟早差 0.5。
+
+    start 起（含）、before 止（不含），都不给就是不限。一段都没有的记录（合计
+    恒为 0）没有服务日期可归，不进这里。
+    """
+    is_pay = and_(HoursSegment.kind == "shift", HoursSegment.reward == "pay")
+    latest = func.max(HoursSegment.date)
+    q = (db.query(HoursRecord.activity_id, latest,
+                  func.coalesce(func.sum(HoursSegment.hours).filter(~is_pay), 0.0),
+                  func.coalesce(func.sum(HoursSegment.hours).filter(is_pay), 0.0))
+         .join(HoursSegment, HoursSegment.record_id == HoursRecord.id)
+         .group_by(HoursRecord.id, HoursRecord.activity_id))
+    if start is not None:
+        q = q.having(latest >= start)
+    if before is not None:
+        q = q.having(latest < before)
+    return [(aid, day, HoursRecord.ceil_half(volunteer), HoursRecord.ceil_half(paid))
+            for aid, day, volunteer, paid in q]
 
 
 def build_activities_summary_workbook(
         db: OrmSession, start: datetime | None = None,
         end: datetime | None = None) -> tuple[BytesIO, int]:
-    """活动级汇总：一场活动一行，末行合计，给校青协做统计。
+    """活动级汇总：一场活动一行，末行合计，表底两行口径说明，给校青协做统计。
 
-    进表的是 SUMMARY_STATUSES 那三个状态的活动，含不公开招募（补记录）活动：
+    进表的是 SUMMARY_STATUSES 那几个状态的活动，含不公开招募（补记录）活动：
     它们没有场次、不收报名，时长靠导入名单，统计时同样算数。
-    区间按活动**结束时间**落在里头算（end 含当天整天），不按两段有没有交集：
-    一场跨月办完的活动只归到它结束的那一侧。没排场次的没有时间可归，跳过。
+    一场活动进表，是因为区间内有段落在这个区间里（不是活动结束在区间里）：
+    段记的是服务当天，办完再补录的时长照样落在服务发生的那个区间，跨月的一笔
+    整笔算在最后一次服务那一侧（见 record_settlements）。
     人数是报名记录按人去重后的个数，人次是报名记录的条数——一个人报两个场次，
-    人数算一个、人次算两个。时数按 HoursRecord.split 拆成志愿时长与劳务两半
-    分别合计。
+    人数算一个、人次算两个；日期取报名所在场次的开始那天（Shift.start_time），
+    也就是本人哪天来服务。补记录活动没有场次、不收报名，人数与人次都是 0，
+    只有时长。时数在一笔之内取整到 0.5（HoursRecord.ceil_half），各笔再相加。
+    end 含当天整天。
     返回工作簿和进表的活动数：条数要写进导出留痕。
     """
-    picked: list[tuple[tuple[datetime, datetime], Activity]] = []
-    # 场次一次带出来：time_span() 要用，逐场活动再去取就是一场一条 SQL，
-    # 全库导出时条数跟着活动数涨
-    acts = (db.query(Activity).options(selectinload(Activity.shifts))
-            .filter(Activity.status.in_(SUMMARY_STATUSES)))
-    for act in acts:
-        span = act.time_span()
-        if span is None:
-            continue
-        if start is not None and span[1] < start:
-            continue
-        if end is not None and span[1] >= end + timedelta(days=1):
-            continue
-        picked.append((span, act))
-    picked.sort(key=lambda x: (x[0][1], x[1].title))
+    before = end + timedelta(days=1) if end is not None else None
+    hours: dict[str, list[float]] = {}
+    for aid, _day, counted, paid in record_settlements(db, start=start,
+                                                       before=before):
+        pair = hours.setdefault(aid, [0.0, 0.0])
+        pair[0] += counted
+        pair[1] += paid
+
+    picked: list[tuple[tuple[datetime, datetime] | None, Activity]] = []
+    if hours:
+        # 场次一次带出来：time_span() 要用，逐场活动再去取就是一场一条 SQL，
+        # 全库导出时条数跟着活动数涨
+        acts = (db.query(Activity).options(selectinload(Activity.shifts))
+                .filter(Activity.status.in_(SUMMARY_STATUSES),
+                        Activity.id.in_(list(hours))))
+        for act in acts:
+            # time_span() 为空的（排不出场次的）时间那格留空，排在排了场次的后面
+            picked.append((act.time_span(), act))
+    picked.sort(key=lambda x: (x[0][1] if x[0] else datetime.max, x[1].title))
 
     ids = [act.id for _span, act in picked]
     counts: dict[str, tuple[int, int]] = {}
-    volunteer: dict[str, float] = {}
-    pay: dict[str, float] = {}
     if ids:
+        enroll_q = (db.query(Enrollment.activity_id,
+                             func.count(func.distinct(Enrollment.user_id)),
+                             func.count(Enrollment.id))
+                    .join(Shift, Shift.id == Enrollment.shift_id)
+                    .filter(Enrollment.activity_id.in_(ids),
+                            Enrollment.status == "enrolled",
+                            # 只数服务场次：培训/彩排的报名是跟着服务场次自动挂上的，
+                            # 同一个人会被再算一次
+                            Shift.kind == "service"))
+        if start is not None:
+            enroll_q = enroll_q.filter(Shift.start_time >= start)
+        if before is not None:
+            enroll_q = enroll_q.filter(Shift.start_time < before)
         counts = {aid: (people, seats) for aid, people, seats in
-                  db.query(Enrollment.activity_id,
-                           func.count(func.distinct(Enrollment.user_id)),
-                           func.count(Enrollment.id))
-                  .join(Shift, Shift.id == Enrollment.shift_id)
-                  .filter(Enrollment.activity_id.in_(ids),
-                          Enrollment.status == "enrolled",
-                          # 只数服务场次：培训/彩排的报名是跟着服务场次自动挂上的，
-                          # 同一个人会被再算一次
-                          Shift.kind == "service")
-                  .group_by(Enrollment.activity_id)}
-        for aid, h, parts in (db.query(HoursRecord.activity_id, HoursRecord.hours,
-                                       HoursRecord.parts)
-                              .filter(HoursRecord.activity_id.in_(ids))):
-            counted, paid = HoursRecord.split(h, parts)
-            volunteer[aid] = volunteer.get(aid, 0.0) + counted
-            pay[aid] = pay.get(aid, 0.0) + paid
+                  enroll_q.group_by(Enrollment.activity_id)}
 
     wb = Workbook()
     ws = wb.active
@@ -560,17 +601,21 @@ def build_activities_summary_workbook(
     seats_total, volunteer_total, pay_total = 0, 0.0, 0.0
     for span, act in picked:
         people, seats = counts.get(act.id, (0, 0))
-        counted, paid = volunteer.get(act.id, 0.0), pay.get(act.id, 0.0)
-        ws.append([act.id, act.title, act.organizer, span_text(*span),
-                   act.label_status(), people, seats,
-                   round(counted, 1), round(paid, 1)])
+        counted, paid = hours.get(act.id, (0.0, 0.0))
+        ws.append([act.id, act.title, act.organizer, act.co_organizer or "",
+                   span_text(*span) if span else "", act.label_status(), people,
+                   seats, round(counted, 1), round(paid, 1)])
         seats_total += seats
         volunteer_total += counted
         pay_total += paid
     # 合计行：人数不去重就没有意义，只合计人次与时数
-    ws.append(["合计", "", "", "", "", "", seats_total,
+    ws.append(["合计", "", "", "", "", "", "", seats_total,
                round(volunteer_total, 1), round(pay_total, 1)])
-    for col, w in zip("ABCDEFGHI", (20, 32, 22, 26, 12, 12, 8, 10, 10)):
+    # 口径说明落在表底：合计行下面空一行，再写 SUMMARY_NOTES 那两行
+    note_row = ws.max_row + 2
+    for i, line in enumerate(SUMMARY_NOTES):
+        ws.cell(row=note_row + i, column=1, value=line)
+    for col, w in zip("ABCDEFGHIJ", (20, 32, 22, 22, 26, 12, 12, 8, 10, 10)):
         ws.column_dimensions[col].width = w
     disarm_formulas(wb)
     buf = BytesIO()

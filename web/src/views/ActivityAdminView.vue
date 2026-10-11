@@ -936,7 +936,7 @@
 
         <!-- 手动添加时长（补记录活动的名单与时长都在「名单导入」里改） -->
         <div v-if="!isRecord" class="section-title" style="margin-top:16px">
-          手动加 / 扣时长（场外支援、补录、中途离场等情况）
+          手动加 / 扣时长（签到漏扫、中途离场等情况）
         </div>
         <el-card v-if="!isRecord" shadow="never">
           <div class="toolbar" style="align-items:flex-start">
@@ -953,13 +953,21 @@
             </el-radio-group>
             <el-input-number v-model="mh.hours" :min="0.5" :step="0.5"
                              :disabled="hoursFrozen" style="width:120px" />
+            <!-- 服务日期：这一段时长对应的服务发生在哪一天，不是今天录的日期 -->
+            <el-date-picker v-model="mh.date" type="date" value-format="YYYY-MM-DD"
+                            placeholder="服务日期" :disabled="hoursFrozen"
+                            style="width:150px" />
             <el-input v-model="mh.note" placeholder="备注（必填，写明为什么）"
                       :disabled="hoursFrozen" style="width:220px" />
             <el-button type="primary"
-                       :disabled="hoursFrozen || !mh.userIds.length || !mh.note.trim()"
+                       :disabled="hoursFrozen || !mh.userIds.length || !mh.note.trim()
+                                  || !mh.date"
                        @click="addManualHours">
               {{ mh.sign === 'deduct' ? '批量扣减' : '批量添加' }}{{ mh.userIds.length ? `（${mh.userIds.length} 人）` : '' }}
             </el-button>
+          </div>
+          <div class="dim">
+            只列这场活动已确认报名的志愿者；没报名的人请在补记录活动里记。
           </div>
           <div class="dim">
             加进这个人这场活动的总时长里，在表格中展开他的明细可以看到那一段，
@@ -1897,8 +1905,24 @@ const hoursSel = ref([])                       // 时长表勾选行
 const hoursState = ref({})                     // 核准/锁定状态，这一页按它决定给哪些按钮
 const approveDlg = ref({ visible: false, deadline: '', busy: false })
 const lockDlg = ref({ visible: false, early: false, names: [], note: '', busy: false })
-// sign：add 加 / deduct 扣。扣减传负数（见后端 hours_manual），备注两边都必填
-const mh = ref({ userIds: [], sign: 'add', hours: 0.5, note: '' })
+// sign：add 加 / deduct 扣。扣减传负数（见后端 hours_manual），备注两边都必填。
+// date：这段时长算哪一天的服务（不是今天录的日期），一次批量共用一个
+const mh = ref({ userIds: [], sign: 'add', hours: 0.5, note: '', date: '' })
+
+/** 这场活动服务的那一天，给手动时长当默认服务日期。
+ *
+ * 场次与补记录活动的开始时间都是本地裸时间串（2026-09-27T16:00），前 10 位就是
+ * 本地日期；绕一遍 Date 再格式化，会随浏览器时区把日子串到前后一天去。
+ */
+function serviceDateOf(a) {
+  const first = a?.shifts?.[0]
+  const raw = first?.start_time || a?.held_start || ''
+  return String(raw).slice(0, 10)
+}
+
+// 默认服务日期是按活动填的：这场活动刷新多少次都不再动它（核准、确认报名都会
+// 重新 loadAll，把管理者选过的日子刷回去等于白选），换活动才按新活动重填
+let mhDateFor = ''
 
 // 手动加时长的候选人 = 本活动全部场次的已报名志愿者（含未签到的）
 // pick 模式却一个岗位都没有 = 学生根本报不了名
@@ -2001,6 +2025,12 @@ async function loadAll() {
       return
     }
     act.value = d
+    // 手动加/扣时长的服务日期默认落在活动服务的那天：时长多是事后统一录进来，
+    // 空着的话每录一条都要自己挑一次日历
+    if (mhDateFor !== activityId) {
+      mhDateFor = activityId
+      mh.value.date = serviceDateOf(d)
+    }
     // 默认页签：发布后进概览；未发布进岗位设置，补记录活动没有岗位设置，进名单导入
     const fallback = d.recruit_mode === 'record' ? 'records' : 'tree'
     if (!tab.value) tab.value = isPublic.value ? 'overview' : fallback
@@ -2816,18 +2846,20 @@ async function confirmAllHours() {
   } catch { /* toast by api */ }
 }
 
-// 手动添加时长（不依赖签到，如场外支援/补录）。批量：一次给多人写同一条时长
+// 手动添加时长（不依赖签到，如签到漏扫、中途离场）。批量：一次给多人写同一条时长
 async function addManualHours() {
-  const { userIds, sign, hours, note } = mh.value
+  const { userIds, sign, hours, note, date } = mh.value
   if (!userIds.length) return ElMessage.warning('请先选择志愿者')
   if (!note.trim()) return ElMessage.warning('备注必填：写清楚为什么加、为什么扣')
+  if (!date) return ElMessage.warning('请选择服务日期：这段时长算哪一天的服务')
   // 扣减就是同一个接口传负数——后台按正负分「加」和「扣」，台账上是一段
   const value = sign === 'deduct' ? -Math.abs(hours) : Math.abs(hours)
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/hours/manual`,
-      { items: userIds.map(sid => ({ student_id: sid, hours: value, note })) })
+      { items: userIds.map(sid => ({ student_id: sid, hours: value, note })), date })
     ElMessage.success(`已为 ${d.count} 位志愿者${sign === 'deduct' ? '扣减' : '添加'}时长`)
-    mh.value = { userIds: [], sign: 'add', hours: 0.5, note: '' }
+    // 日期留着：一场活动的时长常是连着录几条，每来一条都重挑一次日历是白费事
+    mh.value = { userIds: [], sign: 'add', hours: 0.5, note: '', date }
     hoursPreview(true)
   } catch { /* toast by api */ }
 }

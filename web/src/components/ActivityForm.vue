@@ -7,6 +7,14 @@
       <el-input v-model="f.organizer" maxlength="64"
                 placeholder="如：中国人民大学青年志愿者协会 / 图书馆" />
     </el-form-item>
+    <!-- 联合举办：组织单位仍是必填的那一个，这里填另一个主办方。
+         对外显示成「组织单位 × 联合主办方」，由后端拼，前端不自己拼 -->
+    <el-form-item label="联合主办方">
+      <el-autocomplete v-model="f.co_organizer" :fetch-suggestions="coOrganizerSuggest"
+                       :trigger-on-focus="false" maxlength="64" style="width:100%"
+                       placeholder="选填，与别的单位合办时填另一个主办方" />
+      <div class="dim">填了在活动页显示成「组织单位 × 联合主办方」；单独主办就留空</div>
+    </el-form-item>
     <el-form-item label="活动类型" required>
       <el-radio-group v-model="f.recruit_mode">
         <el-radio-button v-for="(m, key) in shownModes" :key="key" :value="key">
@@ -179,6 +187,7 @@ const qrUploading = ref(false)
 const campuses = ref([])
 const stages = ref([])
 const colleges = ref([])
+const coOrganizers = ref([])     // vuecheck: script-only，广场列表给的历史值，做建议用
 const benefitDefault = ref('')   // vuecheck: script-only，只用来预填
 
 // 新建时预填默认的保障（以后端为准，不在前端抄一份）；编辑时已有内容就不动。
@@ -192,16 +201,25 @@ function fillBenefit() {
 watch(() => props.modelValue, fillBenefit)
 
 onMounted(async () => {
-  const [c, cl] = await Promise.all([
+  const [c, cl, square] = await Promise.all([
     api.get('/api/auth/constants', { silent: true }),
     api.get('/api/staff/colleges', { silent: true }),
+    // 只要候选项，所以 size=1；拉不到就没有建议，别的默认值照旧
+    api.get('/api/activities?size=1', { silent: true }).catch(() => ({})),
   ])
   campuses.value = c.campuses || []
   stages.value = c.stages || []
   benefitDefault.value = c.volunteer_benefit_default || ''
   fillBenefit()
   colleges.value = cl.colleges || []
+  coOrganizers.value = square.co_organizers || []
 })
+
+/** 联合主办方的输入建议：在已经用过的历史值里筛（后端按非空去重排好序）。 */
+function coOrganizerSuggest(q, cb) {
+  const key = (q || '').trim()
+  cb(coOrganizers.value.filter(v => !key || v.includes(key)).map(v => ({ value: v })))
+}
 
 // —— 地点定位 ——
 const pointDlg = ref({ visible: false, value: {}, place: '' })

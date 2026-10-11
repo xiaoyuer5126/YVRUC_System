@@ -23,7 +23,8 @@ from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import (require_admin, require_archive_page, require_council,
                     require_council_download, require_manager)
-from ..exporter import SUMMARY_STATUSES, build_activities_summary_workbook
+from ..exporter import (SUMMARY_STATUSES, build_activities_summary_workbook,
+                        record_settlements)
 from ..integrations import all_configs, save_config
 from ..models import (Activity, AuditLog, CheckinRecord, Enrollment,
                       HoursRecord, Shift, User, ViolationRecord, iso,
@@ -41,6 +42,8 @@ def overview(start: str = "", end: str = "",
     「这段时间的量」的卡：活动总数、有效报名、累计时长、报名学院分布。
     此刻的状态卡（注册学生、报名中活动、候补中、24 小时签到、近 14 天报名趋势、
     最近操作留痕）与该区间无关，参数怎么改都不动。
+    累计时长按段的服务日期挑每一笔（见 exporter.record_settlements）：一笔账
+    整笔算在它最后一次服务那一天所属的区间里，办完再补录的时长照样算得进来。
     """
     t = now()
     lo = hi = None
@@ -78,7 +81,8 @@ def overview(start: str = "", end: str = "",
                      .scalar() or 0)
 
     # 区间内的活动：办过的（状态同活动汇总导出），按活动的**结束时间**落区间，
-    # 与导出同一口径，跨月的活动只归一侧。没填区间就是全部活动
+    # 跨月的活动只归一侧——这张卡数的是这段时间办完的活动，跟时长那张各按各的
+    # 日期算。没填区间就是全部活动
     if ranged:
         ids = []
         q = (db.query(Activity).options(selectinload(Activity.shifts))
@@ -93,13 +97,13 @@ def overview(start: str = "", end: str = "",
                 continue
             ids.append(act.id)
         activities_all = len(ids)
-        hours_q = (db.query(func.coalesce(func.sum(HoursRecord.hours_counted), 0.0))
-                   .filter(HoursRecord.activity_id.in_(ids)))
     else:
         activities_all = sum(by_status.values())
-        hours_q = db.query(func.coalesce(func.sum(HoursRecord.hours_counted), 0.0))
-    # 两半的合计是缓存列（见 HoursRecord.sync_totals）：求和交给 SQL
-    hours_total = hours_q.scalar() or 0.0
+    # 累计时长：区间内各笔结算的志愿时数之和，按段的服务日期归属（见 exporter）。
+    # 不跟着上面那张「活动总数」的 id 走：一张卡说的是这段时间的服务量，一笔账
+    # 的段记的是服务当天，活动办完再补录的时长也要算在服务发生的那个区间里
+    hours_total = sum(counted for _aid, _day, counted, _pay
+                      in record_settlements(db, start=lo, before=hi))
 
     # 近 14 天报名趋势：拉出来在内存按天聚合（演示规模无性能问题，
     # 且 SQLite/PG 的日期函数差异就不用管了）

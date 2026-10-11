@@ -306,7 +306,7 @@ def push_vb_confirm(db: OrmSession, act: Activity, actor: User | None,
     again = kind == "resubmit"
     for u in vb_contacts(db):
         notify(db, u, f"志愿北京待确认｜{act.title}",
-               f"「{act.title}」（{act.organizer}）的志愿时长已锁定"
+               f"「{act.title}」（{act.organizer_text()}）的志愿时长已锁定"
                + ("，管理者按退回意见改了志愿北京活动名称，重新提交。" if again else "。")
                + f"\n志愿北京活动名称：{names_text(row.names)}\n"
                f"请到志愿北京核对后，在「活动审批」确认或退回。",

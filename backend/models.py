@@ -18,8 +18,12 @@ import uuid
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Index,
-                        Integer, String, Text, event, text)
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+                        Integer, String, Text, UniqueConstraint, event,
+                        inspect as sa_inspect, text)
+# 会话类在这里叫 OrmSession：本模块还有一个自己的 Session（登录会话那张表），
+# 直接用 Session 这个名字会被它盖掉
+from sqlalchemy.orm import (Mapped, Session as OrmSession, mapped_column,
+                            object_session, relationship)
 from sqlalchemy.orm.attributes import flag_modified
 
 from . import config
@@ -329,6 +333,10 @@ class Activity(Base):
     # 谁办的这场活动：校青协 / 某院系志愿团体 / 学校某部门。必填——
     # 审批时靠它判断该由哪个部门归口，志愿者也要知道自己报的是谁的活动。
     organizer: Mapped[str] = mapped_column(String(64), default="")
+    # 联合主办方（选填）：跟别的单位合办时填另一个主办方，对外显示成「A × B」
+    # （见 organizer_text）。归口审批、筛选、统计一律只看 organizer——
+    # 多了个合办方并不改变这场活动该由谁审、归哪一类。
+    co_organizer: Mapped[str] = mapped_column(String(64), default="")
     # 活动级的整体要求与保障。岗位上的「要求原文」讲的是那个岗位特有的事，
     # 这两条讲的是整个活动共通的：着装、集合、餐食、时长、纪念品。
     # 要求选填；保障必填，招募文案里固定有这一段，默认见 config
@@ -424,6 +432,18 @@ class Activity(Base):
 
     def label_status(self) -> str:
         return self.STATUS_LABELS.get(self.status, self.status)
+
+    def organizer_text(self) -> str:
+        """对外显示的组织单位；联合举办时写成「A × B」。
+
+        两侧各自去掉首尾空白：名字里混进空格时，拼出来会多出一个
+        「A  × B」，拿去搜索、核对都要对不上。
+        """
+        a = (self.organizer or "").strip()
+        b = (self.co_organizer or "").strip()
+        if a and b:
+            return f"{a} × {b}"
+        return a or b
 
     def hours_locked(self) -> bool:
         return self.hours_locked_at is not None
@@ -1019,81 +1039,281 @@ class CheckinRecord(Base):
 
 # ======================= 时长 / 审计 / 通知 / 集成配置 =======================
 
+def day_of(moment: datetime) -> datetime:
+    """那一刻所在的那一天（本地 0 点）。
+
+    段上的服务日期按天记：同一天里上午场还是下午场，看 time_text。
+    """
+    return moment.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def part_is_pay(kind: str, reward: str) -> bool:
+    """这一段按不按劳务计。
+
+    只有签到算出来的段能选劳务（岗位开了「可选劳务」，本人才选得了）；手动加/扣
+    与名单导入的段只记志愿时长。
+    """
+    return kind == "shift" and reward == "pay"
+
+
+def segment_out(fields: dict) -> dict:
+    """一段在接口里的样子：前端一直在读的那套键名（time / position）加服务日期。
+
+    键取列名（time_text / position_name）。算出来还没落库的那几段也走这里，
+    预览与库里的明细才不会在键名上各说各的。
+    """
+    out = {"id": fields.get("id", ""), "label": fields.get("label", ""),
+           "time": fields.get("time_text", ""),
+           "position": fields.get("position_name", ""),
+           "hours": fields.get("hours", 0.0), "kind": fields.get("kind", ""),
+           "shift_id": fields.get("shift_id"),
+           "position_id": fields.get("position_id"),
+           "date": f"{fields['date']:%Y-%m-%d}" if fields.get("date") else ""}
+    if part_is_pay(out["kind"], fields.get("reward", "")):
+        out["reward"] = "pay"
+    return out
+
+
+class HoursSegment(Base):
+    """一笔时长里的一段明细。
+
+    一段一行，不是一个 JSON 数组：按服务日期、按活动、按人统计都能交给带索引的
+    SQL，不必把整份明细拉进 Python 再拆。三种：
+      shift   签到结算按场次一段：哪一场、什么时段、什么岗位
+      manual  管理者手动加/扣一段：备注就是 label，扣减记负数
+      import  补记录活动导入名单一段：时段写活动时间
+
+    段是账的依据：hours 记原始值，一笔的合计恒等于各段之和（见
+    _sync_hours_from_segments）。取整到 0.5 只发生在对外结算那一步（见
+    HoursRecord.split），段上的数不动——对账时明细和合计才对得上。
+    """
+    __tablename__ = "hours_segments"
+
+    # 定长列：这几项都是从别处抄来的（场次名、岗位名、备注），抄来的可能比列宽
+    # 长。收窄放在 normalize 一处，写段的路径不必各记各的宽度
+    WIDTHS = {"label": 128, "position_name": 64, "time_text": 64}
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    # 记录没了段跟着没：外键的 ON DELETE CASCADE 之外，代码里删记录也靠
+    # relationship 的 delete-orphan 一起带走。留下孤儿段，统计会把它算进去，
+    # 直接污染时长
+    record_id: Mapped[str] = mapped_column(
+        ForeignKey("hours_records.id", ondelete="CASCADE"), index=True)
+    activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(12))       # shift / manual / import
+    # 同一笔内的顺序：写入时取这一笔当前的最大值 + 1，明细的顺序就是写入的顺序
+    seq: Mapped[int] = mapped_column(Integer, default=0)
+    # 服务日期（本地 0 点）：这一段算哪一天的服务，不是录进来的那天
+    date: Mapped[datetime] = mapped_column(DateTime)
+    hours: Mapped[float] = mapped_column(Float)         # 原始值，不取整；手动扣减为负
+    reward: Mapped[str] = mapped_column(String(8), default="")   # "" / "pay"
+    label: Mapped[str] = mapped_column(String(128), default="")
+    position_name: Mapped[str] = mapped_column(String(64), default="")
+    time_text: Mapped[str] = mapped_column(String(64), default="")
+    shift_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    position_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    @staticmethod
+    def normalize(fields: dict) -> dict:
+        """段字段的收尾：定长列收窄，小时数写到两位。
+
+        小时数不取整到 0.5——段上留原始值，取整是结算那一步的事。写到两位是为了
+        合计与明细在界面上对得上：二进制存不下 0.1 这种数，不收一下，相加会多出
+        0.0000000000000004 的尾巴。
+        """
+        out = dict(fields)
+        for name, width in HoursSegment.WIDTHS.items():
+            if name in out:
+                out[name] = (out[name] or "")[:width]
+        if "hours" in out:
+            out["hours"] = round(float(out["hours"]), 2)
+        return out
+
+    def is_pay(self) -> bool:
+        return part_is_pay(self.kind, self.reward)
+
+    def refill(self, **fields) -> None:
+        """按现算的结果改写这一段：收尾同 add_segment，顺序（seq）不动。"""
+        for name, value in self.normalize(fields).items():
+            setattr(self, name, value)
+
+    def out(self) -> dict:
+        return segment_out({"id": self.id, "kind": self.kind, "reward": self.reward,
+                            "date": self.date, "hours": self.hours,
+                            "label": self.label, "time_text": self.time_text,
+                            "position_name": self.position_name,
+                            "shift_id": self.shift_id,
+                            "position_id": self.position_id})
+
+
 class HoursRecord(Base):
     """一个人在一场活动里的志愿时长。
 
     时长就存在本平台，不外发。核准与锁定记在活动上（hours_approved_at /
     appeal_deadline / hours_locked_at）：一场活动的账一起结，不必逐条记状态。
+
+    一笔账由若干段（HoursSegment）组成：hours 恒等于各段之和（原始值）；对外
+    结算的两半（志愿时长 / 劳务，各自向上取整到 0.5）见 split()。
     """
     __tablename__ = "hours_records"
+    __table_args__ = (
+        # 一场活动一个人只有一笔：从代码约定变成数据库保证。并发下两条写入路径
+        # 同时发现「他还没有记录」时，也只会有一条落库
+        UniqueConstraint("activity_id", "user_id",
+                         name="ux_hours_record_user_activity"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
-    hours: Mapped[float] = mapped_column(Float)
+    # 各段之和（原始值）：由 _sync_hours_from_segments 在一处写，别处不要直接改。
+    # 默认 0 就是「一段都还没有」时的和，建了记录、段还没加上去也不会是空值
+    hours: Mapped[float] = mapped_column(Float, default=0.0)
     # checkin 签到统计 / manual 手动添加 / import 补记录活动导入名单
     source: Mapped[str] = mapped_column(String(12), default="checkin")
     note: Mapped[str] = mapped_column(String(256), default="")            # 手动添加时的备注
     confirmed_by: Mapped[str] = mapped_column(String(32), default="")
     # 志愿者本人的确认：核准后到申诉截止之间，本人看过说没问题，并给每一段
-    # 选定报酬方式（见 parts 的 reward）。到点没表态的按「没问题 + 全部志愿时长」
-    # 处理，锁定时补上确认时间。
+    # 选定报酬方式（见 HoursSegment.reward）。到点没表态的按「没问题 + 全部志愿
+    # 时长」处理，锁定时补上确认时间。
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # 上一次核准时通知本人的数值：再次核准只惊动数值变过、或申诉过的人
     approved_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
-    # 这笔时长由哪几段组成：
-    #   签到算的（kind="shift"）按场次一段一段记：{label 场次, time 时段,
-    #     position 岗位名, hours, shift_id, position_id, reward?}。
-    #     reward 是本人给这一段选的报酬方式（hours 志愿时长 / pay 劳务），
-    #     只有该段岗位开了「可选劳务」（Position.pay_optional）才会是 pay；
-    #     没有这个键就是志愿时长。
-    #   手动添加的一段（kind="manual"，备注当 label），补记录活动导入的一段
-    #     （kind="import"，时段写活动时间）：都只记志愿时长。
-    # 志愿者看得到自己的明细；导出时长记录的备注也从这里拼。
-    parts: Mapped[list] = mapped_column(JSON, default=list)
-    # 两半合计的缓存列：总览、导出这类统计要按活动/按时间求和，不能再把明细拉进
-    # Python 逐行拆。真值仍是 split()（见 sync_totals），这两列跟着它走
-    hours_counted: Mapped[float] = mapped_column(Float, default=0.0)
-    hours_paid: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    # 明细：按写入顺序（seq）排。记录一删段跟着删——留下的孤儿段会被统计算进去
+    segments: Mapped[list["HoursSegment"]] = relationship(
+        order_by=lambda: (HoursSegment.seq, HoursSegment.id),
+        cascade="all, delete-orphan")
 
     REWARD_LABELS = {"hours": "志愿时长", "pay": "劳务"}
 
-    @staticmethod
-    def part_is_pay(p: dict) -> bool:
-        return p.get("kind") == "shift" and p.get("reward") == "pay"
+    def live_segments(self) -> list[HoursSegment]:
+        """这一笔现在的段：本事务里已经删掉的那些不算。
 
-    @staticmethod
-    def split(hours: float, parts: list | None) -> tuple[float, float]:
-        """一笔时长拆成（计入志愿时长, 劳务）两个数。
-
-        劳务 = 选了劳务的那几段的小时数合计，同合计一样向上取整到 0.5，
-        且不超过合计；其余都计志愿时长。管理者改合计、申诉改判的增减
-        落在志愿时长那一边：那些改动说的是服务了多久，不是报酬怎么拿。
+        会话把删掉的对象留在集合里（delete 之后没 flush 的、已经 flush 过的都在），
+        读的时候不排掉它，合计数会多、差额也会按一段已经不存在的时长去补
+        （见 set_total）。删段一律走 drop_segment（它把段从集合里摘掉），这里再
+        兜一道，别的写法也错不了账。
         """
-        raw = sum(float(p.get("hours") or 0) for p in (parts or [])
-                  if HoursRecord.part_is_pay(p))
-        pay = min(max(0.0, hours), math.ceil(max(0.0, raw) * 2) / 2) if raw > 0 else 0.0
-        return round(hours - pay, 2), pay
+        db = object_session(self)
+        if db is None:
+            return list(self.segments)
+        gone = {s.id for s in db.deleted if isinstance(s, HoursSegment)}
+        return [s for s in self.segments
+                if s.id not in gone and not sa_inspect(s).deleted]
+
+    # —— 写段 ——
+
+    def add_segment(self, **fields) -> HoursSegment:
+        """往这一笔里加一段。
+
+        seq 接着这一笔当前的最大值排：明细的顺序就是写入的顺序。activity_id 与
+        user_id 从这一笔上取，段和它挂的记录不会各说各的。
+        """
+        seg = HoursSegment(
+            id=uid("seg"), record_id=self.id, activity_id=self.activity_id,
+            user_id=self.user_id,
+            seq=max((s.seq for s in self.live_segments()), default=0) + 1,
+            **HoursSegment.normalize(fields))
+        self.segments.append(seg)
+        return seg
+
+    def drop_segment(self, seg: HoursSegment) -> None:
+        """删掉一段。
+
+        先从集合里摘掉，再交给会话 delete。摘掉是为了本事务后面几次「这一笔
+        现在是多少」都算不到它（差额、合计都按剩下的段算）；交给会话是为了
+        session.deleted 里留着它的痕迹——合计重算那一处据此把它排除
+        （见 _sync_hours_from_segments），只摘不删的话那处不知道段动过。
+        """
+        if seg in self.segments:
+            self.segments.remove(seg)
+        db = object_session(self)
+        if db is not None:
+            db.delete(seg)
+
+    def set_total(self, total: float, *, label: str, date: datetime) -> None:
+        """把这一笔的合计定成 total：差额记在 label 这句话的那一段上。
+
+        管理者核定时改的数、申诉改判的数都是「这一笔就是这么多」，不是「再加
+        这么多」，所以同一句话的调整段只留一段：按差额改写它，差额为 0 就删掉。
+        要是不这样，同一笔每改一次就多一段，账越点越大。
+        """
+        segs = self.live_segments()
+        seg = next((s for s in segs if s.kind == "manual" and s.label == label), None)
+        other = round(sum(float(s.hours or 0) for s in segs if s is not seg), 2)
+        delta = round(total - other, 2)
+        if seg is None:
+            if delta:
+                self.add_segment(kind="manual", date=date, hours=delta, label=label,
+                                 time_text=f"{date:%m-%d}")
+            return
+        if delta:
+            seg.refill(hours=delta, date=date, time_text=f"{date:%m-%d}")
+        else:
+            self.drop_segment(seg)
+
+    # —— 结算 ——
+
+    @staticmethod
+    def sum_segments(segments) -> float:
+        """各段之和（原始值）。
+
+        收到两位不是取整到 0.5：段上的数就写到两位，直接相加会因二进制表示多出
+        0.0000000000000004 这种尾巴，界面上的合计与明细就各显示各的。
+        """
+        return round(sum(float(s.hours or 0) for s in segments), 2)
+
+    @staticmethod
+    def ceil_half(value: float) -> float:
+        """向上取整到 0.5。
+
+        取整前先把「两倍」收到六位小数：二进制存不下 0.1 这种数，两段 2.5 与 2
+        相加会算出 4.500000000000001，直接向上取整就平白多出 0.5。段上的数都
+        写到两位，收六位碰不到真值。
+        """
+        return math.ceil(round(value * 2, 6)) / 2
+
+    @staticmethod
+    def settle(items) -> tuple[float, float]:
+        """一笔账拆成（志愿时长, 劳务）：两半各自向上取整到 0.5，再相加。
+
+        items 是 (原始小时数, 是否劳务) 的序列。管理端那张现算的总表还没落库，
+        也走这里：取整的规则只此一处，界面上看到的和导出去的才对得上。两半之和
+        可能略大于原始合计，这是有意的——0.5 是能报给志愿北京的最小刻度。
+        """
+        rows = list(items)        # 两半各要过一遍，生成器只能取一次
+        return (HoursRecord.ceil_half(sum(h for h, pay in rows if not pay)),
+                HoursRecord.ceil_half(sum(h for h, pay in rows if pay)))
+
+    def split(self) -> tuple[float, float]:
+        """这一笔拆成（志愿时长, 劳务）。"""
+        return self.settle((s.hours, s.is_pay()) for s in self.live_segments())
 
     def counted_hours(self) -> float:
         """计入志愿时长的那部分。"""
-        return self.split(self.hours, self.parts)[0]
+        return self.split()[0]
 
     def pay_hours(self) -> float:
         """按劳务计、不记时长的那部分。"""
-        return self.split(self.hours, self.parts)[1]
+        return self.split()[1]
+
+    def settled_hours(self) -> float:
+        """结算合计：两半各自取整到 0.5 之后的和。对外显示、导出、锁定都用它。"""
+        return sum(self.split())
 
     def parts_text(self, *, hours_only: bool = False) -> str:
         """明细拼成一行：「09-20 08:00-12:00 东门引导；09-21 …」，不换行。
         hours_only：只拼计志愿时长的那几段（导出给志愿北京的备注用）。"""
-        return "；".join(" ".join(x for x in (p.get("time", ""), p.get("position", "")
-                                             or p.get("label", "")) if x)
-                        for p in (self.parts or [])
-                        if not (hours_only and self.part_is_pay(p)))
+        return "；".join(" ".join(x for x in (s.time_text,
+                                              s.position_name or s.label) if x)
+                         for s in self.live_segments()
+                         if not (hours_only and s.is_pay()))
 
     def reward_label(self) -> str:
-        counted, pay = self.split(self.hours, self.parts)
+        counted, pay = self.split()
         if pay <= 0:
             return "志愿时长"
         if counted <= 0:
@@ -1101,24 +1321,43 @@ class HoursRecord(Base):
         return f"志愿时长 {counted:g}h + 劳务 {pay:g}h"
 
     def clear_pay(self) -> None:
-        """各段都退回志愿时长（到点没表态时）。"""
-        self.parts = [{k: v for k, v in p.items() if k != "reward"}
-                      for p in (self.parts or [])]
-
-@event.listens_for(HoursRecord.hours, "set")
-def _sync_totals_on_hours(rec, value, _old, _initiator) -> None:
-    """合计改了：按新的合计与当前明细重算两列缓存。"""
-    rec.hours_counted, rec.hours_paid = HoursRecord.split(value or 0.0, rec.parts)
+        """各段都退回志愿时长（到点没表态时）：该笔所有段的报酬方式一起清掉。"""
+        for s in self.live_segments():
+            s.reward = ""
 
 
-@event.listens_for(HoursRecord.parts, "set")
-def _sync_totals_on_parts(rec, value, _old, _initiator) -> None:
-    """明细改了：按当前合计与新的明细重算两列缓存。
+def _segment_record(session: OrmSession, seg: HoursSegment) -> HoursRecord | None:
+    """这一段挂在哪一笔上。
 
-    写 parts 的地方有八处，逐处手写迟早漏一处，漏了就是永久对不上，所以在模型上
-    挂钩子。set 事件在属性落值之前触发，要重算的那个值只能取事件给的 value。
+    还没落库的那一笔也在 session.new 里：先扫它，不然会拿着一个库里还不存在的
+    主键去查，查出来是空的，这一段就没人算进合计。
     """
-    rec.hours_counted, rec.hours_paid = HoursRecord.split(rec.hours or 0.0, value)
+    if not seg.record_id:
+        return None
+    for obj in session.new:
+        if isinstance(obj, HoursRecord) and obj.id == seg.record_id:
+            return obj
+    return session.get(HoursRecord, seg.record_id)
+
+
+@event.listens_for(OrmSession, "before_flush")
+def _sync_hours_from_segments(session: OrmSession, _context, _instances) -> None:
+    """这次 flush 里动过段的那些记录，合计按段重算。
+
+    合计只此一处写：写段的路径有七八条（签到结算、手动加减、名单导入、本人选
+    报酬方式、申诉改判），逐处手写加法迟早漏一处，漏了就是永久对不上账。在一笔
+    之内保证 hours 恒等于各段之和（原始值）。
+    """
+    deleted_records = {r.id for r in session.deleted if isinstance(r, HoursRecord)}
+    touched: dict[str, HoursRecord] = {}
+    for obj in list(session.new) + list(session.dirty) + list(session.deleted):
+        if not isinstance(obj, HoursSegment):
+            continue
+        rec = _segment_record(session, obj)
+        if rec is not None and rec.id not in deleted_records:
+            touched[rec.id] = rec
+    for rec in touched.values():
+        rec.hours = HoursRecord.sum_segments(rec.live_segments())
 
 
 class HoursRequest(Base):

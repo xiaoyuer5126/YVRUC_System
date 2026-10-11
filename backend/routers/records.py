@@ -27,14 +27,14 @@ import re
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.orm import Session as OrmSession, selectinload
 
 from .. import config, hours as hours_flow
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import require_manager
-from ..models import (Activity, HoursAppeal, HoursRecord, User, iso, span_text,
-                      uid)
+from ..models import (Activity, HoursAppeal, HoursRecord, HoursSegment, User,
+                      day_of, iso, now, span_text, uid)
 from ..notify import notify
 from ..perm import ensure_activity_manager
 from ..stage import ensure_hours_editable
@@ -98,17 +98,19 @@ def _invalidate_hours_approval(db: OrmSession, act: Activity) -> bool:
     return True
 
 
-def _import_part(act: Activity, hours: float, note: str) -> dict:
-    """导入的那一段明细。时段写活动时间：导出的备注、志愿者看到的明细都靠它
-    说明这几个小时是哪一天的。"""
-    time = (span_text(act.held_start, act.held_end)
-            if act.held_start and act.held_end else "")
-    return {"id": uid("seg"), "kind": "import", "label": note, "time": time,
-            "position": "", "hours": hours}
+def _import_fields(act: Activity, hours: float, note: str) -> dict:
+    """导入那一段的字段：时段写活动时间，服务日期取活动开始那天。
+
+    导出的备注、志愿者看到的明细都靠它说明这几个小时是哪一天的。活动时间是
+    给人看的紧凑写法，服务日期是完整的那一天。"""
+    return {"kind": "import", "hours": hours, "label": note,
+            "date": day_of(act.held_start or act.created_at or now()),
+            "time_text": (span_text(act.held_start, act.held_end)
+                          if act.held_start and act.held_end else "")}
 
 
-def _import_segment(rec: HoursRecord) -> dict | None:
-    return next((p for p in (rec.parts or []) if p.get("kind") == "import"), None)
+def _import_segment(rec: HoursRecord) -> HoursSegment | None:
+    return next((s for s in rec.live_segments() if s.kind == "import"), None)
 
 
 def parse_hours(raw) -> float:
@@ -200,9 +202,9 @@ def import_rows(db: OrmSession, act: Activity, user: User,
     """逐行导入。能导的照常导，其余逐条说明原因；找不到的学号单列。不提交事务。"""
     if len(rows) > MAX_ROSTER_ROWS:
         raise HTTPException(400, f"一次最多导入 {MAX_ROSTER_ROWS} 行，请分批导入")
-    # 覆盖的是整列 parts：先锁住这场活动的记录行再读改写（见 lock_records，
-    # 按 id 顺序取锁、取库里的最新值）。调用方已持有活动行锁（_record_act
-    # for_update），顺序是活动 → 时长记录，不回头拿活动锁
+    # 改的是名单里那几笔的导入段：先锁住这场活动的记录行再读改写（见
+    # lock_records，按 id 顺序取锁、取库里的最新值）。调用方已持有活动行锁
+    # （_record_act for_update），顺序是活动 → 时长记录，不回头拿活动锁
     existing = {r.user_id: r for r in hours_flow.lock_records(db, act.id)}
     rows = [(n, c) for n, c in rows if not _is_header(c)]
     sids = {(c[0] if c else "").strip() for _n, c in rows} - {""}
@@ -258,26 +260,29 @@ def import_rows(db: OrmSession, act: Activity, user: User,
                      f"请先处理申诉", u.name)
                 continue
             seg = _import_segment(rec)
-            old_note = (seg or {}).get("label", rec.note)
+            old_note = seg.label if seg is not None else rec.note
             new_note = note or old_note        # 这次没写备注就留着原来的
             if rec.hours == hours and new_note == old_note:
                 unchanged += 1
                 continue
             old = rec.hours
-            rec.parts = [{**(seg or _import_part(act, hours, new_note)),
-                          "hours": hours, "label": new_note}]
-            rec.hours, rec.note, rec.confirmed_by = hours, new_note, user.id
+            if seg is None:
+                # 名单里这一笔没有导入段（这条记录不是导入来的）：补一段，
+                # 段上记的才是这笔账的依据
+                rec.add_segment(**_import_fields(act, hours, new_note))
+            else:
+                seg.refill(hours=hours, label=new_note)
             if old != hours:
                 rec.confirmed_at = None        # 本人之前是对着旧数字确认的
+            rec.note, rec.confirmed_by = new_note, user.id
             overwritten.append({"student_id": sid, "name": u.name,
                                 "old_hours": old, "hours": hours,
                                 "warning": warn_of(hours)})
             continue
         rec = HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id,
-                          hours=hours, source="import", note=note,
-                          parts=[_import_part(act, hours, note)],
-                          confirmed_by=user.id)
+                          source="import", note=note, confirmed_by=user.id)
         db.add(rec)
+        rec.add_segment(**_import_fields(act, hours, note))
         existing[u.id] = rec
         added.append({"student_id": sid, "name": u.name, "hours": hours,
                       "warning": warn_of(hours)})
@@ -337,7 +342,8 @@ def _row_out(db: OrmSession, rec: HoursRecord, users: dict,
     return {"id": rec.id,
             "user": ({"id": u.id, "name": u.name, "student_id": u.student_id,
                       "college": u.college} if u else None),
-            "hours": rec.hours, "note": (seg or {}).get("label", rec.note),
+            "hours": rec.settled_hours(),
+            "note": seg.label if seg is not None else rec.note,
             "created_at": iso(rec.created_at),
             "appealed": a is not None,
             "appeal_pending": bool(a and a.status == "pending")}
@@ -349,6 +355,7 @@ def record_roster(activity_id: str, db: OrmSession = Depends(db_session),
     """补记录活动的当前名单，外加现在能不能改、为什么不能。"""
     act = _record_act(db, user, activity_id)
     rows = (db.query(HoursRecord)
+            .options(selectinload(HoursRecord.segments))
             .filter(HoursRecord.activity_id == act.id)
             .order_by(HoursRecord.created_at).all())
     users = {u.id: u for u in db.query(User)
@@ -364,7 +371,7 @@ def record_roster(activity_id: str, db: OrmSession = Depends(db_session),
     except HTTPException as e:
         block = e.detail
     return {"items": [_row_out(db, r, users, appeals) for r in rows],
-            "total_hours": round(sum(r.hours for r in rows), 1),
+            "total_hours": round(sum(r.settled_hours() for r in rows), 1),
             "editable": not block, "block_reason": block,
             "warn_hours": config.RECORD_WARN_HOURS,
             "held_text": (span_text(act.held_start, act.held_end)
@@ -416,7 +423,7 @@ class RecordEditBody(BaseModel):
 
 def _record_of(db: OrmSession, act: Activity, record_id: str, *,
                for_update: bool = False) -> HoursRecord:
-    """名单里的这一条。for_update：要重写它的 parts 时先锁住这一行。"""
+    """名单里的这一条。for_update：要改它的导入段时先锁住这一行。"""
     rec = ((db.query(HoursRecord).filter(HoursRecord.id == record_id)
             .populate_existing().with_for_update().one_or_none())
            if for_update else db.get(HoursRecord, record_id))
@@ -432,7 +439,7 @@ def edit_record(activity_id: str, record_id: str, body: RecordEditBody,
     """改一个人的时长或备注。数值变了，本人之前的确认作废（同手动加减）。"""
     act = _record_act(db, user, activity_id, for_update=True)
     _ensure_importable(db, act)
-    # 这一段明细是整列重写：活动行锁之后接着锁这一条记录，顺序是
+    # 这一段要改写导入段：活动行锁之后接着锁这一条记录，顺序是
     # 活动 → 时长记录（同 import_rows），不回头拿活动锁
     rec = _record_of(db, act, record_id, for_update=True)
     try:
@@ -442,19 +449,20 @@ def edit_record(activity_id: str, record_id: str, body: RecordEditBody,
     u = db.get(User, rec.user_id)
     seg = _import_segment(rec)
     old_hours = rec.hours
-    old_note = (seg or {}).get("label", "")
+    old_note = seg.label if seg is not None else ""
     note = old_note if body.note is None else body.note.strip()[:120]
     # 补记录的一笔只有导入这一段（时长管理的手动加减对它关着），改的就是它
-    rec.parts = [{**(seg or _import_part(act, hours, note)),
-                  "hours": hours, "label": note}]
+    if seg is None:
+        seg = rec.add_segment(**_import_fields(act, hours, note))
+    else:
+        seg.refill(hours=hours, label=note)
     rec.note = note
-    rec.hours = hours
     rec.confirmed_by = user.id
-    if rec.hours != old_hours:
+    if hours != old_hours:
         rec.confirmed_at = None
     changes = []
-    if rec.hours != old_hours:
-        changes.append(f"时长 {old_hours:g}h → {rec.hours:g}h")
+    if hours != old_hours:
+        changes.append(f"时长 {old_hours:g}h → {hours:g}h")
     if note != old_note:
         changes.append(f"备注「{old_note or '无'}」→「{note or '无'}」")
     reapproval_required = _invalidate_hours_approval(db, act) if changes else False
@@ -464,7 +472,7 @@ def edit_record(activity_id: str, record_id: str, body: RecordEditBody,
                   summary=f"修改补记录名单：{u.name if u else '?'}"
                           f"（{u.student_id if u else ''}）{'，'.join(changes)}")
     db.commit()
-    return {"ok": True, "hours": rec.hours,
+    return {"ok": True, "hours": rec.settled_hours(),
             "reapproval_required": reapproval_required}
 
 
@@ -476,7 +484,8 @@ def delete_record(activity_id: str, record_id: str,
     说不清当时争的是什么——要改就改时长。"""
     act = _record_act(db, user, activity_id, for_update=True)
     _ensure_importable(db, act)
-    rec = _record_of(db, act, record_id)
+    # 删整条要连它那一段一起删：活动行锁之后接着锁这一条记录，顺序同 import_rows
+    rec = _record_of(db, act, record_id, for_update=True)
     if db.query(HoursAppeal).filter(HoursAppeal.record_id == rec.id).first():
         raise HTTPException(409, "这条记录有过时长申诉，不能删除；如需更正请改时长")
     u = db.get(User, rec.user_id)
@@ -489,8 +498,10 @@ def delete_record(activity_id: str, record_id: str,
     audit_log(db, actor=user, action="roster_import", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"从补记录名单删除：{u.name if u else '?'}"
-                      f"（{u.student_id if u else ''}）{rec.hours:g}h"
+                      f"（{u.student_id if u else ''}）{rec.settled_hours():g}h"
                       + ("；原时长核准已撤销" if reapproval_required else ""))
+    # 段跟着记录一起删（relationship 的 delete-orphan）：留下孤儿段，
+    # 名单、导出、统计都还会把它算进去
     db.delete(rec)
     db.commit()
     return {"ok": True, "reapproval_required": reapproval_required}

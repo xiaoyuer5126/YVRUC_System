@@ -255,7 +255,7 @@ def remind_stale_approvals(db: OrmSession) -> int:
         if who is not None and liaison.is_dept_handler(db, who, act.approval_dept_id):
             who = liaison.approval_contact(db, act.approval_dept_id) or who
         waited = int((now() - act.submitted_at).total_seconds() // 3600)
-        text = (f"「{act.title}」（{act.organizer}）已提交 {waited} 小时未处理。\n"
+        text = (f"「{act.title}」（{act.organizer_text()}）已提交 {waited} 小时未处理。\n"
                 f"请到「活动审批」通过或驳回，如不该由您审批可以转交。")
         targets = [who] + [p for p in db.query(User)
                            .filter(User.qingxie_post == "council").all()

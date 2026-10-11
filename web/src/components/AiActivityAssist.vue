@@ -31,7 +31,8 @@ const assist = ref(null)
 
 const MODES = { instant: '即选即得', screened: '报名后筛选' }
 const LABELS = [
-  ['title', '活动名称'], ['organizer', '组织单位'], ['recruit_mode', '活动类型', v => MODES[v]],
+  ['title', '活动名称'], ['organizer', '组织单位'], ['co_organizer', '联合主办方'],
+  ['recruit_mode', '活动类型', v => MODES[v]],
   ['location', '活动地点'],
   ['contacts', '联系人', v => v.map(c => `${c.name} ${c.phone}`.trim()).join('\n')],
   ['intro', '活动简介'], ['volunteer_requirement', '志愿者要求'],

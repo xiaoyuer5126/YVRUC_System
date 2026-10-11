@@ -45,6 +45,7 @@ router = APIRouter(prefix="/api/staff", tags=["staff"])
 ACTIVITY_FIELDS = {
     "title": "名称", "recruit_mode": "活动类型", "intro": "简介",
     "location": "地点", "location_point": "地点定位", "organizer": "组织单位",
+    "co_organizer": "联合主办方",
     "contacts": "联系人",
     "contact_group_qr": "志愿者联络群二维码",
     "volunteer_requirement": "志愿者要求", "volunteer_benefit": "志愿者保障",
@@ -141,6 +142,8 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
 class ActivityBody(BaseModel):
     title: str = Field(max_length=128)
     organizer: str = Field(default="", max_length=64)
+    # 联合主办方：选填，与别的单位合办时才填。必填校验只认 organizer
+    co_organizer: str = Field(default="", max_length=64)
     recruit_mode: str = "instant"
     intro: str = ""
     location: str = ""
@@ -358,6 +361,7 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
     act = Activity(id=uid("act"), title=body.title.strip(),
                    recruit_mode=body.recruit_mode,
                    organizer=body.organizer.strip(),
+                   co_organizer=(body.co_organizer or "").strip(),
                    intro=body.intro.strip(), location=body.location.strip(),
                    location_point=None if record else _clean_point(body.location_point),
                    contact_group_qr=body.contact_group_qr.strip(),
@@ -432,6 +436,9 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
             if not str(value).strip():
                 raise HTTPException(400, "志愿者联络群二维码不能为空")
             act.contact_group_qr = str(value).strip()
+        elif key == "co_organizer":
+            # 选填：清空就是各自单独主办，不留空白
+            act.co_organizer = str(value or "").strip()
         else:
             setattr(act, key, value)
     if "reg_end" in body and not act.is_record():

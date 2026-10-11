@@ -278,7 +278,7 @@ def submit(activity_id: str, body: SubmitBody,
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"提交「{dept.name}」审批（审批人 {head.name}{via}）")
     _notify(db, contact, f"志愿活动待审批｜{act.title}",
-            f"{user.name} 提交了「{act.title}」，组织单位：{act.organizer}。\n"
+            f"{user.name} 提交了「{act.title}」，组织单位：{act.organizer_text()}。\n"
             f"归口部门：{dept.name}。\n"
             + (f"备注：{body.note.strip()}\n" if body.note.strip() else "")
             + "请到「活动审批」处理。", act, route="approvals")
@@ -512,6 +512,8 @@ def my_approvals(db: OrmSession = Depends(db_session),
         proposal = liaison.project_file(db, act.id, "proposal")
         out.append({
             "id": act.id, "title": act.title, "organizer": act.organizer,
+            "co_organizer": act.co_organizer or "",
+            "organizer_text": act.organizer_text(),
             "recruit_label": act.recruit_label(), "location": act.location,
             "time_text": (f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}"
                           if span else "待定"),

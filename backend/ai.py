@@ -141,6 +141,7 @@ ACTIVITY_PROMPT = """你帮中国人民大学的志愿服务管理平台起草�
 {{
   "title": "活动名称，如「校运动会开幕式志愿服务」",
   "organizer": "组织单位（主办方），如「校团委」",
+  "co_organizer": "联合主办方：与别的单位合办时才有，写另一个单位的名字；原文没提合办就空",
   "location": "活动地点，按原文提取",
   "intro": "活动简介：介绍活动背景、服务对象等，不超过 100 字，用原文的意思写成通顺的一段。时间、地点、主办方、招募范围、报名方式、联系人、保障这些表单里各有字段，场次、岗位也有专门的表单，不要写进简介",
   "volunteer_requirement": "整个活动共通的志愿者要求，原文提取，没有就空",
@@ -169,6 +170,7 @@ def activity_draft(text: str, images: list[str] = ()) -> dict:
     draft = {
         "title": _text(data.get("title"), 128),
         "organizer": _text(data.get("organizer"), 64),
+        "co_organizer": _text(data.get("co_organizer"), 64),
         "location": _text(data.get("location"), 128),
         "intro": _text(data.get("intro"), 2000),
         "volunteer_requirement": _text(data.get("volunteer_requirement"), 1000),
@@ -259,7 +261,7 @@ POSITION_TAGS = {"性别": ["男", "女"]}
 
 
 def _activity_brief(act: Activity) -> str:
-    lines = [f"名称：{act.title}", f"组织单位：{act.organizer or '—'}",
+    lines = [f"名称：{act.title}", f"组织单位：{act.organizer_text() or '—'}",
              f"地点：{act.location or '—'}", f"招募范围：{recruit_scope_text(act)}",
              f"简介：{(act.intro or '')[:600]}"]
     if act.reg_end:
@@ -430,7 +432,7 @@ FORM_MODES = {
 
 
 def _form_brief(act: Activity) -> str:
-    lines = [f"名称：{act.title}", f"组织单位：{act.organizer or '—'}",
+    lines = [f"名称：{act.title}", f"组织单位：{act.organizer_text() or '—'}",
              f"简介：{(act.intro or '')[:600]}"]
     if (act.volunteer_requirement or "").strip():
         lines.append(f"志愿者要求：{act.volunteer_requirement.strip()[:300]}")

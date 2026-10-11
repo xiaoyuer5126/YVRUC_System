@@ -275,7 +275,9 @@ def _brief_public(act: Activity, counts: dict) -> dict:
     span = act.time_span()
     return {
         "id": act.id, "title": act.title, "recruit_mode": act.recruit_mode,
-        "organizer": act.organizer,
+        "organizer": act.organizer, "co_organizer": act.co_organizer or "",
+        # 显示一律用这个（联合举办是「A × B」），别在各端自己拼
+        "organizer_text": act.organizer_text(),
         "recruit_label": act.recruit_label(), "status": act.status,
         "status_label": act.label_status(), "location": act.location,
         "intro": act.intro[:120], "cover_hue": act.cover_hue,

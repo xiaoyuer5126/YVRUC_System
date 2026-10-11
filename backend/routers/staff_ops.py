@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session as OrmSession, selectinload
 
@@ -29,8 +29,9 @@ from ..locks import current_checkin_code
 from ..notify import notify, notify_checkin
 from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
                       Department, Enrollment, HoursAppeal, HoursRecord,
-                      HoursRequest, Shift, Position, User, ViolationRecord, iso,
-                      new_checkin_token, now, parse_local_dt, span_text, uid)
+                      HoursRequest, HoursSegment, Shift, Position, User,
+                      ViolationRecord, day_of, iso, new_checkin_token, now,
+                      parse_local_dt, part_is_pay, segment_out, span_text, uid)
 from ..serializers import applies_text, iso_of, recruit_scope_phrase
 from .checkin import checkout_open
 from .geo import tiles_configured
@@ -903,7 +904,7 @@ def poster(activity_id: str, request: Request, base: str = "",
         f"志愿招募|{act.title}", "各位同学大家好！",
         "【活动内容简介】",
         f"{intro}{'，' if intro else ''}现面向{recruit_scope_phrase(act)}招募志愿者[玫瑰]",
-        "【活动主办单位】", act.organizer or "—",
+        "【活动主办单位】", act.organizer_text() or "—",
         "【活动时间】",
         *(dict.fromkeys(_cn_span(g.start_time, g.end_time) for g in mains) or ["待定"]),
         "【活动地点】", act.location or "待定",
@@ -1013,11 +1014,6 @@ def _hours_notify_targets(db: OrmSession, act: Activity) -> list[User]:
     return council_members(db)
 
 
-def _round_half_up(hours: float) -> float:
-    """向上取整至 0.5 的倍数：2h13m → 2.5h。"""
-    return math.ceil(max(0.0, hours) * 2) / 2
-
-
 def effective_checkout(rec: CheckinRecord, g: Shift, still_open: bool):
     """签退时间判定：
        · 已签退 → 实际签退时间；
@@ -1068,8 +1064,8 @@ def hours_record_of(db: OrmSession, activity_id: str, user_id: str
     """一个人在一场活动里的那一笔时长。
 
     **一场活动一个人只有一笔**：签到算出来的和手动补录的合在一起（手动的那些
-    段落在 parts 里，kind="manual"）。分开记的话，合计是两处、通知是两条、
-    本人还得分别确认两回——同一个活动的同一笔账，没有理由拆开。
+    段是 kind="manual" 的段）。分开记的话，合计是两处、通知是两条、本人还得
+    分别确认两回——同一个活动的同一笔账，没有理由拆开。
     """
     return (db.query(HoursRecord)
             .filter(HoursRecord.activity_id == activity_id,
@@ -1077,43 +1073,40 @@ def hours_record_of(db: OrmSession, activity_id: str, user_id: str
             .order_by(HoursRecord.created_at).first())
 
 
-def manual_parts(rec: HoursRecord | None) -> list:
-    """这一笔里不是签到算出来的那几段：手动补录的，和补记录活动导入名单的。
+def manual_parts(rec: HoursRecord | None) -> list[HoursSegment]:
+    """这一笔里不是签到算出来的那几段：手动补录/扣减的，和补记录活动导入名单的。
 
-    两种都是人交进来的账，compute_hours 原样读出来拼进合计；删除只认手动那种
-    （见 hours_manual_delete），导入的在「名单导入」里改。"""
-    return [p for p in ((rec.parts if rec else None) or [])
-            if p.get("kind") in ("manual", "import")]
+    两种都是人交进来的账，删除只认手动那种（见 hours_manual_delete），导入的在
+    「名单导入」里改。"""
+    return [s for s in ((rec.live_segments() if rec else None) or [])
+            if s.kind != "shift"]
 
 
-def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
-    """基于签到/签退记录计算时长：签退 - 签到，向上取整至 0.5 小时。
+def checkin_segments(db: OrmSession, act: Activity) -> dict[str, dict]:
+    """这场活动按签到签退算出来的账：{用户 id: {"segments", "total", "flags"}}。
 
-    未签退、签到码还开着没过截止 → 标记 pending（暂按当前时间估算展示）；
-    码已过截止或被关掉仍未签退 → 按场次结束时间兜底，并标记 auto_checkout **待核**：
-    到场扫个码就走的人和全程服务的人算出来一样多，这类记录必须由管理者
-    过目——「确认全部」会跳过它们，见 hours_confirm。
+    段的字段名就是列名，管理端的预览、「确认」写进去的段、导出备注都由这一份
+    数据来——分两处各算一遍，看到的数和入账的数迟早不一样。
 
-    手动补录的时长也算进合计、并按其原样列进明细：管理者看到的这张表就是
-    这场活动的总账，漏了手动那部分，这个数就是错的。
+    计时方式按建场次时定下的 `hours_mode` 走（见 shift_hours）：未签退、签到码
+    还开着没过截止 → 标记 pending（暂按当前时间估算）；码已过截止或被关掉仍未
+    签退 → 按场次结束时间兜底，并标记 auto_checkout **待核**：到场扫个码就走的
+    人和全程服务的人算出来一样多，这类记录必须由管理者过目——「确认全部」会
+    跳过它们，见 hours_confirm。
     """
-    if act.is_record():
-        return _record_hours(db, act)
     t = now()
     records = (db.query(CheckinRecord)
                .filter(CheckinRecord.activity_id == act.id)
                .order_by(CheckinRecord.checkin_at).all())
-    mine = {r.user_id: r for r in db.query(HoursRecord)
-            .filter(HoursRecord.activity_id == act.id).all()}
-    extra = {uid_: manual_parts(r) for uid_, r in mine.items()}
     # 本人已经给哪几段选了劳务：按（场次, 岗位）认段，重算时原样带上——
     # 不然管理者每点一次「确认全部」，本人的选择就被抹回志愿时长
-    chose_pay = {uid_: {(p.get("shift_id"), p.get("position_id"))
-                        for p in (r.parts or []) if HoursRecord.part_is_pay(p)}
-                 for uid_, r in mine.items()}
-    per_user: dict[str, float] = {}
-    flags: dict[str, set] = {}
-    parts: dict[str, list] = {}
+    # 明细一次带出来：逐条记录各取一次，查询条数就跟着人数涨了
+    chose_pay = {r.user_id: {(s.shift_id, s.position_id)
+                             for s in r.live_segments() if s.is_pay()}
+                 for r in db.query(HoursRecord)
+                 .options(selectinload(HoursRecord.segments))
+                 .filter(HoursRecord.activity_id == act.id).all()}
+    out: dict[str, dict] = {}
     open_by_shift: dict[str, bool] = {}   # 这一场还能不能自己签退，一场查一次
     for rec in records:
         g = db.get(Shift, rec.shift_id)
@@ -1122,9 +1115,12 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
         if g.id not in open_by_shift:
             open_by_shift[g.id] = checkout_open(db, g, t)
         hours, flag, start, end = shift_hours(rec, g, t, open_by_shift[g.id])
+        mine = out.setdefault(rec.user_id, {"segments": [], "total": 0.0,
+                                            "flags": set()})
         if flag:
-            flags.setdefault(rec.user_id, set()).add(flag)
-        per_user[rec.user_id] = per_user.get(rec.user_id, 0.0) + max(0.0, hours)
+            mine["flags"].add(flag)
+        hours = max(0.0, hours)
+        mine["total"] += hours
         # 明细一段一段记：哪一场、什么时段、什么岗位、几小时。
         # 时段用的是**这次计时实际依据的那一段**，跟上面那个小时数同源——
         # 备注要能解释这个数，各写各的就没法对账。0 小时的场次不占一行
@@ -1137,18 +1133,41 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
                            Enrollment.user_id == rec.user_id,
                            Enrollment.status == "enrolled").first())
             pos = db.get(Position, enr.position_id) if enr and enr.position_id else None
-        part = {
-            "label": g.name if not g.is_attached() else f"{g.name}（{g.kind_label()}）",
-            "time": span_text(start, end) if start and end else g.span_text(),
-            "position": pos.name if pos and not pos.is_placeholder else "",
-            "hours": round(max(0.0, hours), 2), "kind": "shift",
-            "shift_id": g.id, "position_id": pos.id if pos else None}
         # 岗位后来关了劳务的，这一段回到志愿时长
-        if (pos is not None and pos.pay_optional
-                and (g.id, pos.id) in chose_pay.get(rec.user_id, ())):
-            part["reward"] = "pay"
-        parts.setdefault(rec.user_id, []).append(part)
+        reward = ("pay" if pos is not None and pos.pay_optional
+                  and (g.id, pos.id) in chose_pay.get(rec.user_id, ()) else "")
+        mine["segments"].append({
+            "kind": "shift",
+            # 服务日期是场次开始的那一天：跨天的场次算开头那天
+            "date": day_of(g.start_time),
+            "hours": round(hours, 2), "reward": reward,
+            "label": g.name if not g.is_attached() else f"{g.name}（{g.kind_label()}）",
+            "position_name": pos.name if pos and not pos.is_placeholder else "",
+            "time_text": span_text(start, end) if start and end else g.span_text(),
+            "shift_id": g.id, "position_id": pos.id if pos else None})
+    return out
 
+
+def compute_hours(db: OrmSession, act: Activity,
+                  checkin: dict[str, dict] | None = None) -> list[dict]:
+    """管理端那张时长总表：签到算出来的 + 手动补录/导入的，一人一行。
+
+    手动补录的时长也算进合计、并按其原样列进明细：管理者看到的这张表就是这场
+    活动的总账，漏了手动那部分，这个数就是错的。
+
+    checkin 传现算出来的签到账（checkin_segments）：调用方还要拿它写段时传进来，
+    免得同一份账算两遍——两遍之间签到记录变了，看到的和写进去的就不是一份。
+    """
+    if act.is_record():
+        return _record_hours(db, act)
+    if checkin is None:
+        checkin = checkin_segments(db, act)
+    mine = {r.user_id: r for r in db.query(HoursRecord)
+            .options(selectinload(HoursRecord.segments))
+            .filter(HoursRecord.activity_id == act.id).all()}
+    extra = {uid_: manual_parts(r) for uid_, r in mine.items()}
+    per_user: dict[str, float] = {uid_: info["total"]
+                                  for uid_, info in checkin.items()}
     # 只有手动补录、一场都没签到过的人也要出现在表里：不然这笔账管理者看不见，
     # 也就无从核准
     for uid_ in extra:
@@ -1157,19 +1176,25 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
     party = hours_flow.party_school_users(db, act.id)
     out = []
     for uid_, raw in sorted(per_user.items(), key=lambda kv: -kv[1]):
-        fl = flags.get(uid_, set())
+        mine_info = checkin.get(uid_, {})
+        segs = mine_info.get("segments", [])
         manual = extra.get(uid_, [])
-        total = raw + sum(float(p.get("hours") or 0) for p in manual)
-        if total <= 0 and not manual:
+        if raw <= 0 and not manual:
             # 只去了「不计时长」的场合（如线上培训）：出勤在签到那边看。
             # 有手动段的留着——扣到 0 的人也得在表里，不然那几段加减没处看、没处删
             continue
         u = db.get(User, uid_)
         existing = mine.get(uid_)
+        # 这一行现在算几小时：按结算口径（两半各自向上取整到 0.5）合起来，
+        # 跟导出去、锁定时用的是同一套数
+        counted, pay = HoursRecord.settle(
+            [(float(s["hours"]), part_is_pay(s["kind"], s["reward"]))
+             for s in segs] + [(s.hours, s.is_pay()) for s in manual])
+        fl = mine_info.get("flags", set())
         out.append({
             "user": {"id": u.id, "name": u.name,
                      "student_id": u.student_id, "college": u.college},
-            "hours": _round_half_up(total),
+            "hours": counted + pay,
             "pending": "pending" in fl,      # 未签退（码还开着）
             "auto_checkout": "auto" in fl,   # 码关了/过期仍未签退，按场次结束时间
             "confirmed": existing is not None,
@@ -1177,7 +1202,7 @@ def compute_hours(db: OrmSession, act: Activity) -> list[dict]:
             # 没有记录，也就没有可删的段）
             "record_id": existing.id if existing else "",
             # 签到算出来的在前、手动补录的追加在后：后者是对这笔账的补充说明
-            "parts": parts.get(uid_, []) + manual,
+            "parts": [segment_out(s) for s in segs] + [s.out() for s in manual],
             "party_school": uid_ in party,
             **_volunteer_side(existing),
         })
@@ -1188,14 +1213,16 @@ def _record_hours(db: OrmSession, act: Activity) -> list[dict]:
     """补记录活动的总账：就是导进来的那些记录，数值以记录为准（申诉采纳改过
     的也在里面），没有签到可算、也没有待核的标记。"""
     rows = (db.query(HoursRecord, User)
+            .options(selectinload(HoursRecord.segments))
             .join(User, HoursRecord.user_id == User.id)
             .filter(HoursRecord.activity_id == act.id)
             .order_by(HoursRecord.created_at).all())
     return [{"user": {"id": u.id, "name": u.name, "student_id": u.student_id,
                       "college": u.college},
-             "hours": rec.hours, "pending": False, "auto_checkout": False,
-             "confirmed": True, "record_id": rec.id,
-             "parts": list(rec.parts or []), **_volunteer_side(rec)}
+             "hours": rec.settled_hours(), "pending": False,
+             "auto_checkout": False, "confirmed": True, "record_id": rec.id,
+             "parts": [s.out() for s in rec.live_segments()],
+             **_volunteer_side(rec)}
             for rec, u in rows]
 
 
@@ -1206,6 +1233,55 @@ def _volunteer_side(rec: HoursRecord | None) -> dict:
                 "volunteer_confirmed_at": None}
     return {"pay_hours": rec.pay_hours(), "reward_label": rec.reward_label(),
             "volunteer_confirmed_at": iso_of(rec.confirmed_at)}
+
+
+# 管理者核定与申诉改判都不动签到算出来的那几段：差额单独记成一段手动调整，
+# 明细里看得出这个数是人改的。label 固定这两句话，改判时按它认出上一次的调整段
+# （见 HoursRecord.set_total）——不这样，同一笔每改一次就多一段，账越点越大。
+OVERRIDE_LABEL = "管理者核定时调整"
+APPEAL_LABEL = "申诉改判"
+
+
+def _is_override(seg) -> bool:
+    return seg.kind == "manual" and seg.label == OVERRIDE_LABEL
+
+
+def _segment_day(rec: HoursRecord, act: Activity) -> datetime:
+    """一段调整记在哪一天：取已有段里最晚的服务日期。
+
+    调整说的不是某一场服务，挂在最后一天上，按服务日期统计时才不会把它算到
+    活动之外的某一天。一段都没有（只被手动补录过）就取活动时间那天。
+    """
+    days = [s.date for s in rec.live_segments() if s.date]
+    if days:
+        return max(days)
+    span = act.time_span()
+    return day_of(span[0] if span else now())
+
+
+def _align_shift_segments(rec: HoursRecord, computed: list[dict]) -> None:
+    """把这一笔里签到算出来的那几段对齐到现算的结果。
+
+    同一（场次, 岗位）的就地改写：seq 不动，明细的顺序就还是写入的顺序——
+    管理者加了手动段之后再点一次「确认全部」，签到段不会跑到手动段后面去。
+    签到记录改了、场次没了的那几段删掉，新出现的补上。
+    """
+    left = list(rec.live_segments())
+    for fields in computed:
+        key = (fields["shift_id"], fields["position_id"])
+        seg = next((s for s in left
+                    if s.kind == "shift" and (s.shift_id, s.position_id) == key),
+                   None)
+        if seg is None:
+            rec.add_segment(**fields)
+            continue
+        left.remove(seg)
+        seg.refill(hours=fields["hours"], date=fields["date"],
+                   label=fields["label"], position_name=fields["position_name"],
+                   time_text=fields["time_text"], reward=fields["reward"])
+    for seg in left:
+        if seg.kind == "shift":
+            rec.drop_segment(seg)
 
 
 @router.get("/activities/{activity_id}/hours")
@@ -1243,19 +1319,50 @@ def hours_preview(activity_id: str, db: OrmSession = Depends(db_session),
 
 
 class ManualHoursBody(BaseModel):
-    """手动加/扣时长。items: [{student_id, hours, note}]，hours 为负就是扣减。
+    """手动加/扣时长。items: [{student_id, hours, note}]，hours 为负就是扣减；
+    date 是这一段算哪一天的服务，一次批量共用一个。
 
     备注必填：手动改的是账，事后只有审计和这条备注能说明为什么——「场外支援
     2 小时」和「扣掉中途离场 1 小时」在台账上得看得出来。
     """
     items: list[dict]
+    date: str = Field(default="", max_length=32)
+
+
+def _manual_day(raw: str) -> datetime:
+    """手动那一段的服务日期：客户端说哪天就哪天，不做范围限制（未来的日期也收，
+    补录明天已经定下来的服务是常事）。
+
+    解析走 models.parse_local_dt：带时区的串先换算成本地时间，接口里的时间
+    一律是不带时区的本地时间。
+    """
+    text = (raw or "").strip()
+    if not text:
+        raise HTTPException(400, "缺少服务日期")
+    try:
+        moment = parse_local_dt(text)
+    except ValueError:
+        raise HTTPException(400, "服务日期格式不对") from None
+    return day_of(moment)
+
+
+def _enrolled(db: OrmSession, act: Activity, u: User) -> bool:
+    """这个人在这场活动里有没有已确认的报名。
+
+    手动加/扣给的是这场活动的时长，界面上的下拉也是从各场次的正式报名里取的：
+    接受别的学号，加出来的就是一笔没有服务依据的账。
+    """
+    return (db.query(Enrollment.id)
+            .filter(Enrollment.activity_id == act.id,
+                    Enrollment.user_id == u.id,
+                    Enrollment.status == "enrolled").first()) is not None
 
 
 @router.post("/activities/{activity_id}/hours/manual")
 def hours_manual(activity_id: str, body: ManualHoursBody,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager)):
-    """管理者为志愿者手动添加时长（不依赖签到），可批量。
+    """管理者为志愿者手动添加或扣减时长（不依赖签到），可批量。
 
     并进这个人在这场活动里的那一笔（见 hours_record_of），不另起一条：合计要
     是一个数，通知才只发一条，本人也只需确认一次。
@@ -1267,9 +1374,10 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
     ensure_hours_editable(db, act)
     if not body.items:
         raise HTTPException(400, "空列表")
-    # 这一批要往 parts 里加段（整列覆盖）：先把这场活动的记录行按 id 顺序都
-    # 锁住，再读改写。锁在读之前，中间插进来的「确认全部」「本人选报酬方式」
-    # 就不会被这次覆盖掉
+    day = _manual_day(body.date)
+    # 这一批要往这一笔里加段：先把这场活动的记录行按 id 顺序都锁住，再读改写。
+    # 锁在读之前，中间插进来的「确认全部」「本人选报酬方式」就不会和这次写入
+    # 交错成谁都没写过的组合
     hours_flow.lock_records(db, act.id)
     added = []
     for it in body.items:
@@ -1277,6 +1385,13 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
             User.student_id == (it.get("student_id") or "").strip()).first()
         if u is None:
             raise HTTPException(404, f"学号 {it.get('student_id')} 不存在")
+        if u.user_type == "teacher":
+            # 与名单导入一个口径：老师不参与志愿，也不记时长
+            raise HTTPException(400, "老师类型用户不参与志愿，不记时长")
+        if not _enrolled(db, act, u):
+            raise HTTPException(
+                400, f"{u.name}（{u.student_id}）没有报名这场活动，不能直接加时长；"
+                     f"这类时长请在补记录活动里记")
         try:
             hours = float(it.get("hours"))
         except (TypeError, ValueError):
@@ -1301,27 +1416,25 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
                 # 还没「确认全部」时，这一笔里只有手动补录的那几段——签到算出来
                 # 的时长还没进账，扣不到它头上，得先确认
                 hint = ("（签到算出的时长还没核准进账，请先「确认全部」再扣）"
-                        if not any(p.get("kind") == "shift"
-                                   for p in (rec.parts or [])) else "")
+                        if not any(s.kind == "shift"
+                                   for s in rec.live_segments()) else "")
                 raise HTTPException(
                     400, f"{u.name} 当前只有 {rec.hours:g} 小时，"
                          f"扣不了 {-hours:g} 小时{hint}")
-        # id 是这一段的编号，删除时按它找（见 hours_manual_delete）
-        part = {"id": uid("seg"), "label": note, "time": "",
-                "position": "", "hours": round(hours, 2), "kind": "manual"}
         if rec is None:
-            db.add(HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id,
-                               hours=part["hours"], source="manual", note=note,
-                               parts=[part], confirmed_by=user.id))
-            # 会话不自动 flush：同一批里这个人再出现一次时，hours_record_of
-            # 查不到刚加的这条，会给他再建一笔
-            db.flush()
+            rec = HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id,
+                              source="manual", note=note, confirmed_by=user.id)
+            db.add(rec)
         else:
-            rec.hours = round((rec.hours or 0) + part["hours"], 2)
-            rec.parts = (rec.parts or []) + [part]
             rec.confirmed_by = user.id
             # 数值变了，本人之前那句「确认无误」是对着旧数字说的，不算数了
             rec.confirmed_at = None
+        # 段的 id 是这一段的编号，删除时按它找（见 hours_manual_delete）
+        rec.add_segment(kind="manual", date=day, hours=hours, label=note,
+                        time_text=f"{day:%m-%d}")
+        # 加完就 flush：同一批里这个人再出现一次时，hours_record_of 查不到刚建的
+        # 这条、扣减也看不到刚加上去的那一段（合计是 flush 时按段重算的）
+        db.flush()
         added.append(f"{u.name} {'扣减' if hours < 0 else '添加'}{abs(hours):g}h")
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
@@ -1334,47 +1447,44 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
 def hours_manual_delete(activity_id: str, record_id: str, part_id: str,
                         db: OrmSession = Depends(db_session),
                         user: User = Depends(require_manager)):
-    """删掉手动加的那**一段**（不是整笔账），按补录时发的段编号找。
+    """删掉手动加的那**一段**（不是整笔账），按补录时发的那一段的编号找。
 
-    不能按「它在明细里排第几」找：管理端看到的明细是 compute_hours 现拼的
-    （签到段在前、手动段在后），而还没「确认全部」过的人，库里这一笔只存了
-    手动那几段——两边顺序对不上，按位置取会删掉另一段，合计和审计也跟着错。
+    不能按「它在明细里排第几」找：管理端看到的明细是现算出来的（签到段与手动段
+    拼在一起），按位置取会删掉另一段，合计和审计也跟着错。
 
-    只认 kind="manual" 的段：签到算出来的那些段没有编号，是记录的依据，删不得
-    ——要改就改合计（hours/confirm 的 items）。
+    只认 kind="manual" 的段：签到算出来的那些段是账的依据，删不得——要改就改
+    签到，或者用「手动加/扣」。
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    # 删一段要重写 parts（整列覆盖）与合计：锁住这一行再读改写
+    # 删一段要连着改合计：锁住这一行再读改写
     rec = db.get(HoursRecord, record_id, with_for_update=True)
     if rec is None or rec.activity_id != act.id:
         raise HTTPException(404, "时长记录不存在")
     ensure_hours_editable(db, act)
-    parts = list(rec.parts or [])
-    hit = next((i for i, p in enumerate(parts)
-                if p.get("kind") == "manual" and p.get("id") == part_id), None)
-    if hit is None:
+    segs = rec.live_segments()
+    seg = next((s for s in segs if s.kind == "manual" and s.id == part_id), None)
+    if seg is None:
         raise HTTPException(404, "这一段不是手动添加的时长")
-    gone = parts.pop(hit)
-    hours = round(float(gone.get("hours") or 0), 2)
-    left = round((rec.hours or 0) - hours, 2)
+    rest = [s for s in segs if s is not seg]
+    hours = round(float(seg.hours or 0), 2)
+    left = round(sum(s.hours for s in rest), 2)
     if left < 0:
         # 不能截到 0 了事：截掉的那一截会在删扣减段时被「加回来」，账凭空变多
-        # （加 2、扣 5、删掉加的那段 → 截成 0 → 再删扣的那段 → 多出 1 小时）
+        # （加 2、扣 5 → 合计 0，删掉加的那段 → 截成 0，再删扣的那段 → 多出 3 小时）
         raise HTTPException(
             409, f"删掉这段后合计会变成 {left:g} 小时：它已经被后面的扣减用掉了，"
                  f"请先删掉扣减的那段")
-    rec.hours = left
-    rec.parts = parts
+    rec.drop_segment(seg)
     rec.confirmed_at = None          # 数值变了，本人得重新表个态
     u = db.get(User, rec.user_id)
     # 这笔账本来就是手动加出来的，删空了就该消失，别留一条 0 小时的记录在表里
-    if not parts and rec.hours <= 0:
+    if not rest:
         db.delete(rec)
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"删除手动时长：{u.name if u else '?'} {hours}h"
-                      f"（{gone.get('label')}）")
+                      f"（{seg.label}）")
     db.commit()
     return {"ok": True}
 
@@ -1389,8 +1499,8 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
                   user: User = Depends(require_manager)):
     """确认时长（依据签到记录），幂等可重复执行。
 
-    · 不带 items → 全部志愿者按计算值确认（原逻辑）；
-    · 带 items   → 只确认所选志愿者，时长以请求值为准（覆盖计算值）。
+    · 不带 items → 全部志愿者按签到算出来的数确认；
+    · 带 items   → 只确认所选志愿者，时长以请求值为准（覆盖签到算出来的数）。
 
     确认只是把账算出来放在这儿，志愿者还看不到——要「核准」了才通知本人。
     """
@@ -1402,25 +1512,27 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
                                  "如需修改请到「名单导入」里改")
     ensure_hours_editable(db, act)
 
-    # 重算要读现有的手动段与本人选的报酬方式，写回又是整列覆盖 parts：先按 id
-    # 顺序把这场活动的记录行都锁住，让「读 → 重算 → 写回」整段排他。锁在读之前，
-    # 不然这中间插进来的手动加减、本人确认会被这次重算抹掉
+    # 重算要读现有的段与本人选的报酬方式，写回要按场次对齐签到段：先按 id 顺序
+    # 把这场活动的记录行都锁住，让「读 → 重算 → 写回」整段排他。锁在读之前，
+    # 不然这中间插进来的手动加减、本人确认会和这次重算交错
     hours_flow.lock_records(db, act.id)
 
     kept: list[str] = []
-    items = compute_hours(db, act)
-    computed_parts = {it["user"]["id"]: it["parts"] for it in items}
+    # 这一份签到账既用来出表格，也用来写段：算两遍的话，两遍之间签到变了，
+    # 看到的和写进去的就不是一份
+    checkin = checkin_segments(db, act)
+    items = compute_hours(db, act, checkin)
+    computed_segments = {user_id: info["segments"] for user_id, info in checkin.items()}
 
-    def upsert(user_id: str, hours: float, *, force: bool = False) -> None:
-        # 明细按签到算出来的段落记；管理者改的是合计，段落是它的依据。
-        # 本人给各段选的报酬方式也在 compute_hours 里按（场次, 岗位）带上了。
-        # 手动补录的那几段不用在这儿保住：compute_hours 就是从这一笔的 parts
-        # 里把它们读出来再拼回去的（所以这里再拼一次反而会重复一遍）。
-        # 当初把手动时长拆成单独一张表，图的是「确认全部」别把它抹掉；
-        # 现在拆开记、合起来算，同一个目的换了个不重复的写法。
+    def upsert(user_id: str, hours: float | None, *, force: bool = False) -> None:
+        """这一笔的签到段对齐到现算的结果；管理者点名给了数就按那个数定合计。
+
+        手动补录的那几段（kind="manual"）不动：它们不是签到算出来的，重算时
+        原样留着。本人给各段选的报酬方式在 checkin_segments 里按（场次, 岗位）
+        带上了，对齐时一起写回去，所以「确认全部」不会把本人的选择抹掉。
+        """
         existing = hours_record_of(db, act.id, user_id)
-        parts = computed_parts.get(user_id, [])
-        if existing:
+        if existing is not None:
             # 采纳过申诉的记录不被「确认全部」推回计算值：那次改判是人判的
             settled = db.query(HoursAppeal).filter(
                 HoursAppeal.record_id == existing.id,
@@ -1429,16 +1541,28 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
                 u = db.get(User, user_id)
                 kept.append(u.name if u else user_id)
                 return
-            existing.hours = hours
-            existing.parts = parts
-            return
-        db.add(HoursRecord(id=uid("hrs"), activity_id=act.id,
-                           user_id=user_id, hours=hours, source="checkin",
-                           parts=parts, confirmed_by=user.id))
+            rec = existing
+        else:
+            rec = HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=user_id,
+                              source="checkin", confirmed_by=user.id)
+            db.add(rec)
+        _align_shift_segments(rec, computed_segments.get(user_id, []))
+        if hours is not None:
+            # 管理者给的数就是这一笔的合计：与签到算出来的不一样时，差额记成
+            # 一段手动调整（见 HoursRecord.set_total）。一样就什么也不加——
+            # 「勾选几个人确认」发回来的就是表上那个数，不该凭空多出一段
+            counted, pay = HoursRecord.settle(
+                [(s.hours, s.is_pay()) for s in rec.live_segments()
+                 if not _is_override(s)])
+            if round(hours, 2) != round(counted + pay, 2):
+                rec.set_total(hours, label=OVERRIDE_LABEL,
+                              date=_segment_day(rec, act))
 
     chosen = (body.items if body else None) or []
     if chosen:
-        targets: list[tuple[str, float]] = []
+        # 同一个学号在一批里出现两次时只认最后一条：一笔账不能在一个请求里
+        # 分成两笔写（库上「一人一场一笔」是唯一约束）
+        targets: dict[str, float] = {}
         for it in chosen:
             sid = str(it.get("student_id") or "").strip()
             if not sid:
@@ -1452,12 +1576,12 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
             u = db.query(User).filter(User.student_id == sid).first()
             if u is None:
                 raise HTTPException(404, f"学号 {sid} 不存在")
-            targets.append((u.id, round(hours, 2)))
-        for uid_, h in targets:
+            targets[u.id] = round(hours, 2)
+        for uid_, h in targets.items():
             upsert(uid_, h, force=True)   # 逐个点名改，就是人判的，照改
         count = len(targets)
         detail = "、".join(f"{db.get(User, u_).name}{h:g}h"
-                           for u_, h in targets[:8])
+                           for u_, h in list(targets.items())[:8])
         summary = (f"部分确认 {count} 人志愿时长（以管理端填写为准）：{detail}"
                    + ("…" if count > 8 else ""))
     else:
@@ -1473,7 +1597,7 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
                 400, f"{len(review)} 条记录未正常签退，时长待核，"
                      f"请在表格中逐条核对后确认")
         for it in clear:
-            upsert(it["user"]["id"], it["hours"])
+            upsert(it["user"]["id"], None)
         count = len(clear) - len(kept)
         summary = (f"确认 {count} 人志愿时长（依据签到签退记录）"
                    + (f"；{len(review)} 人未正常签退、时长待核未确认"
@@ -1520,10 +1644,18 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
     t = now()
 
     party_ids = hours_flow.party_school_users(db, act.id)
-    ledger = (db.query(HoursRecord.user_id, HoursRecord.hours, HoursRecord.parts)
-              .filter(HoursRecord.activity_id == act.id).all())
+    # 志愿时长那一半：按笔把非劳务段求和交给 SQL（段上的 record_id 有索引），
+    # 取整只走一处（HoursRecord.ceil_half），不在这儿另写一个取整——两处各写
+    # 一个，界面上看到的和这张卡上的迟早差 0.5
+    not_pay = ~and_(HoursSegment.kind == "shift", HoursSegment.reward == "pay")
+    ledger = (db.query(HoursRecord.user_id,
+                       func.coalesce(func.sum(HoursSegment.hours).filter(not_pay),
+                                     0.0))
+              .outerjoin(HoursSegment, HoursSegment.record_id == HoursRecord.id)
+              .filter(HoursRecord.activity_id == act.id)
+              .group_by(HoursRecord.id, HoursRecord.user_id).all())
     roster = len(ledger)
-    counted = [(u, HoursRecord.split(h, p)[0]) for u, h, p in ledger]
+    counted = [(u, HoursRecord.ceil_half(volunteer)) for u, volunteer in ledger]
     total = sum(c for _u, c in counted)
     party_total = sum(c for u, c in counted if u in party_ids)
     violations = (db.query(func.count(ViolationRecord.id))
@@ -1622,7 +1754,7 @@ def list_appeals(activity_id: str, db: OrmSession = Depends(db_session),
                     "name": u.name if u else "?",
                     "student_id": u.student_id if u else "",
                     "old_hours": a.old_hours, "claimed_hours": a.claimed_hours,
-                    "current_hours": rec.hours if rec else None,
+                    "current_hours": rec.settled_hours() if rec else None,
                     "locked": act.hours_locked(),
                     "reason": a.reason, "reply": a.reply,
                     "final_hours": a.final_hours,
@@ -1655,19 +1787,25 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
     who = db.get(User, a.user_id)
 
     if body.accept:
-        # 采纳要改这一笔的合计与明细（补记录的一笔改的就是 parts，整列覆盖）：
-        # 先把这一行锁住再读改写，免得和本人确认、名单导入互相盖掉刚写的段
+        # 采纳要改这一笔的段：先把这一行锁住再读改写，免得和本人确认、名单导入
+        # 互相盖掉刚写的段
         db.refresh(rec, with_for_update=True)
         hours = a.claimed_hours if body.hours is None else round(body.hours, 2)
         if hours <= 0:
             raise HTTPException(400, "时长必须大于 0")
-        before = rec.hours
-        rec.hours = hours
+        before = rec.settled_hours()
         rec.confirmed_by = user.id
         if act.is_record():
             # 补记录的一笔只有导入那一段：段上的数跟着改，名单里看到的才是新值
-            rec.parts = [{**p, "hours": hours} if p.get("kind") == "import" else p
-                         for p in (rec.parts or [])]
+            seg = next((s for s in rec.live_segments() if s.kind == "import"), None)
+            if seg is None:
+                raise HTTPException(409, "这条记录没有导入明细，"
+                                         "请到「名单导入」里重新导入")
+            seg.refill(hours=hours)
+        else:
+            # 改判说的是「这一笔就是这么多」：差额记成一段手动调整，签到段上的
+            # 原始值不动——动了它，明细就解释不了这个数是从哪来的
+            rec.set_total(hours, label=APPEAL_LABEL, date=_segment_day(rec, act))
         a.final_hours = hours
         a.status = "accepted"
         summary = (f"采纳 {who.name if who else ''} 的时长申诉："
@@ -1675,7 +1813,7 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
     else:
         a.status = "rejected"
         summary = (f"驳回 {who.name if who else ''} 的时长申诉"
-                   f"（申报 {a.claimed_hours:g}h，维持 {rec.hours:g}h）")
+                   f"（申报 {a.claimed_hours:g}h，维持 {rec.settled_hours():g}h）")
     a.reply = body.reply.strip()
     a.handled_by = user.id
     a.handled_at = now()
@@ -1686,13 +1824,13 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
             title=f"时长申诉{'已采纳' if body.accept else '未采纳'}｜{act.title}",
             content=(f"您对「{act.title}」时长的申诉已处理。\n"
                      f"结果：{'采纳' if body.accept else '未采纳'}，"
-                     f"当前时长 {rec.hours:g} 小时。"
+                     f"当前时长 {rec.settled_hours():g} 小时。"
                      + (f"\n说明：{a.reply}" if a.reply else "")))
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=summary + (f"；说明：{a.reply}" if a.reply else ""))
     db.commit()
-    return {"ok": True, "status": a.status, "hours": rec.hours}
+    return {"ok": True, "status": a.status, "hours": rec.settled_hours()}
 
 
 @router.post("/activities/{activity_id}/hours/approve")
@@ -1748,12 +1886,12 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
         notified += 1
         # 有哪一段的岗位可选劳务才需要选报酬方式，别人不必看到这一句
         pay_line = ("\n请选择报酬方式志愿时长或劳务，超时未确认默认选择志愿时长。"
-                    if hours_flow.pay_positions(db, r.parts) else "")
+                    if hours_flow.pay_positions(db, r.live_segments()) else "")
         # 点开去「我的志愿时长」而不是活动详情：要确认/要申诉的那笔账在那儿，
         # 活动详情页上看不到本人在这个活动里有多少时长
         msgcenter.send_user(
             db, u, "hours_approved", data={"route": "hours"},
-            activity=act.title, hours=f"{r.hours:g}",
+            activity=act.title, hours=f"{r.settled_hours():g}",
             deadline=f"{deadline:%Y-%m-%d %H:%M}", pay_line=pay_line)
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,

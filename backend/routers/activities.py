@@ -215,6 +215,14 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
                                Activity.recruit_mode != config.RECORD_MODE,
                                Activity.organizer != "")
                        .distinct().order_by(Activity.organizer).all()],
+        # 联合主办方的历史值：给新建/编辑表单做输入建议。筛选、统计仍按
+        # organizer 走，合办方多一个不代表这场活动归到别处
+        "co_organizers": [o for (o,) in
+                          db.query(Activity.co_organizer)
+                          .filter(Activity.status.in_(PUBLIC_STATUSES),
+                                  Activity.recruit_mode != config.RECORD_MODE,
+                                  Activity.co_organizer != "")
+                          .distinct().order_by(Activity.co_organizer).all()],
     }
 
 

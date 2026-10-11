@@ -89,7 +89,7 @@
           <b>上次退回理由</b><span class="pre">{{ v.last_return }}</span>
         </div>
         <div class="dim" style="margin-top:8px">
-          {{ v.organizer }} · 时长锁定于 {{ fmtDT(v.locked_at) }} ·
+          {{ v.organizer_text }} · 时长锁定于 {{ fmtDT(v.locked_at) }} ·
           {{ v.submitted_by }} {{ v.kind === 'resubmit' ? '重提' : '推送' }}于 {{ fmtDT(v.submitted_at) }}
           · 在志愿北京核对后确认，活动即标记为已完成
         </div>
@@ -162,7 +162,7 @@
       </div>
       <el-descriptions :column="narrow ? 1 : 3" size="small" border
                        style="margin-top:8px">
-        <el-descriptions-item label="组织单位">{{ a.organizer || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="组织单位">{{ a.organizer_text || '—' }}</el-descriptions-item>
         <el-descriptions-item label="归口部门">{{ a.department }}</el-descriptions-item>
         <el-descriptions-item label="提交人">{{ a.creator }}</el-descriptions-item>
         <el-descriptions-item label="活动时间">{{ a.time_text }}</el-descriptions-item>

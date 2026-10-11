@@ -3,7 +3,8 @@
 
 一场活动的账一起结，状态记在活动上（hours_approved_at / appeal_deadline /
 hours_locked_at）；每个人的表态记在自己那条 HoursRecord 上（confirmed_at /
-parts 里每段的 reward）。这里放接口与定时任务都要用的那几步，免得两边各写一份。
+各段 HoursSegment 的 reward）。这里放接口与定时任务都要用的那几步，免得两边
+各写一份。
 """
 from __future__ import annotations
 
@@ -73,22 +74,23 @@ def default_appeal_deadline() -> datetime:
 def lock_records(db: OrmSession, activity_id: str) -> list[HoursRecord]:
     """锁住这场活动的时长记录并返回它们，按 id 顺序取锁。
 
-    要改 parts 的路径先过这一步：parts 是整列覆盖，读出来改完再写回，中间被
-    别人插一脚就丢了对方刚写的段与报酬选择（手动加减、本人选报酬方式、锁定
-    时清掉未表态的报酬，都是这种）。**锁在读之前**，整段「读 → 改 → 写回」
-    才排他；锁到手也顺带取库里的最新值（populate_existing），不用会话里的旧
-    快照。按 id 排序是为了让并发进来的两个批量操作取锁顺序一致。
+    要动段的路径先过这一步：段是行，「读出现有的几段 → 加减 → 写回」中间被别人
+    插一脚，两条路径各写各的段，拼出来的是谁都没写过的组合（手动加减、本人选
+    报酬方式、名单导入、锁定时清掉未表态的报酬，都是这种）。**锁在读之前**，
+    整段「读 → 改 → 写回」才排他；锁到手也顺带取库里的最新值
+    （populate_existing），不用会话里的旧快照。按 id 排序是为了让并发进来的
+    两个批量操作取锁顺序一致。
     """
     return (db.query(HoursRecord).filter(HoursRecord.activity_id == activity_id)
             .populate_existing().with_for_update().order_by(HoursRecord.id).all())
 
 
-def pay_positions(db: OrmSession, parts: list | None) -> dict[str, Position]:
-    """这些段落里开了「可选劳务」的岗位，按岗位 id。
+def pay_positions(db: OrmSession, segments: list | None) -> dict[str, Position]:
+    """这些段里开了「可选劳务」的岗位，按岗位 id。
 
     按岗位现在的设置判断：管理者在核准后才给岗位开劳务，本人照样能选。"""
-    ids = {p.get("position_id") for p in (parts or [])
-           if p.get("kind") == "shift" and p.get("position_id")}
+    ids = {s.position_id for s in (segments or [])
+           if s.kind == "shift" and s.position_id}
     if not ids:
         return {}
     return {p.id: p for p in db.query(Position)
@@ -98,21 +100,25 @@ def pay_positions(db: OrmSession, parts: list | None) -> dict[str, Position]:
 def parts_view(db: OrmSession, rec: HoursRecord) -> list[dict]:
     """给本人看的明细：每段带上能不能选劳务（pay_ok）、劳务说明和眼下记的
     报酬方式（reward，同 HoursRecord.split 的口径，跟合计对得上）。"""
-    pay = pay_positions(db, rec.parts)
+    segs = rec.live_segments()
+    pay = pay_positions(db, segs)
     out = []
-    for p in rec.parts or []:
-        pos = pay.get(p.get("position_id")) if p.get("kind") == "shift" else None
-        out.append({**p, "pay_ok": pos is not None,
+    for s in segs:
+        pos = pay.get(s.position_id) if s.kind == "shift" else None
+        out.append({**s.out(), "pay_ok": pos is not None,
                     "pay_note": pos.pay_note if pos else "",
-                    "reward": "pay" if rec.part_is_pay(p) else "hours"})
+                    "reward": "pay" if s.is_pay() else "hours"})
     return out
 
 
 def result_text(rec: HoursRecord) -> str:
-    """通知里的一句话：记几小时，有没有按劳务计的部分。"""
-    counted, pay = rec.split(rec.hours, rec.parts)
+    """通知里的一句话：记几小时，有没有按劳务计的部分。
+
+    报的是结算口径的那个数（志愿时长那一半），跟本人页面上看到的一致——
+    通知里写原始合计，本人对着页面上的数会以为算错了。"""
+    counted, pay = rec.split()
     if pay <= 0:
-        return f"本次记 {rec.hours:g} 小时"
+        return f"本次记 {counted:g} 小时"
     if counted <= 0:
         return "本次按劳务计，不记入志愿时长"
     return f"本次记 {counted:g} 小时志愿时长，另有 {pay:g} 小时按劳务计"
@@ -132,10 +138,10 @@ def lock_hours(db: OrmSession, act: Activity, actor: User | None,
     from . import liaison
 
     t = now()
-    # 没表态的那些段要清掉报酬选择（clear_pay 整列重写 parts）：先锁住这场活动
-    # 的记录行再读改写。名单导入/编辑是先拿活动行锁再拿记录行锁，但那条路要求
-    # 「没有待审批的锁定申请」，而走到这里时申请还挂着（同一事务里才改成已通过）：
-    # 两边不会成环
+    # 没表态的那些记录要把各段的报酬选择清掉（clear_pay 逐段改写）：先锁住这场
+    # 活动的记录行再读改写。名单导入/编辑是先拿活动行锁再拿记录行锁，但那条路
+    # 要求「没有待审批的锁定申请」，而走到这里时申请还挂着（同一事务里才改成
+    # 已通过）：两边不会成环
     rows = lock_records(db, act.id)
     for r in rows:
         if r.confirmed_at is None:

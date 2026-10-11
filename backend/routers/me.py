@@ -7,7 +7,7 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
-from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.orm import Session as OrmSession, selectinload
 
 from .. import config
 from .. import enroll_logic as logic
@@ -288,6 +288,7 @@ def ack_notification(notification_id: str,
 @router.get("/hours")
 def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
     rows = (db.query(HoursRecord)
+            .options(selectinload(HoursRecord.segments))
             .filter(HoursRecord.user_id == user.id)
             .order_by(HoursRecord.created_at.desc()).all())
     # 选了劳务的那几段不计入时长：账上只有志愿时长（见 HoursRecord.split）。
@@ -317,7 +318,9 @@ def my_hours(db: OrmSession = Depends(db_session), user=Depends(current_user)):
                     # 补记录活动不公开：前端别给它挂活动详情的链接
                     "record_only": bool(act and act.is_record()),
                     "party_school": r.activity_id in party,
-                    "hours": r.hours, "parts": parts,
+                    # 显示的是结算合计：志愿时长与劳务各自向上取整到 0.5 之后的和，
+                    # 各段的原始值在 parts 里（见 HoursRecord.split）
+                    "hours": r.settled_hours(), "parts": parts,
                     "counted_hours": r.counted_hours(), "pay_hours": r.pay_hours(),
                     "reward_label": r.reward_label(),
                     "confirmed_at": iso_of(r.confirmed_at),
@@ -353,9 +356,9 @@ def confirm_hours(record_id: str, body: ConfirmHoursBody,
                   db: OrmSession = Depends(db_session), user=Depends(current_user)):
     """本人确认这条时长没问题，并给每一段选定报酬方式。截止前可以改主意再点一次。
 
-    报酬方式按段（场次 + 岗位）选：同一场活动里有的岗位可选劳务、有的只记
-    志愿时长，一笔账里两种可以并存。"""
-    # 确认要按段重写 parts（整列覆盖）：先把这一行锁住再读改写，否则和
+    报酬方式按段（场次 + 岗位）选：同一场活动里有的岗位可选劳务、有的只记志愿
+    时长，一笔账里两种可以并存。"""
+    # 确认要按段改写报酬方式：先把这一行锁住再读改写，否则和
     # 管理端的手动加减、名单导入、申诉改值并发时，后提交的那次会把对方
     # 刚写进去的段与报酬选择一起盖上
     r = db.get(HoursRecord, record_id, with_for_update=True)
@@ -373,9 +376,9 @@ def confirm_hours(record_id: str, body: ConfirmHoursBody,
             .filter(HoursAppeal.record_id == r.id,
                     HoursAppeal.status == "pending").first()):
         raise HTTPException(409, "您的申诉正在处理中，处理完成后会重新核准")
-    pay_ok = hours_flow.pay_positions(db, r.parts)
-    segs = {(p.get("shift_id"), p.get("position_id")): p for p in (r.parts or [])
-            if p.get("kind") == "shift"}
+    segments = r.live_segments()
+    pay_ok = hours_flow.pay_positions(db, segments)
+    segs = {(s.shift_id, s.position_id): s for s in segments if s.kind == "shift"}
     chosen: dict[tuple, str] = {}
     for it in body.parts:
         key = (it.get("shift_id"), it.get("position_id"))
@@ -384,20 +387,18 @@ def confirm_hours(record_id: str, body: ConfirmHoursBody,
             raise HTTPException(400, "报酬方式只能是 志愿时长 / 劳务")
         seg = segs.get(key)
         if seg is None:
-            raise HTTPException(400, "这笔时长里没有这一段")
+            # 匹配不到就报错，不静默跳过：签到重算过之后段可能已经变了，
+            # 悄悄不生效的话，本人以为选了劳务，账上还是志愿时长
+            raise HTTPException(400, "这笔时长里没有这一段：签到重算后段可能"
+                                     "已经变了，请刷新后重试")
         if reward == "pay" and key[1] not in pay_ok:
-            raise HTTPException(400, f"「{seg.get('label')}」"
-                                     f"{seg.get('position') or ''}的岗位没有开放劳务，"
-                                     f"只能记志愿时长")
+            raise HTTPException(400, f"「{seg.label}」{seg.position_name}的岗位"
+                                     f"没有开放劳务，只能记志愿时长")
         chosen[key] = reward
-    parts = []
-    for p in r.parts or []:
-        p = {k: v for k, v in p.items() if k != "reward"}
-        if chosen.get((p.get("shift_id"), p.get("position_id"))) == "pay" \
-                and p.get("kind") == "shift":
-            p["reward"] = "pay"
-        parts.append(p)
-    r.parts = parts
+    for s in segments:
+        if s.kind == "shift":
+            s.reward = ("pay" if chosen.get((s.shift_id, s.position_id)) == "pay"
+                        else "")
     r.confirmed_at = now()
     db.commit()
     return {"ok": True, "counted_hours": r.counted_hours(),
@@ -441,14 +442,16 @@ def appeal_hours(record_id: str, body: AppealBody,
                        HoursAppeal.status == "pending").first())
     if pending is not None:
         raise HTTPException(409, "已有一条申诉在处理中，请等待答复")
+    # 留证与通知里写的都是本人页面上看到的那个数（结算合计）：跟申报值对不上时，
+    # 管理者一眼看得出差在哪
     db.add(HoursAppeal(id=uid("apl"), record_id=r.id, activity_id=r.activity_id,
-                       user_id=user.id, old_hours=r.hours,
+                       user_id=user.id, old_hours=r.settled_hours(),
                        claimed_hours=round(body.claimed_hours, 2),
                        reason=reason))
     r.confirmed_at = None       # 提了异议就不算确认过，改完再问一次
     notify_managers(db, r.activity_id, f"[时长申诉] {act.title}",
                     f"{user.name}（{user.student_id}）对时长提出异议：\n"
-                    f"{r.hours:g}h → 申报 {body.claimed_hours:g}h\n"
+                    f"{r.settled_hours():g}h → 申报 {body.claimed_hours:g}h\n"
                     f"理由：{reason}\n"
                     f"申诉待处理，时长不会自动锁定，"
                     f"请到活动的「时长管理」页处理。", duty="hours", tab="hours")

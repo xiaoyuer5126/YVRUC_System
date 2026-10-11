@@ -6,7 +6,7 @@
 
 export function emptyActivity() {
   return {
-    title: '', organizer: '', recruit_mode: 'instant', location: '', location_point: null,
+    title: '', organizer: '', co_organizer: '', recruit_mode: 'instant', location: '', location_point: null,
     contacts: [{ name: '', phone: '' }], intro: '',
     volunteer_requirement: '', volunteer_benefit: '', contact_group_qr: '',
     recruit_campuses: [], recruit_stages: [], recruit_colleges: [],
@@ -25,6 +25,7 @@ export function activityToForm(act) {
     : [{ name: '', phone: '' }]
   return {
     title: act.title, organizer: act.organizer || '', recruit_mode: act.recruit_mode,
+    co_organizer: act.co_organizer || '',
     location: act.location, location_point: act.location_point || null,
     contacts, intro: act.intro,
     volunteer_requirement: act.volunteer_requirement || '',

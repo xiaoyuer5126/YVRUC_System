@@ -7,7 +7,8 @@
   · 图书馆图书整理周（即选即得·报名中·截止后统一分配）——报名都落在
     「待分配」，进后台建岗位后一键分配
   · 校园开放日招生咨询（即选即得·报名中）——一个场次一个岗位的简单活动
-  · 校庆文艺晚会（已截止·签到进行中）——统一+分岗位签到码、实时大屏
+  · 校庆文艺晚会（已截止·签到进行中）——统一+分岗位签到码、实时大屏，
+    外加管理者手动补录与扣减的段
   · 社区敬老院陪伴服务（已完成）——时长已核准并锁定
   · 新生迎新周（报名后筛选·报名中）——报名问卷与意向场次
   · 学院读书会志愿服务（补记录·已结束）——名单已导入，等待核准时长
@@ -25,11 +26,11 @@ from . import config
 from .audit import log as audit_log
 from .database import SessionLocal, engine, init_db
 from .qrcodes import qr_svg
-from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, User, ViolationRecord, uid)
+from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, User, ViolationRecord, day_of, uid)
 # 已确认的时长要连明细一起种：明细不是另写的一段文字，是这套算法从签到记录
 # 里推出来的，所以直接借过来用，免得演示数据和线上算出来的两套口径
-from .routers.records import _import_part
-from .routers.staff_ops import compute_hours
+from .routers.records import _import_fields
+from .routers.staff_ops import checkin_segments
 
 random.seed(42)
 
@@ -304,6 +305,7 @@ def main() -> None:
 
         # ---------- 活动2：图书整理周（报名中·截止后统一分配） ----------
         book = Activity(id=uid("act"), title="图书馆图书整理周·周六专场", organizer="图书馆",
+                        co_organizer="校青年志愿者协会",
                         recruit_mode="instant", cover_hue=210,
                         intro="图书馆馆藏调整需要大批志愿者参与图书下架、搬运与重新上架。"
                               "具体分工将在报名截止后由青协统一排班公布。",
@@ -443,8 +445,25 @@ def main() -> None:
                                 created_by=wang.id)
         db.add(task_back)
 
+        # 手动加/扣也走段：签到码扫不上、中途离场这类不进签到记录的账，靠它记
+        # 上去。只给已确认报名的人加——没报名的人这场活动里没有他的账
+        # （见 staff_ops.hours_manual），所以这里取的是报名名单里的人
+        late_u = gala_users[0]
+        manual_rec = HoursRecord(id=uid("hrs"), activity_id=gala.id,
+                                 user_id=late_u.id, source="manual",
+                                 note="签到码扫不上，现场补录",
+                                 confirmed_by=wang.id)
+        db.add(manual_rec)
+        manual_rec.add_segment(kind="manual", date=day_of(c1.start_time),
+                               hours=1.0, label="签到码扫不上，现场补录",
+                               time_text=f"{c1.start_time:%m-%d}")
+        manual_rec.add_segment(kind="manual", date=day_of(c1.start_time),
+                               hours=-0.5, label="中途离场 30 分钟",
+                               time_text=f"{c1.start_time:%m-%d}")
+
         # ---------- 活动5：敬老院（已完成·时长已锁定） ----------
         elder = Activity(id=uid("act"), title="社区敬老院陪伴服务（秋）", organizer="文学院青年志愿者协会",
+                         co_organizer="校青年志愿者协会",
                          recruit_mode="instant", cover_hue=30,
                          intro="每周定期前往附近社区敬老院陪伴老人，聊天读报、组织小活动。"
                                "岗位简单，仅按场次报名。",
@@ -487,10 +506,13 @@ def main() -> None:
         # 已确认的时长也走同一套算法，不在这儿另写一份：备注就是明细
         # （签到签退时间 + 岗位名）——手写的那份跟实际算出来的迟早对不上
         db.flush()
-        for row in compute_hours(db, elder):
-            db.add(HoursRecord(id=uid("hrs"), activity_id=elder.id,
-                               user_id=row["user"]["id"], hours=row["hours"],
-                               parts=row["parts"], confirmed_by=wang.id))
+        for user_id, info in checkin_segments(db, elder).items():
+            rec = HoursRecord(id=uid("hrs"), activity_id=elder.id,
+                              user_id=user_id, source="checkin",
+                              confirmed_by=wang.id)
+            db.add(rec)
+            for seg in info["segments"]:
+                rec.add_segment(**seg)
 
         db.commit()
 
@@ -577,10 +599,10 @@ def main() -> None:
         for i, u in enumerate(students[40:46]):
             hours = 3.0 if i % 3 else 2.5
             note = "场地布置" if i % 2 else "签到引导"
-            db.add(HoursRecord(id=uid("hrs"), activity_id=club.id, user_id=u.id,
-                               hours=hours, source="import", note=note,
-                               parts=[_import_part(club, hours, note)],
-                               confirmed_by=limu.id))
+            rec = HoursRecord(id=uid("hrs"), activity_id=club.id, user_id=u.id,
+                              source="import", note=note, confirmed_by=limu.id)
+            db.add(rec)
+            rec.add_segment(**_import_fields(club, hours, note))
         db.commit()
 
         # ---------- 活动管理者（创建者自动成为管理者，另配多人共管） ----------
