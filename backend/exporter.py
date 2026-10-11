@@ -516,7 +516,7 @@ def record_settlements(db: OrmSession, *, start: datetime | None = None,
     数——两半各自向上取整到 0.5，取整一旦落到按段拆分之后，每一段的零头都要
     多出 0.5 来。
 
-    取整走 HoursRecord.ceil_half 一处，不在这儿另写一个：两处各写一个取整，
+    结算走 HoursRecord.settle_sums 一处，不在这儿另写一个：两处各写一个取整，
     界面上看到的和导出去的迟早差 0.5。
 
     start 起（含）、before 止（不含），都不给就是不限。一段都没有的记录（合计
@@ -533,7 +533,7 @@ def record_settlements(db: OrmSession, *, start: datetime | None = None,
         q = q.having(latest >= start)
     if before is not None:
         q = q.having(latest < before)
-    return [(aid, day, HoursRecord.ceil_half(volunteer), HoursRecord.ceil_half(paid))
+    return [(aid, day, *HoursRecord.settle_sums(volunteer, paid))
             for aid, day, volunteer, paid in q]
 
 

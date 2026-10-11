@@ -1078,10 +1078,14 @@ class HoursSegment(Base):
     """一笔时长里的一段明细。
 
     一段一行，不是一个 JSON 数组：按服务日期、按活动、按人统计都能交给带索引的
-    SQL，不必把整份明细拉进 Python 再拆。三种：
-      shift   签到结算按场次一段：哪一场、什么时段、什么岗位
-      manual  管理者手动加/扣一段：备注就是 label，扣减记负数
-      import  补记录活动导入名单一段：时段写活动时间
+    SQL，不必把整份明细拉进 Python 再拆。五种：
+      shift     签到结算按场次一段：哪一场、什么时段、什么岗位
+      manual    管理者手动加/扣一段：备注就是 label，扣减记负数
+      import    补记录活动导入名单一段：时段写活动时间
+      override  管理者核定时调整：核定的数与其余各段结算之差，一笔最多一段
+      appeal    申诉改判：改判的数与其余各段结算之差，一笔最多一段
+    override 与 appeal 是人判出来的结果，不能在明细里单独删：删了就等于悄悄推翻
+    那次核定或改判。要改就重新核定、重新判。
 
     段是账的依据：hours 记原始值，一笔的合计恒等于各段之和（见
     _sync_hours_from_segments）。取整到 0.5 只发生在对外结算那一步（见
@@ -1101,7 +1105,7 @@ class HoursSegment(Base):
         ForeignKey("hours_records.id", ondelete="CASCADE"), index=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    kind: Mapped[str] = mapped_column(String(12))       # shift / manual / import
+    kind: Mapped[str] = mapped_column(String(12))  # shift/manual/import/override/appeal
     # 同一笔内的顺序：写入时取这一笔当前的最大值 + 1，明细的顺序就是写入的顺序
     seq: Mapped[int] = mapped_column(Integer, default=0)
     # 服务日期（本地 0 点）：这一段算哪一天的服务，不是录进来的那天
@@ -1234,24 +1238,31 @@ class HoursRecord(Base):
         if db is not None:
             db.delete(seg)
 
-    def set_total(self, total: float, *, label: str, date: datetime) -> None:
-        """把这一笔的合计定成 total：差额记在 label 这句话的那一段上。
+    def settle_to(self, target: float, *, kind: str, label: str,
+                  date: datetime) -> None:
+        """把这一笔的结算合计定成 target（先向上取整到 0.5）：差额记在 kind 那一段上。
 
         管理者核定时改的数、申诉改判的数都是「这一笔就是这么多」，不是「再加
-        这么多」，所以同一句话的调整段只留一段：按差额改写它，差额为 0 就删掉。
-        要是不这样，同一笔每改一次就多一段，账越点越大。
+        这么多」，所以同一种调整段只留一段：按差额改写它，差额为 0 就删掉。
+        要是不这样，同一笔每改一次就多一段，账越点越大；核定改回签到算出的原数
+        时，上一次的调整也去不掉。
+
+        差额按结算口径算（其余各段两半各自取整后的和），不按原始值算：差额是
+        0.5 的整数倍，加到志愿那一半上，取整后的合计才恰好等于 target。调用方
+        先把劳务选择清掉（clear_pay），差额落在志愿时长上不会把哪一半扣成负数。
         """
         segs = self.live_segments()
-        seg = next((s for s in segs if s.kind == "manual" and s.label == label), None)
-        other = round(sum(float(s.hours or 0) for s in segs if s is not seg), 2)
-        delta = round(total - other, 2)
+        seg = next((s for s in segs if s.kind == kind), None)
+        other = self.settle((s.hours, s.is_pay()) for s in segs if s is not seg)
+        delta = round(self.ceil_half(target) - sum(other), 2)
         if seg is None:
             if delta:
-                self.add_segment(kind="manual", date=date, hours=delta, label=label,
+                self.add_segment(kind=kind, date=date, hours=delta, label=label,
                                  time_text=f"{date:%m-%d}")
             return
         if delta:
-            seg.refill(hours=delta, date=date, time_text=f"{date:%m-%d}")
+            seg.refill(hours=delta, date=date, label=label,
+                       time_text=f"{date:%m-%d}")
         else:
             self.drop_segment(seg)
 
@@ -1285,8 +1296,21 @@ class HoursRecord(Base):
         可能略大于原始合计，这是有意的——0.5 是能报给志愿北京的最小刻度。
         """
         rows = list(items)        # 两半各要过一遍，生成器只能取一次
-        return (HoursRecord.ceil_half(sum(h for h, pay in rows if not pay)),
-                HoursRecord.ceil_half(sum(h for h, pay in rows if pay)))
+        return HoursRecord.settle_sums(sum(h for h, pay in rows if not pay),
+                                       sum(h for h, pay in rows if pay))
+
+    @staticmethod
+    def settle_sums(volunteer: float, paid: float) -> tuple[float, float]:
+        """两半的原始和 → 结算的（志愿时长, 劳务）。
+
+        扣减段只记志愿时长，本人又把签到段都选成劳务时，志愿那一半的原始和会
+        是负数：不足的部分从劳务里扣，志愿时长记 0。一笔的原始合计不会是负的
+        （扣减与删段都拦着），这样两半都不会出现负数。按段在 SQL 里求和的统计
+        也走这里，界面、导出与统计才是同一套数。
+        """
+        if volunteer < 0:
+            volunteer, paid = 0.0, max(0.0, paid + volunteer)
+        return HoursRecord.ceil_half(volunteer), HoursRecord.ceil_half(paid)
 
     def split(self) -> tuple[float, float]:
         """这一笔拆成（志愿时长, 劳务）。"""
@@ -1321,7 +1345,10 @@ class HoursRecord(Base):
         return f"志愿时长 {counted:g}h + 劳务 {pay:g}h"
 
     def clear_pay(self) -> None:
-        """各段都退回志愿时长（到点没表态时）：该笔所有段的报酬方式一起清掉。"""
+        """各段都退回志愿时长：该笔所有段的报酬方式一起清掉。
+
+        到点没表态时这样结；核准后这一笔的数被改了也这样清——本人是对着旧数选
+        的劳务，新数得重新确认、重新选。"""
         for s in self.live_segments():
             s.reward = ""
 

@@ -437,8 +437,12 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
                 raise HTTPException(400, "志愿者联络群二维码不能为空")
             act.contact_group_qr = str(value).strip()
         elif key == "co_organizer":
-            # 选填：清空就是各自单独主办，不留空白
-            act.co_organizer = str(value or "").strip()
+            # 选填：清空就是各自单独主办，不留空白。长度同新建时的上限，超长
+            # 直接写库会撞列宽报 500
+            value = str(value or "").strip()
+            if len(value) > 64:
+                raise HTTPException(400, "联合主办方不能超过 64 个字")
+            act.co_organizer = value
         else:
             setattr(act, key, value)
     if "reg_end" in body and not act.is_record():

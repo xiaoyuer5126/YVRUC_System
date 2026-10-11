@@ -133,30 +133,38 @@ def test_不可劳务的段提交劳务被拒(client, admin, db, mixed):
     assert r.status_code == 400 and "没有这一段" in r.json()["detail"]
 
 
-def test_确认全部与再次核准都不丢各段的选择(client, admin, db, mixed):
+def test_重算不丢选择_改了数就撤销核准并清掉劳务(client, admin, db, mixed):
     act, am, pm, paid, plain, u = mixed
     _confirm_all(client, admin, act)
     stu = login(client, u.student_id)
     rec_id = _mine(client, stu)["records"][0]["id"]
     _pick(client, stu, rec_id, (am, paid, "pay"))
 
-    _confirm_all(client, admin, act, approve=False)        # 重算一遍
+    _confirm_all(client, admin, act, approve=False)        # 重算一遍，数没变
     rec = _record(db, act)
     assert rec.hours == 7.0 and rec.pay_hours() == 4.0 and rec.counted_hours() == 3.0
+    assert rec.confirmed_at is not None
+    assert db.get(Activity, act.id).hours_approved_at is not None
 
-    # 逐个点名改合计：增减落在志愿时长那边，劳务那段照旧
+    # 逐个点名改合计：数变了，本人对着旧数选的劳务清掉、确认作废，核准撤销
     r = client.post(f"/api/staff/activities/{act.id}/hours/confirm", headers=admin,
                     json={"items": [{"student_id": u.student_id, "hours": 6}]})
     assert r.status_code == 200, r.text
+    assert r.json()["reapproval_required"] is True
     rec = _record(db, act)
-    assert rec.hours == 6.0 and rec.pay_hours() == 4.0 and rec.counted_hours() == 2.0
+    assert rec.hours == 6.0 and rec.pay_hours() == 0 and rec.counted_hours() == 6.0
+    assert rec.confirmed_at is None
+    assert db.get(Activity, act.id).hours_approved_at is None
+    # 没核准时本人选不了
+    assert _pick(client, stu, rec_id, (am, paid, "pay")).status_code == 409
 
-    # 数值变了要再核准：重新问本人，但已选的劳务留着当默认
+    # 重新核准时通知到他，他再选一次
     r = client.post(f"/api/staff/activities/{act.id}/hours/approve",
                     headers=admin, json={})
     assert r.status_code == 200 and r.json()["count"] == 1
+    assert _pick(client, stu, rec_id, (am, paid, "pay")).status_code == 200
     rec = _record(db, act)
-    assert rec.confirmed_at is None and rec.pay_hours() == 4.0
+    assert rec.pay_hours() == 4.0 and rec.counted_hours() == 2.0
 
 
 def test_岗位关了劳务_重算时那段回到志愿时长(client, admin, db, mixed):
@@ -202,15 +210,15 @@ def test_锁定时没表态的劳务退回志愿时长(client, admin, db, mixed)
     stu = login(client, u.student_id)
     rec_id = _mine(client, stu)["records"][0]["id"]
     _pick(client, stu, rec_id, (am, paid, "pay"))
-    # 数值变了再核准：本人要重新表态，可他到截止都没再点
-    client.post(f"/api/staff/activities/{act.id}/hours/confirm", headers=admin,
-                json={"items": [{"student_id": u.student_id, "hours": 7.5}]})
-    client.post(f"/api/staff/activities/{act.id}/hours/approve", headers=admin, json={})
+    # 只选了劳务、没点确认，再锁定：劳务退回志愿时长
+    rec = _record(db, act)
+    rec.confirmed_at = None
+    db.commit()
     assert _record(db, act).pay_hours() == 4.0
     _close_and_lock(client, admin, db, act)
     rec = _record(db, act)
     assert rec.confirmed_at is not None and rec.pay_hours() == 0
-    assert _mine(client, stu)["locked"] == 7.5
+    assert _mine(client, stu)["locked"] == 7.0
 
 
 def test_导出累计概览统计都按段求和(client, admin, db, mixed):

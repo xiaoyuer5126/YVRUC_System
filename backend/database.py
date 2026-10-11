@@ -39,7 +39,11 @@ def _model_metadata(metadata):
 
 
 def schema_gaps(metadata=None, inspector=None) -> list[str]:
-    """模型声明了、库里却没有的表和列。空列表 = 一致。
+    """模型与库对不上、会让写入失败的表和列。空列表 = 一致。
+
+    两种：模型声明了、库里却没有的表和列；库里有、模型里已经没有，又不许为空
+    也没有默认值的列。后一种（模型删了列、库没重建）不影响读，但往这张表插
+    一行就因为那一列是空的而 500，要到有人写这张表时才暴露。
 
     这个项目**没有迁移工具**，`create_all` 只建缺失的表、从不给已有的表加列。
     所以少了这一步，「模型加了列、库里没有」就不在启动时暴露，而是跑到某个
@@ -52,10 +56,17 @@ def schema_gaps(metadata=None, inspector=None) -> list[str]:
         if not insp.has_table(table.name):
             gaps.append(f"{table.name}：整张表都没有")
             continue
-        have = {c["name"] for c in insp.get_columns(table.name)}
-        missing = sorted({c.name for c in table.columns} - have)
+        columns = insp.get_columns(table.name)
+        have = {c["name"] for c in columns}
+        declared = {c.name for c in table.columns}
+        missing = sorted(declared - have)
         if missing:
             gaps.append(f"{table.name}：缺列 {missing}")
+        stale = sorted(c["name"] for c in columns
+                       if c["name"] not in declared
+                       and not c.get("nullable", True) and c.get("default") is None)
+        if stale:
+            gaps.append(f"{table.name}：多出模型里已删掉、又不能为空的列 {stale}")
     return gaps
 
 
@@ -80,7 +91,7 @@ def check_schema() -> None:
             "数据库与模型不一致，先修库再启动：\n  " + "\n  ".join(gaps)
             + "\n（本项目没有迁移工具，create_all 只建缺失的表、不会给已有的表加列。"
               "开发环境重跑 seed：docker compose --profile seed run --rm --build seed；"
-              "要保住数据就手工 ALTER TABLE … ADD COLUMN …）")
+              "要保住数据就手工 ALTER TABLE … ADD COLUMN … / DROP COLUMN …）")
     leftovers = extra_tables()
     if leftovers:
         logger.warning("库里还有模型里没有的表（改名留下的旧表，不影响运行）：%s",

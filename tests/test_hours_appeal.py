@@ -11,6 +11,9 @@ from backend.models import (Activity, ActivityManager, CheckinRecord,
                             span_text, uid)
 from conftest import ADMIN, POSITION_TEXT, login, student_row
 
+# 手动加/扣时长那一段的服务日期
+MANUAL_DATE = "2026-10-05"
+
 
 @pytest.fixture
 def served(db, take_student):
@@ -51,6 +54,20 @@ def served(db, take_student):
                          checkout_at=g.end_time))
     db.commit()
     return act, g, u
+
+
+def _enrolled(db, act, sid: str) -> User:
+    """再报上一名志愿者（这场活动的第一个场次与岗位），不签到。
+
+    手动加时长只给已报名的人：时长是这场活动的，没报名就没有服务依据。"""
+    u = student_row(db, sid)
+    pos = (db.query(Position).join(Shift, Position.shift_id == Shift.id)
+           .filter(Shift.activity_id == act.id).order_by(Shift.sort).first())
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=pos.shift_id,
+                      user_id=u.id, position_id=pos.id, status="enrolled",
+                      joined_at=now()))
+    db.commit()
+    return u
 
 
 def _confirm(client, admin, act, *, approve=True):
@@ -426,9 +443,9 @@ def test_再次核准只惊动申诉过或数值变过的人(client, admin, db, 
 
     act, g, u = served
     # 再来一位志愿者：手动补录 2 小时，第一轮就确认无误
-    other = student_row(db, take_student())
+    other = _enrolled(db, act, take_student())
     r = client.post(f"/api/staff/activities/{act.id}/hours/manual", headers=admin,
-                    json={"items": [{"student_id": other.student_id, "hours": 2, "note": "场外补录"}]})
+                    json={"items": [{"student_id": other.student_id, "hours": 2, "note": "场外补录"}], "date": MANUAL_DATE})
     assert r.status_code == 200, r.text
     _confirm(client, admin, act)
     o = login(client, other.student_id)
@@ -468,20 +485,23 @@ def test_时长带明细且导出时长记录(client, admin, db, served, take_st
 
     act, g, u = served
     u.id_card = "110101200001011234"
-    other = student_row(db, take_student())
+    other = _enrolled(db, act, take_student())
     db.commit()
     _confirm(client, admin, act, approve=False)
     r = client.post(f"/api/staff/activities/{act.id}/hours/manual", headers=admin,
                     json={"items": [{"student_id": other.student_id, "hours": 2,
-                                     "note": "场外搬运"}]})
+                                     "note": "场外搬运"}], "date": MANUAL_DATE})
     assert r.status_code == 200, r.text
 
     stu = login(client, u.student_id)
     rec = _record(client, stu)
     pos = db.query(Position).filter(Position.shift_id == g.id).one()
+    seg = rec["parts"][0]
+    assert seg.pop("id")                       # 每段都有编号
     assert rec["parts"] == [{"label": "服务场", "time": g.span_text(),
                              "position": "引导", "hours": 4.0, "kind": "shift",
                              "shift_id": g.id, "position_id": pos.id,
+                             "date": f"{g.start_time:%Y-%m-%d}",
                              "pay_ok": False, "pay_note": "", "reward": "hours"}]
 
     r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
@@ -494,7 +514,7 @@ def test_时长带明细且导出时长记录(client, admin, db, served, take_st
     assert by_name[u.name] == (u.name, u.student_id, "110101200001011234", 4.0,
                                f"{g.span_text()} 引导")
     assert by_name[other.name][1] == other.student_id
-    assert by_name[other.name][3] == 2 and by_name[other.name][4] == "场外搬运"
+    assert by_name[other.name][3] == 2 and by_name[other.name][4] == "10-05 场外搬运"
 
     # 选了劳务的不导
     _served_pay_position(db, act)
@@ -515,7 +535,7 @@ def _add_manual(client, admin, act, sid, hours, note=""):
     return client.post(f"/api/staff/activities/{act.id}/hours/manual",
                        headers=admin,
                        json={"items": [{"student_id": sid, "hours": hours,
-                                        "note": note}]})
+                                        "note": note}], "date": MANUAL_DATE})
 
 
 def test_手动时长并进本人那一笔(client, admin, db, served):
@@ -548,7 +568,7 @@ def test_手动时长并进本人那一笔(client, admin, db, served):
     r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
     xrow = next(x for x in load_workbook(BytesIO(r.content)).active.values
                 if x[0] == u.name)
-    assert xrow[3] == 6.0 and xrow[4] == f"{g.span_text()} 引导；场外搬运"
+    assert xrow[3] == 6.0 and xrow[4] == f"{g.span_text()} 引导；10-05 场外搬运"
 
 
 def test_确认全部不会抹掉手动加的那几段(client, admin, db, served):
@@ -572,7 +592,7 @@ def test_确认全部不会抹掉手动加的那几段(client, admin, db, served
 def test_只补录过的人也在总表里(client, admin, db, served, take_student):
     """没签到、只被手动补录的人也得出现在这张表里，不然这笔账就没人核。"""
     act, g, u = served
-    other = student_row(db, take_student())
+    other = _enrolled(db, act, take_student())
     _add_manual(client, admin, act, other.student_id, 1.5, "场外搬运")
 
     d = client.get(f"/api/staff/activities/{act.id}/hours", headers=admin).json()
@@ -593,8 +613,10 @@ def test_删手动那一段只减那一截(client, admin, db, served):
     rid, seg = row["id"], row["parts"][2]          # 最后一段是「通勤」
     assert seg["label"] == "通勤"
 
-    # 签到算出来的那一段没有编号，删不到：它是账的依据
-    assert "id" not in row["parts"][0]
+    # 签到算出来的那一段删不了：它是账的依据
+    assert client.delete(
+        f"/api/staff/activities/{act.id}/hours/manual/{rid}/{row['parts'][0]['id']}",
+        headers=admin).status_code == 404
     assert client.delete(
         f"/api/staff/activities/{act.id}/hours/manual/{rid}/none",
         headers=admin).status_code == 404
@@ -633,7 +655,7 @@ def test_没确认过也删得对那一段(client, admin, db, served):
 def test_手动时长删空之后整笔账消失(client, admin, db, served, take_student):
     """本来源自补录的一笔，删空就不该留一条 0 小时的记录在表里。"""
     act, g, u = served
-    other = student_row(db, take_student())
+    other = _enrolled(db, act, take_student())
     _add_manual(client, admin, act, other.student_id, 2, "场外搬运")
 
     d = client.get(f"/api/staff/activities/{act.id}/hours", headers=admin).json()
@@ -681,17 +703,17 @@ def test_手动扣减要写备注也不能扣成负数(client, admin, db, served
     url = f"/api/staff/activities/{act.id}/hours/manual"
 
     r = client.post(url, headers=admin,
-                    json={"items": [{"student_id": u.student_id, "hours": -1}]})
+                    json={"items": [{"student_id": u.student_id, "hours": -1}], "date": MANUAL_DATE})
     assert r.status_code == 400 and "备注必填" in r.json()["detail"]
 
     r = client.post(url, headers=admin,
                     json={"items": [{"student_id": u.student_id, "hours": -99,
-                                     "note": "记错了"}]})
+                                     "note": "记错了"}], "date": MANUAL_DATE})
     assert r.status_code == 400 and "扣不了" in r.json()["detail"]
 
     r = client.post(url, headers=admin,
                     json={"items": [{"student_id": u.student_id, "hours": -1.5,
-                                     "note": "中途离场 1.5 小时"}]})
+                                     "note": "中途离场 1.5 小时"}], "date": MANUAL_DATE})
     assert r.status_code == 200, r.text
 
     stu = login(client, u.student_id)
@@ -704,10 +726,10 @@ def test_手动扣减要写备注也不能扣成负数(client, admin, db, served
 def test_没有时长记录就无从扣减(client, admin, db, served, take_student):
     """扣减要有个账可扣：这场活动他一条记录都没有，扣什么？"""
     act, _g, _u = served
-    other = student_row(db, take_student())
+    other = _enrolled(db, act, take_student())
     r = client.post(f"/api/staff/activities/{act.id}/hours/manual", headers=admin,
                     json={"items": [{"student_id": other.student_id,
-                                     "hours": -1, "note": "记错了"}]})
+                                     "hours": -1, "note": "记错了"}], "date": MANUAL_DATE})
     assert r.status_code == 400 and "没有可扣的" in r.json()["detail"]
 
 
@@ -810,7 +832,7 @@ def test_删段不截到零_账不会凭空多出来(client, admin, db, served):
 
 def test_扣到零的人仍在总表里(client, admin, db, served, take_student):
     act, g, u = served
-    other = student_row(db, take_student())
+    other = _enrolled(db, act, take_student())
     _add_manual(client, admin, act, other.student_id, 2, "场外搬运")
     assert _add_manual(client, admin, act, other.student_id, -2, "其实没去").status_code == 200
     m = _row(client, admin, act, other.id)
@@ -833,11 +855,11 @@ def test_时长拒绝非有限数(client, admin, served):
 
 def test_同一批里同一人出现两次只有一笔(client, admin, db, served, take_student):
     act, g, u = served
-    other = student_row(db, take_student())
+    other = _enrolled(db, act, take_student())
     r = client.post(f"/api/staff/activities/{act.id}/hours/manual", headers=admin,
                     json={"items": [
                         {"student_id": other.student_id, "hours": 2, "note": "搬运"},
-                        {"student_id": other.student_id, "hours": -1, "note": "早退"}]})
+                        {"student_id": other.student_id, "hours": -1, "note": "早退"}], "date": MANUAL_DATE})
     assert r.status_code == 200
     db.expire_all()
     recs = db.query(HoursRecord).filter(HoursRecord.activity_id == act.id,
@@ -864,7 +886,7 @@ def test_党校同学_时长带标签_不进导出_不计入本人累计(client,
         Enrollment.activity_id == act.id, Enrollment.user_id == party.id)] == ["party_school"]
     r = client.post(f"/api/staff/activities/{act.id}/hours/manual", headers=admin,
                     json={"items": [{"student_id": party.student_id, "hours": 3,
-                                     "note": "场外支援"}]})
+                                     "note": "场外支援"}], "date": MANUAL_DATE})
     assert r.status_code == 200, r.text
     _confirm(client, admin, act)
 
