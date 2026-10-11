@@ -305,6 +305,27 @@ const SHOTS = `${S}/shots`
 mkdirSync(SHOTS, { recursive: true })
 let failed = 0, fine
 const heights = {}
+
+// 一页加载完了没有：先等 Element 的加载遮罩消失，再等文字长度连续三次不变。
+// 死等一个固定秒数是不行的：接口还在路上时采样，会把「正在加载」当成空白页，
+// 而空白页正是这个检查要抓的东西。等也有上限：真卡死的页面照样按 ✗ 报出来。
+async function settle(cap = 9000) {
+  const t0 = Date.now()
+  let last = -1, same = 0
+  while (Date.now() - t0 < cap) {
+    await sleep(200)
+    const r = await send('Runtime.evaluate', { expression: `(() => {
+      const mask = document.querySelector('.el-loading-mask');
+      return (mask ? 'M' : '') +
+        ((document.querySelector('.app-main') || document.body).innerText || '').trim().length;
+    })()`, returnByValue: true })
+    const v = String(r.result?.result?.value ?? '')
+    if (v.startsWith('M')) { last = -1; same = 0; continue }
+    const n = Number(v)
+    if (n === last) { if (++same >= 3) return } else { same = 0; last = n }
+  }
+}
+
 for (const [who, route, name, min] of PAGES) {
   await send('Page.navigate', { url: 'http://127.0.0.1:8080/' })
   await sleep(700)
@@ -313,7 +334,7 @@ for (const [who, route, name, min] of PAGES) {
     localStorage.setItem('yvruc_user', ${JSON.stringify(USR[who])});
     sessionStorage.setItem('yvruc_active_identity', ${JSON.stringify(who)});
     location.assign(${JSON.stringify(route)});` })
-  await sleep(2400)
+  await settle()
   const r = await send('Runtime.evaluate', { expression: PROBE, returnByValue: true })
   const d = r.timeout
     ? { textLen: 0, errors: ['页面没有响应（主线程卡死？）'], vw: 0, scrollW: 0, over: [], gapsOff: [],

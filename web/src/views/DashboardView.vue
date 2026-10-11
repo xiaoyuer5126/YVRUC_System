@@ -10,7 +10,9 @@
         <el-button type="primary" @click="exportSummary">导出活动汇总</el-button>
       </div>
     </div>
-    <el-row :gutter="16" v-if="d">
+    <!-- 卡片先立起来（标题 + 0），数据回来再从 0 滚上去：等接口的这几百毫秒里
+         页面不至于是一片空白，谁在加载、有哪些数一眼就知道 -->
+    <el-row :gutter="16">
       <el-col :span="3" v-for="c in cards" :key="c.label">
         <el-card shadow="never" class="kpi">
           <div class="v" :style="{ color: c.color }">{{ c.value }}</div>
@@ -82,9 +84,9 @@ const CARDS = [
 /** 卡片上此刻显示的数值，roll() 每帧改写它；模板经 cards 读。 */
 const shown = reactive(Object.fromEntries(CARDS.map(c => [c.key, 0])))  // vuecheck: script-only
 
-const cards = computed(() => d.value ? CARDS.map(c => ({
+const cards = computed(() => CARDS.map(c => ({
   label: c.label, color: c.color, value: shown[c.key].toFixed(c.digits),
-})) : [])
+})))
 
 /** 快捷跨度：本月、上个月、近 3 个月，都算到本月这天为止。 */
 const shortcuts = [
