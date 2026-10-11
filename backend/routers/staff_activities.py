@@ -1117,20 +1117,20 @@ def _sync_placeholder(db: OrmSession, g: Shift, capacity: int,
     holder.waitlist_quota = waitlist_quota
 
 
-def _refuse_if_questions_scope(db: OrmSession, act_id: str, s: Position) -> None:
-    """岗位被题目的「适用岗位」引用着就先别删。
+def _prune_questions(db: OrmSession, act_id: str, s: Position) -> None:
+    """岗位要删了：把它从报名问卷题目的「适用岗位」里拿掉。
 
-    删了以后这道题对谁都匹配不上（对被问的人直接消失——空 scope 才是「人人都答」，
-    所以不能靠清空来「修」），保存整份问卷时也会被拦下要求重选。
+    发布后问卷不能改，不能指望管理者先去改题，所以这里直接修剪。题目还圈着
+    别的岗位时只拿掉这一个；它是唯一的一个时原样留着：空范围的意思是「人人
+    都答」，清空等于替管理者把范围放大到全体。留下的 id 和谁都对不上，这道题
+    对谁都不显示（见 screening.visible_questions），和删掉整个场次时
+    圈着那一场岗位的题一样。
     """
-    hits = [q.title for q in db.query(FormQuestion)
-            .filter(FormQuestion.activity_id == act_id).all()
-            if s.id in set(q.applies_to_positions or [])]
-    if hits:
-        raise HTTPException(409, f"问卷里有题目的「适用岗位」是「{s.name}」："
-                                 f"{'、'.join(hits[:3])}"
-                                 + (f" 等 {len(hits)} 题" if len(hits) > 3 else "")
-                                 + "，请先改掉那些题再删这个岗位")
+    for q in (db.query(FormQuestion)
+              .filter(FormQuestion.activity_id == act_id).all()):
+        scope = q.applies_to_positions or []
+        if s.id in scope and len(scope) > 1:
+            q.applies_to_positions = [i for i in scope if i != s.id]
 
 
 def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
@@ -1162,7 +1162,7 @@ def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
                 raise HTTPException(
                     409, f"「{g.name}」有过报名记录，不能再改成「报名即选岗位」；"
                          f"如确需调整请新建场次")
-            _refuse_if_questions_scope(db, g.activity_id, holder)
+            _prune_questions(db, g.activity_id, holder)
             g.positions.remove(holder)
             db.delete(holder)
         if mode == "assign":
@@ -1773,7 +1773,7 @@ def open_pick(shift_id: str, db: OrmSession = Depends(db_session),
                     CheckinTask.position_id == holder.id).count():
                 raise HTTPException(409, "「待分配」上开过分岗位签到码，"
                                          "先在签到里删掉它再开放选岗")
-            _refuse_if_questions_scope(db, act.id, holder)
+            _prune_questions(db, act.id, holder)
             _prune_trainings(db, act, {holder.id})
             # 报过「待分配」又退掉（或落选）的历史记录还指着它，外键挡着删不掉。
             # 这些人本来就没分到岗位，岗位一栏该是空的：把 position_id 置空，
@@ -1844,7 +1844,7 @@ def delete_position(position_id: str,
         raise HTTPException(409, f"该岗位还挂着{'、'.join(parts)}，"
                                  "删除会把这些记录一起弄丢，不能删；"
                                  "不再用的话暂停报名即可")
-    _refuse_if_questions_scope(db, act.id, s)
+    _prune_questions(db, act.id, s)
     _prune_trainings(db, act, {s.id})
     label = f"{act.title}·{g.name}·{s.name}"
     db.delete(s)

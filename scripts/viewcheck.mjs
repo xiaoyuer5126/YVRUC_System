@@ -306,22 +306,27 @@ mkdirSync(SHOTS, { recursive: true })
 let failed = 0, fine
 const heights = {}
 
-// 一页加载完了没有：先等 Element 的加载遮罩消失，再等文字长度连续三次不变。
+// 一页加载完了没有：先等跳转落到新页面、Element 的加载遮罩消失，再等文字长度
+// 连续三次不变且不为 0。
 // 死等一个固定秒数是不行的：接口还在路上时采样，会把「正在加载」当成空白页，
-// 而空白页正是这个检查要抓的东西。等也有上限：真卡死的页面照样按 ✗ 报出来。
+// 而空白页正是这个检查要抓的东西。字数为 0 也不算静下来：页面脚本还没加载出来
+// 时字数一直是 0，照「三次不变」算就在白屏上采了样。跳转前的旧页面打了
+// __vcStale 记号，还读到它说明新页面没换上来，同样接着等。
+// 等也有上限：真白屏、真卡死的页面等满 cap 照样采样，按 ✗ 报出来。
 async function settle(cap = 9000) {
   const t0 = Date.now()
   let last = -1, same = 0
   while (Date.now() - t0 < cap) {
     await sleep(200)
     const r = await send('Runtime.evaluate', { expression: `(() => {
+      if (window.__vcStale) return 'S';
       const mask = document.querySelector('.el-loading-mask');
       return (mask ? 'M' : '') +
         ((document.querySelector('.app-main') || document.body).innerText || '').trim().length;
     })()`, returnByValue: true })
     const v = String(r.result?.result?.value ?? '')
-    if (v.startsWith('M')) { last = -1; same = 0; continue }
     const n = Number(v)
+    if (!v || !n) { last = -1; same = 0; continue }     // 旧页面、遮罩、白屏、没取到
     if (n === last) { if (++same >= 3) return } else { same = 0; last = n }
   }
 }
@@ -333,6 +338,7 @@ for (const [who, route, name, min] of PAGES) {
     localStorage.setItem('yvruc_token', ${JSON.stringify(TOK[who])});
     localStorage.setItem('yvruc_user', ${JSON.stringify(USR[who])});
     sessionStorage.setItem('yvruc_active_identity', ${JSON.stringify(who)});
+    window.__vcStale = 1;
     location.assign(${JSON.stringify(route)});` })
   await settle()
   const r = await send('Runtime.evaluate', { expression: PROBE, returnByValue: true })

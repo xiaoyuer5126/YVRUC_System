@@ -360,27 +360,43 @@ def test_挂真实岗位的题目只问那个岗位的人(client, admin, db, tak
     assert _my_answers(db, act_id, sid2)[saved["id"]] == "用过"
 
 
-def test_挂了题目的岗位不能删(client, admin, db):
-    """岗位被题目的「适用岗位」引用着就先别删：删了这题对谁都匹配不上，
-    而清空 scope 等于「人人都答」，不能靠那样「修」。改掉那些题再删。"""
+def test_发布后删岗位题目的适用岗位跟着修剪(client, admin, db, take_student):
+    """发布后问卷改不了，删岗位不能要求先改题：直接删，题目的「适用岗位」里拿掉
+    这个岗位。它是唯一的一个时，这道题对谁都不显示，不会变成人人都答。"""
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    _gid, pids = _pick_shift(client, admin, act_id)
-    extra = {"kind": "text", "title": "有无扩音器使用经验",
-             "applies_to_positions": [pids[0]]}
-    assert _save_form(client, admin, act_id, q, extra).status_code == 200
+    _gid, pids = _pick_shift(client, admin, act_id,
+                             positions=("引导", "登记", "医疗点"))
+    r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
+                   json={"questions": _form_with(q, {
+                       "kind": "text", "title": "引导或登记的人答",
+                       "required": True,
+                       "applies_to_positions": [pids[0], pids[1]]}) + [
+                       {"kind": "text", "title": "只问引导", "required": True,
+                        "applies_to_positions": [pids[0]]}]})
+    assert r.status_code == 200, r.text
+    saved = {x["title"]: x for x in r.json()["questions"]}
+    both, only = saved["引导或登记的人答"], saved["只问引导"]
+
+    act = db.get(Activity, act_id)
+    act.status, act.editing_since = "published", now()
+    db.commit()
+    assert _save_form(client, admin, act_id, q,
+                      {"kind": "text", "title": "x"}).status_code == 409
 
     r = client.delete(f"/api/staff/positions/{pids[0]}", headers=admin)
-    assert r.status_code == 409, r.text
-    assert "有无扩音器使用经验" in r.json()["detail"] and "先改掉" in r.json()["detail"]
+    assert r.status_code == 200, r.text
+    form = client.get(f"/api/staff/activities/{act_id}/form", headers=admin).json()
+    by_id = {x["id"]: x for x in form["questions"]}
+    assert by_id[both["id"]]["applies_to_positions"] == [pids[1]]
 
-    # 去掉那道题之后就能删
-    keep = [{"id": x["id"], "kind": x["kind"], "title": x["title"],
-             "options": x["options"], "required": x["required"],
-             "show_if": x["show_if"]} for x in q]
-    assert client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
-                      json={"questions": keep}).status_code == 200
-    assert client.delete(f"/api/staff/positions/{pids[0]}",
-                         headers=admin).status_code == 200
+    db.get(Activity, act_id).editing_since = None
+    db.commit()
+    t = login(client, take_student())
+    shown = {pid: [x["id"] for x in client.get(
+        f"/api/activities/{act_id}/form?positions={pid}", headers=t).json()["questions"]]
+        for pid in pids[1:]}
+    assert both["id"] in shown[pids[1]] and both["id"] not in shown[pids[2]]
+    assert only["id"] not in shown[pids[1]] and only["id"] not in shown[pids[2]]
 
 
 def test_适用岗位被删的题目拦下重选_对谁都不展示(client, admin, db, take_student):

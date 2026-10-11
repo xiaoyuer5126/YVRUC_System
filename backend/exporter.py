@@ -411,14 +411,14 @@ def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
 def build_claims_workbook(db: OrmSession, claims: list[HoursClaim]) -> BytesIO:
     """校外时长补登：给志愿北京录时长用，一条一行。
 
-    只导通过的（已撤销的不再计入时长）。活动名称、活动时间、服务描述、备注都
+    只导通过的（已撤销的不再计入时长）。活动名称、活动日期、服务描述、备注都
     带上，录的时候能跟本人交的那条对上；身份证号取档案里的，提交就要求资料完整，
     所以不会缺。
     """
     wb = Workbook()
     ws = wb.active
     ws.title = "校外时长补登"
-    header = ["姓名", "学号", "学院", "身份证号", "活动名称", "活动时间",
+    header = ["姓名", "学号", "学院", "身份证号", "活动名称", "活动日期",
               "时长", "服务描述", "备注"]
     ws.append(header)
     _style_header(ws, len(header))
@@ -427,7 +427,7 @@ def build_claims_workbook(db: OrmSession, claims: list[HoursClaim]) -> BytesIO:
         if u is None:
             continue
         ws.append([u.name, u.student_id, u.college or "", u.id_card or "",
-                   c.title, span_text(c.start_at, c.end_at), c.counted_hours(),
+                   c.title, c.service_date.isoformat(), c.counted_hours(),
                    c.service_desc, c.note])
     for col, w in zip("ABCDEFGHI", (12, 14, 16, 22, 28, 24, 8, 48, 20)):
         ws.column_dimensions[col].width = w

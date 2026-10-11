@@ -13,12 +13,12 @@
     <div class="toolbar">
       <el-button type="primary" @click="openForm">登记校外活动</el-button>
       <span class="dim">
-        要填活动名称、活动时间、时长、服务描述，并上传证明材料和本人活动照片
+        要填活动名称、活动日期、时长、服务描述，并上传证明材料和本人活动照片
       </span>
     </div>
 
     <DataCards v-if="narrow" :rows="items" title-key="title" empty="还没有登记过校外时长"
-               :fields="[{ key: 'time_text', label: '活动时间' },
+               :fields="[{ key: 'service_date', label: '活动日期' },
                          { key: 'hours', label: '申报时长', format: v => v + 'h' },
                          { key: 'status_label', label: '状态' }]">
       <template #extra="{ row }">
@@ -49,7 +49,7 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="活动时间" width="200" prop="time_text" />
+      <el-table-column label="活动日期" width="120" prop="service_date" />
       <el-table-column label="申报时长" width="100">
         <template #default="{ row }">{{ row.hours }}h</template>
       </el-table-column>
@@ -78,13 +78,10 @@
           <el-input v-model="form.title" maxlength="128" show-word-limit
                     placeholder="例：XX 社区环保志愿服务" />
         </el-form-item>
-        <el-form-item label="活动时间" required>
-          <div class="two-col">
-            <DateTimeField v-model="form.start" :default-time="DAY_START"
-                           placeholder="开始时间" />
-            <DateTimeField v-model="form.end" :default-time="DAY_END"
-                           placeholder="结束时间" />
-          </div>
+        <el-form-item label="活动日期" required>
+          <el-date-picker v-model="form.day" type="date" value-format="YYYY-MM-DD"
+                          :disabled-date="isFuture" placeholder="参加活动的那一天"
+                          style="width:100%" />
         </el-form-item>
         <el-form-item label="时长" required>
           <el-input-number v-model="form.hours" :min="0.5" :max="MAX_HOURS" :step="0.5" />
@@ -137,10 +134,8 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { DAY_END, DAY_START } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
-import DateTimeField from './DateTimeField.vue'
 
 const emit = defineEmits(['total'])
 const narrow = useNarrow()
@@ -154,7 +149,7 @@ const items = ref([])
 const form = ref(empty())
 
 function empty() {
-  return { visible: false, title: '', start: '', end: '', hours: 2, desc: '',
+  return { visible: false, title: '', day: '', hours: 2, desc: '',
            note: '', proofs: [], photos: [], busy: false }
 }
 const openForm = () => { form.value = { ...empty(), visible: true } }
@@ -185,19 +180,17 @@ function onExceed(what) {
   ElMessage.warning(`${what}最多 ${MAX_FILES} 份`)
 }
 
-// 本地时间串（不带时区）——后端 models.parse_local_dt 认这个格式
-function localISO(v) {
-  if (!v) return ''
-  const d = v instanceof Date ? v : new Date(String(v).replace(' ', 'T'))
-  const p = n => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
-       + ` ${p(d.getHours())}:${p(d.getMinutes())}`
+// 只登记参加过的活动：今天以后的日子不给选（今天可以）
+const isFuture = d => {
+  const end = new Date()
+  end.setHours(23, 59, 59, 999)
+  return d > end
 }
 
 async function submit() {
   const f = form.value
   if (f.title.trim().length < 2) return ElMessage.warning('请填活动名称')
-  if (!f.start || !f.end) return ElMessage.warning('请填活动时间')
+  if (!f.day) return ElMessage.warning('请选活动日期')
   if (f.desc.trim().length < 20) return ElMessage.warning('服务描述请写 20 字以上')
   if (!f.proofs.length) return ElMessage.warning('请上传证明材料')
   if (!f.photos.length) return ElMessage.warning('请上传本人活动照片')
@@ -205,8 +198,7 @@ async function submit() {
   try {
     const body = new FormData()
     body.append('title', f.title.trim())
-    body.append('start_at', localISO(f.start))
-    body.append('end_at', localISO(f.end))
+    body.append('service_date', f.day)
     body.append('hours', String(f.hours))
     body.append('service_desc', f.desc.trim())
     body.append('note', f.note.trim())
@@ -230,8 +222,3 @@ async function withdraw(row) {
   load()
 }
 </script>
-
-<style scoped>
-.two-col { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; }
-.two-col > * { flex: 1 1 180px; min-width: 0; }
-</style>

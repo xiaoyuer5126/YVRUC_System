@@ -58,8 +58,22 @@ async def read_files(files: list[UploadFile], *, label: str, exts: dict,
             raise HTTPException(400, f"{label}里有一份不是图片（改后缀也不行）")
         if ext == "pdf" and not is_pdf(data):
             raise HTTPException(400, f"{label}里有一份不是 PDF")
-        out.append((ext, (f.filename or f"{label}.{ext}")[:160], data))
+        out.append((ext, _title(f.filename or f"{label}.{ext}"), data))
     return out
+
+
+TITLE_MAX = 160      # Attachment.title 的长度
+
+
+def _title(name: str) -> str:
+    """原始文件名放进 TITLE_MAX 个字：太长时截文件名主体，扩展名留着。
+
+    页面按文件名后缀分辨 PDF 和图片，截掉 .pdf 的话，PDF 会被当成图片显示成坏图。
+    """
+    if len(name) <= TITLE_MAX:
+        return name
+    suffix = Path(name).suffix
+    return name[:TITLE_MAX - len(suffix)] + suffix
 
 
 def save_files(db: OrmSession, files, *, owner_type: str, owner_id: str,

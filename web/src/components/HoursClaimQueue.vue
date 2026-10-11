@@ -1,7 +1,7 @@
 <!-- 校外时长补登的审批队列：对外联络部核对证明材料后通过或驳回。
      审批人是「外联那摊事」的同一批（值班人/部长 + 会长团/管理员），见后端
      liaison.vb_decider；别的能进审批页的人后端回空表，这块整个不显示。
-     通过可核定一个不一样的时长，已通过的能撤销；自己的补登要由别人批。 -->
+     通过可核定一个不一样的时长，已通过的能撤销；自己的补登要由别人批、别人撤。 -->
 <template>
   <el-card v-if="canDecide" shadow="never" style="margin-top:16px">
     <template #header>
@@ -36,7 +36,7 @@
       <el-table-column label="活动名称" min-width="200">
         <template #default="{ row }"><b>{{ row.title }}</b></template>
       </el-table-column>
-      <el-table-column label="活动时间" width="200" prop="time_text" />
+      <el-table-column label="活动日期" width="120" prop="service_date" />
       <el-table-column label="申报时长" width="100">
         <template #default="{ row }">{{ row.hours }}h</template>
       </el-table-column>
@@ -75,7 +75,7 @@
           </el-descriptions-item>
           <el-descriptions-item label="手机号">{{ cur.user?.phone || '—' }}</el-descriptions-item>
           <el-descriptions-item label="活动名称">{{ cur.title }}</el-descriptions-item>
-          <el-descriptions-item label="活动时间">{{ cur.time_text }}</el-descriptions-item>
+          <el-descriptions-item label="活动日期">{{ cur.service_date }}</el-descriptions-item>
           <el-descriptions-item label="申报时长">{{ cur.hours }} 小时</el-descriptions-item>
           <el-descriptions-item label="服务描述">
             <span class="pre">{{ cur.service_desc }}</span>
@@ -126,6 +126,10 @@
             </el-button>
           </div>
         </template>
+        <div v-else-if="cur.status === 'approved' && cur.mine" class="dim"
+             style="margin-top:12px">
+          这是您本人提交的补登，要撤销请找对外联络部的其他人。
+        </div>
         <div v-else-if="cur.status === 'approved'" class="foot">
           <el-button type="danger" plain @click="revoke">撤销这条补登</el-button>
         </div>

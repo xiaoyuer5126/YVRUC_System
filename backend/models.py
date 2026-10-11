@@ -1513,8 +1513,9 @@ class HoursClaim(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
     title: Mapped[str] = mapped_column(String(128))          # 活动名称
-    start_at: Mapped[datetime] = mapped_column(DateTime)     # 活动时间（起）
-    end_at: Mapped[datetime] = mapped_column(DateTime)       # 活动时间（止）
+    # 活动日期。只记哪一天，不记几点到几点：校外活动的起止时刻本人多半记不准，
+    # 证明材料上通常也只有日期；同名同天去重、导出都按这一天
+    service_date: Mapped[date] = mapped_column(Date)
     hours: Mapped[float] = mapped_column(Float)              # 本人申报的时长
     # 审批核定的时长：外联可能核减，默认等于申报值。计入时长的是它
     approved_hours: Mapped[float | None] = mapped_column(Float, nullable=True)

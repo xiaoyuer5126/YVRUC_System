@@ -66,15 +66,16 @@ ACTION_LABELS = {
     "assign": "岗位分配", "assign_manual": "手动调岗", "force_assign": "强制分配",
     "export": "导出", "hours_confirm": "时长核准", "roster_import": "名单导入",
     "violation": "违规登记",
-    "checkin_task": "签到任务", "manual_checkin": "手动补签",
+    "checkin_task": "签到任务", "checkin_geo": "定位签到", "manual_checkin": "手动补签",
     "integration": "集成配置", "copy": "复制",
     # 志愿者自己的动作（人员变动流水）
     "enroll": "报名", "waitlist": "加入候补", "cancel": "退选",
     "quit_queue": "退出候补", "abandon": "放弃候补", "promote": "候补转正",
+    "expire": "候补转正超时",
     "excuse": "请假", "unexcuse": "销假",
     "material": "学习材料",
     "submit": "提交审批", "approve": "审批", "view_team": "查看组员",
-    "duty": "值班交接", "vb_confirm": "志愿北京确认",
+    "duty": "值班交接", "vb_confirm": "志愿北京确认", "hours_claim": "时长补登",
     "feedback": "意见反馈",
 }
 

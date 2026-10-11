@@ -109,34 +109,25 @@ def export_oplogs(start: str = "", end: str = "", person: str = "",
                   user: User = Depends(require_admin_download)):
     """导出操作日志：筛选条件与列表相同，全部符合条件的记录，新的在前。"""
     lo, hi, activity_ids = _filters(db, start, end, activity, kind)
-    # 先空走一遍数出条数：每行的落点要从最后一行往上算，新的才能在最上面。
-    # 超上限的也在这里就回绝，不必为一份导不出去的表格建工作簿
-    total = 0
-    ids: set[str] = set()
+    # 一趟读完：超上限当场回绝，不必为一份导不出去的表格建工作簿。工作簿本身
+    # 就把每一格放在内存里，先攒下这批记录不多占什么
+    rows: list[dict] = []
     for r in oplog.iter_rows(lo, hi, person=person, activity_ids=activity_ids,
                              kind=kind):
-        total += 1
-        if total > config.OPLOG_EXPORT_MAX_ROWS:
+        if len(rows) >= config.OPLOG_EXPORT_MAX_ROWS:
             raise HTTPException(
                 400, f"这段时间的日志超过 {config.OPLOG_EXPORT_MAX_ROWS} 条，"
                      "请缩短时间段再导")
-        if r.get("activity_id"):
-            ids.add(r["activity_id"])
-    titles = _titles(db, ids)
+        rows.append(r)
+    titles = _titles(db, {r["activity_id"] for r in rows if r.get("activity_id")})
     wb = Workbook()
     ws = wb.active
     ws.title = "操作日志"
     header = ["时间", "学号", "姓名", "身份", "IP", "操作类型", "操作", "说明",
               "方法", "接口", "活动", "结果", "耗时(毫秒)"]
     ws.append(header)
-    # 再读一遍，边读边写到算好的行号上：最早的一条落在最后一行，内存里只有
-    # 当前这一条
-    for i, r in enumerate(oplog.iter_rows(lo, hi, person=person,
-                                          activity_ids=activity_ids, kind=kind)):
-        if i >= total:
-            break     # 两趟之间又写进了记录：只导数过的那批，行号和总数才对得上
-        for col, value in enumerate(_excel_row(r, titles), start=1):
-            ws.cell(row=total + 1 - i, column=col, value=value)
+    for r in reversed(rows):
+        ws.append(_excel_row(r, titles))
     for col, w in zip("ABCDEFGHIJKLM", (24, 14, 10, 10, 16, 10, 24, 26, 8, 48, 24, 8, 10)):
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"

@@ -144,7 +144,7 @@ const KINDS = { single: '单选', multi: '多选', text: '填空', file: '文件
 const questions = ref([])
 const positionGroups = ref([])            // 出题时挑「这道题问谁」用
 const positionName = id => positionGroups.value
-  .flatMap(g => g.positions).find(p => p.id === id)?.name || id
+  .flatMap(g => g.positions).find(p => p.id === id)?.name || '已删除的岗位'
 const loading = ref(false)
 const saving = ref(false)
 

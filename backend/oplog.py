@@ -27,7 +27,6 @@ import threading
 import time
 from collections import deque
 from datetime import date, datetime, timedelta
-from heapq import merge
 from itertools import groupby
 from pathlib import Path
 
@@ -357,10 +356,7 @@ def purge(today: date) -> int:
 # ======================= 读取 =======================
 
 def _files_between(start: date, end: date) -> list[Path]:
-    """窗口内的日志文件，按日期从早到晚排好。
-
-    文件名以日期开头，按它排就是按天；同一天的几个文件由 iter_rows 按时间归并。
-    """
+    """窗口内的日志文件，按文件名（日期在前）排好。"""
     if not config.OPLOG_DIR.is_dir():
         return []
     lo, hi = start.isoformat(), end.isoformat()
@@ -385,11 +381,13 @@ def _records(path: Path):
 
 def iter_rows(start: datetime, end: datetime, *, person: str = "",
               activity_ids: set[str] | None = None, kind: str = ""):
-    """逐个吐出 [start, end] 之间符合条件的记录，从早到晚。
+    """逐天吐出 [start, end] 之间符合条件的记录，从早到晚。
 
-    边读边吐：调用方要一条、这里才往下读一行，整窗的记录不会同时待在内存里。
-    一天里有几个进程就有几个文件，同一天的几个文件按时间归并着读——直接接起来
-    读到的不是时间顺序；归并时手上只压着每个文件当前的那一条。
+    每条记的是请求开始的时刻，却要等请求结束才进队列写盘：慢请求排在比它晚开始
+    的快请求后面，一个文件里的记录并不按时间排。所以一天的几个文件读完、筛完，
+    在内存里按时间排好再吐；分页和导出都靠这个顺序，要是照写入顺序吐，翻页时
+    会漏掉或重复记录。驻留的是一天里符合条件的记录，不是整个窗口。
+    同一毫秒的几条按文件名、文件内行号排（排序是稳定的），每次读顺序都一样。
     person 匹配学号或姓名（包含即可）；activity_ids 为 None 表示不按活动筛。
     """
     # 刚发生的请求可能还在队列里，先写掉，查得到才像实时
@@ -400,19 +398,22 @@ def iter_rows(start: datetime, end: datetime, *, person: str = "",
     by_day = groupby(_files_between(start.date(), end.date()),
                      key=lambda p: FILE_RE.match(p.name).group(1))
     for _day, paths in by_day:
-        for e in merge(*[_records(p) for p in paths],
-                       key=lambda e: e.get("t", "")):
-            if not (lo <= e.get("t", "") <= hi):
-                continue
-            if kind and e.get("kind") != kind:
-                continue
-            if person and person not in e.get("sid", "") \
-                    and person not in e.get("name", ""):
-                continue
-            if activity_ids is not None \
-                    and e.get("activity_id") not in activity_ids:
-                continue
-            yield e
+        day_rows = []
+        for path in paths:
+            for e in _records(path):
+                if not (lo <= e.get("t", "") <= hi):
+                    continue
+                if kind and e.get("kind") != kind:
+                    continue
+                if person and person not in e.get("sid", "") \
+                        and person not in e.get("name", ""):
+                    continue
+                if activity_ids is not None \
+                        and e.get("activity_id") not in activity_ids:
+                    continue
+                day_rows.append(e)
+        day_rows.sort(key=lambda e: e.get("t", ""))
+        yield from day_rows
 
 
 def page_rows(start: datetime, end: datetime, *, page: int, size: int,
@@ -420,18 +421,15 @@ def page_rows(start: datetime, end: datetime, *, page: int, size: int,
               kind: str = "") -> tuple[list[dict], int]:
     """一页记录（新的在前）和符合条件的总条数，一趟扫描同时得出。
 
-    记录是追加写的，从早到晚读到最后，定长 deque 兜住的最后 page*size 条就是
-    最新的那一批；总数顺手数出来，不用为了分页再走一遍。驻留的记录跟窗口多长
-    无关，最多一页。同一毫秒的几条按读到的先后（也就是写入的先后）排，翻页时
-    边界上才不会重复或漏掉记录。
+    iter_rows 从早到晚吐，定长 deque 兜住的最后 page*size 条就是最新的那一批；
+    总数顺手数出来，不用为了分页再走一遍。
     """
-    latest: deque[tuple[int, dict]] = deque(maxlen=page * size)
+    latest: deque[dict] = deque(maxlen=page * size)
     total = 0
     for e in iter_rows(start, end, person=person, activity_ids=activity_ids,
                        kind=kind):
         total += 1
-        latest.append((total, e))
-    rows = [e for _, e in sorted(latest, key=lambda x: (x[1]["t"], x[0]),
-                                 reverse=True)]
+        latest.append(e)
+    rows = list(reversed(latest))
     begin = (page - 1) * size
     return rows[begin:begin + size], total

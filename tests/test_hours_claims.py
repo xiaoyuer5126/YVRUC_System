@@ -18,16 +18,14 @@ PDF = b"%PDF-1.4\n" + b"\x00" * 64
 DESC = "在社区服务中心做垃圾分类引导，上午两小时、下午两小时，负责两个投放点"
 
 
-def _submit(client, headers, *, title="社区环保志愿服务", start="2026-03-05 09:00",
-            end="2026-03-05 12:00", hours="3", desc=DESC, note="",
-            proofs=None, photos=None):
+def _submit(client, headers, *, title="社区环保志愿服务", day="2026-03-05",
+            hours="3", desc=DESC, note="", proofs=None, photos=None):
     files = [("proofs", p) for p in (proofs if proofs is not None
                                      else [("证明.pdf", PDF, "application/pdf")])]
     files += [("photos", p) for p in (photos if photos is not None
                                       else [("现场.png", PNG, "image/png")])]
     return client.post("/api/me/hours-claims", headers=headers,
-                       data={"title": title, "start_at": start, "end_at": end,
-                             "hours": hours, "service_desc": desc, "note": note},
+                       data={"title": title, "service_date": day, "hours": hours, "service_desc": desc, "note": note},
                        files=files)
 
 
@@ -56,11 +54,10 @@ def test_提交成功并通知对外联络部(client, db, liaison, take_student)
 
 def test_字段校验(client, take_student):
     me = login(client, take_student())
-    # 活动时间不能填将来
-    assert _submit(client, me, end="2099-01-01 10:00").status_code == 400
-    # 结束早于开始
-    assert _submit(client, me, start="2026-03-05 12:00",
-                   end="2026-03-05 09:00").status_code == 400
+    # 活动日期不能填将来，格式只认 YYYY-MM-DD
+    assert _submit(client, me, day="2099-01-01").status_code == 400
+    for bad in ("", "2026-03-05 09:00", "3月5日"):
+        assert _submit(client, me, day=bad).status_code == 400, bad
     # 时长：0、负数、超过上限、不是 0.5 的倍数、NaN/inf（与 0 和上限的比较对它们恒为假，
     # 不先挡住就会一路混到 round() 上炸成 500）
     for bad in ("0", "-1", str(config.CLAIM_HOURS_MAX + 1), "1.2", "nan", "inf"):
@@ -101,8 +98,97 @@ def test_同名同天不能重复提交(client, take_student):
     r = _submit(client, me, hours="2")
     assert r.status_code == 400 and "已经登记过" in r.json()["detail"]
     # 隔一天、或换个名字，可以再提
-    assert _submit(client, me, start="2026-03-06 09:00",
-                   end="2026-03-06 12:00").status_code == 200
+    assert _submit(client, me, day="2026-03-06").status_code == 200
+
+
+def test_只填日期_当天的活动也能登记(client, take_student):
+    """只填哪一天：今天参加完的活动当天就能登记，不会被当成「将来」。"""
+    from backend.models import now
+
+    me = login(client, take_student())
+    today = now().date().isoformat()
+    r = _submit(client, me, day=today, hours="8")
+    assert r.status_code == 200, r.text
+    assert r.json()["service_date"] == today
+    assert "start_at" not in r.json() and "time_text" not in r.json()
+
+
+def test_两个标签页同时提交同一条_只进一条(client, db, take_student, monkeypatch):
+    """去重和限频都是先查后写：锁外的检查两个请求都过得去，写之前在锁里按人
+    重查一遍，后到的那个看得见先到的那条。把写附件拖慢，保证两个请求都已经
+    过了锁外的检查。"""
+    import threading
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from backend import uploads
+    from backend.main import app
+    from backend.models import User
+
+    real = uploads.save_files
+
+    def slow(*a, **kw):
+        time.sleep(0.4)
+        return real(*a, **kw)
+    monkeypatch.setattr(uploads, "save_files", slow)
+
+    sid = take_student()
+    me = login(client, sid)
+    gate = threading.Barrier(2)
+    out = [None, None]
+
+    def go(i):
+        with TestClient(app) as c:
+            gate.wait()
+            out[i] = _submit(c, me, title="两个标签页同时提交")
+    ths = [threading.Thread(target=go, args=(i,)) for i in range(2)]
+    for t in ths:
+        t.start()
+    for t in ths:
+        t.join()
+    assert sorted(r.status_code for r in out) == [200, 400], [r.text for r in out]
+    uid_ = db.query(User.id).filter(User.student_id == sid).scalar()
+    db.expire_all()
+    assert db.query(HoursClaim).filter(HoursClaim.user_id == uid_).count() == 1
+
+
+def test_累计时长不受列表条数限制(client, db, take_student):
+    """列表只列最近 100 条，累计时长对全部补登求和。"""
+    from datetime import date, timedelta
+
+    from backend.models import User, now, uid
+
+    sid = take_student()
+    u = db.query(User).filter(User.student_id == sid).one()
+    t = now()
+    for i in range(105):
+        db.add(HoursClaim(id=uid("hcl"), user_id=u.id, title=f"校外服务{i}",
+                          service_date=date(2025, 1, 1) + timedelta(days=i),
+                          hours=2, approved_hours=1 if i % 2 else None,
+                          service_desc=DESC, status="approved",
+                          submitted_at=t - timedelta(minutes=i)))
+    db.add(HoursClaim(id=uid("hcl"), user_id=u.id, title="没通过的",
+                      service_date=date(2025, 1, 1), hours=5, service_desc=DESC,
+                      status="rejected", submitted_at=t - timedelta(days=30)))
+    db.commit()
+    d = client.get("/api/me/hours-claims", headers=login(client, sid)).json()
+    assert len(d["items"]) == 100
+    # 53 条按申报的 2 小时、52 条按核定的 1 小时；驳回的不算
+    assert d["counted_total"] == 53 * 2 + 52 * 1
+
+
+def test_证明材料文件名太长时截断保留扩展名(client, take_student):
+    """文件名主体截掉，.pdf 留着：页面按后缀认 PDF，没了后缀就当图片显示成坏图。"""
+    me = login(client, take_student())
+    name = "证" * 200 + ".pdf"
+    r = _submit(client, me, proofs=[(name, PDF, "application/pdf")],
+                photos=[("照" * 200 + ".PNG", PNG, "image/png")])
+    assert r.status_code == 200, r.text
+    [proof] = r.json()["files"]["proofs"]
+    [photo] = r.json()["files"]["photos"]
+    assert len(proof["title"]) == 160 and proof["title"].endswith("证.pdf")
+    assert len(photo["title"]) == 160 and photo["title"].endswith(".PNG")
 
 
 def test_分页参数越界不会打成_500(client, liaison, take_student):
@@ -186,8 +272,7 @@ def test_驳回要写理由并通知本人(client, db, liaison, take_student):
     assert len(inbox(db, sid, "时长补登未通过")) == 1
     assert client.get("/api/me/hours-claims", headers=me).json()["counted_total"] == 0
     # 驳回后可以补充材料重新登记
-    assert _submit(client, me, start="2026-03-07 09:00",
-                   end="2026-03-07 12:00").status_code == 200
+    assert _submit(client, me, day="2026-03-07").status_code == 200
 
 
 def test_待审批可撤回_通过后只能由外联撤销(client, db, liaison, take_student):
@@ -264,8 +349,14 @@ def test_审批人自己的补登要由别人批(client, db, liaison, extra_core
     url = f"/api/staff/hours-claims/{claim['id']}/decide"
     r = client.post(url, headers=me, json={"approve": True})
     assert r.status_code == 403 and "其他人" in r.json()["detail"]
-    assert client.post(url, headers=login(client, LIAISON_HEAD),
-                       json={"approve": True}).status_code == 200
+    head = login(client, LIAISON_HEAD)
+    assert client.post(url, headers=head, json={"approve": True}).status_code == 200
+    # 撤销也一样：已通过的那条本人撤不了，要由别人撤
+    revoke = f"/api/staff/hours-claims/{claim['id']}/revoke"
+    r = client.post(revoke, headers=me, json={"reason": "我自己撤掉"})
+    assert r.status_code == 403 and "其他人" in r.json()["detail"]
+    db.expire_all()
+    assert db.get(HoursClaim, claim["id"]).status == "approved"
 
     # 部长的值班日报里看得到这一条：谁提交、谁批的
     day = now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -296,7 +387,7 @@ def test_导出把通过的补登写成一行(client, db, liaison, take_student)
                 json={"approve": True, "hours": 3.5})
     # 撤销掉的那条不导出
     gone = _submit(client, me, title="撤销掉的那一场",
-                   start="2026-03-08 09:00", end="2026-03-08 12:00").json()["id"]
+                   day="2026-03-08").json()["id"]
     client.post(f"/api/staff/hours-claims/{gone}/decide", headers=head,
                 json={"approve": True})
     client.post(f"/api/staff/hours-claims/{gone}/revoke", headers=head,
@@ -307,11 +398,17 @@ def test_导出把通过的补登写成一行(client, db, liaison, take_student)
     ws = load_workbook(BytesIO(r.content)).active
     rows = list(ws.values)
     assert rows[0] == ("姓名", "学号", "学院", "身份证号", "活动名称",
-                       "活动时间", "时长", "服务描述", "备注")
+                       "活动日期", "时长", "服务描述", "备注")
     # 表是全库通过的那些：只看这个学生自己的行（别的用例也提交过）
     mine = [row for row in rows[1:] if row[1] == sid]
     assert [row[4] for row in mine] == ["校外图书馆整理志愿服务"]
-    assert mine[0][6] == 3.5
+    assert mine[0][5] == "2026-03-05" and mine[0][6] == 3.5
+    # 按活动日期筛：日期范围外的不导
+    r = client.get(dl_url(client, head,
+                          "/api/staff/hours-claims.xlsx?start=2026-03-06&end=2026-03-31"))
+    assert r.status_code == 200
+    assert [row for row in list(load_workbook(BytesIO(r.content)).active.values)[1:]
+            if row[1] == sid] == []
     # 没有权限的拿不到这张表
     assert client.get(dl_url(client, me, "/api/staff/hours-claims.xlsx"),
                       follow_redirects=False).status_code == 403

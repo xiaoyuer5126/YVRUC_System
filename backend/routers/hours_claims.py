@@ -3,7 +3,7 @@
 校外自行报名的活动在平台上没有场次、没有报名、没有签到，所以这条账不并进
 HoursRecord——那条路是「一场活动一起结账」，核准、确认/申诉、锁定、外联确认
 每一步都按活动判，为一个没有活动的场景到处开岔路不划算。补登自己一条台账，
-通过的条目按时间范围导出给志愿北京录入（见 exporter.build_claims_workbook）。
+通过的条目按活动日期范围导出给志愿北京录入（见 exporter.build_claims_workbook）。
 
 审批人是「外联那摊事」的同一批：对外联络部的值班人与部长，会长团与管理员
 （liaison.vb_decider），逐条通知也按 vb_contacts 那套找人——同一件事换个人做，
@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime
+from datetime import date
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import config, liaison, locks, uploads
@@ -31,8 +32,7 @@ from ..database import db_session
 from ..deps import (current_user, current_user_download, require_approver,
                     require_claim_decider, require_claim_decider_download)
 from ..exporter import build_claims_workbook
-from ..models import (Attachment, HoursClaim, User, iso, now, parse_local_dt,
-                      span_text, uid)
+from ..models import Attachment, HoursClaim, User, iso, now, uid
 from ..notify import notify
 
 router = APIRouter(prefix="/api", tags=["hours_claims"])
@@ -65,8 +65,7 @@ def _files(db: OrmSession, ids: list[str]) -> dict[str, dict[str, list[dict]]]:
 def _out(claim: HoursClaim, files: dict, *, viewer: User | None = None,
          submitter: User | None = None) -> dict:
     d = {"id": claim.id, "title": claim.title,
-         "start_at": iso(claim.start_at), "end_at": iso(claim.end_at),
-         "time_text": span_text(claim.start_at, claim.end_at),
+         "service_date": claim.service_date.isoformat(),
          "hours": claim.hours, "approved_hours": claim.approved_hours,
          "counted_hours": claim.counted_hours(),
          "service_desc": claim.service_desc, "note": claim.note,
@@ -84,17 +83,19 @@ def _out(claim: HoursClaim, files: dict, *, viewer: User | None = None,
     return d
 
 
-def _parse_range(start_raw: str, end_raw: str) -> tuple[datetime, datetime]:
+def _parse_day(raw: str, what: str) -> date:
+    """客户端传来的日期串（YYYY-MM-DD）。"""
     try:
-        start = parse_local_dt(start_raw)
-        end = parse_local_dt(end_raw)
+        return date.fromisoformat(raw.strip())
     except ValueError:
-        raise HTTPException(400, "活动时间格式不对") from None
-    if end < start:
-        raise HTTPException(400, "结束时间不能早于开始时间")
-    if end > now():
-        raise HTTPException(400, "活动时间不能填将来——这里登记的是已经参加过的活动")
-    return start, end
+        raise HTTPException(400, f"{what}格式不对") from None
+
+
+def _parse_service_date(raw: str) -> date:
+    day = _parse_day(raw, "活动日期")
+    if day > now().date():
+        raise HTTPException(400, "活动日期不能填将来——这里登记的是已经参加过的活动")
+    return day
 
 
 def _parse_hours(raw) -> float:
@@ -121,7 +122,7 @@ def _notify_pending(db: OrmSession, claim: HoursClaim, submitter: User) -> None:
         for u in liaison.claim_contacts(db, submitter):
             notify(db, u, f"[时长补登] {claim.title}",
                    f"{submitter.name}（{submitter.student_id}）提交了一条校外时长补登：\n"
-                   f"活动时间：{span_text(claim.start_at, claim.end_at)}\n"
+                   f"活动日期：{claim.service_date.isoformat()}\n"
                    f"申报时长：{claim.hours:g} 小时\n"
                    f"服务描述：{claim.service_desc}\n"
                    f"请到「活动审批」核对证明材料后通过或驳回。",
@@ -146,9 +147,52 @@ def _notify_owner(db: OrmSession, claim: HoursClaim, title: str, body: str,
 
 # ======================= 本人：提交、我的补登、撤回 =======================
 
+def _refuse_repeat(db: OrmSession, user: User, title: str, day: date) -> None:
+    """同名同天已经报过、或这一小时提交够数了，就不再收。"""
+    # 同一天、同名称的已经报过就不再收：多半是点重了，或者改了几个字重提
+    if db.query(HoursClaim.id).filter(
+            HoursClaim.user_id == user.id,
+            HoursClaim.status.in_(OPEN_STATUSES),
+            HoursClaim.title == title,
+            HoursClaim.service_date == day).first() is not None:
+        raise HTTPException(400, "这条校外活动已经登记过（同名称、同一天），"
+                                 "请在下面的列表里看进度或撤回后重填")
+    if locks.rate_count(_rate_key(user)) >= config.CLAIM_PER_HOUR:
+        raise HTTPException(429, f"每小时最多提交 {config.CLAIM_PER_HOUR} 条，"
+                                 f"请稍后再试")
+
+
+def _rate_key(user: User) -> str:
+    return f"claims:{user.id}"
+
+
+def _store_claim(db: OrmSession, user: User, claim: HoursClaim,
+                 proofs_read: list, photos_read: list) -> None:
+    """按人上锁、重查一遍再写：两个标签页同时提交，锁外的检查谁也看不见对方，
+    不在锁里重查就会写进同名同天的两条，每小时的条数也会多出来。
+
+    锁随事务走（locks.user_lock），提交时放。限频计数在提交前记上：放到提交
+    之后，后一个请求拿到锁时可能还读到旧的数。
+    """
+    locks.user_lock(db, user.id)
+    _refuse_repeat(db, user, claim.title, claim.service_date)
+    db.add(claim)
+    uploads.save_files(db, proofs_read, owner_type=PROOF, owner_id=claim.id,
+                       uploaded_by=user.id)
+    uploads.save_files(db, photos_read, owner_type=PHOTO, owner_id=claim.id,
+                       uploaded_by=user.id)
+    audit_log(db, actor=user, action="hours_claim", target_type="hours_claim",
+              target_id=claim.id, target_label=claim.title,
+              summary=f"提交校外时长补登「{claim.title}」"
+                      f"（{claim.service_date.isoformat()}，{claim.hours:g}h，"
+                      f"证明 {len(proofs_read)} 份、照片 {len(photos_read)} 张）")
+    locks.note_rate(_rate_key(user), RATE_WINDOW_SECONDS)
+    db.commit()
+
+
 @router.post("/me/hours-claims")
-async def submit_claim(title: str = Form(""), start_at: str = Form(""),
-                       end_at: str = Form(""), hours: str = Form(""),
+async def submit_claim(title: str = Form(""), service_date: str = Form(""),
+                       hours: str = Form(""),
                        service_desc: str = Form(""), note: str = Form(""),
                        proofs: list[UploadFile] = File(default=[]),
                        photos: list[UploadFile] = File(default=[]),
@@ -172,7 +216,7 @@ async def submit_claim(title: str = Form(""), start_at: str = Form(""),
     note = note.strip()
     if len(note) > 256:
         raise HTTPException(400, "备注不能超过 256 个字")
-    start, end = _parse_range(start_at, end_at)
+    day = _parse_service_date(service_date)
     hours_value = _parse_hours(hours)
 
     # 空文件名的是表单里没选文件时浏览器带上的空占位
@@ -183,19 +227,8 @@ async def submit_claim(title: str = Form(""), start_at: str = Form(""),
     if not photo_files:
         raise HTTPException(400, "请上传本人活动照片")
 
-    # 同一天、同名称的已经报过就不再收：多半是点重了，或者改了几个字重提
-    same_day = [c for c in db.query(HoursClaim)
-                .filter(HoursClaim.user_id == user.id,
-                        HoursClaim.status.in_(OPEN_STATUSES)).all()
-                if c.title == title and c.start_at.date() == start.date()]
-    if same_day:
-        raise HTTPException(400, "这条校外活动已经登记过（同名称、同一天），"
-                                 "请在下面的列表里看进度或撤回后重填")
-
-    rate_key = f"claims:{user.id}"
-    if locks.rate_count(rate_key) >= config.CLAIM_PER_HOUR:
-        raise HTTPException(429, f"每小时最多提交 {config.CLAIM_PER_HOUR} 条，"
-                                 f"请稍后再试")
+    # 读文件之前先查一遍：重复的、超频的不必把几份材料读进内存。锁里还要再查
+    _refuse_repeat(db, user, title, day)
 
     # 先全部读完、校验完再落盘：第三份不合格时前两份不该已经写在磁盘上
     proofs_read = await uploads.read_files(
@@ -206,36 +239,36 @@ async def submit_claim(title: str = Form(""), start_at: str = Form(""),
         max_count=config.CLAIM_MAX_PHOTOS, max_bytes=config.CLAIM_MAX_FILE_BYTES)
 
     claim = HoursClaim(id=uid("hcl"), user_id=user.id, title=title,
-                       start_at=start, end_at=end, hours=hours_value,
+                       service_date=day, hours=hours_value,
                        service_desc=desc, note=note)
-    db.add(claim)
-    uploads.save_files(db, proofs_read, owner_type=PROOF, owner_id=claim.id,
-                       uploaded_by=user.id)
-    uploads.save_files(db, photos_read, owner_type=PHOTO, owner_id=claim.id,
-                       uploaded_by=user.id)
-    audit_log(db, actor=user, action="hours_claim", target_type="hours_claim",
-              target_id=claim.id, target_label=title,
-              summary=f"提交校外时长补登「{title}」"
-                      f"（{span_text(start, end)}，{hours_value:g}h，"
-                      f"证明 {len(proofs_read)} 份、照片 {len(photos_read)} 张）")
-    db.commit()
-    locks.note_rate(rate_key, RATE_WINDOW_SECONDS)
-    # 提交之后的推送是同步外呼（一条最多等 8 秒），放到线程池里做：
-    # 这是 async 处理函数，直接调会把整个事件循环卡住，同一进程的请求全跟着等
+    # 等锁会阻塞，放到线程池里：这是 async 处理函数，直接等会卡住整个事件循环
+    await run_in_threadpool(_store_claim, db, user, claim, proofs_read, photos_read)
+    # 提交之后的推送是同步外呼（一条最多等 8 秒），同样放到线程池里做
     await run_in_threadpool(_notify_pending, db, claim, user)
     return _out(claim, _files(db, [claim.id])[claim.id], viewer=user)
+
+
+MY_CLAIMS_LIMIT = 100
 
 
 @router.get("/me/hours-claims")
 def my_claims(db: OrmSession = Depends(db_session),
               user: User = Depends(current_user)):
-    """我登记过的校外时长，最新的在前。"""
+    """我登记过的校外时长，最新的在前（列最近 MY_CLAIMS_LIMIT 条）。
+
+    计入的总时长在库里对全部补登求和，不受列表条数限制。
+    """
     rows = (db.query(HoursClaim).filter(HoursClaim.user_id == user.id)
-            .order_by(HoursClaim.submitted_at.desc()).limit(100).all())
+            .order_by(HoursClaim.submitted_at.desc())
+            .limit(MY_CLAIMS_LIMIT).all())
     files = _files(db, [r.id for r in rows])
-    counted = sum(r.counted_hours() for r in rows)
+    # 和 HoursClaim.counted_hours 同一个口径：通过的才算，按核定值
+    counted = db.query(func.coalesce(func.sum(case(
+        (HoursClaim.status == "approved",
+         func.coalesce(HoursClaim.approved_hours, HoursClaim.hours)),
+        else_=0.0)), 0.0)).filter(HoursClaim.user_id == user.id).scalar()
     return {"items": [_out(r, files[r.id], viewer=user) for r in rows],
-            "counted_total": round(counted, 2)}
+            "counted_total": round(float(counted), 2)}
 
 
 @router.post("/me/hours-claims/{claim_id}/withdraw")
@@ -352,14 +385,14 @@ def decide_claim(claim_id: str, body: DecideBody,
         summary = f"通过校外时长补登「{claim.title}」，核定 {hours:g} 小时"
         title, text = (f"时长补登已通过｜{claim.title}",
                        f"您登记的「{claim.title}」"
-                       f"（{span_text(claim.start_at, claim.end_at)}）"
+                       f"（{claim.service_date.isoformat()}）"
                        f"已通过对外联络部审批，计入志愿时长 {hours:g} 小时。")
     else:
         claim.status = "rejected"
         summary = f"驳回校外时长补登「{claim.title}」：{reply}"
         title, text = (f"时长补登未通过｜{claim.title}",
                        f"您登记的「{claim.title}」"
-                       f"（{span_text(claim.start_at, claim.end_at)}）未通过审批。\n"
+                       f"（{claim.service_date.isoformat()}）未通过审批。\n"
                        f"理由：{reply}\n"
                        f"补充材料后可以重新登记。")
     audit_log(db, actor=user, action="hours_claim", target_type="hours_claim",
@@ -380,11 +413,15 @@ def revoke_claim(claim_id: str, body: RevokeBody,
     """撤销一条已经通过的补登：材料不实、重复登记、时长填错。
 
     已经计进时长的部分随之作废（这条台账只有 admin 与审批线上的人看得到），
-    本人会收到通知，理由进审计。
+    本人会收到通知，理由进审计。审批人撤不了自己的那条。
     """
     claim = db.get(HoursClaim, claim_id, with_for_update=True)
     if claim is None:
         raise HTTPException(404, "补登记录不存在")
+    # 和审批一个道理：自己的补登自己批不了，自己撤也不行——撤销同样改的是
+    # 计入的时长，本人动手就绕过了「由别人核对」这一道
+    if claim.user_id == user.id:
+        raise HTTPException(403, "本人提交的补登要由对外联络部的其他人撤销")
     if claim.status != "approved":
         raise HTTPException(409, f"只有已通过的能撤销，这条是「{claim.status_label()}」")
     reason = body.reason.strip()
@@ -399,7 +436,7 @@ def revoke_claim(claim_id: str, body: RevokeBody,
     db.commit()
     _notify_owner(db, claim, f"时长补登已撤销｜{claim.title}",
                   f"您登记的「{claim.title}」"
-                  f"（{span_text(claim.start_at, claim.end_at)}）已被撤销，"
+                  f"（{claim.service_date.isoformat()}）已被撤销，"
                   f"原计入的 {counted:g} 小时不再计入。\n理由：{reason}",
                   claim.user_id)
     return _out(claim, _files(db, [claim.id])[claim.id])
@@ -409,22 +446,16 @@ def revoke_claim(claim_id: str, body: RevokeBody,
 def export_claims(start: str = "", end: str = "",
                   db: OrmSession = Depends(db_session),
                   user: User = Depends(require_claim_decider_download)):
-    """导出通过的补登给志愿北京录入；可按活动时间范围筛（默认全部）。
+    """导出通过的补登给志愿北京录入；可按活动日期范围筛（默认全部）。
 
     已撤销的不在里头：它们不再计入时长。
     """
     q = db.query(HoursClaim).filter(HoursClaim.status == "approved")
     if start:
-        try:
-            q = q.filter(HoursClaim.start_at >= parse_local_dt(start))
-        except ValueError:
-            raise HTTPException(400, "开始时间格式不对") from None
+        q = q.filter(HoursClaim.service_date >= _parse_day(start, "开始日期"))
     if end:
-        try:
-            q = q.filter(HoursClaim.start_at <= parse_local_dt(end))
-        except ValueError:
-            raise HTTPException(400, "截止时间格式不对") from None
-    rows = q.order_by(HoursClaim.start_at).all()
+        q = q.filter(HoursClaim.service_date <= _parse_day(end, "截止日期"))
+    rows = q.order_by(HoursClaim.service_date, HoursClaim.submitted_at).all()
     buf = build_claims_workbook(db, rows)
     filename = f"校外时长补登_{now():%Y%m%d_%H%M}.xlsx"
     audit_log(db, actor=user, action="export", target_type="hours_claim",

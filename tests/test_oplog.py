@@ -195,6 +195,34 @@ def test_同一毫秒的几条翻页时不重不漏(monkeypatch, tmp_path):
     assert sorted(got) == [f"s{i}" for i in range(7)]
 
 
+def test_慢请求晚写盘时翻页和导出仍按时间(client, monkeypatch, tmp_path):
+    """记的是请求开始的时刻、请求结束才写盘：文件里慢请求排在比它晚开始的快请求
+    后面。列表翻页和导出都得按时间来，不重、不漏、新的在前。"""
+    monkeypatch.setattr(config, "OPLOG_DIR", tmp_path)
+    day = "2020-01-02"
+    # 写盘顺序：s1 s2 s0 s4 s5 s3（s0、s3 是慢请求，开始得早、写得晚）
+    order = (1, 2, 0, 4, 5, 3)
+    (tmp_path / f"{day}-7.jsonl").write_text(
+        "".join(json.dumps({"t": f"{day}T09:00:0{s}.000", "sid": f"s{s}",
+                            "kind": "create"}) + "\n" for s in order),
+        encoding="utf-8")
+    admin = login(client, ADMIN)
+    window = {"start": f"{day}T00:00:00", "end": f"{day}T23:59:59"}
+    got = []
+    for page in (1, 2, 3):
+        body = client.get(f"/api/staff/oplogs?{urlencode({**window, 'page': page, 'size': 2})}",
+                          headers=admin).json()
+        assert body["total"] == 6
+        got += [r["sid"] for r in body["items"]]
+    assert got == ["s5", "s4", "s3", "s2", "s1", "s0"]
+
+    r = client.get(dl_url(client, admin,
+                          f"/api/staff/oplogs.xlsx?{urlencode(window)}"))
+    assert r.status_code == 200
+    ws = load_workbook(BytesIO(r.content)).active
+    assert [ws.cell(row=i, column=2).value for i in range(2, 8)] == got
+
+
 def test_导出新的在前且超上限回绝(client, open_group, monkeypatch):
     acts = [open_group(1)[0] for _ in range(3)]
     since = _since()
