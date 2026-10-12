@@ -74,13 +74,13 @@ def test_区间只改四张卡(client, db, take_student):
     aug = _overview(client, council, **AUG)
     cards, aug_cards = full["cards"], aug["cards"]
 
-    # 活动总数：不填区间＝全部活动（含草稿与还没办的），填了＝区间内有服务的
+    # 活动总数：不填区间＝全部活动（含草稿与还没办的），填了＝区间内结束的
     assert cards["activities_all"] - base_all["activities_all"] == 2
     assert aug_cards["activities_all"] - base_aug["activities_all"] == 1
     # 有效报名：填了区间只数区间内新产生的报名
     assert cards["active_enrollments"] - base_all["active_enrollments"] == 2
     assert aug_cards["active_enrollments"] - base_aug["active_enrollments"] == 1
-    # 累计时长：只有服务日期在区间内的那一笔进账
+    # 累计时长：只有结束在区间内的那一场进账
     assert round(cards["hours_total"] - base_all["hours_total"], 1) == 8.0
     assert round(aug_cards["hours_total"] - base_aug["hours_total"], 1) == 3.0
 
@@ -113,7 +113,7 @@ def test_只给一侧边界(client, db, take_student):
     act, g = _activity(db, "总览七月里", dt("07-20 09:00"), dt("07-20 12:00"))
     _enroll(db, act, g, take_student(), joined_at=dt("07-15 10:00"))
 
-    # 只给 start：服务场次在 7/1 及以后开始的活动算进来
+    # 只给 start：结束时间不早于 7/1 的活动算进来
     lo = _overview(client, council, start="2019-07-01")["cards"]
     assert lo["activities_all"] - base_lo["activities_all"] == 1
     # 只给 end：6/30 之前的窗口装不下这场七月的活动

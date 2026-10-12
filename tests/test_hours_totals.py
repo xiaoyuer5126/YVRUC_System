@@ -4,7 +4,7 @@
   · 结算（志愿时长 / 劳务）在一笔之内两半各自向上取整到 0.5（HoursRecord.split）：
     先把两半各自求和再取整，逐段取整会把每一段的零头都攒上去；
   · 数据总览的「累计时长」= 各笔的志愿时数之和，一笔一笔取整之后再相加，
-    与活动汇总导出同一口径（见 exporter.record_settlements）。
+    与活动汇总导出同一口径（见 exporter.activity_hours）。
 
 段本身的口径（三种段、写入顺序、删段、并发）见 test_hours_segments.py。
 """
