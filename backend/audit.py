@@ -36,9 +36,9 @@ def log(db: OrmSession, *, actor, action: str, target_type: str,
         act = db.get(Activity, activity_id)
         if act is not None and act.status in ("draft", "pending", "approved"):
             visible = False
-    # 以哪个身份操作的（前端的 X-Identity）、影响到哪些人。没有专门的列——
-    # 线上没有迁移，加列要手工 ALTER——就挂在 changes 末尾带下划线字段名的
-    # 记录上，AuditLog.out() 把它们摘掉，不会混进变更明细
+    # 以哪个身份操作的（前端的 X-Identity）、影响到哪些人。没有专门的列，
+    # 挂在 changes 末尾带下划线字段名的记录上，AuditLog.out() 把它们摘掉，
+    # 不会混进变更明细
     changes = list(changes or [])
     if affected:
         changes.append({"field": AFFECTED_FIELD, "label": "受影响的人",

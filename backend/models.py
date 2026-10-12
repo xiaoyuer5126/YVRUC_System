@@ -994,10 +994,6 @@ class CheckinTask(Base):
 class CheckinGeo(Base):
     """定位签到的坐标锚点：**这张表有行 = 这个任务改用定位签到**，没有 = 扫码。
 
-    单独一张表而不是给 checkin_tasks 加列：线上没有 Alembic，
-    `create_all()` 只建缺失的表，不会给已有的表加列（见 database.py）。
-    加表当场就能用，加列得手工去生产库上 ALTER。
-
     锚点最好由管理者站在现场用手机量（「使用我的当前位置」），那样它的可信度
     等于「管理者的手机可信」；在地图上点的也收，但审计里记着来源（见
     routers/staff_ops.set_geo）。志愿者那一端传上来的坐标只用来比对，不采信

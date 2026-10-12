@@ -24,7 +24,8 @@ from sqlalchemy import text
 
 from . import config
 from .audit import log as audit_log
-from .database import SessionLocal, engine, init_db
+from . import migrate
+from .database import SessionLocal, engine
 from .qrcodes import qr_svg
 from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, User, ViolationRecord, day_of, uid)
 # 已确认的时长要连明细一起种：明细不是另写的一段文字，是这套算法从签到记录
@@ -88,10 +89,11 @@ def main() -> None:
     # 整个 schema 重建，而不是逐表 delete、也不是 metadata.drop_all：
     # 模型改了名字时，旧表还在库里且不在 metadata 里，drop_all 会因为
     # 外键依赖失败；只删数据则会留下旧结构，插入时报「column 不存在」。
+    # 建表和部署走同一套迁移，演示库和测试库的结构就是线上的结构。
     with engine.begin() as conn:
         conn.execute(text("DROP SCHEMA public CASCADE"))
         conn.execute(text("CREATE SCHEMA public"))
-    init_db()
+    migrate.upgrade()
     db = SessionLocal()
     try:
 
