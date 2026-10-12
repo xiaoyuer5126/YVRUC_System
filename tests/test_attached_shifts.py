@@ -354,14 +354,17 @@ def test_招募文案按校青协定的格式拼(client, admin, db, act_with_pos
     assert lines[:6] == [f"志愿招募|{act.title}", "各位同学大家好！", "【活动内容简介】",
                          f"演出当天需要引导与检录，现面向全校{config.STAGES[0]}招募志愿者[玫瑰]",
                          "【活动主办单位】", "校团委"]
+    # 活动时间一整段起止，和网页上的「活动时间」同一个写法
     assert lines[6] == "【活动时间】"
-    assert re.fullmatch(r"\d+月\d+日（周[一二三四五六日]）\d\d:\d\d—.*\d\d:\d\d", lines[7])
+    assert lines[7] == act.time_text()
+    assert re.fullmatch(r"\d\d-\d\d \d\d:\d\d ~ \d\d-\d\d \d\d:\d\d", lines[7])
+    assert client.get(f"/api/activities/{act.id}", headers=admin).json()["time_text"] == lines[7]
     # 选填的段有内容才出现，夹在「服务内容」和「志愿者保障」之间
     assert [s for s in lines if s.startswith("【")] == [
         "【活动内容简介】", "【活动主办单位】", "【活动时间】", "【活动地点】",
         "【服务内容及招募人数】", "【培训与彩排】", "【志愿者要求】", "【志愿者保障】",
         "【报名方式】"]
-    assert "东门引导 3人：无特殊要求" in lines and "  岗位地点：北门" in lines
+    assert "  · 东门引导 3人：无特殊要求" in lines and "    岗位地点：北门" in lines
     assert any("排练厅（东门引导需参加，计入时长）" in s for s in lines)
     assert lines[lines.index("【志愿者保障】") + 1] == "提供午餐与纪念徽章"
     # 报名方式按校青协定的原文；链接两边留空格，免得微信把旁边的字吞进网址
@@ -377,6 +380,20 @@ def test_招募文案按校青协定的格式拼(client, admin, db, act_with_pos
     r = client.get(f"/api/staff/activities/{act.id}/poster?base=https://evil.example",
                    headers=admin)
     assert r.status_code == 400
+
+
+def test_招募文案多场次时场次一行带菱形_岗位缩进带圆点(client, admin, db, act_with_positions):
+    act, g, _east, _c = act_with_positions
+    g2, _check2 = _second_shift(db, act, g)
+    text = client.get(f"/api/staff/activities/{act.id}/poster", headers=admin).json()["text"]
+    lines = text.split("\n")
+    # 两个场次也只写一整段活动时间
+    assert lines[lines.index("【活动时间】") + 1] == act.time_text()
+    body = lines[lines.index("【服务内容及招募人数】") + 1:]
+    heads = [s for s in body if s.startswith("◆ ")]
+    assert [h.split("　")[0] for h in heads] == [f"◆ {g.name}", f"◆ {g2.name}"]
+    assert body[0] == heads[0]
+    assert any(s.startswith("  · 检录台 3人") for s in body)
 
 
 def test_招募文案的时间与招募范围写法():

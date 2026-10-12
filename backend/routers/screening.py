@@ -54,6 +54,8 @@ def _questions(db: OrmSession, activity_id: str) -> list[FormQuestion]:
 
 class QuestionBody(BaseModel):
     id: str = ""                  # 空 = 新题
+    # 新题在编辑页上的临时编号：后面的题可以拿它当显示条件的来源，保存时换成正式 id
+    ref: str = ""
     kind: str
     title: str = Field(max_length=200)
     options: list[str] = []
@@ -102,6 +104,7 @@ def save_form(activity_id: str, body: FormBody,
     keep: set[str] = set()
     # 显示条件只能挂在前面的选择题上：往后指会绕成环，答一道题跳一道题就说不清了
     earlier: dict[str, list[str]] = {}
+    refs: dict[str, str] = {}     # 新题的临时编号 → 正式 id
     for i, q in enumerate(body.questions):
         if q.kind not in FormQuestion.KINDS:
             raise HTTPException(400, f"第 {i + 1} 题的题型不合法")
@@ -111,12 +114,17 @@ def save_form(activity_id: str, body: FormBody,
         options = [o.strip() for o in q.options if o.strip()]
         if q.kind in ("single", "multi") and len(options) < 2:
             raise HTTPException(400, f"「{title}」至少要有两个选项")
-        show_if = _clean_show_if(q.show_if, earlier, title)
+        raw_if = dict(q.show_if or {})
+        if raw_if.get("question_id") in refs:
+            raw_if["question_id"] = refs[raw_if["question_id"]]
+        show_if = _clean_show_if(raw_if, earlier, title)
         scope = _clean_scope(positions, q.applies_to_positions, title)
         row = existing.get(q.id) if q.id else None
         if row is None:
             row = FormQuestion(id=uid("q"), activity_id=activity_id, kind=q.kind)
             db.add(row)
+            if q.ref:
+                refs[q.ref] = row.id
         row.kind, row.title, row.options, row.required, row.sort = (
             q.kind, title, options, q.required, i)
         row.show_if = show_if

@@ -484,6 +484,12 @@ class Activity(Base):
         return (min(s.start_time for s in rows),
                 max(s.end_time for s in rows))
 
+    def time_text(self) -> str:
+        """活动时间的说法：「11-01 05:30 ~ 11-01 15:00」。广场、活动详情、审批列表、
+        招募文案都用它，几处写法一致，学生对得上。"""
+        span = self.time_span()
+        return f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}" if span else "待定"
+
     def last_shift_start(self) -> datetime | None:
         """报名截止最晚只能填到这里：最后一个服务场次的开始时间。
 

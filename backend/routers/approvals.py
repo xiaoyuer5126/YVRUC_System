@@ -478,7 +478,6 @@ def my_approvals(db: OrmSession = Depends(db_session),
         dept = db.get(Department, act.approval_dept_id) if act.approval_dept_id else None
         who = db.get(User, act.approval_assignee_id) if act.approval_assignee_id else None
         creator = db.get(User, act.created_by)
-        span = act.time_span()
         # 提交时写的说明。审批人做决定的这个页面是最该看到那句话的地方，
         # 光存进流水、发进通知是不够的。
         submit = (db.query(ApprovalEvent)
@@ -492,8 +491,7 @@ def my_approvals(db: OrmSession = Depends(db_session),
             "co_organizer": act.co_organizer or "",
             "organizer_text": act.organizer_text(),
             "recruit_label": act.recruit_label(), "location": act.location,
-            "time_text": (f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}"
-                          if span else "待定"),
+            "time_text": act.time_text(),
             "shifts_count": len(act.main_shifts()),
             "record_only": act.is_record(),
             "submitted_at": iso(act.submitted_at),

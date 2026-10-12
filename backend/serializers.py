@@ -272,7 +272,6 @@ def _brief_public(act: Activity, counts: dict) -> dict:
     total_cap = sum(g.total_capacity() for g in shifts)
     total_conf = sum(counts.get(g.id, (0, 0, 0))[0] for g in shifts)
     total_used = sum(counts.get(g.id, (0, 0, 0))[1] for g in shifts)
-    span = act.time_span()
     return {
         "id": act.id, "title": act.title, "recruit_mode": act.recruit_mode,
         "organizer": act.organizer, "co_organizer": act.co_organizer or "",
@@ -284,8 +283,7 @@ def _brief_public(act: Activity, counts: dict) -> dict:
         "shifts_count": len(shifts),
         "total_capacity": total_cap, "total_enrolled": total_conf,
         "remaining": max(0, total_cap - total_used),
-        "time_text": (f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}"
-                      if span else "待定"),
+        "time_text": act.time_text(),
         "reg_start": iso_of(act.reg_start), "reg_end": iso_of(act.reg_end),
         # 补记录活动（不公开招募）：没有场次，活动时间直接填在这两项上
         "record_only": act.is_record(),
