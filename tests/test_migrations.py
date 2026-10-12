@@ -5,7 +5,8 @@
 - 空库升到最新，和直接按模型建表，得到的表、列、索引、约束一模一样；
 - 迁移只有一个 head；
 - 库版本不对时后端拒绝启动；
-- 几个进程同时跑迁移，只有一个真去建表，其余等它跑完。
+- 几个进程同时跑迁移，只有一个真去建表，其余等它跑完；
+- 空库升到最新就有校青协的 12 个部门，库里已有部门时迁移不动它们。
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ import threading
 from contextlib import contextmanager
 
 import pytest
+from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import create_engine, text
@@ -21,6 +23,7 @@ from sqlalchemy.engine import make_url
 
 from backend import database, migrate
 from backend.database import Base, engine
+from conftest import ADMIN, login
 
 TEST_URL = make_url(os.environ["YVRUC_DATABASE_URL"])
 
@@ -135,3 +138,49 @@ def test_并发跑迁移只建一次表():
             t.join()
         assert errors == []
         assert migrate.current_revision(eng) == migrate.head_revision()
+
+
+DEPARTMENTS = ["对外联络部", "办公室", "新媒体技术部", "组织部", "支教项目部",
+               "红十字项目部", "环保项目部", "青春健康项目部", "社区服务部",
+               "特殊关爱项目部", "校园服务部", "首都服务部"]
+LIAISON_NOTE = "【二级志愿团体请选择此部门审批】"
+
+
+def departments(eng) -> list[tuple[str, str]]:
+    with eng.connect() as conn:
+        return [tuple(r) for r in conn.execute(text(
+            "SELECT name, note FROM departments ORDER BY sort"))]
+
+
+def upgrade_to(eng, revision: str) -> None:
+    cfg = migrate.alembic_config()
+    with eng.begin() as conn:
+        cfg.attributes["connection"] = conn
+        command.upgrade(cfg, revision)
+
+
+def test_空库升到最新就有12个部门():
+    with scratch_db("dept") as eng:
+        migrate.upgrade(eng)
+        got = departments(eng)
+    assert [name for name, _ in got] == DEPARTMENTS
+    assert got[0][1] == LIAISON_NOTE
+    assert all(note == "" for _, note in got[1:])
+
+
+def test_库里已有部门时迁移不铺部门():
+    with scratch_db("dept_kept") as eng:
+        upgrade_to(eng, "0002")
+        with eng.begin() as conn:
+            conn.execute(text("INSERT INTO departments (id, name, note, sort) "
+                              "VALUES ('dep_manual', '手工建的部', '', 0)"))
+        migrate.upgrade(eng)
+        assert departments(eng) == [("手工建的部", "")]
+
+
+def test_部门列表接口给出迁移铺好的部门(client):
+    # 测试库是各用例共用的，别的用例会改部门说明、加删部门，这里只核对 12 个部门
+    # 都在且顺序不变；说明的取值由上面的空库用例核对
+    rows = client.get("/api/staff/departments",
+                      headers=login(client, ADMIN)).json()
+    assert [d["name"] for d in rows if d["name"] in DEPARTMENTS] == DEPARTMENTS
