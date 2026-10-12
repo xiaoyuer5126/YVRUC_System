@@ -129,10 +129,9 @@ def main() -> None:
         limu = users["2025002"]
         zhang = users["2025003"]
 
-        # 部门与职务：审批按部门归口，部长是默认审批人，会长可接管任何一条
-        from backend.routers.approvals import ensure_departments
+        # 部门与职务：审批按部门归口，部长是默认审批人，会长可接管任何一条。
+        # 12 个部门由迁移铺好（见 migrations/versions/*_seed_departments.py）
         from backend.models import Department
-        ensure_departments(db)
         zhang.qingxie_post = "council"
         wang.qingxie_post = "council"      # 管理员同时在会长团
         liaison = (db.query(Department)

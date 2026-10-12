@@ -29,29 +29,6 @@ from ..perm import ensure_activity_manager
 
 router = APIRouter(prefix="/api/staff", tags=["approvals"])
 
-# 12 个部门；对外联络部置顶，二级团体归它。种子数据与首次启动都用这份。
-DEFAULT_DEPARTMENTS = [
-    ("对外联络部", "【二级志愿团体请选择此部门审批】"),
-    ("办公室", ""), ("新媒体技术部", ""), ("组织部", ""),
-    ("支教项目部", ""), ("红十字项目部", ""), ("环保项目部", ""),
-    ("青春健康项目部", ""), ("社区服务部", ""), ("特殊关爱项目部", ""),
-    ("校园服务部", ""), ("首都服务部", ""),
-]
-
-
-def ensure_departments(db: OrmSession) -> None:
-    """建库时把 12 个部门铺进去，由 seed 调用一次。
-
-    之后部门的增删改都在页面上做（会长团 / 管理员），所以这里不能在每次
-    读列表时兜底——真把某个部门删了，下次打开页面它又长回来。
-    """
-    if db.query(Department).count():
-        return
-    for i, (name, note) in enumerate(DEFAULT_DEPARTMENTS):
-        db.add(Department(id=uid("dep"), name=name, note=note, sort=i))
-    db.commit()
-
-
 _dept_head = liaison.dept_head
 
 
