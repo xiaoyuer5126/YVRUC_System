@@ -17,13 +17,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import config, oplog, school_id
+from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import create_session, current_token, current_user
 from ..integrations import sso
 from ..liaison import session_user
 from ..locks import (clear_failures, failure_count, issue_ticket,
                      note_failure)
-from ..models import Session, User, ViolationRecord, uid
+from ..models import ROLE_LABELS, Session, User, ViolationRecord, uid
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -151,6 +152,7 @@ def sso_callback(body: SsoCallbackBody, request: Request,
         user = _provision(db, info)
     else:
         _sync_from_school(db, user, info)
+    _grant_bootstrap_admin(db, user)
     oplog.mark_login(request, user=user)
     return {"token": create_session(db, user), "user": session_user(db, user),
             "mode": sso.mode(), "next": info.get("next") or ""}
@@ -174,6 +176,25 @@ def _sync_from_school(db: OrmSession, user: User, ident: dict) -> None:
         return
     for f in changed:
         setattr(user, f, ident[f])
+    db.commit()
+
+
+def _grant_bootstrap_admin(db: OrmSession, user: User) -> None:
+    """学号列在 YVRUC_BOOTSTRAP_ADMINS 里、还没有管理员身份的，补上管理员。
+
+    空库里没有管理员，没人能进「角色」页给别人授权；不在登录时补，就只能
+    手改数据库。只追加 admin、不动其他身份：本人原来是志愿者或发起方，照样是。
+    """
+    if user.student_id not in config.BOOTSTRAP_ADMINS or "admin" in (user.roles or []):
+        return
+    before = list(user.roles or [])
+    # roles 是 JSON 列，原地 append 不会被识别为改动，要整个换掉
+    user.roles = [*before, "admin"]
+    audit_log(db, actor=None, action="update", target_type="user",
+              target_id=user.id,
+              target_label=f"{user.name}（{user.student_id}）",
+              summary="按 YVRUC_BOOTSTRAP_ADMINS 授予管理员身份；原有身份："
+                      + ("、".join(ROLE_LABELS.get(r, r) for r in before) or "无"))
     db.commit()
 
 

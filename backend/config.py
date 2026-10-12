@@ -42,6 +42,17 @@ ID_CARD_KEY = os.environ.get("YVRUC_ID_CARD_KEY", "").strip()
 # 学校 SSO 接通后删除 routers/auth.py 里的 demo 分支与这一项。
 DEMO_LOGIN_PASSWORD = os.environ.get("YVRUC_DEMO_PASSWORD", "").strip()
 
+# —— 初始管理员 ——
+# 空库上线时没有人能进工作台分配身份。列在这里的学号每次经统一身份认证登录，
+# 缺管理员身份就补上（原有身份保留），所以先登录、后写进来也生效。
+# 反过来，要撤掉其中某人的管理员，得先从这里删掉学号，否则下次登录又被补回。
+# 演示登录不看这一项。留空 = 不启用。
+def id_list(raw: str) -> frozenset[str]:
+    return frozenset(s.strip() for s in raw.split(",") if s.strip())
+
+
+BOOTSTRAP_ADMINS = id_list(os.environ.get("YVRUC_BOOTSTRAP_ADMINS", ""))
+
 # 接口文档（/docs、/openapi.json）仅在显式打开时暴露
 EXPOSE_API_DOCS = os.environ.get("YVRUC_EXPOSE_DOCS", "").strip() == "1"
 
