@@ -26,6 +26,8 @@ RUN pip install --no-cache-dir -r requirements-dev.txt \
         -i $PIP_INDEX
 COPY pytest.ini ./
 COPY tests/ ./tests/
+# 备份容器的保留策略也在这套用例里测
+COPY backup/ ./backup/
 CMD ["python", "-m", "pytest"]
 
 

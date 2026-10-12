@@ -11,7 +11,7 @@ FastAPI + SQLAlchemy（PostgreSQL）+ Redis + Vue3 / Element Plus / ECharts（Vi
 ```bash
 cp .env.example .env          # 填 POSTGRES_PASSWORD、YVRUC_ID_CARD_KEY
 cp caddy.env.example caddy.env # 填 YVRUC_DOMAIN、CF_API_TOKEN（内网 https 入口）
-docker compose up -d --build                    # postgres + redis + backend + web + caddy + cloudflared
+docker compose up -d --build                    # postgres + redis + backend + web + caddy + cloudflared + backup
 docker compose --profile seed run --rm seed     # 重置演示数据
 docker compose --profile test run --rm tests    # 跑回归测试（独立的 yvruc_test 库）
 ```
@@ -74,6 +74,9 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 | `YVRUC_AI_TIMEOUT` | 一次起草最多等几秒，默认 90 |
 | `YVRUC_AI_THINKING` | 思考模式 `enabled` / `disabled`，默认 `disabled`；服务商不认这个参数时填 `none` |
 | `CLOUDFLARE_TOKEN` | 隧道令牌，勿提交/外传。留空 = 隧道容器起不来，内网 https 入口不受影响 |
+| `YVRUC_BACKUP_DIR` | 备份写到宿主机的哪个文件夹，默认仓库下 `./backups`。Windows 写 `D:/yvruc-backups` 这样的正斜杠路径 |
+| `YVRUC_BACKUP_AT` | 每天几点备份，默认 `03:00` |
+| `YVRUC_BACKUP_DB` | 设为 `0` 不导出数据库、只备文件卷（数据库由别处备份时用），默认 `1` |
 | `HTTPS_/WEB_/BACKEND_/POSTGRES_/REDIS_HOST_PORT` | 宿主机端口，被别的项目占用时改这里 |
 
 ### 登录方式
@@ -87,6 +90,49 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 会话 24 小时过期，令牌只认 `Authorization` 头，**唯一的例外是导出与材料下载**这一个直链
 场景：前端先换一张一次性票据（绑那一个网址、60 秒有效、用一次即作废），地址栏里因此
 永远不会有会话令牌。
+
+### 备份与恢复（`backup/`）
+
+compose 里的 `backup` 服务随 `up -d` 一起起来，每天 3:00 备一份，写到宿主机的普通文件夹
+（`.env` 的 `YVRUC_BACKUP_DIR`，默认仓库下 `./backups`，已被 git 忽略），资源管理器里直接
+能看到、拷走。电脑在 3:00 关着机的话，开机后当天补一份。
+
+- **备什么**：数据库（`pg_dump`，服务不用停）和三个文件卷：`yvruc_uploads`（上传件）、
+  `yvruc_materials`（材料、立项书结项书、反馈截图）、`yvruc_oplog`（操作日志）。
+  不备天地图瓦片缓存、Redis、caddy 证书，它们丢了能重建。
+- **每份备份**是一个文件夹，名字形如 `2026-10-12_0300_daily`，里面是 `db.dump`、
+  `uploads.tar.gz`、`materials.tar.gz`、`oplog.tar.gz` 和 `manifest.json`。
+- **留多久**：定时备份留最近 7 天，每周再留一份（这一周最后一份，一般是周日），留 4 周；
+  每月再留一份（这个月最后一份），留 6 个月。手动备份另算，留最近 10 份。
+- **只存本机**：防误删、防重建库，防不了硬盘坏。要防硬盘坏，把 `YVRUC_BACKUP_DIR` 设到
+  另一块盘上，或者定期把这个文件夹拷走。
+- **身份证加密密钥不在备份里**：`YVRUC_ID_CARD_KEY` 只在 `.env`。备份里的身份证号是加密的，
+  密钥丢了恢复出来也读不出。把密钥单独存一份（密码管理器或打印出来），不要和备份放在一起。
+- **数据库不归我们备时**（例如连学校统一数据库）：`.env` 设 `YVRUC_BACKUP_DB=0`，只备文件卷。
+  完全不要了就删掉 compose 里的 `backup` 服务。
+- 备份文件夹在 Windows 上的写法：`.env` 里写 `YVRUC_BACKUP_DIR=D:/yvruc-backups`
+  （正斜杠；Docker Desktop 设置里的 File sharing 要包含这个盘）。改完 `docker compose up -d backup`。
+
+```bash
+docker compose run --rm backup now    # 立即备一份：部署、重建库、改表之前都跑
+docker compose run --rm backup list   # 列出现有备份
+docker logs yvruc-backup --tail 20    # 看每天的备份有没有成功
+```
+
+**恢复**（会覆盖现在的数据，备份之后的改动全部丢失）：
+
+```bash
+docker compose run --rm backup now                    # 先把现在的状态也备一份，以防选错
+docker compose stop backend                           # 恢复数据库时不能有别的连接
+docker compose run --rm backup restore 2026-10-12_0300_daily --yes
+docker compose start backend
+```
+
+- 只恢复其中一样：加 `--only db` 或 `--only files`。
+- 恢复到一个全新的库（换电脑、`down -v` 之后）：先 `docker compose up -d postgres`，
+  再按上面的步骤恢复，最后 `docker compose up -d`。`.env` 里的 `POSTGRES_PASSWORD` 与
+  `YVRUC_ID_CARD_KEY` 要和原来的一样。
+- 文件卷恢复时先清空再解包，备份之后新增的上传件会被删掉。
 
 ## 二、权限体系
 
@@ -434,8 +480,10 @@ SSO 模拟「认证已通过」。
 YVRUC_System/
 ├── docker-compose.yml          全栈编排：postgres + redis + backend + web
 │                               + caddy（内网 80/443，TLS 终止）+ cloudflared（隧道）
+│                               + backup（每日备份）
 │                               （+ seed / tests 两个一次性任务 profile）
 ├── Caddyfile / caddy.env.example  内网入口的 TLS 与 Cloudflare DNS-01 令牌
+├── backup/                     备份容器：定时与手动备份、保留策略、恢复（job.py）
 ├── .env.example                环境变量模板（数据库口令、加密密钥、演示登录、隧道令牌）
 ├── pytest.ini / requirements-dev.txt
 ├── tests/                      回归测试：登录会话、报名闸门与并发、审批、分配、签到闭环、
