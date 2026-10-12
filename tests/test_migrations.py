@@ -179,8 +179,8 @@ def test_库里已有部门时迁移不铺部门():
 
 
 def test_部门列表接口给出迁移铺好的部门(client):
+    # 测试库是各用例共用的，别的用例会改部门说明、加删部门，这里只核对 12 个部门
+    # 都在且顺序不变；说明的取值由上面的空库用例核对
     rows = client.get("/api/staff/departments",
                       headers=login(client, ADMIN)).json()
-    by_name = {d["name"]: d for d in rows}
     assert [d["name"] for d in rows if d["name"] in DEPARTMENTS] == DEPARTMENTS
-    assert by_name["对外联络部"]["note"] == LIAISON_NOTE
