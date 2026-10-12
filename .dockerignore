@@ -10,3 +10,4 @@ data
 .env
 .env.*
 caddy.env
+backups

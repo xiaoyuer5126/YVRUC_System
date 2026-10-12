@@ -5,6 +5,7 @@
 #   docker compose up -d --build                    # 启动全套（先由 migrate 把库升到最新）
 #   docker compose run --rm migrate                 # 只升级数据库
 #   docker compose --profile seed run --rm seed     # 重置演示数据
+#   docker compose run --rm backup now              # 立即备份（部署、重建库、改表前）
 #   docker logs yvruc-caddy --tail 20               # 看证书签发情况
 #   docker logs yvruc-cloudflared --tail 20         # 看隧道连接状态
 #
@@ -37,8 +38,8 @@ x-backend-build: &backend_build
 
 x-backend-env: &backend_env
   # .env 里填了完整连接串就用它（连接参数如 ?sslmode=require 原样带过去），
-  # 没填就连本文件里的 postgres 容器
-  YVRUC_DATABASE_URL: ${YVRUC_DATABASE_URL:-postgresql+psycopg://yvruc:${POSTGRES_PASSWORD:-}@postgres:5432/yvruc}
+  # 没填就连本文件里的 postgres 容器。备份容器导出数据库也用这一条（见 backup 服务）
+  YVRUC_DATABASE_URL: &database_url ${YVRUC_DATABASE_URL:-postgresql+psycopg://yvruc:${POSTGRES_PASSWORD:-}@postgres:5432/yvruc}
   YVRUC_REDIS_URL: redis://redis:6379/0
   YVRUC_DEMO_PASSWORD: ${YVRUC_DEMO_PASSWORD:-}
   YVRUC_BOOTSTRAP_ADMINS: ${YVRUC_BOOTSTRAP_ADMINS:-}
@@ -230,6 +231,34 @@ services:
     command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TOKEN}"]
     depends_on:
       - web
+    restart: unless-stopped
+
+  # 定时备份：每天 YVRUC_BACKUP_AT（默认 03:00）导出数据库、打包三个文件卷，
+  # 写到宿主机的 YVRUC_BACKUP_DIR（默认仓库下 ./backups）。电脑在那个时刻关着的话，
+  # 开机后当天补一份。用法与恢复步骤见 README「备份与恢复」：
+  #   docker compose run --rm backup now                    # 立即备份
+  #   docker compose run --rm backup list                   # 看有哪些
+  #   docker compose run --rm backup restore <名字> --yes   # 恢复（先停 backend）
+  # 不备：天地图瓦片缓存（能重新取）、Redis（瞬时状态）、caddy 证书（会自动重签）。
+  # 身份证加密密钥在 .env 里，不进备份，要另外保管。
+  # 不依赖 postgres 服务：数据库在别处（YVRUC_BACKUP_DB=0 只备文件卷）时照样能起。
+  backup:
+    build:
+      context: .
+      dockerfile: backup/Dockerfile
+    image: yvruc-backup:local
+    container_name: yvruc-backup
+    environment:
+      YVRUC_DATABASE_URL: *database_url
+      YVRUC_BACKUP_DB: ${YVRUC_BACKUP_DB:-1}
+      YVRUC_BACKUP_AT: ${YVRUC_BACKUP_AT:-03:00}
+      TZ: Asia/Shanghai
+    volumes:
+      - ${YVRUC_BACKUP_DIR:-./backups}:/backups
+      # 读写挂载：恢复时要往卷里写
+      - yvruc_uploads:/data/uploads
+      - yvruc_materials:/data/materials
+      - yvruc_oplog:/data/oplog
     restart: unless-stopped
 
   # 一次性任务：跑回归测试（用独立的 yvruc_test 库，不碰演示数据）

@@ -35,3 +35,6 @@ tmp/
 *.swp
 Thumbs.db
 .DS_Store
+
+# ===== 备份（docker compose 的 backup 服务写到这里，见 README）=====
+backups/
