@@ -3,7 +3,7 @@
 这个项目没有迁移工具：`create_all` 只建缺失的表、从不给已有的表加列。少了这道
 自检，「模型加了列、库里没有」就不在启动时报错，而是跑到某个页面才 500，前端还
 把它渲染成空列表——只能靠人去翻日志。
-这几条用例钉住那个自检：缺表、缺列都要发现，齐全时不许误报。
+这几条用例钉住那个自检：缺表、缺列、多出不许为空的旧列都要发现，齐全时不许误报。
 """
 from __future__ import annotations
 
@@ -22,7 +22,9 @@ class FakeInspector:
         return name in self._tables
 
     def get_columns(self, name: str) -> list[dict]:
-        return [{"name": c} for c in self._tables[name]]
+        # 列名后缀 "!" 表示不许为空、没有默认值
+        return [{"name": c.rstrip("!"), "nullable": not c.endswith("!"),
+                 "default": None} for c in self._tables[name]]
 
     def get_table_names(self) -> list[str]:
         return list(self._tables)
@@ -63,3 +65,11 @@ def test_真库跟模型是一致的():
     """跑用例这个库也要对得上——它由 conftest 按模型建，按理永远一致；
     真出现差异说明有人手工动过测试库、或者 conftest 建表的方式变了。"""
     assert database.schema_gaps() == []
+
+
+def test_多出不许为空的旧列会被发现():
+    """模型删了列、库没重建：读不受影响，一插入就因为那列是空的而失败。"""
+    md = _metadata(("hours_records", ["id", "hours"]))
+    insp = FakeInspector({"hours_records": ["id", "hours", "hours_counted!", "note"]})
+    assert database.schema_gaps(md, insp) == [
+        "hours_records：多出模型里已删掉、又不能为空的列 ['hours_counted']"]

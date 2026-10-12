@@ -72,32 +72,6 @@ def _ensure_importable(db: OrmSession, act: Activity) -> None:
     ensure_hours_editable(db, act)
 
 
-def _invalidate_hours_approval(db: OrmSession, act: Activity) -> bool:
-    """核准后的名单发生变化：撤销活动的核准与截止时间，要求管理者重新核准。
-
-    自动报批只看活动级截止时间；不撤销就可能把新增或改过的
-    时长按旧截止时间直接送审，志愿者没有完整的确认/申诉机会。
-
-    只撤销活动这一级。没改到的人，上次通知过的数值（approved_hours）和本人
-    的确认都留着：重新核准时只通知新增的、时长变了的人（见
-    staff_ops.hours_approve），改一个人不该惊动整份名单。这一轮提过申诉的人
-    例外，清掉他的 approved_hours，重新核准时照样通知到他。
-    """
-    if act.hours_approved_at is None:
-        return False
-    appealed = {a.record_id for a in db.query(HoursAppeal).filter(
-        HoursAppeal.activity_id == act.id,
-        HoursAppeal.created_at >= act.hours_approved_at)}
-    act.hours_approved_at = None
-    act.appeal_deadline = None
-    for rec in (db.query(HoursRecord)
-                .filter(HoursRecord.activity_id == act.id,
-                        HoursRecord.id.in_(appealed or [""])).all()):
-        rec.confirmed_at = None
-        rec.approved_hours = None
-    return True
-
-
 def _import_fields(act: Activity, hours: float, note: str) -> dict:
     """导入那一段的字段：时段写活动时间，服务日期取活动开始那天。
 
@@ -289,7 +263,7 @@ def import_rows(db: OrmSession, act: Activity, user: User,
 
     reapproval_required = False
     if added or overwritten:
-        reapproval_required = _invalidate_hours_approval(db, act)
+        reapproval_required = hours_flow.revoke_approval(db, act)
         summary = "导入补记录名单"
         if reapproval_required:
             summary += "；名单变更，原时长核准已撤销"
@@ -465,7 +439,7 @@ def edit_record(activity_id: str, record_id: str, body: RecordEditBody,
         changes.append(f"时长 {old_hours:g}h → {hours:g}h")
     if note != old_note:
         changes.append(f"备注「{old_note or '无'}」→「{note or '无'}」")
-    reapproval_required = _invalidate_hours_approval(db, act) if changes else False
+    reapproval_required = hours_flow.revoke_approval(db, act) if changes else False
     if changes:
         audit_log(db, actor=user, action="roster_import", target_type="hours",
                   target_id=act.id, target_label=act.title, activity_id=act.id,
@@ -489,7 +463,7 @@ def delete_record(activity_id: str, record_id: str,
     if db.query(HoursAppeal).filter(HoursAppeal.record_id == rec.id).first():
         raise HTTPException(409, "这条记录有过时长申诉，不能删除；如需更正请改时长")
     u = db.get(User, rec.user_id)
-    reapproval_required = _invalidate_hours_approval(db, act)
+    reapproval_required = hours_flow.revoke_approval(db, act)
     if reapproval_required and u is not None:
         notify(db, u, f"志愿时长核准已撤销｜{act.title}",
                f"「{act.title}」的补记录名单已更正，您原先收到的时长核准不再有效。"

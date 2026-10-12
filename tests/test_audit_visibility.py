@@ -143,3 +143,26 @@ def test_审批中的改动同样不可见(client, admin, db, take_student):
                          json={"location": f"改到 {status}"})
         assert r.status_code == 200, (status, r.text)
         assert _visible_summaries(client, admin, aid) == [], status
+
+
+def test_每个审计动作都有中文名():
+    """审计页按 ACTION_LABELS 显示动作，表里漏了的就显示成英文（如 expire）。
+
+    写死在代码里的动作（action="..."）和人员变动流水的动作（ROSTER_ACTIONS）
+    都要在表里。
+    """
+    import re
+    from pathlib import Path
+
+    from backend.audit import ACTION_LABELS
+    from backend.enroll_logic import ROSTER_ACTIONS
+
+    root = Path(__file__).resolve().parent.parent / "backend"
+    used = set(ROSTER_ACTIONS)
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for call in re.finditer(r"audit_log\((.*?)\)", text, re.S):
+            used.update(re.findall(r'action="([a-z_]+)"', call.group(1)))
+    assert "expire" in used
+    assert sorted(used - set(ACTION_LABELS)) == []
+    assert ACTION_LABELS["expire"] == "候补转正超时"

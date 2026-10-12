@@ -614,6 +614,7 @@ def user_lock(db: OrmSession, user_id: str, wait: float | None = None) -> None:
     必须在 shift_lock 块**里面**调（或者这个事务根本不拿场次锁），之后不能再
     进新的 shift_lock。等不到回 503（默认 WAIT_TIMEOUT）。
     报名这种一进锁就要拿的，用 shift_lock(..., user_id=) 省一个往返。
+    时长补登也用它把同一个人的提交排成队（见 hours_claims._store_claim）。
     """
     budget = WAIT_TIMEOUT if wait is None else wait
     _pg_lock(db, [], time.monotonic() + budget, user_id)

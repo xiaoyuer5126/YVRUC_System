@@ -411,14 +411,14 @@ def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
 def build_claims_workbook(db: OrmSession, claims: list[HoursClaim]) -> BytesIO:
     """校外时长补登：给志愿北京录时长用，一条一行。
 
-    只导通过的（已撤销的不再计入时长）。活动名称、活动时间、服务描述、备注都
+    只导通过的（已撤销的不再计入时长）。活动名称、活动日期、服务描述、备注都
     带上，录的时候能跟本人交的那条对上；身份证号取档案里的，提交就要求资料完整，
     所以不会缺。
     """
     wb = Workbook()
     ws = wb.active
     ws.title = "校外时长补登"
-    header = ["姓名", "学号", "学院", "身份证号", "活动名称", "活动时间",
+    header = ["姓名", "学号", "学院", "身份证号", "活动名称", "活动日期",
               "时长", "服务描述", "备注"]
     ws.append(header)
     _style_header(ws, len(header))
@@ -427,7 +427,7 @@ def build_claims_workbook(db: OrmSession, claims: list[HoursClaim]) -> BytesIO:
         if u is None:
             continue
         ws.append([u.name, u.student_id, u.college or "", u.id_card or "",
-                   c.title, span_text(c.start_at, c.end_at), c.counted_hours(),
+                   c.title, c.service_date.isoformat(), c.counted_hours(),
                    c.service_desc, c.note])
     for col, w in zip("ABCDEFGHI", (12, 14, 16, 22, 28, 24, 8, 48, 20)):
         ws.column_dimensions[col].width = w
@@ -500,41 +500,63 @@ SUMMARY_HEADER = ("活动编号", "活动名称", "组织单位", "联合主办�
 # 表底的口径说明：拿到表的人不必回头问人数怎么算、时数为什么不是整数。
 # 写在合计行下面空一行处，表头与数据行的位置不因此挪动（见 _rows 用例）
 SUMMARY_NOTES = (
-    "说明：人数、人次按报名岗位数计；补记录活动与没有报名岗位的补录只有时长。",
-    "时长按 0.5 小时向上取整，归属到该笔最后一次服务的日期。",
+    "说明：按活动结束时间归属区间，一场活动的人数、人次、时长整场算在它结束的那一侧；"
+    "人数、人次按服务场次的报名计，补记录活动只有时长。",
+    "时长按 0.5 小时向上取整（一人一场一笔，志愿与劳务两半各自取整）。",
 )
 
 
-def record_settlements(db: OrmSession, *, start: datetime | None = None,
-                       before: datetime | None = None
-                       ) -> list[tuple[str, datetime, float, float]]:
-    """各笔账的（活动 id, 归属日期, 志愿时数, 劳务时数），一笔一条。
+def activities_ending_in(db: OrmSession, *, start: datetime | None = None,
+                         before: datetime | None = None
+                         ) -> list[tuple[tuple[datetime, datetime], Activity]]:
+    """结束时间落在区间里的活动（SUMMARY_STATUSES 那几个状态），带上活动时间。
 
-    一笔的归属日期 = 这一笔所有段里最晚的那个服务日期。一笔账可能横跨两个月
-    （这个月签到算出两段、下个月又补录一段），整笔的结算数都算在最后那次服务
-    所属的区间里：要是不这样、把两半各归各的那一天，各区间之和就对不上单笔结算
-    数——两半各自向上取整到 0.5，取整一旦落到按段拆分之后，每一段的零头都要
-    多出 0.5 来。
+    按活动算：一场活动整场归到它结束的那一侧，跨月办完的只算一次；办完再补录
+    的时长跟着活动走，不另按补录那天归。数据总览的「活动总数」「累计时长」与
+    活动汇总导出都用它，同一个区间两边数出来一样。排不出时间的（没有场次的
+    招募活动）没有结束时间可归，跳过。start 起（含）、before 止（不含）。
+    """
+    picked = []
+    # 场次一次带出来：time_span() 要用，逐场活动再去取就是一场一条 SQL，
+    # 全库导出时条数跟着活动数涨
+    for act in (db.query(Activity).options(selectinload(Activity.shifts))
+                .filter(Activity.status.in_(SUMMARY_STATUSES))):
+        span = act.time_span()
+        if span is None:
+            continue
+        if start is not None and span[1] < start:
+            continue
+        if before is not None and span[1] >= before:
+            continue
+        picked.append((span, act))
+    picked.sort(key=lambda x: (x[0][1], x[1].title))
+    return picked
 
-    取整走 HoursRecord.ceil_half 一处，不在这儿另写一个：两处各写一个取整，
-    界面上看到的和导出去的迟早差 0.5。
 
-    start 起（含）、before 止（不含），都不给就是不限。一段都没有的记录（合计
-    恒为 0）没有服务日期可归，不进这里。
+def activity_hours(db: OrmSession, ids: list[str] | None = None
+                   ) -> dict[str, tuple[float, float]]:
+    """各活动的（志愿时数, 劳务时数）：每一笔按结算口径算完再按活动相加。
+
+    两半按笔在 SQL 里求和（段上的 record_id 有索引），结算走
+    HoursRecord.settle_sums 一处：两处各写一个取整，界面上看到的和导出去的
+    迟早差 0.5。ids 为 None 就是全部活动。
     """
     is_pay = and_(HoursSegment.kind == "shift", HoursSegment.reward == "pay")
-    latest = func.max(HoursSegment.date)
-    q = (db.query(HoursRecord.activity_id, latest,
+    q = (db.query(HoursRecord.activity_id,
                   func.coalesce(func.sum(HoursSegment.hours).filter(~is_pay), 0.0),
                   func.coalesce(func.sum(HoursSegment.hours).filter(is_pay), 0.0))
          .join(HoursSegment, HoursSegment.record_id == HoursRecord.id)
          .group_by(HoursRecord.id, HoursRecord.activity_id))
-    if start is not None:
-        q = q.having(latest >= start)
-    if before is not None:
-        q = q.having(latest < before)
-    return [(aid, day, HoursRecord.ceil_half(volunteer), HoursRecord.ceil_half(paid))
-            for aid, day, volunteer, paid in q]
+    if ids is not None:
+        if not ids:
+            return {}
+        q = q.filter(HoursRecord.activity_id.in_(ids))
+    out: dict[str, tuple[float, float]] = {}
+    for aid, volunteer, paid in q:
+        counted, pay = HoursRecord.settle_sums(volunteer, paid)
+        have = out.get(aid, (0.0, 0.0))
+        out[aid] = (have[0] + counted, have[1] + pay)
+    return out
 
 
 def build_activities_summary_workbook(
@@ -544,54 +566,30 @@ def build_activities_summary_workbook(
 
     进表的是 SUMMARY_STATUSES 那几个状态的活动，含不公开招募（补记录）活动：
     它们没有场次、不收报名，时长靠导入名单，统计时同样算数。
-    一场活动进表，是因为区间内有段落在这个区间里（不是活动结束在区间里）：
-    段记的是服务当天，办完再补录的时长照样落在服务发生的那个区间，跨月的一笔
-    整笔算在最后一次服务那一侧（见 record_settlements）。
+    区间按活动**结束时间**落在里头算（end 含当天整天，见 activities_ending_in），
+    这场活动的人数、人次、时长整场都算在这一行。
     人数是报名记录按人去重后的个数，人次是报名记录的条数——一个人报两个场次，
-    人数算一个、人次算两个；日期取报名所在场次的开始那天（Shift.start_time），
-    也就是本人哪天来服务。补记录活动没有场次、不收报名，人数与人次都是 0，
-    只有时长。时数在一笔之内取整到 0.5（HoursRecord.ceil_half），各笔再相加。
-    end 含当天整天。
+    人数算一个、人次算两个。补记录活动没有场次、不收报名，人数与人次都是 0，
+    只有时长。
     返回工作簿和进表的活动数：条数要写进导出留痕。
     """
     before = end + timedelta(days=1) if end is not None else None
-    hours: dict[str, list[float]] = {}
-    for aid, _day, counted, paid in record_settlements(db, start=start,
-                                                       before=before):
-        pair = hours.setdefault(aid, [0.0, 0.0])
-        pair[0] += counted
-        pair[1] += paid
-
-    picked: list[tuple[tuple[datetime, datetime] | None, Activity]] = []
-    if hours:
-        # 场次一次带出来：time_span() 要用，逐场活动再去取就是一场一条 SQL，
-        # 全库导出时条数跟着活动数涨
-        acts = (db.query(Activity).options(selectinload(Activity.shifts))
-                .filter(Activity.status.in_(SUMMARY_STATUSES),
-                        Activity.id.in_(list(hours))))
-        for act in acts:
-            # time_span() 为空的（排不出场次的）时间那格留空，排在排了场次的后面
-            picked.append((act.time_span(), act))
-    picked.sort(key=lambda x: (x[0][1] if x[0] else datetime.max, x[1].title))
-
+    picked = activities_ending_in(db, start=start, before=before)
     ids = [act.id for _span, act in picked]
+    hours = activity_hours(db, ids)
     counts: dict[str, tuple[int, int]] = {}
     if ids:
-        enroll_q = (db.query(Enrollment.activity_id,
-                             func.count(func.distinct(Enrollment.user_id)),
-                             func.count(Enrollment.id))
-                    .join(Shift, Shift.id == Enrollment.shift_id)
-                    .filter(Enrollment.activity_id.in_(ids),
-                            Enrollment.status == "enrolled",
-                            # 只数服务场次：培训/彩排的报名是跟着服务场次自动挂上的，
-                            # 同一个人会被再算一次
-                            Shift.kind == "service"))
-        if start is not None:
-            enroll_q = enroll_q.filter(Shift.start_time >= start)
-        if before is not None:
-            enroll_q = enroll_q.filter(Shift.start_time < before)
         counts = {aid: (people, seats) for aid, people, seats in
-                  enroll_q.group_by(Enrollment.activity_id)}
+                  db.query(Enrollment.activity_id,
+                           func.count(func.distinct(Enrollment.user_id)),
+                           func.count(Enrollment.id))
+                  .join(Shift, Shift.id == Enrollment.shift_id)
+                  .filter(Enrollment.activity_id.in_(ids),
+                          Enrollment.status == "enrolled",
+                          # 只数服务场次：培训/彩排的报名是跟着服务场次自动挂上的，
+                          # 同一个人会被再算一次
+                          Shift.kind == "service")
+                  .group_by(Enrollment.activity_id)}
 
     wb = Workbook()
     ws = wb.active
@@ -603,7 +601,7 @@ def build_activities_summary_workbook(
         people, seats = counts.get(act.id, (0, 0))
         counted, paid = hours.get(act.id, (0.0, 0.0))
         ws.append([act.id, act.title, act.organizer, act.co_organizer or "",
-                   span_text(*span) if span else "", act.label_status(), people,
+                   span_text(*span), act.label_status(), people,
                    seats, round(counted, 1), round(paid, 1)])
         seats_total += seats
         volunteer_total += counted

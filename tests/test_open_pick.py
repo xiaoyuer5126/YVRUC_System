@@ -165,3 +165,24 @@ def test_锁里认出岗位已被删掉(db, published, take_student):
     u = db.query(User).filter(User.student_id == take_student()).one()
     assert not logic.enroll_ledger(db, aid, g.id, g.placeholder().id, u.id, [g]).gone
     assert logic.enroll_ledger(db, aid, g.id, "p_missing", u.id, [g]).gone
+
+
+def test_圈着待分配的题换成圈这一场的岗位(client, admin, db, published):
+    """「待分配」退场后这一场由真实岗位接着收人：只问这一场的题照样问报这一场
+    的人，不会因为占位岗位没了就对谁都不显示。"""
+    from backend.models import FormQuestion
+
+    aid, g = published
+    holder_id = g.placeholder().id
+    other = FormQuestion(id=uid("q"), activity_id=aid, kind="text", title="别处",
+                         sort=1, applies_to_positions=["p_elsewhere"])
+    mine = FormQuestion(id=uid("q"), activity_id=aid, kind="text", title="这一场",
+                        sort=0, applies_to_positions=[holder_id])
+    db.add_all([mine, other])
+    db.commit()
+    a = _position(client, admin, aid, g, "甲", 2)
+    b = _position(client, admin, aid, g, "乙", 1)
+    assert _open(client, admin, g).status_code == 200
+    db.expire_all()
+    assert sorted(db.get(FormQuestion, mine.id).applies_to_positions) == sorted([a, b])
+    assert db.get(FormQuestion, other.id).applies_to_positions == ["p_elsewhere"]

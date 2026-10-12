@@ -1,12 +1,10 @@
-"""活动汇总导出的段口径：行 = 区间内有服务段落入的活动，一笔整笔归到它最后
-一次服务那一天所属的区间。
+"""活动汇总导出与数据总览按活动结束时间：一场活动整场算在它结束的那一侧。
 
-四种情形：
-  ① 一笔跨月（两段分别在两个月）：整笔算在最后一次服务那一侧，各区间之和 ==
-     这一笔的结算数，取整的零头不会算丢；
+  ① 一笔跨月（签到在这个月、补录记在下个月）：整笔跟着活动，算在活动结束那个月；
   ② 补记录活动没有场次、不收报名：人数与人次是 0，只有时长；
-  ③ 人数与人次按报名口径落区间，日期取报名所在场次的开始那天，培训场次不算；
-  ④ 口径说明写在合计行下面的表底，数据行仍旧从第 2 行开始。
+  ③ 场次跨月的活动，人数人次整场算在结束那个月，培训场次不算；
+  ④ 口径说明写在合计行下面的表底，数据行仍旧从第 2 行开始；
+  ⑤ 数据总览的活动总数、累计时长与导出表同一口径。
 
 造数与读表都用 test_export_summary 里那套助手：两个文件量的是同一张口径，
 助手只有一份，改了不会各说各的。
@@ -34,7 +32,7 @@ def _hours_of(rows, act) -> float:
     return got[0][8] if got else 0.0
 
 
-def test_一笔跨月整笔算在最后一次服务那侧(client, db, take_student):
+def test_事后补录的时长跟着活动走(client, db, take_student):
     council = login(client, COUNCIL)
     act, g = _activity(db, "跨月一笔", dt("11-30 09:00"), dt("11-30 12:00"))
     _enroll(db, act, g, take_student())
@@ -42,7 +40,6 @@ def test_一笔跨月整笔算在最后一次服务那侧(client, db, take_stude
     _hours(db, act, take_student(),
            _seg(2.2, g.start_time),
            _seg(1.4, dt("12-02 09:00"), kind="manual", label="补录"))
-    # 另一笔只服务在 11 月，归 11 月
     _hours(db, act, take_student(), _seg(1.2, g.start_time))
 
     _r, _h, nov_rows, _t, _n = _rows(client, council, NOV)
@@ -50,10 +47,9 @@ def test_一笔跨月整笔算在最后一次服务那侧(client, db, take_stude
 
     recs = db.query(HoursRecord).filter(HoursRecord.activity_id == act.id).all()
     assert sorted(r.counted_hours() for r in recs) == [1.5, 4.0]
-    # 跨月那一笔的 4.0 整笔落在十二月（最后一次服务在 12/02），十一月不重复算
-    assert (_hours_of(nov_rows, act), _hours_of(dec_rows, act)) == (1.5, 4.0)
-    # 各区间之和 == 各笔结算之和
-    assert _hours_of(nov_rows, act) + _hours_of(dec_rows, act) == 5.5
+    # 活动 11/30 结束：两笔整场算在十一月，十二月里没有它
+    assert _hours_of(nov_rows, act) == 5.5
+    assert act.id not in [row[0] for row in dec_rows]
 
 
 def test_补记录活动只有时数(client, db, take_student):
@@ -73,7 +69,7 @@ def test_补记录活动只有时数(client, db, take_student):
     assert round(total[8] - base_total[8], 1) == 3.0
 
 
-def test_报名人数按场次日期落区间(client, db, take_student):
+def test_场次跨月整场算在结束那个月(client, db, take_student):
     council = login(client, COUNCIL)
     act, dec = _activity(db, "报名跨月", dt("12-08 09:00"), dt("12-08 12:00"))
     jan_start = datetime(2020, 1, 3, 9, 0)
@@ -99,14 +95,10 @@ def test_报名人数按场次日期落区间(client, db, take_student):
     _r, _h, dec_rows, _t, _n = _rows(client, council, DEC)
     _r, _h, jan_rows, _t, _n = _rows(client,
                                      council, "?start=2020-01-01&end=2020-01-31")
-    _r, _h, all_rows, _t, _n = _rows(client, council)
-
-    dec_row, jan_row = _row(dec_rows, act), _row(jan_rows, act)
-    # 各区间各数各的：十二月 2 人 2 条报名，一月也是 2 人 2 条
-    assert (dec_row[6], dec_row[7]) == (2, 2)
-    assert (jan_row[6], jan_row[7]) == (2, 2)
-    # 全期只有 3 个人、4 条报名（u2 报了两场，培训那条不算）
-    assert (_row(all_rows, act)[6], _row(all_rows, act)[7]) == (3, 4)
+    # 活动 1/3 结束：十二月没有它，一月整场 3 人 4 条报名、4 小时
+    assert act.id not in [row[0] for row in dec_rows]
+    jan_row = _row(jan_rows, act)
+    assert (jan_row[6], jan_row[7], jan_row[8]) == (3, 4, 4.0)
     assert db.query(Enrollment).filter(
         Enrollment.activity_id == act.id).count() == 5
 
@@ -120,7 +112,7 @@ def test_口径说明写在合计行下面的表底(client, db, take_student):
     r, header, rows, total, notes = _rows(client, council, NOV)
     assert len(notes) == 2
     assert notes[0][0].startswith("说明：") and "报名" in notes[0][0]
-    assert "0.5" in notes[1][0] and "最后一次服务" in notes[1][0]
+    assert "结束时间" in notes[0][0] and "0.5" in notes[1][0]
     assert total[0] == "合计"
 
     # 表底的位置：表头第 1 行、数据行紧接其后，合计行下面空一行才是说明
@@ -131,3 +123,33 @@ def test_口径说明写在合计行下面的表底(client, db, take_student):
     assert act.id in [row[0] for row in rows]
     assert sheet[-4][0] == "合计" and not any(sheet[-3])
     assert [row[0] for row in sheet[-2:]] == [notes[0][0], notes[1][0]]
+
+
+def test_总览与导出同一口径_都按活动结束时间(client, db, take_student):
+    """同一个区间：总览数出几场活动、多少时长，导出表就有几行、合计多少。
+
+    还没记时长的活动只要在区间内结束就进表（有人数、没时长）；场次在上个月、
+    补录记在这个月的那一笔跟着活动算上个月。
+    """
+    council = login(client, COUNCIL)
+    query = {"start": "2018-03-01", "end": "2018-03-31"}
+    no_hours, g1 = _activity(db, "三月未记时长", datetime(2018, 3, 5, 9),
+                             datetime(2018, 3, 5, 12))
+    _enroll(db, no_hours, g1, take_student())
+    done, g2 = _activity(db, "三月有时长", datetime(2018, 3, 8, 9),
+                         datetime(2018, 3, 8, 12))
+    _enroll(db, done, g2, take_student())
+    _hours(db, done, take_student(), _seg(2, g2.start_time))
+    late, g3 = _activity(db, "二月场三月补录", datetime(2018, 2, 26, 9),
+                         datetime(2018, 2, 26, 12))
+    _hours(db, late, take_student(),
+           _seg(1.5, datetime(2018, 3, 2, 9), kind="manual", label="补录"))
+
+    _r, _h, rows, total, _n = _rows(
+        client, council, f"?start={query['start']}&end={query['end']}")
+    assert [(r[1], r[6], r[7], r[8]) for r in rows] == [
+        ("三月未记时长", 1, 1, 0.0), ("三月有时长", 1, 1, 2.0)]
+    cards = client.get("/api/staff/overview", headers=council,
+                       params=query).json()["cards"]
+    assert cards["activities_all"] == len(rows) == 2
+    assert cards["hours_total"] == total[8] == 2.0

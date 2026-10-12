@@ -841,6 +841,7 @@
             志愿者已收到时长通知，将于截止前确认或提出申诉，超时未确认自动按「无误 + 志愿时长」处理。
             截止时没有申诉将自动提交校青协审核，<b>有申诉就不会自动提交</b>——改完再核准一次
             （只会再通知 申诉过或数值变过的人），或直接「提交时长审核」。
+            <br />这期间手动加扣、删手动时长、改核定数会<b>撤销核准</b>，并清掉那个人选的劳务，改完要重新核准；处理申诉不撤销核准。
             <template v-if="hoursState.pending_appeals">
               <br />当前有 <b>{{ hoursState.pending_appeals }}</b> 条申诉待处理
             </template>
@@ -2822,6 +2823,15 @@ async function hoursPreview(silent = false) {
 
 function onHoursSelect(rows) { hoursSel.value = rows }
 
+/** 改时长的接口回来后的提示：核准过的活动改了数会被撤销核准，要说清楚。 */
+function hoursChanged(d, text) {
+  if (d.reapproval_required) {
+    ElMessage.warning(`${text}；原时长核准已撤销，请重新核准`)
+  } else {
+    ElMessage.success(text)
+  }
+}
+
 // 确认选中志愿者的时长
 async function confirmSelectedHours() {
   if (!hoursSel.value.length) return ElMessage.warning('请先勾选志愿者')
@@ -2832,7 +2842,7 @@ async function confirmSelectedHours() {
   }))
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/hours/confirm`, { items })
-    ElMessage.success(`已报名 ${d.count} 名志愿者的时长`)
+    hoursChanged(d, `已确认 ${d.count} 名志愿者的时长`)
     hoursPreview(true)
   } catch { /* toast by api */ }
 }
@@ -2841,7 +2851,8 @@ async function confirmSelectedHours() {
 async function confirmAllHours() {
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/hours/confirm`, {})
-    ElMessage.success(d.message || `已报名 ${d.count} 名志愿者的时长`)
+    if (d.reapproval_required) ElMessage.warning(d.message)
+    else ElMessage.success(d.message || `已确认 ${d.count} 名志愿者的时长`)
     hoursPreview(true)
   } catch { /* toast by api */ }
 }
@@ -2857,7 +2868,7 @@ async function addManualHours() {
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/hours/manual`,
       { items: userIds.map(sid => ({ student_id: sid, hours: value, note })), date })
-    ElMessage.success(`已为 ${d.count} 位志愿者${sign === 'deduct' ? '扣减' : '添加'}时长`)
+    hoursChanged(d, `已为 ${d.count} 位志愿者${sign === 'deduct' ? '扣减' : '添加'}时长`)
     // 日期留着：一场活动的时长常是连着录几条，每来一条都重挑一次日历是白费事
     mh.value = { userIds: [], sign: 'add', hours: 0.5, note: '', date }
     hoursPreview(true)
@@ -2868,9 +2879,9 @@ async function addManualHours() {
  *  这张明细是现拼的，和库里那一笔的顺序不一定一样（见后端 hours_manual_delete）。 */
 async function delManualPart(row, part) {
   if (!row.record_id) return ElMessage.warning('这一行还没有时长记录，无法删除')
-  await api.del(
+  const d = await api.del(
     `/api/staff/activities/${activityId}/hours/manual/${row.record_id}/${part.id}`)
-  ElMessage.success('已删除该段时长')
+  hoursChanged(d, '已删除该段时长')
   hoursPreview(true)
 }
 

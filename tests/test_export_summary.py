@@ -1,12 +1,10 @@
 """活动级汇总导出（数据总览页的「导出活动汇总」）。
 
 口径：进表的是报名中/已截止/已结束等活动（SUMMARY_STATUSES），含不公开招募
-（补记录）活动。行 = 区间内有服务段落入的活动，段落在哪一天由 HoursSegment.date
-说了算（end 含当天整天）；一笔账整笔算在它最后一次服务那一天所属的区间里
-（见 exporter.record_settlements），跨月的一笔不会把取整的零头算丢。
-人数按人去重、人次按报名记录条数，日期取报名所在场次的开始那天
-（Shift.start_time）；补记录活动没有场次、不收报名，人数与人次是 0。
-合计行下面空一行是两行口径说明（见 _rows）。
+（补记录）活动。区间按活动结束时间算（end 含当天整天），一场活动的人数、人次、
+时长整场算在这一行，办完再补录的时长也跟着活动走。人数按人去重、人次按报名
+记录条数；补记录活动没有场次、不收报名，人数与人次是 0。合计行下面空一行是
+两行口径说明（见 _rows）。
 
 活动都排在 2019 年，一个用例占一个月：种子与别的用例的活动都照 now() 现算，
 那个窗口里只有本文件造的几场，合计行才断言得准。
@@ -188,39 +186,39 @@ def test_选了劳务的那一段只进劳务列(client, db, take_student):
     assert (total[8], total[9]) == (5.5, 2.0)
 
 
-def test_区间按段的服务日期算且end含当天整天(client, db, take_student):
-    """服务日期落在区间里的进表；跨零点的一场算开场那天，end 含当天整天。"""
+def test_区间按结束时间算且end含当天整天(client, db):
+    """结束在区间里的进；只是跟区间有交集的不进（用户定的是按结束时间）。"""
     admin = login(client, ADMIN)
-    inside, g_in = _activity(db, "八月里", dt("08-10 09:00"), dt("08-10 12:00"))
-    before, g_before = _activity(db, "七月末", dt("07-31 09:00"), dt("07-31 12:00"))
-    over, g_over = _activity(db, "八月开始九月结束",
-                             dt("08-31 22:00"), dt("09-01 02:00"))
-    cross, g_cross = _activity(db, "七月开始八月结束",
-                               dt("07-31 22:00"), dt("08-01 02:00"))
-    last, g_last = _activity(db, "八月最后一刻", dt("08-31 20:00"), dt("08-31 23:59"))
-    zero, g_zero = _activity(db, "九月零点整开始", dt("09-01 00:00"), dt("09-01 03:00"))
-    for act, g in ((inside, g_in), (before, g_before), (over, g_over),
-                   (cross, g_cross), (last, g_last), (zero, g_zero)):
-        _hours(db, act, take_student(), _seg(1, g.start_time))
+    inside = _activity(db, "八月里", dt("08-10 09:00"), dt("08-10 12:00"))[0]
+    before = _activity(db, "七月末", dt("07-31 09:00"), dt("07-31 12:00"))[0]
+    over = _activity(db, "八月开始九月结束",
+                     dt("08-31 22:00"), dt("09-01 02:00"))[0]
+    cross = _activity(db, "七月开始八月结束",
+                      dt("07-31 22:00"), dt("08-01 02:00"))[0]
+    last = _activity(db, "八月最后一刻", dt("08-31 20:00"), dt("08-31 23:59"))[0]
+    zero = _activity(db, "九月零点整结束", dt("08-31 22:00"), dt("09-01 00:00"))[0]
 
     _r, _header, rows, _total, _notes = _rows(client, admin,
-                                              "?start=2019-08-01&end=2019-08-31")
+                                      "?start=2019-08-01&end=2019-08-31")
     ids = {row[0] for row in rows}
-    # 服务在八月里的进：8/31 深夜开场、第二天凌晨才结束的那一场也算八月
-    assert {inside.id, over.id, last.id} <= ids
-    # 七月底开场、八月才结束的算七月底，不进八月；零点开场的那一场算九月
-    assert {before.id, cross.id, zero.id}.isdisjoint(ids)
+    # 结束落在八月里的进：八月里办的，以及七月开始、八月才结束的
+    assert {inside.id, cross.id, last.id} <= ids
+    # 八月开始、九月结束的只是「跟八月有交集」，按结束时间不算在八月
+    assert over.id not in ids
+    assert before.id not in ids
+    # end 含当天整天：8/31 23:59 结束的算在内，9/1 00:00 整结束的不算
+    assert zero.id not in ids
 
-    # 只给 start：服务日期不早于它的都进
+    # 只给 start：结束时间不早于它的都进
     _r, _header, rows, _total, _notes = _rows(client, admin, "?start=2019-09-01")
     ids = {row[0] for row in rows}
-    assert zero.id in ids and {inside.id, over.id}.isdisjoint(ids)
+    assert {over.id, zero.id} <= ids and inside.id not in ids
 
-    # 只给 end：8/31（含当天整天）之前服务的才进
-    _r, _header, rows, _total, _notes = _rows(client, admin, "?end=2019-08-31")
+    # 只给 end：8/1 00:00 之前结束的才进
+    _r, _header, rows, _total, _notes = _rows(client, admin, "?end=2019-07-31")
     ids = {row[0] for row in rows}
-    assert {inside.id, before.id, cross.id, over.id, last.id} <= ids
-    assert zero.id not in ids
+    assert before.id in ids
+    assert {inside.id, cross.id, over.id, zero.id}.isdisjoint(ids)
 
     # 都不给：不限，本文件造过的都在
     _r, _header, rows, _total, _notes = _rows(client, admin)

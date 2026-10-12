@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from backend.models import (Activity, Enrollment, HoursRecord, Shift, now, uid)
+from backend.models import (Activity, Enrollment, HoursRecord, Shift, day_of, now,
+                            uid)
 from conftest import ADMIN, login, student_row
 
 COUNCIL = "2025003"      # 张远航，会长团：进得了数据总览
@@ -40,10 +41,13 @@ def _enroll(db, act, g, sid, *, joined_at=None):
     db.commit()
 
 
-def _hours(db, act, sid, hours, parts=None):
-    db.add(HoursRecord(id=uid("hrs"), activity_id=act.id,
-                       user_id=student_row(db, sid).id, hours=hours,
-                       parts=parts or []))
+def _hours(db, act, g, sid, hours):
+    """一笔时长：一段，服务日期是场次开始那天。"""
+    rec = HoursRecord(id=uid("hrs"), activity_id=act.id,
+                      user_id=student_row(db, sid).id)
+    db.add(rec)
+    rec.add_segment(kind="shift", date=day_of(g.start_time), hours=hours,
+                    label=g.name, shift_id=g.id)
     db.commit()
 
 
@@ -63,14 +67,14 @@ def test_区间只改四张卡(client, db, take_student):
     # 一条报名发生在八月里（落区间），一条就是现在（区间外）
     _enroll(db, inside, g_in, take_student(), joined_at=dt("08-05 10:00"))
     _enroll(db, inside, g_in, take_student())
-    _hours(db, inside, take_student(), 3)
-    _hours(db, outside, take_student(), 5)
+    _hours(db, inside, g_in, take_student(), 3)
+    _hours(db, outside, g_out, take_student(), 5)
 
     full = _overview(client, council)
     aug = _overview(client, council, **AUG)
     cards, aug_cards = full["cards"], aug["cards"]
 
-    # 活动总数：不填区间＝全部活动（含草稿与还没办的），填了＝区间内办过的
+    # 活动总数：不填区间＝全部活动（含草稿与还没办的），填了＝区间内结束的
     assert cards["activities_all"] - base_all["activities_all"] == 2
     assert aug_cards["activities_all"] - base_aug["activities_all"] == 1
     # 有效报名：填了区间只数区间内新产生的报名
@@ -112,7 +116,7 @@ def test_只给一侧边界(client, db, take_student):
     # 只给 start：结束时间不早于 7/1 的活动算进来
     lo = _overview(client, council, start="2019-07-01")["cards"]
     assert lo["activities_all"] - base_lo["activities_all"] == 1
-    # 只给 end：结束在 6/30 之前的窗口装不下这场七月的活动
+    # 只给 end：6/30 之前的窗口装不下这场七月的活动
     hi = _overview(client, council, end="2019-06-30")["cards"]
     assert hi["activities_all"] == base_hi["activities_all"]
 

@@ -10,6 +10,11 @@
         <el-button type="primary" @click="exportSummary">导出活动汇总</el-button>
       </div>
     </div>
+    <!-- 接口失败时卡片上显示「—」并给出提示：留着 0 看上去就像真的一个都没有 -->
+    <el-alert v-if="failed" type="error" :closable="false" show-icon
+              title="数据没有取到，卡片上的数暂不可用" style="margin-bottom:16px">
+      <el-button size="small" @click="load">重新加载</el-button>
+    </el-alert>
     <!-- 卡片先立起来（标题 + 0），数据回来再从 0 滚上去：等接口的这几百毫秒里
          页面不至于是一片空白，谁在加载、有哪些数一眼就知道 -->
     <el-row :gutter="16">
@@ -21,7 +26,7 @@
       </el-col>
     </el-row>
 
-    <el-row :gutter="16" style="margin-top:16px" v-if="d">
+    <el-row :gutter="16" style="margin-top:16px" v-if="d && !failed">
       <el-col :span="15">
         <el-card shadow="never"><template #header><b>近14天报名趋势</b></template>
           <div ref="trendEl" style="height:260px"></div>
@@ -33,7 +38,7 @@
         </el-card>
       </el-col>
     </el-row>
-    <el-row :gutter="16" style="margin-top:16px" v-if="d">
+    <el-row :gutter="16" style="margin-top:16px" v-if="d && !failed">
       <el-col :span="24">
         <el-card shadow="never">
           <template #header><b>最近操作留痕</b>
@@ -67,6 +72,7 @@ const narrow = useNarrow()
 const d = ref(null)
 const range = ref([])          // 页面与导出共用的时间跨度，空 = 不限
 const loading = ref(false)
+const failed = ref(false)      // 最近一次取数失败：卡片显示「—」，图表和留痕不显示
 const trendEl = ref()
 const pieEl = ref()
 
@@ -85,7 +91,8 @@ const CARDS = [
 const shown = reactive(Object.fromEntries(CARDS.map(c => [c.key, 0])))  // vuecheck: script-only
 
 const cards = computed(() => CARDS.map(c => ({
-  label: c.label, color: c.color, value: shown[c.key].toFixed(c.digits),
+  label: c.label, color: c.color,
+  value: failed.value ? '—' : shown[c.key].toFixed(c.digits),
 })))
 
 /** 快捷跨度：本月、上个月、近 3 个月，都算到本月这天为止。 */
@@ -200,10 +207,18 @@ async function load() {
     const data = await api.get(`/api/staff/overview${rangeQuery()}`)
     if (mine !== seq) return          // 又选了新的区间，这次的结果已经过期
     d.value = data
+    failed.value = false
     await nextTick()
     draw()
     roll()
-  } catch { /* 提示由 api 层统一弹出 */ } finally {
+  } catch {
+    // 弹窗提示由 api 层统一弹出；页面上也要标出这次没取到，别让旧数或 0 冒充结果
+    if (mine === seq) {
+      cancelAnimationFrame(rollRAF)
+      rollRAF = 0
+      failed.value = true
+    }
+  } finally {
     if (mine === seq) loading.value = false
   }
 }

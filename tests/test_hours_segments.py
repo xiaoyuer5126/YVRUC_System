@@ -260,7 +260,7 @@ def test_确认全部不覆盖管理者核定过的差额(client, admin, db, tak
         assert r.status_code == 200, r.text
         rec = _invariant(db, act, u)
         assert rec.hours == 3.0
-        assert [s.kind for s in rec.segments] == ["shift", "manual"]
+        assert [s.kind for s in rec.segments] == ["shift", "override"]
         assert rec.segments[1].hours == -1.0
 
     # 「确认全部」不把这次改判推回去：改判是人判的（同已采纳的申诉）
@@ -334,12 +334,12 @@ def test_删记录不留孤儿段(client, admin, db, take_student):
     sid3 = take_student()
     act3, u3, _shifts3 = _make(db, sid3, [("上午场", 2)])
     _confirm_all(client, admin, act3)
-    rec3 = _invariant(db, act3, u3)
-    db.execute(text("DELETE FROM hours_records WHERE id = :i"), {"i": rec3.id})
+    rec3_id = _invariant(db, act3, u3).id
+    db.execute(text("DELETE FROM hours_records WHERE id = :i"), {"i": rec3_id})
     db.commit()
     db.expire_all()
     assert db.query(HoursSegment).filter(
-        HoursSegment.record_id == rec3.id).count() == 0
+        HoursSegment.record_id == rec3_id).count() == 0
 
 
 def test_一人一场一笔是数据库保证(client, admin, db, take_student):
@@ -361,10 +361,11 @@ def test_一人一场一笔是数据库保证(client, admin, db, take_student):
 # ======================= ⑤ 并发 =======================
 
 def test_两条写入路径并发不会拼出中间态(client, admin, db, take_student):
-    """本人选劳务与管理端手动加同时打：一个先一个后，两边的写入都在。
+    """本人选劳务与管理端手动加同时打：一个先一个后，结果都落在同一个终态。
 
-    段的增删改都在父记录的行锁里（hours.lock_records / with_for_update），
-    后到的那个等锁，不会拿着旧快照盖掉先到的。
+    段的增删改都在活动行与父记录的行锁里（hours.lock_records / with_for_update），
+    后到的那个等锁，不会拿着旧快照盖掉先到的。先选后加：手动加清掉劳务、撤销
+    核准；先加后选：核准已撤销，选不了。两种顺序账上都是 5 小时志愿时长。
     """
     sid = take_student()
     act, u, shifts = _make(db, sid, [("上午场", 4)], pay_idx=(0,))
@@ -392,15 +393,47 @@ def test_两条写入路径并发不会拼出中间态(client, admin, db, take_s
     for t in ths:
         t.join()
 
-    assert out["pick"].status_code == 200, out["pick"].text
+    assert out["pick"].status_code in (200, 409), out["pick"].text
     assert out["manual"].status_code == 200, out["manual"].text
 
     rec = _invariant(db, act, u)          # 合计与段对得上，没有半截状态
     assert rec.hours == 5.0
     assert [s.kind for s in rec.segments] == ["shift", "manual"]
-    assert rec.segments[0].hours == 4.0 and rec.segments[0].reward == "pay"
-    assert rec.segments[1].hours == 1.0 and rec.segments[1].reward == ""
-    assert rec.pay_hours() == 4.0 and rec.counted_hours() == 1.0
+    assert [s.reward for s in rec.segments] == ["", ""]
+    assert rec.pay_hours() == 0 and rec.counted_hours() == 5.0
+    assert rec.confirmed_at is None
+    assert db.get(Activity, act.id).hours_approved_at is None
+
+
+@pytest.mark.parametrize("path", ["confirm", "manual"])
+def test_并发给同一人记第一笔不撞唯一约束(client, admin, db, take_student, path):
+    """「确认全部」点两下、两位管理者同时手动加：记录行还不存在时锁不住它，
+    靠活动行锁排队，后到的看得到先来的那一笔，不会 500。"""
+    sid = take_student()
+    act, u, _shifts = _make(db, sid, [("上午场", 2)])
+    gate = threading.Barrier(2)
+    out: list = []
+
+    def hit():
+        with TestClient(app) as c:
+            gate.wait()
+            if path == "confirm":
+                out.append(c.post(f"/api/staff/activities/{act.id}/hours/confirm",
+                                  headers=admin, json={}))
+            else:
+                out.append(_manual(c, admin, act, sid, 1, "场外搬运"))
+
+    ths = [threading.Thread(target=hit) for _ in range(2)]
+    for t in ths:
+        t.start()
+    for t in ths:
+        t.join()
+    assert [r.status_code for r in out] == [200, 200], [r.text for r in out]
+    db.expire_all()
+    assert db.query(HoursRecord).filter(HoursRecord.activity_id == act.id,
+                                        HoursRecord.user_id == u.id).count() == 1
+    # 确认两次是同一个 2 小时；手动加两次是 1 + 1
+    assert _invariant(db, act, u).hours == 2.0
 
 
 # ======================= ⑥ 结算取整 =======================
@@ -529,3 +562,166 @@ def test_删除只认手动那几段(client, admin, db, take_student):
                          f"{rec.id}/{manual_seg.id}", headers=admin).status_code == 200
     rec = _invariant(db, act, u)
     assert rec.hours == 2.0 and [s.kind for s in rec.segments] == ["shift"]
+
+
+# ======================= ⑨ 核准后改数 =======================
+
+def _override(client, admin, act, sid: str, hours: float):
+    return client.post(f"/api/staff/activities/{act.id}/hours/confirm",
+                       headers=admin,
+                       json={"items": [{"student_id": sid, "hours": hours}]})
+
+
+def test_劳务之后再扣_志愿时长不会扣成负数(client, admin, db, take_student):
+    """4 小时选了劳务，管理者再扣 2 小时：劳务清掉、全回志愿时长再扣，记 2 小时。"""
+    sid = take_student()
+    act, u, shifts = _make(db, sid, [("上午场", 4)], pay_idx=(0,))
+    g, pos = shifts[0]
+    _confirm_all(client, admin, act, approve=True)
+    stu = login(client, sid)
+    rec_id = _invariant(db, act, u).id
+    assert _pick(client, stu, rec_id, (g, pos, "pay")).status_code == 200
+
+    r = _manual(client, admin, act, sid, -2, "中途离场")
+    assert r.status_code == 200, r.text
+    assert r.json()["reapproval_required"] is True
+    rec = _invariant(db, act, u)
+    assert (rec.counted_hours(), rec.pay_hours()) == (2.0, 0.0)
+    assert rec.confirmed_at is None
+    assert db.get(Activity, act.id).hours_approved_at is None
+
+    # 重新核准后本人再把签到那段选成劳务：扣减从劳务里扣，两半都不为负
+    client.post(f"/api/staff/activities/{act.id}/hours/approve", headers=admin,
+                json={})
+    assert _pick(client, stu, rec_id, (g, pos, "pay")).status_code == 200
+    rec = _invariant(db, act, u)
+    assert (rec.counted_hours(), rec.pay_hours()) == (0.0, 2.0)
+    d = client.get("/api/me/hours", headers=stu).json()
+    assert d["total"] == 0 and d["records"][0]["hours"] == 2.0
+    ov = client.get(f"/api/staff/activities/{act.id}/overview", headers=admin).json()
+    assert ov["hours"]["total"] == 0
+
+
+def test_核定的数就是结算合计(client, admin, db, take_student):
+    """劳务 2.2 + 志愿 1.2 显示 4；核定成 5 就是 5，不是按原始值补差额得 5.5。"""
+    sid = take_student()
+    act, u, shifts = _make(db, sid, [("上午场", 2.2), ("下午场", 1.2)],
+                           pay_idx=(0,))
+    _confirm_all(client, admin, act, approve=True)
+    stu = login(client, sid)
+    rec_id = _invariant(db, act, u).id
+    assert _pick(client, stu, rec_id, (shifts[0][0], shifts[0][1], "pay")
+                 ).status_code == 200
+    assert _invariant(db, act, u).settled_hours() == 4.0
+
+    assert _override(client, admin, act, sid, 5).status_code == 200
+    rec = _invariant(db, act, u)
+    assert rec.settled_hours() == 5.0 and rec.pay_hours() == 0
+    row = next(x for x in client.get(f"/api/staff/activities/{act.id}/hours",
+                                     headers=admin).json()["items"]
+               if x["user"]["id"] == u.id)
+    assert row["hours"] == 5.0
+
+    # 不是 0.5 整数倍的数按结算口径向上取整
+    assert _override(client, admin, act, sid, 4.2).status_code == 200
+    assert _invariant(db, act, u).settled_hours() == 4.5
+
+
+def test_核定改回原数_调整段去掉(client, admin, db, take_student):
+    sid = take_student()
+    act, u, _shifts = _make(db, sid, [("上午场", 4)])
+    _confirm_all(client, admin, act)
+    assert _override(client, admin, act, sid, 5).status_code == 200
+    rec = _invariant(db, act, u)
+    assert [(s.kind, s.hours) for s in rec.segments] == [("shift", 4.0),
+                                                        ("override", 1.0)]
+    assert _override(client, admin, act, sid, 4).status_code == 200
+    rec = _invariant(db, act, u)
+    assert [(s.kind, s.hours) for s in rec.segments] == [("shift", 4.0)]
+    assert rec.settled_hours() == 4.0
+
+
+def test_核定与改判的调整段删不掉(client, admin, db, take_student):
+    sid = take_student()
+    act, u, _shifts = _make(db, sid, [("上午场", 4)])
+    _confirm_all(client, admin, act, approve=True)
+    stu = login(client, sid)
+    rec_id = _invariant(db, act, u).id
+    assert client.post(f"/api/me/hours/{rec_id}/appeal", headers=stu,
+                       json={"claimed_hours": 5, "reason": "签退晚扫了一小时"}
+                       ).status_code == 200
+    a = client.get(f"/api/staff/activities/{act.id}/hours-appeals",
+                   headers=admin).json()[0]
+    assert client.post(f"/api/staff/hours-appeals/{a['id']}/resolve",
+                       headers=admin, json={"accept": True}).status_code == 200
+    assert _override(client, admin, act, sid, 6).status_code == 200
+
+    rec = _invariant(db, act, u)
+    kinds = {s.kind: s for s in rec.segments}
+    assert set(kinds) == {"shift", "appeal", "override"}
+    for kind, word in (("appeal", "申诉改判"), ("override", "核定")):
+        r = client.delete(f"/api/staff/activities/{act.id}/hours/manual/"
+                          f"{rec.id}/{kinds[kind].id}", headers=admin)
+        assert r.status_code == 409 and word in r.json()["detail"], r.text
+    assert _invariant(db, act, u).settled_hours() == 6.0
+    # 管理端明细里这两段不带删除入口（前端按 kind == "manual" 给按钮）
+    row = next(x for x in client.get(f"/api/staff/activities/{act.id}/hours",
+                                     headers=admin).json()["items"]
+               if x["user"]["id"] == u.id)
+    assert [p["kind"] for p in row["parts"]] == ["shift", "appeal", "override"]
+
+
+def test_申诉改判不撤销核准_清掉劳务并请本人重选(client, admin, db, take_student):
+    from backend.models import Notification
+
+    sid = take_student()
+    act, u, shifts = _make(db, sid, [("上午场", 4)], pay_idx=(0,))
+    g, pos = shifts[0]
+    _confirm_all(client, admin, act, approve=True)
+    stu = login(client, sid)
+    rec_id = _invariant(db, act, u).id
+    assert client.post(f"/api/me/hours/{rec_id}/appeal", headers=stu,
+                       json={"claimed_hours": 5, "reason": "签退晚扫了一小时"}
+                       ).status_code == 200
+    a = client.get(f"/api/staff/activities/{act.id}/hours-appeals",
+                   headers=admin).json()[0]
+    r = client.post(f"/api/staff/hours-appeals/{a['id']}/resolve", headers=admin,
+                    json={"accept": True})
+    assert r.status_code == 200 and r.json()["hours"] == 5.0
+    assert db.get(Activity, act.id).hours_approved_at is not None
+    rec = _invariant(db, act, u)
+    assert rec.confirmed_at is None and rec.pay_hours() == 0
+    note = (db.query(Notification)
+            .filter(Notification.user_id == u.id,
+                    Notification.title.like("时长申诉已采纳%")).one())
+    assert "重新确认" in note.content and "报酬方式" in note.content
+    # 改判后本人照常能选劳务：差额记在志愿时长那一半
+    assert _pick(client, stu, rec_id, (g, pos, "pay")).status_code == 200
+    rec = _invariant(db, act, u)
+    assert (rec.counted_hours(), rec.pay_hours()) == (1.0, 4.0)
+
+
+def test_核准后手动加时_撤销核准且重新核准通知到他(client, admin, db, take_student):
+    from backend.models import Notification
+
+    sid = take_student()
+    act, u, _shifts = _make(db, sid, [("上午场", 4)])
+    _confirm_all(client, admin, act, approve=True)
+    r = _manual(client, admin, act, sid, 1, "场外搬运")
+    assert r.status_code == 200 and r.json()["reapproval_required"] is True
+    assert db.get(Activity, act.id).hours_approved_at is None
+    r = client.post(f"/api/staff/activities/{act.id}/hours/approve", headers=admin,
+                    json={})
+    assert r.status_code == 200 and r.json()["count"] == 1
+    assert (db.query(Notification)
+            .filter(Notification.user_id == u.id,
+                    Notification.title.like("志愿时长已核准%")).count()) == 2
+
+    # 删掉那段同样撤销核准
+    rec = _invariant(db, act, u)
+    seg = next(s for s in rec.segments if s.kind == "manual")
+    r = client.delete(f"/api/staff/activities/{act.id}/hours/manual/{rec.id}/{seg.id}",
+                      headers=admin)
+    assert r.status_code == 200 and r.json()["reapproval_required"] is True
+    db.expire_all()
+    assert db.get(Activity, act.id).hours_approved_at is None
