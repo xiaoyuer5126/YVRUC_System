@@ -2,7 +2,8 @@
 #
 #   cp .env.example .env && 填好口令                # 首次
 #   cp caddy.env.example caddy.env && 填域名与令牌   # 首次（内网 https 入口）
-#   docker compose up -d --build                    # 启动全套
+#   docker compose up -d --build                    # 启动全套（先由 migrate 把库升到最新）
+#   docker compose run --rm migrate                 # 只升级数据库
 #   docker compose --profile seed run --rm seed     # 重置演示数据
 #   docker logs yvruc-caddy --tail 20               # 看证书签发情况
 #   docker logs yvruc-cloudflared --tail 20         # 看隧道连接状态
@@ -11,6 +12,10 @@
 #   caddy(80/443, TLS 终止) ──▶ web(nginx:80) ──/api──▶ backend(uvicorn:8000)
 #   cloudflared(隧道, TLS 在 Cloudflare 边缘终止) ──▶ web(nginx:80) ──▶ 同上
 #        └──▶ postgres + redis
+#
+# 数据库默认是这里的 postgres 容器。连外部的库（学校统一数据库）时在 .env 里填
+# YVRUC_DATABASE_URL，并叠加 docker-compose.school-db.yml 不起 postgres 容器，
+# 见 README「连外部数据库」。
 #
 # 网络用固定网段（见文件末尾 networks）：web 容器里的 nginx 要靠
 # YVRUC_TRUSTED_PROXY_CIDR 把 X-Forwarded-For 还原成真实客户端 IP，
@@ -31,7 +36,9 @@ x-backend-build: &backend_build
     PIP_INDEX: ${PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}
 
 x-backend-env: &backend_env
-  YVRUC_DATABASE_URL: postgresql+psycopg://yvruc:${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}@postgres:5432/yvruc
+  # .env 里填了完整连接串就用它（连接参数如 ?sslmode=require 原样带过去），
+  # 没填就连本文件里的 postgres 容器
+  YVRUC_DATABASE_URL: ${YVRUC_DATABASE_URL:-postgresql+psycopg://yvruc:${POSTGRES_PASSWORD:-}@postgres:5432/yvruc}
   YVRUC_REDIS_URL: redis://redis:6379/0
   YVRUC_DEMO_PASSWORD: ${YVRUC_DEMO_PASSWORD:-}
   YVRUC_BOOTSTRAP_ADMINS: ${YVRUC_BOOTSTRAP_ADMINS:-}
@@ -83,7 +90,9 @@ services:
     container_name: yvruc-postgres
     environment:
       POSTGRES_USER: yvruc
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}
+      # 不写成 ${…:?} 必填：那样连外部库、不起这个容器时也得填它（compose 先
+      # 解析整份文件再挑服务）。口令空着，postgres 镜像自己会拒绝初始化并说明原因
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_DB: yvruc
       TZ: Asia/Shanghai
     ports:
@@ -126,8 +135,8 @@ services:
       # 操作日志（JSON Lines 文件，见 backend/oplog.py）：和数据库、上传件分开放
       - yvruc_oplog:/app/data/oplog
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     restart: unless-stopped
@@ -142,6 +151,20 @@ services:
       retries: 12
       start_period: 20s
       start_interval: 2s
+
+  # 一次性任务：把数据库升到代码里最新的迁移版本，跑完就退出。
+  # backend 等它成功才启动；后端自己只核对版本、不改表（见 backend/database.py）。
+  # 多个进程只起一份迁移；手工再跑一遍也无妨，迁移锁让后来的等前一个跑完。
+  migrate:
+    build: *backend_build
+    image: yvruc-backend:local
+    container_name: yvruc-migrate
+    environment: *backend_env
+    entrypoint: ["python", "-X", "utf8", "-m", "backend.migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   web:
     build:
@@ -219,7 +242,7 @@ services:
     image: yvruc-backend:test
     container_name: yvruc-tests
     environment:
-      YVRUC_TEST_DATABASE_URL: postgresql+psycopg://yvruc:${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}@postgres:5432/yvruc_test
+      YVRUC_TEST_DATABASE_URL: postgresql+psycopg://yvruc:${POSTGRES_PASSWORD:-}@postgres:5432/yvruc_test
       YVRUC_TEST_REDIS_URL: redis://redis:6379/1
       YVRUC_DEMO_PASSWORD: test-pass
       # 学校对接参数显式置空：不用 x-backend-env，也不让 .env 里的真实值漏进来，

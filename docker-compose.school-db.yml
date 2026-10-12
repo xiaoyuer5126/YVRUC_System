@@ -1,0 +1,29 @@
+# 连外部数据库（学校统一数据库）时叠加在 docker-compose.yml 之上：不起本地 postgres 容器，
+# 迁移、后端、seed 都不再等它。数据库地址取 .env 里的 YVRUC_DATABASE_URL。
+#
+# 在 .env 里加一行，之后的 docker compose 命令都会自动带上这份文件：
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.school-db.yml
+# （Windows 上分隔符是分号：docker-compose.yml;docker-compose.school-db.yml）
+#
+# 回归测试（tests 服务）仍需本地 postgres，不在这种部署上跑。
+services:
+  postgres:
+    profiles: ["localdb"]
+
+  migrate:
+    depends_on: !reset {}
+
+  backend:
+    depends_on: !override
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  seed:
+    depends_on: !reset {}
+
+  tests:
+    depends_on: !override
+      redis:
+        condition: service_healthy

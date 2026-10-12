@@ -1,18 +1,14 @@
-"""数据库会话与建表。
+"""数据库会话。
 
-连 YVRUC_DATABASE_URL 指向的 PostgreSQL（compose 内为 postgres 服务）。
+连 YVRUC_DATABASE_URL 指向的 PostgreSQL（compose 里默认是 postgres 容器，也可以是外部的库）。
 连不上就启动失败：静默降级到别的库只会让人对着一份空数据发懵。
 """
 from __future__ import annotations
 
-import logging
-
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from . import config
-
-logger = logging.getLogger(__name__)
 
 engine = create_engine(config.DATABASE_URL, pool_pre_ping=True, future=True,
                        pool_size=config.DB_POOL_SIZE,
@@ -26,82 +22,23 @@ class Base(DeclarativeBase):
     pass
 
 
-def _model_metadata(metadata):
-    """拿到模型那份 metadata；没传就先确保模型已注册。
+def check_schema(bind=None) -> None:
+    """启动时核对库的迁移版本。不是代码里最新的那一版就别起来。
 
-    模型没导入时 `Base.metadata` 是**空的**，比对会得出「哪儿都一致」——自检
-    反倒成了哑巴。所有入口都走这里，免得依赖调用顺序。
+    表结构只由迁移改（python -m backend.migrate，部署时 compose 的 migrate 服务
+    先跑它）。版本对不上时硬起来，新加的列在库里没有，要跑到某个页面才 500，
+    前端把 500 渲染成空列表，看着像数据丢了。所以在启动那一秒把话说明白；
+    容器会反复重启，日志里一直有这一条，不会被漏看。
     """
-    if metadata is not None:
-        return metadata
-    from . import models  # noqa: F401
-    return Base.metadata
-
-
-def schema_gaps(metadata=None, inspector=None) -> list[str]:
-    """模型与库对不上、会让写入失败的表和列。空列表 = 一致。
-
-    两种：模型声明了、库里却没有的表和列；库里有、模型里已经没有，又不许为空
-    也没有默认值的列。后一种（模型删了列、库没重建）不影响读，但往这张表插
-    一行就因为那一列是空的而 500，要到有人写这张表时才暴露。
-
-    这个项目**没有迁移工具**，`create_all` 只建缺失的表、从不给已有的表加列。
-    所以少了这一步，「模型加了列、库里没有」就不在启动时暴露，而是跑到某个
-    页面才 500——前端把 500 渲染成空列表，看着像数据丢了。
-    """
-    metadata = _model_metadata(metadata)
-    insp = inspect(engine) if inspector is None else inspector
-    gaps: list[str] = []
-    for table in metadata.sorted_tables:
-        if not insp.has_table(table.name):
-            gaps.append(f"{table.name}：整张表都没有")
-            continue
-        columns = insp.get_columns(table.name)
-        have = {c["name"] for c in columns}
-        declared = {c.name for c in table.columns}
-        missing = sorted(declared - have)
-        if missing:
-            gaps.append(f"{table.name}：缺列 {missing}")
-        stale = sorted(c["name"] for c in columns
-                       if c["name"] not in declared
-                       and not c.get("nullable", True) and c.get("default") is None)
-        if stale:
-            gaps.append(f"{table.name}：多出模型里已删掉、又不能为空的列 {stale}")
-    return gaps
-
-
-def extra_tables(metadata=None, inspector=None) -> list[str]:
-    """库里有、模型里没有的表。改名留下的旧表，不影响运行，提醒一句。"""
-    metadata = _model_metadata(metadata)
-    insp = inspect(engine) if inspector is None else inspector
-    known = {t.name for t in metadata.sorted_tables}
-    return sorted(set(insp.get_table_names()) - known - {"spatial_ref_sys"})
-
-
-def check_schema() -> None:
-    """启动时对一遍模型与库。不一致就别起来——起也是半死不活。
-
-    比起「跑到哪个页面才 500」，在启动那一秒把话说明白更省事：那 5 列是哪个
-    表缺的、怎么补，都写在报错里。库真的落后时容器会反复重启，日志里一直
-    有这一条，不会被漏看。
-    """
-    gaps = schema_gaps()
-    if gaps:
+    from . import migrate
+    head = migrate.head_revision()
+    current = migrate.current_revision(bind or engine)
+    if current != head:
         raise RuntimeError(
-            "数据库与模型不一致，先修库再启动：\n  " + "\n  ".join(gaps)
-            + "\n（本项目没有迁移工具，create_all 只建缺失的表、不会给已有的表加列。"
-              "开发环境重跑 seed：docker compose --profile seed run --rm --build seed；"
-              "要保住数据就手工 ALTER TABLE … ADD COLUMN … / DROP COLUMN …）")
-    leftovers = extra_tables()
-    if leftovers:
-        logger.warning("库里还有模型里没有的表（改名留下的旧表，不影响运行）：%s",
-                       "、".join(leftovers))
-
-
-def init_db() -> None:
-    from . import models  # noqa: F401  确保模型注册完毕
-    Base.metadata.create_all(engine)
-    check_schema()
+            f"数据库版本 {current or '（没有版本记录）'} 不是代码要求的 {head}，先升级再启动：\n"
+            "  docker compose run --rm migrate\n"
+            "（不用 compose 时：python -m backend.migrate。库比代码还新，说明部署的是"
+            "旧代码，换回对应版本的代码。）")
 
 
 def db_session():

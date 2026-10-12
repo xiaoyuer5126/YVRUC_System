@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config, crypto, locks, oplog, scheduled
-from .database import SessionLocal, init_db
+from .database import SessionLocal, check_schema
 from .routers import all_routers
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="志愿服务管理平台", version="1.0.0",
                   lifespan=lifespan, docs_url=docs, redoc_url=None,
                   openapi_url="/openapi.json" if config.EXPOSE_API_DOCS else None)
-    init_db()
+    check_schema()
     for r in all_routers:
         app.include_router(r)
     # 操作日志：改数据的请求、登录、导出下载，响应发出后记一条（见 oplog.py）
