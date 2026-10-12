@@ -41,14 +41,14 @@ def demo_login_enabled() -> bool:
 def sso_mode():
     """当前登录方式：真实 SSO 时前端显示跳转按钮，演示模式时显示口令表单。
 
-    只回**方式**与**是否配好**，不回跳转地址——那个要点击时才取，见下。
+    只回**方式**，不回跳转地址——那个要点击时才取，见下。
     """
     if demo_login_enabled():
-        return {"mode": "demo", "ready": False}
+        return {"mode": "demo"}
     if sso.mode() == "mock":
-        # SSO 未配置且未开演示登录：谁也进不来，如实告诉前端
-        return {"mode": "unavailable", "ready": False}
-    return {"mode": sso.mode(), "ready": sso.configured()}
+        # SSO 没开且未开演示登录：谁也进不来，如实告诉前端
+        return {"mode": "unavailable"}
+    return {"mode": sso.mode()}
 
 
 @router.get("/sso-login-url")
@@ -62,10 +62,7 @@ def sso_login_url(next: str = ""):
     """
     if sso.mode() == "mock":
         raise HTTPException(409, "统一身份认证尚未接通")
-    url = sso.login_url(next)
-    if not url:
-        raise HTTPException(503, "统一身份认证未配置，请联系管理员")
-    return {"login_url": url}
+    return {"login_url": sso.login_url(next)}
 
 
 class DemoLoginBody(BaseModel):
@@ -283,7 +280,6 @@ def download_ticket(body: TicketBody, user: User = Depends(current_user)):
 @router.get("/constants")
 def constants(user: User = Depends(current_user)):
     from .. import ai
-    from ..integrations import DEFAULTS
     return {
         "recruit_modes": config.RECRUIT_MODES,
         "violation_kinds": ViolationRecord.KINDS,
@@ -297,7 +293,6 @@ def constants(user: User = Depends(current_user)):
             # 确认窗夜间不计时的起止整点，[23, 8] 即 23:00–次日 8:00
             "confirm_quiet": [config.PROMOTE_QUIET_START, config.PROMOTE_QUIET_END],
         },
-        "integration_labels": {k: v["label"] for k, v in DEFAULTS.items()},
         # 活动管理里的 智能起草按钮：没配 key 就不出现
         "ai_enabled": ai.enabled(),
     }

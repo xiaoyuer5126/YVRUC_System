@@ -116,6 +116,14 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 | `YVRUC_ID_CARD_KEY` | 身份证号的加密密钥，必填。**必须与数据库分开保管**，否则加密只是走过场；换密钥等于已有数据读不出来（先解密导出再重新写入） |
 | `YVRUC_DEMO_PASSWORD` | 内测登录共享口令。**留空则整个演示登录接口不存在**；SSO 接通后必须留空 |
 | `YVRUC_BOOTSTRAP_ADMINS` | 初始管理员的学号（教工号），逗号分隔。列在这里的人每次经统一身份认证登录，缺管理员身份就补上（原有身份保留，记一条审计），空库上线时用它指定第一个管理员；演示登录不受影响。**要撤掉其中某人的管理员，先从这里删掉学号再到「角色」页撤，否则下次登录会被补回**。留空 = 不启用 |
+| `YVRUC_SSO_ENABLED` | 统一身份认证登录：`1` 走真实接口，留空或 `0` 走演示模式。开了却缺参数，后端拒绝启动并写明缺哪一项 |
+| `YVRUC_MSGCENTER_ENABLED` | 消息中心推送：`1` 经学校消息中心下发，留空或 `0` 只落站内消息。开了要填齐开放平台的 appid、secret、网关 |
+| `YVRUC_OPENPLATFORM_APPID` / `_SECRET` / `_GATEWAY` | 学校开放平台的应用标识、密钥、网关，在应用中心注册应用后获得 |
+| `YVRUC_CAS_BASE_URL` | 统一身份认证根地址，OAuth 三个端点按它拼 |
+| `YVRUC_SSO_AUTHORIZE_URL` / `_TOKEN_URL` / `_USER_INFO_URL` | 单独指定 OAuth 端点，留空按 `YVRUC_CAS_BASE_URL` 拼 |
+| `YVRUC_SSO_CLIENT_ID` / `_CLIENT_SECRET` | OAuth 的 client_id / secret，留空用开放平台的 appid / secret |
+| `YVRUC_SSO_REDIRECT_URI` | OAuth 回调地址，必须与应用中心登记的一字不差 |
+| `YVRUC_MSGCENTER_CHANNELS` | 推送通道，`2` 邮件、`4` 企业微信，逗号分隔，默认 `4`。填 `1`（短信）后端拒绝启动 |
 | `YVRUC_PUBLIC_BASE_URL` | 平台对外网址（多个用逗号分隔）。二维码里写的就是它，只有列在这里的域名才允许出现在码里。与 `caddy.env` 的 `YVRUC_DOMAIN` 填同一个 |
 | `YVRUC_EXPOSE_DOCS` | 设为 `1` 才暴露 `/docs` 与 `/openapi.json`，默认关闭 |
 | `YVRUC_TIANDITU_TK_SERVER` | 天地图**服务端** tk：管理端地图瓦片转发 + 地名搜索。要在天地图后台登记服务器公网出口 IP；只在后端用，不进前端。留空 = 地图只显示点和圈 |
@@ -134,7 +142,7 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 ### 登录方式
 
 学校统一身份认证（微人大，走 CAS 服务器上的 OAuth2.0 接口）是唯一正式入口，
-参数在「集成设置」页配置。
+开关和参数在 `.env`（见上表 `YVRUC_SSO_*`），改完执行 `docker compose up -d` 生效。
 接通之前，开发小组用 `POST /api/auth/demo-login`（学号 + `YVRUC_DEMO_PASSWORD` 共享口令）
 登录；口令连错 10 次锁该来源 IP 5 分钟。`GET /api/auth/sso-mode` 会如实告诉前端当前是
 哪种情形（演示登录 / SSO 已接通 / 两者都没有、谁也进不来）。
@@ -198,7 +206,7 @@ docker compose up -d                                  # migrate 先把恢复出�
 |---|---|---|
 | 身份 | `User.roles`，可多个 | `admin` 管理员 / `qingxie` 青协 / `initiator` 活动发起方 / `student` 学生。顶栏切换视角；路由守卫在视角不够但持有对应身份时自动切换放行 |
 | 类型 | `User.user_type`，二选一 | `teacher` / `student`。**老师类型不参与志愿报名**（自主报名与管理员补录均拦截），也不用补充个人信息；老师首次登录即自动获得 `initiator` 活动发起方身份，学生获得 `student` |
-| 青协层级 | `User.qingxie_post` | `council` 会长团（除集成设置外与管理员同权）/ `head` 部长 / `core` 部门骨干 / `member` 部门成员 |
+| 青协层级 | `User.qingxie_post` | `council` 会长团（除平台公告、操作日志、意见反馈外与管理员同权）/ `head` 部长 / `core` 部门骨干 / `member` 部门成员 |
 | 活动级 | `activity_managers` | 谁能看、能操作哪个活动（见下） |
 
 **部门成员是「学习权限」**：平时就是来报名的学生，切到青协视角能进工作台、能看，
@@ -208,7 +216,6 @@ docker compose up -d                                  # migrate 先把恢复出�
 | 页面 | 可见身份 |
 |---|---|
 | 数据总览 dashboard | 管理员、会长团 |
-| 集成设置 integrations | 仅管理员 |
 | 平台公告 announcement | 仅管理员 |
 | 操作日志 oplogs | 仅管理员（会长团也不行） |
 | 志愿者档案 users | 管理员、会长团、部长 |
@@ -477,14 +484,15 @@ docker compose up -d                                  # migrate 先把恢复出�
   一个区间，汇总加总不重复），补记录活动也算（时间取建活动时填的）。导出发的是数据，
   不产生通知。
 - **审计留痕中心**：活动/场次/岗位增删改、发布、审批与转交、分配与强制分配、签到任务、
-  导出、调分、违规登记、集成配置变更全记录（字段级 diff）。部分日志对志愿者可见，
+  导出、调分、违规登记全记录（字段级 diff）。部分日志对志愿者可见，
   在活动页公示摘要；其余按活动级可见范围过滤。
 
 ## 八、外部对接适配层（backend/integrations/）
 
 两个适配器：`msgcenter` 消息中心 / `sso` 统一身份认证。
-参数存 `integration_configs` 表，「集成设置」页在线切换 `enabled=true`
-即启用真实 HTTP 调用，改完生效、无需重启；**开关已开但必填参数为空时自动回落演示模式**。
+开关和参数都在 `.env`：`YVRUC_SSO_ENABLED`、`YVRUC_MSGCENTER_ENABLED` 填 `1` 启用真实
+HTTP 调用，改完执行 `docker compose up -d` 重启后端生效。**开关已开但必填参数为空、
+或推送通道里有短信（`1`），后端拒绝启动**，报错里写明改哪个变量。
 
 演示模式行为：消息中心把模板消息落 `notifications` 表
 （消息中心即收件箱，模板库 13 类场景），发送失败只标 `delivered=False`，不打断业务；

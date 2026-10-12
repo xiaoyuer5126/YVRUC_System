@@ -27,7 +27,6 @@ const routes = [
       { path: 'audit', component: () => import('./views/AuditLogsView.vue'), meta: { page: 'audit' } },
       { path: 'volunteers', component: () => import('./views/VolunteerArchiveView.vue'), meta: { page: 'volunteers' } },
       { path: 'roles', component: () => import('./views/RolesView.vue'), meta: { page: 'roles' } },
-      { path: 'integrations', component: () => import('./views/IntegrationsView.vue'), meta: { page: 'integrations' } },
       { path: 'announcement', component: () => import('./views/AnnouncementView.vue'), meta: { page: 'announcement' } },
       { path: 'oplogs', component: () => import('./views/OplogsView.vue'), meta: { page: 'oplogs' } },
       { path: 'feedback', component: () => import('./views/FeedbackAdminView.vue'), meta: { page: 'feedback' } },
@@ -115,7 +114,7 @@ router.beforeEach((to) => {
   // 当前视角不够 → 若持有对应身份则自动切换视角放行
   const adminOr = hasIdentity('admin') ? 'admin' : 'qingxie'
   const wanted = {
-    integrations: 'admin', feedback: 'admin', announcement: 'admin', oplogs: 'admin',
+    feedback: 'admin', announcement: 'admin', oplogs: 'admin',
     dashboard: adminOr, roles: adminOr, users: adminOr, approvals: adminOr,
     manage: hasIdentity('admin') ? 'admin' : hasIdentity('initiator') ? 'initiator' : 'qingxie',
     audit: hasIdentity('admin') ? 'admin' : hasIdentity('initiator') ? 'initiator' : 'qingxie',

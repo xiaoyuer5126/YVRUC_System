@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, crypto, locks, oplog, scheduled
+from . import config, crypto, integrations, locks, oplog, scheduled
 from .database import SessionLocal, check_schema
 from .routers import all_routers
 
@@ -81,6 +81,7 @@ async def lifespan(_app: FastAPI):
     anyio.to_thread.current_default_thread_limiter().total_tokens = config.THREADS
     locks.ping()          # Redis 是硬依赖：连不上就别假装能扛住抢报
     crypto.check()        # 身份证号的密钥：不对就别起来，别等到有人填资料
+    integrations.check()  # 学校对接：开关开了参数却没填齐、或配了短信，不让起来
     logger.info("数据库：%s", config.DATABASE_URL.split("@")[-1])
     if config.DEMO_LOGIN_PASSWORD:
         logger.warning("演示登录已启用（口令登录）。接入统一身份认证后请清空 "

@@ -1,7 +1,7 @@
-"""管理端：工作台统计、审计日志、志愿者档案与违规记录、集成设置。
+"""管理端：工作台统计、审计日志、志愿者档案与违规记录。
 
 页面可见性：
-  · 数据总览 → 管理员 / 会长团；集成设置 → 仅管理员
+  · 数据总览 → 管理员 / 会长团
   · 审计日志 → 活动发起方/青协/管理员（非全权者只看自己能管的活动）
   · 志愿者档案（全校名册）→ 管理员 / 会长团 / 部长；
     活动内点姓名看档案 → 该活动的管理者，且只限报了这场活动的人
@@ -20,11 +20,10 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import config, scoring
 from ..audit import log as audit_log
 from ..database import db_session
-from ..deps import (require_admin, require_archive_page, require_council,
+from ..deps import (require_archive_page, require_council,
                     require_council_download, require_manager)
 from ..exporter import (activities_ending_in, activity_hours,
                         build_activities_summary_workbook)
-from ..integrations import all_configs, save_config
 from ..models import (Activity, AuditLog, CheckinRecord, Enrollment,
                       HoursRecord, Shift, User, ViolationRecord, iso,
                       like_pattern, now, parse_local_dt, span_text, uid)
@@ -457,29 +456,3 @@ def delete_violation(record_id: str, db: OrmSession = Depends(db_session),
     db.delete(v)
     db.commit()
     return {"ok": True}
-
-
-# ======================= 集成设置（仅管理员） =======================
-
-@router.get("/integrations")
-def get_integrations(db: OrmSession = Depends(db_session),
-                     user: User = Depends(require_admin)):
-    return all_configs()
-
-
-@router.put("/integrations/{key}")
-def put_integration(key: str, body: dict,
-                    db: OrmSession = Depends(db_session),
-                    user: User = Depends(require_admin)):
-    from ..integrations import DEFAULTS
-    if key not in DEFAULTS:
-        raise HTTPException(404, "未知集成项")
-    clean = {k: v for k, v in body.items() if k not in ("key", "label")}
-    save_config(key, clean)
-    cfg = next(c for c in all_configs() if c["key"] == key)
-    audit_log(db, actor=user, action="integration", target_type="integration",
-              target_id=key, target_label=cfg.get("label", key),
-              summary=f"更新「{cfg.get('label', key)}」对接配置"
-                      f"（{'真实接口' if cfg.get('enabled') else '演示模式'}）")
-    db.commit()
-    return cfg

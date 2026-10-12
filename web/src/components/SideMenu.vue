@@ -16,9 +16,6 @@
       <el-menu-item v-if="canSee.roles()" index="/roles">
         <el-icon><Key /></el-icon>角色管理
       </el-menu-item>
-      <el-menu-item v-if="canSee.integrations()" index="/integrations">
-        <el-icon><Link /></el-icon>集成设置
-      </el-menu-item>
       <el-menu-item v-if="canSee.announcement()" index="/announcement">
         <el-icon><Promotion /></el-icon>平台公告
       </el-menu-item>
@@ -42,7 +39,7 @@
 
 <script setup>
 import {
-  Bell, Calendar, ChatDotRound, Clock, Compass, Document, Key, Link, List, Odometer,
+  Bell, Calendar, ChatDotRound, Clock, Compass, Document, Key, List, Odometer,
   Promotion, Stamp, Tickets, UserFilled,
 } from '@element-plus/icons-vue'
 import { auth, canSee, ROLE_LABELS } from '../store'

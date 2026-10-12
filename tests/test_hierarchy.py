@@ -66,7 +66,7 @@ def _staff_write_routes():
 # 这些接口的门槛比「管理身份」更高（管理员/会长团/部长/骨干），部门成员在
 # 那一道就被拦下，轮不到学习权限出场。点名列出：新接口不在表里就必须是学习权限拦的。
 STRICTER_GATE = {"create_department", "update_department", "delete_department",
-                 "pin", "put_integration", "set_roles", "batch_roles",
+                 "pin", "set_roles", "batch_roles",
                  "handle_feedback", "put_announcement",
                  # 校外时长补登的拍板：对外联络部值班人/部长 + 会长团/管理员
                  "decide_claim", "revoke_claim"}
@@ -190,12 +190,12 @@ def test_部长看本部门全部含草稿而骨干只看自己管的(client, db
     assert aid in [a["id"] for a in client.get("/api/staff/activities", headers=core).json()["items"]]
 
 
-def test_会长团除集成设置外与管理员同权(client, db):
+def test_会长团除平台管理页外与管理员同权(client, db):
     council = login(client, COUNCIL)
     assert client.get("/api/staff/overview", headers=council).status_code == 200
     assert client.get("/api/staff/roles", headers=council).status_code == 200
     assert client.get("/api/staff/users", headers=council).status_code == 200
-    assert client.get("/api/staff/integrations", headers=council).status_code == 403
+    assert client.get("/api/staff/announcement", headers=council).status_code == 403
 
 
 def test_骨干进不了档案与总览(client):

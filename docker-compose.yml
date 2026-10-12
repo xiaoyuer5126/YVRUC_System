@@ -47,13 +47,22 @@ x-backend-env: &backend_env
   YVRUC_PUBLIC_BASE_URL: ${YVRUC_PUBLIC_BASE_URL:-}
   YVRUC_SITE_URL: ${YVRUC_SITE_URL:-}
   YVRUC_ID_CARD_KEY: ${YVRUC_ID_CARD_KEY:?请在 .env 设置 YVRUC_ID_CARD_KEY（见 .env.example）}
-  # 学校开放平台（能力开放平台 / 统一认证）。留空 = 相关能力回落 Mock。
+  # 学校对接（统一身份认证、消息中心）。两个开关填 1 走真实接口，留空走演示 Mock；
+  # 开关开了参数却没填齐，后端拒绝启动。改了要 docker compose up -d 才生效。
   # tests 服务把这几个变量显式置空：测试永远跑在 Mock 下，碰不到真实接口。
+  YVRUC_SSO_ENABLED: ${YVRUC_SSO_ENABLED:-}
+  YVRUC_MSGCENTER_ENABLED: ${YVRUC_MSGCENTER_ENABLED:-}
   YVRUC_OPENPLATFORM_APPID: ${YVRUC_OPENPLATFORM_APPID:-}
   YVRUC_OPENPLATFORM_SECRET: ${YVRUC_OPENPLATFORM_SECRET:-}
   YVRUC_OPENPLATFORM_GATEWAY: ${YVRUC_OPENPLATFORM_GATEWAY:-}
   YVRUC_CAS_BASE_URL: ${YVRUC_CAS_BASE_URL:-}
+  YVRUC_SSO_AUTHORIZE_URL: ${YVRUC_SSO_AUTHORIZE_URL:-}
+  YVRUC_SSO_TOKEN_URL: ${YVRUC_SSO_TOKEN_URL:-}
+  YVRUC_SSO_USER_INFO_URL: ${YVRUC_SSO_USER_INFO_URL:-}
+  YVRUC_SSO_CLIENT_ID: ${YVRUC_SSO_CLIENT_ID:-}
+  YVRUC_SSO_CLIENT_SECRET: ${YVRUC_SSO_CLIENT_SECRET:-}
   YVRUC_SSO_REDIRECT_URI: ${YVRUC_SSO_REDIRECT_URI:-}
+  YVRUC_MSGCENTER_CHANNELS: ${YVRUC_MSGCENTER_CHANNELS:-}
   # 天地图（管理端画签到点用）。瓦片由后端转发，只用服务端 tk（瓦片 + 地名搜索，
   # 按服务器 IP 白名单校验），只在后端用、不进前端；没配则地图只画点和圈。
   # 注意这一份是逐个变量列出来的——往 .env 加了新变量，忘了在这儿加一行，
@@ -279,11 +288,19 @@ services:
       # 学校对接参数显式置空：不用 x-backend-env，也不让 .env 里的真实值漏进来，
       # 否则全量 pytest 会往学校网关、统一身份认证上打请求。tests/conftest.py
       # 导入 backend 之前还会再清一遍
+      YVRUC_SSO_ENABLED: ""
+      YVRUC_MSGCENTER_ENABLED: ""
       YVRUC_OPENPLATFORM_APPID: ""
       YVRUC_OPENPLATFORM_SECRET: ""
       YVRUC_OPENPLATFORM_GATEWAY: ""
       YVRUC_CAS_BASE_URL: ""
+      YVRUC_SSO_AUTHORIZE_URL: ""
+      YVRUC_SSO_TOKEN_URL: ""
+      YVRUC_SSO_USER_INFO_URL: ""
+      YVRUC_SSO_CLIENT_ID: ""
+      YVRUC_SSO_CLIENT_SECRET: ""
       YVRUC_SSO_REDIRECT_URI: ""
+      YVRUC_MSGCENTER_CHANNELS: ""
       TZ: Asia/Shanghai
     depends_on:
       postgres:
