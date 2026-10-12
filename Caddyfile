@@ -19,7 +19,8 @@
 # 会尝试回源到那个内网 IP，整个域名就挂了。
 #
 # 镜像里的 Caddy 必须带 Cloudflare DNS 插件：官方 caddy 镜像没有，会报
-# unknown directive: dns —— 见 Caddyfile.Dockerfile（两个版本都要钉住）。
+# unknown directive: dns —— 所以用 caddybuilds/caddy-cloudflare，见 docker-compose.yml
+# 的 caddy 服务。
 
 {$YVRUC_DOMAIN} {
 	encode zstd gzip
@@ -28,9 +29,9 @@
 		dns cloudflare {env.CF_API_TOKEN}
 	}
 
-	# 客户端地址只靠 X-Forwarded-For 传：Caddy 会保留上游已有的链、再追加自己
-	# 看到的对端，web 容器里的 nginx 用 real_ip 取**最右边那一跳**还原真实客户端
-	# （见 web/nginx.conf）。不另外发 X-Real-IP：两条来源一旦不一致，操作日志里
+	# 客户端地址只靠 X-Forwarded-For 传：这里没配 trusted_proxies，Caddy 丢掉
+	# 客户端自带的这个头，只写自己看到的对端；web 容器里的 nginx 用 real_ip 取
+	# **最右边那一跳**还原真实客户端（见 web/nginx.conf.template）。不另外发 X-Real-IP：两条来源一旦不一致，操作日志里
 	# 的 IP 与登录失败限流就会各记各的。
 	reverse_proxy web:80
 }

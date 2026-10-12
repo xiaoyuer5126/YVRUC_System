@@ -153,12 +153,11 @@ services:
       # nginx 配置模板里的 set_real_ip_from：信任哪些来源的 X-Forwarded-For。
       # 默认值要与文件末尾 networks 的网段一致，改一处就得改两处。
       YVRUC_TRUSTED_PROXY_CIDR: ${YVRUC_TRUSTED_PROXY_CIDR:-172.30.0.0/16}
-    ports: []
-    # 上面这个空数组是有意的：不对宿主机开端口，内网经 caddy、公网经 cloudflared，
-    # 两者都在 compose 网络里按服务名访问 web:80。绑 0.0.0.0 等于多开一个绕过 TLS
-    # 终止的明文入口。要从本机直接量前端时，把下面这行挪进上面的数组
-    # （curl http://127.0.0.1:8080/）：
-    # - "127.0.0.1:${WEB_HOST_PORT:-8080}:80"
+    # 对外的入口是 caddy（内网）和 cloudflared（公网），两者都在 compose 网络里按
+    # 服务名访问 web:80。这里的映射只绑 127.0.0.1，局域网连不上，不构成绕过 TLS
+    # 的入口；本机调试和 CI 的页面自检（scripts/viewcheck.mjs）走它。
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-8080}:80"
     depends_on:
       backend:
         condition: service_healthy
@@ -183,8 +182,11 @@ services:
     ports:
       - "80:80"      # 只用来把 http 跳成 https；占用不了就删掉这一行
       - "443:443"
+    # YVRUC_DOMAIN 与 CF_API_TOKEN，见 caddy.env.example。文件可以不存在：CI 和
+    # 只跑测试的机器上没有它，compose 照常加载其余服务；要起 caddy 时必须有。
     env_file:
-      - caddy.env    # YVRUC_DOMAIN 与 CF_API_TOKEN，见 caddy.env.example
+      - path: caddy.env
+        required: false
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # 证书与账户密钥必须持久化：不挂卷的话每次 up --build 都会重新签发一张，
@@ -198,7 +200,7 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: yvruc-cloudflared
-    # 固定域名隧道，内测期间的第二个入口（另一个是 443 直连，见 web 服务）。
+    # 固定域名隧道，内测期间的第二个入口（另一个是 443 直连，见 caddy 服务）。
     # token 存于 .env 的 CLOUDFLARE_TOKEN（勿提交/外传）。
     # 官方镜像为 distroless（无 shell），故命令必须直接可执行、不能做条件分支。
     command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TOKEN}"]

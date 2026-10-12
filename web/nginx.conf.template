@@ -12,8 +12,8 @@
 
 # —— 真实客户端地址 ——
 # 本容器前面一定有一跳反代（caddy 或 cloudflared），它看到的对端只是那一跳的
-# 容器 IP。反代在 X-Forwarded-For 里保留了真实客户端（caddy 会把上游已有的链
-# 原样带上、再追加自己看到的对端），这里用 real_ip 模块把它还原成 $remote_addr：
+# 容器 IP。反代把它看到的真实客户端写在 X-Forwarded-For 的最右边（caddy 丢掉
+# 客户端自带的这个头、只写自己看到的对端），这里用 real_ip 模块把它还原成 $remote_addr：
 # 不这样做，操作日志里的 IP 全是容器地址，登录失败限流也会把所有人算成一个人。
 #
 # real_ip_recursive off = 取**最右边那一跳**。后端启动参数是

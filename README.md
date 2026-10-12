@@ -23,7 +23,10 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 yv
     `浏览器 ──https──▶ Cloudflare ──隧道──▶ web:80 ──▶ 同上`
 - 平台域名写两处：`.env` 的 `YVRUC_PUBLIC_BASE_URL`（二维码与通知链接用它）和
   `caddy.env` 的 `YVRUC_DOMAIN`（caddy 按它签证书），两个填同一个。
-- 数据库 5433 / Redis 6380 / 后端 8000 都只绑 `127.0.0.1`，调试用得上、公网碰不到。
+- 前端 8080 / 数据库 5433 / Redis 6380 / 后端 8000 都只绑 `127.0.0.1`，调试用得上、
+  局域网和公网都连不上。本机直接打开 http://127.0.0.1:8080 可绕开 caddy 看前端，
+  CI 的页面自检也走这里。
+- `caddy.env` 不存在时 compose 照常加载（CI 上就没有），只是 caddy 起不来。
 - `docker logs yvruc-caddy` 看证书签发，`docker logs yvruc-cloudflared` 看隧道状态。
 - 上传的活动二维码存命名卷 `yvruc_uploads`，学习材料、立项书与结项书、模板和反馈截图存
   `yvruc_materials`，数据库存 `yvruc_pgdata`，caddy 的证书与账户密钥存 `yvruc_caddy_data`。
@@ -45,10 +48,10 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 - 镜像里的 Caddy 必须带 Cloudflare DNS 插件：官方 `caddy` 镜像没有，会报
   `unknown directive: dns`。所以用 `caddybuilds/caddy-cloudflare`（同一作者的
   `ghcr.io` 那份已经拉不到，registry 返回 denied；Docker Hub 这份正常）。
-- **钉具体版本，别用 latest**（compose 里是 `:2.11.7`）：镜像里 Caddy 与插件的
-  组合一旦对不上，会在装配 TLS 时 panic，报
-  `expected ModuleMap because inline_key is empty`——这句话完全不指向版本，会让人
-  去查配置（v2.9/v2.10 配插件 v0.2.x 就是这样）。换版本后确认证书还能签下来。
+- 镜像用 `latest`，重建时跟着镜像作者的最新版本走。镜像里 Caddy 与插件的组合
+  一旦对不上，会在装配 TLS 时 panic，报 `expected ModuleMap because inline_key is empty`
+  ——这句话完全不指向版本，会让人去查配置（v2.9/v2.10 配插件 v0.2.x 就是这样）。
+  撞上就换回已知能用的标签（如 `:2.11.7`），并确认证书还能签下来。
 - 证书落在命名卷 `yvruc_caddy_data`，**别随手 `down -v`**：卷一删就重新签发，
   而 Let's Encrypt 对同一注册域限每周 50 张，调试期间重建几次会被锁一周。
   真要反复试配置，先在 Caddyfile 顶部加 `{ local_certs }`（浏览器会报证书不受信任，
@@ -469,7 +472,7 @@ YVRUC_System/
 │   │                             档案、违规与集成配置）
 │   └── integrations/           msgcenter / sso
 └── web/                        Vue3 + Element Plus + ECharts（Vite，无 Pinia）
-    ├── Dockerfile / nginx.conf Node 构建 → nginx 托管并反代 /api；
+    ├── Dockerfile / nginx.conf.template  Node 构建 → nginx 托管并反代 /api；
     │                          只监听 80，TLS 由前面的 caddy 或 Cloudflare 终止
     └── src/
         ├── views/              学生端 + 工作台 + 登录 / 扫码落地页
