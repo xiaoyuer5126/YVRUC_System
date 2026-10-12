@@ -14,7 +14,10 @@ RUN npm run build
 
 FROM nginx:1.27-alpine
 
-COPY web/nginx.conf /etc/nginx/conf.d/default.conf
+# 文件名带 .template：nginx 入口脚本启动时把 ${...} 换成环境变量再写到
+# /etc/nginx/conf.d/default.conf（目前只有 YVRUC_TRUSTED_PROXY_CIDR，见 compose）
+COPY web/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /src/web/dist /usr/share/nginx/html
 
+# 只监听 80：TLS 在 caddy（内网）或 Cloudflare 边缘（公网）终止
 EXPOSE 80
