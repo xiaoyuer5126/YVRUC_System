@@ -97,11 +97,19 @@ jobs:
       TZ: Asia/Shanghai
       # 学校侧的对接参数一律留空：消息中心与统一身份认证因此走演示模式，
       # 测试不会往学校的接口上打任何请求
+      YVRUC_SSO_ENABLED: ""
+      YVRUC_MSGCENTER_ENABLED: ""
       YVRUC_OPENPLATFORM_APPID: ""
       YVRUC_OPENPLATFORM_SECRET: ""
       YVRUC_OPENPLATFORM_GATEWAY: ""
       YVRUC_CAS_BASE_URL: ""
+      YVRUC_SSO_AUTHORIZE_URL: ""
+      YVRUC_SSO_TOKEN_URL: ""
+      YVRUC_SSO_USER_INFO_URL: ""
+      YVRUC_SSO_CLIENT_ID: ""
+      YVRUC_SSO_CLIENT_SECRET: ""
       YVRUC_SSO_REDIRECT_URI: ""
+      YVRUC_MSGCENTER_CHANNELS: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

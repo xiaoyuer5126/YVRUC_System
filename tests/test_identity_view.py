@@ -131,7 +131,7 @@ def test_伪造身份头不会提权(client, db):
     assert forged.status_code == 200
     assert _sids(forged.json()["items"]) == plain
     assert ADMIN not in _sids(forged.json()["items"])
-    assert client.get("/api/staff/integrations",
+    assert client.get("/api/staff/announcement",
                       headers=_as(h, "admin")).status_code == 403
     assert client.get("/api/staff/overview",
                       headers=_as(h, "admin")).status_code == 403
@@ -143,10 +143,10 @@ def test_伪造身份头不会提权(client, db):
 # ---------- d. 不带头按并集 ----------
 
 def test_不带头按全部身份判权(client, admin):
-    assert client.get("/api/staff/integrations", headers=admin).status_code == 200
+    assert client.get("/api/staff/announcement", headers=admin).status_code == 200
     assert client.get("/api/staff/overview", headers=admin).status_code == 200
     h = login(client, CORE)
-    assert client.get("/api/staff/integrations", headers=h).status_code == 403
+    assert client.get("/api/staff/announcement", headers=h).status_code == 403
     assert client.get("/api/staff/roles", headers=h).status_code == 200
 
 
@@ -167,9 +167,9 @@ def test_管理员兼部门成员_身份决定能不能写(client, db, make_user
     # 管理员身份下照常能改
     r = client.put(f"/api/staff/roles/{target.id}", headers=_as(h, "admin"), json=body)
     assert r.status_code == 200, r.text
-    assert client.get("/api/staff/integrations",
+    assert client.get("/api/staff/announcement",
                       headers=_as(h, "admin")).status_code == 200
-    assert client.get("/api/staff/integrations",
+    assert client.get("/api/staff/announcement",
                       headers=_as(h, "qingxie")).status_code == 403
 
     # /me 下发的是身份事实，与当前身份无关

@@ -10,10 +10,14 @@ import urllib.request
 import pytest
 
 from backend import config, sudy_sign
-from backend.integrations import is_mock, msgcenter, sso
+from backend.integrations import msgcenter, sso
 
 
 def test_学校对接参数全是空的():
+    assert not config.SSO_ENABLED
+    assert not config.MSGCENTER_ENABLED
+    assert config.SSO_CLIENT_ID == ""
+    assert config.SSO_CLIENT_SECRET == ""
     assert config.OPENPLATFORM_APPID == ""
     assert config.OPENPLATFORM_SECRET == ""
     assert config.OPENPLATFORM_GATEWAY == ""
@@ -23,11 +27,9 @@ def test_学校对接参数全是空的():
 
 def test_统一身份认证走演示模式():
     assert sso.mode() == "mock"
-    assert not sso.configured()
 
 
 def test_消息中心走演示实现():
-    assert is_mock("msgcenter")
     assert not msgcenter.real_mode()
     assert not sudy_sign.configured()
 

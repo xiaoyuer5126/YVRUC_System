@@ -15,7 +15,6 @@
           <el-option value="user" label="用户/档案" />
           <el-option value="export" label="导出" />
           <el-option value="hours" label="时长" />
-          <el-option value="integration" label="集成配置" />
         </el-select>
         <el-checkbox v-model="onlyVisible" @change="load">仅志愿者可见</el-checkbox>
         <span class="dim">共 {{ total }} 条</span>

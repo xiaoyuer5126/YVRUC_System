@@ -3,121 +3,63 @@
 设计原则：
   · 每个外部系统一个客户端类，**接口稳定**：Mock 实现和真实 HTTP 实现
     满足同一组方法，业务代码只面向接口；
-  · 参数存 integration_configs 表，「集成设置」页可在线切换
-    enabled=false（演示/Mock） ↔ true（真实接口），改完即生效、无需重启；
-  · 学校信息化部门提供正式接口后，只需在 *_http.py 里补全调用细节。
+  · 开关和参数都在 .env（见 config.py「学校开放平台」一节），改了重启后端生效；
+  · 启动时 check() 核对一遍：开关打开却缺参数、或者配了短信通道，直接拒绝启动。
+    要是缺参数时悄悄回落演示模式，部署的人会以为已经接通了，直到有人登录不了、
+    收不到通知才发现。
 """
 from __future__ import annotations
 
-from sqlalchemy.orm import Session as OrmSession
+import os
 
 from .. import config
 
-from ..database import SessionLocal
-from ..models import IntegrationConfig
+# 开关只认这几种写法；true、yes 之类不认，免得以为打开了其实没开
+_FLAG_VALUES = {"", "0", "1"}
 
-DEFAULTS: dict[str, dict] = {
-    "msgcenter": {
-        "label": "消息中心",
-        "enabled": False,
-        # appid / gateway 默认取环境变量，这里只是兜底、可在「集成设置」页覆盖。
-        # secret 不进这张表：它会在 all_configs() 的响应里被原样吐给前端。
-        "appid": config.OPENPLATFORM_APPID,
-        "gateway": config.OPENPLATFORM_GATEWAY,
-        # 通道：1=短信，2=邮件，4=企业微信。**默认只发 4**——短信是按条计费的
-        # 真金白银，且学校未同意本平台发短信，代码里任何路径都不得出现 1。
-        "channels": "4",
-        "mode_hint": "经学校开放平台向学号对应的师生推送消息",
-        "capabilities": ["报名成功通知", "候补转正通知", "岗位分配通知",
-                          "活动变更警告", "时长核准通知"],
-    },
-    "sso": {
-        "label": "微人大统一身份认证",
-        "enabled": False,
-        # 只有 OAuth2.0 一条路径：学校给的就是 CAS 上的 OAuth 接口，
-        # CAS 原生那条不接（理由见 integrations/sso.py 文件头）。
-        # 留空则按 base_url 拼成 {base}/oauth2.0/{authorize,accessToken,user/profiles}
-        "base_url": config.CAS_BASE_URL,
-        "authorize_url": "",
-        "token_url": "",
-        "user_info_url": "",
-        # client_id/secret 默认借开放平台的 appid/secret（同一套应用注册）。
-        # 文档说 OAuth 的 client_id 由「后台 OAuth 配置维护」单独分配，未必是
-        # 同一个值——所以留了覆盖口子，对不上时在这里改成学校另给的那套。
-        "client_id": config.OPENPLATFORM_APPID,
-        "client_secret": "",
-        "redirect_uri": config.SSO_REDIRECT_URI,
-        "mode_hint": "OAuth2.0，师生登录平台唯一入口；演示期用内置模拟登录",
-        "capabilities": ["师生 SSO 登录"],
-    },
-}
+# 消息中心能用的通道：2=邮件，4=企业微信。1 是短信，单独报错（见 check）
+_CHANNELS = {"2", "4"}
 
 
-def get_config(key: str, db: OrmSession | None = None) -> dict:
-    """读某个对接配置（带默认值兜底）。
+def check() -> None:
+    """核对对接配置，有问题就抛 RuntimeError，错误信息写明改哪个变量。"""
+    problems: list[str] = []
+    for name in ("YVRUC_SSO_ENABLED", "YVRUC_MSGCENTER_ENABLED"):
+        raw = os.environ.get(name, "").strip()
+        if raw not in _FLAG_VALUES:
+            problems.append(f"{name}={raw!r}：只能填 1（真实接口）或留空 / 0（演示模式）")
 
-    db：调用方已经开着的会话。**请求里能传就传**：另开一个会话就是再占一条
-    连接，而调用方手里那条还没还——抢报时连接池已经满了，这第二条就要不到，
-    锁里的人卡住，排在后面的全跟着卡（2026-09-26 压测里测出来过）。
-    """
-    own = db is None
-    if own:
-        db = SessionLocal()
-    try:
-        row = db.get(IntegrationConfig, key)
-        cfg = dict(DEFAULTS.get(key, {}))
-        if row and isinstance(row.value, dict):
-            cfg.update(row.value)
-        cfg["key"] = key
-        return cfg
-    finally:
-        if own:
-            db.close()
+    codes = [c.strip() for c in config.MSGCENTER_CHANNELS.split(",") if c.strip()]
+    if "1" in codes:
+        problems.append("YVRUC_MSGCENTER_CHANNELS 含 1（短信）：本平台不使用短信，请去掉")
+    unknown = [c for c in codes if c not in _CHANNELS | {"1"}]
+    if unknown:
+        problems.append(f"YVRUC_MSGCENTER_CHANNELS 含未知通道 {'、'.join(unknown)}："
+                        "只能是 2（邮件）、4（企业微信）")
 
+    if config.SSO_ENABLED:
+        need = [
+            ("YVRUC_SSO_CLIENT_ID（或 YVRUC_OPENPLATFORM_APPID）",
+             config.SSO_CLIENT_ID or config.OPENPLATFORM_APPID),
+            ("YVRUC_SSO_CLIENT_SECRET（或 YVRUC_OPENPLATFORM_SECRET）",
+             config.SSO_CLIENT_SECRET or config.OPENPLATFORM_SECRET),
+            ("YVRUC_SSO_REDIRECT_URI", config.SSO_REDIRECT_URI),
+            ("YVRUC_CAS_BASE_URL（或把 YVRUC_SSO_AUTHORIZE_URL、YVRUC_SSO_TOKEN_URL、"
+             "YVRUC_SSO_USER_INFO_URL 三项都填上）",
+             config.CAS_BASE_URL or (config.SSO_AUTHORIZE_URL and config.SSO_TOKEN_URL
+                                     and config.SSO_USER_INFO_URL)),
+        ]
+        missing = [name for name, value in need if not value]
+        if missing:
+            problems.append("YVRUC_SSO_ENABLED=1，但没有填：" + "、".join(missing))
 
-def save_config(key: str, value: dict) -> None:
-    db = SessionLocal()
-    try:
-        row = db.get(IntegrationConfig, key)
-        if row is None:
-            row = IntegrationConfig(key=key, value=value)
-            db.add(row)
-        else:
-            merged = dict(DEFAULTS.get(key, {}))
-            merged.update(row.value or {})
-            merged.update(value)
-            row.value = merged
-        db.commit()
-    finally:
-        db.close()
+    if config.MSGCENTER_ENABLED:
+        missing = [name for name in ("YVRUC_OPENPLATFORM_APPID", "YVRUC_OPENPLATFORM_SECRET",
+                                     "YVRUC_OPENPLATFORM_GATEWAY")
+                   if not getattr(config, name.removeprefix("YVRUC_"))]
+        if missing:
+            problems.append("YVRUC_MSGCENTER_ENABLED=1，但没有填：" + "、".join(missing))
 
-
-def all_configs() -> list[dict]:
-    out = []
-    for key in DEFAULTS:
-        out.append(get_config(key))
-    return out
-
-
-def is_mock(key: str, db: OrmSession | None = None) -> bool:
-    """true = 当前走 Mock（演示模式）。
-
-    除了开关未打开，**开了开关但必填参数为空**也回落演示——
-    否则请求会打到空地址上，表现为莫名其妙的接口错误。
-    """
-    cfg = get_config(key, db)
-    if not cfg.get("enabled"):
-        return True
-    required = REQUIRED_FIELD.get(key)
-    if required and not str(cfg.get(required) or "").strip():
-        return True
-    return False
-
-
-# 启用真实接口前必须填好的参数
-REQUIRED_FIELD = {
-    # appid / client_id 默认来自环境变量：测试环境没有这些变量 → 值为空 →
-    # 即便用例把开关打开了也照样回落 Mock，不会误打真实接口。
-    "msgcenter": "appid",
-    "sso": "client_id",
-}
+    if problems:
+        raise RuntimeError("学校对接配置有误，后端不启动。改好 .env 后执行 "
+                           "docker compose up -d：\n  " + "\n  ".join(problems))

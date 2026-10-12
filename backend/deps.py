@@ -8,7 +8,7 @@
 权限模型：
   · 身份（User.roles，可多个）：管理员 / 青协 / 活动发起方 / 学生
   · 青协层级（User.qingxie_post）：会长团 / 部长 / 部门骨干 / 部门成员
-      - 集成设置：仅管理员
+      - 平台公告、操作日志、意见反馈处理：仅管理员
       - 角色管理、数据总览：管理员、会长团（部长只管本部门骨干/成员）
       - 活动审批、志愿者档案：管理员、会长团、部长
       - 部门成员：能进工作台、能看，**任何写请求都在这里被拦**（学习权限）
@@ -175,7 +175,7 @@ def require_manager_download(request: Request,
 
 
 def require_admin(user: User = Depends(current_user)) -> User:
-    """仅系统管理员：集成设置。"""
+    """仅系统管理员：平台公告、操作日志、意见反馈处理。"""
     if not user.is_admin():
         raise HTTPException(403, "需要管理员身份")
     return user

@@ -78,7 +78,7 @@ export const isManager = () =>
 // 青协层级：会长团 / 部长 / 部门骨干 / 部门成员。只在青协视角下有意义
 export const post = () => (auth.user?.qingxie_post || '')
 const qx = (...posts) => auth.activeIdentity === 'qingxie' && posts.includes(post())
-// 管理员视角，或会长团视角：除集成设置外同权
+// 管理员视角，或会长团视角：除平台公告、操作日志、意见反馈外同权
 const full = () => auth.activeIdentity === 'admin' || qx('council')
 export const isTrainee = () => auth.activeIdentity === 'qingxie' && post() === 'member'
 
@@ -93,7 +93,6 @@ export const canSee = {
   roles: () => full() || qx('head', 'core'),   // 骨干进来只为认领本部门成员
   // 对外联络部的骨干有值班资格：要看得到谁在班、轮到自己时接得了班、处理得了审批
   approvals: () => full() || qx('head') || (qx('core') && !!auth.user?.duty_eligible),
-  integrations: () => auth.activeIdentity === 'admin',
   announcement: () => auth.activeIdentity === 'admin',
   oplogs: () => auth.activeIdentity === 'admin',      // 会长团不行
   feedback: () => auth.activeIdentity === 'admin',   // 意见反馈的处理端；提交入口人人都有

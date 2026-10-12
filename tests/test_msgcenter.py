@@ -1,6 +1,8 @@
-"""消息中心：通道白名单、送达判定、失败不打断业务。
+"""消息中心：报文格式、送达判定、失败不打断业务。
 
-真实推送在测试环境永远走不到（开放平台变量为空 → real_mode() 为假），
+通道里不许有短信由启动校验管，见 test_integration_config.py。
+
+真实推送在测试环境永远走不到（开关变量为空 → real_mode() 为假），
 所以这里既验「不会误打真实接口」，也用手工 monkeypatch 验真实分支的行为。
 """
 from __future__ import annotations
@@ -11,29 +13,12 @@ from backend.models import Notification, User
 
 
 def test_测试环境不碰真实接口():
-    """conftest 不注入开放平台变量，这里必须始终是假。
+    """conftest 清空了对接开关，这里必须始终是假。
 
     一旦这道门失守，测试就会拿真实 appid 往学校网关上打——真实的人会收到
     真实的消息。
     """
     assert not msgcenter.real_mode()
-
-
-def test_通道里永远没有短信():
-    """学校未同意本平台发短信，短信还是按条计费的真钱。
-
-    管理员在「集成设置」里填了 1 也只是记条日志——宁可少发一条，
-    也不能悄悄发出去。
-    """
-    assert msgcenter._channels({"channels": "1,4"}) == "4"
-    assert msgcenter._channels({"channels": "1"}) == "4"
-    assert msgcenter._channels({"channels": "1,2,4"}) == "2,4"
-    assert msgcenter._channels({}) == "4"
-
-
-def test_邮件通道照样放行():
-    """挡的只有短信，别把正常通道一起挡了。"""
-    assert msgcenter._channels({"channels": "2,4"}) == "2,4"
 
 
 def test_报文里收件人是真数组不是字符串(db, monkeypatch):

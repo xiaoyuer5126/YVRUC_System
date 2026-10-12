@@ -1,6 +1,6 @@
 """统一身份认证：state 一次性、首次登录自动建档。
 
-真实 CAS 在测试里调不到（开放平台变量为空 → sso 是 mock，接口直接 409），
+真实 CAS 在测试里调不到（开关变量为空 → sso 是 mock，接口直接 409），
 所以这里验 state 的存取语义、建档规则，以及回调接口在拿到身份后的行为。
 """
 from __future__ import annotations
@@ -309,9 +309,7 @@ def test_mock_下不生成跳转地址(client):
 
 
 def test_sso_mode_不回跳转地址(client):
-    """跳转地址要点击时才取（state 有有效期），这里只回方式与是否配好。"""
+    """跳转地址要点击时才取（state 有有效期），这里只回方式。"""
     body = client.get("/api/auth/sso-mode").json()
     assert "login_url" not in body
-    # 只有 oauth2 一条真实路径：集成设置里能改协议的话，就会有人改成 cas
-    # 然后卡在「票据校验尚未实现」上——那个选项已经拿掉了。
     assert body["mode"] in {"demo", "unavailable", "oauth2"}

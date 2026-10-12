@@ -4,14 +4,15 @@
   报名成功 / 候补转正 / 岗位分配 / 活动变更警告
 
 Mock 模式：把消息落库（notifications 表），前端「消息中心」即收件箱。
-真实模式：经学校开放平台的消息中心（opengw）下发。
+真实模式（YVRUC_MSGCENTER_ENABLED=1）：落库之外，再经学校开放平台的消息中心
+（opengw）下发。
 
 点开一条通知去哪一页，只有 page_for 这一份规则：站内消息中心按它跳，企业微信
 卡片的点击链接也由它拼出来（_link_for，走 extras 的 im_linkUrl）。
 
-**本平台只发企业微信通道（channels=4）**。学校未同意本平台发短信，而短信是按条
-计费的真金白银——所以 `_channels()` 里对通道 1 做了硬拦截，管理员在「集成设置」
-页填了也不发。
+**默认只发企业微信通道（channels=4）**。学校未同意本平台发短信，而短信是按条
+计费的真金白银——YVRUC_MSGCENTER_CHANNELS 里出现 1，启动时 integrations.check()
+就拒绝启动。
 """
 from __future__ import annotations
 
@@ -23,7 +24,6 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import config, locks, sudy_sign
 from ..database import SessionLocal
 from ..models import Notification, User, uid
-from . import get_config, is_mock
 
 log = logging.getLogger(__name__)
 
@@ -192,15 +192,9 @@ def render(template_key: str, extra: str = "", **kw) -> tuple[str, str]:
     return title, body
 
 
-def real_mode(db: OrmSession | None = None) -> bool:
-    """是否走真实推送。
-
-    比 `is_mock()` 多要一个 secret：开关打开但密钥没配时，请求会带着一份空签名
-    打到学校网关上，换回一句看不懂的「签名校验失败」——不如老实在本地落库，
-    前端「消息中心」照样能看到内容。
-    """
-    # 先看密钥：没配就不必去库里读开关（演示期每次发通知都省一次查询）
-    return bool(config.OPENPLATFORM_SECRET) and not is_mock("msgcenter", db)
+def real_mode() -> bool:
+    """是否走真实推送。开关打开时 appid、secret、网关已在启动时核对齐全。"""
+    return config.MSGCENTER_ENABLED
 
 
 def send_user(db: OrmSession, user: User, template_key: str,
@@ -215,7 +209,7 @@ def send_user(db: OrmSession, user: User, template_key: str,
     审批页上的状态就说明了，再要一次签收只是多一条要点的待办。
     """
     title, content = render(template_key, **fields)
-    real = real_mode(db)    # 用调用方的会话读配置，别另占一条连接
+    real = real_mode()
     url = _link_for(template_key, data, need_ack)
     row = Notification(id=uid("ntf"), user_id=user.id,
                        template_key=template_key, title=title,
@@ -271,38 +265,19 @@ def _push(items: list[tuple[str, str, str, str, str]]) -> None:
         db.close()
 
 
-def _channels(cfg: dict) -> str:
-    """通道清单，**永远不含 1（短信）**。
-
-    管理员在「集成设置」里填了 1 也只是记一条日志、不发：本平台没有发短信的
-    许可，而短信一发就是真实计费、真实打扰。宁可少发一条，也不能悄悄发出去。
-    """
-    keep: list[str] = []
-    for code in str(cfg.get("channels") or "4").split(","):
-        code = code.strip()
-        if not code:
-            continue
-        if code == "1":
-            log.warning("集成设置里配了短信通道(1)，已忽略：本平台不使用短信")
-            continue
-        keep.append(code)
-    return ",".join(keep) or "4"
-
-
 def _send(student_id: str, title: str, content: str, url: str = "") -> bool:
     """经开放平台消息中心下发一条消息，返回是否真的送达。
 
     收件人用 `uc_ux` + `(学号)`：由消息中心按学号去查这个人的企业微信地址。
     我们不需要、也不该知道他的手机号。
     """
-    cfg = get_config("msgcenter")
     payload = {
         "title": title,
         "content": content,
         # receivers 用请求示例里的**真数组**。参数表把它标成 string 是文档笔误：
         # 换成 json.dumps 的字符串，网关会回 code=11「参数格式有误」。
         "receivers": [{"type": "uc_ux", "address": f"({student_id})"}],
-        "channels": _channels(cfg),
+        "channels": config.MSGCENTER_CHANNELS,
         "plannedTime": "",     # 空串 = 立即发送（文档示例即如此）
         # extras 是消息中心的「扩展属性」。im_linkUrl = 消息外链，卡片点击后
         # 打开它；写进正文是行不通的——链接词在卡片里看不出来可点，正文里

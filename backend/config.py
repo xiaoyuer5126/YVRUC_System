@@ -4,8 +4,8 @@
 后端连容器内的 PostgreSQL 与 Redis，两者都是硬依赖，连不上直接启动失败——
 半可用的服务比起不来更难排查。
 
-与外部系统（消息中心 / 统一身份认证）的对接参数不写死在这里，
-存数据库 integration_configs 表，管理员可在「集成设置」页在线修改。
+与外部系统（消息中心 / 统一身份认证）的对接开关和参数全部来自环境变量（.env），
+改了要重启后端才生效；启动时由 integrations.check() 核对，配错了不让起来。
 """
 from __future__ import annotations
 
@@ -57,18 +57,41 @@ BOOTSTRAP_ADMINS = id_list(os.environ.get("YVRUC_BOOTSTRAP_ADMINS", ""))
 EXPOSE_API_DOCS = os.environ.get("YVRUC_EXPOSE_DOCS", "").strip() == "1"
 
 # —— 学校开放平台（能力开放平台 / 统一认证）——
-# 在应用中心注册应用后获得，调用任何接口都要拿它俩签名。放环境变量而不是
-# integration_configs 表：密钥不该出现在「集成设置」页的接口响应里。
-# 留空 = 相关能力一律回落 Mock，测试环境天然拿不到这些变量。
+# 在应用中心注册应用后获得，调用任何接口都要拿它俩签名。
 OPENPLATFORM_APPID = os.environ.get("YVRUC_OPENPLATFORM_APPID", "").strip()
 OPENPLATFORM_SECRET = os.environ.get("YVRUC_OPENPLATFORM_SECRET", "").strip()
 OPENPLATFORM_GATEWAY = os.environ.get("YVRUC_OPENPLATFORM_GATEWAY", "").strip()
+
+
+def flag(name: str) -> bool:
+    """对接开关：1 = 走真实接口，空或 0 = 演示 Mock。别的写法在
+    integrations.check() 里拒绝启动，免得把 true、yes 当成打开了。"""
+    return os.environ.get(name, "").strip() == "1"
+
+
+# 两个开关。测试环境把它们和下面的参数一律清空，永远跑在 Mock 下。
+SSO_ENABLED = flag("YVRUC_SSO_ENABLED")
+MSGCENTER_ENABLED = flag("YVRUC_MSGCENTER_ENABLED")
+
 # 统一身份认证（CAS 与 OAuth 两套接口都挂在它下面）
 CAS_BASE_URL = os.environ.get("YVRUC_CAS_BASE_URL", "").strip()
+# OAuth 的三个端点，留空按 CAS_BASE_URL 拼成 {base}/oauth2.0/...（见 integrations/sso.py）
+SSO_AUTHORIZE_URL = os.environ.get("YVRUC_SSO_AUTHORIZE_URL", "").strip()
+SSO_TOKEN_URL = os.environ.get("YVRUC_SSO_TOKEN_URL", "").strip()
+SSO_USER_INFO_URL = os.environ.get("YVRUC_SSO_USER_INFO_URL", "").strip()
+# OAuth 的 client_id/secret 留空就用开放平台的 appid/secret（同一套应用注册）。
+# 文档说 client_id 由「后台 OAuth 配置维护」单独分配，学校另给了一套时填这两项。
+SSO_CLIENT_ID = os.environ.get("YVRUC_SSO_CLIENT_ID", "").strip()
+SSO_CLIENT_SECRET = os.environ.get("YVRUC_SSO_CLIENT_SECRET", "").strip()
 # OAuth 回调地址，必须与应用中心登记的**一字不差**，否则换令牌时报 invalid_grant。
 # 单独一项而不是从 PUBLIC_BASE_URLS 里取：登记的是哪个地址只有学校后台说了算，
 # 而且随时可能改，改这个不该顺带把二维码域名白名单也改了。
 SSO_REDIRECT_URI = os.environ.get("YVRUC_SSO_REDIRECT_URI", "").strip()
+
+# 消息中心的发送通道，逗号分隔：2=邮件，4=企业微信，默认只发 4。
+# 1（短信）按条计费，学校也没同意本平台发短信：配了 1，后端拒绝启动。
+MSGCENTER_CHANNELS = (os.environ.get("YVRUC_MSGCENTER_CHANNELS", "").strip()
+                      or "4")
 
 # —— 地图（管理端看签到点与范围）——
 # 瓦片由**我们自己的服务器**向天地图取、再转给浏览器（见 routers/geo.py），

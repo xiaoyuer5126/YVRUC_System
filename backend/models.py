@@ -127,7 +127,7 @@ class User(Base):
     roles: Mapped[list] = mapped_column(JSON, default=list)                # ["student", ...]
 
     # —— 青协内部层级（只对 qingxie 身份有意义）——
-    #   council 会长团：除集成设置外与管理员同权
+    #   council 会长团：除平台公告、操作日志、意见反馈外与管理员同权
     #   head    部长：本部门活动全部可见，审本部门的活动，可设本部门的骨干/成员
     #   core    部门骨干：只看自己被加进管理者的活动
     #   member  部门成员：本部门活动只读，可以点、提交时被拦（学习权限）
@@ -1570,7 +1570,7 @@ class AuditLog(Base):
     actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     actor_name: Mapped[str] = mapped_column(String(64), default="系统")
     action: Mapped[str] = mapped_column(String(32))       # create/update/delete/publish/...
-    target_type: Mapped[str] = mapped_column(String(24))  # activity/group/station/enrollment/assignment/user/export/hours/integration
+    target_type: Mapped[str] = mapped_column(String(24))  # activity/group/station/enrollment/assignment/user/export/hours
     target_id: Mapped[str] = mapped_column(String(48), default="")
     target_label: Mapped[str] = mapped_column(String(160), default="")
     activity_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
@@ -1630,20 +1630,6 @@ class Notification(Base):
             "need_ack": self.need_ack, "acked_at": iso(self.acked_at),
             "data": self.data or {}, "created_at": iso(self.created_at),
         }
-
-
-class IntegrationConfig(Base):
-    """外部系统对接参数。key → JSON。
-
-    固定两个 key：
-      msgcenter / sso
-    enabled=false 时走内置 Mock 实现（演示模式），true 时走真实 HTTP 实现。
-    """
-    __tablename__ = "integration_configs"
-
-    key: Mapped[str] = mapped_column(String(32), primary_key=True)
-    value: Mapped[dict] = mapped_column(JSON, default=dict)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
 
 
 class Announcement(Base):

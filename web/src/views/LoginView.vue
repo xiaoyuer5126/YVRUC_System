@@ -9,8 +9,8 @@
       <!-- 真实 SSO：一个跳转按钮，账号口令都在学校那边 -->
       <template v-if="mode !== 'demo'">
         <el-button type="primary" size="large" style="width:100%"
-                   :loading="ssoLoading" :disabled="!ready" @click="gotoSso">
-          {{ ready ? '前往统一身份认证登录' : '登录方式未配置，请联系管理员' }}
+                   :loading="ssoLoading" :disabled="mode !== 'oauth2'" @click="gotoSso">
+          {{ mode === 'oauth2' ? '前往统一身份认证登录' : '登录方式未配置，请联系管理员' }}
         </el-button>
       </template>
 
@@ -59,13 +59,11 @@ const passwordInput = ref(null)
 const loading = ref(false)
 const accounts = ref([])
 const mode = ref('')
-const ready = ref(false)
 const ssoLoading = ref(false)
 
 onMounted(async () => {
   const m = await api.get('/api/auth/sso-mode', { silent: true })
   mode.value = m.mode
-  ready.value = !!m.ready
   if (mode.value === 'demo') {
     accounts.value = await api.get('/api/auth/demo-accounts', { silent: true })
   }

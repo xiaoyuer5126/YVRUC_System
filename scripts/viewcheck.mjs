@@ -84,7 +84,6 @@ const PAGES = [
   ['admin', '/audit', '审计日志', 200],
   ['admin', '/dashboard', '数据总览', 200],
   ['admin', '/roles', '角色管理', 200],
-  ['admin', '/integrations', '集成设置', 100],
   ['admin', '/announcement', '平台公告', 50],
   ['admin', '/oplogs', '操作日志', 100],
   ['admin', '/feedback', '意见反馈', 20],

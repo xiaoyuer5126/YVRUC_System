@@ -120,7 +120,7 @@
               <el-radio value="council" :disabled="headOnly">会长团</el-radio>
             </el-radio-group>
             <div class="dim">
-              会长团：除集成设置外与管理员同权 · 部长：审批本部门活动，管理本部门骨干与成员 ·
+              会长团：除平台公告、操作日志、意见反馈外与管理员同权 · 部长：审批本部门活动，管理本部门骨干与成员 ·
               骨干：只管理自己参与的活动 · 成员：可见范围与归属骨干一致，可查看但不能保存
             </div>
           </el-form-item>

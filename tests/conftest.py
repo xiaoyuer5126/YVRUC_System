@@ -17,16 +17,20 @@ from contextlib import contextmanager
 # config.py 在导入时就把环境变量读成常量。开发机的 .env 或宿主机环境里填着
 # 真实参数时，不清空就会让消息中心、SSO 走真实接口——真实的人会收到测试发的
 # 消息。compose 的 tests 服务也置空了这几项，这里兜底直接在宿主机跑 pytest 的情况。
-SCHOOL_ENV = ("YVRUC_OPENPLATFORM_APPID", "YVRUC_OPENPLATFORM_SECRET",
+SCHOOL_ENV = ("YVRUC_SSO_ENABLED", "YVRUC_MSGCENTER_ENABLED",
+              "YVRUC_OPENPLATFORM_APPID", "YVRUC_OPENPLATFORM_SECRET",
               "YVRUC_OPENPLATFORM_GATEWAY", "YVRUC_CAS_BASE_URL",
-              "YVRUC_SSO_REDIRECT_URI")
+              "YVRUC_SSO_AUTHORIZE_URL", "YVRUC_SSO_TOKEN_URL",
+              "YVRUC_SSO_USER_INFO_URL", "YVRUC_SSO_CLIENT_ID",
+              "YVRUC_SSO_CLIENT_SECRET", "YVRUC_SSO_REDIRECT_URI",
+              "YVRUC_MSGCENTER_CHANNELS")
 for _name in SCHOOL_ENV:
     os.environ[_name] = ""
 
 
 def _no_school_network(*args, **kwargs):
-    """学校接口（消息中心、SSO）都经 urllib 发请求。就算哪个用例在「集成设置」里
-    把开关打开、自己填了地址，请求也到不了网上，直接在这里报错。要验真实分支的
+    """学校接口（消息中心、SSO）都经 urllib 发请求。就算哪个用例把开关打开、
+    自己填了地址，请求也到不了网上，直接在这里报错。要验真实分支的
     用例自己 monkeypatch 掉发请求的那一层。"""
     raise RuntimeError("测试里不许经 urllib 访问外部接口")
 
@@ -415,7 +419,8 @@ def inbox(db, student_id: str, title_prefix: str) -> list:
     u = student_row(db, student_id)
     return (db.query(Notification)
             .filter(Notification.user_id == u.id,
-                    Notification.title.startswith(title_prefix)).all())
+                    Notification.title.startswith(title_prefix))
+            .order_by(Notification.created_at).all())
 
 
 def is_approval_todo(notes: list) -> bool:
