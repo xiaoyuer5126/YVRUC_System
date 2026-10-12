@@ -246,6 +246,8 @@ services:
     build:
       context: .
       dockerfile: backup/Dockerfile
+      args:
+        APK_MIRROR: ${APK_MIRROR-https://mirrors.tuna.tsinghua.edu.cn/alpine}
     image: yvruc-backup:local
     container_name: yvruc-backup
     environment:
