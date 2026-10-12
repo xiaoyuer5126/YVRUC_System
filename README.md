@@ -11,8 +11,8 @@ FastAPI + SQLAlchemy（PostgreSQL）+ Redis + Vue3 / Element Plus / ECharts（Vi
 ```bash
 cp .env.example .env          # 填 POSTGRES_PASSWORD、YVRUC_ID_CARD_KEY
 cp caddy.env.example caddy.env # 填 YVRUC_DOMAIN、CF_API_TOKEN（内网 https 入口）
-docker compose up -d --build                    # postgres + redis + backend + web + caddy + cloudflared
-docker compose --profile seed run --rm seed     # 重置演示数据
+docker compose up -d --build                    # postgres + redis + migrate + backend + web + caddy + cloudflared
+docker compose --profile seed run --rm seed     # 清空数据库并导入演示数据（只在开发机上用）
 docker compose --profile test run --rm tests    # 跑回归测试（独立的 yvruc_test 库）
 ```
 
@@ -31,7 +31,57 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 yv
 - 上传的活动二维码存命名卷 `yvruc_uploads`，学习材料、立项书与结项书、模板和反馈截图存
   `yvruc_materials`，数据库存 `yvruc_pgdata`，caddy 的证书与账户密钥存 `yvruc_caddy_data`。
 - 启动时 Redis 与身份证加密密钥都是**硬依赖**：连不上、密钥不对直接起不来——
-  半可用的服务比起不来更难排查。
+  半可用的服务比起不来更难排查。数据库的迁移版本不是代码里最新的那一版，后端也拒绝
+  启动，见下面「数据库迁移」。
+
+### 数据库迁移（Alembic）
+
+表结构只由迁移建、只由迁移改，迁移文件在 `backend/migrations/versions/`。
+`docker compose up` 时先起一次性的 `migrate` 服务（`python -m backend.migrate`）把库升到
+最新，成功后才起 backend。后端启动只核对库的版本，不改表。seed 和回归测试也走同一套迁移建表。
+
+**改了模型（`backend/models.py`），同一个提交里必须带上迁移**：
+
+1. 起一个空库，或用开发库（`docker compose up -d postgres` 后先 `docker compose run --rm migrate`，
+   让库停在改模型之前的那一版）。
+2. 生成迁移：
+   ```bash
+   docker compose run --rm --entrypoint alembic -v ./backend:/app/backend migrate \
+     -c backend/alembic.ini revision --autogenerate -m "一句话说明"
+   ```
+   本机装了依赖、`YVRUC_DATABASE_URL` 指着库时，直接 `alembic -c backend/alembic.ini revision --autogenerate -m "…"`。
+3. **逐行检查生成的文件**。自动生成认不出改名（会写成删一列再加一列，数据就丢了），
+   要手工改成 `op.alter_column(..., new_column_name=...)`；新加的非空列要给老数据一个值
+   （先加可空列、`op.execute` 回填、再改非空）；需要搬数据的写 `op.execute`。
+4. 跑全量 pytest。`tests/test_migrations.py` 会比对迁移后的库与模型，有一处对不上就红。
+
+两个人各自基于同一版写了迁移、都合进 main，会出现两个 head，后端和迁移都会报错。
+这时用 `alembic -c backend/alembic.ini merge heads -m "合并"` 写一条合并迁移。
+
+**发版升级步骤**（库里有真实数据之后）：
+
+1. 备份数据库。
+2. 拉代码：`git pull`。
+3. 重建并启动：`docker compose up -d --build`。`migrate` 先跑完迁移，backend 再起来；
+   迁移失败时 backend 不会启动，看 `docker logs yvruc-migrate`。
+4. 确认：`docker compose run --rm --entrypoint alembic migrate -c backend/alembic.ini current`
+   显示的版本带 `(head)`。
+
+生产库上不跑 seed：它会清空整个库。
+
+### 连外部数据库
+
+生产环境连学校统一数据库（PostgreSQL），不起本地 postgres 容器：
+
+1. `.env` 里填 `YVRUC_DATABASE_URL`，例如
+   `postgresql+psycopg://用户:口令@主机:5432/库名?sslmode=require`。问号后面的连接参数
+   原样交给驱动（`sslmode`、`sslrootcert` 等）；口令里的特殊字符写成 URL 编码（`@` 写 `%40`）。
+   要用证书文件时，把文件挂进 backend 和 migrate 容器，`sslrootcert` 写容器里的路径。
+2. `.env` 里再加 `COMPOSE_FILE=docker-compose.yml:docker-compose.school-db.yml`
+   （Windows 上分隔符用分号）。之后的 `docker compose` 命令都不再起、也不再等 postgres 容器。
+3. `docker compose up -d --build`，`migrate` 会在学校的库里建表。所用账号要有建表、改表的权限。
+
+不填 `YVRUC_DATABASE_URL` 时连 compose 里的 postgres 容器，口令取 `POSTGRES_PASSWORD`。
 
 ### 内网 https 与证书（caddy）
 
@@ -61,7 +111,8 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 
 | 变量 | 说明 |
 |---|---|
-| `POSTGRES_PASSWORD` | 数据库口令，必填；公网部署务必改掉示例值 |
+| `POSTGRES_PASSWORD` | 本地 postgres 容器的口令，用这个容器时必填；公网部署务必改掉示例值 |
+| `YVRUC_DATABASE_URL` | 外部数据库的完整连接串，留空 = 连本地 postgres 容器。见「连外部数据库」 |
 | `YVRUC_ID_CARD_KEY` | 身份证号的加密密钥，必填。**必须与数据库分开保管**，否则加密只是走过场；换密钥等于已有数据读不出来（先解密导出再重新写入） |
 | `YVRUC_DEMO_PASSWORD` | 内测登录共享口令。**留空则整个演示登录接口不存在**；SSO 接通后必须留空 |
 | `YVRUC_BOOTSTRAP_ADMINS` | 初始管理员的学号（教工号），逗号分隔。列在这里的人每次经统一身份认证登录，缺管理员身份就补上（原有身份保留，记一条审计），空库上线时用它指定第一个管理员；演示登录不受影响。**要撤掉其中某人的管理员，先从这里删掉学号再到「角色」页撤，否则下次登录会被补回**。留空 = 不启用 |
@@ -432,9 +483,10 @@ SSO 模拟「认证已通过」。
 
 ```
 YVRUC_System/
-├── docker-compose.yml          全栈编排：postgres + redis + backend + web
-│                               + caddy（内网 80/443，TLS 终止）+ cloudflared（隧道）
-│                               （+ seed / tests 两个一次性任务 profile）
+├── docker-compose.yml          全栈编排：postgres + redis + migrate（一次性，升级数据库）
+│                               + backend + web + caddy（内网 80/443，TLS 终止）
+│                               + cloudflared（隧道）（+ seed / tests 两个一次性任务 profile）
+├── docker-compose.school-db.yml  连外部数据库时叠加：不起 postgres 容器
 ├── Caddyfile / caddy.env.example  内网入口的 TLS 与 Cloudflare DNS-01 令牌
 ├── .env.example                环境变量模板（数据库口令、加密密钥、演示登录、隧道令牌）
 ├── pytest.ini / requirements-dev.txt
@@ -448,7 +500,8 @@ YVRUC_System/
 ├── backend/
 │   ├── Dockerfile              base → test（跑 pytest）/ runtime（跑 uvicorn）两个 target
 │   ├── main.py                 FastAPI 入口：API + SPA 托管 + 定时任务协程
-│   ├── config.py / database.py 业务常量与环境变量；PostgreSQL 连接
+│   ├── config.py / database.py 业务常量与环境变量；PostgreSQL 连接与启动时的版本核对
+│   ├── migrate.py / alembic.ini / migrations/  数据库迁移（python -m backend.migrate）
 │   ├── locks.py                ★ 场次锁（PG 咨询锁）、名额闸门、登录失败计数、下载票据
 │   ├── crypto.py               身份证号的字段级加密（Fernet）
 │   ├── models.py / serializers.py   全部表结构与出参组装

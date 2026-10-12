@@ -78,10 +78,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from backend import seed  # noqa: E402
 from backend.database import SessionLocal  # noqa: E402
 
-# 先把测试库按模型重建，**再**导入 app。顺序不能颠倒：导入 backend.main 会跑
-# create_app() → init_db()，那里会拿模型跟库对一遍，对不上直接拒绝启动
-# （见 database.check_schema）。上一次跑剩下的旧结构正好是「对不上」的那种，
-# 先导 app 就会在这里撞上那句「先修库再启动」。
+# 先把测试库清空、用迁移重建，**再**导入 app。顺序不能颠倒：导入 backend.main
+# 会跑 create_app() → check_schema()，库的迁移版本不是最新就拒绝启动。上一次
+# 跑剩下的旧库正好是那种，先导 app 就会在这里撞上那句「先升级再启动」。
 seed.main()
 
 from backend.main import app  # noqa: E402
