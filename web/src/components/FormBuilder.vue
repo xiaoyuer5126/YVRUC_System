@@ -26,9 +26,10 @@
         <div v-if="q.condQ" class="dim">{{ condText(q) }}</div>
       </li>
     </ol>
-    <div v-for="(q, i) in questions" v-else :key="i" class="fb-row">
+    <div v-for="(q, i) in questions" v-else :key="q.key" class="fb-row">
       <span class="fb-no">{{ i + 1 }}.</span>
-      <el-select v-model="q.kind" style="width:120px" :disabled="!editable">
+      <el-select v-model="q.kind" style="width:120px" :disabled="!editable"
+                 @change="reconcile">
         <el-option v-for="(label, k) in KINDS" :key="k" :value="k" :label="label" />
       </el-select>
       <el-input v-model="q.title" placeholder="题目" maxlength="200"
@@ -37,11 +38,11 @@
       <el-button-group v-if="editable" size="small">
         <el-button :disabled="i === 0" @click="move(i, -1)">上移</el-button>
         <el-button :disabled="i === questions.length - 1" @click="move(i, 1)">下移</el-button>
-        <el-button type="danger" plain @click="questions.splice(i, 1)">删除</el-button>
+        <el-button type="danger" plain @click="remove(i)">删除</el-button>
       </el-button-group>
       <el-input v-if="q.kind === 'single' || q.kind === 'multi'" v-model="q.optionsText"
                 type="textarea" :rows="2" placeholder="选项，一行一个（至少两个）"
-                :disabled="!editable" class="fb-opts" />
+                :disabled="!editable" class="fb-opts" @change="reconcile" />
       <!-- 适用岗位：只问选了这些岗位的人。留空 = 人人都答 -->
       <div v-if="positionGroups.length" class="fb-cond">
         <span class="dim">适用岗位</span>
@@ -59,7 +60,7 @@
         <span class="dim">显示条件</span>
         <el-select v-model="q.condQ" clearable placeholder="一直显示" style="width:220px"
                    :disabled="!editable" @change="clearCondValues(q)">
-          <el-option v-for="c in conditionSources(i)" :key="c.id" :value="c.id"
+          <el-option v-for="c in conditionSources(i)" :key="c.key" :value="c.key"
                      :label="c.title" />
         </el-select>
         <el-select v-if="q.condQ" v-model="q.condValues" multiple collapse-tags
@@ -120,7 +121,7 @@
       </template>
     </div>
     <div v-if="editable" class="dim" style="margin-top:8px">
-      适用岗位留空 = 人人都答；显示条件只能挂在前面的选择题上，新增的题目保存后才能作为条件。
+      适用岗位留空 = 人人都答；显示条件只能挂在前面的选择题上。
     </div>
     <el-empty v-else-if="!questions.length" description="没有设置题目" />
   </div>
@@ -164,14 +165,19 @@ async function load() {
 }
 onMounted(load)
 
+// key：题目在编辑页上的编号，显示条件按它指向来源题。已保存的题用正式 id，
+// 新题先给一个临时编号，不用保存就能被后面的题选作条件
+let newSeq = 0
+const newKey = () => `new-${++newSeq}`
+
 const toRow = q => ({
-  ...q, optionsText: (q.options || []).join('\n'),
+  ...q, key: q.id, optionsText: (q.options || []).join('\n'),
   condQ: q.show_if?.question_id || '', condValues: q.show_if?.values || [],
   applies_to_positions: q.applies_to_positions || [],
 })
 
 function add() {
-  questions.value.push({ id: '', kind: 'single', title: '', optionsText: '',
+  questions.value.push({ id: '', key: newKey(), kind: 'single', title: '', optionsText: '',
                          required: true, condQ: '', condValues: [],
                          applies_to_positions: [] })
 }
@@ -179,17 +185,55 @@ function add() {
 // 能当条件的：排在这道题前面的单选/多选题。往后指会绕成环
 function conditionSources(index) {
   return questions.value.slice(0, index)
-    .filter(q => q.id && (q.kind === 'single' || q.kind === 'multi') && q.title.trim())
+    .filter(q => (q.kind === 'single' || q.kind === 'multi') && q.title.trim())
 }
-const optionsOf = qid => (questions.value.find(q => q.id === qid)?.optionsText || '')
+const optionsOf = key => (questions.value.find(q => q.key === key)?.optionsText || '')
   .split('\n').map(s => s.trim()).filter(Boolean)
 const clearCondValues = q => { q.condValues = [] }
-const condText = q => `仅当「${questions.value.find(x => x.id === q.condQ)?.title || ''}」`
+const condText = q => `仅当「${questions.value.find(x => x.key === q.condQ)?.title || ''}」`
   + `选了 ${q.condValues.join(' / ')} 时显示`
 function move(i, delta) {
   const list = questions.value
   const [q] = list.splice(i, 1)
   list.splice(i + delta, 0, q)
+  reconcile()
+}
+function remove(i) {
+  questions.value.splice(i, 1)
+  reconcile()
+}
+
+// 来源题挪到后面、删掉、改成非选择题，或者选项改了：当场清掉失效的条件并说一声，
+// 不留到保存时才报错。选项只去掉已经不存在的那几个，一个都不剩才整条清掉。
+// 选项框在失焦时才对账，免得改字改到一半就把条件清了
+function reconcile() {
+  const notes = []
+  questions.value.forEach((q, i) => {
+    if (!q.condQ) return
+    const name = q.title.trim() || `第 ${i + 1} 题`
+    const at = questions.value.findIndex(x => x.key === q.condQ)
+    const src = questions.value[at]
+    let why = ''
+    if (!src) why = '来源题已删除'
+    else if (at > i) why = '来源题挪到了它后面'
+    else if (src.kind !== 'single' && src.kind !== 'multi') why = '来源题不再是选择题'
+    if (!why) {
+      const opts = optionsOf(q.condQ)
+      const kept = q.condValues.filter(v => opts.includes(v))
+      if (kept.length === q.condValues.length) return
+      if (kept.length) {
+        notes.push(`「${name}」的显示条件去掉了已不存在的选项：`
+                   + q.condValues.filter(v => !opts.includes(v)).join(' / '))
+        q.condValues = kept
+        return
+      }
+      why = '选中的选项都已不存在'
+    }
+    notes.push(`「${name}」的显示条件已清除：${why}`)
+    q.condQ = ''
+    q.condValues = []
+  })
+  if (notes.length) ElMessage.warning({ message: notes.join('；'), duration: 6000 })
 }
 
 // —— 智能出题 ——
@@ -221,7 +265,8 @@ function closeAi() {
 function addDrafted() {
   const drafted = aiResult.value.questions
   for (const q of drafted) {
-    questions.value.push({ id: '', kind: q.kind, title: q.title, required: q.required,
+    questions.value.push({ id: '', key: newKey(), kind: q.kind, title: q.title,
+                           required: q.required,
                            optionsText: q.options.join('\n'), condQ: '', condValues: [],
                            applies_to_positions: q.applies_to_positions })
   }
@@ -233,7 +278,7 @@ async function save() {
   saving.value = true
   try {
     const body = questions.value.map(q => ({
-      id: q.id || '', kind: q.kind, title: q.title, required: q.required,
+      id: q.id || '', ref: q.id ? '' : q.key, kind: q.kind, title: q.title, required: q.required,
       options: q.optionsText.split('\n').map(s => s.trim()).filter(Boolean),
       show_if: q.condQ ? { question_id: q.condQ, values: q.condValues } : {},
       applies_to_positions: q.applies_to_positions || [],

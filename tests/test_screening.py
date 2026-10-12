@@ -1167,3 +1167,28 @@ def test_录取到两场共用同一培训_培训只报一次(client, admin, db,
     rows = (db.query(Enrollment)
             .filter(Enrollment.shift_id == training, Enrollment.user_id == u.id).all())
     assert [e.status for e in rows] == ["enrolled"]
+
+
+def test_新题不用先保存就能当显示条件的来源(client, admin, db):
+    """编辑页给新题一个临时编号 ref，后面的题拿它挂条件，一次保存就换成正式 id。"""
+    act_id, _ids, _q = _create_screened(client, admin, db, status="draft")
+    r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
+                   json={"questions": [
+                       {"ref": "new-1", "kind": "single", "title": "会外语吗",
+                        "options": ["会", "不会"]},
+                       {"ref": "new-2", "kind": "text", "title": "会哪几种",
+                        "show_if": {"question_id": "new-1", "values": ["会"]}},
+                   ]})
+    assert r.status_code == 200, r.text
+    qs = r.json()["questions"]
+    assert qs[1]["show_if"] == {"question_id": qs[0]["id"], "values": ["会"]}
+    assert qs[0]["id"] != "new-1"
+
+    # 临时编号指向后面的题，照样按「只能挂在前面」拦下
+    bad = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
+                     json={"questions": [
+                         {"ref": "new-2", "kind": "text", "title": "会哪几种",
+                          "show_if": {"question_id": "new-1", "values": ["会"]}},
+                         {"ref": "new-1", "kind": "single", "title": "会外语吗",
+                          "options": ["会", "不会"]}]})
+    assert bad.status_code == 400 and "前面" in bad.json()["detail"]

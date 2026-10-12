@@ -890,7 +890,9 @@ def poster(activity_id: str, request: Request, base: str = "",
 
     只写对外能公开的：时间地点、岗位与名额、要求与保障。不含任何志愿者名单——
     名单要用「导出排班表」，那条路有下载留痕。选填的段（培训与彩排、志愿者
-    要求）有内容才出现，放在「服务内容」与「志愿者保障」之间。[玫瑰] 原样写：
+    要求）有内容才出现，放在「服务内容」与「志愿者保障」之间。活动时间写一整段
+    起止，和网页上的「活动时间」一致；服务内容里场次一行「◆ 」、岗位一行
+    「  · 」，岗位的补充信息再缩进一层。[玫瑰] 原样写：
     发到微信里显示成玫瑰表情。报名链接的域名同活动二维码：base 由前端传当前
     站点地址，只认本平台的域名。
     """
@@ -905,27 +907,30 @@ def poster(activity_id: str, request: Request, base: str = "",
         "【活动内容简介】",
         f"{intro}{'，' if intro else ''}现面向{recruit_scope_phrase(act)}招募志愿者[玫瑰]",
         "【活动主办单位】", act.organizer_text() or "—",
-        "【活动时间】",
-        *(dict.fromkeys(_cn_span(g.start_time, g.end_time) for g in mains) or ["待定"]),
+        "【活动时间】", act.time_text(),
         "【活动地点】", act.location or "待定",
         "【服务内容及招募人数】"]
     for g in mains:
-        if len(mains) > 1:
-            L.append(f"{g.name}　{_cn_span(g.start_time, g.end_time)}")
+        assign = ""
         if g.needs_assign():
             hold = g.placeholder()
-            L.append(f"招募 {hold.quota if hold else g.total_capacity()} 人，"
-                     f"岗位于报名截止后统一分配")
+            assign = (f"招募 {hold.quota if hold else g.total_capacity()} 人，"
+                      f"岗位于报名截止后统一分配")
+        if len(mains) > 1:
+            L.append(f"◆ {g.name}　{_cn_span(g.start_time, g.end_time)}"
+                     + (f"　{assign}" if assign else ""))
+        elif assign:
+            L.append(assign)
         for p in sorted(g.real_positions(), key=lambda x: x.sort):
             task = _one_line(p.service_task)
-            L.append(p.name + ("" if g.needs_assign() else f" {p.quota}人")
+            L.append("  · " + p.name + ("" if g.needs_assign() else f" {p.quota}人")
                      + (f"：{task}" if task else ""))
             extra = [x for x in (
                 f"岗位地点：{p.location}" if p.location and p.location != act.location else "",
                 f"志愿服装：{p.attire_text()}" if p.attire_text() else "",
                 f"报酬方式：{p.pay_text()}" if p.pay_text() else "") if x]
             if extra:
-                L.append("  " + "；".join(extra))
+                L.append("    " + "；".join(extra))
     attached = [
         f"{_cn_span(s.start_time, s.end_time)} {s.kind_label()}"
         + (f"，{s.location}" if s.location else "")
