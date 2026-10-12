@@ -112,6 +112,8 @@ compose 里的 `backup` 服务随 `up -d` 一起起来，每天 3:00 备一份�
   完全不要了就删掉 compose 里的 `backup` 服务。
 - 备份文件夹在 Windows 上的写法：`.env` 里写 `YVRUC_BACKUP_DIR=D:/yvruc-backups`
   （正斜杠；Docker Desktop 设置里的 File sharing 要包含这个盘）。改完 `docker compose up -d backup`。
+- Linux 上先用部署账号建好这个文件夹（`mkdir -p /srv/yvruc-backups`）：备份交给文件夹的属主，
+  只有属主能读。让 Docker 自动建的话属主是 root，要 sudo 才打得开。
 
 ```bash
 docker compose run --rm backup now    # 立即备一份：部署、重建库、改表之前都跑
@@ -129,8 +131,8 @@ docker compose start backend
 ```
 
 - 只恢复其中一样：加 `--only db` 或 `--only files`。
-- 恢复到一个全新的库（换电脑、`down -v` 之后）：先 `docker compose up -d postgres`，
-  再按上面的步骤恢复，最后 `docker compose up -d`。`.env` 里的 `POSTGRES_PASSWORD` 与
+- 恢复到一个全新的库（换电脑、`down -v` 之后）：先 `docker compose up -d --wait postgres`
+  （`--wait` 等数据库能连上才返回），再跑上面的 `restore`，最后 `docker compose up -d`。`.env` 里的 `POSTGRES_PASSWORD` 与
   `YVRUC_ID_CARD_KEY` 要和原来的一样。
 - 文件卷恢复时先清空再解包，备份之后新增的上传件会被删掉。
 

@@ -40,7 +40,9 @@ KEEP_MONTHLY = 6
 # 手动备份多在部署、改表前跑，留着是为了出事能退回去，不参与每日轮换
 KEEP_MANUAL = 10
 # 定时备份失败后隔多久再试：失败多半是数据库没起来，马上重试只会刷日志
-RETRY_AFTER = timedelta(minutes=30)
+RETRY_AFTER = timedelta(minutes=10)
+# 启动后先等一会再看要不要补备：开机时各容器一起起来，数据库还没准备好
+STARTUP_DELAY = 60
 
 NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}_\d{4})_(daily|manual)$")
 STAMP_FMT = "%Y-%m-%d_%H%M"
@@ -160,6 +162,19 @@ def archive_volume(src: Path, dest: Path) -> None:
             tar.add(child, arcname=child.name)
 
 
+def give_to_owner(path: Path, root: Path) -> None:
+    """备份交给备份文件夹的属主。
+
+    容器里是 root 在写，Linux 上不改属主的话，部署的人不用 sudo 就打不开自己的备份。
+    Windows 的挂载目录没有这层权限，chown 什么也不改。
+    """
+    st = root.stat()
+    if st.st_uid == 0:
+        return
+    for p in [path, *path.rglob("*")]:
+        os.chown(p, st.st_uid, st.st_gid, follow_symlinks=False)
+
+
 def make_backup(kind: str, root: Path = BACKUP_ROOT, now: datetime | None = None,
                 with_db: bool | None = None) -> Path:
     now = now or datetime.now()
@@ -188,6 +203,7 @@ def make_backup(kind: str, root: Path = BACKUP_ROOT, now: datetime | None = None
         manifest = {"name": name, "kind": kind, "created_at": now.isoformat(timespec="seconds"),
                     "database": with_db, "files": files}
         (tmp / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+        give_to_owner(tmp, root)
         tmp.rename(final)
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -263,6 +279,7 @@ def run_forever() -> None:
         f"保留 {KEEP_DAILY} 天 / {KEEP_WEEKLY} 周 / {KEEP_MONTHLY} 月，手动备份留最近 {KEEP_MANUAL} 份")
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
     clean_partial()
+    time.sleep(STARTUP_DELAY)
     last_fail: datetime | None = None
     while True:
         now = datetime.now()
@@ -280,7 +297,7 @@ def run_forever() -> None:
 def main(argv: list[str] | None = None) -> None:
     # 容器里 python 是 1 号进程，不装处理函数就收不到 docker stop 的 SIGTERM
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    os.umask(0o077)  # 备份里有姓名、学号、手机号，Linux 上只给属主读
+    os.umask(0o077)  # 备份里有姓名、学号、手机号，Linux 上只给属主读（属主见 give_to_owner）
     parser = argparse.ArgumentParser(prog="backup")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("run", help="常驻，每天定时备份")
