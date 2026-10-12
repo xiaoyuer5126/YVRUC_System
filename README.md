@@ -136,6 +136,7 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 | `YVRUC_BACKUP_DIR` | 备份写到宿主机的哪个文件夹，默认仓库下 `./backups`。Windows 写 `D:/yvruc-backups` 这样的正斜杠路径 |
 | `YVRUC_BACKUP_AT` | 每天几点备份，默认 `03:00` |
 | `YVRUC_BACKUP_DB` | 设为 `0` 不导出数据库、只备文件卷（数据库由别处备份时用），默认 `1` |
+| `APK_MIRROR` | 备份容器构建时装系统包用的 Alpine 镜像站，默认清华镜像。服务器在境外时改成官方源 `https://dl-cdn.alpinelinux.org/alpine` |
 | `HTTPS_/WEB_/BACKEND_/POSTGRES_/REDIS_HOST_PORT` | 宿主机端口，被别的项目占用时改这里 |
 
 ### 登录方式

@@ -2,7 +2,13 @@
 # 主版本要与数据库对齐：pg_dump 比服务器旧就拒绝导出。数据库升级时这里一起改。
 FROM postgres:16-alpine
 
-RUN apk add --no-cache python3 tzdata
+# 默认走国内镜像；海外机器构建时传 --build-arg APK_MIRROR=https://dl-cdn.alpinelinux.org/alpine，
+# 留空也用官方源
+ARG APK_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/alpine
+RUN if [ -n "$APK_MIRROR" ]; then \
+        sed -i -E "s#https?://dl-cdn\.alpinelinux\.org/alpine#${APK_MIRROR%/}#" /etc/apk/repositories; \
+    fi \
+    && apk add --no-cache python3 tzdata
 
 ENV PYTHONUNBUFFERED=1 \
     TZ=Asia/Shanghai
