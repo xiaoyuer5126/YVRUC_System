@@ -10,20 +10,52 @@ FastAPI + SQLAlchemy（PostgreSQL）+ Redis + Vue3 / Element Plus / ECharts（Vi
 
 ```bash
 cp .env.example .env          # 填 POSTGRES_PASSWORD、YVRUC_ID_CARD_KEY
-docker compose up -d --build                    # postgres + redis + backend + web + cloudflared
+cp caddy.env.example caddy.env # 填 YVRUC_DOMAIN、CF_API_TOKEN（内网 https 入口）
+docker compose up -d --build                    # postgres + redis + backend + web + caddy + cloudflared
 docker compose --profile seed run --rm seed     # 重置演示数据
 docker compose --profile test run --rm tests    # 跑回归测试（独立的 yvruc_test 库）
 ```
 
-- 入口 **http://127.0.0.1:8080** （nginx 托管前端并同源反代 `/api`，无跨域）。
-- 数据库 5433 / Redis 6380 / 后端 8000 都只绑 `127.0.0.1`，调试用得上、公网碰不到；
-  对外只有 web 的 8080 与 cloudflared 隧道。
-- cloudflared 固定域名隧道：token 存 `.env` 的 `CLOUDFLARE_TOKEN`，公网域名在
-  Cloudflare Zero Trust 控制台绑定，`docker logs yvruc-cloudflared` 看连接状态。
+- 两个入口，都落到同一个 web 容器（nginx 只监听 80，TLS 不在它这里终止）：
+  - **内网直连**：域名的 A 记录指向本机内网 IP，`caddy` 在宿主机 80/443 上终止 TLS：
+    `浏览器 ──https──▶ caddy ──http──▶ web:80 ──/api──▶ backend:8000`
+  - **公网**：Cloudflare 隧道，TLS 由 Cloudflare 边缘终止：
+    `浏览器 ──https──▶ Cloudflare ──隧道──▶ web:80 ──▶ 同上`
+- 平台域名写两处：`.env` 的 `YVRUC_PUBLIC_BASE_URL`（二维码与通知链接用它）和
+  `caddy.env` 的 `YVRUC_DOMAIN`（caddy 按它签证书），两个填同一个。
+- 前端 8080 / 数据库 5433 / Redis 6380 / 后端 8000 都只绑 `127.0.0.1`，调试用得上、
+  局域网和公网都连不上。本机直接打开 http://127.0.0.1:8080 可绕开 caddy 看前端，
+  CI 的页面自检也走这里。
+- `caddy.env` 不存在时 compose 照常加载（CI 上就没有），只是 caddy 起不来。
+- `docker logs yvruc-caddy` 看证书签发，`docker logs yvruc-cloudflared` 看隧道状态。
 - 上传的活动二维码存命名卷 `yvruc_uploads`，学习材料、立项书与结项书、模板和反馈截图存
-  `yvruc_materials`，数据库存 `yvruc_pgdata`。
+  `yvruc_materials`，数据库存 `yvruc_pgdata`，caddy 的证书与账户密钥存 `yvruc_caddy_data`。
 - 启动时 Redis 与身份证加密密钥都是**硬依赖**：连不上、密钥不对直接起不来——
   半可用的服务比起不来更难排查。
+
+### 内网 https 与证书（caddy）
+
+caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TXT 记录证明域名
+所有权，**不需要 80/443 从公网可达**，所以域名的 A 记录指向内网 IP 也照样能签下来。
+签发与续期全自动（90 天一轮，到期前 30 天自己续），不需要人工介入。
+
+- 需要 `caddy.env` 里的 `CF_API_TOKEN`：Cloudflare 令牌，权限 **Zone → DNS → Edit**，
+  范围覆盖该域名所在的 zone。`caddy.env` 由 `caddy.env.example` 复制而来，**是本机
+  文件、已被忽略，永不入库**——这个令牌能改你的 DNS，提交上去等于把它交出去；
+  一旦误提交，先把令牌吊销重发，再改历史。
+- 域名在 Cloudflare 里的 A 记录必须是 **DNS only（灰云）**：开橙云的话 Cloudflare 会
+  尝试回源到那个内网 IP，整个域名就挂了。
+- 镜像里的 Caddy 必须带 Cloudflare DNS 插件：官方 `caddy` 镜像没有，会报
+  `unknown directive: dns`。所以用 `caddybuilds/caddy-cloudflare`（同一作者的
+  `ghcr.io` 那份已经拉不到，registry 返回 denied；Docker Hub 这份正常）。
+- 镜像用 `latest`，重建时跟着镜像作者的最新版本走。镜像里 Caddy 与插件的组合
+  一旦对不上，会在装配 TLS 时 panic，报 `expected ModuleMap because inline_key is empty`
+  ——这句话完全不指向版本，会让人去查配置（v2.9/v2.10 配插件 v0.2.x 就是这样）。
+  撞上就换回已知能用的标签（如 `:2.11.7`），并确认证书还能签下来。
+- 证书落在命名卷 `yvruc_caddy_data`，**别随手 `down -v`**：卷一删就重新签发，
+  而 Let's Encrypt 对同一注册域限每周 50 张，调试期间重建几次会被锁一周。
+  真要反复试配置，先在 Caddyfile 顶部加 `{ local_certs }`（浏览器会报证书不受信任，
+  属正常），调通后删掉再 `docker compose restart caddy`。
 
 ### 环境变量（.env）
 
@@ -33,7 +65,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 yv
 | `YVRUC_ID_CARD_KEY` | 身份证号的加密密钥，必填。**必须与数据库分开保管**，否则加密只是走过场；换密钥等于已有数据读不出来（先解密导出再重新写入） |
 | `YVRUC_DEMO_PASSWORD` | 内测登录共享口令。**留空则整个演示登录接口不存在**；SSO 接通后必须留空 |
 | `YVRUC_BOOTSTRAP_ADMINS` | 初始管理员的学号（教工号），逗号分隔。列在这里的人每次经统一身份认证登录，缺管理员身份就补上（原有身份保留，记一条审计），空库上线时用它指定第一个管理员；演示登录不受影响。**要撤掉其中某人的管理员，先从这里删掉学号再到「角色」页撤，否则下次登录会被补回**。留空 = 不启用 |
-| `YVRUC_PUBLIC_BASE_URL` | 平台对外网址（多个用逗号分隔）。二维码里写的就是它，只有列在这里的域名才允许出现在码里 |
+| `YVRUC_PUBLIC_BASE_URL` | 平台对外网址（多个用逗号分隔）。二维码里写的就是它，只有列在这里的域名才允许出现在码里。与 `caddy.env` 的 `YVRUC_DOMAIN` 填同一个 |
 | `YVRUC_EXPOSE_DOCS` | 设为 `1` 才暴露 `/docs` 与 `/openapi.json`，默认关闭 |
 | `YVRUC_TIANDITU_TK_SERVER` | 天地图**服务端** tk：管理端地图瓦片转发 + 地名搜索。要在天地图后台登记服务器公网出口 IP；只在后端用，不进前端。留空 = 地图只显示点和圈 |
 | `YVRUC_TIANDITU_DAILY_LIMIT` | 每天向天地图取瓦片的上限，默认 10000（天地图给的额度），到上限直接 503 |
@@ -41,8 +73,8 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 yv
 | `YVRUC_AI_BASE_URL` / `YVRUC_AI_MODEL` | OpenAI 兼容接口的地址与模型，默认 `https://api.deepseek.com` / `deepseek-flash`（附件里的图片要模型能识图） |
 | `YVRUC_AI_TIMEOUT` | 一次起草最多等几秒，默认 90 |
 | `YVRUC_AI_THINKING` | 思考模式 `enabled` / `disabled`，默认 `disabled`；服务商不认这个参数时填 `none` |
-| `CLOUDFLARE_TOKEN` | 隧道令牌，勿提交/外传 |
-| `WEB_/BACKEND_/POSTGRES_/REDIS_HOST_PORT` | 宿主机端口，被别的项目占用时改这里 |
+| `CLOUDFLARE_TOKEN` | 隧道令牌，勿提交/外传。留空 = 隧道容器起不来，内网 https 入口不受影响 |
+| `HTTPS_/WEB_/BACKEND_/POSTGRES_/REDIS_HOST_PORT` | 宿主机端口，被别的项目占用时改这里 |
 
 ### 登录方式
 
@@ -400,8 +432,10 @@ SSO 模拟「认证已通过」。
 
 ```
 YVRUC_System/
-├── docker-compose.yml          全栈编排：postgres + redis + backend + web + cloudflared
+├── docker-compose.yml          全栈编排：postgres + redis + backend + web
+│                               + caddy（内网 80/443，TLS 终止）+ cloudflared（隧道）
 │                               （+ seed / tests 两个一次性任务 profile）
+├── Caddyfile / caddy.env.example  内网入口的 TLS 与 Cloudflare DNS-01 令牌
 ├── .env.example                环境变量模板（数据库口令、加密密钥、演示登录、隧道令牌）
 ├── pytest.ini / requirements-dev.txt
 ├── tests/                      回归测试：登录会话、报名闸门与并发、审批、分配、签到闭环、
@@ -439,7 +473,8 @@ YVRUC_System/
 │   │                             档案、违规与集成配置）
 │   └── integrations/           msgcenter / sso
 └── web/                        Vue3 + Element Plus + ECharts（Vite，无 Pinia）
-    ├── Dockerfile / nginx.conf Node 构建 → nginx 托管并反代 /api
+    ├── Dockerfile / nginx.conf.template  Node 构建 → nginx 托管并反代 /api；
+    │                          只监听 80，TLS 由前面的 caddy 或 Cloudflare 终止
     └── src/
         ├── views/              学生端 + 工作台 + 登录 / 扫码落地页
         ├── components/         AssignPanel（智能排班）/ CheckinPanel（签到大屏）/
