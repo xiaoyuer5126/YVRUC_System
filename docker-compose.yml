@@ -1,13 +1,25 @@
 # 志愿服务管理平台 · Docker 全栈编排
 #
 #   cp .env.example .env && 填好口令                # 首次
+#   cp caddy.env.example caddy.env && 填域名与令牌   # 首次（内网 https 入口）
 #   docker compose up -d --build                    # 启动全套
 #   docker compose --profile seed run --rm seed     # 重置演示数据
-#   docker logs yvruc-cloudflared --tail 20         # 查看隧道连接状态
+#   docker logs yvruc-caddy --tail 20               # 看证书签发情况
+#   docker logs yvruc-cloudflared --tail 20         # 看隧道连接状态
 #
-# 服务拓扑：
-#   web(nginx:8080) ──/api──▶ backend(uvicorn:8000) ──▶ postgres + redis
-#   cloudflared：固定域名隧道，公网域名在 Cloudflare Zero Trust 控制台绑定。
+# 服务拓扑（两个入口，都落到同一个 web 容器）：
+#   caddy(80/443, TLS 终止) ──▶ web(nginx:80) ──/api──▶ backend(uvicorn:8000)
+#   cloudflared(隧道, TLS 在 Cloudflare 边缘终止) ──▶ web(nginx:80) ──▶ 同上
+#        └──▶ postgres + redis
+#
+# 网络用固定网段（见文件末尾 networks）：web 容器里的 nginx 要靠
+# YVRUC_TRUSTED_PROXY_CIDR 把 X-Forwarded-For 还原成真实客户端 IP，
+# 信任范围与网段必须一致；网段由 Docker 随机分配的话，这个值就没法提前写死。
+# 换网段时两处一起改：这里是 172.30.0.0/16，.env 里是 172.30.0.0/16。
+#
+# 内网这条路：域名的 A 记录指向本机内网 IP，caddy 用 Let's Encrypt 的 DNS-01
+# 挑战签证书（不需要 80/443 从公网可达，见 Caddyfile）。
+# 公网这条路：Cloudflare 隧道，域名在 Zero Trust 控制台绑定。
 #
 # 数据库与 Redis 端口只绑 127.0.0.1：调试用得上，公网碰不到。
 # 宿主机端口可在 .env 里改——同一台机器上别的项目也可能占着这些端口。
@@ -137,19 +149,57 @@ services:
       args:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     container_name: yvruc-web
-    ports:
-      # 只绑本机：公网走 cloudflared 隧道，它在 compose 内网里直连 web:80。
-      # 绑 0.0.0.0 等于把源站也摆到公网上，绕过隧道前面的防护。
-      - "127.0.0.1:${WEB_HOST_PORT:-8080}:80"
+    environment:
+      # nginx 配置模板里的 set_real_ip_from：信任哪些来源的 X-Forwarded-For。
+      # 默认值要与文件末尾 networks 的网段一致，改一处就得改两处。
+      YVRUC_TRUSTED_PROXY_CIDR: ${YVRUC_TRUSTED_PROXY_CIDR:-172.30.0.0/16}
+    ports: []
+    # 上面这个空数组是有意的：不对宿主机开端口，内网经 caddy、公网经 cloudflared，
+    # 两者都在 compose 网络里按服务名访问 web:80。绑 0.0.0.0 等于多开一个绕过 TLS
+    # 终止的明文入口。要从本机直接量前端时，把下面这行挪进上面的数组
+    # （curl http://127.0.0.1:8080/）：
+    # - "127.0.0.1:${WEB_HOST_PORT:-8080}:80"
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
 
+  # 内网直连入口：域名的 A 记录指向本机，TLS 在这里终止，再明文转给 web。
+  # 证书由 Let's Encrypt 经 DNS-01 自动签发与续期，见 Caddyfile。
+  caddy:
+    # 官方 caddy 镜像不含 DNS 插件（Caddyfile 里写 dns cloudflare 会报
+    # unknown directive: dns），这个镜像就是官方版本加上 Cloudflare 插件。
+    #
+    # 用 latest：镜像作者负责把 Caddy 与插件编成能用的组合。注意它随重建
+    # （up --force-recreate / pull 后重建 / 换机器重装）跟着作者的最新版本走，
+    # 组合一旦对不上，症状是装配 TLS 时 panic：
+    # expected ModuleMap because inline_key is empty —— 这句话完全不指向版本。
+    # 撞上就这么办：换回已知能用的标签（如 :2.11.7），并确认证书还能签下来。
+    #
+    # 同一个作者的 ghcr.io/caddybuilds/caddy-cloudflare 已经拉不到（registry
+    # 返回 denied），这里用 Docker Hub 上的同名镜像。
+    image: caddybuilds/caddy-cloudflare:latest
+    container_name: yvruc-caddy
+    ports:
+      - "80:80"      # 只用来把 http 跳成 https；占用不了就删掉这一行
+      - "443:443"
+    env_file:
+      - caddy.env    # YVRUC_DOMAIN 与 CF_API_TOKEN，见 caddy.env.example
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # 证书与账户密钥必须持久化：不挂卷的话每次 up --build 都会重新签发一张，
+      # 而 Let's Encrypt 对同一注册域限每周 50 张——调试期间重建几次就会被锁一周。
+      - yvruc_caddy_data:/data
+      - yvruc_caddy_config:/config
+    depends_on:
+      - web
+    restart: unless-stopped
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: yvruc-cloudflared
-    # 固定域名隧道：token 存于 .env 的 CLOUDFLARE_TOKEN（勿提交/外传）。
+    # 固定域名隧道，内测期间的第二个入口（另一个是 443 直连，见 web 服务）。
+    # token 存于 .env 的 CLOUDFLARE_TOKEN（勿提交/外传）。
     # 官方镜像为 distroless（无 shell），故命令必须直接可执行、不能做条件分支。
     command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TOKEN}"]
     depends_on:
@@ -199,9 +249,19 @@ services:
         condition: service_healthy
     restart: "no"
 
+networks:
+  # 固定网段：web 容器里的 nginx 用它作为 set_real_ip_from 的信任范围
+  # （YVRUC_TRUSTED_PROXY_CIDR，见上面的 web 服务）。换成别的网段时两处一起改。
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+
 volumes:
   yvruc_pgdata:
   yvruc_uploads:
   yvruc_materials:
   yvruc_tiles:
   yvruc_oplog:
+  yvruc_caddy_data:
+  yvruc_caddy_config:

@@ -1,9 +1,33 @@
 # 校青协平台 · web 容器站点配置
 # 静态资源本地托管，业务接口反代到 backend 容器（同源，无跨域问题）。
+#
+# 本容器只监听 80，前面有两个入口，两边都以 http 打进来：
+#   · caddy（宿主机 443，TLS 由它终止）→ web:80，内网直连这条路
+#   · cloudflared（TLS 在 Cloudflare 边缘终止）→ web:80，公网这条路
+# 所以这里不配证书、不开 443。
+#
+# 文件名带 .template：nginx 官方镜像的入口脚本会在启动时把 ${...} 替换成同名
+# 环境变量，替换结果写到 /etc/nginx/conf.d/default.conf。所以这个文件里
+# **${开头的都是占位符**，nginx 自己的变量（$remote_addr、$scheme 这些）不受影响。
+
+# —— 真实客户端地址 ——
+# 本容器前面一定有一跳反代（caddy 或 cloudflared），它看到的对端只是那一跳的
+# 容器 IP。反代在 X-Forwarded-For 里保留了真实客户端（caddy 会把上游已有的链
+# 原样带上、再追加自己看到的对端），这里用 real_ip 模块把它还原成 $remote_addr：
+# 不这样做，操作日志里的 IP 全是容器地址，登录失败限流也会把所有人算成一个人。
+#
+# real_ip_recursive off = 取**最右边那一跳**。后端启动参数是
+# --forwarded-allow-ips '*'（谁都能自报 IP），所以「最右边」才是反代亲自看到的
+# 那个对端；取最左边等于让客户端自己填。信任范围限定成 compose 网络
+# （YVRUC_TRUSTED_PROXY_CIDR，默认 172.30.0.0/16，见 docker-compose.yml 的
+# networks 定义——两者必须一致），公网来的请求伪造这个头也不会被采信。
+set_real_ip_from ${YVRUC_TRUSTED_PROXY_CIDR};
+real_ip_header X-Forwarded-For;
+real_ip_recursive off;
 
 # 二维码要按「浏览器实际用的地址」拼出对外网址，所以协议不能被这一跳覆盖：
-# cloudflared 到本容器之间是明文 http，$scheme 就是 http，直接写下去会让
-# https 站点生成 http:// 的码。有上游传下来的就用上游的，没有才用 $scheme。
+# caddy / cloudflared 到本容器之间都是明文 http，$scheme 就是 http，直接写下去
+# 会让 https 站点生成 http:// 的码。有上游传下来的就用上游的，没有才用 $scheme。
 map $http_x_forwarded_proto $fwd_proto {
     default $http_x_forwarded_proto;
     ""      $scheme;

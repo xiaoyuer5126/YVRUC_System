@@ -1,0 +1,41 @@
+# 内测入口（内网直连）的 TLS 终止。
+#
+# 拓扑：浏览器 ──443/HTTPS──▶ caddy ──http──▶ web(nginx:80) ──/api──▶ backend
+#      公网走 Cloudflare 隧道：cloudflared 在 compose 内网里直连 web:80，
+#      TLS 由 Cloudflare 边缘终止，与这里无关。
+#
+# 证书用 Let's Encrypt 的 **DNS-01** 挑战签发：它靠往 DNS 写一条 TXT 记录来
+# 证明域名所有权，不需要任何从公网连进来的入站请求，也不需要 80 端口可达。
+# 域名 A 记录指向内网 IP 也能签下来——本机当服务器、只有内网地址时就该这么做。
+# 签发与续期全自动（90 天一轮，到期前 30 天自己续），不需要人工介入。
+#
+# 需要 caddy.env 里的：
+#   CF_API_TOKEN  Cloudflare 令牌，权限 Zone → DNS → Edit
+#   YVRUC_DOMAIN  平台域名，与 .env 的 YVRUC_PUBLIC_BASE_URL 用同一个
+#                 域名**不能留空**：留空时 {$YVRUC_DOMAIN} 展开成空串，caddy 会把
+#                 站点块里的 encode 读成全局选项，报 unrecognized global option: encode
+#
+# 域名在 Cloudflare 里的 A 记录必须是 **DNS only（灰云）**：开橙云的话 Cloudflare
+# 会尝试回源到那个内网 IP，整个域名就挂了。
+#
+# 镜像里的 Caddy 必须带 Cloudflare DNS 插件：官方 caddy 镜像没有，会报
+# unknown directive: dns —— 见 Caddyfile.Dockerfile（两个版本都要钉住）。
+
+{$YVRUC_DOMAIN} {
+	encode zstd gzip
+
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+
+	# 客户端地址只靠 X-Forwarded-For 传：Caddy 会保留上游已有的链、再追加自己
+	# 看到的对端，web 容器里的 nginx 用 real_ip 取**最右边那一跳**还原真实客户端
+	# （见 web/nginx.conf）。不另外发 X-Real-IP：两条来源一旦不一致，操作日志里
+	# 的 IP 与登录失败限流就会各记各的。
+	reverse_proxy web:80
+}
+
+# 兜住 http 访问（收藏夹里的 http://<IP>、隧道以外的旧链接）：一律跳 https。
+:80 {
+	redir https://{$YVRUC_DOMAIN}{uri} permanent
+}
