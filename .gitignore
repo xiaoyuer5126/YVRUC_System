@@ -24,6 +24,12 @@ data/
 caddy.env
 !caddy.env.example
 
+# ===== 证书与私钥（学校发的 *.ruc.edu.cn 证书放这里；与 .env 同级机密）=====
+.certs/
+certs/
+*.pem
+*.key
+
 # ===== 日志 / 临时文件 =====
 *.log
 *.tmp

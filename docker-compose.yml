@@ -176,6 +176,10 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # 对外的入口在形态叠加文件里：内测是 caddy + cloudflared，生产是 nginx 自己
+  # 用学校证书听 443，本机调试直接映射端口。这里的映射只绑 127.0.0.1，局域网
+  # 连不上，不构成绕过 TLS 的入口；本机调试和 CI 的页面自检
+  # （scripts/viewcheck.mjs）走它。
   web:
     build:
       context: .
@@ -187,9 +191,6 @@ services:
       # nginx 配置模板里的 set_real_ip_from：信任哪些来源的 X-Forwarded-For。
       # 默认值要与文件末尾 networks 的网段一致，改一处就得改两处。
       YVRUC_TRUSTED_PROXY_CIDR: ${YVRUC_TRUSTED_PROXY_CIDR:-172.30.0.0/16}
-    # 对外的入口是 caddy（内网）和 cloudflared（公网），两者都在 compose 网络里按
-    # 服务名访问 web:80。这里的映射只绑 127.0.0.1，局域网连不上，不构成绕过 TLS
-    # 的入口；本机调试和 CI 的页面自检（scripts/viewcheck.mjs）走它。
     ports:
       - "127.0.0.1:${WEB_HOST_PORT:-8080}:80"
     depends_on:
@@ -197,8 +198,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # 内网直连入口：域名的 A 记录指向本机，TLS 在这里终止，再明文转给 web。
+  # 内网直连入口（内测形态）：域名的 A 记录指向本机，TLS 在这里终止，再明文转给 web。
   # 证书由 Let's Encrypt 经 DNS-01 自动签发与续期，见 Caddyfile。
+  # 生产形态不用它：那边 nginx 自己拿学校发的证书听 443。
   caddy:
     # 官方 caddy 镜像不含 DNS 插件（Caddyfile 里写 dns cloudflare 会报
     # unknown directive: dns），这个镜像就是官方版本加上 Cloudflare 插件。
@@ -211,6 +213,7 @@ services:
     #
     # 同一个作者的 ghcr.io/caddybuilds/caddy-cloudflare 已经拉不到（registry
     # 返回 denied），这里用 Docker Hub 上的同名镜像。
+    profiles: ["intranet"]
     image: caddybuilds/caddy-cloudflare:latest
     container_name: yvruc-caddy
     ports:
@@ -231,12 +234,13 @@ services:
       - web
     restart: unless-stopped
 
+  # 固定域名隧道（内测形态的公网入口：TLS 在 Cloudflare 边缘终止，它在 compose
+  # 内网里直连 web:80）。token 存于 .env 的 CLOUDFLARE_TOKEN（勿提交/外传）。
+  # 官方镜像为 distroless（无 shell），故命令必须直接可执行、不能做条件分支。
   cloudflared:
+    profiles: ["tunnel"]
     image: cloudflare/cloudflared:latest
     container_name: yvruc-cloudflared
-    # 固定域名隧道，内测期间的第二个入口（另一个是 443 直连，见 caddy 服务）。
-    # token 存于 .env 的 CLOUDFLARE_TOKEN（勿提交/外传）。
-    # 官方镜像为 distroless（无 shell），故命令必须直接可执行、不能做条件分支。
     command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TOKEN}"]
     depends_on:
       - web

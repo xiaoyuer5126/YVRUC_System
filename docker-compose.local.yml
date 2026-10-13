@@ -1,0 +1,19 @@
+# 本机调试形态：只起 postgres + redis + migrate + backend + web，web 用 http 直接
+# 映射到宿主机端口，浏览器访问 http://localhost:8080。不要 caddy、不要 cloudflared、
+# 不需要证书、不需要域名。
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+#   或写进 .env：COMPOSE_FILE=docker-compose.yml;docker-compose.local.yml
+#   （Linux/macOS 用冒号分隔，Windows 用分号）
+#
+# 与 base 的差别只有两处：换上 http 版 nginx 配置、把 80 端口从「只绑本机」放开成
+# 局域网可访问（手机连同一个 wifi 时能直接测）。
+services:
+  web:
+    # base 里默认进镜像的是 https 那份；本形态换成 http 那份（不配证书、不监听 443）
+    volumes:
+      - ./web/nginx-local.conf.template:/etc/nginx/templates/default.conf.template:ro
+    ports: !override
+      # 绑 0.0.0.0：手机扫二维码、测签到要能从局域网访问。http 明文只在这台开发机
+      # 所在的网段里可达，不进任何公网入口。
+      - "${WEB_HOST_PORT:-8080}:80"

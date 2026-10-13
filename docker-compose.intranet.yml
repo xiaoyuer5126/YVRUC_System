@@ -1,0 +1,18 @@
+# 内测形态：本机当服务器，同学通过域名访问。
+#   · 内网直连：域名 A 记录指向本机内网 IP，caddy 终止 TLS（Let's Encrypt DNS-01）
+#   · 公网兜底：cloudflared 固定域名隧道，TLS 在 Cloudflare 边缘终止
+#   · 本机 postgres 照旧，数据可弃
+#
+#   docker compose -f docker-compose.yml -f docker-compose.intranet.yml up -d --build
+#   或写进 .env：COMPOSE_FILE=docker-compose.yml;docker-compose.intranet.yml
+#   （Linux/macOS 用冒号分隔，Windows 用分号）
+#
+# base 里 caddy 在 intranet profile、cloudflared 在 tunnel profile，默认都不起；
+# 这个文件只负责把两个 profile 打开、指定域名与公开地址。证书由 caddy 自己管，
+# 不需要 YVRUC_CERTS_DIR，也不需要学校证书。
+#
+# 要填的值（.env 里）：
+#   YVRUC_PUBLIC_BASE_URL   https://<内测域名>      二维码与通知链接用它
+#   YVRUC_SITE_URL          同上（通知卡片打开地址，可留空自动取前者）
+#   CLOUDFLARE_TOKEN        隧道令牌
+#   caddy.env               YVRUC_DOMAIN（同一个域名）、CF_API_TOKEN（DNS-01 用）

@@ -1,0 +1,32 @@
+# 本机调试形态：nginx 只监听 80，直接映射到宿主机端口，浏览器走 http 访问。
+# 用法见 docker-compose.local.yml。不配证书、不做真实 IP 还原（前面没有反代）。
+
+# 二维码要按「浏览器实际用的地址」拼出对外网址：本形态下 $scheme 就是 http，
+# 与浏览器实际用的协议一致，直接用。
+map $http_x_forwarded_proto $fwd_proto {
+    default $http_x_forwarded_proto;
+    ""      $scheme;
+}
+
+# 访问日志只记路径，不记查询串。下载票据一分钟即失效、用一次即作废，
+# 但没有任何理由让它进日志——地址栏里出现过的东西，日志里能不留就不留。
+log_format yvruc '$remote_addr - [$time_local] "$request_method $uri $server_protocol" '
+                 '$status $body_bytes_sent "$http_referer" "$http_user_agent"';
+
+# 缓存策略按路径算，算完统一在 server 里发（原因见 nginx-common.conf）。
+map $uri $cache_control {
+    default          "no-cache";
+    "~^/api/"        "";
+    "~^/assets/"     "public, max-age=31536000, immutable";
+    "/version.json"  "no-store";
+}
+
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+
+    access_log /var/log/nginx/access.log yvruc;
+
+    include /etc/nginx/snippets/yvruc-shared.conf;
+}
