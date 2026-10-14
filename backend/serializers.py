@@ -194,7 +194,7 @@ def opens_in(act: Activity, t=None) -> int:
 # 给所有人共用（见 pubcache）。所以凡是随「谁在看」而变的字段，一律不许
 # 进 _detail_public / _brief_public，只能在 _for_viewer 里每次现算：
 #
-#   活动      my_time_conflicts   我已有的报名与本活动各场次的时段冲突
+#   活动      my_time_conflicts   我别的活动里与本活动场次压上时的提示（本活动不算）
 #             application         报名后筛选：题目 + **我的**申请
 #             contact_group_qr    联络群二维码，只给管理者
 #             attire_issued       只给管理者（后台有没有服装台账）
@@ -712,12 +712,20 @@ def _for_viewer(db: OrmSession, act: Activity, out: dict, user,
                                    for g in act.shifts for p in g.positions)
     if out["recruit_mode"] == "screened":
         out["application"] = application_out(db, act, user)
-    # 我在该活动的冲突提示（报名前预检用）：我的报名查一次，逐场次在内存里比
+    # 「您有时间冲突的活动」（报名前预检用）：我的有效报名查一次，逐场次在内存里比。
+    # 本活动自己的报名不比——它就在志愿者正看着的那几场里，拿它跟本活动的场次比
+    # 等于自己跟自己撞。列表里同一条报名也只留一行：本活动有几个场次跟它压上，
+    # 那也只是别的活动里的同一段报名。
     if user is not None:
-        rows = active_rows(db, user)
-        clashes = []
+        rows = [r for r in active_rows(db, user) if r[2].id != act.id]
+        clashes: list[dict] = []
+        seen: set[str] = set()
         for sid, start, end, _deadline, _lock in basis["shifts"]:
-            clashes.extend(conflicts_among(rows, sid, _dt(start), _dt(end)))
+            for c in conflicts_among(rows, sid, _dt(start), _dt(end)):
+                if c["enrollment_id"] in seen:
+                    continue
+                seen.add(c["enrollment_id"])
+                clashes.append(c)
         out["my_time_conflicts"] = clashes
     return with_times(out)
 
