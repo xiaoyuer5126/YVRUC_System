@@ -128,10 +128,10 @@ def test_表头顺序与合计行(client, db, take_student):
     # 按活动结束时间早晚排，上半月那场在前
     assert [row[0] for row in rows] == [first.id, second.id]
     # 组织单位与联合主办方各占一列：没合办的那场，联办那一格是空串
-    assert rows[0] == [first.id, "汇总五月甲", "校青协", "", "05-06 09:00-12:00",
+    assert rows[0] == [first.id, "汇总五月甲", "校青协", "", "05-06（周一）09:00-12:00",
                        "已结束", 2, 2, 3.0, 0.0]
     assert rows[1] == [second.id, "汇总五月乙", "文学院青协", "校青协",
-                       "05-07 14:00-17:00", "已结束", 1, 1, 1.5, 0.0]
+                       "05-07（周二）14:00-17:00", "已结束", 1, 1, 1.5, 0.0]
     # 合计的是人次（2+1）与时数（3+1.5）；人数不去重，不合计，那一格空着
     assert total[0] == "合计" and total[7:] == [3, 4.5, 0.0]
     assert not any(total[1:7])
@@ -251,7 +251,7 @@ def test_补记录活动进表草稿不进表且导出留痕(client, db, take_st
     assert header == HEADER
     # 补记录活动没有场次也没有报名，时间取 held_*，导入的时长照旧进表
     assert [row[0] for row in rows] == [rec.id]
-    assert rows[0] == [rec.id, "汇总十月补记录", "校青协", "", "10-12 14:00-17:00",
+    assert rows[0] == [rec.id, "汇总十月补记录", "校青协", "", "10-12（周六）14:00-17:00",
                        "已结束", 0, 0, 3.0, 0.0]
     assert total[0] == "合计" and total[7:] == [0, 3.0, 0.0]
     assert not any(total[1:7])
