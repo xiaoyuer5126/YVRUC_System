@@ -45,7 +45,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 yv
   局域网和公网都连不上（本机调试形态的 8080 会放开到局域网，方便手机连同一个 wifi 测签到）。
 - `caddy.env` 不存在时 compose 照常加载（CI 上就没有），只是 caddy 起不来。
 - `docker logs yvruc-caddy` 看证书签发，`docker logs yvruc-cloudflared` 看隧道状态。
-- **用户上传的文件全在一个命名卷 `yvruc_materials` 里**（挂在容器的 `/app/data/files`）：
+- **用户上传的文件全在一个命名卷 `yvruc_files` 里**（挂在容器的 `/app/data/files`）：
   学习材料、立项书与结项书、模板、报名问卷附件、反馈截图、时长补登的证明与照片、
   活动联络群二维码。谁能看由各接口自己的鉴权决定，和目录无关，所以不按「材料 / 二维码」
   分两个卷。数据库存 `yvruc_pgdata`，天地图瓦片缓存存 `yvruc_tiles`，操作日志存
@@ -211,11 +211,11 @@ compose 里的 `backup` 服务随 `up -d` 一起起来，每天 3:00 备一份�
 （`.env` 的 `YVRUC_BACKUP_DIR`，默认仓库下 `./backups`，已被 git 忽略），资源管理器里直接
 能看到、拷走。电脑在 3:00 关着机的话，开机后当天补一份。
 
-- **备什么**：数据库（`pg_dump`，服务不用停）和两个文件卷：`yvruc_materials`（用户上传的
+- **备什么**：数据库（`pg_dump`，服务不用停）和两个文件卷：`yvruc_files`（用户上传的
   文件：材料、立项书结项书、反馈截图、二维码等）、`yvruc_oplog`（操作日志）。
   不备天地图瓦片缓存、Redis、caddy 证书，它们丢了能重建。
 - **每份备份**是一个文件夹，名字形如 `2026-10-12_0300_daily`，里面是 `db.dump`、
-  `materials.tar.gz`、`oplog.tar.gz` 和 `manifest.json`。`materials.tar.gz` 里装的是
+  `files.tar.gz`、`oplog.tar.gz` 和 `manifest.json`。`files.tar.gz` 里装的是
   用户上传的全部文件——包括二维码，它们和材料同卷。
 - **留多久**：定时备份留最近 7 天，每周再留一份（这一周最后一份，一般是周日），留 4 周；
   每月再留一份（这个月最后一份），留 6 个月。手动备份另算，留最近 10 份。

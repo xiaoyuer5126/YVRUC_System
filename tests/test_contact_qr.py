@@ -16,6 +16,7 @@ import pytest
 
 from backend import config
 from backend.models import Attachment, Enrollment, now, uid
+from backup import job
 from conftest import login, student_row
 
 PNG = b"\x89PNG\r\n\x1a\n" + "用例用的二维码图".encode()
@@ -65,11 +66,14 @@ def test_compose_把_data_下每个目录都挂上了卷():
     for d in (config.MATERIAL_DIR, config.TILE_CACHE_DIR, config.OPLOG_DIR):
         target = "/app/data/" + str(d.relative_to(config.DATA_DIR))
         assert target in mounts.values(), f"{d} 没有对应的挂载"
-    # 上传件只有一个卷：备份额外挂了它（目录名沿用 materials，老备份才恢复得了）
+    # 上传件只有一个卷，备份额外挂了它；名字处处一致：目录、卷名、备份包同名
     files_vol = next(v for v, t in mounts.items() if t == "/app/data/files")
-    assert f"{files_vol}:/data/materials" in text
-    # 合并掉的那个卷不该再出现
-    assert "yvruc_uploads" not in text
+    assert files_vol == f"yvruc_{config.MATERIAL_DIR.name}"
+    backup = dict(re.findall(r"^\s*-\s+([\w.-]+):(/data/[\w.-]+)\s*$", text, re.M))
+    assert {d.rsplit("/", 1)[-1] for d in backup.values()} == set(job.VOLUMES)
+    assert backup[files_vol] == f"/data/{config.MATERIAL_DIR.name}"
+    # 合并掉的那两个卷不该再出现
+    assert "yvruc_uploads" not in text and "yvruc_materials" not in text
 
 
 # ---------------------------------------------------------------- 上传与读回
