@@ -1834,16 +1834,18 @@ async function startEditing() {
 const canPublish = computed(
   () => !!act.value && (act.value.status === 'approved' || act.value.editing))
 
+// 发布之后学生什么时候能报，由服务端按报名开始时间算好（act.publish_hint）；
+// 页面不自己写死「即可报名」，报名还没开始的那些活动会被说成现在就能报
 const publishConfirm = computed(() => act.value?.status === 'approved'
-  ? '发布后学生即可报名，确认？'
+  ? `发布后学生即可看到活动，${act.value?.publish_hint}，确认？`
   : '恢复报名，并把改动通知志愿者？')
 
 async function saveAndPublish() {
   lockBusy.value = true
   try {
     if (act.value.status === 'approved') {
-      await api.post(`/api/staff/activities/${activityId}/publish`)
-      ElMessage.success('已发布，学生现在可以报名了')
+      const d = await api.post(`/api/staff/activities/${activityId}/publish`)
+      ElMessage.success(`已发布，学生即可看到活动，${d.hint}`)
     } else {
       const d = await api.post(`/api/staff/activities/${activityId}/publish-changes`)
       ElMessage.success((d.changes

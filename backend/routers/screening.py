@@ -176,6 +176,30 @@ def _clean_scope(positions: dict[str, Position], raw: list[str],
     return out
 
 
+def scoped_questions(questions: list[FormQuestion],
+                     positions: list[str] | None = None) -> list[FormQuestion]:
+    """只按已选岗位筛出这个人该看的题，不看显示条件。
+
+    填表这一步把题先发给页面，页面按作答实时的答案决定露出哪几道（见
+    web/src/components/QuestionFields.vue）。服务端这时候还没有答案，照着
+    显示条件筛会把带条件的题连同挂在它下面的题一并筛掉——选了触发选项也
+    再也出不来，题上写了必填就卡死在「为必填」上，志愿者连题都看不见。
+
+    positions 是这个人当前的岗位，None 表示调用方要整份表（列表预览用），
+    此时不做岗位过滤。
+    """
+    if positions is None:
+        return list(questions)
+    chosen = set(positions)
+    # 适用岗位是管理者圈定的一小撮岗位，与已选岗位没有交集就不问这个人。
+    # 圈里的岗位被删掉（占位岗位被清理、岗位被删）时，这道题的 scope 和谁都
+    # 不相交，于是对所有人都问不到——这道题就此失效，而不是退化成人人都答：
+    # 范围是管理者圈的，圈里的岗位没了不能替他放大到全体。这种题在出题界面
+    # 一保存就被拦下要求重选（见 _clean_scope）。
+    return [q for q in questions
+            if not q.applies_to_positions or chosen & set(q.applies_to_positions)]
+
+
 def visible_questions(questions: list[FormQuestion], answers: dict,
                       positions: list[str] | None = None) -> list[FormQuestion]:
     """按已选岗位与已填答案算出这份表当前该显示哪几道题。
@@ -184,16 +208,14 @@ def visible_questions(questions: list[FormQuestion], answers: dict,
     positions 是这个人当前的岗位，None 表示调用方要整份表（列表预览用），
     此时不做岗位过滤。题目按 sort 排，条件只指向前面的题，所以一遍扫下来就够了：
     被条件挡掉的题，挂在它下面的题也跟着挡掉。
+
+    提交时按这份名单校验与存答案：页面按同一套规则露出题，两边说的是同一批题。
+    发题给页面用 scoped_questions——那一步还没有答案，筛不了显示条件。
     """
     chosen = set(positions or [])
     shown, out = set(), []
     for q in questions:
         scope = q.applies_to_positions or []
-        # 适用岗位是管理者圈定的一小撮岗位，与已选岗位没有交集就不问这个人。
-        # 圈里的岗位被删掉（占位岗位被清理、岗位被删）时，这道题的 scope 和谁都
-        # 不相交，于是对所有人都问不到——这道题就此失效，而不是退化成人人都答：
-        # 范围是管理者圈的，圈里的岗位没了不能替他放大到全体。这种题在出题界面
-        # 一保存就被拦下要求重选（见 _clean_scope）。
         if scope and positions is not None and not (chosen & set(scope)):
             continue
         cond = q.show_if or {}
@@ -219,7 +241,8 @@ def student_form(activity_id: str, positions: str = "",
     """申请页要的东西。
 
     带 positions（逗号分隔的岗位 id）时只返回这些岗位该答的题——填表是第二步，
-    第一步勾完岗位才知道要问什么。不带就是整份表。
+    第一步勾完岗位才知道要问什么。这一步只按岗位筛，带显示条件的题照样发下去，
+    由页面按作答实时决定露不露（见 scoped_questions）。不带就是整份表。
     """
     act = _act(db, activity_id)
     if act.status not in ("published", "closed", "finished", "vb_pending",
@@ -229,8 +252,8 @@ def student_form(activity_id: str, positions: str = "",
     out = application_out(db, act, user)
     if positions:
         picked = [p for p in positions.split(",") if p]
-        out["questions"] = [q.out() for q in visible_questions(
-            _questions(db, act.id), {}, picked)]
+        out["questions"] = [q.out() for q in scoped_questions(
+            _questions(db, act.id), picked)]
     return out
 
 

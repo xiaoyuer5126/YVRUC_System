@@ -28,9 +28,8 @@
              而显示占位文字，empty-values 去掉它，让「全部状态」照常显示出来 -->
         <el-select v-model="f.status" :empty-values="[null, undefined]"
                    style="width:150px" @change="reload">
-          <el-option value="" label="全部状态" />
-          <el-option v-for="(label, code) in STATUS_LABELS" :key="code"
-                     :value="code" :label="label" />
+          <el-option v-for="o in STATUS_OPTIONS" :key="o.value"
+                     :value="o.value" :label="o.label" />
         </el-select>
       </div>
       <DataCards v-if="narrow" :rows="list" title-key="title" v-loading="loading"
@@ -38,7 +37,7 @@
                            { key: 'location', label: '地点' }]"
                  empty="还没有活动">
         <template #extra="{ row }">
-          <el-tag size="small" :type="statusType(row.status)">{{ row.status_label }}</el-tag>
+          <el-tag size="small" :type="statusType(row.display_status)">{{ row.display_label }}</el-tag>
         </template>
         <template #body="{ row }">
           <div class="dim">
@@ -54,7 +53,8 @@
           <el-button size="small" type="primary"
                      @click="$router.push('/manage/' + row.id)">管理</el-button>
           <el-button size="small" @click="openCopy(row)">复制</el-button>
-          <el-popconfirm v-if="row.status === 'approved'" title="发布后学生即可看到活动，确认发布？"
+          <el-popconfirm v-if="row.status === 'approved'"
+                         :title="`发布后学生即可看到活动，${row.publish_hint}，确认？`"
                          @confirm="transition(row, 'publish')">
             <template #reference><el-button size="small" type="success" plain>发布</el-button></template>
           </el-popconfirm>
@@ -72,7 +72,7 @@
             <div class="act-head">
               <el-tag v-if="row.urgent" size="small" type="danger" effect="dark">急招</el-tag>
               <b>{{ row.title }}</b>
-              <el-tag size="small" :type="statusType(row.status)">{{ row.status_label }}</el-tag>
+              <el-tag size="small" :type="statusType(row.display_status)">{{ row.display_label }}</el-tag>
             </div>
             <div class="dim">{{ row.time_text }} · {{ row.location || '待定' }}</div>
           </template>
@@ -103,7 +103,8 @@
               <el-button size="small" type="primary" link
                          @click="$router.push('/manage/' + row.id)">管理</el-button>
               <el-button size="small" link @click="openCopy(row)">复制</el-button>
-              <el-popconfirm v-if="row.status === 'approved'" title="发布后学生即可报名，确认？"
+              <el-popconfirm v-if="row.status === 'approved'"
+                             :title="`发布后学生即可看到活动，${row.publish_hint}，确认？`"
                              @confirm="transition(row, 'publish')">
                 <template #reference><el-button size="small" type="success" link>发布</el-button></template>
               </el-popconfirm>
@@ -201,10 +202,22 @@ const narrow = useNarrow()
 const list = ref([])
 const total = ref(0)
 const f = reactive({ q: '', status: '', page: 1, size: 20 })
-const STATUS_LABELS = {
-  draft: '草稿', pending: '待审批', approved: '待发布', published: '报名中',
-  closed: '已截止', finished: '已结束', vb_pending: '待外联确认', completed: '已完成',
-}
+// 筛选与标签用的是服务端算好的显示状态（display_status / display_label），
+// 与广场上学生看到的那套一致：未开始报名的活动在这里也写「未开始报名」，
+// 不再混进「报名中」。管理端专有的几个状态各自保留（见后端 admin_status_of）。
+const STATUS_OPTIONS = [
+  { value: '', label: '全部状态' },
+  { value: 'draft', label: '草稿' },
+  { value: 'pending', label: '待审批' },
+  { value: 'approved', label: '待发布' },
+  { value: 'upcoming', label: '未开始报名' },
+  { value: 'published', label: '报名中' },
+  { value: 'ongoing', label: '进行中' },
+  { value: 'closed', label: '已截止' },
+  { value: 'finished', label: '已结束' },
+  { value: 'vb_pending', label: '待外联确认' },
+  { value: 'completed', label: '已完成' },
+]
 const loading = ref(false)
 const creating = ref(false)
 const saving = ref(false)
@@ -215,7 +228,12 @@ const form = ref({})
 const createRange = ref([])
 
 const modeColor = m => MODE_COLORS[m]?.color
-const statusType = s => ({ published: 'success', closed: 'info', draft: 'info', pending: 'warning', approved: 'primary', finished: 'info', vb_pending: 'warning', completed: 'success' }[s])
+const STATUS_TYPES = {
+  draft: 'info', pending: 'warning', approved: 'primary', upcoming: 'warning',
+  published: 'success', ongoing: 'success', closed: 'info', finished: 'info',
+  vb_pending: 'warning', completed: 'success',
+}
+const statusType = s => STATUS_TYPES[s]
 const pct = r => Math.min(100, Math.round(r.total_enrolled / Math.max(1, r.total_capacity) * 100))
 
 function openCopy(row) {
@@ -328,8 +346,10 @@ async function save() {
 }
 
 async function transition(row, action) {
-  await api.post(`/api/staff/activities/${row.id}/${action}`)
-  ElMessage.success('操作成功')
+  // 发布成功的提示由服务端给：设了将来的报名开始时间就说清哪一刻开始，
+  // 页面不自己写死「学生现在可以报名」（见后端 published_hint）
+  const resp = await api.post(`/api/staff/activities/${row.id}/${action}`)
+  ElMessage.success(resp?.hint || '操作成功')
   load()
 }
 
