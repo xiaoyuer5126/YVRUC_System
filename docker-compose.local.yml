@@ -6,11 +6,11 @@
 #   或写进 .env：COMPOSE_FILE=docker-compose.yml;docker-compose.local.yml
 #   （Linux/macOS 用冒号分隔，Windows 用分号）
 #
-# 与 base 的差别只有两处：换上 http 版 nginx 配置、把 80 端口从「只绑本机」放开成
+# 与 base 的差别只有两处：换上不做真实 IP 还原的 nginx 配置、把 80 端口从「只绑本机」放开成
 # 局域网可访问（手机连同一个 wifi 时能直接测）。
 services:
   web:
-    # base 里默认进镜像的是 https 那份；本形态换成 http 那份（不配证书、不监听 443）
+    # 镜像默认那份做真实 IP 还原（内测前面有反代）；本形态浏览器直连，换成不还原的这份
     volumes:
       - ./web/nginx-local.conf.template:/etc/nginx/templates/default.conf.template:ro
     ports: !override

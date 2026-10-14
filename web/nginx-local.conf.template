@@ -13,7 +13,7 @@ map $http_x_forwarded_proto $fwd_proto {
 log_format yvruc '$remote_addr - [$time_local] "$request_method $uri $server_protocol" '
                  '$status $body_bytes_sent "$http_referer" "$http_user_agent"';
 
-# 缓存策略按路径算，算完统一在 server 里发（原因见 nginx-common.conf）。
+# 缓存策略按路径算，算完统一在 server 里发（原因见 nginx-shared.conf）。
 map $uri $cache_control {
     default          "no-cache";
     "~^/api/"        "";

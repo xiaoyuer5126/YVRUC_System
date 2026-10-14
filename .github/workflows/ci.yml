@@ -61,7 +61,7 @@ jobs:
           pages=true
           if [ "$EVENT" = pull_request ]; then
             gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' > files.txt
-            grep -qE '^(web|backend|scripts)/|^docker-compose\.yml$|^\.github/workflows/ci\.yml$' files.txt \
+            grep -qE '^(web|backend|scripts)/|^docker-compose(\.[a-z-]+)?\.yml$|^\.github/workflows/ci\.yml$' files.txt \
               || pages=false
           fi
           echo "pages=$pages" >> "$GITHUB_OUTPUT"

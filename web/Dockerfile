@@ -14,16 +14,16 @@ RUN npm run build
 
 FROM nginx:1.27-alpine
 
-# 站点主体：两份形态配置都 include /etc/nginx/snippets/yvruc-shared.conf
+# 站点主体：三份形态配置都 include /etc/nginx/snippets/yvruc-shared.conf
 COPY web/nginx-shared.conf /etc/nginx/snippets/yvruc-shared.conf
-# 默认进镜像的是 https 那份（内测与生产用）；本机调试形态由
-# docker-compose.local.yml 把 nginx-local.conf.template 挂到
-# /etc/nginx/templates/default.conf.template 顶掉它。
+# 默认进镜像的是 http 80 那份（内测与 CI 用，前面有 caddy / cloudflared）。
+# 另两种形态把各自的配置挂到 /etc/nginx/templates/default.conf.template 顶掉它：
+# 生产由 docker-compose.prod.yml 挂 nginx-https.conf.template（连同证书），
+# 本机调试由 docker-compose.local.yml 挂 nginx-local.conf.template。
 # 文件名带 .template：nginx 入口脚本启动时把 ${...} 换成环境变量再写到
 # /etc/nginx/conf.d/default.conf（YVRUC_TRUSTED_PROXY_CIDR 见 compose）
 COPY web/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /src/web/dist /usr/share/nginx/html
 
-# 443 是两种 https 形态的监听口：内测由 caddy 转到 80，生产直接对校园网开 443；
-# 本机调试形态监听 80。两个都声明，避免用哪个形态都得改镜像。
+# 内测与本机调试监听 80，生产监听 443。两个都声明，用哪个形态都不用改镜像。
 EXPOSE 80 443
