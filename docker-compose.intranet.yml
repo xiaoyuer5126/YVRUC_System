@@ -8,11 +8,18 @@
 #   （Linux/macOS 用冒号分隔，Windows 用分号）
 #
 # base 里 caddy 在 intranet profile、cloudflared 在 tunnel profile，默认都不起；
-# 这个文件只负责把两个 profile 打开、指定域名与公开地址。证书由 caddy 自己管，
-# 不需要 YVRUC_CERTS_DIR，也不需要学校证书。
+# 这个文件把两者的 profile 清空，跟其余服务一起启动。web 用镜像默认的 http 80
+# 配置，caddy 与 cloudflared 都往 web:80 转。证书由 caddy 自己管，不需要
+# YVRUC_CERTS_DIR，也不需要学校证书。
 #
 # 要填的值（.env 里）：
 #   YVRUC_PUBLIC_BASE_URL   https://<内测域名>      二维码与通知链接用它
 #   YVRUC_SITE_URL          同上（通知卡片打开地址，可留空自动取前者）
 #   CLOUDFLARE_TOKEN        隧道令牌
 #   caddy.env               YVRUC_DOMAIN（同一个域名）、CF_API_TOKEN（DNS-01 用）
+services:
+  caddy:
+    profiles: !reset []
+
+  cloudflared:
+    profiles: !reset []

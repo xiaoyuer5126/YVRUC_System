@@ -12,7 +12,8 @@
 #
 # 本文件只做四件事：
 #   · 不起 caddy / cloudflared：域名直接解析到这台服务器，TLS 由 nginx 用学校证书终止
-#   · 证书目录挂进 web 容器：YVRUC_CERTS_DIR（默认仓库下 ./.certs）
+#   · web 换上 https 配置（web/nginx-https.conf.template），证书目录一起挂进去：
+#     YVRUC_CERTS_DIR（默认仓库下 ./.certs）
 #   · web 只开 443（校园网入向唯一放行的端口）
 #   · 备份不再导出数据库：学校库账户没有导入导出权限，只备文件卷
 #
@@ -40,6 +41,8 @@ services:
 
   web:
     volumes:
+      # 镜像默认是内测用的 http 80 那份；生产换成听 443、读证书的这份
+      - ./web/nginx-https.conf.template:/etc/nginx/templates/default.conf.template:ro
       # 证书只读挂进来：容器里固定是 /etc/nginx/certs/{fullchain,privkey}.pem
       - ${YVRUC_CERTS_DIR:-./.certs}:/etc/nginx/certs:ro
     ports: !override

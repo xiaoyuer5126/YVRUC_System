@@ -137,6 +137,8 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 生产形态下 **nginx 自己监听 443、用学校发的证书终止 TLS**，前面没有 caddy——证书是
 学校签好的，不需要自动签发那一套，少一个容器、少一跳，客户端 IP 也不用再从
 `X-Forwarded-For` 里还原（nginx 直接看到浏览器地址）。
+配置是 `web/nginx-https.conf.template`，由 `docker-compose.prod.yml` 连同证书目录挂进 web 容器，
+顶掉镜像默认那份（内测与 CI 用的 http 80）。
 
 - 证书放成两个文件，由 `YVRUC_CERTS_DIR`（默认仓库下 `./.certs`）挂进 web 容器的
   `/etc/nginx/certs`：
@@ -595,7 +597,7 @@ YVRUC_System/
 │                               + backend + web + backup（每日备份）+ postgres
 │                               （+ seed / tests 两个一次性任务 profile）
 ├── docker-compose.local.yml      本机调试形态：http 直连宿主机端口，不要 caddy/隧道
-├── docker-compose.intranet.yml   内测形态：caddy（自签证书，内网 80/443）+ 隧道
+├── docker-compose.intranet.yml   内测形态：caddy（Let's Encrypt 证书，内网 80/443）+ 隧道
 ├── docker-compose.prod.yml       生产形态：nginx 用学校证书听 443，不要 caddy/隧道
 ├── docker-compose.school-db.yml  连外部数据库时叠加：不起 postgres 容器
 ├── Caddyfile / caddy.env.example  内测入口的 TLS 与 Cloudflare DNS-01 令牌
@@ -640,7 +642,10 @@ YVRUC_System/
 │   └── integrations/           msgcenter / sso
 └── web/                        Vue3 + Element Plus + ECharts（Vite，无 Pinia）
     ├── Dockerfile / nginx.conf.template  Node 构建 → nginx 托管并反代 /api；
-    │                          只监听 80，TLS 由前面的 caddy 或 Cloudflare 终止
+    │                          默认只监听 80，TLS 由前面的 caddy 或 Cloudflare 终止
+    ├── nginx-https.conf.template  生产形态：听 443、用学校证书终止 TLS
+    ├── nginx-local.conf.template  本机调试形态：听 80、不还原真实 IP
+    ├── nginx-shared.conf     三份形态共用的站点主体
     └── src/
         ├── views/              学生端 + 工作台 + 登录 / 扫码落地页
         ├── components/         AssignPanel（智能排班）/ CheckinPanel（签到大屏）/
