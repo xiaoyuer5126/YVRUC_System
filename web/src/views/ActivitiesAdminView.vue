@@ -170,7 +170,7 @@
                 上传图片
               </el-button>
             </el-upload>
-            <img v-if="copyDlg.qr" :src="copyDlg.qr" class="copy-qr" />
+            <img v-if="copyQrSrc" :src="copyQrSrc" class="copy-qr" />
           </div>
         </el-form-item>
       </el-form>
@@ -193,6 +193,7 @@ import { MODE_COLORS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import { activityBody, emptyActivity, validateActivity } from '../composables/activityForm'
 import { uploadImage } from '../composables/uploadImage'
+import { useAuthedImage } from '../composables/authedImage'
 import ActivityForm from '../components/ActivityForm.vue'
 import AiActivityAssist from '../components/AiActivityAssist.vue'
 import DataCards from '../components/DataCards.vue'
@@ -224,6 +225,8 @@ const saving = ref(false)
 const modes = ref({})
 const copyDlg = ref({ visible: false, source: null, title: '', shiftDays: 7,
                       qr: '', uploading: false, busy: false })
+// 二维码要鉴权，地址不能直接放进 <img>，得带凭据取回来（见 authedImage）
+const copyQrSrc = useAuthedImage(() => copyDlg.value.qr)
 const form = ref({})
 const createRange = ref([])
 

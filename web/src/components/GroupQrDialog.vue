@@ -1,8 +1,9 @@
-<!-- 志愿者联络群二维码。报名成功/候补转正/录取时弹一次，之后在「我的报名」里点开看。 -->
+<!-- 志愿者联络群二维码。报名成功/候补转正/录取时弹一次，之后在「我的报名」里点开看。
+     二维码要鉴权，地址不能直接放进 <img>，得带凭据取回来（见 composables/authedImage）。 -->
 <template>
   <el-dialog v-model="visible" title="志愿者联络群" width="380" align-center>
     <div class="qr-box">
-      <img :src="qr" alt="志愿者联络群二维码" />
+      <img v-if="src" :src="src" alt="志愿者联络群二维码" />
       <p class="title">{{ title }}</p>
       <p class="dim">
         请扫码加入志愿者联络群，入群后把昵称改为<b>姓名+电话</b>，
@@ -18,9 +19,11 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useAuthedImage } from '../composables/authedImage'
 
 const visible = ref(false)
 const qr = ref('')
+const src = useAuthedImage(() => qr.value)
 const title = ref('')
 
 function open({ qr: image, title: name }) {

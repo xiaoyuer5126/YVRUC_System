@@ -12,7 +12,8 @@ export async function uploadTo(url, file) {
   return d
 }
 
-/** 上传一张图片，返回可直接放进 <img> 的地址（联络群二维码用）。 */
+/** 上传一张图片（联络群二维码），返回要鉴权的访问地址：显示时得带凭据取回来
+ *  （见 composables/authedImage.js），不能直接塞进 <img>。 */
 export async function uploadImage(file) {
   return (await uploadTo('/api/staff/upload-image', file)).url
 }

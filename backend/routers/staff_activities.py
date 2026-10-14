@@ -8,10 +8,7 @@
 """
 from __future__ import annotations
 
-import re
 from datetime import datetime
-from pathlib import Path
-from uuid import uuid4
 
 from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
                      UploadFile)
@@ -21,19 +18,19 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
-from .. import assign, config, copying, hours as hours_flow, scoring
+from .. import assign, config, copying, hours as hours_flow, scoring, uploads
 from ..stage import ensure_hours_editable, ensure_not_finished
 from ..audit import diff_changes, log as audit_log, value_text
 from ..database import db_session
-from ..deps import require_council, require_manager
+from ..deps import current_user_download, require_council, require_manager
 from ..locks import invalidate_gates, shift_lock, urgent_lock
 from ..notify import notify_edit_changes, notify_enrolled
 from ..perm import (activity_manager_ids, add_manager,
-                     ensure_activity_manager, managed_activity_ids,
-                     remove_manager)
+                     ensure_activity_manager, is_activity_manager,
+                     managed_activity_ids, remove_manager)
 from ..integrations import msgcenter
 from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
-                      AttireRecord, AttireTask, AuditLog,
+                      Attachment, AttireRecord, AttireTask, AuditLog,
                       CheckinRecord, CheckinTask, Enrollment, FormQuestion,
                       Notification, Position, Shift, User, VbConfirm,
                       iso, like_pattern, now, parse_local_dt, uid)
@@ -2668,47 +2665,72 @@ def add_walkin(shift_id: str, body: dict,
             "attached": [s.id for s in extra]}
 
 
-# ======================= 图片上传 / 媒体访问 =======================
+# ======================= 联络群二维码 =======================
 
-UPLOAD_DIR = Path(__file__).resolve().parents[1] / "data" / "uploads"
-IMAGE_EXTS = {"png": "image/png", "jpg": "image/jpeg",
-              "jpeg": "image/jpeg", "webp": "image/webp"}
+# 二维码是用户上传的文件，和材料走同一条路：落在 config.MATERIAL_DIR（挂载卷）、
+# 写一条 Attachment、读的时候判权限。别为了 <img src> 好写另开一条匿名直链——
+# 2026-10-13 那次丢文件就出在这条自成一体的路上（目录自己拼，还错了一层）。
+QR_OWNER = "activity_qr"
+QR_URL_PREFIX = "/api/staff/contact-qr/"
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
+
+
+def qr_url(attachment_id: str) -> str:
+    """二维码的访问地址。活动的 contact_group_qr 里存的就是它。"""
+    return f"{QR_URL_PREFIX}{attachment_id}"
+
+
+def qr_activity(db: OrmSession, attachment_id: str) -> Activity | None:
+    """这张二维码挂在哪个活动上。
+
+    上传发生在活动存在之前（表单里先传图、后保存），所以归属不看
+    Attachment.owner_id，认的是活动里存着的那个地址——上传后没保存的，
+    这里就是 None。
+    """
+    return (db.query(Activity)
+            .filter(Activity.contact_group_qr == qr_url(attachment_id)).first())
 
 
 @router.post("/upload-image")
 async def upload_image(file: UploadFile = File(...),
+                       db: OrmSession = Depends(db_session),
                        user: User = Depends(require_manager)):
-    """上传答疑群二维码等图片（png/jpg/jpeg/webp，≤2MB），返回访问链接。"""
-    ext = Path(file.filename or "").suffix.lower().lstrip(".")
-    if ext not in IMAGE_EXTS:
-        raise HTTPException(400, "仅支持 png/jpg/jpeg/webp 格式的图片")
-    data = await file.read()
-    if len(data) > MAX_IMAGE_BYTES:
-        raise HTTPException(400, "图片大小不能超过 2MB")
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    filename = f"qr_{uuid4().hex}.{ext}"
-    (UPLOAD_DIR / filename).write_bytes(data)
-    return {"url": f"/api/media/{filename}"}
+    """上传志愿者联络群二维码（png/jpg/jpeg/webp，≤2MB），返回访问地址。"""
+    files = await uploads.read_files([file], label="二维码",
+                                     exts=uploads.IMAGE_TYPES, max_count=1,
+                                     max_bytes=MAX_IMAGE_BYTES)
+    row = uploads.save_files(db, files, owner_type=QR_OWNER, owner_id="",
+                             uploaded_by=user.id)[0]
+    db.commit()
+    return {"url": qr_url(row.id)}
 
 
-# 媒体路由不带 /api/staff 前缀：单独构建路由对象后把已生成的
-# 路由表并入上方 router（main.py 只 include 本模块的 router，无需改动）。
-media_router = APIRouter(tags=["staff"])
+@router.get("/contact-qr/{attachment_id}")
+def contact_qr(attachment_id: str, db: OrmSession = Depends(db_session),
+               user: User = Depends(current_user_download)):
+    """读二维码：活动管理者、已报上名的志愿者本人，以及刚传完还没保存的那位
+    （表单里的预览）。别人一律 404，不透露这张图存不存在。
 
-
-@media_router.get("/api/media/{name}")
-def media_file(name: str):
-    """读取上传的图片。文件名仅允许字母数字下划线点，防止目录穿越。"""
-    if (not name or ".." in name or name.startswith(".")
-            or not re.fullmatch(r"[A-Za-z0-9_.]+", name)):
+    <img src> 带不了 Authorization 头，所以前端是带凭据把图取回来再显示
+    （见 web/src/composables/authedImage.js），不能只靠文件名难猜。
+    """
+    row = db.get(Attachment, attachment_id)
+    if row is None or row.owner_type != QR_OWNER:
         raise HTTPException(404, "文件不存在")
-    path = UPLOAD_DIR / name
+    act = qr_activity(db, row.id)
+    allowed = act is None and row.uploaded_by == user.id
+    if act is not None:
+        allowed = (is_activity_manager(db, user, act.id)
+                   or db.query(Enrollment)
+                   .filter(Enrollment.activity_id == act.id,
+                           Enrollment.user_id == user.id,
+                           Enrollment.status == "enrolled").first() is not None)
+    if not allowed:
+        raise HTTPException(404, "文件不存在")
+    path = config.MATERIAL_DIR / row.stored_name
     if not path.is_file():
-        raise HTTPException(404, "文件不存在")
-    media_type = IMAGE_EXTS.get(path.suffix.lower().lstrip("."),
-                                "application/octet-stream")
-    return FileResponse(path, media_type=media_type)
-
-
-router.routes.extend(media_router.routes)
+        raise HTTPException(404, "文件已丢失，请重新上传")
+    ext = row.stored_name.rsplit(".", 1)[-1]
+    return FileResponse(path, filename=row.title, content_disposition_type="inline",
+                        media_type=uploads.IMAGE_TYPES.get(
+                            ext, "application/octet-stream"))

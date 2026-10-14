@@ -71,8 +71,8 @@ def dirs(tmp_path, monkeypatch):
 
 def test_文件卷备份后恢复成备份时的样子(dirs):
     root, data = dirs
-    (data / "uploads" / "a").mkdir()
-    (data / "uploads" / "a" / "qr.png").write_bytes(b"\x89PNG-1")
+    (data / "materials" / "a").mkdir()
+    (data / "materials" / "a" / "qr.png").write_bytes(b"\x89PNG-1")
     (data / "materials" / "立项书.pdf").write_bytes(b"pdf")
     (data / "oplog" / "2026-10-12-7.jsonl").write_text('{"x":1}\n')
 
@@ -81,13 +81,13 @@ def test_文件卷备份后恢复成备份时的样子(dirs):
     assert not any(p.name.startswith(job.TMP_PREFIX) for p in root.iterdir())
 
     # 备份之后有改动、有新增
-    (data / "uploads" / "a" / "qr.png").write_bytes(b"changed")
-    (data / "uploads" / "new.png").write_bytes(b"new")
+    (data / "materials" / "a" / "qr.png").write_bytes(b"changed")
+    (data / "materials" / "new.png").write_bytes(b"new")
     (data / "oplog" / "2026-10-12-7.jsonl").write_text('{"x":1}\n{"x":2}\n')
 
     job.restore(made.name, "files", root=root)
-    assert (data / "uploads" / "a" / "qr.png").read_bytes() == b"\x89PNG-1"
-    assert not (data / "uploads" / "new.png").exists()
+    assert (data / "materials" / "a" / "qr.png").read_bytes() == b"\x89PNG-1"
+    assert not (data / "materials" / "new.png").exists()
     assert (data / "materials" / "立项书.pdf").read_bytes() == b"pdf"
     assert (data / "oplog" / "2026-10-12-7.jsonl").read_text() == '{"x":1}\n'
 

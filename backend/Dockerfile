@@ -28,6 +28,8 @@ COPY pytest.ini ./
 COPY tests/ ./tests/
 # 备份容器的保留策略也在这套用例里测
 COPY backup/ ./backup/
+# 挂载表：用例会核对着它看每个数据目录是不是都挂在卷上（见 config.check_data_dir）
+COPY docker-compose.yml ./
 CMD ["python", "-m", "pytest"]
 
 

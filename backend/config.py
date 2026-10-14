@@ -18,9 +18,29 @@ from urllib.parse import urlparse
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
+
+
+def check_data_dir(data_dir: Path, code_dir: Path) -> None:
+    """数据目录不能落在代码目录里面。
+
+    代码是打进镜像的，容器一重建，写进代码目录的文件就跟着没了，而库里存着的
+    地址还在（2026-10-13 的联络群二维码就是这样丢的）。挂载卷都在 data/ 下面
+    （见 docker-compose.yml），路径全部由 DATA_DIR 派生，这里把根钉住：真算到
+    代码目录里了就直接起不来，不留一个静默丢文件的口子。
+    """
+    if data_dir.is_relative_to(code_dir):
+        raise RuntimeError(
+            f"数据目录 {data_dir} 落在代码目录 {code_dir} 里面，容器重建会连"
+            f"用户上传的文件一起删掉；它必须指向挂载卷（见 docker-compose.yml）")
+
+
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-# 附件目录：学习材料、立项书、报名问卷附件、反馈截图、时长补登的证明材料
-MATERIAL_DIR = DATA_DIR / "materials"
+check_data_dir(DATA_DIR, Path(__file__).resolve().parent)
+
+# 用户上传的文件都存这里：学习材料、立项书与结项书、报名问卷附件、反馈截图、
+# 时长补登的证明材料与活动照片、活动联络群二维码。一个目录一个卷，备份整卷备。
+# 谁能看不由目录决定，由各接口自己的鉴权判断（见 routers/materials.py）。
+MATERIAL_DIR = DATA_DIR / "files"
 
 # —— 基础设施 ——
 DATABASE_URL = os.environ["YVRUC_DATABASE_URL"]
