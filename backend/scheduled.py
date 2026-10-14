@@ -787,18 +787,22 @@ def purge_expired_sessions(db: OrmSession) -> int:
 
 
 def purge_orphan_attachments(db: OrmSession) -> int:
-    """清掉没人引用的问卷附件：文件与记录一起删。
+    """清掉没人引用的问卷附件与联络群二维码：文件与记录一起删。
 
     报名问卷的文件题是先传文件、再提交答案。填到一半关掉页面，文件就留在
     磁盘上，没有任何申请指向它。提交与撤回时会当场清一遍，这里管的是
     「传了就再也没回来」的那些，留够重来的时间再删。
+
+    联络群二维码同样是先传图、后保存活动：传完就没再回来（关掉表单、活动删掉
+    了）的那些，这里一并清掉。
     """
     from .models import Application, Attachment
     from .routers.materials import MATERIAL_DIR
+    from .routers.staff_activities import QR_OWNER, qr_activity
 
     cutoff = now() - timedelta(days=config.ORPHAN_ATTACHMENT_DAYS)
     rows = (db.query(Attachment)
-            .filter(Attachment.owner_type == "application",
+            .filter(Attachment.owner_type.in_(("application", QR_OWNER)),
                     Attachment.created_at <= cutoff).all())
     if not rows:
         return 0
@@ -812,12 +816,16 @@ def purge_orphan_attachments(db: OrmSession) -> int:
     for att in rows:
         if att.id in used:
             continue
+        # 还挂在某个活动上的二维码也不动：上传和保存之间隔着人的操作，
+        # 只看有没有归属就会把管理者刚传好还没保存的那张删掉
+        if att.owner_type == QR_OWNER and qr_activity(db, att.id) is not None:
+            continue
         (MATERIAL_DIR / att.stored_name).unlink(missing_ok=True)
         db.delete(att)
         n += 1
     if n:
         db.commit()
-        logger.info("清理无人引用的问卷附件 %d 个", n)
+        logger.info("清理无人引用的附件 %d 个", n)
     return n
 
 

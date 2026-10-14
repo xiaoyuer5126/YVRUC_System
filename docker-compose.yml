@@ -138,8 +138,12 @@ services:
     ports:
       - "127.0.0.1:${BACKEND_HOST_PORT:-8000}:8000"   # 本机直连 API 调试用，公网只走 web 反代
     volumes:
-      - yvruc_uploads:/app/data/uploads   # 活动二维码等上传件持久化
-      - yvruc_materials:/app/data/materials # 学习材料、立项书与反馈截图持久化
+      # 用户上传的文件全在这一个卷里（见 backend/config.py 的 MATERIAL_DIR）：
+      # 学习材料、立项书与结项书、报名问卷附件、反馈截图、补登的证明与照片、
+      # 活动联络群二维码。谁能看是代码里的鉴权判断，和目录无关，所以不再按
+      # 「材料 / 二维码」分两个目录两个卷。名字处处统一叫 files：代码里的目录名、
+      # 卷名、备份包名一致，出问题时对得上号。
+      - yvruc_files:/app/data/files
       # 天地图瓦片的磁盘缓存：重建容器不丢，免得重新花每天 10000 次的额度
       - yvruc_tiles:/app/data/tiles
       # 操作日志（JSON Lines 文件，见 backend/oplog.py）：和数据库、上传件分开放
@@ -271,8 +275,9 @@ services:
     volumes:
       - ${YVRUC_BACKUP_DIR:-./backups}:/backups
       # 读写挂载：恢复时要往卷里写
-      - yvruc_uploads:/data/uploads
-      - yvruc_materials:/data/materials
+      # 上传件卷和后端挂的是同一个卷，目录名也和后端那边一样叫 files：
+      # 备份包里的文件名就是这个（见 backup/job.py 的 VOLUMES）
+      - yvruc_files:/data/files
       - yvruc_oplog:/data/oplog
     restart: unless-stopped
 
@@ -337,8 +342,7 @@ networks:
 
 volumes:
   yvruc_pgdata:
-  yvruc_uploads:
-  yvruc_materials:
+  yvruc_files:
   yvruc_tiles:
   yvruc_oplog:
   yvruc_caddy_data:

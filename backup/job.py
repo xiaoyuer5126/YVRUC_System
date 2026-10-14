@@ -7,9 +7,9 @@
 
 一份备份是 /backups 下的一个文件夹，名字形如 2026-10-12_0300_daily：
     db.dump              pg_dump 自定义格式（YVRUC_BACKUP_DB=0 时没有）
-    uploads.tar.gz       各文件卷整卷打包，卷在容器里挂在 /data/<卷名>
-    materials.tar.gz
-    oplog.tar.gz
+    files.tar.gz         用户上传的文件（卷是 yvruc_files，后端挂在
+                         /app/data/files，这里挂在 /data/files，同一个卷）
+    oplog.tar.gz         操作日志
     manifest.json        时间、种类、各文件大小
 先写进 .tmp- 开头的文件夹，全部成功才改名，所以没改名的都是半截，下次启动时清掉。
 
@@ -32,7 +32,10 @@ from pathlib import Path
 
 BACKUP_ROOT = Path(os.environ.get("YVRUC_BACKUP_ROOT", "/backups"))
 DATA_ROOT = Path(os.environ.get("YVRUC_BACKUP_DATA_ROOT", "/data"))
-VOLUMES = ("uploads", "materials", "oplog")
+# 要备的文件卷，名字就是在容器里挂的目录名（见 docker-compose.yml 的 backup 服务）。
+# 上传件那一个叫 files：代码里的目录名（config.MATERIAL_DIR）、卷名（yvruc_files）、
+# 备份包里的文件名（files.tar.gz）处处一致
+VOLUMES = ("files", "oplog")
 
 KEEP_DAILY = 7
 KEEP_WEEKLY = 4
