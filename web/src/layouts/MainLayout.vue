@@ -153,6 +153,20 @@ function openFeedback() {
   feedbackDialog.value.open()
 }
 
+// 「意见反馈已处理」通知的落点是 /messages?feedback=mine：把「我的反馈」弹窗
+// 打开，再把查询串从地址栏去掉——不删的话刷新或后退会又弹一次。企业微信卡片
+// 直接打开这个地址（整页加载），所以挂载时也要认一次，不能只听路由变化。
+async function openFeedbackFromQuery() {
+  if (route.query.feedback !== 'mine') return
+  drawer.value = false
+  feedbackDialog.value?.open('mine')
+  const query = { ...route.query }
+  delete query.feedback
+  // 只改查询串，路径和路由参数原样保留
+  await router.replace({ query })
+}
+watch(() => route.query.feedback, openFeedbackFromQuery)
+
 // 本地存的用户信息是登录那一刻的：部门、层级、值班资格事后可能被调过，
 // 打开页面时刷一次，菜单（比如「活动审批」）才跟得上
 async function refreshUser() {
@@ -180,6 +194,7 @@ onMounted(() => {
   poll(); timer = setInterval(poll, 30000)
   if (auth.token) refreshUser()
   showAnnouncement()
+  openFeedbackFromQuery()
   // 学生资料未完善 → 强制弹出（不可关闭），补全前不可报名
   if (auth.token && auth.user?.user_type === 'student' && !auth.user.profile_complete) {
     openProfileDialog(true)

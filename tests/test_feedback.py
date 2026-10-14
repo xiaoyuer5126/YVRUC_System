@@ -93,6 +93,11 @@ def test_管理员处理后提交人收到通知且看到回复(client, take_stu
 
     notes = inbox(db, sid, "意见反馈已处理")
     assert len(notes) == 1 and "已修复，请刷新后再试" in notes[0].content
+    # 点开要能落到「我的反馈」：站内和企业微信用同一个带查询串的地址
+    assert notes[0].data["route"] == "feedback_mine"
+    msgs = client.get("/api/me/notifications", headers=me).json()["items"]
+    note = [m for m in msgs if m["title"] == "意见反馈已处理"][0]
+    assert note["page"] == "/messages?feedback=mine"
 
     mine = client.get("/api/feedback/mine", headers=me).json()
     assert mine[0]["status"] == "handled"

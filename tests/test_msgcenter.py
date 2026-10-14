@@ -52,6 +52,9 @@ def test_点开去哪页只有一份规则():
     assert page("custom", {"activity_id": "a1", "route": "approvals"}) == "/approvals"
     assert page("custom", {"route": "hours"}) == "/hours"
     assert page("custom", {"route": "feedback", "feedback_id": "f1"}) == "/feedback"
+    # 反馈回复：去消息中心并把「我的反馈」弹窗打开（弹窗没有自己的路由）
+    assert (page("custom", {"route": "feedback_mine", "feedback_id": "f1"})
+            == "/messages?feedback=mine")
     assert page("activity_changed", {"activity_id": "a1"}) == "/activity/a1"
     # 发给活动管理者的进活动管理页，页签只认名单里的
     assert (page("custom", {"activity_id": "a1", "route": "manage", "tab": "review"})
@@ -82,6 +85,9 @@ def test_企业微信链接_要签收的落在消息中心(monkeypatch):
     assert link("signup_success", None, False) == "https://p.cn/my"
     assert (link("custom", {"activity_id": "a1", "route": "approvals"}, False)
             == "https://p.cn/approvals")
+    # 反馈回复的落点是弹窗，站内和企业微信用同一个带查询串的地址
+    assert (link("custom", {"route": "feedback_mine"}, False)
+            == "https://p.cn/messages?feedback=mine")
     assert link("custom", {"activity_id": "a1"}, True) == "https://p.cn/messages"
     assert (link("checkin_reminder", {"activity_id": "a1"}, True)
             == "https://p.cn/messages")
