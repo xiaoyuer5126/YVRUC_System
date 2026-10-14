@@ -1,5 +1,5 @@
 <template>
-  <div class="page">
+  <div class="page page-wide">
     <h2>平台公告</h2>
     <p class="dim" style="margin-top:-8px">
       启用后，每个用户登录平台时弹出一次。修改公告不会再弹给已经登录的人，他们下次登录时看到。

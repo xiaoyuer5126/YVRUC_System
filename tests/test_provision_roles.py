@@ -65,6 +65,6 @@ def test_学生首次登录是学生(db):
 
 
 def test_没有身份的老师不显示成学生():
-    """身份被管理员全撤掉的老师，称呼按类型走，不能落到「学生」。"""
+    """身份被管理员全撤掉的老师，称呼按类型走，不能落到「志愿者」。"""
     assert User(user_type="teacher", roles=[]).active_role_label() == "教职工"
-    assert User(user_type="student", roles=[]).active_role_label() == "学生"
+    assert User(user_type="student", roles=[]).active_role_label() == "志愿者"

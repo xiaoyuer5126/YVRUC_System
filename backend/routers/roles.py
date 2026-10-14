@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import Text, cast, or_
+from sqlalchemy import Text, case, cast, or_
 from sqlalchemy.orm import Session as OrmSession
 
 from ..audit import log as audit_log
@@ -35,6 +35,42 @@ POSTS = ("council", "head", "core", "member")
 HEAD_GRANTABLE = ("core", "member")
 # 已结束的活动是终态、只读，没人管也不要紧；未结束的才需要有人盯着
 LIVE_STATUSES = ("draft", "pending", "approved", "published", "closed")
+
+# 角色列表里「同部门的人聚在一起」的只有骨干、成员这两档
+DEPT_RANKS = (3, 4)
+
+
+def _holds(role: str):
+    """这个人持不持有某个身份。
+
+    roles 是 JSON 而不是 JSONB，没有包含运算符可用；按序列化后的文本匹配
+    "admin" 这种带引号的完整词，不会误命中别的值。
+    """
+    return cast(User.roles, Text).like(f'%"{role}"%')
+
+
+def _role_order() -> list:
+    """角色列表的排序键：身份档 → （骨干、成员两档内）部门 → 学号。
+
+    档从高到低是 管理员 / 会长团 / 部长 / 骨干 / 成员 / 活动发起方 / 志愿者。
+    一个人有多种身份时按最高档算——CASE 从高到低写，先命中的就是最高档。
+    学号唯一，排序键稳定，翻页不会有人重复或漏掉。
+    """
+    rank = case(
+        (_holds("admin"), 0),
+        (_holds("qingxie") & (User.qingxie_post == "council"), 1),
+        (_holds("qingxie") & (User.qingxie_post == "head"), 2),
+        (_holds("qingxie") & (User.qingxie_post == "core"), 3),
+        (_holds("qingxie") & (User.qingxie_post == "member"), 4),
+        (_holds("initiator"), 5),
+        else_=6,
+    )
+    in_dept = rank.in_(DEPT_RANKS)
+    # 只有那两档带部门键；别的档里部门是空档，同一档内就只剩学号说话
+    return [rank,
+            case((in_dept, Department.sort), else_=None),
+            case((in_dept, Department.name), else_=None),
+            User.student_id]
 
 
 def require_role_manager(user: User = Depends(current_user)) -> User:
@@ -200,7 +236,7 @@ def list_role_users(q: str = "", role: str = "",
     学生加身份就搜他的学号。部长默认只看本部门的人，搜索不受限——他要从
     全校学生里挑人进部门。骨干只看本部门的成员，搜也只在这里面搜。
 
-    分页，按学号排：学号唯一，翻页时不会有人重复或漏掉。
+    分页；先按身份档排，见 _role_order。
     """
     query = db.query(User)
     # 先看是不是管理员/会长团，再看部门层级：管理员兼骨干（以并集判权时）
@@ -217,14 +253,12 @@ def list_role_users(q: str = "", role: str = "",
     elif not full and not core:
         query = query.filter(User.department_id == user.department_id)
     else:
-        # roles 是 JSON 而不是 JSONB，没有包含运算符可用；按序列化后的文本
-        # 匹配 "admin" 这种带引号的完整词，不会误命中别的值。
-        def holds(r):
-            return cast(User.roles, Text).like(f'%"{r}"%')
         wanted = [role] if role in ROLES else ["admin", "qingxie", "initiator"]
-        query = query.filter(or_(*[holds(r) for r in wanted]))
+        query = query.filter(or_(*[_holds(r) for r in wanted]))
     total = query.count()
-    rows = (query.order_by(User.student_id)
+    # 档内要按部门聚拢，部门名与部门的固定次序都在部门表里，带上这一跳
+    rows = (query.outerjoin(Department, User.department_id == Department.id)
+            .order_by(*_role_order())
             .offset((page - 1) * size).limit(size).all())
     names = {d.id: d.name for d in db.query(Department).all()}
     # 归属骨干的名字也从同一张表查：成员行上要写「归属：林骁」

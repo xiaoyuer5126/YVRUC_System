@@ -1,6 +1,6 @@
 <!-- 角色管理。管理员与会长团管全部；部长只管本部门的骨干与成员；骨干只认领本部门成员。 -->
 <template>
-  <div class="page">
+  <div class="page page-wide">
     <h2>角色管理</h2>
     <el-alert type="warning" :closable="false">
       <template v-if="coreOnly">
@@ -9,7 +9,7 @@
       </template>
       <template v-else-if="headOnly">
         你是<b>{{ myDeptName }}</b>部长：可设置或撤销本部门的骨干与成员。
-        仅能调整青协身份，管理员、活动发起方、学生身份请联系会长团。
+        仅能调整青协身份，管理员、活动发起方、志愿者身份请联系会长团。
       </template>
       <template v-else>
         本页调整的是<b>权限</b>：谁能进入工作台、谁能审批、谁是部长。
@@ -102,7 +102,7 @@
       <el-form label-width="88px">
         <el-form-item label="身份" required>
           <el-checkbox-group v-model="dlg.roles">
-            <!-- 部长只能动青协身份：别的身份（含学生）显示但锁住 -->
+            <!-- 部长只能动青协身份：别的身份（含志愿者）显示但锁住 -->
             <el-checkbox v-for="r in ROLE_ORDER" :key="r" :value="r"
                          :disabled="(r === 'admin' && dlg.row?.is_me)
                                     || (headOnly && r !== 'qingxie')">
@@ -164,7 +164,7 @@
             <el-radio value="qingxie">青协</el-radio>
             <el-radio v-if="!headOnly" value="initiator">活动发起方</el-radio>
           </el-radio-group>
-          <div class="dim">管理员与「学生」不批量：管理员逐个交接，学生由统一身份认证下发</div>
+          <div class="dim">管理员与「志愿者」不批量：管理员逐个交接，志愿者由统一身份认证下发</div>
         </el-form-item>
         <template v-if="bd.action === 'add' && bd.role === 'qingxie'">
           <el-form-item label="青协层级">
@@ -239,13 +239,12 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
-import { auth } from '../store'
+import { auth, ROLE_LABELS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
 import RefreshBar from '../components/RefreshBar.vue'
 
 const ROLE_ORDER = ['admin', 'qingxie', 'initiator', 'student']
-const ROLE_LABELS = { admin: '管理员', qingxie: '青协', initiator: '活动发起方', student: '学生' }
 const ROLE_TAG = { admin: 'danger', qingxie: 'success', initiator: 'primary', student: 'info' }
 
 const SIZE = 20

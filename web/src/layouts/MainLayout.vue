@@ -125,11 +125,11 @@ const unread = ref(0)
 let timer = null
 
 // 当前视角的称呼：没有对应身份时（比如还没被授予任何身份的老师，默认视角是
-// student）按身份类型说，别把老师叫成「学生」
+// student）按身份类型说，别把老师叫成「志愿者」
 const identityLabel = computed(() => {
   const roles = auth.user?.roles || []
   if (roles.includes(auth.activeIdentity)) return ROLE_LABELS[auth.activeIdentity]
-  return auth.user?.user_type === 'teacher' ? '教职工' : '学生'
+  return auth.user?.user_type === 'teacher' ? '教职工' : '志愿者'
 })
 
 // 抽屉里点的若是当前页，el-menu 不触发 select，这里兜住
@@ -235,7 +235,7 @@ async function onCommand(cmd) {
 /* 固定视口高度：侧边栏恒定满高，右侧内容独立滚动 */
 .app-root { height: 100vh; }
 .app-body { height: calc(100vh - 56px); }
-.app-main { height: 100%; overflow-y: auto; padding: 0; }
+.app-main { height: 100%; overflow-y: auto; padding: 0; scrollbar-gutter: stable; }
 .topbar {
   background: var(--ruc-red);
   color: #fff; display: flex; align-items: center; justify-content: space-between;
