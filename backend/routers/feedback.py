@@ -205,7 +205,9 @@ def handle_feedback(feedback_id: str, body: HandleBody,
                f"您提交的意见反馈「{brief}」已处理。"
                + (f"\n回复：{reply}" if reply else "")
                + "\n可在右上角菜单「意见反馈 → 我的反馈」查看。",
-               data={"feedback_id": fb.id})
+               # route="feedback_mine"：落消息中心并把「我的反馈」弹窗打开
+               # （弹窗没有自己的路由），站内和企业微信用同一个地址
+               data={"feedback_id": fb.id, "route": "feedback_mine"})
     audit_log(db, actor=user, action="feedback", target_type="feedback",
               target_id=fb.id, target_label=fb.content[:40],
               summary=("修改反馈回复" if again else "处理意见反馈")

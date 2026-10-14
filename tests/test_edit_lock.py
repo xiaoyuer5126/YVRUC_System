@@ -85,10 +85,12 @@ def test_超时自动解冻并通知管理者(client, admin, db, enrolled_activi
     assert scheduled.release_stale_edit_locks(db) >= 1
     db.expire_all()
     assert db.get(Activity, act.id).editing_since is None
-    assert (db.query(Notification)
+    note = (db.query(Notification)
             .filter(Notification.user_id == editor,
                     Notification.title == f"报名已自动恢复｜{act.title}")
-            .count() == 1)
+            .one())
+    # 点开进这个活动的管理页「岗位设置」页签：正文叫他重新点的「调整岗位」在那儿
+    assert note.data == {"activity_id": act.id, "route": "manage", "tab": "tree"}
 
 
 def test_未冻结时不能保存并发布(client, admin, enrolled_activity):

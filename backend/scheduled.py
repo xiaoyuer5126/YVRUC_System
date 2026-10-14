@@ -633,12 +633,16 @@ def release_stale_edit_locks(db: OrmSession) -> int:
                   summary=f"编辑态超过 {config.EDIT_LOCK_HOURS} 小时未保存，"
                           f"系统自动解冻并恢复报名")
         if who is not None:
+            # 落点进活动管理页的「岗位设置」页签：「调整岗位」按钮就在那儿，
+            # 正文叫他重新点的也是它
             msgcenter.send_user(db, who, "custom",
                             title=f"报名已自动恢复｜{act.title}",
                             content=f"您对「{act.title}」的编辑态超过 "
                                     f"{config.EDIT_LOCK_HOURS} 小时未保存，"
                                     f"系统已自动解冻并恢复报名。\n"
-                                    f"如仍需调整，请重新点击「调整岗位」。")
+                                    f"如仍需调整，请重新点击「调整岗位」。",
+                            data={"activity_id": act.id, "route": "manage",
+                                  "tab": "tree"})
         logger.info("活动「%s」编辑态超时，已自动解冻", act.title)
     if rows:
         db.commit()
