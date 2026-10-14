@@ -1383,6 +1383,7 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
     # 交错成谁都没写过的组合
     hours_flow.lock_records(db, act.id)
     added = []
+    changes = []
     revoked = False
     for it in body.items:
         u = db.query(User).filter(
@@ -1425,6 +1426,7 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
                 raise HTTPException(
                     400, f"{u.name} 当前只有 {rec.hours:g} 小时，"
                          f"扣不了 {-hours:g} 小时{hint}")
+        before = rec.settled_hours() if rec is not None else None
         if rec is None:
             rec = HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id,
                               source="manual", note=note, confirmed_by=user.id)
@@ -1440,11 +1442,15 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
         # 加完就 flush：同一批里这个人再出现一次时，hours_record_of 查不到刚建的
         # 这条、扣减也看不到刚加上去的那一段（合计是 flush 时按段重算的）
         db.flush()
-        added.append(f"{u.name} {'扣减' if hours < 0 else '添加'}{abs(hours):g}h")
+        verb = f"{'手动扣减' if hours < 0 else '手动添加'} {abs(hours):g}h"
+        added.append(f"{u.name} {verb}")
+        changes.append(hours_flow.hours_change(u, before, rec.settled_hours(),
+                                               f"{verb}：{note}"))
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"手动调整时长：{'、'.join(added)}"
-                      + ("；原时长核准已撤销" if revoked else ""))
+                      + ("；原时长核准已撤销" if revoked else ""),
+              changes=changes)
     db.commit()
     return {"ok": True, "count": len(added), "reapproval_required": revoked}
 
@@ -1477,6 +1483,7 @@ def hours_manual_delete(activity_id: str, record_id: str, part_id: str,
     if seg is None or seg.kind != "manual":
         raise HTTPException(404, "这一段不是手动添加的时长")
     rest = [s for s in segs if s is not seg]
+    before = rec.settled_hours()
     hours = round(float(seg.hours or 0), 2)
     left = round(sum(s.hours for s in rest), 2)
     if left < 0:
@@ -1494,8 +1501,11 @@ def hours_manual_delete(activity_id: str, record_id: str, part_id: str,
     revoked = hours_flow.reopen_record(db, act, rec if rest else None)
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"删除手动时长：{u.name if u else '?'} {hours}h"
-                      f"（{seg.label}）" + ("；原时长核准已撤销" if revoked else ""))
+              summary=f"删除手动时长：{u.name if u else '?'} {hours:g}h"
+                      f"（{seg.label}）" + ("；原时长核准已撤销" if revoked else ""),
+              changes=[hours_flow.hours_change(
+                  u, before, rec.settled_hours() if rest else None,
+                  f"删除手动段 {hours:g}h：{seg.label}")])
     db.commit()
     return {"ok": True, "reapproval_required": revoked}
 
@@ -1529,6 +1539,7 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
     hours_flow.lock_records(db, act.id)
 
     kept: list[str] = []
+    changes: list[dict] = []
     revoked = False
     # 这一份签到账既用来出表格，也用来写段：算两遍的话，两遍之间签到变了，
     # 看到的和写进去的就不是一份
@@ -1536,7 +1547,8 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
     items = compute_hours(db, act, checkin)
     computed_segments = {user_id: info["segments"] for user_id, info in checkin.items()}
 
-    def upsert(user_id: str, hours: float | None, *, force: bool = False) -> None:
+    def upsert(user_id: str, hours: float | None, *, force: bool = False,
+               reason: str) -> None:
         """这一笔的签到段对齐到现算的结果；管理者点名给了数就按那个数定合计。
 
         手动补录的那几段（kind="manual"）不动：它们不是签到算出来的，重算时
@@ -1570,8 +1582,14 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
             rec.clear_pay()
             rec.settle_to(hours, kind="override", label=OVERRIDE_LABEL,
                           date=_segment_day(rec, act))
-        if rec.settled_hours() != before:
+        after = rec.settled_hours()
+        if after != before:
             revoked = hours_flow.reopen_record(db, act, rec) or revoked
+        if after != before or force:
+            # 逐个点名确认的人都记，数没变的也记：点名本身就是一次人判；
+            # 「确认全部」只记数变了的人，名单上几百个原样不动的人不必各占一行
+            changes.append(hours_flow.hours_change(
+                db.get(User, user_id), before, after, reason))
 
     chosen = (body.items if body else None) or []
     if chosen:
@@ -1593,12 +1611,10 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
                 raise HTTPException(404, f"学号 {sid} 不存在")
             targets[u.id] = round(hours, 2)
         for uid_, h in targets.items():
-            upsert(uid_, h, force=True)   # 逐个点名改，就是人判的，照改
+            # 逐个点名改，就是人判的，照改
+            upsert(uid_, h, force=True, reason="部分确认（以管理端填写为准）")
         count = len(targets)
-        detail = "、".join(f"{db.get(User, u_).name}{h:g}h"
-                           for u_, h in list(targets.items())[:8])
-        summary = (f"部分确认 {count} 人志愿时长（以管理端填写为准）：{detail}"
-                   + ("…" if count > 8 else ""))
+        summary = f"部分确认 {count} 人志愿时长（以管理端填写为准）"
     else:
         if not items:
             raise HTTPException(400, "暂无签到数据，无法确认时长")
@@ -1612,18 +1628,19 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
                 400, f"{len(review)} 条记录未正常签退，时长待核，"
                      f"请在表格中逐条核对后确认")
         for it in clear:
-            upsert(it["user"]["id"], None)
+            upsert(it["user"]["id"], None, reason="按签到签退记录确认")
         count = len(clear) - len(kept)
         summary = (f"确认 {count} 人志愿时长（依据签到签退记录）"
                    + (f"；{len(review)} 人未正常签退、时长待核未确认"
                       if review else "")
                    + (f"；{'、'.join(kept)} 的时长由申诉改判过，保留不覆盖"
-                      if kept else ""))
+                      if kept else "")
+                   + (f"；{len(changes)} 人时长有变动" if changes else ""))
     if revoked:
         summary += "；时长有变动，原核准已撤销，请重新核准"
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=summary)
+              summary=summary, changes=changes)
     db.commit()
     return {"ok": True, "count": count, "message": summary,
             "reapproval_required": revoked}
@@ -1837,7 +1854,11 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
         a.status = "accepted"
         summary = (f"采纳 {who.name if who else ''} 的时长申诉："
                    f"{before:g}h → {hours:g}h（申报 {a.claimed_hours:g}h）")
+        changes = [hours_flow.hours_change(
+            who, before, rec.settled_hours(),
+            f"采纳时长申诉（申报 {a.claimed_hours:g}h）")]
     else:
+        changes = []
         a.status = "rejected"
         summary = (f"驳回 {who.name if who else ''} 的时长申诉"
                    f"（申报 {a.claimed_hours:g}h，维持 {rec.settled_hours():g}h）")
@@ -1864,7 +1885,8 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
                      + (f"\n说明：{a.reply}" if a.reply else "")))
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=summary + (f"；说明：{a.reply}" if a.reply else ""))
+              summary=summary + (f"；说明：{a.reply}" if a.reply else ""),
+              changes=changes)
     db.commit()
     return {"ok": True, "status": a.status, "hours": rec.settled_hours()}
 

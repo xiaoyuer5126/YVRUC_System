@@ -324,6 +324,27 @@ def upload_stamped(client, headers, activity_id):
     return r
 
 
+def import_roster(client, headers, activity_id, text):
+    """补记录名单导入走完两步：先预览拿指纹，再带着指纹确认。返回确认的响应；
+    预览就失败的（如还没审批）返回预览的响应。"""
+    url = f"/api/staff/activities/{activity_id}/record-roster/import"
+    r = client.post(f"{url}/preview", headers=headers, json={"text": text})
+    if r.status_code != 200:
+        return r
+    return client.post(url, headers=headers,
+                       json={"text": text, "fingerprint": r.json()["fingerprint"]})
+
+
+def import_roster_file(client, headers, activity_id, file):
+    """上传导入走完两步。file 是 (文件名, 内容, 类型)。"""
+    url = f"/api/staff/activities/{activity_id}/record-roster/import-file"
+    r = client.post(f"{url}/preview", headers=headers, files={"file": file})
+    if r.status_code != 200:
+        return r
+    return client.post(url, headers=headers, files={"file": file},
+                       data={"fingerprint": r.json()["fingerprint"]})
+
+
 def approve(client, headers, activity_id, auto_publish=True):
     """走一遍审批：提交给一个有部长的部门 → 通过。要发布活动就得先过这关。
     默认「通过即发布」，回来活动就在报名中了。

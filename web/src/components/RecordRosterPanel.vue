@@ -1,5 +1,6 @@
 <!-- 补记录活动（不公开招募）的名单导入：粘贴或上传「学号 + 时长」，
-     导进来的每一行就是这个人在这场活动里的时长，之后到「时长管理」核准。 -->
+     导进来的每一行就是这个人在这场活动里的时长，之后到「时长管理」核准。
+     导入分两步：先出预览（会新增谁、覆盖谁、跳过哪几行），点「确认导入」才写入。 -->
 <template>
   <div>
     <el-alert v-if="state.block_reason" type="info" show-icon :closable="false"
@@ -8,6 +9,7 @@
       每行一个人：<b>学号 时长 [备注]</b>，空格、制表符或逗号分隔；时长以小时计，
       支持 0.5 小时，超过 {{ state.warn_hours }} 小时的会标出来请你核对。可直接从 Excel
       复制三列粘贴，也可上传 .xlsx / .csv（前三列依次为学号、时长、备注，表头行自动跳过）。
+      先出预览，确认无误后点「确认导入」才写入。
       平台里找不到的学号只会列出来提醒，不会建档。可以多次导入：新的人追加，
       <b>已在名单里的人按这次的时长覆盖</b>（有待处理申诉的除外）。
       时长核准后再改名单会撤销本轮核准，须到「时长管理」重新核准并通知志愿者。
@@ -18,8 +20,8 @@
                 placeholder="2023200001 3&#10;2023200002 2.5 场外支援" />
       <div class="toolbar" style="margin-top:8px">
         <el-button type="primary" :loading="busy" :disabled="!text.trim()"
-                   @click="importText">导入</el-button>
-        <el-upload :show-file-list="false" :http-request="importFile"
+                   @click="previewText">预览</el-button>
+        <el-upload :show-file-list="false" :http-request="previewFile"
                    accept=".xlsx,.csv">
           <el-button plain :loading="busy">
             <el-icon><Upload /></el-icon>&nbsp;上传 Excel / CSV
@@ -29,12 +31,20 @@
       </div>
     </el-card>
 
-    <!-- 上一次导入的结果：导进去的、跳过的（带原因）、找不到的学号 -->
+    <!-- 预览（还没写入）或刚导入的结果：新增与覆盖的人、未改动几人、跳过的行（带原因）、
+         找不到的学号。预览时底下是「确认导入」 -->
     <el-card v-if="result" shadow="never" style="margin-top:12px">
       <div class="toolbar">
+        <el-tag size="small" :type="result.applied ? 'success' : 'warning'">
+          {{ result.applied ? '已导入' : '预览 · 尚未写入' }}
+        </el-tag>
         <b>{{ result.message }}</b>
-        <el-button link style="margin-left:auto" @click="result = null">收起</el-button>
+        <el-button v-if="result.applied" link style="margin-left:auto"
+                   @click="result = null">收起</el-button>
       </div>
+      <el-alert v-if="!result.applied && result.reapproval_required" type="warning"
+                show-icon :closable="false" style="margin-top:8px"
+                title="时长已经核准过：确认导入会撤销本轮核准，须到「时长管理」重新核准并通知志愿者" />
       <!-- 超过 24 小时的照导，但要人再看一眼 -->
       <div v-if="flagged.length" style="margin-top:8px">
         <span class="dim">请核对（时长偏大）：</span>
@@ -43,17 +53,32 @@
           {{ x.name }} {{ x.student_id }} {{ x.hours }}h · {{ x.warning }}
         </el-tag>
       </div>
-      <el-table v-if="result.overwritten?.length" :data="result.overwritten" size="small"
-                style="margin-top:8px">
-        <el-table-column label="覆盖" width="60">
-          <template #default><el-tag size="small" type="primary">覆盖</el-tag></template>
-        </el-table-column>
-        <el-table-column prop="name" label="姓名" width="100" />
-        <el-table-column prop="student_id" label="学号" width="130" />
-        <el-table-column label="旧时长 → 新时长" min-width="160">
-          <template #default="{ row }">{{ row.old_hours }}h → <b>{{ row.hours }}h</b></template>
-        </el-table-column>
-      </el-table>
+      <div v-if="changed.length" class="scroll-x">
+        <el-table :data="changed" size="small" max-height="360"
+                  style="margin-top:8px;min-width:480px">
+          <el-table-column label="" width="70">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.old_hours == null ? 'success' : 'primary'">
+                {{ row.old_hours == null ? '新增' : '覆盖' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="name" label="姓名" width="100" />
+          <el-table-column prop="student_id" label="学号" width="130" />
+          <el-table-column label="时长" min-width="160">
+            <template #default="{ row }">
+              <template v-if="row.old_hours == null"><b>{{ row.hours }}h</b></template>
+              <template v-else>
+                {{ row.old_hours }}h → <b>{{ row.hours }}h</b>
+                <span v-if="row.note_changed" class="dim">（备注也改了）</span>
+              </template>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <div v-if="result.unchanged" class="dim" style="margin-top:8px">
+        {{ result.unchanged }} 人与当前名单一致，不改动
+      </div>
       <div v-if="result.not_found.length" style="margin-top:8px">
         <span class="dim">平台里找不到这些学号（未建档，请核对后重新导入）：</span>
         <el-tag v-for="x in result.not_found" :key="x.line" type="danger" effect="plain"
@@ -68,6 +93,12 @@
         <el-table-column prop="name" label="姓名" width="100" />
         <el-table-column prop="reason" label="跳过原因" min-width="220" />
       </el-table>
+      <div v-if="!result.applied" class="btn-row" style="margin-top:12px">
+        <el-button type="primary" :loading="busy" :disabled="!changed.length"
+                   @click="confirmImport">确认导入</el-button>
+        <el-button :disabled="busy" @click="cancelPreview">取消</el-button>
+        <span v-if="!changed.length" class="dim">没有要写入的变动</span>
+      </div>
     </el-card>
 
     <div class="section-title" style="margin-top:16px">
@@ -139,7 +170,6 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { uploadTo } from '../composables/uploadImage'
 
 const props = defineProps({
   activityId: { type: String, required: true },
@@ -150,10 +180,17 @@ const state = ref({ items: [], total_hours: 0, editable: false, block_reason: ''
                     warn_hours: 24, held_text: '' })
 const text = ref('')
 const busy = ref(false)
+// 预览（applied 为假）或刚写入的结果
 const result = ref(null)
+// 预览的是哪一份内容：确认时原样再交一次，后端按指纹核对没变过
+let source = null
 // 这次导入里新增或覆盖后时长偏大、要人核对的
-const flagged = computed(() => [...(result.value?.added || []),
-                                ...(result.value?.overwritten || [])].filter(x => x.warning))
+const flagged = computed(() => changed.value.filter(x => x.warning))
+// 新增与覆盖合成一张表：新增的没有旧时长
+const changed = computed(() => [
+  ...(result.value?.added || []).map(x => ({ ...x, old_hours: null })),
+  ...(result.value?.overwritten || []),
+])
 const edit = ref({ visible: false, row: null, hours: 1, note: '', busy: false })
 const base = () => `/api/staff/activities/${props.activityId}/record-roster`
 
@@ -161,30 +198,67 @@ async function load() {
   state.value = await api.get(base())
 }
 
-function done(d) {
-  result.value = d
-  const warn = d.reapproval_required || d.skipped.length || d.not_found.length
-    || [...d.added, ...(d.overwritten || [])].some(x => x.warning)
-  ElMessage[warn ? 'warning' : 'success'](d.message)
-  load()
-  emit('changed')
+function fileForm(file, fingerprint) {
+  const fd = new FormData()
+  fd.append('file', file)
+  if (fingerprint) fd.append('fingerprint', fingerprint)
+  return fd
 }
 
-async function importText() {
+// 按 source 预览一次：粘贴的文本或上传的文件
+async function preview() {
+  const src = source
+  result.value = src.text != null
+    ? await api.post(`${base()}/import/preview`, { text: src.text })
+    : await api.post(`${base()}/import-file/preview`, fileForm(src.file))
+}
+
+async function previewText() {
   busy.value = true
   try {
-    done(await api.post(`${base()}/import`, { text: text.value }))
-    text.value = ''
+    source = { text: text.value }
+    await preview()
   } finally { busy.value = false }
 }
 
-async function importFile({ file }) {
+async function previewFile({ file }) {
   busy.value = true
   try {
-    done(await uploadTo(`${base()}/import-file`, file))
+    source = { file }
+    await preview()
+  } finally { busy.value = false }
+}
+
+async function confirmImport() {
+  const src = source
+  const fingerprint = result.value.fingerprint
+  busy.value = true
+  try {
+    const d = src.text != null
+      ? await api.post(`${base()}/import`, { text: src.text, fingerprint },
+                       { skipErrorToast: true })
+      : await api.post(`${base()}/import-file`, fileForm(src.file, fingerprint),
+                       { skipErrorToast: true })
+    result.value = d
+    source = null
+    if (src.text != null) text.value = ''
+    const warn = d.reapproval_required || d.skipped.length || d.not_found.length
+      || changed.value.some(x => x.warning)
+    ElMessage[warn ? 'warning' : 'success'](d.message)
+    load()
+    emit('changed')
   } catch (e) {
-    ElMessage.error(e.message || '导入失败')
+    if (e.data?.code !== 'ROSTER_CHANGED') { ElMessage.error(e.message); return }
+    // 预览之后别人改过名单：按现在的名单重新预览，请管理者再看一遍
+    ElMessage.warning('预览之后名单有变动，已按最新名单重新预览，请核对后再确认')
+    load()
+    await preview()
   } finally { busy.value = false }
+}
+
+function cancelPreview() {
+  result.value = null
+  source = null
 }
 
 function openEdit(row) {

@@ -1113,9 +1113,7 @@
             <b>{{ l.actor_name }}</b>
             <el-tag size="small" effect="plain" style="margin:0 8px">{{ l.action_label }}</el-tag>
             <span>{{ l.summary }}</span>
-            <div v-for="(ch, i) in l.changes" :key="i" class="dim" style="margin-top:4px">
-              {{ ch.label }}：{{ ch.old || '空' }} → <b style="color:var(--el-color-primary)">{{ ch.new || '空' }}</b>
-            </div>
+            <AuditChanges :changes="l.changes" strong line-style="margin-top:4px" />
           </el-timeline-item>
         </el-timeline>
         <el-empty v-else description="暂无操作记录" />
@@ -1731,6 +1729,7 @@ import CheckinPanel from '../components/CheckinPanel.vue'
 import RefreshBar from '../components/RefreshBar.vue'
 import AttirePanel from '../components/AttirePanel.vue'
 import MaterialManager from '../components/MaterialManager.vue'
+import AuditChanges from '../components/AuditChanges.vue'
 import DataCards from '../components/DataCards.vue'
 import ActivityForm from '../components/ActivityForm.vue'
 import ArchiveDrawer from '../components/ArchiveDrawer.vue'

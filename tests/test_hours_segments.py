@@ -24,7 +24,7 @@ from backend.main import app
 from backend.models import (Activity, ActivityManager, CheckinRecord, CheckinTask,
                             Enrollment, HoursRecord, HoursSegment, Position, Shift,
                             User, day_of, new_checkin_token, now, span_text, uid)
-from conftest import ADMIN, POSITION_TEXT, login, student_row
+from conftest import ADMIN, POSITION_TEXT, import_roster, login, student_row
 
 MANUAL_DATE = "2026-10-05"
 
@@ -166,8 +166,7 @@ def test_三种段都能建_服务日期与时段对(client, admin, db, take_stu
     assert manual.shift_id is None and manual.position_id is None
 
     club = _record_activity(db)
-    r = client.post(f"/api/staff/activities/{club.id}/record-roster/import",
-                    headers=admin, json={"text": f"{sid} 3 场地布置"})
+    r = import_roster(client, admin, club.id, f"{sid} 3 场地布置")
     assert r.status_code == 200, r.text
     rec2 = _invariant(db, club, u)
     imp = rec2.segments[0]
@@ -231,8 +230,7 @@ def test_合计恒等于各段之和_走四条真实流程(client, admin, db, ta
     assert _invariant(db, act, u).hours == 2.5             # 手动扣
 
     club = _record_activity(db)
-    r = client.post(f"/api/staff/activities/{club.id}/record-roster/import",
-                    headers=admin, json={"text": f"{sid} 3 场地布置"})
+    r = import_roster(client, admin, club.id, f"{sid} 3 场地布置")
     assert r.status_code == 200, r.text
     assert _invariant(db, club, u).hours == 3.0            # 名单导入
     rec2 = _invariant(db, club, u)
@@ -302,8 +300,7 @@ def test_删记录不留孤儿段(client, admin, db, take_student):
     # 名单里整条删：段跟着走（relationship 的 delete-orphan）
     sid = take_student()
     club = _record_activity(db)
-    r = client.post(f"/api/staff/activities/{club.id}/record-roster/import",
-                    headers=admin, json={"text": f"{sid} 3 场地布置"})
+    r = import_roster(client, admin, club.id, f"{sid} 3 场地布置")
     assert r.status_code == 200, r.text
     rec_id = _rec(db, club, student_row(db, sid)).id
     assert db.query(HoursSegment).filter(

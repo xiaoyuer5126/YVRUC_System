@@ -15,8 +15,9 @@ from openpyxl import Workbook, load_workbook
 
 from backend import config, scoring, scheduled
 from backend.models import Activity, AuditLog, HoursRecord, HoursRequest, Notification, User, now, uid
-from conftest import (ADMIN, INITIATOR, dl_url, login, student_row,
-                      upload_proposal, upload_stamped)
+from conftest import (ADMIN, INITIATOR, dl_url, import_roster,
+                      import_roster_file, login, student_row, upload_proposal,
+                      upload_stamped)
 
 TEACHER = INITIATOR          # 李慕清是老师类型
 
@@ -46,8 +47,7 @@ def _submit_and_approve(client, headers, aid):
 
 
 def _import(client, headers, aid, text):
-    return client.post(f"/api/staff/activities/{aid}/record-roster/import",
-                       headers=headers, json={"text": text})
+    return import_roster(client, headers, aid, text)
 
 
 @pytest.fixture
@@ -198,7 +198,11 @@ def test_导入名单_成功与跳过清单(client, admin, db, approved, take_st
     logs = db.query(AuditLog).filter(AuditLog.activity_id == approved,
                                      AuditLog.action == "roster_import").all()
     assert len(logs) == 2 and "找不到" in logs[0].summary + logs[1].summary
-    assert any("覆盖 1 人" in l.summary and "2.5h→5h" in l.summary for l in logs)
+    assert any("覆盖 1 人" in l.summary for l in logs)
+    hours_of = [{(c["student_id"], c["old_hours"], c["new_hours"])
+                 for c in l.changes if c["field"] == "hours"} for l in logs]
+    assert {(a, None, 2.5), (b, None, 3.0), (c4, None, 36.5)} in hours_of
+    assert {(c, None, 1.5), (a, 2.5, 5.0)} in hours_of
 
 
 def test_上传xlsx与csv(client, admin, approved, take_student):
@@ -210,20 +214,19 @@ def test_上传xlsx与csv(client, admin, approved, take_student):
     ws.append(["8888888888", 1])
     buf = BytesIO()
     wb.save(buf)
-    url = f"/api/staff/activities/{approved}/record-roster/import-file"
-    r = client.post(url, headers=admin, files={"file": (
+    r = import_roster_file(client, admin, approved, (
         "名单.xlsx", buf.getvalue(),
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
     assert r.status_code == 200, r.text
     assert [x["student_id"] for x in r.json()["added"]] == [a]
     assert r.json()["not_found"][0]["student_id"] == "8888888888"
 
     csv_bytes = f"学号,时长\n{b},1.5\n".encode("gb18030")
-    r = client.post(url, headers=admin,
-                    files={"file": ("名单.csv", csv_bytes, "text/csv")})
+    r = import_roster_file(client, admin, approved,
+                           ("名单.csv", csv_bytes, "text/csv"))
     assert r.status_code == 200 and r.json()["added"][0]["hours"] == 1.5
-    r = client.post(url, headers=admin,
-                    files={"file": ("名单.pdf", b"%PDF", "application/pdf")})
+    r = import_roster_file(client, admin, approved,
+                           ("名单.pdf", b"%PDF", "application/pdf"))
     assert r.status_code == 400
 
 

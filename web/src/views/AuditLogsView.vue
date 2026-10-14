@@ -27,10 +27,7 @@
           <el-tag size="small" effect="plain">{{ row.action_label }}</el-tag>
         </template>
         <template #body="{ row }">
-          <div v-for="(ch, i) in row.changes" :key="i" class="dim">
-            {{ ch.label }}：{{ ch.old || '空' }} →
-            <b style="color:var(--el-color-primary)">{{ ch.new || '空' }}</b>
-          </div>
+          <AuditChanges :changes="row.changes" strong />
         </template>
       </DataCards>
 
@@ -43,9 +40,7 @@
         <el-table-column prop="summary" label="摘要" min-width="300" show-overflow-tooltip />
         <el-table-column label="变更明细" min-width="240">
           <template #default="{row}">
-            <div v-for="(ch, i) in row.changes" :key="i" class="dim">
-              {{ ch.label }}：{{ ch.old || '空' }} → {{ ch.new || '空' }}
-            </div>
+            <AuditChanges :changes="row.changes" />
           </template>
         </el-table-column>
         <el-table-column label="时间" width="110">
@@ -63,6 +58,7 @@
 import { onMounted, ref } from 'vue'
 import { api, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
+import AuditChanges from '../components/AuditChanges.vue'
 import DataCards from '../components/DataCards.vue'
 
 const narrow = useNarrow()
