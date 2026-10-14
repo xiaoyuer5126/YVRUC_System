@@ -9,6 +9,11 @@ kind="import" 的明细），之后的核准 → 确认/申诉 → 提交时长�
 时长、申诉、锁定都只认它；造一个假场次反而要在广场、签到、名额、冲突检测、
 档案里处处把它挑出来。
 
+导入分两步：先预览，列出会新增谁、覆盖谁（旧值→新值）、几人未改动、跳过
+哪几行、哪些学号找不到、谁超过 24 小时、会不会撤销核准；管理者点「确认导入」
+才写入，预览之后名单被人改过就不写、请他重新预览（见 import_rows 的指纹）。
+写入时审计里按人记下每一笔的旧值→新值，跳过和找不到的行也逐条记，不截断。
+
 导入规则：
   · 平台里找不到的学号只列出来提醒，不建档——建档是统一身份认证的事，
     这里补建的人没有学院、校区，也登不了录；
@@ -21,12 +26,14 @@ kind="import" 的明细），之后的核准 → 确认/申诉 → 提交时长�
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
+import json
 import math
 import re
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as OrmSession, selectinload
 
 from .. import config, hours as hours_flow
@@ -171,15 +178,50 @@ def _is_header(cells: list[str]) -> bool:
     return bool(cells) and "学号" in cells[0]
 
 
+def _fingerprint(act: Activity, records: list[HoursRecord], appealing: set[str],
+                 rows: list[tuple[int, list[str]]]) -> str:
+    """预览那一刻的名单与这次要导的内容，压成一串指纹。
+
+    确认导入时按同一份内容重算一遍：名单里谁有几小时、备注是什么、谁有待处理的
+    申诉、活动核准了没有，再加上这次交上来的每一行。任何一项和预览时不同，管理者
+    点下去的就不是他看过的那份结果，这时不写，请他重新预览。
+    """
+    state = {
+        "approved": iso(act.hours_approved_at) if act.hours_approved_at else "",
+        "records": sorted(
+            (r.user_id, round(float(r.hours or 0), 2),
+             (seg.label if (seg := _import_segment(r)) is not None else r.note),
+             r.id in appealing)
+            for r in records),
+        "rows": rows,
+    }
+    raw = json.dumps(state, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 def import_rows(db: OrmSession, act: Activity, user: User,
-                rows: list[tuple[int, list[str]]]) -> dict:
-    """逐行导入。能导的照常导，其余逐条说明原因；找不到的学号单列。不提交事务。"""
+                rows: list[tuple[int, list[str]]], *,
+                fingerprint: str | None = None) -> dict:
+    """逐行比对名单，算出这次导入会怎样；给了 fingerprint 才真的写入。
+
+    不给 fingerprint 是预览：只读不写，结果里带上这一刻的指纹。给了就是确认
+    导入：先锁住名单再按同一份内容重算指纹，和预览时的对不上（这期间名单被人
+    改过，或者交上来的内容变了）就 409，不写；对得上才逐行写入。能导的照常导，
+    其余逐条说明原因；找不到的学号单列。不提交事务。
+    """
     if len(rows) > MAX_ROSTER_ROWS:
         raise HTTPException(400, f"一次最多导入 {MAX_ROSTER_ROWS} 行，请分批导入")
-    # 改的是名单里那几笔的导入段：先锁住这场活动的记录行再读改写（见
-    # lock_records，按 id 顺序取锁、取库里的最新值）。调用方已持有活动行锁
-    # （_record_act for_update），顺序是活动 → 时长记录，不回头拿活动锁
-    existing = {r.user_id: r for r in hours_flow.lock_records(db, act.id)}
+    apply = fingerprint is not None
+    if apply:
+        # 改的是名单里那几笔的导入段：先锁住这场活动的记录行再读改写（见
+        # lock_records，按 id 顺序取锁、取库里的最新值）。调用方已持有活动行锁
+        # （_record_act for_update），顺序是活动 → 时长记录，不回头拿活动锁
+        records = hours_flow.lock_records(db, act.id)
+    else:
+        records = (db.query(HoursRecord)
+                   .options(selectinload(HoursRecord.segments))
+                   .filter(HoursRecord.activity_id == act.id).all())
+    existing = {r.user_id: r for r in records}
     rows = [(n, c) for n, c in rows if not _is_header(c)]
     sids = {(c[0] if c else "").strip() for _n, c in rows} - {""}
     users = {u.student_id: u for u in db.query(User)
@@ -188,12 +230,19 @@ def import_rows(db: OrmSession, act: Activity, user: User,
     appealing = {a.record_id for a in db.query(HoursAppeal)
                  .filter(HoursAppeal.activity_id == act.id,
                          HoursAppeal.status == "pending").all()}
+    current = _fingerprint(act, records, appealing, rows)
+    if apply and fingerprint != current:
+        # 带 code：前端据此自动按最新名单重新预览，别的 409（如已锁定）照常报错
+        raise HTTPException(409, {"code": "ROSTER_CHANGED",
+                                  "message": "预览之后名单有变动（或导入的内容和"
+                                             "预览时不同），请刷新后重新预览再确认"})
 
     def warn_of(hours: float) -> str:
         return (f"超过 {config.RECORD_WARN_HOURS} 小时，请核对"
                 if hours > config.RECORD_WARN_HOURS else "")
 
     added, skipped, not_found, overwritten = [], [], [], []
+    changes = []
     unchanged = 0
     seen: dict[str, int] = {}
     for line, cells in rows:
@@ -240,6 +289,13 @@ def import_rows(db: OrmSession, act: Activity, user: User,
                 unchanged += 1
                 continue
             old = rec.hours
+            overwritten.append({"student_id": sid, "name": u.name,
+                                "old_hours": old, "hours": hours,
+                                "note_changed": new_note != old_note,
+                                "warning": warn_of(hours)})
+            if not apply:
+                continue
+            before = rec.settled_hours()
             if seg is None:
                 # 名单里这一笔没有导入段（这条记录不是导入来的）：补一段，
                 # 段上记的才是这笔账的依据
@@ -249,43 +305,51 @@ def import_rows(db: OrmSession, act: Activity, user: User,
             if old != hours:
                 rec.confirmed_at = None        # 本人之前是对着旧数字确认的
             rec.note, rec.confirmed_by = new_note, user.id
-            overwritten.append({"student_id": sid, "name": u.name,
-                                "old_hours": old, "hours": hours,
-                                "warning": warn_of(hours)})
+            changes.append(hours_flow.hours_change(
+                u, before, rec.settled_hours(),
+                "名单导入覆盖" + ("（备注改为「" + new_note + "」）"
+                               if new_note != old_note else "")))
+            continue
+        added.append({"student_id": sid, "name": u.name, "hours": hours,
+                      "warning": warn_of(hours)})
+        if not apply:
             continue
         rec = HoursRecord(id=uid("hrs"), activity_id=act.id, user_id=u.id,
                           source="import", note=note, confirmed_by=user.id)
         db.add(rec)
         rec.add_segment(**_import_fields(act, hours, note))
         existing[u.id] = rec
-        added.append({"student_id": sid, "name": u.name, "hours": hours,
-                      "warning": warn_of(hours)})
+        changes.append(hours_flow.hours_change(
+            u, None, rec.settled_hours(),
+            "名单导入新增" + (f"：{note}" if note else "")))
 
-    reapproval_required = False
-    if added or overwritten:
-        reapproval_required = hours_flow.revoke_approval(db, act)
-        summary = "导入补记录名单"
+    # 名单有增改、活动又核准过：确认导入会撤销核准，预览时就要说出来
+    reapproval_required = bool(added or overwritten) and act.hours_approved_at is not None
+    if apply and (added or overwritten):
+        hours_flow.revoke_approval(db, act)
+        summary = f"导入补记录名单：新增 {len(added)} 人，覆盖 {len(overwritten)} 人"
+        if unchanged:
+            summary += f"，{unchanged} 人未改动"
         if reapproval_required:
             summary += "；名单变更，原时长核准已撤销"
-        if added:
-            detail = "、".join(f"{a['name']}{a['hours']:g}h" for a in added[:8])
-            summary += (f"，新增 {len(added)} 人：{detail}"
-                        + ("…" if len(added) > 8 else ""))
-        if overwritten:
-            detail = "、".join(f"{o['name']}（{o['student_id']}）"
-                              f"{o['old_hours']:g}h→{o['hours']:g}h"
-                              for o in overwritten[:8])
-            summary += (f"，覆盖 {len(overwritten)} 人：{detail}"
-                        + ("…" if len(overwritten) > 8 else ""))
         if skipped:
             summary += f"；跳过 {len(skipped)} 行"
         if not_found:
-            summary += (f"；{len(not_found)} 个学号平台里找不到："
-                        + "、".join(x["student_id"] for x in not_found[:8])
-                        + ("…" if len(not_found) > 8 else ""))
+            summary += f"；{len(not_found)} 个学号平台里找不到"
+        # 跳过的行、找不到的学号也全记下：事后对原名单时，没进账的那几行
+        # 为什么没进账同样要说得清。old 为 None：这一条只是说明，没有「从几到几」
+        for x in skipped:
+            changes.append({"field": "skipped", "label": f"第 {x['line']} 行跳过",
+                            "old": None, "new": f"{x['student_id'] or '（无学号）'}"
+                                              f"{x['name'] and '（' + x['name'] + '）'}"
+                                              f"：{x['reason']}"})
+        for x in not_found:
+            changes.append({"field": "not_found",
+                            "label": f"第 {x['line']} 行平台里找不到",
+                            "old": None, "new": x["student_id"]})
         audit_log(db, actor=user, action="roster_import", target_type="hours",
                   target_id=act.id, target_label=act.title, activity_id=act.id,
-                  summary=summary)
+                  summary=summary, changes=changes)
     parts = [f"新增 {len(added)} 人"]
     if overwritten:
         parts.append(f"覆盖 {len(overwritten)} 人")
@@ -299,10 +363,12 @@ def import_rows(db: OrmSession, act: Activity, user: User,
     if not_found:
         parts.append(f"{len(not_found)} 个学号平台里找不到（未建档）")
     if reapproval_required:
-        parts.append("原时长核准已撤销，请到时长管理重新核准")
+        parts.append("原时长核准已撤销，请到时长管理重新核准" if apply
+                     else "确认后原时长核准会撤销，需要重新核准")
     return {"added": added, "overwritten": overwritten, "unchanged": unchanged,
             "skipped": skipped, "not_found": not_found,
             "reapproval_required": reapproval_required,
+            "fingerprint": current, "applied": apply,
             "message": "，".join(parts)}
 
 
@@ -354,38 +420,79 @@ def record_roster(activity_id: str, db: OrmSession = Depends(db_session),
 
 class ImportBody(BaseModel):
     text: str
+    # 预览时拿到的指纹：确认导入必须带上，见 import_rows
+    fingerprint: str = Field(min_length=1, max_length=64)
 
 
-@router.post("/activities/{activity_id}/record-roster/import")
-def import_text(activity_id: str, body: ImportBody,
-                db: OrmSession = Depends(db_session),
-                user: User = Depends(require_manager)):
-    """粘贴导入：每行「学号 时长 [备注]」，空格、制表符、逗号都能分隔。"""
-    act = _record_act(db, user, activity_id, for_update=True)
-    _ensure_importable(db, act)
-    rows = rows_from_text(body.text)
+class PreviewBody(BaseModel):
+    text: str
+
+
+def _text_rows(text: str) -> list[tuple[int, list[str]]]:
+    rows = rows_from_text(text)
     if not rows:
         raise HTTPException(400, "没有可导入的内容：每行一个人，「学号 时长」")
-    out = import_rows(db, act, user, rows)
-    db.commit()
-    return out
+    return rows
 
 
-@router.post("/activities/{activity_id}/record-roster/import-file")
-async def import_file(activity_id: str, file: UploadFile = File(...),
-                      db: OrmSession = Depends(db_session),
-                      user: User = Depends(require_manager)):
-    """上传导入：.xlsx / .csv，前三列依次是学号、时长、备注（备注选填），
-    第一行是表头的自动跳过。"""
-    act = _record_act(db, user, activity_id, for_update=True)
-    _ensure_importable(db, act)
+async def _file_rows(file: UploadFile) -> list[tuple[int, list[str]]]:
     data = await file.read(MAX_ROSTER_BYTES + 1)
     if len(data) > MAX_ROSTER_BYTES:
         raise HTTPException(400, "文件太大（上限 2MB），请只保留学号、时长、备注三列")
     rows = rows_from_file(file.filename or "", data)
     if not rows:
         raise HTTPException(400, "文件里没有可导入的行")
-    out = import_rows(db, act, user, rows)
+    return rows
+
+
+# 导入分两步：先预览（只读，返回会新增谁、覆盖谁从几小时到几小时、跳过哪几行、
+# 会不会撤销核准，外加一串指纹），管理者看过点「确认导入」，带着指纹再交一次
+# 同样的内容才写入。不直接写：导完才看到结果，导错了就已经进账、撤了核准。
+
+@router.post("/activities/{activity_id}/record-roster/import/preview")
+def preview_text(activity_id: str, body: PreviewBody,
+                 db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_manager)):
+    """粘贴导入的预览：每行「学号 时长 [备注]」，空格、制表符、逗号都能分隔。"""
+    act = _record_act(db, user, activity_id)
+    _ensure_importable(db, act)
+    return import_rows(db, act, user, _text_rows(body.text))
+
+
+@router.post("/activities/{activity_id}/record-roster/import")
+def import_text(activity_id: str, body: ImportBody,
+                db: OrmSession = Depends(db_session),
+                user: User = Depends(require_manager)):
+    """粘贴导入的确认：内容与预览时相同，并带上预览返回的指纹。"""
+    act = _record_act(db, user, activity_id, for_update=True)
+    _ensure_importable(db, act)
+    out = import_rows(db, act, user, _text_rows(body.text),
+                      fingerprint=body.fingerprint)
+    db.commit()
+    return out
+
+
+@router.post("/activities/{activity_id}/record-roster/import-file/preview")
+async def preview_file(activity_id: str, file: UploadFile = File(...),
+                       db: OrmSession = Depends(db_session),
+                       user: User = Depends(require_manager)):
+    """上传导入的预览：.xlsx / .csv，前三列依次是学号、时长、备注（备注选填），
+    第一行是表头的自动跳过。"""
+    act = _record_act(db, user, activity_id)
+    _ensure_importable(db, act)
+    return import_rows(db, act, user, await _file_rows(file))
+
+
+@router.post("/activities/{activity_id}/record-roster/import-file")
+async def import_file(activity_id: str, file: UploadFile = File(...),
+                      fingerprint: str = Form(..., min_length=1, max_length=64),
+                      db: OrmSession = Depends(db_session),
+                      user: User = Depends(require_manager)):
+    """上传导入的确认：再交一次预览过的那份文件，并带上预览返回的指纹。"""
+    act = _record_act(db, user, activity_id, for_update=True)
+    _ensure_importable(db, act)
+    out = import_rows(db, act, user, await _file_rows(file),
+                      fingerprint=fingerprint)
     db.commit()
     return out
 
@@ -422,6 +529,7 @@ def edit_record(activity_id: str, record_id: str, body: RecordEditBody,
         raise HTTPException(400, str(e)) from None
     u = db.get(User, rec.user_id)
     seg = _import_segment(rec)
+    before = rec.settled_hours()
     old_hours = rec.hours
     old_note = seg.label if seg is not None else ""
     note = old_note if body.note is None else body.note.strip()[:120]
@@ -444,7 +552,11 @@ def edit_record(activity_id: str, record_id: str, body: RecordEditBody,
         audit_log(db, actor=user, action="roster_import", target_type="hours",
                   target_id=act.id, target_label=act.title, activity_id=act.id,
                   summary=f"修改补记录名单：{u.name if u else '?'}"
-                          f"（{u.student_id if u else ''}）{'，'.join(changes)}")
+                          f"（{u.student_id if u else ''}）{'，'.join(changes)}",
+                  changes=[hours_flow.hours_change(
+                      u, before, rec.settled_hours(),
+                      "名单单人修改" + (f"（备注「{old_note or '无'}」→「{note or '无'}」）"
+                                     if note != old_note else ""))])
     db.commit()
     return {"ok": True, "hours": rec.settled_hours(),
             "reapproval_required": reapproval_required}
@@ -473,7 +585,9 @@ def delete_record(activity_id: str, record_id: str,
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"从补记录名单删除：{u.name if u else '?'}"
                       f"（{u.student_id if u else ''}）{rec.settled_hours():g}h"
-                      + ("；原时长核准已撤销" if reapproval_required else ""))
+                      + ("；原时长核准已撤销" if reapproval_required else ""),
+              changes=[hours_flow.hours_change(u, rec.settled_hours(), None,
+                                               "从名单删除")])
     # 段跟着记录一起删（relationship 的 delete-orphan）：留下孤儿段，
     # 名单、导出、统计都还会把它算进去
     db.delete(rec)

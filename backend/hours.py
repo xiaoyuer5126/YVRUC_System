@@ -65,6 +65,29 @@ def submit_lock(db: OrmSession, act: Activity, actor: User | None,
     return req
 
 
+def hours_change(u: User | None, old: float | None, new: float | None,
+                 reason: str) -> dict:
+    """一个人的时长结算值变了：记进审计 changes 的那一条。
+
+    改时长的每条路径都按人记一条，不截断、不只写摘要：事后要回答「谁、什么时候、
+    把哪位同学从几小时改成几小时、为什么」，靠的就是它。old / new 是结算合计
+    （settled_hours），None 表示那一刻还没有这一笔（新记的、整笔删掉的）。
+    label、old、new 是给审计页直接念的人话；student_id、name、old_hours、
+    new_hours、reason 留着结构化的原值，导出、核对时不必再从人话里拆。
+    """
+    name = u.name if u else "?"
+    sid = u.student_id if u else ""
+    who = f"{name}（{sid}）" if sid else name
+
+    def text(v: float | None) -> str:
+        return "无记录" if v is None else f"{v:g}h"
+
+    return {"field": "hours", "label": f"{who} · {reason}" if reason else who,
+            "old": text(old), "new": text(new),
+            "student_id": sid, "name": name,
+            "old_hours": old, "new_hours": new, "reason": reason}
+
+
 def default_appeal_deadline() -> datetime:
     """默认申诉截止：第二天中午。大家一般当天就自己看了，留一夜足够。"""
     t = now() + timedelta(days=1)
