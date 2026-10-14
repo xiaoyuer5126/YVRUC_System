@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from backend.database import SessionLocal
 from backend.main import app
-from backend.models import Enrollment, Position, now, uid
+from backend.models import Enrollment, Position, Shift, now, uid
 from conftest import POSITION_TEXT, editing, login, student_row
 
 
@@ -37,6 +37,35 @@ def test_time_conflict_blocks_enroll(client, open_group, take_student):
     r = enroll(client, h, act2, g2)
     assert r.status_code == 409
     assert "冲突" in r.json()["detail"]["message"]
+
+
+def test_详情页冲突提示只列别的活动且一条报名只一行(client, db, open_group,
+                                              take_student):
+    """「您有时间冲突的活动」只列别的活动，同一条报名也只出一行。
+
+    本活动的场次跟本人的报名压上不算冲突——那几场正是他要看的那几场，自己跟
+    自己撞没有意义；别的活动里的一段报名压上本活动好几场时，也只是那一段，
+    不按场次数重复列。
+    """
+    # 本活动两场压在一起，本人在其中一场（改期、加场、复制延期都会造出这种）
+    act, g1 = open_group(5, day_offset=340, start_in_hours=4)
+    h = login(client, take_student())
+    assert enroll(client, h, act, g1).status_code == 200
+    db.add(Shift(id=uid("g"), activity_id=act.id, name="同日第二场",
+                 start_time=g1.start_time + timedelta(hours=1),
+                 end_time=g1.end_time + timedelta(hours=1),
+                 mode="pick", sort=1))
+    db.commit()
+    assert client.get(f"/api/activities/{act.id}",
+                      headers=h).json()["my_time_conflicts"] == []
+
+    # 别的活动的一段报名，跟本活动这两场都压上：只列这一条
+    other, g2 = open_group(5, day_offset=340, start_in_hours=5)
+    h2 = login(client, take_student())
+    assert enroll(client, h2, other, g2).status_code == 200
+    conf = client.get(f"/api/activities/{act.id}",
+                      headers=h2).json()["my_time_conflicts"]
+    assert [c["activity_id"] for c in conf] == [other.id]
 
 
 def test_waitlisted_group_also_locks_the_slot(client, open_group, take_student):
