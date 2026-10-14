@@ -126,6 +126,11 @@ def _date_range(start: str, end: str) -> tuple[datetime | None, datetime | None]
     return lo, hi
 
 
+# 广场上各展示状态的先后（见 list_activities）
+SQUARE_ORDER = {"published": 0, "upcoming": 1, "closed": 2, "ongoing": 3,
+                "finished": 4}
+
+
 @router.get("")
 def list_activities(q: str = "", mode: str = "", organizer: str = "",
                     status: str = "", start: str = "", end: str = "",
@@ -141,7 +146,8 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
     """
     rows = db.query(Activity.id, Activity.status, Activity.reg_start,
                     Activity.reg_end, Activity.recruit_campuses,
-                    Activity.recruit_stages, Activity.recruit_colleges)
+                    Activity.recruit_stages, Activity.recruit_colleges,
+                    Activity.pinned_at)
     rows = rows.filter(Activity.status.in_(PUBLIC_STATUSES),
                        Activity.recruit_mode != config.RECORD_MODE)
     if q.strip():
@@ -165,7 +171,8 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
         rows = rows.filter(Activity.status == "published")
     elif status in ("ongoing", "closed"):
         rows = rows.filter(Activity.status.in_(("published", "closed")))
-    # 急招的排最前（后置顶的更靠前），其余按创建时间
+    # 急招的排最前（后置顶的更靠前），其余按创建时间；展示状态的先后在下面
+    # 算完状态后再排
     urgent = case((Activity.pinned_at.isnot(None)
                    & (Activity.status == "published"), 0), else_=1)
     rows = rows.order_by(urgent,
@@ -186,8 +193,8 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
     managed = managed_activity_ids(db, user)
     involved = _involved_activity_ids(db, user)
 
-    ids = []
-    for aid, st, reg_start, reg_end, campuses, stages, colleges in rows:
+    shown = []
+    for aid, st, reg_start, reg_end, campuses, stages, colleges, pinned in rows:
         span, last_start = spans.get(aid, (None, None))
         code, _label = display_status_of(st, reg_start, reg_end, span, last_start)
         if status and code != status:
@@ -195,7 +202,11 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
         if (managed is None or aid in managed or aid in involved
                 or not logic.unmet_for_tags(
                     user, logic.recruit_scope_tags(campuses, stages, colleges))):
-            ids.append(aid)
+            shown.append((pinned is not None and st == "published",
+                          SQUARE_ORDER.get(code, len(SQUARE_ORDER)), aid))
+    # 「全部状态」下还能报的排在前面：急招，再报名中、未开始，再已截止、进行中、
+    # 已结束。sorted 是稳定的，同一档里保持上面 SQL 的先后
+    ids = [aid for _u, _r, aid in sorted(shown, key=lambda x: (not x[0], x[1]))]
 
     size = max(1, min(size, 50))
     page = max(1, page)

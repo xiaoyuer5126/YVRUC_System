@@ -785,3 +785,20 @@ def test_活动地点定位选填_详情里带着(client, admin, db):
     assert r.status_code == 200, r.text
     assert client.get(f"/api/activities/{r.json()['id']}", headers=admin).json()[
         "location_point"] is None
+
+
+def test_活动列表带活动起止供复制预览平移(client, admin, db):
+    """复制活动的预览按活动时间（服务场次的最早开始～最晚结束）平移，
+    不能拿报名截止去算。"""
+    from backend.models import iso
+    from conftest import make_draft
+    aid = make_draft(client, admin, proposal=False)
+    act = db.get(Activity, aid)
+    g = act.main_shifts()[0]
+    title = act.title
+    rows = client.get("/api/staff/activities", headers=admin,
+                      params={"q": title}).json()["items"]
+    row = next(r for r in rows if r["id"] == aid)
+    assert row["time_start"] == iso(g.start_time)
+    assert row["time_end"] == iso(g.end_time)
+    assert row["time_start"] != row["reg_end"]

@@ -83,17 +83,17 @@ const route = useRoute()
 const router = useRouter()
 const narrow = useNarrow()
 const STATUS_OPTIONS = [
+  { value: '', label: '全部状态' },
   { value: 'published', label: '报名中' },
   { value: 'upcoming', label: '未开始报名' },
   { value: 'closed', label: '已截止' },
   { value: 'ongoing', label: '进行中' },
   { value: 'finished', label: '已结束' },
-  { value: '', label: '全部状态' },
 ]
 // 筛选条件同步到地址栏：点进活动再返回，筛到第几页还在
 const f = reactive({
   q: route.query.q || '',
-  status: route.query.status ?? 'published',
+  status: route.query.status || '',
   mode: route.query.mode || '',
   organizer: route.query.organizer || '',
   start: route.query.start || '',
@@ -187,7 +187,7 @@ async function load() {
     ...(f.q ? { q: f.q } : {}), ...(f.mode ? { mode: f.mode } : {}),
     ...(f.organizer ? { organizer: f.organizer } : {}),
     ...(f.start ? { start: f.start } : {}), ...(f.end ? { end: f.end } : {}),
-    ...(f.status === 'published' ? {} : { status: f.status }),
+    ...(f.status ? { status: f.status } : {}),
     ...(f.page > 1 ? { page: f.page } : {}),
   } })
 }

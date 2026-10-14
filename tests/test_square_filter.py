@@ -58,3 +58,29 @@ def test_广场时间范围_日期格式不对给400(client, take_student):
                       params={"start": "不是日期"}).status_code == 400
     assert client.get("/api/activities", headers=h,
                       params={"end": "2026-13-40"}).status_code == 400
+
+
+def test_全部状态下急招最前_还能报的排在已截止和已结束前面(client, db, open_group,
+                                                       take_student):
+    """广场默认「全部状态」：只按创建时间排的话，刚结束的活动会压在报名中的上面。"""
+    tag = uid("排序")
+    made = {}
+    # 按创建先后：急招（还没到报名时间）、报名中、已结束、已截止
+    for name in ("urgent", "open", "finished", "closed"):
+        act, _g = open_group(3)
+        act.title = f"{tag} {name}"
+        made[name] = act
+        db.commit()
+    made["urgent"].pinned_at = now()
+    made["urgent"].reg_start = now() + timedelta(days=1)
+    made["finished"].status = "finished"
+    made["closed"].status = "closed"
+    made["closed"].reg_end = now() - timedelta(hours=1)
+    db.commit()
+
+    h = login(client, take_student())
+    items = _square(client, h, q=tag, size=50)["items"]
+    order = [a["id"] for a in items]
+    assert order == [made[k].id for k in ("urgent", "open", "closed", "finished")]
+    assert [a["display_status"] for a in items] == [
+        "upcoming", "published", "closed", "finished"]
