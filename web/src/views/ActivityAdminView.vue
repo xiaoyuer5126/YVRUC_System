@@ -171,8 +171,7 @@
                     :type="g.mode === 'assign' ? 'warning' : 'info'">
               {{ g.mode_label }}
             </el-tag>
-            <span class="dim">{{ g.start_time.slice(5,16).replace('T',' ') }}
-              ~ {{ g.end_time.slice(5,16).replace('T',' ') }}</span>
+            <span class="dim">{{ g.time_text }}</span>
             <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}（待分配）` : `本场合计 ${g.capacity} 人` }}</span>
             <el-tag v-if="!realPositions(g).length"
                     size="small" :type="g.mode === 'assign' ? 'info' : 'danger'"
@@ -1654,7 +1653,7 @@
         <el-form-item v-if="notifyForm.scope !== 'all'" label="选择场次" required>
           <el-select v-model="notifyForm.shift_id" style="width:100%" placeholder="请选择场次">
             <el-option v-for="g in shifts" :key="g.id" :value="g.id"
-                       :label="`${g.name}（${g.start_time.slice(5,16).replace('T',' ')} ~ ${g.end_time.slice(11,16)}）`" />
+                       :label="`${g.name}（${g.time_text}）`" />
           </el-select>
         </el-form-item>
         <el-form-item label="通知标题" required>

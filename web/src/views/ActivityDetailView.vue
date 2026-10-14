@@ -193,28 +193,9 @@
               <el-progress :percentage="pct(g)" :stroke-width="5" :show-text="false"
                            style="margin-top:4px" />
             </div>
-            <div v-if="g.attached?.length" class="att-list">
-              <div v-for="s in g.attached" :key="s.id" class="att-item"
-                   :class="{ mine: s.mine }">
-                <el-tag size="small" effect="dark"
-                        :type="s.kind === 'training' ? 'success' : 'warning'">
-                  {{ s.kind_label }}
-                </el-tag>
-                <span>{{ s.time_text }}</span>
-                <span class="dim">{{ s.location || act.location }}</span>
-                <span class="dim">{{ attachedWho(g, s) }}</span>
-                <span v-if="s.note" class="dim">备注：{{ s.note }}</span>
-                <template v-if="s.mine">
-                  <el-tag size="small" :type="s.excused ? 'info' : 'primary'" effect="plain">
-                    {{ s.excused ? '已请假' : '要参加' }}
-                  </el-tag>
-                  <el-button size="small" link
-                             :type="s.excused ? 'primary' : 'warning'"
-                             @click="toggleExcuse(s)">
-                    {{ s.excused ? '销假' : '我无法参加' }}
-                  </el-button>
-                </template>
-              </div>
+            <div v-if="wholeShiftTrainings(g).length" class="att-list">
+              <TrainingItem v-for="s in wholeShiftTrainings(g)" :key="s.id" :s="s"
+                            :location="act.location" @excuse="toggleExcuse" />
             </div>
 
             <!-- 报名即选岗位：每个岗位一块 -->
@@ -240,6 +221,10 @@
                 </div>
                 <div v-if="!isTeacher" class="m-pos-act-wrap">
                   <PositionAction :g="g" :s="s" />
+                </div>
+                <div v-if="positionTrainings(g, s).length" class="att-list">
+                  <TrainingItem v-for="t in positionTrainings(g, s)" :key="t.id" :s="t"
+                                :location="act.location" @excuse="toggleExcuse" />
                 </div>
               </div>
               <!-- 报了名却没有对应的岗位卡（补招时没指定岗位，或岗位被删） -->
@@ -372,6 +357,11 @@
                                   :type="s.training_visible ? 'success' : 'info'">
                             材料 {{ s.material_count }}{{ s.training_visible ? '' : '·报名后可看' }}
                           </el-tag>
+                          <div v-if="positionTrainings(g, s).length" class="att-list">
+                            <TrainingItem v-for="t in positionTrainings(g, s)" :key="t.id"
+                                          :s="t" :location="act.location"
+                                          @excuse="toggleExcuse" />
+                          </div>
                         </template>
                       </el-table-column>
                       <el-table-column label="服务地点" min-width="110">
@@ -491,33 +481,9 @@
                   </el-card>
 
                   <!-- 培训 / 彩排：报了这个场次就要一起去 -->
-                  <div v-if="g.attached?.length" class="att-list">
-                    <div v-for="s in g.attached" :key="s.id" class="att-item"
-                         :class="{ mine: s.mine }">
-                      <el-tag size="small" effect="dark"
-                              :type="s.kind === 'training' ? 'success' : 'warning'">
-                        {{ s.kind_label }}
-                      </el-tag>
-                      <b>{{ s.name }}</b>
-                      <span>{{ s.time_text }}</span>
-                      <span class="dim">{{ s.location || act.location || '地点待定' }}</span>
-                      <span class="dim">{{ attachedWho(g, s) }}</span>
-                      <span class="dim">
-                        {{ s.hours_mode === 'none' ? '不计时长' : '计入志愿时长' }}
-                      </span>
-                      <span v-if="s.note" class="dim">备注：{{ s.note }}</span>
-                      <template v-if="s.mine">
-                        <el-tag size="small" :type="s.excused ? 'info' : 'primary'"
-                                effect="plain">
-                          {{ s.excused ? '已请假' : '您需要参加' }}
-                        </el-tag>
-                        <el-button size="small" link
-                                   :type="s.excused ? 'primary' : 'warning'"
-                                   @click="toggleExcuse(s)">
-                          {{ s.excused ? '销假' : '我无法参加' }}
-                        </el-button>
-                      </template>
-                    </div>
+                  <div v-if="wholeShiftTrainings(g).length" class="att-list">
+                    <TrainingItem v-for="s in wholeShiftTrainings(g)" :key="s.id" :s="s" full
+                                  :location="act.location" @excuse="toggleExcuse" />
                   </div>
                 </div>
               </template>
@@ -727,6 +693,7 @@ import MaterialList from '../components/MaterialList.vue'
 import QuestionFields from '../components/QuestionFields.vue'
 import RefreshBar from '../components/RefreshBar.vue'
 import PositionAction from '../components/PositionAction.vue'
+import TrainingItem from '../components/TrainingItem.vue'
 import { useNarrow } from '../composables/useNarrow'
 import { Clock, Warning } from '@element-plus/icons-vue'
 
@@ -819,10 +786,11 @@ async function toggleExcuse(s) {
   load()
 }
 
-// 培训/彩排可以只叫某几个岗位，把「谁要去」写在脸上
-function attachedWho(g, s) {
-  return s.applies_to_positions?.length ? `仅 ${s.applies_text}` : '全体参加'
-}
+// 按场次看时培训/彩排挂在谁下面，就是叫谁去：没圈岗位的全体参加，挂在场次下；
+// 圈了岗位的挂在那几个岗位下
+const wholeShiftTrainings = g => (g.attached || []).filter(s => !s.applies_to_positions?.length)
+const positionTrainings = (g, p) => (g.attached || [])
+  .filter(s => s.applies_to_positions?.includes(p.id))
 
 // —— 按岗位看 ——
 const VIEW_KEY = 'yvruc_detail_view'

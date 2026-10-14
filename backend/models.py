@@ -568,15 +568,23 @@ class ActivityManager(Base):
               "hours": "志愿时长"}
 
 
+WEEKDAYS = "一二三四五六日"
+
+
+def day_text(t: datetime) -> str:
+    """「10-22（周四）」：志愿者排时间是按星期几想的，光看日期还得去翻日历。"""
+    return f"{t:%m-%d}（周{WEEKDAYS[t.weekday()]}）"
+
+
 def span_text(start: datetime, end: datetime) -> str:
-    """一段时间的说法：「09-20 09:00-12:00」，跨天就把两个日期都写上。
+    """一段时间的说法：「09-20（周六）09:00-12:00」，跨天就把两头的日期都写上。
 
     场次和「实际签到签退那一段」共用它。同一段服务在两处各写各的格式，
     对账时就得靠眼睛去认它们说的是同一件事。
     """
     if start.date() == end.date():
-        return f"{start:%m-%d} {start:%H:%M}-{end:%H:%M}"
-    return f"{start:%m-%d %H:%M} ~ {end:%m-%d %H:%M}"
+        return f"{day_text(start)}{start:%H:%M}-{end:%H:%M}"
+    return f"{day_text(start)}{start:%H:%M} ~ {day_text(end)}{end:%H:%M}"
 
 
 class Shift(Base):

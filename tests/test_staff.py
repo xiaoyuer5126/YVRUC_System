@@ -802,3 +802,27 @@ def test_活动列表带活动起止供复制预览平移(client, admin, db):
     assert row["time_start"] == iso(g.start_time)
     assert row["time_end"] == iso(g.end_time)
     assert row["time_start"] != row["reg_end"]
+
+
+def test_场次时间带周几_跨天两头都带(client, open_group, take_student, db):
+    act, g = open_group(3)
+    days = "一二三四五六日"
+    s, e = g.start_time, g.end_time
+    h = login(client, take_student())
+    got = client.get(f"/api/activities/{act.id}", headers=h).json()
+    shift = next(x for x in got["shifts"] if x["id"] == g.id)
+    if s.date() == e.date():
+        want = f"{s:%m-%d}（周{days[s.weekday()]}）{s:%H:%M}-{e:%H:%M}"
+    else:
+        want = (f"{s:%m-%d}（周{days[s.weekday()]}）{s:%H:%M} ~ "
+                f"{e:%m-%d}（周{days[e.weekday()]}）{e:%H:%M}")
+    assert shift["time_text"] == want
+
+    # 跨天：两头都带周几
+    g.end_time = s.replace(hour=0, minute=0) + timedelta(days=1, hours=2)
+    db.commit()
+    got = client.get(f"/api/activities/{act.id}", headers=h).json()
+    shift = next(x for x in got["shifts"] if x["id"] == g.id)
+    e = g.end_time
+    assert shift["time_text"] == (f"{s:%m-%d}（周{days[s.weekday()]}）{s:%H:%M} ~ "
+                                  f"{e:%m-%d}（周{days[e.weekday()]}）{e:%H:%M}")
