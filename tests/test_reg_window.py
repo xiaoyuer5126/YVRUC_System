@@ -229,3 +229,71 @@ def test_已结束的活动改不了任何东西(client, admin, db, two_shifts):
                                headers=admin,
                                json={"name": "新岗", "quota": 1, **POSITION_TEXT}))
     assert refused(client.delete(f"/api/staff/positions/{pid}", headers=admin))
+
+
+# ======================= 报名截止不能早于此刻、不能早于报名开始 =======================
+
+def _new_activity(client, admin, reg_start, reg_end):
+    return client.post("/api/staff/activities", headers=admin,
+                       json={"contact_group_qr": "x", "title": f"报名时间 {uid('t')}",
+                             "organizer": "校青协", "intro": "x", "location": "世纪馆",
+                             "contacts": [{"name": "王", "phone": "13900000000"}],
+                             "reg_start": reg_start.isoformat(),
+                             "reg_end": reg_end.isoformat()})
+
+
+def test_新建时截止早于此刻或早于开始都拦(client, admin):
+    r = _new_activity(client, admin, now() - timedelta(days=3),
+                      now() - timedelta(hours=1))
+    assert r.status_code == 400 and "已经过去" in r.json()["detail"]
+    r = _new_activity(client, admin, now() + timedelta(days=3),
+                      now() + timedelta(days=2))
+    assert r.status_code == 400 and "须晚于报名开始" in r.json()["detail"]
+
+
+def test_改报名时间时也拦(client, admin, two_shifts):
+    url = f"/api/staff/activities/{two_shifts}"
+    r = client.patch(url, headers=admin,
+                     json={"reg_end": (now() - timedelta(hours=1)).isoformat()})
+    assert r.status_code == 400 and "已经过去" in r.json()["detail"]
+    r = client.patch(url, headers=admin,
+                     json={"reg_start": (now() + timedelta(days=6)).isoformat()})
+    assert r.status_code == 400 and "须晚于报名开始" in r.json()["detail"]
+
+
+def test_截止已过的活动提交审批和审批通过都拦(client, admin, db, two_shifts):
+    from conftest import upload_proposal
+    act = db.get(Activity, two_shifts)
+    act.reg_end = now() - timedelta(minutes=5)
+    db.commit()
+    r = client.get(f"/api/staff/activities/{two_shifts}/submit-check", headers=admin)
+    assert r.status_code == 400 and "已经过去" in r.json()["detail"]
+
+    # 提交时还没过，审批时过了：通过即发布的活动不能就这样发出去
+    act.reg_end = now() + timedelta(days=5)
+    db.commit()
+    upload_proposal(client, admin, two_shifts)
+    depts = [d for d in client.get("/api/staff/departments", headers=admin).json()
+             if d["has_head"]]
+    r = client.post(f"/api/staff/activities/{two_shifts}/submit", headers=admin,
+                    json={"department_id": depts[0]["id"]})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    act = db.get(Activity, two_shifts)
+    act.reg_end = now() - timedelta(minutes=5)
+    db.commit()
+    r = client.post(f"/api/staff/activities/{two_shifts}/decide", headers=admin,
+                    json={"approve": True})
+    assert r.status_code == 400 and "已经过去" in r.json()["detail"]
+    db.expire_all()
+    assert db.get(Activity, two_shifts).status == "pending"
+
+
+def test_报名截止后只改开始时间不被已过的截止拦(client, admin, db, two_shifts):
+    act = db.get(Activity, two_shifts)
+    act.reg_start = now() - timedelta(days=3)
+    act.reg_end = now() - timedelta(hours=1)
+    db.commit()
+    r = client.patch(f"/api/staff/activities/{two_shifts}", headers=admin,
+                     json={"reg_start": (now() - timedelta(days=2)).isoformat()})
+    assert r.status_code == 200, r.text

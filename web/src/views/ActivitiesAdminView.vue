@@ -153,7 +153,7 @@
             报名时间与场次时间整体后移
           </span>
           <div v-if="copyPreview" class="dim" style="margin-top:8px">
-            场次时间：{{ copyPreview.from }} → <b>{{ copyPreview.to }}</b>
+            活动时间：{{ copyPreview.from }} → <b>{{ copyPreview.to }}</b>
           </div>
         </el-form-item>
         <el-form-item label="新活动名称">
@@ -232,16 +232,22 @@ async function uploadCopyQr({ file }) {
   } finally { copyDlg.value.uploading = false }
 }
 
-// 延期后场次落在哪天，边填边看，省得复制完才发现日子不对
+// 延期后活动落在哪几天，边填边看，省得复制完才发现日子不对。
+// 「10-10 ~ 10-11 → 10-17 ~ 10-18」，单日活动只写一个日期
 const copyPreview = computed(() => {
   const src = copyDlg.value.source
-  if (!src?.reg_end) return null
-  const shift = (iso, days) => {
+  if (!src?.time_start || !src?.time_end) return null
+  const day = (iso, days) => {
     const t = new Date(iso)
     t.setDate(t.getDate() + days)
-    return `${t.getMonth() + 1}-${String(t.getDate()).padStart(2, '0')}`
+    return `${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
   }
-  return { from: shift(src.reg_end, 0), to: shift(src.reg_end, copyDlg.value.shiftDays) }
+  const range = days => {
+    const a = day(src.time_start, days)
+    const b = day(src.time_end, days)
+    return a === b ? a : `${a} ~ ${b}`
+  }
+  return { from: range(0), to: range(copyDlg.value.shiftDays) }
 })
 
 async function doCopy() {

@@ -471,3 +471,18 @@ def test_名下还有人或活动的部门不能删(client, admin, db, draft,
                         json={"head_student_id": QINGXIE_HEAD}).status_code == 200
     r = client.delete(f"/api/staff/departments/{empty}", headers=admin)
     assert r.status_code == 409 and "归口着 1 场活动" in r.json()["detail"]
+
+
+def test_审批人打开活动管理页能直接去审批(client, initiator, liaison):
+    """审批详情的 can_decide 决定活动管理页右上角是「去审批」还是「待 xx 审批」。"""
+    from conftest import LIAISON_HEAD, make_draft
+    aid = make_draft(client, initiator)
+    r = client.post(f"/api/staff/activities/{aid}/submit", headers=initiator,
+                    json={"department_id": liaison.id})
+    assert r.status_code == 200, r.text
+    url = f"/api/staff/activities/{aid}/approval"
+    assert client.get(url, headers=initiator).json()["can_decide"] is False
+    head = login(client, LIAISON_HEAD)
+    assert client.get(url, headers=head).json()["can_decide"] is True
+    assert aid in [a["id"] for a in client.get("/api/staff/approvals",
+                                               headers=head).json()]

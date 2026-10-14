@@ -626,7 +626,7 @@ def release_stale_edit_locks(db: OrmSession) -> int:
         act.editing_since = None
         act.editing_by = None
         # 改到一半的东西也已经生效了：和「保存并发布」一样按人告诉志愿者
-        if act.status != "draft":
+        if not act.is_unpublished():
             notify_edit_changes(db, act, since)
         audit_log(db, actor=None, action="update", target_type="activity",
                   target_id=act.id, target_label=act.title, activity_id=act.id,

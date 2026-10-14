@@ -34,7 +34,7 @@ def log(db: OrmSession, *, actor, action: str, target_type: str,
     # 「变更记录」的意思是「你报名之后发生了什么变化」，得从公开那一刻算起。
     if visible and activity_id:
         act = db.get(Activity, activity_id)
-        if act is not None and act.status in ("draft", "pending", "approved"):
+        if act is not None and act.is_unpublished():
             visible = False
     # 以哪个身份操作的（前端的 X-Identity）、影响到哪些人。没有专门的列，
     # 挂在 changes 末尾带下划线字段名的记录上，AuditLog.out() 把它们摘掉，

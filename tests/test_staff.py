@@ -785,3 +785,44 @@ def test_活动地点定位选填_详情里带着(client, admin, db):
     assert r.status_code == 200, r.text
     assert client.get(f"/api/activities/{r.json()['id']}", headers=admin).json()[
         "location_point"] is None
+
+
+def test_活动列表带活动起止供复制预览平移(client, admin, db):
+    """复制活动的预览按活动时间（服务场次的最早开始～最晚结束）平移，
+    不能拿报名截止去算。"""
+    from backend.models import iso
+    from conftest import make_draft
+    aid = make_draft(client, admin, proposal=False)
+    act = db.get(Activity, aid)
+    g = act.main_shifts()[0]
+    title = act.title
+    rows = client.get("/api/staff/activities", headers=admin,
+                      params={"q": title}).json()["items"]
+    row = next(r for r in rows if r["id"] == aid)
+    assert row["time_start"] == iso(g.start_time)
+    assert row["time_end"] == iso(g.end_time)
+    assert row["time_start"] != row["reg_end"]
+
+
+def test_场次时间带周几_跨天两头都带(client, open_group, take_student, db):
+    act, g = open_group(3)
+    days = "一二三四五六日"
+    s, e = g.start_time, g.end_time
+    h = login(client, take_student())
+    got = client.get(f"/api/activities/{act.id}", headers=h).json()
+    shift = next(x for x in got["shifts"] if x["id"] == g.id)
+    if s.date() == e.date():
+        want = f"{s:%m-%d}（周{days[s.weekday()]}）{s:%H:%M}-{e:%H:%M}"
+    else:
+        want = (f"{s:%m-%d}（周{days[s.weekday()]}）{s:%H:%M} ~ "
+                f"{e:%m-%d}（周{days[e.weekday()]}）{e:%H:%M}")
+    assert shift["time_text"] == want
+
+    # 跨天：两头都带周几
+    g.end_time = s.replace(hour=0, minute=0) + timedelta(days=1, hours=2)
+    db.commit()
+    got = client.get(f"/api/activities/{act.id}", headers=h).json()
+    shift = next(x for x in got["shifts"] if x["id"] == g.id)
+    e = g.end_time
+    assert shift["time_text"] == (f"{s:%m-%d}（周{days[s.weekday()]}）{s:%H:%M} ~ "
+                                  f"{e:%m-%d}（周{days[e.weekday()]}）{e:%H:%M}")

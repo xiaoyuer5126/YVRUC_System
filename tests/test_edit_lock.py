@@ -397,3 +397,48 @@ def test_有报名历史的岗位不能删(client, admin, db, enrolled_activity)
     db.commit()
     r = client.delete(f"/api/staff/positions/{pos.id}", headers=admin)
     assert r.status_code == 409 and "签到码" in r.json()["detail"], r.text
+
+
+def _shift_and_position(db, aid):
+    act = db.get(Activity, aid)
+    shift = act.main_shifts()[0]
+    return act, shift, shift.positions[0]
+
+
+def test_待审批和待发布的活动也直接改(client, admin, db):
+    """审批期间、通过后还没发布，都还没人能报名：和草稿一样直接改，
+    不进编辑态，也不留「进入编辑态 / 结束编辑」的痕。"""
+    from conftest import approve, make_draft
+    pending = make_draft(client, admin)
+    depts = [d for d in client.get("/api/staff/departments", headers=admin).json()
+             if d["has_head"]]
+    r = client.post(f"/api/staff/activities/{pending}/submit", headers=admin,
+                    json={"department_id": depts[0]["id"]})
+    assert r.status_code == 200, r.text
+    approved = make_draft(client, admin, proposal=False)
+    approve(client, admin, approved, auto_publish=False)
+
+    for aid, status in ((pending, "pending"), (approved, "approved")):
+        db.expire_all()
+        act, shift, pos = _shift_and_position(db, aid)
+        assert act.status == status
+        r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                         json={"quota": 7})
+        assert r.status_code == 200, r.text
+        r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
+                        json={"name": "下午场", "mode": "pick",
+                              "start_time": (now() + timedelta(days=9, hours=4)).isoformat(),
+                              "end_time": (now() + timedelta(days=9, hours=6)).isoformat()})
+        assert r.status_code == 200, r.text
+        r = client.post(f"/api/staff/shifts/{r.json()['id']}/positions",
+                        headers=admin, json={"name": "引导", "quota": 2,
+                                             **POSITION_TEXT})
+        assert r.status_code == 200, r.text
+        r = client.post(f"/api/staff/activities/{aid}/edit-lock", headers=admin)
+        assert r.status_code == 409 and "无需暂停报名" in r.json()["detail"]
+        db.expire_all()
+        assert db.get(Activity, aid).editing_since is None
+
+    # 待发布的照常能首次发布
+    r = client.post(f"/api/staff/activities/{approved}/publish", headers=admin)
+    assert r.status_code == 200, r.text

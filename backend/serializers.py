@@ -48,8 +48,8 @@ def display_status_of(status: str, reg_start, reg_end,
 
     报名中和进行中可以同时成立：场次排在好几天里，第一场开过了、后面的
     还收人（每场在自己开场时才截止，见 enroll_logic.enroll_deadline）。
-    这时显示「报名中」——广场默认只看报名中，标成进行中，还能报的场次就
-    没人看得见了。last_start 是最晚一个服务场次的开始时间，过了它就一场
+    这时显示「报名中」——标成进行中，按状态筛「报名中」的人就看不见这些
+    还能报的场次了。last_start 是最晚一个服务场次的开始时间，过了它就一场
     也报不进去了。没填报名截止的活动在第一场开场时由定时任务截止，不算。
 
     拆成不吃 Activity 的一版：广场列表筛状态时手上只有几个字段，不能为了
@@ -272,6 +272,7 @@ def _brief_public(act: Activity, counts: dict) -> dict:
     total_cap = sum(g.total_capacity() for g in shifts)
     total_conf = sum(counts.get(g.id, (0, 0, 0))[0] for g in shifts)
     total_used = sum(counts.get(g.id, (0, 0, 0))[1] for g in shifts)
+    span = act.time_span()
     return {
         "id": act.id, "title": act.title, "recruit_mode": act.recruit_mode,
         "organizer": act.organizer, "co_organizer": act.co_organizer or "",
@@ -284,6 +285,9 @@ def _brief_public(act: Activity, counts: dict) -> dict:
         "total_capacity": total_cap, "total_enrolled": total_conf,
         "remaining": max(0, total_cap - total_used),
         "time_text": act.time_text(),
+        # 活动整体起止（见 Activity.time_span），没有场次时为空
+        "time_start": iso_of(span[0]) if span else None,
+        "time_end": iso_of(span[1]) if span else None,
         "reg_start": iso_of(act.reg_start), "reg_end": iso_of(act.reg_end),
         # 补记录活动（不公开招募）：没有场次，活动时间直接填在这两项上
         "record_only": act.is_record(),

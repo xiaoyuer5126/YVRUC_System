@@ -144,7 +144,8 @@
                 ? '没有待你审批的活动（轮到你值班时，本部门的审批会出现在这里）'
                 : '没有待你审批的活动'" />
 
-    <el-card v-for="a in rows" :key="a.id" shadow="never" class="item">
+    <el-card v-for="a in rows" :key="a.id" :id="'approval-' + a.id" shadow="never"
+             class="item" :class="{ focused: a.id === focusId }">
       <div class="head">
         <b class="title" @click="$router.push('/activity/' + a.id)">{{ a.title }}</b>
         <el-tag size="small" effect="plain">{{ a.recruit_label }}</el-tag>
@@ -297,7 +298,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
 import ApprovalCommentDialog from '../components/ApprovalCommentDialog.vue'
@@ -372,7 +374,18 @@ async function load() {
   } finally { loading.value = false }
   loadTemplates()
 }
-onMounted(load)
+// 从活动管理页「去审批」跳来（?activity=活动 id）：滚到那一条并标出来，
+// 通过、驳回就在那张卡片上点
+const route = useRoute()
+const focusId = ref(String(route.query.activity || ''))
+onMounted(async () => {
+  await load()
+  if (!focusId.value) return
+  await nextTick()
+  const el = document.getElementById('approval-' + focusId.value)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  else ElMessage.info('这条活动已经不在待审批列表里了')
+})
 
 const docTemplates = ref(null)
 async function loadTemplates() {
@@ -468,6 +481,7 @@ async function submitTransfer() {
 }
 .submit-note b { margin-right: 8px; }
 .item { margin-bottom: 12px; border-radius: 12px; }
+.item.focused { border-color: var(--el-color-warning); box-shadow: 0 0 0 2px var(--el-color-warning-light-7); }
 .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .title { font-size: 15px; color: var(--el-color-primary); cursor: pointer; }
 </style>
