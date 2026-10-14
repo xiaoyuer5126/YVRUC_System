@@ -337,31 +337,33 @@
                   <!-- 报名一律选岗位。「截止后统一分配」的场次只有一条，
                        就是那个写明「暂不选岗位」的占位。 -->
                   <template v-if="g.positions.length">
-                    <el-table :data="g.positions" size="small" border>
+                    <el-table :data="positionRows(g)" :span-method="posSpan" size="small" border>
                       <el-table-column label="岗位" min-width="150">
                         <template #default="{ row: s }">
-                          <el-link type="primary" underline="never" style="font-weight:600"
-                                   @click="showStationDetail(g, s)">{{ s.display_name }}</el-link>
-                          <el-tag v-if="myStationId(g) === s.id" size="small" type="success"
-                                  effect="light" style="margin-left:8px">已选</el-tag>
-                          <el-tag v-if="s.needs_leader" size="small" type="warning"
-                                  effect="plain" style="margin-left:8px">
-                            设组长{{ s.leader_name ? `·${s.leader_name}` : '' }}
-                          </el-tag>
-                          <el-tag v-if="s.attire !== 'none'" size="small" type="primary"
-                                  effect="plain" style="margin-left:8px">服装{{ s.attire_label }}</el-tag>
-                          <el-tag v-if="s.pay_optional" size="small" type="warning"
-                                  effect="plain" style="margin-left:8px">可选劳务</el-tag>
-                          <el-tag v-if="s.material_count" size="small" effect="plain"
-                                  style="margin-left:8px"
-                                  :type="s.training_visible ? 'success' : 'info'">
-                            材料 {{ s.material_count }}{{ s.training_visible ? '' : '·报名后可看' }}
-                          </el-tag>
-                          <div v-if="positionTrainings(g, s).length" class="att-list">
-                            <TrainingItem v-for="t in positionTrainings(g, s)" :key="t.id"
-                                          :s="t" :location="act.location"
+                          <!-- 培训/彩排行：整行合并，用整张表的宽度放下整条 -->
+                          <div v-if="s.attachment" class="att-list att-in-row">
+                            <TrainingItem :s="s.attachment" :location="act.location" full
                                           @excuse="toggleExcuse" />
                           </div>
+                          <template v-else>
+                            <el-link type="primary" underline="never" style="font-weight:600"
+                                     @click="showStationDetail(g, s)">{{ s.display_name }}</el-link>
+                            <el-tag v-if="myStationId(g) === s.id" size="small" type="success"
+                                    effect="light" style="margin-left:8px">已选</el-tag>
+                            <el-tag v-if="s.needs_leader" size="small" type="warning"
+                                    effect="plain" style="margin-left:8px">
+                              设组长{{ s.leader_name ? `·${s.leader_name}` : '' }}
+                            </el-tag>
+                            <el-tag v-if="s.attire !== 'none'" size="small" type="primary"
+                                    effect="plain" style="margin-left:8px">服装{{ s.attire_label }}</el-tag>
+                            <el-tag v-if="s.pay_optional" size="small" type="warning"
+                                    effect="plain" style="margin-left:8px">可选劳务</el-tag>
+                            <el-tag v-if="s.material_count" size="small" effect="plain"
+                                    style="margin-left:8px"
+                                    :type="s.training_visible ? 'success' : 'info'">
+                              材料 {{ s.material_count }}{{ s.training_visible ? '' : '·报名后可看' }}
+                            </el-tag>
+                          </template>
                         </template>
                       </el-table-column>
                       <el-table-column label="服务地点" min-width="110">
@@ -792,6 +794,17 @@ const wholeShiftTrainings = g => (g.attached || []).filter(s => !s.applies_to_po
 const positionTrainings = (g, p) => (g.attached || [])
   .filter(s => s.applies_to_positions?.includes(p.id))
 
+// 岗位子表的行：每个岗位一行，它下面的培训/彩排各占一行（带 attachment 标记）。
+// 岗位行本身不再被培训撑高。
+const positionRows = g => g.positions.flatMap(p =>
+  [p, ...positionTrainings(g, p).map(t => ({ attachment: t }))])
+// 培训行整行合并成一格，用整张表的宽度放内容；其余列收成 0 列不渲染。
+// 老师不报名，没有「操作」列，列数少一列。
+const posSpan = ({ row, columnIndex }) => {
+  if (!row.attachment) return [1, 1]
+  return columnIndex === 0 ? [1, isTeacher.value ? 4 : 5] : [0, 0]
+}
+
 // —— 按岗位看 ——
 const VIEW_KEY = 'yvruc_detail_view'
 function readView() {
@@ -1107,6 +1120,8 @@ const openProfileDialog = () => profileDialog.value.open(true)
   font-size: 13px; padding: 6px 10px; border-radius: 8px; background: #f7f8fa;
 }
 .att-item.mine { background: var(--el-color-primary-light-9); }
+/* 岗位子表里培训独占一整行，整行只有它，不用再留列表上方那条间距 */
+.att-in-row { margin-top: 0; }
 
 /* 仅场次：没有可展开的岗位，隐藏展开箭头 */
 </style>
