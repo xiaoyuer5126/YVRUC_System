@@ -1,5 +1,5 @@
 <template>
-  <div class="page">
+  <div class="page page-wide">
     <h2>活动审批</h2>
     <el-alert type="info" :closable="false">
       通过可以附意见（选填），驳回、退回与转交须写明理由；意见随通知发给申请人，审核页签里也看得到。

@@ -6,7 +6,9 @@
     <div v-if="narrow" v-loading="loading" class="mob-list">
       <div v-for="row in rows" :key="row.id" class="mob-card">
         <div class="mob-head">
-          <b>{{ row.activity.title }}</b>
+          <b class="title" @click="$router.push('/activity/' + row.activity.id)">
+            {{ row.activity.title }}
+          </b>
           <EnrollStatusTag :row="row" />
           <el-tag v-if="row.status === 'enrolled' && row.list_locked" size="small" type="info">名单已锁定</el-tag>
         </div>
@@ -53,9 +55,6 @@
           <el-button v-if="signAction(row)" size="small"
                      :type="signAction(row) === '签退' ? 'warning' : 'primary'"
                      @click="openCheckin(row)">{{ signAction(row) }}</el-button>
-          <el-button size="small" @click="$router.push('/activity/' + row.activity.id)">
-            查看活动
-          </el-button>
           <el-button v-if="row.contact_group_qr" size="small" plain
                      @click="showQr(row)">查看联络群</el-button>
           <el-button v-if="row.is_leader" size="small" type="warning" plain
@@ -76,7 +75,9 @@
     <el-table v-else :data="rows" style="width:100%" v-loading="loading">
       <el-table-column label="活动" min-width="260">
         <template #default="{ row }">
-          <b>{{ row.activity.title }}</b>
+          <b class="title" @click="$router.push('/activity/' + row.activity.id)">
+            {{ row.activity.title }}
+          </b>
           <div class="dim">{{ row.activity.location }}</div>
         </template>
       </el-table-column>
@@ -132,13 +133,12 @@
           <span v-else class="dim">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="300" fixed="right">
+      <el-table-column label="操作" width="225" fixed="right">
         <template #default="{ row }">
           <div class="btn-row">
             <el-button v-if="signAction(row)" size="small"
                        :type="signAction(row) === '签退' ? 'warning' : 'primary'"
                        @click="openCheckin(row)">{{ signAction(row) }}</el-button>
-            <el-button size="small" @click="$router.push('/activity/' + row.activity.id)">查看</el-button>
             <el-button v-if="row.contact_group_qr" size="small" plain
                        @click="showQr(row)">联络群</el-button>
             <el-button v-if="row.is_leader" size="small" type="warning" plain
@@ -377,6 +377,7 @@ async function cancel(row) {
             gap:4px; flex-wrap:wrap; }
 .mob-actions { margin-top:12px; padding-top:10px; border-top:1px dashed #eceef1;
                display:flex; gap:8px; flex-wrap:wrap; }
+.title { color: var(--el-color-primary); cursor: pointer; }
 .checkout-time {
   font-size: 11px;
   line-height: 1.4;

@@ -67,7 +67,7 @@ export function clearAuth() {
 }
 
 export const ROLE_LABELS = {
-  admin: '管理员', qingxie: '青协', initiator: '活动发起方', student: '学生',
+  admin: '管理员', qingxie: '青协', initiator: '活动发起方', student: '志愿者',
 }
 
 export const hasIdentity = (role) => !!auth.user && (auth.user.roles || []).includes(role)

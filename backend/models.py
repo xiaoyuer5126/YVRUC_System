@@ -91,7 +91,7 @@ def iso(dt: datetime | None) -> str | None:
 # 决定的是能不能报名，与这里无关。
 ROLES = ("admin", "qingxie", "initiator", "student")
 ROLE_LABELS = {"admin": "管理员", "qingxie": "青协",
-               "initiator": "活动发起方", "student": "学生"}
+               "initiator": "活动发起方", "student": "志愿者"}
 # 可被设为活动管理者的身份（发起方 / 青协；管理员天然全权）
 MANAGER_ROLES = ("initiator", "qingxie")
 # 审计 changes 里不对外展示的附注，字段名都以下划线开头（见 audit.log）：
@@ -232,8 +232,8 @@ class User(Base):
 
     def active_role_label(self) -> str:
         if not self.roles:
-            # 没有任何身份时按身份类型显示，别把老师叫成「学生」
-            return "教职工" if self.user_type == "teacher" else "学生"
+            # 没有任何身份时按身份类型显示，别把老师叫成「志愿者」
+            return "教职工" if self.user_type == "teacher" else "志愿者"
         return "、".join(ROLE_LABELS.get(r, r) for r in self.roles)
 
     def brief(self) -> dict:
