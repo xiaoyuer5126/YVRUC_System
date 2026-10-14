@@ -27,6 +27,7 @@ from ..exporter import (activities_ending_in, activity_hours,
 from ..models import (Activity, AuditLog, CheckinRecord, Enrollment,
                       HoursRecord, Shift, User, ViolationRecord, iso,
                       like_pattern, now, parse_local_dt, span_text, uid)
+from ..serializers import admin_status_of
 from ..perm import ensure_activity_manager, managed_activity_ids
 
 router = APIRouter(prefix="/api/staff", tags=["staff-admin"])
@@ -62,6 +63,20 @@ def overview(start: str = "", end: str = "",
     act_rows = db.query(Activity.status, func.count(Activity.id)).group_by(
         Activity.status).all()
     by_status = {s: n for s, n in act_rows}
+    # 「报名中活动」只数此刻真能报的：已发布但还没到报名时间、报名已截止的都
+    # 不算，与广场上按「报名中」筛出来的一致（见 serializers.admin_status_of）
+    pub_rows = (db.query(Activity.id, Activity.reg_start, Activity.reg_end)
+                .filter(Activity.status == "published").all())
+    pub_ids = [r[0] for r in pub_rows]
+    pub_spans = {aid: ((first, last), last_start) for aid, first, last, last_start in
+                 db.query(Shift.activity_id, func.min(Shift.start_time),
+                          func.max(Shift.end_time), func.max(Shift.start_time))
+                 .filter(Shift.kind == "service", Shift.activity_id.in_(pub_ids))
+                 .group_by(Shift.activity_id).all()} if pub_ids else {}
+    live_published = sum(
+        1 for aid, reg_start, reg_end in pub_rows
+        if admin_status_of("published", reg_start, reg_end,
+                           *pub_spans.get(aid, (None, None)))[0] == "published")
     # 有效报名：不填区间是此刻在册的（含候补与待确认），填了就是区间内新产生的
     enroll_q = (db.query(func.count(Enrollment.id))
                 .filter(Enrollment.status.in_(("enrolled", "waitlisted",
@@ -121,7 +136,7 @@ def overview(start: str = "", end: str = "",
     return {
         "cards": {
             "students": total_students,
-            "activities_published": by_status.get("published", 0),
+            "activities_published": live_published,
             "activities_all": activities_all,
             "active_enrollments": active_enroll,
             "waitlisted": waitlisted,

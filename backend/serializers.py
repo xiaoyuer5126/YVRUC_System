@@ -83,6 +83,40 @@ def display_status_of(status: str, reg_start, reg_end,
     return "closed", "已截止"
 
 
+# 管理端列表照原样显示的几种状态：各有各的按钮与下一步，分得开才点得对
+ADMIN_STATUSES = ("draft", "pending", "approved", "vb_pending", "completed")
+
+
+def admin_status_of(status: str, reg_start, reg_end, span, last_start=None,
+                    t=None) -> tuple[str, str]:
+    """管理端列表上显示的状态码与标签。
+
+    已发布之后按时间算，与广场同一套（见 display_status_of）：没到报名时间的
+    标「未开始报名」，进行中、已截止、已结束都按当前时刻定。活动管理页的状态列
+    与状态筛选都读它——只看 status 的话，报名时间还没到的活动在管理页上写着
+    「报名中」，跟学生在广场上看到的那一条对不上。
+
+    还没公开的三态（草稿 / 待审批 / 待发布）与等外联确认的两态（待外联确认 /
+    已完成）各有各的按钮和下一步，照原样显示，不并进按时间算的那几档：管理端
+    要的是「我还能对它做什么」，学生端要的是「现在能不能报」。
+    """
+    if status in ADMIN_STATUSES:
+        return status, Activity.STATUS_LABELS[status]
+    return display_status_of(status, reg_start, reg_end, span, last_start, t)
+
+
+def published_hint(reg_start, t=None) -> str:
+    """「发布之后学生什么时候能报」的一句话，接在「发布后学生即可看到活动」后面。
+
+    设了将来的报名开始时间就说清是哪一刻开始；没设、或已经到点，才是现在能报。
+    一律写「即可报名」的话，报名明早才开始的活动发布出去，学生点开却报不了。
+    """
+    t = t or now()
+    if reg_start is not None and not reg_started(reg_start, t):
+        return f"报名将于 {reg_start:%m-%d %H:%M} 开始"
+    return "现在可以报名"
+
+
 # 占位岗位给学生看的说法。管理端仍叫「待分配」——那是给老师看的账。
 PLACEHOLDER_LABEL = "暂不选岗位 · 由负责人后续统一分配"
 
@@ -218,7 +252,9 @@ def with_times(out: dict, t=None) -> dict:
                                     _dt(basis["last_start"]), t)
     ms = opens_in_ms(reg_start, t)
     out.update({"display_status": code, "display_label": label,
-                "opens_in_ms": ms, "opens_in": math.ceil(ms / 1000)})
+                "opens_in_ms": ms, "opens_in": math.ceil(ms / 1000),
+                # 发布确认与发布成功提示里那句话，见 published_hint
+                "publish_hint": published_hint(reg_start, t)})
     if "shifts" in out:
         times = {sid: (_dt(start), _dt(dl), _dt(auto_at))
                  for sid, start, _end, dl, auto_at in basis["shifts"]}

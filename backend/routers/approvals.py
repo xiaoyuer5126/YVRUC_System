@@ -26,6 +26,7 @@ from ..deps import (current_user, require_approver, require_council,
 from ..integrations import msgcenter
 from ..models import (Activity, ApprovalEvent, Department, User, iso, now, uid)
 from ..perm import ensure_activity_manager
+from ..serializers import published_hint
 
 router = APIRouter(prefix="/api/staff", tags=["approvals"])
 
@@ -337,8 +338,8 @@ def decide(activity_id: str, body: DecideBody,
         title, body_text = (
             f"审批通过｜{act.title}",
             f"「{act.title}」已通过校青协审批"
-            + (f"并发布，报名于 {iso(act.reg_start)} 开始。" if published
-               else "，请在活动管理页点「发布」开始报名。")
+            + (f"并发布，{published_hint(act.reg_start)}。" if published
+               else "，请在活动管理页点「发布」，学生即可看到活动。")
             + (f"\n审批意见：{comment}" if comment else ""))
     else:
         act.status = "draft"

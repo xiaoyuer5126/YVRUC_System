@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import selectinload
 
 from . import config, hours as hours_flow, scoring
+from .serializers import admin_status_of
 from .models import (Activity, Attachment, CheckinRecord, Enrollment,
                      FormQuestion, HoursClaim, HoursRecord, HoursSegment,
                      Position, Shift, User, now, span_text)
@@ -600,8 +601,12 @@ def build_activities_summary_workbook(
     for span, act in picked:
         people, seats = counts.get(act.id, (0, 0))
         counted, paid = hours.get(act.id, (0.0, 0.0))
+        # 状态列与活动管理页同一套口径（见 serializers.admin_status_of）：
+        # 拿表的人照着状态与页面上的对，两边说得不一样就要来回问
+        label = admin_status_of(act.status, act.reg_start, act.reg_end,
+                                span, act.last_shift_start())[1]
         ws.append([act.id, act.title, act.organizer, act.co_organizer or "",
-                   span_text(*span), act.label_status(), people,
+                   span_text(*span), label, people,
                    seats, round(counted, 1), round(paid, 1)])
         seats_total += seats
         volunteer_total += counted

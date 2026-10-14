@@ -233,6 +233,49 @@ def test_题目按显示条件出现(client, admin, db, take_student):
     assert r.status_code == 200, r.text
 
 
+def test_带显示条件的必填题_发到填表页由页面实时决定露出(client, admin, db, take_student):
+    """第二步发题只按岗位筛，带显示条件的题照样发下去。
+
+    发题这一刻还没有答案，照着显示条件筛就会把带条件的题连同挂在它下面的题
+    一并筛掉：选了触发选项也出不来，题上写了必填就卡死在「为必填」上，志愿者
+    连题都没见过。露出与否交给页面按作答实时判（见 QuestionFields.vue）。
+    """
+    act_id, _ids, _q = _create_screened(client, admin, db, status="draft", shifts=0)
+    _gid, pids = _pick_shift(client, admin, act_id)
+    base = client.get(f"/api/staff/activities/{act_id}/form", headers=admin).json()
+    yes_no = base["questions"][0]        # 单选：参加过吗
+    r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
+                   json={"questions": [
+                       {"id": yes_no["id"], "kind": "single", "title": "参加过吗",
+                        "options": ["是", "否"]},
+                       {"kind": "text", "title": "上次做了什么", "required": True,
+                        "show_if": {"question_id": yes_no["id"], "values": ["是"]}},
+                       {"kind": "text", "title": "只问第二个岗位", "required": True,
+                        "applies_to_positions": [pids[1]]},
+                   ]})
+    assert r.status_code == 200, r.text
+    follow = next(x["id"] for x in r.json()["questions"]
+                  if x["title"] == "上次做了什么")
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+
+    t = login(client, take_student())
+    d = client.get(f"/api/activities/{act_id}/form?positions={pids[0]}",
+                   headers=t).json()
+    titles = [x["title"] for x in d["questions"]]
+    # 带条件的题也在，岗位范围之外的题照旧不在
+    assert "上次做了什么" in titles and "只问第二个岗位" not in titles
+
+    # 选了触发选项，这道题就是必填；不填交不了，填了才过
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"position_ids": [pids[0]], "answers": {yes_no["id"]: "是"}})
+    assert r.status_code == 400 and "上次做了什么" in r.json()["detail"]
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"position_ids": [pids[0]],
+                          "answers": {yes_no["id"]: "是", follow: "带过路"}})
+    assert r.status_code == 200, r.text
+
+
 def test_题目按适用岗位出现(client, admin, db, take_student):
     """挂了适用岗位的题，只问选了那个岗位的人：没选就不出现、不校验、不存。"""
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)

@@ -37,7 +37,8 @@ from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
                       CheckinRecord, CheckinTask, Enrollment, FormQuestion,
                       Notification, Position, Shift, User, VbConfirm,
                       iso, like_pattern, now, parse_local_dt, uid)
-from ..serializers import activity_brief, applies_text, load_trees
+from ..serializers import (activity_brief, admin_status_of, applies_text,
+                           load_trees, published_hint)
 from .screening import answers_out
 
 router = APIRouter(prefix="/api/staff", tags=["staff"])
@@ -109,12 +110,35 @@ def _notify_assignment_bg(items: list[dict]):
 
 # ======================= 活动列表与基本信息 =======================
 
+# 状态筛选的每个值，库里可能落到哪几种 status。展示状态要按当前时刻与场次时间
+# 算（见 serializers.admin_status_of），SQL 只能先按这个把候选行砍下来，算完
+# 再筛一遍——和广场列表的做法一样。
+ADMIN_FILTER_BASIS = {
+    "draft": ("draft",), "pending": ("pending",), "approved": ("approved",),
+    "upcoming": ("published",), "published": ("published",),
+    "ongoing": ("published", "closed"), "closed": ("published", "closed"),
+    "finished": ("published", "closed", "finished"),
+    "vb_pending": ("vb_pending",), "completed": ("completed",),
+}
+
+
 @router.get("/activities")
 def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
              db: OrmSession = Depends(db_session),
              user: User = Depends(require_manager)):
-    """管理端活动列表。分页返回：每条都要数场次、报名与候补，全量拉会越来越慢。"""
-    rows = db.query(Activity).order_by(Activity.created_at.desc())
+    """管理端活动列表。
+
+    状态列与 status 筛选都用与广场同一套展示状态（见 serializers.admin_status_of）：
+    「已发布但还没到报名时间」的活动在这里也标「未开始报名」，跟学生在广场上
+    看到的那条一致。所以每条返回的 display_status / display_label 是管理端口径
+    ——草稿、待审批、待发布分开，别的几天几档与广场相同。
+
+    分页返回：每条都要数场次、报名与候补。先按状态定下这一页是哪几条，再只为
+    这一页装场次岗位，条数不随活动总数涨。
+    """
+    rows = (db.query(Activity.id, Activity.status, Activity.reg_start,
+                     Activity.reg_end)
+            .order_by(Activity.created_at.desc()))
     managed = managed_activity_ids(db, user)
     if managed is not None:
         rows = rows.filter(Activity.id.in_(managed or ['__none__']))
@@ -122,21 +146,46 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
         rows = rows.filter(Activity.title.ilike(like_pattern(q.strip()),
                                                 escape="\\"))
     if status:
-        rows = rows.filter(Activity.status == status)
-    total = rows.count()
+        rows = rows.filter(Activity.status.in_(ADMIN_FILTER_BASIS.get(status, ())))
+    rows = rows.all()
+
+    # 服务场次的跨度与最晚开场时刻：算展示状态要用（同 Activity.time_span /
+    # last_shift_start，只算服务场次）。只查筛出来的这些活动
+    ids = [r[0] for r in rows]
+    spans = {aid: ((first, last), last_start) for aid, first, last, last_start in
+             db.query(Shift.activity_id, func.min(Shift.start_time),
+                      func.max(Shift.end_time), func.max(Shift.start_time))
+             .filter(Shift.kind == "service", Shift.activity_id.in_(ids))
+             .group_by(Shift.activity_id).all()} if ids else {}
+
+    matched = []
+    for aid, st, reg_start, reg_end in rows:
+        span, last_start = spans.get(aid, (None, None))
+        code = admin_status_of(st, reg_start, reg_end, span, last_start)[0]
+        if status and code != status:
+            continue
+        matched.append(aid)
+
     size = max(1, min(size, 100))
     page = max(1, page)
-    acts = rows.offset((page - 1) * size).limit(size).all()
+    picked = matched[(page - 1) * size: page * size]
+    acts = (db.query(Activity).filter(Activity.id.in_(picked)).all()
+            if picked else [])
     # 场次、岗位、人数各一次查完，条数不随一页多少个活动涨
     load_trees(db, acts)
     counts = logic.shift_counts(db, [a.id for a in acts])
+    by_id = {a.id: a for a in acts}
     out = []
-    for a in acts:
-        item = activity_brief(db, a, counts)
+    for aid in picked:
+        item = activity_brief(db, by_id[aid], counts)
         item["waitlist_count"] = sum(counts.get(g.id, (0, 0, 0))[2]
-                                     for g in a.shifts)
+                                     for g in by_id[aid].shifts)
+        # 管理端口径的状态覆盖掉广场那套：草稿 / 待审批 / 待发布在这里分得开
+        item["display_status"], item["display_label"] = admin_status_of(
+            by_id[aid].status, by_id[aid].reg_start, by_id[aid].reg_end,
+            spans.get(aid, (None, None))[0], spans.get(aid, (None, None))[1])
         out.append(item)
-    return {"items": out, "total": total, "page": page, "size": size}
+    return {"items": out, "total": len(matched), "page": page, "size": size}
 
 
 class ActivityBody(BaseModel):
@@ -776,7 +825,9 @@ def publish(activity_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(409, f"当前状态为「{act.label_status()}」，不能发布")
     publish_approved(db, act, user)
     db.commit()
-    return {"ok": True}
+    # 发布成功的提示由服务端给：设了将来的报名开始时间就说清是哪一刻开始，
+    # 别让页面写死「学生现在可以报名」
+    return {"ok": True, "hint": published_hint(act.reg_start)}
 
 
 def publish_approved(db: OrmSession, act: Activity, user: User) -> None:

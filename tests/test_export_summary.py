@@ -234,6 +234,17 @@ def test_没有全权的人拿不到这张表(client, take_student):
         assert r.json()["detail"] == "需要 管理员/会长团 身份"
 
 
+def test_状态列按活动时间给(client, db):
+    """库里还挂着 published 的活动，场次早办完了，状态列写「已结束」——拿表的人
+    照着状态与活动管理页上的对，两边是同一个口径（见 serializers.admin_status_of）。"""
+    council = login(client, COUNCIL)
+    act, _g = _activity(db, "汇总十二月未收尾", dt("12-05 09:00"), dt("12-05 12:00"),
+                        status="published")
+    r, _header, rows, _total, _notes = _rows(client, council,
+                                             "?start=2019-12-01&end=2019-12-31")
+    assert _row(rows, act)[5] == "已结束"
+
+
 def test_补记录活动进表草稿不进表且导出留痕(client, db, take_student):
     council = login(client, COUNCIL)
     rec, _g = _activity(db, "汇总十月补记录", dt("10-12 14:00"), dt("10-12 17:00"),
