@@ -60,6 +60,11 @@
         <el-button v-if="act.status === 'draft'" type="primary" @click="openSubmit">
           提交审批
         </el-button>
+        <!-- 审批人自己打开：直接去审批页办，别的管理者只看到在等谁 -->
+        <el-button v-else-if="act.status === 'pending' && approval?.can_decide" type="warning"
+                   @click="$router.push({ path: '/approvals', query: { activity: act.id } })">
+          去审批
+        </el-button>
         <el-tag v-else-if="act.status === 'pending'" type="warning" size="large" effect="dark">
           待 {{ approval?.department || '青协' }} 审批
         </el-tag>
@@ -1930,9 +1935,10 @@ let mhDateFor = ''
 const editLabel = computed(() =>
   act.value?.status === 'published' ? '调整岗位（暂停报名）' : '调整岗位')
 
-// 已发布的活动，不进编辑态就不能动结构
+// 已发布的活动，不进编辑态就不能动结构；没发布的（草稿、待审批、待发布）没人能报名，直接改
 const structureLocked = computed(
-  () => !!act.value && act.value.status !== 'draft' && !act.value.editing)
+  () => !!act.value && !['draft', 'pending', 'approved'].includes(act.value.status)
+    && !act.value.editing)
 
 // 报名是否已经截止：截止后还有人没岗位，就不再是「等着分」而是漏排了
 const regClosed = computed(

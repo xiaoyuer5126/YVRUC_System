@@ -448,6 +448,11 @@ class Activity(Base):
     def hours_locked(self) -> bool:
         return self.hours_locked_at is not None
 
+    def is_unpublished(self) -> bool:
+        """还没上广场：草稿、待审批、审批通过待发布。这时没人能报名，
+        场次岗位随便改，改动也不对志愿者公开。"""
+        return self.status in ("draft", "pending", "approved")
+
     def is_screened(self) -> bool:
         return self.recruit_mode == "screened"
 

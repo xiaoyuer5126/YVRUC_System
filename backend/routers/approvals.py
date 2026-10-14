@@ -292,6 +292,12 @@ def decide(activity_id: str, body: DecideBody,
     if body.approve and liaison.is_external(db, act) \
             and liaison.project_file(db, act.id, "proposal") is None:
         raise HTTPException(400, "这场对外活动还没有上传立项书，请驳回让发起方补传")
+    # 通过即发布的活动截止已过：发出去就是「已截止」，没人报得上
+    if body.approve and act.auto_publish and not act.is_record() \
+            and act.reg_end is not None and act.reg_end <= now():
+        raise HTTPException(
+            400, f"报名截止时间（{act.reg_end:%m-%d %H:%M}）已经过去，通过后没人"
+                 f"报得上。请让发起方先改报名时间再审批，或驳回")
 
     # 部长自己发起的活动归口自己部门、由自己审——允许，但流水里标明是本人
     submit = (db.query(ApprovalEvent)

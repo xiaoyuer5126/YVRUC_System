@@ -380,6 +380,7 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                    approval_dept_id=(user.department_id
                                      if user.has_role("qingxie") else None),
                    created_by=user.id, status="draft")
+    ensure_reg_times(act)
     act.contacts = contacts
     db.add(act)
     db.flush()
@@ -445,6 +446,8 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
             act.co_organizer = value
         else:
             setattr(act, key, value)
+    if "reg_start" in body or "reg_end" in body:
+        ensure_reg_times(act, future=act.reg_end != before["reg_end"])
     if "reg_end" in body and not act.is_record():
         ensure_reg_end_in_range(act)
     if act.is_record() and ("held_start" in body or "held_end" in body
@@ -466,7 +469,7 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
 
     # 活动变更警告（带前后对比摘要），对已报名志愿者推送。编辑态下不单发：
     # 保存并发布时和场次、岗位的改动一起按人汇总（见 finish_editing）
-    if act.status != "draft" and act.editing_since is None:
+    if not act.is_unpublished() and act.editing_since is None:
         summary = "；".join(
             f"{c['label']}：{value_text(c['old']) or '（空）'}"
             f"→{value_text(c['new']) or '（空）'}" for c in changes[:6])
@@ -576,8 +579,8 @@ def start_editing(activity_id: str, db: OrmSession = Depends(db_session),
     ensure_not_finished(act)
     if act.is_record():
         raise HTTPException(409, "补记录活动没有场次与岗位可调整")
-    if act.status == "draft":
-        raise HTTPException(409, "筹备中的活动可直接编辑，无需暂停报名")
+    if act.is_unpublished():
+        raise HTTPException(409, "活动还没有发布，可直接修改，无需暂停报名")
     if act.editing_since is not None:
         who = db.get(User, act.editing_by)
         raise HTTPException(409, f"{who.name if who else '其他管理者'} "
@@ -630,7 +633,7 @@ def finish_editing(activity_id: str, bg: BackgroundTasks,
     # 编辑态已经解除，这次的汇总只有这一次机会发：先排上，再去补位。
     # 补位要逐场拿场次锁，哪一场排不上会跳过而不是让请求报错（见 _fill_vacancies），
     # 请求报错的话排好的后台任务也会跟着作废
-    if rows and act.status != "draft":
+    if rows and not act.is_unpublished():
         bg.add_task(_notify_edit_changes_bg, act.id, since)
     promoted, busy = _fill_vacancies(db, act)
     return {"ok": True, "editing": False, "changes": len(rows),
@@ -807,6 +810,7 @@ def ensure_ready_to_publish(act: Activity) -> None:
         raise HTTPException(
             400, f"场次「{'、'.join(empty)}」还没有岗位，学生无法报名。"
                  f"请先添加岗位，或把这些场次改为「截止后统一分配」")
+    ensure_reg_times(act)
     ensure_reg_end_in_range(act)
 
 
@@ -822,6 +826,25 @@ def ensure_reg_end_in_range(act: Activity) -> None:
             400, f"报名截止时间（{act.reg_end:%m-%d %H:%M}）晚于最后一个场次的"
                  f"开始时间（{last:%m-%d %H:%M}），请将报名截止时间提前，"
                  f"或将场次时间后移")
+
+
+def ensure_reg_times(act: Activity, future: bool = True) -> None:
+    """报名截止要晚于报名开始；future 时还要晚于此刻。
+
+    截止已过的活动一发布就是「已截止」，没人报得上；截止早于开始则一刻
+    都不开放。改报名时间时只有截止时间动了才查「晚于此刻」：活动报名
+    截止之后再改别的（比如只改开始时间），不该被已经过去的截止时间拦住。
+    """
+    if act.is_record() or act.reg_end is None:
+        return
+    if act.reg_start is not None and act.reg_end <= act.reg_start:
+        raise HTTPException(
+            400, f"报名截止时间（{act.reg_end:%m-%d %H:%M}）须晚于报名开始时间"
+                 f"（{act.reg_start:%m-%d %H:%M}）")
+    if future and act.reg_end <= now():
+        raise HTTPException(
+            400, f"报名截止时间（{act.reg_end:%m-%d %H:%M}）已经过去，"
+                 f"请重新选择报名截止时间")
 
 
 def _transition(activity_id: str, target: str, action: str, summary: str,
@@ -1378,14 +1401,15 @@ POSITION_FIELDS = {"name": "岗位名", "location": "地点", "quota": "名额",
 def _ensure_editing(db: OrmSession, activity_id: str) -> Activity:
     """改场次/岗位之前，活动必须处于编辑态。
 
-    筹备中的活动随便改——还没公开，没人报名。已发布之后每一次改动都可能
+    没发布的活动（草稿、待审批、待发布）随便改——还没公开，没人报名。
+    已发布之后每一次改动都可能
     让学生看到半成品：名额改到一半、岗位删了又建。所以强制走
     「调整岗位 → 改 → 保存并发布」这条路，改动期间报名暂停，
     保存时把这批改动一次性通知到人。
     """
     act = _act(db, activity_id)
     ensure_not_finished(act)
-    if act.status != "draft" and act.editing_since is None:
+    if not act.is_unpublished() and act.editing_since is None:
         raise HTTPException(
             409, "请先点击右上角「调整岗位（暂停报名）」，再修改场次与岗位")
     return act
