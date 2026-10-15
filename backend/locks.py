@@ -79,12 +79,16 @@ def note_failure(key: str, window_seconds: int) -> None:
         pass
 
 
-# —— 一次性下载票据 ——
+# —— 下载票据 ——
 #
 # 导出与材料下载是 <a> 直链，发不出 Authorization 头。把会话令牌挂在地址上
 # 最省事，但它会原样落进 nginx 访问日志、浏览器历史和外链 Referer，而那是
-# 一个 24 小时有效的会话。改发票据：绑定这一个网址、一分钟有效、用一次就
-# 作废，进了日志也换不出任何东西。
+# 一个 24 小时有效的会话。改发票据：绑定这一个网址、一分钟有效，进了日志
+# 也换不出任何东西。
+#
+# 有效期内可以反复兑换。微信这类内置浏览器会拦下附件导航、先问「在浏览器中
+# 打开」，用户点开时才由浏览器发出同一个地址的请求；只认一次的票撑不过这一跳，
+# 兑换时读而不删，这一跳前后的请求才都能进。
 
 def issue_ticket(user_id: str, path: str, ttl: int, identity: str = "") -> str:
     """identity：换票时的身份视角（X-Identity），兑换时照样套上；没有就留空。"""
@@ -94,11 +98,11 @@ def issue_ticket(user_id: str, path: str, ttl: int, identity: str = "") -> str:
 
 
 def redeem_ticket(token: str, path: str) -> tuple[str, str] | None:
-    """核销票据，返回 (用户 id, 身份视角)；票据不存在、已用过或对不上这个
+    """兑换票据，返回 (用户 id, 身份视角)；票据不存在、过期或对不上这个
     网址都返回 None。旧票只有两段（没有视角），按空视角处理。"""
     if not token:
         return None
-    raw = _client.getdel(f"yvruc:dl:{token}")
+    raw = _client.get(f"yvruc:dl:{token}")
     if not raw or "|" not in raw:
         return None
     # 网址以 /api/ 开头、不含查询串，里面不会有「|」；视角在最后一段

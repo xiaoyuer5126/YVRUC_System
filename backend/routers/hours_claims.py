@@ -17,16 +17,14 @@ from __future__ import annotations
 import logging
 import math
 from datetime import date
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, liaison, locks, uploads
+from .. import config, downloads, liaison, locks, uploads
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import (current_user, current_user_download, require_approver,
@@ -310,9 +308,9 @@ def claim_file(attachment_id: str, db: OrmSession = Depends(db_session),
     ext = row.stored_name.rsplit(".", 1)[-1]
     # 图片内联：前端当缩略图显示。PDF 走下载：内联返回会让浏览器把当前页面换成
     # PDF 阅读器，材料看到一半就找不回审批页了（材料下载接口也是这个口径）
-    return FileResponse(path, media_type=uploads.EXT_TYPES.get(
-        ext, "application/octet-stream"), filename=row.title,
-        content_disposition_type="attachment" if ext == "pdf" else "inline")
+    return downloads.file_response(
+        path, row.title, kind="attachment" if ext == "pdf" else "inline",
+        media_type=uploads.EXT_TYPES.get(ext, "application/octet-stream"))
 
 
 # ======================= 对外联络部：队列、审批、撤销、导出 =======================
@@ -462,9 +460,4 @@ def export_claims(start: str = "", end: str = "",
               target_id="", target_label="校外时长补登",
               summary=f"导出校外时长补登《{filename}》（{len(rows)} 条）")
     db.commit()
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument"
-                   ".spreadsheetml.sheet",
-        headers={"Content-Disposition":
-                 f"attachment; filename*=UTF-8''{quote(filename)}"})
+    return downloads.stream_response(buf, filename, downloads.XLSX)

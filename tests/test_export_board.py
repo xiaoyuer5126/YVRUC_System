@@ -433,6 +433,9 @@ def test_问卷结果只给excel附件按场次岗位分文件夹另外打包(cl
                       headers=admin).json() == {"count": 0}
     r = client.get(dl_url(client, admin, f"{base}/attachments.zip"))
     assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    # 附件的名字也得有普通写法那一份（安卓的系统下载器只认它）
+    cd = r.headers["content-disposition"]
+    assert 'filename="' in cd and "filename*=UTF-8''" in cd
     z = zipfile.ZipFile(BytesIO(r.content))
     assert z.namelist() == names
     assert [z.read(n) for n in names] == [b"data0", b"data1", b"data2"]

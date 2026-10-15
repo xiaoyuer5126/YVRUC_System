@@ -1,10 +1,12 @@
 """登录、会话与令牌传递方式。"""
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 
 import pytest
 
+from backend import locks
 from backend.models import Session, User, now
 from conftest import ADMIN, DEMO_PASSWORD, dl_url, login
 
@@ -154,9 +156,11 @@ def test_修改资料时留空不会清掉已填的身份证号(client, db, take
     assert db.query(User).filter(User.student_id == sid).one().id_card == before
 
 
-def test_下载票据只能用一次且认准那个网址(client, admin, db, enrolled_activity):
-    """导出是 <a> 直链，带不了请求头。票据代替会话令牌：
-    绑定这一个网址、用一次即作废，捡到也换不出别的东西。"""
+def test_下载票据有效期内可重复兑换且认准那个网址(client, admin, db,
+                                          enrolled_activity):
+    """导出是 <a> 直链，带不了请求头。票据代替会话令牌：绑定这一个网址、
+    一分钟有效。同一个地址可能被请求两次（微信先拦一下，用户点「在浏览器中
+    打开」后浏览器才真正发请求），有效期内两次都认。"""
     act, _shift, _u = enrolled_activity
     path = f"/api/staff/activities/{act.id}/export.xlsx"
 
@@ -165,8 +169,8 @@ def test_下载票据只能用一次且认准那个网址(client, admin, db, enr
     ticket = r.json()["ticket"]
 
     assert client.get(f"{path}?ticket={ticket}").status_code == 200
-    # 第二次就作废了
-    assert client.get(f"{path}?ticket={ticket}").status_code == 401
+    # 同一张票再兑换一次，照样进得去
+    assert client.get(f"{path}?ticket={ticket}").status_code == 200
     # 换一张票去别的网址，对不上
     other = client.post("/api/auth/download-ticket", headers=admin,
                         json={"path": path}).json()["ticket"]
@@ -174,6 +178,18 @@ def test_下载票据只能用一次且认准那个网址(client, admin, db, enr
     assert client.get(f"{hours}?ticket={other}").status_code == 401
     # 对照：给那个网址开的票就进得去——上面的 401 是票对不上，不是网址本身不通
     assert client.get(dl_url(client, admin, hours)).status_code == 200
+
+
+def test_下载票据过了有效期就作废(client, admin, db, enrolled_activity):
+    """有效期是票据本身的 TTL，不靠兑换时删掉：一分钟一到，票自己没了。"""
+    act, _shift, _u = enrolled_activity
+    path = f"/api/staff/activities/{act.id}/export.xlsx"
+    user = db.query(User).filter(User.student_id == ADMIN).one()
+    ticket = locks.issue_ticket(user.id, path, 1)
+
+    assert client.get(f"{path}?ticket={ticket}").status_code == 200
+    time.sleep(1.2)
+    assert client.get(f"{path}?ticket={ticket}").status_code == 401
 
 
 def test_过期会话会被定时任务清掉(client, db):

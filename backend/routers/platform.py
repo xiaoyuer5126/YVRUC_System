@@ -8,15 +8,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from io import BytesIO
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, oplog
+from .. import config, downloads, oplog
 from ..database import db_session
 from ..deps import current_user, require_admin, require_admin_download
 from ..exporter import disarm_formulas
@@ -136,11 +134,7 @@ def export_oplogs(start: str = "", end: str = "", person: str = "",
     wb.save(buf)
     buf.seek(0)
     filename = f"操作日志_{now().strftime('%Y%m%d%H%M')}.xlsx"
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition":
-                 f"attachment; filename*=UTF-8''{quote(filename)}"})
+    return downloads.stream_response(buf, filename, downloads.XLSX)
 
 
 # ======================= 平台公告 =======================
