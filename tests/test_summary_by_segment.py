@@ -18,8 +18,8 @@ from openpyxl import load_workbook
 
 from backend.models import Enrollment, HoursRecord, Shift, uid
 from conftest import login
-from test_export_summary import (COUNCIL, _activity, _enroll, _hours, _row,
-                                _rows, _seg, dt)
+from test_export_summary import (COUNCIL, HOURS, NOTES, PAY, PEOPLE, SEATS,
+                                _activity, _enroll, _hours, _row, _rows, _seg, dt)
 
 NOV = "?start=2019-11-01&end=2019-11-30"
 DEC = "?start=2019-12-01&end=2019-12-31"
@@ -29,7 +29,7 @@ def _hours_of(rows, act) -> float:
     """这场活动在表里的志愿时数；不在表里就是 0。"""
     got = [row for row in rows if row[0] == act.id]
     assert len(got) <= 1, got
-    return got[0][8] if got else 0.0
+    return got[0][HOURS] if got else 0.0
 
 
 def test_事后补录的时长跟着活动走(client, db, take_student):
@@ -64,9 +64,9 @@ def test_补记录活动只有时数(client, db, take_student):
     _r, _h, rows, total, _n = _rows(client, council, NOV)
     row = _row(rows, act)
     # 没有场次、不收报名：人数与人次都是 0，时长照算
-    assert (row[6], row[7]) == (0, 0)
-    assert (row[8], row[9]) == (3.0, 0.0)
-    assert round(total[8] - base_total[8], 1) == 3.0
+    assert (row[PEOPLE], row[SEATS]) == (0, 0)
+    assert (row[HOURS], row[PAY]) == (3.0, 0.0)
+    assert round(total[HOURS] - base_total[HOURS], 1) == 3.0
 
 
 def test_场次跨月整场算在结束那个月(client, db, take_student):
@@ -98,7 +98,7 @@ def test_场次跨月整场算在结束那个月(client, db, take_student):
     # 活动 1/3 结束：十二月没有它，一月整场 3 人 4 条报名、4 小时
     assert act.id not in [row[0] for row in dec_rows]
     jan_row = _row(jan_rows, act)
-    assert (jan_row[6], jan_row[7], jan_row[8]) == (3, 4, 4.0)
+    assert (jan_row[PEOPLE], jan_row[SEATS], jan_row[HOURS]) == (3, 4, 4.0)
     assert db.query(Enrollment).filter(
         Enrollment.activity_id == act.id).count() == 5
 
@@ -110,19 +110,20 @@ def test_口径说明写在合计行下面的表底(client, db, take_student):
     _hours(db, act, take_student(), _seg(2, g.start_time))
 
     r, header, rows, total, notes = _rows(client, council, NOV)
-    assert len(notes) == 2
+    assert len(notes) == NOTES
     assert notes[0][0].startswith("说明：") and "报名" in notes[0][0]
     assert "结束时间" in notes[0][0] and "0.5" in notes[1][0]
+    assert "归口审批部门" in notes[2][0] and "违规条数" in notes[3][0]
     assert total[0] == "合计"
 
     # 表底的位置：表头第 1 行、数据行紧接其后，合计行下面空一行才是说明
     sheet = [["" if v is None else v for v in row]
              for row in load_workbook(BytesIO(r.content)).active.values]
     assert sheet[0] == header
-    assert [row[0] for row in sheet[1:-4]] == [row[0] for row in rows]
+    assert [row[0] for row in sheet[1:-NOTES - 2]] == [row[0] for row in rows]
     assert act.id in [row[0] for row in rows]
-    assert sheet[-4][0] == "合计" and not any(sheet[-3])
-    assert [row[0] for row in sheet[-2:]] == [notes[0][0], notes[1][0]]
+    assert sheet[-NOTES - 2][0] == "合计" and not any(sheet[-NOTES - 1])
+    assert [row[0] for row in sheet[-NOTES:]] == [line[0] for line in notes]
 
 
 def test_总览与导出同一口径_都按活动结束时间(client, db, take_student):
@@ -147,9 +148,9 @@ def test_总览与导出同一口径_都按活动结束时间(client, db, take_s
 
     _r, _h, rows, total, _n = _rows(
         client, council, f"?start={query['start']}&end={query['end']}")
-    assert [(r[1], r[6], r[7], r[8]) for r in rows] == [
+    assert [(r[1], r[PEOPLE], r[SEATS], r[HOURS]) for r in rows] == [
         ("三月未记时长", 1, 1, 0.0), ("三月有时长", 1, 1, 2.0)]
     cards = client.get("/api/staff/overview", headers=council,
                        params=query).json()["cards"]
     assert cards["activities_all"] == len(rows) == 2
-    assert cards["hours_total"] == total[8] == 2.0
+    assert cards["hours_total"] == total[HOURS] == 2.0

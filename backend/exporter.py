@@ -26,10 +26,10 @@ from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import selectinload
 
 from . import config, hours as hours_flow, scoring
-from .serializers import admin_status_of
-from .models import (Activity, Attachment, CheckinRecord, Enrollment,
+from .serializers import admin_status_of, recruit_scope_text
+from .models import (Activity, Attachment, CheckinRecord, Department, Enrollment,
                      FormQuestion, HoursClaim, HoursRecord, HoursSegment,
-                     Position, Shift, User, now, span_text)
+                     Position, Shift, User, ViolationRecord, now, span_text)
 
 MATERIAL_DIR = config.MATERIAL_DIR
 
@@ -496,15 +496,25 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
 # （待外联确认、已完成）——那也是办完的活动，漏掉等于长期统计少一块。
 # 草稿与审批线上的还没办，列进去等于把没发生的事算成数据。
 SUMMARY_STATUSES = ("published", "closed", "finished", "vb_pending", "completed")
-SUMMARY_HEADER = ("活动编号", "活动名称", "组织单位", "联合主办方", "时间", "状态",
-                  "志愿者人数", "人次", "志愿时数", "劳务时数")
+# 列按「是哪场活动 → 谁办的 → 什么时候办的 → 办在哪、招什么人 → 数字」排：
+# 组织单位、联合主办方、归口审批部门三列挨着，拿到表的人一眼对得出归口是不是
+# 跟主办一致；地点与范围跟着时间状态走，后面才是人数时数。
+SUMMARY_HEADER = ("活动编号", "活动名称", "组织单位", "联合主办方", "归口审批部门",
+                  "时间", "状态", "活动地点", "招募范围", "志愿者人数", "人次",
+                  "志愿时数", "劳务时数", "违规条数")
 # 表底的口径说明：拿到表的人不必回头问人数怎么算、时数为什么不是整数。
 # 写在合计行下面空一行处，表头与数据行的位置不因此挪动（见 _rows 用例）
 SUMMARY_NOTES = (
     "说明：按活动结束时间归属区间，一场活动的人数、人次、时长整场算在它结束的那一侧；"
     "人数、人次按服务场次的报名计，补记录活动只有时长。",
     "时长按 0.5 小时向上取整（一人一场一笔，志愿与劳务两半各自取整）。",
+    "归口审批部门是活动立项时归口的部门，没有写「—」；活动地点取活动填的地点，"
+    "没填依次用服务场次的地点、岗位的地点，都没有写「—」。",
+    "招募范围是这场活动限的校区、学段、学院，三项都没限写「面向全校」；"
+    "违规条数按活动加总，迟到早退、无故请假、消极志愿、其他四类不分列。",
 )
+# 表里「这一列没有值」的写法：空着一格容易被当成漏填
+SUMMARY_EMPTY = "—"
 
 
 def activities_ending_in(db: OrmSession, *, start: datetime | None = None,
@@ -563,7 +573,7 @@ def activity_hours(db: OrmSession, ids: list[str] | None = None
 def build_activities_summary_workbook(
         db: OrmSession, start: datetime | None = None,
         end: datetime | None = None) -> tuple[BytesIO, int]:
-    """活动级汇总：一场活动一行，末行合计，表底两行口径说明，给校青协做统计。
+    """活动级汇总：一场活动一行，末行合计，表底口径说明，给校青协做统计。
 
     进表的是 SUMMARY_STATUSES 那几个状态的活动，含不公开招募（补记录）活动：
     它们没有场次、不收报名，时长靠导入名单，统计时同样算数。
@@ -572,6 +582,8 @@ def build_activities_summary_workbook(
     人数是报名记录按人去重后的个数，人次是报名记录的条数——一个人报两个场次，
     人数算一个、人次算两个。补记录活动没有场次、不收报名，人数与人次都是 0，
     只有时长。
+    归口审批部门、活动地点、招募范围、违规条数四列都取库里现成的值，缺的写
+    SUMMARY_EMPTY（见 SUMMARY_NOTES 的口径）。
     返回工作簿和进表的活动数：条数要写进导出留痕。
     """
     before = end + timedelta(days=1) if end is not None else None
@@ -579,7 +591,34 @@ def build_activities_summary_workbook(
     ids = [act.id for _span, act in picked]
     hours = activity_hours(db, ids)
     counts: dict[str, tuple[int, int]] = {}
+    depts: dict[str, str] = {}
+    shift_locs: dict[str, str] = {}
+    position_locs: dict[str, str] = {}
+    violations: dict[str, int] = {}
     if ids:
+        dept_ids = {a.approval_dept_id for _s, a in picked if a.approval_dept_id}
+        if dept_ids:
+            depts = dict(db.query(Department.id, Department.name)
+                         .filter(Department.id.in_(dept_ids)))
+        # 活动地点缺了往下找：先服务场次的地点，再岗位的地点。培训/彩排的地点
+        # 是筹备的地方，不是这场活动办在哪，不参与。都是批量取，不逐场去查。
+        for aid, loc in (db.query(Shift.activity_id, Shift.location)
+                         .filter(Shift.activity_id.in_(ids),
+                                 Shift.kind == "service")
+                         .order_by(Shift.sort, Shift.start_time)):
+            if loc.strip() and aid not in shift_locs:
+                shift_locs[aid] = loc.strip()
+        for aid, loc in (db.query(Shift.activity_id, Position.location)
+                         .join(Position, Position.shift_id == Shift.id)
+                         .filter(Shift.activity_id.in_(ids),
+                                 Shift.kind == "service")
+                         .order_by(Shift.sort, Position.sort)):
+            if loc.strip() and aid not in position_locs:
+                position_locs[aid] = loc.strip()
+        violations = dict(db.query(ViolationRecord.activity_id,
+                                   func.count(ViolationRecord.id))
+                          .filter(ViolationRecord.activity_id.in_(ids))
+                          .group_by(ViolationRecord.activity_id))
         counts = {aid: (people, seats) for aid, people, seats in
                   db.query(Enrollment.activity_id,
                            func.count(func.distinct(Enrollment.user_id)),
@@ -597,7 +636,7 @@ def build_activities_summary_workbook(
     ws.title = "活动汇总"
     ws.append(list(SUMMARY_HEADER))
     _style_header(ws, len(SUMMARY_HEADER))
-    seats_total, volunteer_total, pay_total = 0, 0.0, 0.0
+    seats_total, volunteer_total, pay_total, bad_total = 0, 0.0, 0.0, 0
     for span, act in picked:
         people, seats = counts.get(act.id, (0, 0))
         counted, paid = hours.get(act.id, (0.0, 0.0))
@@ -605,20 +644,33 @@ def build_activities_summary_workbook(
         # 拿表的人照着状态与页面上的对，两边说得不一样就要来回问
         label = admin_status_of(act.status, act.reg_start, act.reg_end,
                                 span, act.last_shift_start())[1]
+        place = (act.location.strip() or shift_locs.get(act.id)
+                 or position_locs.get(act.id) or SUMMARY_EMPTY)
+        bad = violations.get(act.id, 0)
         ws.append([act.id, act.title, act.organizer, act.co_organizer or "",
-                   span_text(*span), label, people,
-                   seats, round(counted, 1), round(paid, 1)])
+                   depts.get(act.approval_dept_id or "", SUMMARY_EMPTY),
+                   span_text(*span), label, place, recruit_scope_text(act),
+                   people, seats, round(counted, 1), round(paid, 1), bad])
         seats_total += seats
         volunteer_total += counted
         pay_total += paid
-    # 合计行：人数不去重就没有意义，只合计人次与时数
-    ws.append(["合计", "", "", "", "", "", "", seats_total,
-               round(volunteer_total, 1), round(pay_total, 1)])
-    # 口径说明落在表底：合计行下面空一行，再写 SUMMARY_NOTES 那两行
+        bad_total += bad
+    # 合计行：人数不去重就没有意义，只合计人次、时数与违规条数。其余格子留空，
+    # 按列名落位——列增删时不必数格子对不对得上
+    total = [""] * len(SUMMARY_HEADER)
+    total[0] = "合计"
+    for name, value in (("人次", seats_total),
+                        ("志愿时数", round(volunteer_total, 1)),
+                        ("劳务时数", round(pay_total, 1)),
+                        ("违规条数", bad_total)):
+        total[SUMMARY_HEADER.index(name)] = value
+    ws.append(total)
+    # 口径说明落在表底：合计行下面空一行，再逐行写 SUMMARY_NOTES
     note_row = ws.max_row + 2
     for i, line in enumerate(SUMMARY_NOTES):
         ws.cell(row=note_row + i, column=1, value=line)
-    for col, w in zip("ABCDEFGHIJ", (20, 32, 22, 22, 26, 12, 12, 8, 10, 10)):
+    for col, w in zip("ABCDEFGHIJKLMN",
+                      (18, 32, 20, 20, 16, 26, 12, 24, 30, 12, 8, 10, 10, 10)):
         ws.column_dimensions[col].width = w
     disarm_formulas(wb)
     buf = BytesIO()
