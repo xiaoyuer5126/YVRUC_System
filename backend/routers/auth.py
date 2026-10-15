@@ -259,11 +259,11 @@ class TicketBody(BaseModel):
 
 @router.post("/download-ticket")
 def download_ticket(body: TicketBody, user: User = Depends(current_user)):
-    """换一张一次性下载票。
+    """换一张下载票。
 
     导出与学习材料是 <a> 直链，发不出 Authorization 头。票绑定这一个网址、
-    一分钟有效、用一次即作废，所以就算随地址落进日志也换不出任何东西。
-    权限仍由目标接口自己把关，这张票只证明「是谁」。
+    一分钟有效，所以就算随地址落进日志也换不出任何东西。权限仍由目标接口
+    自己把关，这张票只证明「是谁」。
     """
     path = body.path.strip()
     # 「|」是票据内容的分隔符（见 locks.issue_ticket），合法网址里不会有

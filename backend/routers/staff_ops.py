@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session as OrmSession, selectinload
 
 from ..audit import log as audit_log
 from ..codes import insert_with_unique_code
-from .. import config, hours as hours_flow, liaison
+from .. import config, downloads, hours as hours_flow, liaison
 from ..stage import ensure_hours_editable, ensure_not_finished
 from ..database import db_session
 from ..deps import require_manager, require_manager_download
@@ -801,13 +801,8 @@ def export_answer_attachments(activity_id: str, shifts: str = "",
 
 def _download(buf, filename: str) -> StreamingResponse:
     """带中文文件名的下载响应：.xlsx 表格，或 .zip 附件包。"""
-    from urllib.parse import quote
-    media = ("application/zip" if filename.endswith(".zip") else
-             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    return StreamingResponse(
-        buf, media_type=media,
-        headers={"Content-Disposition":
-                 f"attachment; filename*=UTF-8''{quote(filename)}"})
+    media = downloads.ZIP if filename.endswith(".zip") else downloads.XLSX
+    return downloads.stream_response(buf, filename, media)
 
 
 @router.get("/activities/{activity_id}/hours.xlsx")

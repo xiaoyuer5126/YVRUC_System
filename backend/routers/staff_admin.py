@@ -9,15 +9,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, scoring
+from .. import config, downloads, scoring
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import (require_archive_page, require_council,
@@ -178,12 +176,7 @@ def export_activities_summary(start: str = "", end: str = "",
               target_id="", target_label="活动汇总",
               summary=f"导出活动汇总《{filename}》，{count} 个活动")
     db.commit()
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument"
-                   ".spreadsheetml.sheet",
-        headers={"Content-Disposition":
-                 f"attachment; filename*=UTF-8''{quote(filename)}"})
+    return downloads.stream_response(buf, filename, downloads.XLSX)
 
 
 # ======================= 审计日志中心 =======================

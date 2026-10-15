@@ -12,13 +12,13 @@ from datetime import datetime
 
 from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
                      UploadFile)
-from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
-from .. import assign, config, copying, hours as hours_flow, scoring, uploads
+from .. import (assign, config, copying, downloads, hours as hours_flow,
+                scoring, uploads)
 from ..stage import ensure_hours_editable, ensure_not_finished
 from ..audit import diff_changes, log as audit_log, value_text
 from ..database import db_session
@@ -2731,6 +2731,6 @@ def contact_qr(attachment_id: str, db: OrmSession = Depends(db_session),
     if not path.is_file():
         raise HTTPException(404, "文件已丢失，请重新上传")
     ext = row.stored_name.rsplit(".", 1)[-1]
-    return FileResponse(path, filename=row.title, content_disposition_type="inline",
-                        media_type=uploads.IMAGE_TYPES.get(
-                            ext, "application/octet-stream"))
+    return downloads.file_response(
+        path, row.title, kind="inline",
+        media_type=uploads.IMAGE_TYPES.get(ext, "application/octet-stream"))

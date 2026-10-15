@@ -13,12 +13,11 @@ import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import Text, cast
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, locks, uploads
+from .. import config, downloads, locks, uploads
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import current_user, current_user_download, require_admin
@@ -151,8 +150,9 @@ def feedback_file(attachment_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(404, "文件已丢失")
     ext = row.stored_name.rsplit(".", 1)[-1]
     # 内联返回：前端直接当图片显示，不弹下载
-    return FileResponse(path, media_type=IMAGE_TYPES.get(ext, "application/octet-stream"),
-                        filename=row.title, content_disposition_type="inline")
+    return downloads.file_response(
+        path, row.title, kind="inline",
+        media_type=IMAGE_TYPES.get(ext, "application/octet-stream"))
 
 
 # ======================= 管理员：列表与处理 =======================

@@ -10,11 +10,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config
+from .. import config, downloads
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import current_user_download, require_manager
@@ -178,5 +177,6 @@ def download_material(material_id: str, db: OrmSession = Depends(db_session),
     if not path.is_file():
         raise HTTPException(404, "文件已丢失，请联系负责人重新上传")
     ext = row.stored_name.rsplit(".", 1)[-1]
-    return FileResponse(path, media_type=EXT_TYPES.get(ext, "application/octet-stream"),
-                        filename=row.title)
+    return downloads.file_response(
+        path, row.title,
+        media_type=EXT_TYPES.get(ext, "application/octet-stream"))

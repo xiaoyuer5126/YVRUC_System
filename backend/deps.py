@@ -90,7 +90,7 @@ def current_user(request: Request,
 
 def current_user_download(request: Request,
                           db: OrmSession = Depends(db_session)) -> User:
-    """浏览器直链下载：认 Authorization 头，或一次性票据 ?ticket=。
+    """浏览器直链下载：认 Authorization 头，或票据 ?ticket=。
 
     走这个依赖的都是导出和附件下载，操作日志要记下来。
     """
