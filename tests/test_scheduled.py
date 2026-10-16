@@ -224,3 +224,37 @@ def test_manual_reminder_skips_checked_in(client, db, admin, make_activity,
     r = client.post(f"/api/staff/shifts/{g.id}/checkin-reminder", headers=admin)
     assert r.status_code == 400
     assert r.json()["detail"] == "全场次没有需要提醒的志愿者"
+
+
+def test_sunday_duty_reminder_at_21(db, monkeypatch):
+    from datetime import datetime
+    from backend.models import Department, Notification, User
+    dept = db.query(Department).filter(Department.name == "对外联络部").one()
+    core = db.query(User).filter(User.department_id == dept.id,
+                                 User.qingxie_post == "core").first()
+    assert core is not None
+    old_duty = dept.duty_user_id
+    dept.duty_user_id = core.id
+    dept.duty_remind_on = None
+    db.commit()
+    try:
+        # 周六 21:30 不触发
+        monkeypatch.setattr(scheduled, "now", lambda: datetime(2026, 10, 17, 21, 30))
+        assert scheduled.send_sunday_duty_reminders(db) == 0
+        # 周日 20:30 不触发
+        monkeypatch.setattr(scheduled, "now", lambda: datetime(2026, 10, 18, 20, 30))
+        assert scheduled.send_sunday_duty_reminders(db) == 0
+        # 周日 21:05 触发一次，且同一天不重复发
+        monkeypatch.setattr(scheduled, "now", lambda: datetime(2026, 10, 18, 21, 5))
+        assert scheduled.send_sunday_duty_reminders(db) >= 1
+        assert scheduled.send_sunday_duty_reminders(db) == 0
+        ntf = (db.query(Notification)
+               .filter(Notification.user_id == core.id,
+                       Notification.title == f"周日值班提醒与交接班｜{dept.name}")
+               .first())
+        assert ntf is not None and "值班交接" in ntf.content
+    finally:
+        dept.duty_user_id = old_duty
+        dept.duty_remind_on = None
+        db.commit()
+

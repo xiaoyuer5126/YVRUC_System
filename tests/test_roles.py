@@ -162,7 +162,7 @@ def test_设部长必须指定部门(client, admin, db, take_student):
     assert r.status_code == 400 and "必须指定所属部门" in r.json()["detail"]
 
 
-def test_新部长上任顶掉原来那位(client, admin, db, take_student):
+def test_同一部门可设多位部长(client, admin, db, take_student):
     dept = db.query(Department).filter(Department.name == "对外联络部").one()
     old_head = (db.query(User)
                 .filter(User.department_id == dept.id,
@@ -175,14 +175,12 @@ def test_新部长上任顶掉原来那位(client, admin, db, take_student):
                                 "department_id": dept.id}).status_code == 200
         db.expire_all()
         assert db.get(User, u.id).qingxie_post == "head"
-        assert db.get(User, old_head.id).qingxie_post == "member", \
-            "一个部门只有一位部长"
+        assert db.get(User, old_head.id).qingxie_post == "head", \
+            "一个部门支持同时设多位部长"
     finally:
-        # 复原，免得影响别的用例（审批要找有部长的部门）
-        assert client.put(f"/api/staff/roles/{old_head.id}", headers=admin,
-                          json={"roles": list(old_head.roles),
-                                "qingxie_post": "head",
-                                "department_id": dept.id}).status_code == 200
+        # 复原，免得影响别的用例
+        assert client.put(f"/api/staff/roles/{u.id}", headers=admin,
+                          json={"roles": ["student"]}).status_code == 200
     db.expire_all()
     assert db.get(User, old_head.id).qingxie_post == "head"
 
@@ -325,3 +323,38 @@ def test_批量调整的边界(client, admin, db, take_student):
     assert "别的部门" in d["skipped"][0]["reason"]
     db.expire_all()
     assert "qingxie" in student_row(db, outsider.student_id).roles, "跳过的人不动"
+
+
+def test_学生志愿者身份与教师活动发起方身份不可清除(client, admin, db, take_student):
+    u = student_row(db, take_student())
+    r = client.put(f"/api/staff/roles/{u.id}", headers=admin,
+                   json={"roles": ["initiator"]})
+    assert r.status_code == 400 and "学生的「志愿者」身份不可清除" in r.json()["detail"]
+
+    teacher = db.query(User).filter(User.user_type == "teacher",
+                                    User.student_id != ADMIN).first()
+    assert teacher is not None
+    r = client.put(f"/api/staff/roles/{teacher.id}", headers=admin,
+                   json={"roles": ["student"]})
+    assert r.status_code == 400 and "教师的「活动发起方」身份不可清除" in r.json()["detail"]
+
+
+def test_会长团可配置催办接收部门范围(client, admin, db, take_student):
+    from backend.routers.staff_ops import council_members
+    depts = db.query(Department).order_by(Department.sort).limit(2).all()
+    d1, d2 = depts[0], depts[1]
+    u = student_row(db, take_student())
+    try:
+        r = client.put(f"/api/staff/roles/{u.id}", headers=admin,
+                       json={"roles": ["student", "qingxie"],
+                             "qingxie_post": "council",
+                             "remind_dept_ids": [d1.id]})
+        assert r.status_code == 200
+        db.expire_all()
+        assert db.get(User, u.id).remind_dept_ids == [d1.id]
+        assert u.id in {m.id for m in council_members(db, d1.id)}
+        assert u.id not in {m.id for m in council_members(db, d2.id)}
+    finally:
+        client.put(f"/api/staff/roles/{u.id}", headers=admin,
+                   json={"roles": ["student"]})
+

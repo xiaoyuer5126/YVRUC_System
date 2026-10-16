@@ -121,7 +121,9 @@
             <div v-for="x in r.slots" :key="x.p.id" class="m-pos"
                  :class="{ mine: myStationId(x.g) === x.p.id, blocked: x.p.eligible === false }">
               <div class="m-pos-head">
-                <span>{{ x.g.name }} · {{ x.g.time_text }}</span>
+                <span>{{ x.g.name }} · {{ x.g.time_text }}
+                  <el-tag v-if="x.g.flexible_time" size="small" type="success" effect="plain" style="margin-left:4px">时间灵活·不计冲突</el-tag>
+                </span>
                 <span class="dim">{{ x.p.enrolled }}/{{ x.p.quota }}</span>
               </div>
               <div class="m-pos-meta dim">
@@ -148,6 +150,7 @@
               <el-link class="m-shift-name" type="primary" underline="never"
                        @click="showGroupDetail(g)">{{ g.name }}</el-link>
               <el-tag size="small" type="warning" effect="plain">按时间报名</el-tag>
+              <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain">时间灵活·不计冲突</el-tag>
               <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
               <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
             </div>
@@ -177,6 +180,7 @@
                       :type="g.mode === 'assign' ? 'warning' : 'info'">
                 {{ g.mode_label }}
               </el-tag>
+              <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain">时间灵活·不计冲突</el-tag>
               <el-tag v-if="g.started" size="small" type="info" effect="plain">已开场</el-tag>
               <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
               <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
@@ -498,6 +502,8 @@
                         :type="row.mode === 'pick' ? 'info' : row.mode === 'assign' ? 'warning' : 'primary'">
                   {{ row.mode_label }}
                 </el-tag>
+                <el-tag v-if="row.flexible_time" size="small" type="success" effect="plain"
+                        style="margin-left:8px">时间灵活·不计冲突</el-tag>
                 <el-tag v-if="row.enroll_paused" size="small" type="danger" effect="plain"
                         style="margin-left:8px">暂停报名</el-tag>
                 <el-tag v-if="row.locked" size="small" type="info"
@@ -656,9 +662,12 @@
           <div v-else class="dim" style="margin-top:4px">
             仅在名额不足时可能进行调剂，负责人可看到你的意愿。
           </div>
-          <el-checkbox v-model="enrollDlg.leaderWilling" style="display:block;margin-top:8px">
+          <el-checkbox v-model="enrollDlg.leaderWilling" style="margin-top:8px">
             愿意担任组长（如本岗位需要）
           </el-checkbox>
+          <div class="dim" style="margin-top:4px">
+            担任小组长的志愿者将根据实际工作额外记录志愿时数。
+          </div>
         </div>
       </template>
       <template #footer>

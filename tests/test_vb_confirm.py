@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from backend import scheduled
+from backend import config, scheduled
 from backend.models import (Activity, ActivityManager, AuditLog, Department,
                             HoursRequest, Notification, VbConfirm, now, uid)
 from conftest import (ADMIN, INITIATOR, LIAISON_CORE, LIAISON_HEAD, inbox,
@@ -386,10 +386,10 @@ def test_外联超过24小时未确认催一次(client, admin, db, liaison):
     admin_id = student_row(db, ADMIN).id
     stale = VbConfirm(id=uid("vbc"), activity_id=stale_act.id, kind="lock",
                       names=NAMES, submitted_by=admin_id,
-                      submitted_at=now() - timedelta(hours=25))
+                      submitted_at=now() - timedelta(hours=config.APPROVAL_REMIND_HOURS + 1))
     fresh = VbConfirm(id=uid("vbc"), activity_id=fresh_act.id, kind="lock",
                       names=NAMES, submitted_by=admin_id,
-                      submitted_at=now() - timedelta(hours=23))
+                      submitted_at=now() - timedelta(hours=config.APPROVAL_REMIND_HOURS - 1))
     db.add_all([stale, fresh])
     db.commit()
     db.expire_all()                  # 值班是接口在另一个会话里安排的
@@ -484,11 +484,11 @@ def test_时长审批超时催对接人抄送会长团_只催一次(client, admi
     admin_id = student_row(db, ADMIN).id
     stale = HoursRequest(id=uid("hrq"), activity_id=act.id, kind="lock",
                          reason="系统自动提交", requested_by=admin_id,
-                         created_at=now() - timedelta(hours=25))
+                         created_at=now() - timedelta(hours=config.APPROVAL_REMIND_HOURS + 1))
     fresh_act = _approved_act(db, liaison.id)
     fresh = HoursRequest(id=uid("hrq"), activity_id=fresh_act.id, kind="lock",
                          reason="刚提交", requested_by=admin_id,
-                         created_at=now() - timedelta(hours=23))
+                         created_at=now() - timedelta(hours=config.APPROVAL_REMIND_HOURS - 1))
     db.add_all([stale, fresh])
     db.commit()
 

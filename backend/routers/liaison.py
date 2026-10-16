@@ -37,7 +37,8 @@ def _person(u: User | None) -> dict | None:
 
 def _duty_out(db: OrmSession, dept: Department, user: User) -> dict:
     cur = liaison.on_duty(db, dept)
-    head = liaison.dept_head(db, dept.id)
+    heads = liaison.dept_heads(db, dept.id)
+    head = heads[0] if heads else None
     rows = (db.query(DutyHandover).filter(DutyHandover.dept_id == dept.id)
             .order_by(DutyHandover.created_at.desc()).limit(30).all())
 
@@ -47,6 +48,8 @@ def _duty_out(db: OrmSession, dept: Department, user: User) -> dict:
     return {
         "dept_id": dept.id, "dept_name": dept.name,
         "on_duty": _person(cur), "head": _person(head),
+        "heads": [_person(h) for h in heads],
+        "head_name": "、".join(h.name for h in heads),
         "eligible": [_person(u) for u in liaison.eligible_users(db, dept)],
         # 部长（与会长团、管理员）指定；在班的人自己交班
         "can_assign": user.has_full_access() or liaison.is_head_of(user, dept),
@@ -126,11 +129,10 @@ def set_duty(dept_id: str, body: DutyBody, db: OrmSession = Depends(db_session),
                f"{target.name if target else '暂无人值班'}。",
                data={"route": "approvals"})
     # 值班人自己交班时告诉部长一声；部长不收逐条审批，但得知道现在是谁在班
-    head = liaison.dept_head(db, dept.id)
-    if head is not None and head.id != user.id \
-            and head.id != (target.id if target else ""):
-        notify(db, head, f"值班交接｜{dept.name}", f"{user.name}：{what}",
-               data={"route": "approvals"})
+    for head in liaison.dept_heads(db, dept.id):
+        if head.id != user.id and head.id != (target.id if target else ""):
+            notify(db, head, f"值班交接｜{dept.name}", f"{user.name}：{what}",
+                   data={"route": "approvals"})
     db.commit()
     return _duty_out(db, dept, user)
 

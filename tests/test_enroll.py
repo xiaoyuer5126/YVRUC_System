@@ -256,3 +256,20 @@ def test_连点两下退选只退一次(client, admin, db, open_group, take_stud
     assert [c["action"] for c in roster["roster_changes"]].count("cancel") == 1
     db.expire_all()
     assert db.get(Enrollment, queued["enrollment_id"]).status == "pending_confirm"
+
+
+def test_flexible_time_shift_exempt_from_conflict(client, db, open_group, take_student):
+    sid = take_student()
+    headers = login(client, sid)
+    act1, g1 = open_group(2, waitlist_quota=0)
+    act2, g2 = open_group(2, waitlist_quota=0)
+    # 两个场次时间重叠，先将 g1 设为时间灵活
+    g1.flexible_time = True
+    g2.start_time = g1.start_time
+    g2.end_time = g1.end_time
+    db.commit()
+
+    assert enroll(client, headers, act1, g1).status_code == 200
+    # 已报时间灵活场次 g1，再报同时间段的普通场次 g2 不撞车
+    assert enroll(client, headers, act2, g2).status_code == 200
+

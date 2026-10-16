@@ -138,6 +138,8 @@ class User(Base):
     # 只对 qingxie_post="member" 有意义。
     supervisor_id: Mapped[str | None] = mapped_column(
         String(32), nullable=True, index=True)
+    # 会长团可配置的超时催办接收部门范围（空列表 = 全部部门）
+    remind_dept_ids: Mapped[list] = mapped_column(JSON, default=list)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
@@ -281,6 +283,8 @@ class Department(Base):
     # 每晚给部长的值班日报发到了哪一天：清扫每分钟一轮、多进程抢主，
     # 落库才能保证一天只发一次（进程重启也不补发第二遍）
     duty_digest_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # 每周日 21:00 给当前值班人的未处理事项与交接班提醒发到了哪一天
+    duty_remind_on: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 
 class DutyHandover(Base):
@@ -637,6 +641,8 @@ class Shift(Base):
     # 自动锁定已经生效过：管理者过了锁定点再手动解锁，不会被自动锁回去
     auto_lock_spent: Mapped[bool] = mapped_column(Boolean, default=False)
     sort: Mapped[int] = mapped_column(Integer, default=0)
+    # 时间待定/长期活动场次：不计入报名和申请的时间冲突检查
+    flexible_time: Mapped[bool] = mapped_column(Boolean, default=False)
     # 签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
     reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # 人员变动日报发到哪一天了，防止一天推多条

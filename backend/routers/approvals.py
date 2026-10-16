@@ -41,9 +41,12 @@ def _in_dept(db: OrmSession, act: Activity) -> bool:
 
 
 def _can_decide(db: OrmSession, user: User, act: Activity) -> bool:
-    """能不能拍这一条：当前审批人、会长团、或平台管理员；启用值班的部门
+    """能不能拍这一条：当前审批人、本部门任一部长、会长团、或平台管理员；启用值班的部门
     另加值班人与部长（转给部门里某个人的也一样，部长随时能直接拍）。"""
     if act.approval_assignee_id == user.id or user.has_full_access():
+        return True
+    dept = db.get(Department, act.approval_dept_id) if act.approval_dept_id else None
+    if liaison.is_head_of(user, dept) and _in_dept(db, act):
         return True
     return (liaison.is_dept_handler(db, user, act.approval_dept_id)
             and _in_dept(db, act))
@@ -91,10 +94,14 @@ def list_departments(db: OrmSession = Depends(db_session),
     """部门下拉。带上部长姓名，提交时看得见这条会交到谁手上。"""
     out = []
     for d in db.query(Department).order_by(Department.sort).all():
-        head = _dept_head(db, d.id)
-        out.append({"id": d.id, "name": d.name, "note": d.note,
-                    "head_name": head.name if head else "",
-                    "has_head": head is not None})
+        heads = liaison.dept_heads(db, d.id)
+        out.append({
+            "id": d.id, "name": d.name, "note": d.note,
+            "head_name": "、".join(h.name for h in heads),
+            "heads": [{"id": h.id, "student_id": h.student_id, "name": h.name}
+                      for h in heads],
+            "has_head": bool(heads),
+        })
     return out
 
 
@@ -148,14 +155,15 @@ def delete_department(dept_id: str, db: OrmSession = Depends(db_session),
 class DeptBody(BaseModel):
     name: str = ""
     note: str = ""
-    head_student_id: str | None = None      # 指定部长；空串=清空
+    head_student_id: str | None = None          # 新增/指定部长；空串=清空全部部长
+    remove_head_student_id: str | None = None   # 移除某位部长（降为部门成员）
 
 
 @router.patch("/departments/{dept_id}")
 def update_department(dept_id: str, body: DeptBody,
                       db: OrmSession = Depends(db_session),
                       user: User = Depends(require_council)):
-    """改部门名/说明、指定部长。换届时用。"""
+    """改部门名/说明、增删部长。支持一个部门有多位部长。"""
     d = db.get(Department, dept_id)
     if d is None:
         raise HTTPException(404, "部门不存在")
@@ -166,10 +174,19 @@ def update_department(dept_id: str, body: DeptBody,
     if body.note.strip() != d.note:
         d.note = body.note.strip()
         changed.append("说明")
+    if body.remove_head_student_id is not None:
+        rm_sid = body.remove_head_student_id.strip()
+        if rm_sid:
+            who = db.query(User).filter(
+                User.student_id == rm_sid,
+                User.department_id == d.id,
+                User.qingxie_post == "head",
+            ).first()
+            if who is None:
+                raise HTTPException(404, f"该部门未找到学号为 {rm_sid} 的部长")
+            who.qingxie_post = "member"
+            changed.append(f"移除部长 {who.name}")
     if body.head_student_id is not None:
-        for old in db.query(User).filter(User.department_id == d.id,
-                                         User.qingxie_post == "head").all():
-            old.qingxie_post = "member"
         sid = body.head_student_id.strip()
         if sid:
             who = db.query(User).filter(User.student_id == sid).first()
@@ -179,8 +196,11 @@ def update_department(dept_id: str, body: DeptBody,
                 raise HTTPException(400, f"{who.name} 不是青协身份，不能当部长")
             who.department_id = d.id
             who.qingxie_post = "head"
-            changed.append(f"部长→{who.name}")
+            changed.append(f"部长+{who.name}")
         else:
+            for old in db.query(User).filter(User.department_id == d.id,
+                                             User.qingxie_post == "head").all():
+                old.qingxie_post = "member"
             changed.append("清空部长")
     audit_log(db, actor=user, action="update", target_type="department",
               target_id=d.id, target_label=d.name, activity_id=None,
@@ -232,16 +252,19 @@ def submit(activity_id: str, body: SubmitBody,
     dept = db.get(Department, dept_id) if dept_id else None
     if dept is None:
         raise HTTPException(400, "请选择归口部门")
-    head = _dept_head(db, dept.id)
-    if head is None:
+    heads = liaison.dept_heads(db, dept.id)
+    if not heads:
         raise HTTPException(400, f"「{dept.name}」还没有指定部长，请联系管理员")
+    head = heads[0]
+    head_names = "、".join(h.name for h in heads)
     # 对外活动要带立项书：审批人看的就是这份东西，没有它批不了
     if dept.name == liaison.LIAISON_DEPT \
             and liaison.project_file(db, act.id, "proposal") is None:
         raise HTTPException(400, f"提交「{dept.name}」审批须先上传立项书")
-    # 审批人仍挂部长（部门的责任人），通知发给值班的人
-    contact = liaison.approval_contact(db, dept.id) or head
-    via = f"，值班 {contact.name}" if contact.id != head.id else ""
+    # 审批人仍挂部长（部门的责任人），通知发给值班的人（没人值班发全体部长）
+    duty = liaison.on_duty(db, dept)
+    contacts = [duty] if duty is not None else heads
+    via = f"，值班 {duty.name}" if duty is not None else ""
 
     act.status = "pending"
     act.auto_publish = body.auto_publish
@@ -254,14 +277,15 @@ def submit(activity_id: str, body: SubmitBody,
            comment=body.note.strip())
     audit_log(db, actor=user, action="submit", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"提交「{dept.name}」审批（审批人 {head.name}{via}）")
-    _notify(db, contact, f"志愿活动待审批｜{act.title}",
-            f"{user.name} 提交了「{act.title}」，组织单位：{act.organizer_text()}。\n"
-            f"归口部门：{dept.name}。\n"
-            + (f"备注：{body.note.strip()}\n" if body.note.strip() else "")
-            + "请到「活动审批」处理。", act, route="approvals")
+              summary=f"提交「{dept.name}」审批（部长 {head_names}{via}）")
+    for c in contacts:
+        _notify(db, c, f"志愿活动待审批｜{act.title}",
+                f"{user.name} 提交了「{act.title}」，组织单位：{act.organizer_text()}。\n"
+                f"归口部门：{dept.name}。\n"
+                + (f"备注：{body.note.strip()}\n" if body.note.strip() else "")
+                + "请到「活动审批」处理。", act, route="approvals")
     db.commit()
-    return {"ok": True, "assignee": contact.name}
+    return {"ok": True, "assignee": "、".join(c.name for c in contacts)}
 
 
 class DecideBody(BaseModel):
@@ -442,14 +466,15 @@ def transfer(activity_id: str, body: TransferBody,
                       f"（{dept.name if dept else '未归口'}）；理由：{reason}"
                       + (f"；转为内部活动，立项书《{dropped.title}》已删除"
                          if dropped else ""))
-    # 转给部门的（审批人落在部长身上）通知该部门的值班人；点名转给某人的就是他
-    contact = target
+    # 转给部门的（审批人落在部长身上）通知该部门的值班人或全体部长；点名转给某人的就是他
+    contacts = [target]
     if not body.student_id.strip() and dept is not None:
-        contact = liaison.approval_contact(db, dept.id) or target
-    _notify(db, contact, f"转来一条待审批｜{act.title}",
-            f"{user.name} 把「{act.title}」的审批转交给您。\n理由：{reason}"
-            + ("\n这场活动还没有上传立项书，已通知活动管理者补传。" if need_proposal else ""),
-            act, route="approvals")
+        contacts = liaison.approval_contacts(db, dept.id) or [target]
+    for c in contacts:
+        _notify(db, c, f"转来一条待审批｜{act.title}",
+                f"{user.name} 把「{act.title}」的审批转交给您。\n理由：{reason}"
+                + ("\n这场活动还没有上传立项书，已通知活动管理者补传。" if need_proposal else ""),
+                act, route="approvals")
     _notify(db, before, f"审批已转出｜{act.title}",
             f"您名下的「{act.title}」已由 {user.name} 转交给 {target.name}。\n"
             f"理由：{reason}", act)
@@ -464,7 +489,7 @@ def transfer(activity_id: str, body: TransferBody,
                    "传好后对外联络部才能审批。" if need_proposal else ""), act,
                 route="manage", tab="review")
     db.commit()
-    return {"ok": True, "assignee": contact.name}
+    return {"ok": True, "assignee": "、".join(c.name for c in contacts)}
 
 
 @router.get("/approvals")
@@ -475,7 +500,9 @@ def my_approvals(db: OrmSession = Depends(db_session),
     from sqlalchemy import or_
     q = db.query(Activity).filter(Activity.status == "pending")
     if not user.has_full_access():
-        depts = liaison.handler_dept_ids(db, user)
+        depts = list(liaison.handler_dept_ids(db, user))
+        if user.is_head() and user.department_id and user.department_id not in depts:
+            depts.append(user.department_id)
         q = q.filter(or_(Activity.approval_assignee_id == user.id,
                          Activity.approval_dept_id.in_(depts)))
     out = []
@@ -506,7 +533,8 @@ def my_approvals(db: OrmSession = Depends(db_session),
             "assignee": who.name if who else "",
             # 在我名下（会长团接管别人名下的那种不算）：前端据此标「当前审批人」
             "mine": (act.approval_assignee_id == user.id
-                     or (liaison.is_dept_handler(db, user, act.approval_dept_id)
+                     or ((liaison.is_dept_handler(db, user, act.approval_dept_id)
+                          or liaison.is_head_of(user, dept))
                          and _in_dept(db, act))),
             "on_duty": duty.name if duty else "",
             "creator": creator.name if creator else "",
@@ -533,6 +561,7 @@ def approval_detail(activity_id: str, db: OrmSession = Depends(db_session),
             .order_by(ApprovalEvent.created_at).all())
     dept = db.get(Department, act.approval_dept_id) if act.approval_dept_id else None
     who = db.get(User, act.approval_assignee_id) if act.approval_assignee_id else None
+    dept_names = {d.id: d.name for d in db.query(Department).all()}
     return {
         "status": act.status, "status_label": act.label_status(),
         "department": dept.name if dept else "",
@@ -545,8 +574,10 @@ def approval_detail(activity_id: str, db: OrmSession = Depends(db_session),
             "kind": e.kind, "kind_label": e.kind_label(),
             "actor": (db.get(User, e.actor_id).name
                       if db.get(User, e.actor_id) else "?"),
-            "to": (db.get(User, e.to_user_id).name
-                   if e.to_user_id and db.get(User, e.to_user_id) else ""),
+            "to": (dept_names.get(e.dept_id, dept.name if dept else "")
+                   if e.kind == "submit" else
+                   (db.get(User, e.to_user_id).name
+                    if e.to_user_id and db.get(User, e.to_user_id) else "")),
             "comment": e.comment, "created_at": iso(e.created_at),
         } for e in rows],
     }

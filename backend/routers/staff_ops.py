@@ -993,10 +993,14 @@ def _hours_approvers(db: OrmSession, act: Activity) -> list[User]:
     return uniq
 
 
-def council_members(db: OrmSession) -> list[User]:
-    """会长团。按真实身份：问的是这些人是谁，不是当前操作者此刻的视角。"""
-    return [u for u in db.query(User).filter(User.qingxie_post == "council").all()
+def council_members(db: OrmSession, dept_id: str | None = None) -> list[User]:
+    """会长团。按真实身份：问的是这些人是谁，不是当前操作者此刻的视角。
+    传入 dept_id 时，按每个人的 remind_dept_ids 过滤（空列表 = 接收全部部门）。"""
+    rows = [u for u in db.query(User).filter(User.qingxie_post == "council").all()
             if u.is_council(real=True)]
+    if not dept_id:
+        return rows
+    return [u for u in rows if not u.remind_dept_ids or dept_id in u.remind_dept_ids]
 
 
 def _hours_notify_targets(db: OrmSession, act: Activity) -> list[User]:
@@ -1008,10 +1012,10 @@ def _hours_notify_targets(db: OrmSession, act: Activity) -> list[User]:
     对接人找不到（没有归口部门、部门没设部长）就兜底发会长团：这时候没有
     别人会收到这条审批，不发就只能等超时催办才有人知道。
     """
-    contact = liaison.approval_contact(db, act.approval_dept_id)
-    if contact is not None:
-        return [contact]
-    return council_members(db)
+    contacts = liaison.approval_contacts(db, act.approval_dept_id)
+    if contacts:
+        return contacts
+    return council_members(db, act.approval_dept_id)
 
 
 def effective_checkout(rec: CheckinRecord, g: Shift, still_open: bool):
@@ -2157,13 +2161,14 @@ def activity_hours_requests(activity_id: str, db: OrmSession = Depends(db_sessio
         u = db.get(User, uid_) if uid_ else None
         return u.name if u else ""
     dept = db.get(Department, act.approval_dept_id) if act.approval_dept_id else None
-    head = liaison.dept_head(db, dept.id) if dept else None
+    heads = liaison.dept_heads(db, dept.id) if dept else []
+    head_names = "、".join(h.name for h in heads)
     duty = liaison.on_duty(db, dept)
     return {
         "department": dept.name if dept else "",
         # 等谁处理：启用值班的部门是值班人，否则是部长（会长团、管理员也能批）
         "handler": (f"{duty.name}（值班）" if duty
-                    else (f"{head.name}（部长）" if head else "")),
+                    else (f"{head_names}（部长）" if head_names else "")),
         "locked_at": iso_of(act.hours_locked_at),
         "items": [{
             "id": r.id, "kind": r.kind, "kind_label": r.kind_label(),

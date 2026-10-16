@@ -171,6 +171,9 @@
                     :type="g.mode === 'assign' ? 'warning' : 'info'">
               {{ g.mode_label }}
             </el-tag>
+            <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain">
+              时间灵活·不计冲突
+            </el-tag>
             <span class="dim">{{ g.time_text }}</span>
             <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}（待分配）` : `本场合计 ${g.capacity} 人` }}</span>
             <el-tag v-if="!realPositions(g).length"
@@ -574,8 +577,8 @@
           </template>
         </el-table-column>
             <el-table-column prop="user.student_id" label="学号" width="110" />
-            <el-table-column prop="user.college" label="学院" width="130" />
             <el-table-column prop="user.phone" label="手机号" width="120" />
+            <el-table-column prop="user.wechat" label="微信号" width="130" />
             <el-table-column label="调剂意愿" width="100">
               <template #default="{row}">
                 <el-tag size="small" effect="plain"
@@ -1035,7 +1038,10 @@
             <!-- 常加的就那几个人：会长团、部长、自己手下的骨干与成员。
                  名单里没有的直接敲学工号，同一个框都能用 -->
             <el-select v-model="newMgrSid" filterable allow-create default-first-option
-                       placeholder="选择或输入学工号/教工号" style="width:300px">
+                       placeholder="选择或输入学工号/教工号" style="width:300px"
+                       @input="onMgrInput"
+                       @change="mgrTyped = ''"
+                       @visible-change="onMgrVisible">
               <el-option-group v-for="g in mgrCandidates" :key="g.label" :label="g.label">
                 <el-option v-for="u in g.users" :key="u.id" :value="u.student_id"
                            :label="`${u.name}（${u.student_id}）${u.post_label}`" />
@@ -1159,6 +1165,14 @@
         </el-form-item>
         <el-form-item label="结束时间" required>
           <DateTimeField v-model="groupForm.end_time" :default-time="DAY_END" />
+        </el-form-item>
+        <el-form-item label="时间冲突">
+          <el-checkbox v-model="groupForm.flexible_time">
+            时间灵活 / 待定（不计入与其他活动的时间冲突检测）
+          </el-checkbox>
+          <div class="dim">
+            适用于长期招募、具体服务时间报名后协商的场次；勾选后本场次与志愿者其他报名不互判时间冲突。
+          </div>
         </el-form-item>
         <!-- 名额与候补只属于「截止后统一分配」：报名即选岗位时它们在岗位上 -->
         <template v-if="groupForm.mode === 'assign'">
@@ -1372,7 +1386,7 @@
           <div>
             <el-radio-group v-model="submitDlg.autoPublish">
               <el-radio :value="true">通过即发布</el-radio>
-              <el-radio :value="false">通过后自行发布</el-radio>
+              <el-radio :value="false">通过后管理者自行发布</el-radio>
             </el-radio-group>
             <div class="dim">
               发布只是在活动广场面向志愿者公开，开放报名仍由「报名开始时间」决定。
@@ -1788,6 +1802,7 @@ const savingStation = ref(false)
 const savingBase = ref(false)
 const managers = ref([])
 const newMgrSid = ref('')
+const mgrTyped = ref('')
 const mgrCandidates = ref([])
 const moveSel = ref({})
 
@@ -2191,11 +2206,12 @@ function openShift(g) {
     capacity: g.capacity, mode: g.mode || 'pick', note: g.note,
     waitlist_quota: g.waitlist_quota ?? 3,
     lock_hours: g.lock_hours ?? 12,
+    flexible_time: !!g.flexible_time,
     campusReq: g.requirement_tags?.校区 || [],
     stageReq: g.requirement_tags?.学段 || [],
   } : { name: '', start_time: '', end_time: '', capacity: 10, note: '',
         mode: act.value.recruit_mode === 'screened' ? 'assign' : 'pick',   // 筛选活动多半先不定岗
-        waitlist_quota: 3, lock_hours: 12, campusReq: [], stageReq: [] }
+        waitlist_quota: 3, lock_hours: 12, flexible_time: false, campusReq: [], stageReq: [] }
   shiftDlg.value.visible = true
 }
 const screened = computed(() => act.value?.recruit_mode === 'screened')
@@ -2218,6 +2234,7 @@ async function saveShift() {
     const body = {
       name: f.name, capacity: f.capacity, mode: f.mode, note: f.note,
       waitlist_quota: f.waitlist_quota ?? 3, lock_hours: f.lock_hours ?? 12,
+      flexible_time: !!f.flexible_time,
       start_time: toISO(f.start_time), end_time: toISO(f.end_time),
       requirement_tags: scopeTags(f.campusReq, f.stageReq),
     }
@@ -3059,10 +3076,23 @@ async function saveDuties(row, duties) {
   ElMessage.success(duties.length ? '已更新通知分工' : '已改为接收全部通知')
 }
 
+function onMgrInput(e) {
+  if (e?.target?.value !== undefined) mgrTyped.value = e.target.value.trim()
+}
+function onMgrVisible(v) {
+  if (!v && mgrTyped.value) {
+    newMgrSid.value = mgrTyped.value
+    mgrTyped.value = ''
+  }
+}
+
 async function addManager() {
+  const sid = (mgrTyped.value || newMgrSid.value).trim()
+  if (sid) newMgrSid.value = sid
+  mgrTyped.value = ''
   try {
     await api.post(`/api/staff/activities/${activityId}/managers`,
-                   { student_id: newMgrSid.value })
+                   { student_id: sid })
     ElMessage.success('已添加')
     newMgrSid.value = ''
     await loadManagers()

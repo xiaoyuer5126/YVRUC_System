@@ -89,7 +89,7 @@ x-backend-env: &backend_env
   # 拿到名额闸门号的报名请求最多排多少秒场次锁（等不到回 503）
   YVRUC_TICKET_WAIT_SECONDS: ${YVRUC_TICKET_WAIT_SECONDS:-30}
   # 审批放着没人处理多少小时开始催（只催人，不自动通过）
-  YVRUC_APPROVAL_REMIND_HOURS: ${YVRUC_APPROVAL_REMIND_HOURS:-24}
+  YVRUC_APPROVAL_REMIND_HOURS: ${YVRUC_APPROVAL_REMIND_HOURS:-48}
   # 设为 1 关掉后台定时任务（候补清扫、状态流转、提醒、日报）。生产别关
   YVRUC_DISABLE_SWEEPER: ${YVRUC_DISABLE_SWEEPER:-}
   TZ: Asia/Shanghai

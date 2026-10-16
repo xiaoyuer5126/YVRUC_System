@@ -200,6 +200,7 @@ def _row(u: User, me: User, depts: dict[str, str]) -> dict:
         "department": depts.get(u.department_id, ""),
         "supervisor_id": u.supervisor_id or "",
         "supervisor": depts.get(u.supervisor_id, ""),
+        "remind_dept_ids": u.remind_dept_ids or [],
         "is_me": u.id == me.id,
     }
 
@@ -274,6 +275,7 @@ class RoleBody(BaseModel):
     qingxie_post: str = "member"
     department_id: str = ""
     supervisor_id: str = ""     # 部门成员归属哪位骨干
+    remind_dept_ids: list[str] = []  # 会长团超时催办接收部门范围（空列表=全部部门）
 
 
 @router.put("/roles/{user_id}")
@@ -299,6 +301,10 @@ def set_roles(user_id: str, body: RoleBody,
     _guard_self_demotion(user, target, roles)
     _guard_head_scope(user, target, roles, body.qingxie_post, dept_id)
     _guard_core_scope(user, target, body)
+    if target.user_type == "student" and "student" not in roles:
+        raise HTTPException(400, "学生的「志愿者」身份不可清除")
+    if target.user_type == "teacher" and "initiator" not in roles:
+        raise HTTPException(400, "教师的「活动发起方」身份不可清除")
 
     orphans = _orphaned_activities(db, target, roles, body.qingxie_post)
     if orphans:
@@ -316,20 +322,23 @@ def set_roles(user_id: str, body: RoleBody,
         if body.qingxie_post != "council" and not dept_id:
             raise HTTPException(400, f"{User.POST_LABELS[body.qingxie_post]}必须指定所属部门")
         target.qingxie_post = body.qingxie_post
-        target.department_id = dept_id
+        target.department_id = None if body.qingxie_post == "council" else dept_id
         target.supervisor_id = (_check_supervisor(db, target, body, dept_id)
                                 if body.qingxie_post == "member" else None)
-        if body.qingxie_post == "head":
-            for old in (db.query(User)
-                        .filter(User.department_id == dept_id,
-                                User.qingxie_post == "head",
-                                User.id != target.id).all()):
-                old.qingxie_post = "member"
+        if body.qingxie_post == "council":
+            valid_depts = {d.id for d in db.query(Department).all()}
+            target.remind_dept_ids = [
+                d for d in dict.fromkeys(body.remind_dept_ids or [])
+                if d in valid_depts
+            ]
+        else:
+            target.remind_dept_ids = []
     else:
         # 不是青协了，层级与部门一并清掉，免得留下「非青协的部长」
         target.qingxie_post = "member"
         target.department_id = None
         target.supervisor_id = None
+        target.remind_dept_ids = []
 
     after = (target.roles, target.qingxie_post, target.department_id)
     _audit_role_change(db, user, target, before, after)
@@ -369,6 +378,10 @@ def _batch_change(db: OrmSession, actor: User, target: User,
     else:
         if body.role not in roles:
             raise HTTPException(400, f"没有「{ROLE_LABELS.get(body.role)}」身份")
+        if target.user_type == "student" and body.role == "student":
+            raise HTTPException(400, "学生的「志愿者」身份不可清除")
+        if target.user_type == "teacher" and body.role == "initiator":
+            raise HTTPException(400, "教师的「活动发起方」身份不可清除")
         roles = [r for r in roles if r != body.role]
         if not roles:
             raise HTTPException(400, "至少要保留一个身份，先给他别的身份再撤")
