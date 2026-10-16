@@ -1088,6 +1088,8 @@ class ShiftBody(BaseModel):
     # 开场前多少小时自动锁定名单，0 = 不自动锁定
     lock_hours: int = Field(default=config.LOCK_HOURS_DEFAULT, ge=0,
                             le=config.LOCK_HOURS_MAX)
+    # 时间灵活/待定的场次：不参与跨活动时间冲突检测
+    flexible_time: bool = False
 
 
 def _clean_lock_hours(v) -> int:
@@ -1266,7 +1268,8 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
     g = Shift(id=uid("g"), activity_id=act.id, name=body.name.strip(),
                       start_time=start, end_time=end,
                       note=body.note.strip(), sort=len(act.shifts),
-                      location=body.location.strip(), lock_hours=body.lock_hours)
+                      location=body.location.strip(), lock_hours=body.lock_hours,
+                      flexible_time=bool(body.flexible_time) and body.kind == "service")
     _apply_shift_mode(db, g, body.mode)
     _apply_attachment(db, g, body, act)
     db.add(g)
@@ -1294,7 +1297,8 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
 SHIFT_FIELDS = {"name": "场次名", "start_time": "开始时间", "end_time": "结束时间",
                 "mode": "岗位模式", "note": "备注",
                 "location": "地点", "hours_mode": "时长认定",
-                "requirement_tags": "条件要求", "lock_hours": "开场前自动锁定（小时）"}
+                "requirement_tags": "条件要求", "lock_hours": "开场前自动锁定（小时）",
+                "flexible_time": "时间灵活（不计冲突）"}
 
 
 @router.patch("/shifts/{shift_id}")
@@ -1328,6 +1332,8 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
             g.hours_mode = v
         elif key == "requirement_tags":
             g.requirement_tags = _clean_requirement_tags(v, "场次")
+        elif key == "flexible_time":
+            g.flexible_time = bool(v) and not g.is_attached()
         else:
             setattr(g, key, v)
     if "applies_to_positions" in body and g.is_attached():
@@ -1344,6 +1350,8 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
     def fmt(v):
         if isinstance(v, datetime):
             return v.strftime("%m-%d %H:%M")
+        if isinstance(v, bool):
+            return "是" if v else "否"
         return v
     changes = diff_changes({k: fmt(v) for k, v in before_raw.items()},
                            {k: fmt(getattr(g, k)) for k in SHIFT_FIELDS},
@@ -2273,7 +2281,7 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
             "answers": answers_out(db, questions, e.answers) if questions else [],
             "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
                      "college": u.college, "gender": u.gender, "phone": u.phone,
-                     "grade": u.grade, **scores.get(u.id, {})},
+                     "wechat": u.wechat, "grade": u.grade, **scores.get(u.id, {})},
             "position_id": e.position_id,
             "position_name": st.name if st else "",
             "position_group": st.group_name if st else "",

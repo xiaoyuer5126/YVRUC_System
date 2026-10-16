@@ -76,6 +76,9 @@
             {{ row.post_label }}
             <span v-if="row.department" class="dim">· {{ row.department }}</span>
             <span v-if="row.supervisor" class="dim">· 归属 {{ row.supervisor }}</span>
+            <span v-if="row.qingxie_post === 'council'" class="dim">
+              · 催办：{{ row.remind_dept_ids?.length ? row.remind_dept_ids.map(id => deptName(id)).join('、') : '全部部门' }}
+            </span>
           </template>
           <span v-else class="dim">—</span>
         </template>
@@ -105,11 +108,16 @@
             <!-- 部长只能动青协身份：别的身份（含志愿者）显示但锁住 -->
             <el-checkbox v-for="r in ROLE_ORDER" :key="r" :value="r"
                          :disabled="(r === 'admin' && dlg.row?.is_me)
+                                    || (r === 'student' && dlg.row?.user_type === 'student')
+                                    || (r === 'initiator' && dlg.row?.user_type === 'teacher')
                                     || (headOnly && r !== 'qingxie')">
               {{ ROLE_LABELS[r] }}
             </el-checkbox>
           </el-checkbox-group>
-          <div v-if="dlg.row?.is_me && !headOnly" class="dim">不能移除自己的管理员身份</div>
+          <div class="dim">
+            <template v-if="dlg.row?.is_me && !headOnly">不能移除自己的管理员身份 · </template>
+            学生的志愿者身份、老师的活动发起方身份不可清除
+          </div>
         </el-form-item>
         <template v-if="dlg.roles.includes('qingxie')">
           <el-form-item label="青协层级">
@@ -123,6 +131,12 @@
               会长团：除平台公告、操作日志、意见反馈外与管理员同权 · 部长：审批本部门活动，管理本部门骨干与成员 ·
               骨干：只管理自己参与的活动 · 成员：可见范围与归属骨干一致，可查看但不能保存
             </div>
+          </el-form-item>
+          <el-form-item v-if="dlg.post === 'council'" label="催办部门">
+            <el-checkbox-group v-model="dlg.remindDeptIds">
+              <el-checkbox v-for="d in depts" :key="d.id" :value="d.id">{{ d.name }}</el-checkbox>
+            </el-checkbox-group>
+            <div class="dim">勾选要接收超时催办通知的部门；全部不勾表示接收全部部门的超时催办</div>
           </el-form-item>
           <el-form-item v-if="dlg.post !== 'council'" label="所属部门" required>
             <el-select v-model="dlg.deptId" placeholder="选择部门" style="width:100%"
@@ -173,7 +187,7 @@
               <el-radio value="core">部门骨干</el-radio>
               <el-radio value="council" :disabled="headOnly">会长团</el-radio>
             </el-radio-group>
-            <div class="dim">部长每个部门只有一位，请逐个设置</div>
+            <div class="dim">部长请逐个设置</div>
           </el-form-item>
           <el-form-item v-if="bd.post !== 'council'" label="所属部门" required>
             <el-select v-model="bd.deptId" placeholder="选择部门" style="width:100%"
@@ -256,7 +270,10 @@ const depts = ref([])
 const q = ref('')
 const loading = ref(false)
 const loadedAt = ref(0)
-const dlg = ref({ visible: false, row: null, roles: [], post: 'member', deptId: '', busy: false })
+const dlg = ref({ visible: false, row: null, roles: [], post: 'member', deptId: '', remindDeptIds: [], busy: false })
+function deptName(id) {
+  return depts.value.find(d => d.id === id)?.name || id
+}
 // 部长视角：只能在本部门里设骨干/成员；骨干视角：只认领本部门成员
 const headOnly = computed(() =>
   auth.activeIdentity === 'qingxie' && auth.user?.qingxie_post === 'head')
@@ -304,6 +321,7 @@ function open(row) {
     // 部长拉人进部门：部门就是他自己的，不用选
     deptId: row.department_id || (headOnly.value ? auth.user.department_id : ''),
     supervisorId: row.supervisor_id || '',
+    remindDeptIds: [...(row.remind_dept_ids || [])],
     busy: false,
   }
   loadCores()
@@ -326,7 +344,8 @@ async function save() {
   try {
     await api.put(`/api/staff/roles/${d.row.id}`,
                   { roles: d.roles, qingxie_post: d.post, department_id: d.deptId,
-                    supervisor_id: d.supervisorId })
+                    supervisor_id: d.supervisorId,
+                    remind_dept_ids: d.post === 'council' ? d.remindDeptIds : [] })
     ElMessage.success('已保存')
     d.visible = false
     load()

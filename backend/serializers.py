@@ -503,6 +503,7 @@ def _shift_public(g: Shift, occ: Occupancy, n_materials: dict) -> dict:
         "list_locked": g.list_locked,
         "mode": g.mode,
         "mode_label": g.mode_label(),
+        "flexible_time": bool(g.flexible_time),
         "location": g.location,
         "kind": g.kind, "kind_label": g.kind_label(),
         "hours_mode": g.hours_mode, "hours_label": g.hours_label(),
@@ -718,9 +719,13 @@ def _for_viewer(db: OrmSession, act: Activity, out: dict, user,
     # 那也只是别的活动里的同一段报名。
     if user is not None:
         rows = [r for r in active_rows(db, user) if r[2].id != act.id]
+        flex_ids = {g["id"] for g in out.get("shifts", [])
+                    if g.get("flexible_time")}
         clashes: list[dict] = []
         seen: set[str] = set()
         for sid, start, end, _deadline, _lock in basis["shifts"]:
+            if sid in flex_ids:
+                continue
             for c in conflicts_among(rows, sid, _dt(start), _dt(end)):
                 if c["enrollment_id"] in seen:
                     continue

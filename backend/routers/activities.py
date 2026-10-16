@@ -382,6 +382,8 @@ def _check_time_conflicts(rows, g: Shift, attached: list[Shift]) -> None:
     一次查、在内存里比，不必每个目标场次各查一遍全部报名。
     """
     for target in [g] + attached:
+        if target.flexible_time:
+            continue
         clashes = logic.conflicts_among(rows, target.id, target.start_time,
                                         target.end_time)
         if clashes:

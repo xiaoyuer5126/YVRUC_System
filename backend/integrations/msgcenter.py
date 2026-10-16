@@ -232,14 +232,30 @@ def send_user(db: OrmSession, user: User, template_key: str,
             (row.id, user.student_id, title, content, url))
 
 
+from concurrent.futures import Future, ThreadPoolExecutor, wait
+
 _OUTBOX = "msgcenter_outbox"
+_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="msgcenter")
+_PENDING: set[Future] = set()
+
+
+def _submit_push(items: list) -> None:
+    fut = _EXECUTOR.submit(_push, items)
+    _PENDING.add(fut)
+    fut.add_done_callback(_PENDING.discard)
+
+
+def flush() -> None:
+    """等待后台已派发的推送任务全部完成。"""
+    while _PENDING:
+        wait(list(_PENDING), timeout=5)
 
 
 @event.listens_for(SessionLocal, "after_commit")
 def _push_after_commit(session) -> None:
     items = session.info.pop(_OUTBOX, None)
     if items:
-        locks.after_unlock(lambda: _push(items))
+        locks.after_unlock(lambda: _submit_push(items))
 
 
 @event.listens_for(SessionLocal, "after_rollback")

@@ -594,7 +594,11 @@ def _ensure_no_clash(db: OrmSession, u: User, rows: list[Enrollment],
     不算：没选中的马上作废，选中的就是要录的这几场。
     """
     for i, a in enumerate(chosen):
+        if a.flexible_time:
+            continue
         for b in chosen[i + 1:]:
+            if b.flexible_time:
+                continue
             if logic.overlaps(a.start_time, a.end_time, b.start_time, b.end_time):
                 raise HTTPException(
                     409, f"{u.name} 选中的「{a.name}」（{a.span_text()}）与"
@@ -602,6 +606,8 @@ def _ensure_no_clash(db: OrmSession, u: User, rows: list[Enrollment],
     own = {e.id for e in rows}
     others = [r for r in logic.active_rows(db, u) if r[0].id not in own]
     for g in chosen:
+        if g.flexible_time:
+            continue
         clashes = logic.conflicts_among(others, g.id, g.start_time, g.end_time)
         if clashes:
             raise HTTPException(

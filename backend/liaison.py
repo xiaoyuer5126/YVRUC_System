@@ -56,10 +56,16 @@ def liaison_dept(db: OrmSession) -> Department | None:
     return db.query(Department).filter(Department.name == LIAISON_DEPT).first()
 
 
-def dept_head(db: OrmSession, dept_id: str) -> User | None:
+def dept_heads(db: OrmSession, dept_id: str) -> list[User]:
     return (db.query(User)
             .filter(User.department_id == dept_id,
-                    User.qingxie_post == "head").first())
+                    User.qingxie_post == "head")
+            .order_by(User.student_id).all())
+
+
+def dept_head(db: OrmSession, dept_id: str) -> User | None:
+    heads = dept_heads(db, dept_id)
+    return heads[0] if heads else None
 
 
 def is_head_of(user: User, dept: Department | None) -> bool:
@@ -95,13 +101,23 @@ def on_duty(db: OrmSession, dept: Department | None) -> User | None:
     return u if eligible(u, dept) else None
 
 
+def approval_contacts(db: OrmSession, dept_id: str | None) -> list[User]:
+    """这个部门的审批该通知谁：启用值班的部门先找值班人，没人值班找全体部长；
+    其他部门通知该部门全体部长。"""
+    dept = db.get(Department, dept_id) if dept_id else None
+    if dept is None:
+        return []
+    cur = on_duty(db, dept)
+    if cur is not None:
+        return [cur]
+    return dept_heads(db, dept.id)
+
+
 def approval_contact(db: OrmSession, dept_id: str | None) -> User | None:
     """这个部门的审批该通知谁：启用值班的部门先找值班人，没人值班找部长；
     其他部门照旧是部长。"""
-    dept = db.get(Department, dept_id) if dept_id else None
-    if dept is None:
-        return None
-    return on_duty(db, dept) or dept_head(db, dept.id)
+    contacts = approval_contacts(db, dept_id)
+    return contacts[0] if contacts else None
 
 
 def is_dept_handler(db: OrmSession, user: User, dept_id: str | None) -> bool:
@@ -258,9 +274,9 @@ def vb_contacts(db: OrmSession) -> list[User]:
     归口哪个部门。部门没了、也没设部长就兜底发会长团（按真实身份），
     不然这一条没人知道。"""
     dept = liaison_dept(db)
-    contact = approval_contact(db, dept.id) if dept else None
-    if contact is not None:
-        return [contact]
+    contacts = approval_contacts(db, dept.id) if dept else []
+    if contacts:
+        return contacts
     return [u for u in db.query(User).filter(User.qingxie_post == "council").all()
             if u.is_council(real=True)]
 
@@ -273,9 +289,9 @@ def claim_contacts(db: OrmSession, submitter: User) -> list[User]:
     if out:
         return out
     dept = liaison_dept(db)
-    head = dept_head(db, dept.id) if dept else None
-    if head is not None and head.id != submitter.id:
-        return [head]
+    heads = [h for h in (dept_heads(db, dept.id) if dept else []) if h.id != submitter.id]
+    if heads:
+        return heads
     return [u for u in db.query(User).filter(User.qingxie_post == "council").all()
             if u.is_council(real=True) and u.id != submitter.id]
 

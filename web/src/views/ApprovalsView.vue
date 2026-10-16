@@ -13,7 +13,7 @@
           当前值班：{{ d.on_duty.name }}（{{ d.on_duty.post_label }}）
         </el-tag>
         <el-tag v-else type="warning" effect="plain">
-          无人值班，审批通知发给部长{{ d.head ? ' ' + d.head.name : '' }}
+          无人值班，审批通知发给部长{{ d.head_name ? ' ' + d.head_name : (d.head ? ' ' + d.head.name : '') }}
         </el-tag>
         <el-link v-if="d.history.length" type="primary" underline="never"
                  style="margin-left:auto" @click="d.showHistory = !d.showHistory">

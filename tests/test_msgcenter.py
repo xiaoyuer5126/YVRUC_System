@@ -147,6 +147,7 @@ def test_推送失败只标未送达不打断业务(db, take_student, monkeypatc
     monkeypatch.setattr(msgcenter, "_send", boom)
     msgcenter.send_user(db, user, "custom", title="标题", content="正文")
     db.commit()
+    msgcenter.flush()
 
     row = (db.query(Notification)
            .filter(Notification.user_id == user.id,
@@ -216,6 +217,7 @@ def test_真实推送在事务提交且场次锁放掉之后才发(client, open_
     monkeypatch.setattr(config, "SITE_URL", "https://p.cn")
     sid = take_student()
     assert enroll(client, login(client, sid), act, g).status_code == 200
+    msgcenter.flush()
     # 推了一次：名额已还、锁已放掉、事务已提交，且链接拼成了报名成功该去的页
     assert seen == [(True, True, 1, "https://p.cn/my")]
 

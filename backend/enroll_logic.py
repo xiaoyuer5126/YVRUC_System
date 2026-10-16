@@ -52,6 +52,8 @@ def active_rows(db: OrmSession, user: User) -> list[tuple]:
 def time_conflicts(db: OrmSession, user: User,
                    target: Shift) -> list[dict]:
     """该用户有效报名中与 target 组时间段重叠的记录（跨活动）。"""
+    if target.flexible_time:
+        return []
     return conflicts_among(active_rows(db, user), target.id,
                            target.start_time, target.end_time)
 
@@ -61,7 +63,7 @@ def conflicts_among(rows, target_id: str, start: datetime,
     """在 active_rows 查回来的报名里挑出与 [start, end) 重叠的（本场次自己除外）。"""
     out = []
     for enr, g, act in rows:
-        if enr.shift_id == target_id:
+        if enr.shift_id == target_id or g.flexible_time:
             continue
         if overlaps(g.start_time, g.end_time, start, end):
             out.append({

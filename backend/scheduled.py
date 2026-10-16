@@ -42,6 +42,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("vb_confirms", remind_stale_vb_confirms),
                       ("vb_resubmit", remind_vb_resubmit),
                       ("duty_digests", send_duty_digests),
+                      ("sunday_duty_reminders", send_sunday_duty_reminders),
                       ("hours_lock_requests", submit_lock_when_due),
                       ("unlocked", release_stale_edit_locks),
                       ("sessions", purge_expired_sessions),
@@ -248,18 +249,27 @@ def remind_stale_approvals(db: OrmSession) -> int:
                     Activity.submitted_at < deadline,
                     Activity.approval_reminded_at.is_(None)).all())
     from . import liaison
+    from .routers.staff_ops import council_members
     for act in rows:
         who = (db.get(User, act.approval_assignee_id)
                if act.approval_assignee_id else None)
-        # 挂在部长名下的、启用值班的部门：催值班的人（没人值班还是部长）
-        if who is not None and liaison.is_dept_handler(db, who, act.approval_dept_id):
-            who = liaison.approval_contact(db, act.approval_dept_id) or who
+        dept = db.get(Department, act.approval_dept_id) if act.approval_dept_id else None
+        # 挂在部长名下的：催值班人（没人值班催本部门全体部长）；转给个人的催本人
+        if who is not None and (
+            liaison.is_dept_handler(db, who, act.approval_dept_id)
+            or (dept is not None and who.department_id == dept.id and who.qingxie_post == "head")
+        ):
+            contacts = liaison.approval_contacts(db, act.approval_dept_id) or [who]
+        else:
+            contacts = [who] if who is not None else []
         waited = int((now() - act.submitted_at).total_seconds() // 3600)
         text = (f"「{act.title}」（{act.organizer_text()}）已提交 {waited} 小时未处理。\n"
                 f"请到「活动审批」通过或驳回，如不该由您审批可以转交。")
-        targets = [who] + [p for p in db.query(User)
-                           .filter(User.qingxie_post == "council").all()
-                           if p is not None and p.id != (who.id if who else "")]
+        copied = {u.id for u in contacts if u is not None}
+        targets = contacts + [
+            p for p in council_members(db, act.approval_dept_id)
+            if p is not None and p.id not in copied
+        ]
         for t in targets:
             if t is None:
                 continue
@@ -305,10 +315,12 @@ def remind_stale_claims(db: OrmSession) -> int:
         waited = int((t - claim.submitted_at).total_seconds() // 3600)
         # 提交人自己批不了自己的，催他没用，抄送也跳过他
         submitter = db.get(User, claim.user_id)
+        dept = liaison.liaison_dept(db)
         contacts = (liaison.claim_contacts(db, submitter) if submitter
                     else liaison.vb_contacts(db))
         copied = {u.id for u in contacts} | {claim.user_id}
-        for u in contacts + [p for p in council_members(db) if p.id not in copied]:
+        for u in contacts + [p for p in council_members(db, dept.id if dept else None)
+                             if p.id not in copied]:
             msgcenter.send_user(
                 db, u, "custom", data={"route": "approvals"},
                 title=f"时长补登已等待 {waited} 小时｜{claim.title}",
@@ -354,9 +366,11 @@ def remind_stale_hours_requests(db: OrmSession) -> int:
         act = db.get(Activity, req.activity_id)
         if act is None:
             continue
-        contact = liaison.approval_contact(db, act.approval_dept_id)
-        targets = ([contact] if contact else []) + [
-            p for p in council_members(db) if contact is None or p.id != contact.id]
+        contacts = liaison.approval_contacts(db, act.approval_dept_id)
+        copied = {u.id for u in contacts}
+        targets = contacts + [
+            p for p in council_members(db, act.approval_dept_id)
+            if p.id not in copied]
         waited = int((t - req.created_at).total_seconds() // 3600)
         text = (f"「{act.title}」的时长{req.kind_label()}申请已提交 {waited} 小时未处理。\n"
                 f"说明：{req.reason}\n请到「活动审批」通过或驳回。")
@@ -489,8 +503,8 @@ def send_duty_digests(db: OrmSession) -> int:
     sent = 0
     for dept in (db.query(Department)
                  .filter(Department.name.in_(liaison.DUTY_DEPTS)).all()):
-        head = liaison.dept_head(db, dept.id)
-        if head is None:
+        heads = liaison.dept_heads(db, dept.id)
+        if not heads:
             continue
         claimed = db.execute(
             update(Department)
@@ -510,15 +524,60 @@ def send_duty_digests(db: OrmSession) -> int:
             return f"【{title}】{len(lines)} 条\n" + (
                 "\n".join(f"· {x}" for x in lines) if lines else "· 无")
 
+        for head in heads:
+            msgcenter.send_user(
+                db, head, "custom", data={"route": "approvals"},
+                title=f"值班日报｜{dept.name} {t:%m-%d}",
+                content=(f"今日值班：{duty.name if duty else '无人值班（通知发给了您）'}\n"
+                         + "\n".join((block("今日新增", new), block("今日处理", done),
+                                      block("尚未处理", waiting)))))
+        db.commit()
+        sent += len(heads)
+        logger.info("值班日报已发给 %s（%s）", "、".join(h.name for h in heads), dept.name)
+    return sent
+
+
+def send_sunday_duty_reminders(db: OrmSession) -> int:
+    """每周日 DUTY_DIGEST_HOUR（21:00）提醒当前值班人处理未完成的任务并交接班。"""
+    from sqlalchemy import or_, update
+    from . import liaison
+
+    t = now()
+    if t.weekday() != 6 or t.hour < config.DUTY_DIGEST_HOUR:
+        return 0
+    today = t.date()
+    day_start = t.replace(hour=0, minute=0, second=0, microsecond=0)
+    sent = 0
+    for dept in (db.query(Department)
+                 .filter(Department.name.in_(liaison.DUTY_DEPTS)).all()):
+        duty = liaison.on_duty(db, dept)
+        if duty is None:
+            continue
+        claimed = db.execute(
+            update(Department)
+            .where(Department.id == dept.id,
+                   or_(Department.duty_remind_on.is_(None),
+                       Department.duty_remind_on < today))
+            .values(duty_remind_on=today)).rowcount
+        db.commit()
+        if not claimed:
+            continue
+        _new, _done, waiting = _duty_digest_lines(db, dept, day_start)
+        if waiting:
+            pending_part = (
+                f"当前还有 {len(waiting)} 条待办事项尚未处理：\n"
+                + "\n".join(f"· {x}" for x in waiting)
+                + "\n请尽快处理未完成的任务，并在完成后于「活动审批」页面办理值班交接。"
+            )
+        else:
+            pending_part = "本周待办事项已全部处理完毕，请在「活动审批」页面办理值班交接。"
         msgcenter.send_user(
-            db, head, "custom", data={"route": "approvals"},
-            title=f"值班日报｜{dept.name} {t:%m-%d}",
-            content=(f"今日值班：{duty.name if duty else '无人值班（通知发给了您）'}\n"
-                     + "\n".join((block("今日新增", new), block("今日处理", done),
-                                  block("尚未处理", waiting)))))
+            db, duty, "custom", data={"route": "approvals"},
+            title=f"周日值班提醒与交接班｜{dept.name}",
+            content=pending_part)
         db.commit()
         sent += 1
-        logger.info("值班日报已发给 %s（%s）", head.name, dept.name)
+        logger.info("周日值班交接提醒已发给 %s（%s）", duty.name, dept.name)
     return sent
 
 
