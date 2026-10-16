@@ -662,11 +662,11 @@
           <div v-else class="dim" style="margin-top:4px">
             仅在名额不足时可能进行调剂，负责人可看到你的意愿。
           </div>
-          <el-checkbox v-model="enrollDlg.leaderWilling" style="display:block;margin-top:8px">
+          <el-checkbox v-model="enrollDlg.leaderWilling" style="margin-top:8px">
             愿意担任组长（如本岗位需要）
           </el-checkbox>
           <div class="dim" style="margin-top:4px">
-            担任小组长的志愿者将根据实际工作额外记录志愿时数
+            担任小组长的志愿者将根据实际工作额外记录志愿时数。
           </div>
         </div>
       </template>

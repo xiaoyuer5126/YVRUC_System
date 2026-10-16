@@ -82,9 +82,9 @@
                           :upload-url="`/api/activities/${act.id}/apply/upload`" />
           <el-form-item>
             <el-checkbox v-model="form.leader_willing">愿意担任组长（如岗位需要）</el-checkbox>
-            <div class="dim" style="width:100%;margin-bottom:4px">担任小组长的志愿者将根据实际工作额外记录志愿时数</div>
-            <el-checkbox v-model="form.allow_reassign">接受岗位调剂</el-checkbox>
-            <div class="dim">仅在名额不足时可能被调到有空缺的岗位；负责人会看到你的意愿。</div>
+            <div class="dim" style="width:100%">担任小组长的志愿者将根据实际工作额外记录志愿时数。</div>
+            <el-checkbox v-model="form.allow_reassign" style="margin-top:8px">接受岗位调剂</el-checkbox>
+            <div class="dim" style="width:100%">仅在名额不足时可能被调到有空缺的岗位；负责人会看到你的意愿。</div>
           </el-form-item>
         </el-form>
         <div class="btn-row">

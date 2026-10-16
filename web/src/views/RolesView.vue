@@ -114,10 +114,7 @@
               {{ ROLE_LABELS[r] }}
             </el-checkbox>
           </el-checkbox-group>
-          <div class="dim">
-            <template v-if="dlg.row?.is_me && !headOnly">不能移除自己的管理员身份 · </template>
-            学生的志愿者身份、老师的活动发起方身份不可清除
-          </div>
+          <div v-if="dlg.row?.is_me && !headOnly" class="dim">不能移除自己的管理员身份</div>
         </el-form-item>
         <template v-if="dlg.roles.includes('qingxie')">
           <el-form-item label="青协层级">
