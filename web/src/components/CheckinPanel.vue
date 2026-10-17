@@ -134,6 +134,8 @@
             <div class="dim">已到岗 / 应到岗</div>
             <div class="dim" style="margin-top:4px">已签退 {{ board.checked_out }} 人</div>
             <div v-if="board.excused" class="dim">已请假 {{ board.excused }} 人（不计入应到岗）</div>
+            <!-- 时间灵活的场次一张码一轮：到岗、签退数的是开着的那张码这一轮 -->
+            <div v-if="board.flexible_time" class="dim">时间灵活场次：按当前开着的签到码这一轮统计</div>
             <el-progress type="circle" :percentage="pct" :width="86"
                          :color="pct === 100 ? '#67c23a' : '#ae0b2a'" style="margin-top:8px" />
           </el-card>
@@ -192,6 +194,9 @@
                empty="名单为空">
       <template #extra="{ row }">
         <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+        <el-tag v-if="board.flexible_time && row.checkin_count" size="small" effect="plain">
+          共签到 {{ row.checkin_count }} 次
+        </el-tag>
         <el-tag size="small"
                 :type="row.checked_in ? 'success' : (row.excused ? 'info' : 'danger')"
                 :effect="row.checked_in ? 'light' : 'plain'">
@@ -221,6 +226,9 @@
           <el-table-column prop="student_id" label="学号" width="120" />
           <el-table-column prop="college" label="学院" min-width="140" />
           <el-table-column prop="position" label="岗位" min-width="120" />
+          <el-table-column v-if="board.flexible_time" label="共签到" width="80">
+            <template #default="{row}">{{ row.checkin_count }} 次</template>
+          </el-table-column>
           <el-table-column label="方式" width="130">
             <template #default="{row}">
               <el-tag v-if="row.excused && !row.checked_in" size="small"

@@ -31,9 +31,9 @@ from ..perm import (activity_manager_ids, add_manager,
 from ..integrations import msgcenter
 from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
                       Attachment, AttireRecord, AttireTask, AuditLog,
-                      CheckinRecord, CheckinTask, Enrollment, FormQuestion,
-                      Notification, Position, Shift, User, VbConfirm,
-                      iso, like_pattern, now, parse_local_dt, uid)
+                      CheckinRecord, CheckinTask, Department, Enrollment,
+                      FormQuestion, Notification, Position, Shift, User,
+                      VbConfirm, iso, like_pattern, now, parse_local_dt, uid)
 from ..serializers import (activity_brief, admin_status_of, applies_text,
                            load_trees, published_hint)
 from .screening import answers_out
@@ -130,12 +130,16 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
     看到的那条一致。所以每条返回的 display_status / display_label 是管理端口径
     ——草稿、待审批、待发布分开，别的几天几档与广场相同。
 
-    分页返回：每条都要数场次、报名与候补。先按状态定下这一页是哪几条，再只为
-    这一页装场次岗位，条数不随活动总数涨。
+    分页返回：每条都要数场次、报名与候补，只为这一页装场次岗位，条数不随活动
+    总数涨。不筛状态时直接在 SQL 里分页；筛状态时展示状态要按场次时间现算，
+    得先把候选行的状态都算完、筛过，再切这一页。
     """
+    size = max(1, min(size, 100))
+    page = max(1, page)
+    # created_at 相同的几条再按 id 定序：分页靠 offset，次序不稳的话翻页会重复或漏条
     rows = (db.query(Activity.id, Activity.status, Activity.reg_start,
                      Activity.reg_end)
-            .order_by(Activity.created_at.desc()))
+            .order_by(Activity.created_at.desc(), Activity.id.desc()))
     managed = managed_activity_ids(db, user)
     if managed is not None:
         rows = rows.filter(Activity.id.in_(managed or ['__none__']))
@@ -144,10 +148,13 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
                                                 escape="\\"))
     if status:
         rows = rows.filter(Activity.status.in_(ADMIN_FILTER_BASIS.get(status, ())))
-    rows = rows.all()
+        rows = rows.all()
+    else:
+        total = rows.order_by(None).count()
+        rows = rows.offset((page - 1) * size).limit(size).all()
 
     # 服务场次的跨度与最晚开场时刻：算展示状态要用（同 Activity.time_span /
-    # last_shift_start，只算服务场次）。只查筛出来的这些活动
+    # last_shift_start，只算服务场次）。只查上面取出来的这些活动
     ids = [r[0] for r in rows]
     spans = {aid: ((first, last), last_start) for aid, first, last, last_start in
              db.query(Shift.activity_id, func.min(Shift.start_time),
@@ -155,17 +162,16 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
              .filter(Shift.kind == "service", Shift.activity_id.in_(ids))
              .group_by(Shift.activity_id).all()} if ids else {}
 
-    matched = []
-    for aid, st, reg_start, reg_end in rows:
-        span, last_start = spans.get(aid, (None, None))
-        code = admin_status_of(st, reg_start, reg_end, span, last_start)[0]
-        if status and code != status:
-            continue
-        matched.append(aid)
-
-    size = max(1, min(size, 100))
-    page = max(1, page)
-    picked = matched[(page - 1) * size: page * size]
+    if status:
+        matched = []
+        for aid, st, reg_start, reg_end in rows:
+            span, last_start = spans.get(aid, (None, None))
+            if admin_status_of(st, reg_start, reg_end, span, last_start)[0] == status:
+                matched.append(aid)
+        total = len(matched)
+        picked = matched[(page - 1) * size: page * size]
+    else:
+        picked = ids
     acts = (db.query(Activity).filter(Activity.id.in_(picked)).all()
             if picked else [])
     # 场次、岗位、人数各一次查完，条数不随一页多少个活动涨
@@ -182,7 +188,7 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
             by_id[aid].status, by_id[aid].reg_start, by_id[aid].reg_end,
             spans.get(aid, (None, None))[0], spans.get(aid, (None, None))[1])
         out.append(item)
-    return {"items": out, "total": len(matched), "page": page, "size": size}
+    return {"items": out, "total": total, "page": page, "size": size}
 
 
 class ActivityBody(BaseModel):
@@ -1088,7 +1094,7 @@ class ShiftBody(BaseModel):
     # 开场前多少小时自动锁定名单，0 = 不自动锁定
     lock_hours: int = Field(default=config.LOCK_HOURS_DEFAULT, ge=0,
                             le=config.LOCK_HOURS_MAX)
-    # 时间灵活/待定的场次：不参与跨活动时间冲突检测
+    # 时间灵活/待定的场次：每张签到码各签一次到、一次退，可以签好几轮
     flexible_time: bool = False
 
 
@@ -1106,6 +1112,14 @@ def _clean_lock_hours(v) -> int:
 def _validate_shift_times(start: datetime, end: datetime):
     if end <= start:
         raise HTTPException(400, "结束时间必须晚于开始时间")
+
+
+def _validate_flexible_hours(g: Shift) -> None:
+    """时间灵活的场次一人能签好几轮到，「按场次时长固定计」会把每一轮都算成
+    整场，所以只能按签到签退计或不计时长。"""
+    if g.flexible_time and g.hours_mode == "fixed":
+        raise HTTPException(400, "时间灵活的场次时长只能按签到签退计或不计时长，"
+                                 "不能按场次时长固定计")
 
 
 def _clean_applies(act: Activity, ids: list[str]) -> list[str]:
@@ -1272,6 +1286,7 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                       flexible_time=bool(body.flexible_time) and body.kind == "service")
     _apply_shift_mode(db, g, body.mode)
     _apply_attachment(db, g, body, act)
+    _validate_flexible_hours(g)
     db.add(g)
     db.flush()
     # 占位岗位要等场次落库拿到 id 之后再建
@@ -1298,7 +1313,7 @@ SHIFT_FIELDS = {"name": "场次名", "start_time": "开始时间", "end_time": "
                 "mode": "岗位模式", "note": "备注",
                 "location": "地点", "hours_mode": "时长认定",
                 "requirement_tags": "条件要求", "lock_hours": "开场前自动锁定（小时）",
-                "flexible_time": "时间灵活（不计冲突）"}
+                "flexible_time": "时间灵活（可多次签到）"}
 
 
 @router.patch("/shifts/{shift_id}")
@@ -1340,6 +1355,7 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
         g.applies_to_positions = _clean_applies(act, body["applies_to_positions"])
         _resync_training(db, act, g)
     _validate_shift_times(g.start_time, g.end_time)
+    _validate_flexible_hours(g)
     # 名额与候补落到占位岗位上；没传就沿用它当前的值
     holder = g.placeholder()
     _sync_placeholder(db, g,
@@ -1975,12 +1991,13 @@ def manager_candidates(activity_id: str, db: OrmSession = Depends(db_session),
                        user: User = Depends(require_manager)):
     """能被加进共管名单的人，按层级分组。
 
-    共管名单十有八九加的是同一批人：会长团、归口部长、自己手下的骨干与成员。
+    共管名单十有八九加的是同一批人：会长团、各部门部长、活动归口部门的骨干、
+    自己手下的骨干与成员。
     每次都去问学工号再手输一遍太笨。名单只列**已经有 活动发起方/青协 身份**
     的人——列出来点了才被后端拒，等于白列。
     """
     ensure_activity_manager(db, user, activity_id)
-    _act(db, activity_id)
+    act = _act(db, activity_id)
     already = set(activity_manager_ids(db, activity_id))
     groups: list[dict] = []
 
@@ -1998,10 +2015,22 @@ def manager_candidates(activity_id: str, db: OrmSession = Depends(db_session),
     qingxie = [u for u in db.query(User).all() if u.has_role("qingxie", real=True)]
     add("会长团", [u for u in qingxie if u.qingxie_post == "council"])
     add("各部门部长", [u for u in qingxie if u.qingxie_post == "head"])
-    if user.post() in ("head", "core") and user.department_id:
-        same = [u for u in qingxie if u.department_id == user.department_id]
+    # 活动归口部门的骨干：谁来管这个活动都看得到。归口没定（草稿还没提交
+    # 审批）时按操作人自己的部门；两样都没有就不出这一组
+    own_dept = user.department_id if user.post() else None
+    dept_id = act.approval_dept_id or own_dept
+    act_dept = db.get(Department, dept_id) if dept_id else None
+    if act_dept is not None:
+        add(f"{act_dept.name}骨干",
+            [u for u in qingxie if u.department_id == act_dept.id
+             and u.qingxie_post == "core"])
+    # 下面几组按操作人自己的部门
+    if user.post() in ("head", "core") and own_dept:
+        same = [u for u in qingxie if u.department_id == own_dept]
         if user.post() == "head":
-            add("本部门骨干", [u for u in same if u.qingxie_post == "core"])
+            # 归口就是本部门时，这批骨干上面已经列过
+            if dept_id != own_dept:
+                add("本部门骨干", [u for u in same if u.qingxie_post == "core"])
             add("本部门成员", [u for u in same if u.qingxie_post == "member"])
         else:
             add("我管理的成员", [u for u in same
@@ -2553,12 +2582,13 @@ def add_walkin(shift_id: str, body: dict,
                user: User = Depends(require_manager)):
     """管理员直接添加志愿者（现场补招）。
 
-    时段冲突、名额超出都拦一道，勾选强制才放行——补招是常规操作，
-    不该顺手把场次搞超员；真要超也得是明确按下去的，且留痕。
+    名额超出拦一道，勾选强制才放行——补招是常规操作，不该顺手把场次搞超员；
+    真要超也得是明确按下去的，且留痕。时段冲突先提示（code=time_conflict），
+    管理者确认后带 confirm_conflict 重发，同样留痕。
 
     attached_ids：一并报上的培训/彩排（本场次下、对这个岗位生效的）。
     补招**不自动**连带：现场临时加进来的人，赶不赶得上培训、要不要去彩排，
-    得负责人自己判断，所以只报勾上的那几场。它们的时段冲突同样要强制才放行。
+    得负责人自己判断，所以只报勾上的那几场。它们的时段冲突一并提示。
     """
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
@@ -2573,7 +2603,10 @@ def add_walkin(shift_id: str, body: dict,
         raise HTTPException(400, "老师类型用户不参与志愿报名，无法补招")
 
     force = bool(body.get("force"))
-    reasons: list[str] = []
+    confirm = bool(body.get("confirm_conflict"))
+    reasons: list[str] = []         # 名额超出：要勾强制
+    clashes: list[dict] = []        # 时段冲突：要确认
+    clash_notes: list[str] = []
     db.commit()          # 还连接再抢锁，理由同 enroll（routers/activities.py）
     # 连同这个人的用户锁：下面要判时段冲突，本人可能正同时在别的场次报名
     # （见 locks 的「用户锁」；先场次后用户，不会死锁）
@@ -2594,9 +2627,10 @@ def add_walkin(shift_id: str, body: dict,
             if position is None or position.shift_id != g.id:
                 raise HTTPException(400, "岗位不属于该场次")
 
-        clashes = logic.time_conflicts(db, u, g)
-        if clashes:
-            reasons.append(f"时段与{logic.conflict_message(clashes)}冲突")
+        hit = logic.time_conflicts(db, u, g)
+        if hit:
+            clashes += hit
+            clash_notes.append(f"时段与{logic.conflict_message(hit, g.activity_id)}冲突")
 
         wanted = list(dict.fromkeys(body.get("attached_ids") or []))
         allowed = {s.id: s for s in logic.attached_shifts(
@@ -2612,9 +2646,13 @@ def add_walkin(shift_id: str, body: dict,
                 continue            # 已经在那场里了（比如之前连带报过），不重复加
             hit = logic.time_conflicts(db, u, s)
             if hit:
-                reasons.append(f"{s.kind_label()}「{s.name}」时段与"
-                               f"{logic.conflict_message(hit)}冲突")
+                clashes += hit
+                clash_notes.append(f"{s.kind_label()}「{s.name}」时段与"
+                                   f"{logic.conflict_message(hit, g.activity_id)}冲突")
             extra.append(s)
+        if clashes and not confirm:
+            raise logic.conflict_error(f"{u.name}：{'；'.join(clash_notes)}",
+                                       logic.dedupe_conflicts(clashes))
 
         if not logic.has_room(db, g, position):
             reasons.append(f"「{position.name}」名额已满（上限{position.quota}人）"
@@ -2626,6 +2664,8 @@ def add_walkin(shift_id: str, body: dict,
         if reasons and not force:
             raise HTTPException(409, f"{u.name}：{'；'.join(reasons)}。"
                                      f"确认添加请勾选强制")
+        # 留痕与名单上的「强制」标记两样都算：都是管理者越过了一道提示
+        reasons += clash_notes
 
         # 党校同学只能这样加进来：时长带「党校」标签，不进导出表、不计入本人累计
         source = hours_flow.PARTY_SCHOOL if body.get("party_school") else "admin"

@@ -15,6 +15,9 @@
               {{ task.method === 'geo' ? '定位签到'
                  : (task.mode === 'position' ? '分岗位签到' : '统一签到') }}
             </el-descriptions-item>
+            <el-descriptions-item v-if="task.flexible_time" label="本场已签到">
+              {{ task.checkin_count }} 次（时间灵活场次：每张签到码签一次到、一次退）
+            </el-descriptions-item>
             <el-descriptions-item label="当前状态">
               <template v-if="task.checked_in">
                 已签到{{ task.checked_out ? ' · 已签退'
@@ -41,22 +44,25 @@
           </el-alert>
           <el-button v-else :type="task.checked_in ? 'warning' : 'primary'" size="large"
                      style="width:100%;margin-top:16px"
-                     :disabled="task.state !== 'active' || !task.enrolled"
+                     :disabled="task.state !== 'active' || !task.enrolled
+                                || (task.flexible_time && task.checked_out)"
                      :loading="submitting" @click="doCheckin">
             <template v-if="!task.enrolled">您不是本场次志愿者，请联系负责人</template>
             <template v-else-if="task.checked_in && !task.checked_out">签退离岗</template>
+            <template v-else-if="task.flexible_time && task.checked_out">这张码已签到签退，下次请扫新码</template>
             <template v-else>签到到岗</template>
           </el-button>
           <!-- 签退截止就是这张码的截止（后端 checkout_deadline），不写死几小时：
-               可签时段是管理者定的。过了它还没签退，时长按场次结束时间记、待核 -->
+               可签时段是管理者定的。过了它还没签退，时长按场次结束时间（时间灵活的
+               场次按这张码的截止时间）记、待核 -->
           <p v-if="task.checked_in && !task.checked_out" class="dim" style="margin:12px 0 0">
             <template v-if="task.state === 'active' || task.state === 'early'">
               离岗时请签退，签退截止 {{ task.checkout_deadline.replace('T', ' ') }}；
-              逾期未签退的，时长按场次结束时间记并由负责人核对
+              逾期未签退的，时长按{{ task.flexible_time ? '签到码截止时间' : '场次结束时间' }}记并由负责人核对
             </template>
             <template v-else>
               签到码已{{ task.state === 'closed' ? '关闭' : '截止' }}，无法自行签退；
-              时长按场次结束时间记并由负责人核对，有出入请联系负责人
+              时长按{{ task.flexible_time ? '签到码截止时间' : '场次结束时间' }}记并由负责人核对，有出入请联系负责人
             </template>
           </p>
         </template>

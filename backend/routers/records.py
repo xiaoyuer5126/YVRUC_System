@@ -179,13 +179,16 @@ def _is_header(cells: list[str]) -> bool:
 
 
 def _fingerprint(act: Activity, records: list[HoursRecord], appealing: set[str],
-                 rows: list[tuple[int, list[str]]]) -> str:
+                 rows: list[tuple[int, list[str]]], users: dict[str, User]) -> str:
     """预览那一刻的名单与这次要导的内容，压成一串指纹。
 
     确认导入时按同一份内容重算一遍：名单里谁有几小时、备注是什么、谁有待处理的
-    申诉、活动核准了没有，再加上这次交上来的每一行。任何一项和预览时不同，管理者
-    点下去的就不是他看过的那份结果，这时不写，请他重新预览。
+    申诉、活动核准了没有，再加上这次交上来的每一行，以及这些行里的学号各对上了
+    谁（用户 id 与类型，找不到记 None）。任何一项和预览时不同，管理者点下去的就
+    不是他看过的那份结果，这时不写，请他重新预览：比如预览时某个学号还没建档、
+    列在「找不到」里，确认前刚好有人建了档，不重新预览就会把他悄悄导进名单。
     """
+    sids = sorted({(c[0] if c else "").strip() for _n, c in rows} - {""})
     state = {
         "approved": iso(act.hours_approved_at) if act.hours_approved_at else "",
         "records": sorted(
@@ -194,6 +197,8 @@ def _fingerprint(act: Activity, records: list[HoursRecord], appealing: set[str],
              r.id in appealing)
             for r in records),
         "rows": rows,
+        "people": [(sid, u.id, u.user_type) if (u := users.get(sid)) else (sid, None, None)
+                   for sid in sids],
     }
     raw = json.dumps(state, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -230,7 +235,7 @@ def import_rows(db: OrmSession, act: Activity, user: User,
     appealing = {a.record_id for a in db.query(HoursAppeal)
                  .filter(HoursAppeal.activity_id == act.id,
                          HoursAppeal.status == "pending").all()}
-    current = _fingerprint(act, records, appealing, rows)
+    current = _fingerprint(act, records, appealing, rows, users)
     if apply and fingerprint != current:
         # 带 code：前端据此自动按最新名单重新预览，别的 409（如已锁定）照常报错
         raise HTTPException(409, {"code": "ROSTER_CHANGED",
@@ -414,7 +419,7 @@ def record_roster(activity_id: str, db: OrmSession = Depends(db_session),
             "total_hours": round(sum(r.settled_hours() for r in rows), 1),
             "editable": not block, "block_reason": block,
             "warn_hours": config.RECORD_WARN_HOURS,
-            "held_text": (span_text(act.held_start, act.held_end)
+            "held_text": (act.time_text()
                           if act.held_start and act.held_end else "")}
 
 

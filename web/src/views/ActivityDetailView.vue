@@ -122,7 +122,7 @@
                  :class="{ mine: myStationId(x.g) === x.p.id, blocked: x.p.eligible === false }">
               <div class="m-pos-head">
                 <span>{{ x.g.name }} · {{ x.g.time_text }}
-                  <el-tag v-if="x.g.flexible_time" size="small" type="success" effect="plain" style="margin-left:4px">时间灵活·不计冲突</el-tag>
+                  <el-tag v-if="x.g.flexible_time" size="small" type="success" effect="plain" style="margin-left:4px">时间灵活·可多次签到</el-tag>
                 </span>
                 <span class="dim">{{ x.p.enrolled }}/{{ x.p.quota }}</span>
               </div>
@@ -150,7 +150,7 @@
               <el-link class="m-shift-name" type="primary" underline="never"
                        @click="showGroupDetail(g)">{{ g.name }}</el-link>
               <el-tag size="small" type="warning" effect="plain">按时间报名</el-tag>
-              <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain">时间灵活·不计冲突</el-tag>
+              <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain">时间灵活·可多次签到</el-tag>
               <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
               <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
             </div>
@@ -167,6 +167,7 @@
               </div>
             </div>
           </el-card>
+          <div v-if="showPickRule" class="dim">{{ PICK_RULE }}</div>
         </div>
 
         <!-- 窄屏：场次与岗位改成竖排卡片。手机上选岗位是最要紧的动作，
@@ -180,7 +181,7 @@
                       :type="g.mode === 'assign' ? 'warning' : 'info'">
                 {{ g.mode_label }}
               </el-tag>
-              <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain">时间灵活·不计冲突</el-tag>
+              <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain">时间灵活·可多次签到</el-tag>
               <el-tag v-if="g.started" size="small" type="info" effect="plain">已开场</el-tag>
               <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
               <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
@@ -329,6 +330,7 @@
               </el-tag>
             </div>
           </el-card>
+          <div v-if="showPickRule" class="dim">{{ PICK_RULE }}</div>
         </div>
 
         <el-card v-else shadow="never">
@@ -399,9 +401,6 @@
                         </template>
                       </el-table-column>
                     </el-table>
-                    <div v-if="!isTeacher" class="dim" style="margin-top:8px">
-                      同场次只能选一个岗位，候补将在名额释放后转正，转正后需在确认窗口内确认（2 小时，夜间 23:00–8:00 不计时）。
-                    </div>
                   </template>
                   <p v-else class="dim" style="margin:4px 0">本场次尚未设置岗位，请联系负责人。</p>
 
@@ -503,7 +502,7 @@
                   {{ row.mode_label }}
                 </el-tag>
                 <el-tag v-if="row.flexible_time" size="small" type="success" effect="plain"
-                        style="margin-left:8px">时间灵活·不计冲突</el-tag>
+                        style="margin-left:8px">时间灵活·可多次签到</el-tag>
                 <el-tag v-if="row.enroll_paused" size="small" type="danger" effect="plain"
                         style="margin-left:8px">暂停报名</el-tag>
                 <el-tag v-if="row.locked" size="small" type="info"
@@ -526,6 +525,7 @@
               </template>
             </el-table-column>
           </el-table>
+          <div v-if="showPickRule" class="dim pick-rule">{{ PICK_RULE }}</div>
         </el-card>
       </el-col>
 
@@ -534,7 +534,7 @@
         <el-alert v-if="act.my_time_conflicts?.length" type="error" :closable="false">
           <p style="margin:0 0 4px"><b>您有时间冲突的活动：</b></p>
           <p v-for="c in act.my_time_conflicts" :key="c.enrollment_id" style="margin:4px 0;font-size:13px">
-            「{{ c.activity_title }}」{{ c.shift_name }}（{{ c.time }}）
+            {{ conflictLine(c, act.id) }}
           </p>
         </el-alert>
         <el-card shadow="never">
@@ -695,7 +695,7 @@
 import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api, fmtDT } from '../api'
+import { api, conflictLine, fmtDT, withConflictConfirm } from '../api'
 import { auth, MODE_COLORS } from '../store'
 import ProfileDialog from '../components/ProfileDialog.vue'
 import GroupQrDialog from '../components/GroupQrDialog.vue'
@@ -726,10 +726,15 @@ const queued = ref({})       // vuecheck: script-only（模板经 queuedShift / 
 const QUEUE_NOTE = '排队中，请勿刷新'
 const queuedShift = g => g.id in queued.value
 const queuedHere = (g, s) => queued.value[g.id] === (s ? s.id : '')
-// 挂了适用岗位的题只问报这个岗位的人
+// 挂了适用岗位的题只问报这个岗位的人；适用校区、学段按个人信息里填的算，
+// 和后端校验（FormQuestion.fits）同一口径
 const enrollQuestions = computed(() => (act.value?.questions || []).filter(q => {
   const scope = q.applies_to_positions || []
-  return !scope.length || scope.includes(enrollDlg.value.position?.id)
+  const campuses = q.applies_to_campuses || []
+  const stages = q.applies_to_stages || []
+  return (!scope.length || scope.includes(enrollDlg.value.position?.id))
+    && (!campuses.length || campuses.includes(auth.user?.campus))
+    && (!stages.length || stages.includes(auth.user?.stage))
 }))
 const willWaitlist = computed(() => {
   const { shift: g, position } = enrollDlg.value
@@ -765,6 +770,10 @@ const navUrl = computed(() => {
 })
 // 老师不参与志愿报名：安排照看，报名、申请入口都不给
 const isTeacher = computed(() => auth.user?.user_type === 'teacher')
+// 选岗规则：各场次通用，全部场次（或岗位）列完之后说一次
+const PICK_RULE = '同场次只能选一个岗位，候补将在名额释放后转正，转正后需在确认窗口内确认（2 小时，夜间 23:00–8:00 不计时）。'
+const showPickRule = computed(() =>
+  !isTeacher.value && act.value?.shifts.some(g => g.positions.length))
 
 function pct(g) {
   return Math.min(100, Math.round((g.enrolled / Math.max(1, g.capacity)) * 100))
@@ -989,12 +998,16 @@ async function submitEnroll() {
   enrollDlg.value.visible = false
   queued.value = { ...queued.value, [g.id]: position ? position.id : '' }
   try {
-    // 错误自己提示：同时排着好几场时，得说清是哪一场没报上
-    const d = await api.post(
+    // 错误自己提示：同时排着好几场时，得说清是哪一场没报上。
+    // 时段冲突先问一句，确认了才带 confirm_conflict 重发
+    const d = await withConflictConfirm(confirm => api.post(
       `/api/activities/${act.value.id}/shifts/${g.id}/enroll`,
       { position_id: position ? position.id : null,
-        allow_reassign: allowReassign, leader_willing: leaderWilling, answers },
-      { skipErrorToast: true })
+        allow_reassign: allowReassign, leader_willing: leaderWilling, answers,
+        confirm_conflict: confirm },
+      { skipErrorToast: true }),
+    { title: `「${g.name}」时间冲突`, ask: '仍要报名？', activityId: act.value.id })
+    if (!d) return
     ElMessage.success(`「${g.name}」${d.message}`)
     groupQr.value.open({ qr: d.contact_group_qr, title: act.value.title })
   } catch (e) {
@@ -1007,13 +1020,6 @@ async function submitEnroll() {
           { type: 'warning', confirmButtonText: '去完善' })
       } catch { /* 关闭提示也照样打开表单 */ }
       openProfileDialog()
-    } else if (e.data && e.data.conflicts) {
-      // 纯文本，不拼 HTML：活动名是别人填的，当 HTML 渲染就等于把一段
-      // 脚本塞进每个撞时间的志愿者的浏览器里
-      const list = e.data.conflicts
-        .map(c => `「${c.activity_title}」${c.shift_name}（${c.time}）`
-                  + (c.waiting ? '（候补中）' : '')).join('\n')
-      ElMessageBox.alert(list, `「${g.name}」与其他活动时间冲突`, { type: 'error' })
     } else if (e.status !== 401) {     // 401 已经统一提示并跳去登录了
       ElMessage.error(`「${g.name}」${e.message}`)
     }
@@ -1063,6 +1069,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 </script>
 
 <style scoped>
+.pick-rule { margin-top: 12px; }
 /* 页头：宽屏标题与标签同一行，窄屏标签落到下一行 */
 .hd-title { font-weight: 600; }
 .hd-tags { display: inline-flex; gap: 8px; margin-left: 12px; vertical-align: middle; }

@@ -6,6 +6,11 @@
 宽限：码过了截止或被关掉时还没签退的人，时长按场次结束时间兜底并标记待核
 （见 staff_ops.effective_checkout）。管理者手动补签/签退不受这个限制。
 
+**时间灵活的场次（Shift.flexible_time）一张码一轮**：每张签到码每人签一次到、
+一次退，同一张码签退后再扫就挡回去；负责人开一张新码，就能再签一轮。时长按
+各轮累加；某一轮没签退的，按那张码的截止时间兜底并标记待核。别的场次一人一场
+只有一条记录，换码也还是那一条。
+
 **两类签到码都从这个入口进**：
   · 动态码——管理端每 30 秒换一张，只活在 Redis 里（见 locks.py）。默认用这个，
     因为固定码拍张照发群里就能代签；
@@ -70,14 +75,45 @@ def resolve_task(db: OrmSession, shift_id: str, position_id: str | None
             or next((t for t in tasks if not t.position_id), None) or tasks[0])
 
 
-def checkout_open(db: OrmSession, g: Shift, t: datetime) -> bool:
+def find_record(db: OrmSession, user_id: str, g: Shift,
+                task: CheckinTask | None) -> CheckinRecord | None:
+    """扫这张码该落在哪条签到记录上。
+
+    一般场次按「人 + 场次」只有一条：签到用 A 码、A 关了再开 B 码，扫 B 照样
+    是给 A 那条签退。时间灵活的场次一张码一轮，按「人 + 场次 + 码」找——
+    这张码上没有他的记录，扫了就是新的一轮签到。
+    """
+    q = db.query(CheckinRecord).filter(CheckinRecord.user_id == user_id,
+                                       CheckinRecord.shift_id == g.id)
+    if g.flexible_time:
+        if task is None:
+            return None
+        q = q.filter(CheckinRecord.task_id == task.id)
+    return q.order_by(CheckinRecord.checkin_at.desc()).first()
+
+
+def checkin_count(db: OrmSession, user_id: str, g: Shift) -> int:
+    """他在这一场签过几轮到（时间灵活的场次才会多于一次）。"""
+    return (db.query(CheckinRecord)
+            .filter(CheckinRecord.user_id == user_id,
+                    CheckinRecord.shift_id == g.id).count())
+
+
+def checkout_open(db: OrmSession, g: Shift, t: datetime,
+                  task: CheckinTask | None = None) -> bool:
     """这一场此刻还能不能自己签退：场次下有任一张签到码开着、且没过截止。
 
-    看的是**整场**的码而不只是签到时扫的那张：_apply_checkin 按「人 + 场次」
+    看的是**整场**的码而不只是签到时扫的那张：find_record 按「人 + 场次」
     找记录，签到用 A 码、A 关了再开 B 码，扫 B 照样能签退。只看 A 的话，
     人明明还能签退，时长这边却已经按场次结束兜底了，两边说的不是一回事。
     签到时那张码被删了也一样，只看这一场现在还有没有能用的码。
+
+    时间灵活的场次一张码一轮，只看这条记录签到时那张码（task）：它关了或过了
+    截止，这一轮就签不了退了，换新码签的是下一轮。
     """
+    if g.flexible_time:
+        return (task is not None and task.active
+                and t <= task.window(g)[1])
     tasks = (db.query(CheckinTask)
              .filter(CheckinTask.shift_id == g.id,
                      CheckinTask.active.is_(True)).all())
@@ -134,9 +170,7 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
     if enr is None:
         raise HTTPException(403, f"您不是「{act.title}·{g.name}」的志愿者")
 
-    rec = (db.query(CheckinRecord)
-           .filter(CheckinRecord.user_id == user.id,
-                   CheckinRecord.shift_id == g.id).first())
+    rec = find_record(db, user.id, g, task)
 
     if rec is None:
         # ---- 签到 ----
@@ -147,13 +181,18 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
                             user_id=user.id, method=method, checkin_at=t)
         db.add(rec)
         db.commit()
+        rounds = (f"（本场第 {checkin_count(db, user.id, g)} 次签到）"
+                  if g.flexible_time else "")
         return {"ok": True, "action": "checkin",
-                "message": f"签到成功，{user.name} 已到岗。" + note,
+                "message": f"签到成功，{user.name} 已到岗{rounds}。" + note,
                 "time": t.isoformat(timespec="minutes"),
                 "location": (position.location if position and position.location
                              else act.location)}
 
     if rec.checkout_at:
+        if g.flexible_time:
+            raise HTTPException(409, "您已用这张签到码签到并签退过；"
+                                     "再来服务请扫负责人新开的签到码")
         raise HTTPException(409, "您已完成本场次的签到与签退，请勿重复操作")
 
     # 刚签完又扫一遍，多半是「以为没成功」或相机连读了两下。这条要是当成签退，
@@ -181,9 +220,7 @@ def task_info(token: str, db: OrmSession = Depends(db_session),
     task, act, g = _load_task(db, token)
     position = db.get(Position, task.position_id) if task.position_id else None
     t = now()
-    rec = (db.query(CheckinRecord)
-           .filter(CheckinRecord.user_id == user.id,
-                   CheckinRecord.shift_id == g.id).first())
+    rec = find_record(db, user.id, g, task)
     start, end = task.window(g)
     state = "active"
     if not task.active:
@@ -205,6 +242,10 @@ def task_info(token: str, db: OrmSession = Depends(db_session),
         # 得告诉人该怎么办，而不是等他点了按钮再报错
         "method": "geo" if geo_anchor(db, task) else "scan",
         "enrolled": mine is not None,
+        # 时间灵活的场次：checked_in / checked_out 说的是**这张码**这一轮，
+        # checkin_count 是本场一共签过几轮
+        "flexible_time": g.flexible_time,
+        "checkin_count": checkin_count(db, user.id, g),
         "checked_in": rec is not None,
         "checked_out": bool(rec and rec.checkout_at),
         "my_checkin_at": rec.checkin_at.isoformat(timespec="minutes") if rec else None,
@@ -220,7 +261,8 @@ def task_info(token: str, db: OrmSession = Depends(db_session),
 @router.post("/task/{token}")
 def do_checkin(token: str, db: OrmSession = Depends(db_session),
                user: User = Depends(current_user)):
-    """扫码签到：同一签到码，无记录 → 签到；已签未退 → 签退；已签已退 → 拒绝重复。
+    """扫码签到：同一签到码，无记录 → 签到；已签未退 → 签退；已签已退 → 拒绝重复
+    （时间灵活的场次换一张新码可以再签一轮，见文件头）。
 
     但「已签未退」里分两种：刚签完又扫一遍（手滑）和散场回来签退。前者挡回去，
     见下面 CHECKOUT_MIN_GAP_MINUTES。

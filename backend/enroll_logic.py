@@ -1,8 +1,10 @@
 """报名核心逻辑：冲突检测、名额账本、候补流转。
 
 关键机制：
-  · 时段冲突：只比场次的时间区间，重叠即拦截（跨活动，含候补中的场次——
-    排了队就等于预留了这段时间）；
+  · 时段冲突：只比场次的时间区间，重叠就提示（跨活动、也比本活动的别的场次，
+    含候补中的场次——排了队就等于预留了这段时间）。志愿者或管理者看过提示、
+    确认仍要报（confirm_conflict）就放行，见 conflict_error；候补转正、一键
+    排班这类没人可问的自动路径不查冲突；
   · 名额账本：已报名 + 候补转正待确认（确认窗内位子给他留着）；
   · 候补按 joined_at 排队，退选释放名额 → 队首转正，2 小时确认窗口
     （夜间 23:00–8:00 不计时，且不晚于场次开始，见 promote_confirm_deadline）；
@@ -18,6 +20,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import NamedTuple
 
+from fastapi import HTTPException
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm.attributes import set_committed_value
@@ -27,7 +30,7 @@ from .integrations import msgcenter
 from .models import (Activity, CheckinRecord, Enrollment, Shift, Position,
                      User, now, uid)
 
-# 申请中的场次同样占着时段：申请就拦冲突，不等录取
+# 申请中的场次同样占着时段：申请时就提示冲突，不等录取
 ACTIVE = ("applied", "enrolled", "waitlisted", "pending_confirm")
 
 
@@ -52,8 +55,6 @@ def active_rows(db: OrmSession, user: User) -> list[tuple]:
 def time_conflicts(db: OrmSession, user: User,
                    target: Shift) -> list[dict]:
     """该用户有效报名中与 target 组时间段重叠的记录（跨活动）。"""
-    if target.flexible_time:
-        return []
     return conflicts_among(active_rows(db, user), target.id,
                            target.start_time, target.end_time)
 
@@ -63,7 +64,7 @@ def conflicts_among(rows, target_id: str, start: datetime,
     """在 active_rows 查回来的报名里挑出与 [start, end) 重叠的（本场次自己除外）。"""
     out = []
     for enr, g, act in rows:
-        if enr.shift_id == target_id or g.flexible_time:
+        if enr.shift_id == target_id:
             continue
         if overlaps(g.start_time, g.end_time, start, end):
             out.append({
@@ -164,13 +165,38 @@ def sync_attached(db: OrmSession, enr: Enrollment,
                 db.delete(row)
 
 
-def conflict_message(clashes: list[dict]) -> str:
+def conflict_message(clashes: list[dict], activity_id: str = "") -> str:
+    """冲突列表拼成一句话。给了 activity_id 时，本活动里的那几场写成「本活动 xx 场」。"""
     parts = []
     for c in clashes[:3]:
         tail = "（候补中）" if c["waiting"] else ""
-        parts.append(f"「{c['activity_title']}」{c['shift_name']}"
-                     f"（{c['time']}）{tail}")
+        where = ("本活动" if activity_id and c["activity_id"] == activity_id
+                 else f"「{c['activity_title']}」")
+        parts.append(f"{where}{c['shift_name']}（{c['time']}）{tail}")
     return "；".join(parts)
+
+
+TIME_CONFLICT = "time_conflict"
+
+
+def conflict_error(message: str, clashes: list[dict]):
+    """时段冲突的 409：前端认 code 弹确认框，列出 conflicts，确认后带
+    confirm_conflict 重发。冲突只提示不硬拦——同一时段两场都报、到时候请假
+    一场，是志愿者自己能拿主意的事。"""
+    return HTTPException(409, {"code": TIME_CONFLICT, "message": message,
+                               "conflicts": clashes})
+
+
+def dedupe_conflicts(clashes: list[dict]) -> list[dict]:
+    """同一条报名跟好几场都压上时只留一行。"""
+    seen: set[str] = set()
+    out = []
+    for c in clashes:
+        if c["enrollment_id"] in seen:
+            continue
+        seen.add(c["enrollment_id"])
+        out.append(c)
+    return out
 
 
 # ======================= 名额账本 =======================
@@ -356,7 +382,8 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
       · 冲突：time_conflicts——本人 ACTIVE 的报名，场次与 targets 里任一场
         （主场次和它的培训/彩排）区间重叠，比某一场时不算那一场自己。
         这里只要「有没有」；真有的话调用方再走 active_rows 拼出详细的提示，
-        那是少见的路径，常见路径省下一个往返。
+        那是少见的路径，常见路径省下一个往返。本人已确认冲突仍要报时，调用方
+        不看这一项。
     """
     live = Enrollment.status.in_(ACTIVE)
     mine = (Enrollment.shift_id == shift_id) & (Enrollment.user_id == user_id)

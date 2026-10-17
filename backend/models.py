@@ -305,7 +305,8 @@ class DutyHandover(Base):
 
 
 class Session(Base):
-    """登录会话。expires_at 到点即失效，由 deps.current_user 校验并清理。"""
+    """登录会话。expires_at 到点即失效，由 deps.current_user 校验并清理；
+    每次使用往后顺延（滑动有效期，见 config.SESSION_TTL）。"""
     __tablename__ = "sessions"
     token: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
@@ -494,10 +495,11 @@ class Activity(Base):
                 max(s.end_time for s in rows))
 
     def time_text(self) -> str:
-        """活动时间的说法：「11-01 05:30 ~ 11-01 15:00」。广场、活动详情、审批列表、
-        招募文案都用它，几处写法一致，学生对得上。"""
+        """活动时间的说法：「2026-10-16（周五）~ 2026-10-17（周六）」，见 days_text。
+        广场、活动详情、管理端、审批列表、招募文案、导出都用它，几处写法一致，
+        学生对得上。"""
         span = self.time_span()
-        return f"{span[0]:%m-%d %H:%M} ~ {span[1]:%m-%d %H:%M}" if span else "待定"
+        return days_text(*span) if span else "待定"
 
     def last_shift_start(self) -> datetime | None:
         """报名截止最晚只能填到这里：最后一个服务场次的开始时间。
@@ -580,6 +582,21 @@ def day_text(t: datetime) -> str:
     return f"{t:%m-%d}（周{WEEKDAYS[t.weekday()]}）"
 
 
+def days_text(start: datetime, end: datetime) -> str:
+    """活动整体时间的说法：「2026-10-16（周五）~ 2026-10-17（周六）」，同一天
+    只写一个日期。
+
+    只写日期不写钟点：活动整体的起止是最早一场开始、最晚一场结束拼出来的，
+    写上钟点读着像一整段连续服务；具体几点看各场次（span_text）。带上年份，
+    导出和跨年的活动拿出来不用猜是哪一年。
+    """
+    a = f"{start:%Y-%m-%d}（周{WEEKDAYS[start.weekday()]}）"
+    if start.date() == end.date():
+        return a
+    # 全角右括号自带留白，「~」前不加空格
+    return f"{a}~ {end:%Y-%m-%d}（周{WEEKDAYS[end.weekday()]}）"
+
+
 def span_text(start: datetime, end: datetime) -> str:
     """一段时间的说法：「09-20（周六）09:00-12:00」，跨天就把两头的日期都写上。
 
@@ -641,7 +658,9 @@ class Shift(Base):
     # 自动锁定已经生效过：管理者过了锁定点再手动解锁，不会被自动锁回去
     auto_lock_spent: Mapped[bool] = mapped_column(Boolean, default=False)
     sort: Mapped[int] = mapped_column(Integer, default=0)
-    # 时间待定/长期活动场次：不计入报名和申请的时间冲突检查
+    # 时间待定/长期活动场次：每张签到码各签一次到、一次退，换码可以再签一轮，
+    # 时长按各轮累加（见 routers/checkin.py）。所以时长只能按签到签退计或不计，
+    # 不能是 fixed
     flexible_time: Mapped[bool] = mapped_column(Boolean, default=False)
     # 签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
     reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -865,13 +884,27 @@ class FormQuestion(Base):
     # 适用岗位：只有选了其中某个岗位的人才要答这道题。空 = 人人都答。
     # 和场次的 applies_to_positions 一个意思，只是那边管培训、这边管题目。
     applies_to_positions: Mapped[list] = mapped_column(JSON, default=list)
+    # 适用校区 / 适用学段：按志愿者个人信息里的校区、学段（User.campus / stage）
+    # 圈人，取值是 config.CAMPUSES / STAGES 里的。空 = 不限。和适用岗位、显示
+    # 条件同时满足才问这个人，不满足的看不到、必答也不用答
+    applies_to_campuses: Mapped[list] = mapped_column(JSON, default=list)
+    applies_to_stages: Mapped[list] = mapped_column(JSON, default=list)
     sort: Mapped[int] = mapped_column(Integer, default=0)
+
+    def fits(self, user: "User") -> bool:
+        """这个人的校区、学段在不在本题的适用范围里。"""
+        return ((not self.applies_to_campuses
+                 or user.campus in self.applies_to_campuses)
+                and (not self.applies_to_stages
+                     or user.stage in self.applies_to_stages))
 
     def out(self) -> dict:
         return {"id": self.id, "kind": self.kind, "kind_label": self.KINDS.get(self.kind, self.kind),
                 "title": self.title, "options": self.options or [],
                 "required": self.required, "show_if": self.show_if or {},
                 "applies_to_positions": self.applies_to_positions or [],
+                "applies_to_campuses": self.applies_to_campuses or [],
+                "applies_to_stages": self.applies_to_stages or [],
                 "sort": self.sort}
 
 

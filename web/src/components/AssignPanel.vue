@@ -170,7 +170,7 @@
         </el-form-item>
         <el-form-item label="">
           <el-checkbox v-model="walkin.force">
-            时段冲突或名额已满时强制加入，计入留痕
+            名额已满时强制加入，计入留痕（时段冲突会另外弹窗确认）
           </el-checkbox>
         </el-form-item>
       </el-form>
@@ -185,7 +185,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api, uploadFile } from '../api'
+import { api, uploadFile, withConflictConfirm } from '../api'
 
 const props = defineProps({
   shift: { type: Object, required: true },
@@ -324,19 +324,24 @@ async function apply() {
 
 async function addWalkin() {
   try {
-    await api.post(`/api/staff/shifts/${props.shift.id}/add-walkin`, {
-      student_id: walkin.value.sid, position_id: walkin.value.position || '',
-      allow_reassign: walkin.value.allowReassign,
-      attached_ids: walkin.value.attached.filter(
-        id => walkinAttached.value.some(a => a.id === id)),
-      force: walkin.value.force, party_school: walkin.value.party })
+    // 时段冲突先弹窗确认，确认了带 confirm_conflict 重发；名额超出照旧要勾强制
+    const d = await withConflictConfirm(confirm => api.post(
+      `/api/staff/shifts/${props.shift.id}/add-walkin`, {
+        student_id: walkin.value.sid, position_id: walkin.value.position || '',
+        allow_reassign: walkin.value.allowReassign,
+        attached_ids: walkin.value.attached.filter(
+          id => walkinAttached.value.some(a => a.id === id)),
+        force: walkin.value.force, party_school: walkin.value.party,
+        confirm_conflict: confirm }),
+    { head: `${walkin.value.sid} 与以下场次时间冲突：`, ask: '仍要补招？' })
+    if (!d) return
     ElMessage.success('补招成功')
     walkinVisible.value = false
     walkin.value = { sid: '', position: '', force: false, allowReassign: true,
                      attached: [], party: false }
     emit('reload')
   } catch (e) {
-    // 冲突/超额都需要显式勾选强制，替用户把勾打上并提示重试
+    // 超额需要显式勾选强制，替用户把勾打上并提示重试
     if ((e.message || '').includes('强制')) {
       walkin.value.force = true
     }

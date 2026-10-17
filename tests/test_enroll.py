@@ -1,4 +1,4 @@
-"""报名闸门：名额、候补、时段冲突、并发抢报。"""
+"""报名闸门：名额、候补、时段冲突提示、并发抢报。"""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -27,25 +27,81 @@ def test_duplicate_enroll_rejected(client, open_group, take_student):
     assert enroll(client, h, act, g).status_code == 409
 
 
-def test_time_conflict_blocks_enroll(client, open_group, take_student):
-    """两个场次时间重叠，第二个报不了。"""
+def test_时段冲突先提示_确认后照报(client, db, open_group, take_student):
+    """两个场次时间重叠：不带确认回 409 和冲突列表，带上 confirm_conflict 就报上。"""
     act1, g1 = open_group(5, day_offset=200, start_in_hours=4)
     act2, g2 = open_group(5, day_offset=200, start_in_hours=6)   # 与 g1 重叠
-    h = login(client, take_student())
+    sid = take_student()
+    h = login(client, sid)
 
-    assert enroll(client, h, act1, g1).status_code == 200
+    first = enroll(client, h, act1, g1).json()["enrollment_id"]
     r = enroll(client, h, act2, g2)
     assert r.status_code == 409
-    assert "冲突" in r.json()["detail"]["message"]
+    detail = r.json()["detail"]
+    assert detail["code"] == "time_conflict" and "冲突" in detail["message"]
+    assert [c["enrollment_id"] for c in detail["conflicts"]] == [first]
+    assert detail["conflicts"][0]["activity_id"] == act1.id
+    assert db.query(Enrollment).filter(Enrollment.shift_id == g2.id).count() == 0
+
+    r = enroll(client, h, act2, g2, confirm_conflict=True)
+    assert r.status_code == 200 and r.json()["status"] == "enrolled", r.text
 
 
-def test_详情页冲突提示只列别的活动且一条报名只一行(client, db, open_group,
-                                              take_student):
-    """「您有时间冲突的活动」只列别的活动，同一条报名也只出一行。
+def test_确认冲突也绕不过名额(client, open_group, take_student):
+    """确认的只是时段：名额照样按锁里数到的判，满了进候补、候补满了拒。"""
+    act1, g1 = open_group(5, day_offset=201, start_in_hours=4)
+    act2, g2 = open_group(1, day_offset=201, start_in_hours=5, waitlist_quota=0)
+    assert enroll(client, login(client, take_student()), act2, g2).status_code == 200
+    h = login(client, take_student())
+    assert enroll(client, h, act1, g1).status_code == 200
+    r = enroll(client, h, act2, g2, confirm_conflict=True)
+    assert r.status_code == 409 and "候补名额已满" in r.json()["detail"], r.text
 
-    本活动的场次跟本人的报名压上不算冲突——那几场正是他要看的那几场，自己跟
-    自己撞没有意义；别的活动里的一段报名压上本活动好几场时，也只是那一段，
-    不按场次数重复列。
+
+def test_本活动两场重叠也提示(client, db, open_group, take_student):
+    act, g1 = open_group(5, day_offset=202, start_in_hours=4)
+    g2 = Shift(id=uid("g"), activity_id=act.id, name="同日第二场",
+               start_time=g1.start_time + timedelta(hours=1),
+               end_time=g1.end_time + timedelta(hours=1), mode="pick", sort=1)
+    db.add(g2)
+    db.flush()
+    p = Position(id=uid("p"), shift_id=g2.id, name="岗位", quota=5,
+                 **POSITION_TEXT)
+    db.add(p)
+    db.commit()
+    g2.test_position_id = p.id
+    h = login(client, take_student())
+    first = enroll(client, h, act, g1).json()["enrollment_id"]
+    r = enroll(client, h, act, g2)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "time_conflict"
+    assert "本活动" in r.json()["detail"]["message"]
+    assert [c["enrollment_id"] for c in r.json()["detail"]["conflicts"]] == [first]
+    assert enroll(client, h, act, g2, confirm_conflict=True).status_code == 200
+
+
+def test_候补自动转正不看时段冲突(client, db, open_group, take_student):
+    """候补转正没人可问：排队期间本人确认报了同一时段的别的活动，名额空出来
+    照样转正，冲突由他自己处理。"""
+    act1, g1 = open_group(1, day_offset=203, start_in_hours=4)
+    act2, g2 = open_group(5, day_offset=203, start_in_hours=5)
+    h1 = login(client, take_student())
+    h2 = login(client, take_student())
+    held = enroll(client, h1, act1, g1).json()["enrollment_id"]
+    wl_id = enroll(client, h2, act1, g1).json()["enrollment_id"]
+    assert enroll(client, h2, act2, g2).status_code == 409
+    assert enroll(client, h2, act2, g2, confirm_conflict=True).status_code == 200
+
+    assert client.delete(f"/api/activities/enrollments/{held}",
+                         headers=h1).json()["effect"] == "released"
+    db.expunge_all()
+    assert db.get(Enrollment, wl_id).status == "pending_confirm"
+
+
+def test_详情页冲突提示含本活动别的场次且一条报名只一行(client, db, open_group,
+                                                take_student):
+    """「您有时间冲突的活动」也列本活动的：本人报了的那一场跟本活动别的场次
+    压着，再报那一场就是两头跑。同一条报名只出一行：别的活动里的一段报名压上
+    本活动好几场时，也只是那一段，不按场次数重复列。
     """
     # 本活动两场压在一起，本人在其中一场（改期、加场、复制延期都会造出这种）
     act, g1 = open_group(5, day_offset=340, start_in_hours=4)
@@ -56,8 +112,8 @@ def test_详情页冲突提示只列别的活动且一条报名只一行(client,
                  end_time=g1.end_time + timedelta(hours=1),
                  mode="pick", sort=1))
     db.commit()
-    assert client.get(f"/api/activities/{act.id}",
-                      headers=h).json()["my_time_conflicts"] == []
+    conf = client.get(f"/api/activities/{act.id}", headers=h).json()["my_time_conflicts"]
+    assert [(c["activity_id"], c["shift_name"]) for c in conf] == [(act.id, g1.name)]
 
     # 别的活动的一段报名，跟本活动这两场都压上：只列这一条
     other, g2 = open_group(5, day_offset=340, start_in_hours=5)
@@ -258,18 +314,19 @@ def test_连点两下退选只退一次(client, admin, db, open_group, take_stud
     assert db.get(Enrollment, queued["enrollment_id"]).status == "pending_confirm"
 
 
-def test_flexible_time_shift_exempt_from_conflict(client, db, open_group, take_student):
+def test_时间灵活场次照常提示冲突(client, db, open_group, take_student):
+    """时间灵活管的是签到（可以签好几轮），时段冲突照常提示。"""
     sid = take_student()
     headers = login(client, sid)
     act1, g1 = open_group(2, waitlist_quota=0)
     act2, g2 = open_group(2, waitlist_quota=0)
-    # 两个场次时间重叠，先将 g1 设为时间灵活
     g1.flexible_time = True
     g2.start_time = g1.start_time
     g2.end_time = g1.end_time
     db.commit()
 
     assert enroll(client, headers, act1, g1).status_code == 200
-    # 已报时间灵活场次 g1，再报同时间段的普通场次 g2 不撞车
-    assert enroll(client, headers, act2, g2).status_code == 200
+    r = enroll(client, headers, act2, g2)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "time_conflict"
+    assert enroll(client, headers, act2, g2, confirm_conflict=True).status_code == 200
 

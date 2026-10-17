@@ -200,7 +200,8 @@ def _row(u: User, me: User, depts: dict[str, str]) -> dict:
         "department": depts.get(u.department_id, ""),
         "supervisor_id": u.supervisor_id or "",
         "supervisor": depts.get(u.supervisor_id, ""),
-        "remind_dept_ids": u.remind_dept_ids or [],
+        # 已删掉的部门不往外给：前端没处查它的名字，只会露出一串 id
+        "remind_dept_ids": [d for d in (u.remind_dept_ids or []) if d in depts],
         "is_me": u.id == me.id,
     }
 
@@ -349,7 +350,7 @@ def set_roles(user_id: str, body: RoleBody,
 # ======================= 批量调整身份 =======================
 
 BATCH_MAX = 200
-# 批量能设的青协层级：部长每个部门只有一位，批量设谁顶掉谁说不清，逐个来
+# 批量能设的青协层级：部长决定一个部门的审批由谁来拍，要逐个确认，不批量设
 BATCH_GRANTABLE_POSTS = ("council", "core", "member")
 
 
@@ -441,7 +442,7 @@ def batch_roles(body: BatchRoleBody, db: OrmSession = Depends(db_session),
         raise HTTPException(400, "操作只能是 添加 / 移除")
     if body.role not in ("qingxie", "initiator"):
         raise HTTPException(400, "批量只支持「青协」与「活动发起方」两个身份；"
-                                 "管理员、学生不批量")
+                                 "管理员、志愿者不批量")
     ids = list(dict.fromkeys(s.strip() for s in body.student_ids if s.strip()))
     if not ids:
         raise HTTPException(400, "请填写学号，一行一个")
@@ -450,7 +451,7 @@ def batch_roles(body: BatchRoleBody, db: OrmSession = Depends(db_session),
     if body.action == "add" and body.role == "qingxie":
         if body.qingxie_post not in BATCH_GRANTABLE_POSTS:
             raise HTTPException(400, "批量只能设 会长团 / 骨干 / 成员；"
-                                     "部长每个部门只有一位，请逐个设置")
+                                     "部长请逐个设置")
         dept_id = body.department_id.strip() or None
         if body.qingxie_post != "council" and not dept_id:
             raise HTTPException(400, "请选择部门")
@@ -479,6 +480,10 @@ def batch_roles(body: BatchRoleBody, db: OrmSession = Depends(db_session),
                 u.supervisor_id = supervisor
             else:
                 u.qingxie_post, u.department_id, u.supervisor_id = "member", None, None
+            # 催办部门范围只对会长团有意义；批量不设这个范围，调整后不是会长团的
+            # 一律清空，免得以后再设成会长团时带着一份旧范围
+            if not ("qingxie" in roles and post == "council"):
+                u.remind_dept_ids = []
             _audit_role_change(db, user, u, before, after[:3],
                                prefix="批量调整身份：")
         updated.append({"student_id": sid, "name": u.name,

@@ -172,7 +172,7 @@
               {{ g.mode_label }}
             </el-tag>
             <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain">
-              时间灵活·不计冲突
+              时间灵活·可多次签到
             </el-tag>
             <span class="dim">{{ g.time_text }}</span>
             <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}（待分配）` : `本场合计 ${g.capacity} 人` }}</span>
@@ -1166,13 +1166,16 @@
         <el-form-item label="结束时间" required>
           <DateTimeField v-model="groupForm.end_time" :default-time="DAY_END" />
         </el-form-item>
-        <el-form-item label="时间冲突">
+        <el-form-item label="时间灵活">
           <el-checkbox v-model="groupForm.flexible_time">
-            时间灵活 / 待定（不计入与其他活动的时间冲突检测）
+            时间灵活 / 待定（可多次签到）
           </el-checkbox>
           <div class="dim">
-            适用于长期招募、具体服务时间报名后协商的场次；勾选后本场次与志愿者其他报名不互判时间冲突。
+            适用于长期招募、具体服务时间报名后协商的场次：每开一张新签到码，志愿者可以再签到、签退一次，
+            时长按每次签到签退累加；某次没签退的，按那张码的截止时间记并待核。时长只能按签到签退计（或不计），不能按场次时长固定计。
           </div>
+          <el-alert v-if="flexibleFixed" type="warning" show-icon :closable="false"
+                    title="本场次时长按场次时长固定计，时间灵活的场次不能这样计；保存时改为按签到签退计" />
         </el-form-item>
         <!-- 名额与候补只属于「截止后统一分配」：报名即选岗位时它们在岗位上 -->
         <template v-if="groupForm.mode === 'assign'">
@@ -2207,6 +2210,7 @@ function openShift(g) {
     waitlist_quota: g.waitlist_quota ?? 3,
     lock_hours: g.lock_hours ?? 12,
     flexible_time: !!g.flexible_time,
+    hours_mode: g.hours_mode,
     campusReq: g.requirement_tags?.校区 || [],
     stageReq: g.requirement_tags?.学段 || [],
   } : { name: '', start_time: '', end_time: '', capacity: 10, note: '',
@@ -2215,6 +2219,9 @@ function openShift(g) {
   shiftDlg.value.visible = true
 }
 const screened = computed(() => act.value?.recruit_mode === 'screened')
+// 时间灵活的场次一人可以签好几次到，「按场次时长固定计」会把每次都算成整场
+const flexibleFixed = computed(() => groupForm.value.flexible_time
+  && groupForm.value.hours_mode === 'fixed')
 /** 切模式只在一个人都没报时允许（后端同样拦）：两种场次的人记在不同的账上，
  *  有人之后再切，要么作废大家选好的岗位，要么让还没安排的人无处可放。 */
 const modeSwitchCost = computed(() => {
@@ -2235,6 +2242,7 @@ async function saveShift() {
       name: f.name, capacity: f.capacity, mode: f.mode, note: f.note,
       waitlist_quota: f.waitlist_quota ?? 3, lock_hours: f.lock_hours ?? 12,
       flexible_time: !!f.flexible_time,
+      ...(flexibleFixed.value ? { hours_mode: 'checkin' } : {}),
       start_time: toISO(f.start_time), end_time: toISO(f.end_time),
       requirement_tags: scopeTags(f.campusReq, f.stageReq),
     }

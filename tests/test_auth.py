@@ -44,6 +44,41 @@ def test_expired_session_rejected(client, db):
     assert client.get("/api/auth/me", headers=headers).status_code == 401
 
 
+def test_会话3天有效且用一次顺延一次(client, db):
+    """滑动有效期：新登录 3 天后到期；用过之后从使用那一刻再算 3 天；
+    一小时内反复用不重复写库。"""
+    headers = login(client, ADMIN)
+    token = headers["Authorization"].removeprefix("Bearer ")
+    row = db.get(Session, token)
+    left = row.expires_at - now()
+    assert timedelta(days=3) - timedelta(minutes=1) < left <= timedelta(days=3)
+
+    # 刚续过（离满 3 天不到一小时）：不动
+    fresh = now() + timedelta(days=3) - timedelta(minutes=30)
+    row.expires_at = fresh
+    db.commit()
+    assert client.get("/api/auth/me", headers=headers).status_code == 200
+    db.expire_all()
+    assert db.get(Session, token).expires_at == fresh
+
+    # 上次续期已过两天：用一次就续回整 3 天
+    row = db.get(Session, token)
+    row.expires_at = now() + timedelta(days=1)
+    db.commit()
+    assert client.get("/api/auth/me", headers=headers).status_code == 200
+    db.expire_all()
+    left = db.get(Session, token).expires_at - now()
+    assert left > timedelta(days=3) - timedelta(minutes=1)
+
+    # 3 天没用：到期即失效，记录一并删掉
+    row = db.get(Session, token)
+    row.expires_at = now() - timedelta(seconds=1)
+    db.commit()
+    assert client.get("/api/auth/me", headers=headers).status_code == 401
+    db.expire_all()
+    assert db.get(Session, token) is None
+
+
 def test_会话令牌不能走地址栏(client, admin):
     """令牌走 URL 就会漏进访问日志、浏览器历史与 Referer，一处都不认。"""
     token = admin["Authorization"].removeprefix("Bearer ")

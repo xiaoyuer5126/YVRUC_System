@@ -324,6 +324,10 @@ def test_排班表的页签是概览志愿者信息和各场次名单(client, ad
     wb = load_workbook(BytesIO(r.content))
     assert wb.sheetnames[:2] == ["活动概览", "志愿者信息"]
     assert len(wb.sheetnames) == 2 + len(act.shifts)
+    # 概览页的活动时间与网页上同一个写法：只写日期带星期
+    held = {r[0].value: r[1].value for r in wb["活动概览"].iter_rows() if len(r) > 1}
+    db.refresh(act)
+    assert held["活动时间"] == act.time_text()
 
     info = wb["志愿者信息"]
     assert [c.value for c in info[1]] == ["姓名", "学号", "学院", "身份证号", "手机号", "微信号"]

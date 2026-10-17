@@ -360,16 +360,19 @@ def test_共管名单的快捷候选按层级给(client, admin, db, dept_activit
                         headers=head).json()["groups"]
     labels = [g["label"] for g in groups]
     assert labels[0] == "会长团"
-    assert "本部门骨干" in labels and "本部门成员" in labels
+    # 归口就是本部门：骨干只出「对外联络部骨干」一组，不重复出「本部门骨干」
+    assert "对外联络部骨干" in labels and "本部门成员" in labels
+    assert "本部门骨干" not in labels
     # 建活动的人自己已经在名单里，不该再作为候选出现
     ids = {u["student_id"] for g in groups for u in g["users"]}
     assert HEAD not in ids and CORE in ids
 
-    # 管理员没有部门，只看到会长团与各部门部长
+    # 管理员没有部门，按活动的归口部门看到那个部门的骨干
     labels = [g["label"] for g in
               client.get(f"/api/staff/activities/{aid}/manager-candidates",
                          headers=admin).json()["groups"]]
-    assert set(labels) <= {"会长团", "各部门部长"} and "会长团" in labels
+    assert set(labels) <= {"会长团", "各部门部长", "对外联络部骨干"}
+    assert "会长团" in labels and "对外联络部骨干" in labels
 
     # 骨干看得到自己名下的成员
     core = login(client, CORE)
@@ -379,3 +382,54 @@ def test_共管名单的快捷候选按层级给(client, admin, db, dept_activit
               client.get(f"/api/staff/activities/{aid}/manager-candidates",
                          headers=core).json()["groups"]]
     assert "我管理的成员" in labels
+
+
+def test_共管候选的骨干组按归口部门(client, admin, db, take_student):
+    """骨干组跟着活动的归口部门走；归口没定时退回操作人自己的部门，
+    都没有就不出这一组。"""
+    other = Department(id=uid("dept"), name=f"测试部{uid('t')[-6:]}")
+    db.add(other)
+    db.flush()
+    other_core = student_row(db, take_student())
+    other_core.roles = ["student", "qingxie"]
+    other_core.department_id = other.id
+    other_core.qingxie_post = "core"
+    head = _user(db, HEAD)
+
+    def make(dept_id):
+        act = Activity(id=uid("act"), title=f"归口候选 {uid('t')}",
+                       intro="x", location="世纪馆", organizer="校青协",
+                       contacts=[{"name": "王", "phone": "13900000000"}],
+                       status="draft", reg_start=now() - timedelta(days=1),
+                       reg_end=now() + timedelta(days=3), created_by=head.id,
+                       approval_dept_id=dept_id)
+        db.add(act)
+        db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                               user_id=head.id, added_by=head.id))
+        return act.id
+
+    to_other, no_dept = make(other.id), make(None)
+    db.commit()
+
+    def groups(aid, headers):
+        r = client.get(f"/api/staff/activities/{aid}/manager-candidates",
+                       headers=headers)
+        assert r.status_code == 200, r.text
+        return {g["label"]: {u["student_id"] for u in g["users"]}
+                for g in r.json()["groups"]}
+
+    # 部长管别的部门归口的活动：归口部门的骨干一组，本部门骨干照旧另一组
+    got = groups(to_other, login(client, HEAD))
+    assert got[f"{other.name}骨干"] == {other_core.student_id}
+    assert CORE in got["本部门骨干"] and "本部门成员" in got
+    # 管理员没有部门，也按归口部门看到骨干
+    got = groups(to_other, admin)
+    assert got[f"{other.name}骨干"] == {other_core.student_id}
+    assert "本部门骨干" not in got
+
+    # 归口没定：部长退回自己的部门，只出一组
+    got = groups(no_dept, login(client, HEAD))
+    assert CORE in got["对外联络部骨干"] and "本部门骨干" not in got
+    # 管理员也没有部门：不出骨干组
+    got = groups(no_dept, admin)
+    assert not [k for k in got if k.endswith("骨干")]

@@ -77,7 +77,7 @@
             <span v-if="row.department" class="dim">· {{ row.department }}</span>
             <span v-if="row.supervisor" class="dim">· 归属 {{ row.supervisor }}</span>
             <span v-if="row.qingxie_post === 'council'" class="dim">
-              · 催办：{{ row.remind_dept_ids?.length ? row.remind_dept_ids.map(id => deptName(id)).join('、') : '全部部门' }}
+              · 催办：{{ remindText(row) }}
             </span>
           </template>
           <span v-else class="dim">—</span>
@@ -271,6 +271,14 @@ const dlg = ref({ visible: false, row: null, roles: [], post: 'member', deptId: 
 function deptName(id) {
   return depts.value.find(d => d.id === id)?.name || id
 }
+// 催办部门范围：只认现有部门，一个都不剩就是全部部门
+function remindIds(row) {
+  return (row.remind_dept_ids || []).filter(id => depts.value.some(d => d.id === id))
+}
+function remindText(row) {
+  const ids = remindIds(row)
+  return ids.length ? ids.map(deptName).join('、') : '全部部门'
+}
 // 部长视角：只能在本部门里设骨干/成员；骨干视角：只认领本部门成员
 const headOnly = computed(() =>
   auth.activeIdentity === 'qingxie' && auth.user?.qingxie_post === 'head')
@@ -318,7 +326,7 @@ function open(row) {
     // 部长拉人进部门：部门就是他自己的，不用选
     deptId: row.department_id || (headOnly.value ? auth.user.department_id : ''),
     supervisorId: row.supervisor_id || '',
-    remindDeptIds: [...(row.remind_dept_ids || [])],
+    remindDeptIds: remindIds(row),
     busy: false,
   }
   loadCores()

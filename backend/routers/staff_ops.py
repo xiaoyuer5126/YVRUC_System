@@ -33,7 +33,7 @@ from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
                       ViolationRecord, day_of, iso, new_checkin_token, now,
                       parse_local_dt, part_is_pay, segment_out, span_text, uid)
 from ..serializers import applies_text, iso_of, recruit_scope_phrase
-from .checkin import checkout_open
+from .checkin import checkout_open, find_record
 from .geo import tiles_configured
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
@@ -497,8 +497,9 @@ def board(task_id: str, db: OrmSession = Depends(db_session),
                       Enrollment.status == "enrolled")
               .order_by(User.college, User.name).all())
     recs = (db.query(CheckinRecord)
-            .filter(CheckinRecord.shift_id == g.id).all())
-    rec_by_user: dict[str, CheckinRecord] = {r.user_id: r for r in recs}
+            .filter(CheckinRecord.shift_id == g.id)
+            .order_by(CheckinRecord.checkin_at).all())
+    rec_by_user, rounds = _board_records(g, recs, task)
 
     items = []
     checked = checked_out = 0
@@ -527,12 +528,14 @@ def board(task_id: str, db: OrmSession = Depends(db_session),
             "checkout_at": (rec.checkout_at.strftime("%H:%M:%S")
                             if rec and rec.checkout_at else ""),
             "checkout_method": (rec.checkout_method or "") if rec else "",
+            "checkin_count": rounds.get(u.id, 0),
         })
     positions = [{"id": s.id, "name": s.name, "quota": s.quota,
                   "checked": by_position.get(s.id, 0),
                   "expected": expected_by_position.get(s.id, 0)}
                  for s in sorted(g.positions, key=lambda x: x.sort)]
     return {
+        "flexible_time": g.flexible_time,
         "task": {"id": task.id, "token": task.token, "mode": task.mode,
                  "active": task.active},
         "activity_title": act.title, "shift_name": g.name,
@@ -542,6 +545,33 @@ def board(task_id: str, db: OrmSession = Depends(db_session),
     }
 
 
+def _board_records(g: Shift, recs: list[CheckinRecord],
+                   task: CheckinTask | None
+                   ) -> tuple[dict[str, CheckinRecord], dict[str, int]]:
+    """大屏上每人显示哪条签到记录，以及各人一共签过几轮。
+
+    recs 按签到时间排好。一般场次一人一条。时间灵活的场次一张码一轮：给了
+    task（大屏对应的那张码、或这一场现在开着的码）就只看这张码上的那一轮——
+    现场关心的是这一轮谁到了、谁还没签退；没有码开着时显示各人最近的一轮。
+    """
+    by_user: dict[str, CheckinRecord] = {}
+    rounds: dict[str, int] = {}
+    for r in recs:
+        rounds[r.user_id] = rounds.get(r.user_id, 0) + 1
+        if g.flexible_time and task is not None and r.task_id != task.id:
+            continue
+        by_user[r.user_id] = r
+    return by_user, rounds
+
+
+def _live_task(db: OrmSession, g: Shift) -> CheckinTask | None:
+    """这一场现在开着的那张码（同一时间只开一张，见 live_task_conflict；
+    分岗位的码可能有几张，取最新的，跟签到面板补签用的那张一致）。"""
+    return (db.query(CheckinTask)
+            .filter(CheckinTask.shift_id == g.id, CheckinTask.active.is_(True))
+            .order_by(CheckinTask.created_at.desc()).first())
+
+
 @router.get("/shifts/{shift_id}/board")
 def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
                 user: User = Depends(require_manager)):
@@ -549,7 +579,8 @@ def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
     任务关闭/不存在时仍可查看到场名单）。前端 5s 轮询。
 
     以已报名报名（Enrollment.status=enrolled）join User 为主表，
-    左连该场次的 CheckinRecord（user_id+shift_id 匹配，一人至多一条）。
+    每人配上该场次的签到记录：一般场次一人至多一条；时间灵活的场次一人可能
+    签过好几轮，配哪一轮见 _board_records。
     """
     g = db.get(Shift, shift_id)
     if g is None:
@@ -557,14 +588,17 @@ def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
 
-    rows = (db.query(Enrollment, User, CheckinRecord)
-            .join(User, Enrollment.user_id == User.id)
-            .outerjoin(CheckinRecord,
-                       (CheckinRecord.user_id == Enrollment.user_id)
-                       & (CheckinRecord.shift_id == Enrollment.shift_id))
-            .filter(Enrollment.shift_id == g.id,
-                    Enrollment.status == "enrolled")
-            .order_by(User.college, User.name).all())
+    roster = (db.query(Enrollment, User)
+              .join(User, Enrollment.user_id == User.id)
+              .filter(Enrollment.shift_id == g.id,
+                      Enrollment.status == "enrolled")
+              .order_by(User.college, User.name).all())
+    recs = (db.query(CheckinRecord)
+            .filter(CheckinRecord.shift_id == g.id)
+            .order_by(CheckinRecord.checkin_at).all())
+    rec_by_user, rounds = _board_records(
+        g, recs, _live_task(db, g) if g.flexible_time else None)
+    rows = [(enr, u, rec_by_user.get(u.id)) for enr, u in roster]
 
     items = []
     checked = checked_out = excused = 0
@@ -598,6 +632,7 @@ def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
                             if rec and rec.checkout_at else ""),
             "checkout_method": (rec.checkout_method or "") if rec else "",
             "excused": enr.excused, "excuse_reason": enr.excuse_reason,
+            "checkin_count": rounds.get(u.id, 0),
         })
     positions = [{"id": s.id, "name": s.name, "quota": s.quota,
                   "checked": by_position.get(s.id, 0),
@@ -607,6 +642,8 @@ def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
         "activity_id": act.id, "activity_title": act.title,
         "shift_id": g.id, "shift_name": g.name,
         "kind": g.kind, "kind_label": g.kind_label(),
+        # 时间灵活的场次：到岗、签退说的是当前开着的那张码这一轮
+        "flexible_time": g.flexible_time,
         # 请假的人不进应到岗的分母：他事先说了不来，不该拉低到岗率
         "expected": len(rows) - excused, "checked": checked,
         "excused": excused,
@@ -624,6 +661,10 @@ def batch_op(task_id: str, body: dict,
     body: {"action": "checkin|checkout|cancel_checkin|cancel_checkout",
            "student_ids": ["2023…", …]}
     全部计入留痕。
+
+    时间灵活的场次一张码一轮，补签、签退、取消都作用在这张码的那一轮上，
+    而且这张码要开着：补签补的是「现在这一轮」，没开码就没有这一轮。要补
+    以前某一轮，先把那张码重新开启。
     """
     task = db.get(CheckinTask, task_id)
     if task is None:
@@ -633,6 +674,9 @@ def batch_op(task_id: str, body: dict,
     # 账没结完就还得能补
     ensure_hours_editable(db, _act(db, task.activity_id))
     g = db.get(Shift, task.shift_id)
+    if g.flexible_time and not task.active:
+        raise HTTPException(409, "时间灵活的场次按签到码分轮次，补签要落在开着的签到码上；"
+                                 "请先开启签到码")
     action = body.get("action")
     sids = [s.strip() for s in (body.get("student_ids") or []) if s.strip()]
     if action not in ("checkin", "checkout", "cancel_checkin", "cancel_checkout"):
@@ -655,9 +699,7 @@ def batch_op(task_id: str, body: dict,
             # 的人，管理者本来也不该从这儿认识他。学号是他自己填进来的，还给他
             skipped.append(f"{sid}（非本场次确认志愿者）")
             continue
-        rec = (db.query(CheckinRecord)
-               .filter(CheckinRecord.user_id == u.id,
-                       CheckinRecord.shift_id == task.shift_id).first())
+        rec = find_record(db, u.id, g, task)
 
         if action == "checkin":
             if rec:
@@ -995,12 +1037,19 @@ def _hours_approvers(db: OrmSession, act: Activity) -> list[User]:
 
 def council_members(db: OrmSession, dept_id: str | None = None) -> list[User]:
     """会长团。按真实身份：问的是这些人是谁，不是当前操作者此刻的视角。
-    传入 dept_id 时，按每个人的 remind_dept_ids 过滤（空列表 = 接收全部部门）。"""
+    传入 dept_id 时，按每个人的 remind_dept_ids 过滤（空列表 = 接收全部部门）。
+    范围里已经不存在的部门先去掉，去掉后为空同样按全部部门算：要是不去掉，
+    一个只勾了已删部门的人就哪个部门的催办都收不到了。"""
     rows = [u for u in db.query(User).filter(User.qingxie_post == "council").all()
             if u.is_council(real=True)]
     if not dept_id:
         return rows
-    return [u for u in rows if not u.remind_dept_ids or dept_id in u.remind_dept_ids]
+    valid = {d.id for d in db.query(Department.id).all()}
+
+    def wants(u: User) -> bool:
+        scope = [d for d in (u.remind_dept_ids or []) if d in valid]
+        return not scope or dept_id in scope
+    return [u for u in rows if wants(u)]
 
 
 def _hours_notify_targets(db: OrmSession, act: Activity) -> list[User]:
@@ -1018,32 +1067,45 @@ def _hours_notify_targets(db: OrmSession, act: Activity) -> list[User]:
     return council_members(db, act.approval_dept_id)
 
 
-def effective_checkout(rec: CheckinRecord, g: Shift, still_open: bool):
+def effective_checkout(rec: CheckinRecord, g: Shift, still_open: bool,
+                       fallback: datetime):
     """签退时间判定：
        · 已签退 → 实际签退时间；
-       · 未签退、这一场已经没有能签退的码了（码过了截止，或被关掉/删掉）
-         → 按场次结束时间兜底（auto，待核）；
+       · 未签退、已经没有能签退的码了（码过了截止，或被关掉/删掉）
+         → 按 fallback 兜底（auto，待核）；
        · 未签退、码还开着没过截止 → None（时长待定，pending）。
 
-    still_open 由调用方用 checkin.checkout_open 算好传进来（一场算一次）。
+    still_open 由调用方用 checkin.checkout_open 算好传进来（一场算一次；时间
+    灵活的场次一张码算一次）。fallback 一般是场次结束时间；时间灵活的场次
+    一张码一轮，是这条记录那张码的截止时间（见 record_deadline）。
     签退没有另外的宽限：自己能签退的时段就是码的可签时段，两边必须说同一件事。
     关掉的码再开、或把截止往后改，只要人还没被补签，这里就回到 pending——
     判定是每次现算的，不落库。"""
     if rec.checkout_at:
         return rec.checkout_at, "actual"
     if not still_open:
-        return g.end_time, "auto"
+        return fallback, "auto"
     return None, "pending"
 
 
-def shift_hours(rec: CheckinRecord, g: Shift, t: datetime, still_open: bool):
+def record_deadline(g: Shift, task: CheckinTask | None) -> datetime:
+    """一条签到记录没签退时按哪个时刻兜底：时间灵活的场次是那张码的截止，
+    别的场次是场次结束。"""
+    if g.flexible_time and task is not None:
+        return task.window(g)[1]
+    return g.end_time
+
+
+def shift_hours(rec: CheckinRecord, g: Shift, t: datetime, still_open: bool,
+                fallback: datetime):
     """一条签到记录在该场次记多少小时、要不要人工过目，**以及按哪段时间算的**。
 
     时长认定方式是建场次时定下的一次决定，不是事后逐条判断：
       fixed  到场即按场次时长计——两小时的彩排人就在那儿，不值得卡分钟，
              顺带消灭了「忘记签退」这类麻烦的一大半；
       none   只记出勤，不产生时长（线上培训）；
-      checkin 签退 − 签到，码关了/过了截止还没签退的按场次结束兜底并标记待核。
+      checkin 签退 − 签到，码关了/过了截止还没签退的按 fallback（场次结束；
+             时间灵活的场次是那张码的截止）兜底并标记待核。
 
     返回 (小时数, 待核标记, 计时起点, 计时终点)。时段跟着一起给：备注里写的
     就是它，只回小时数的话，明细和数字会各说各的。
@@ -1054,9 +1116,9 @@ def shift_hours(rec: CheckinRecord, g: Shift, t: datetime, still_open: bool):
         # 到场即按场次时长：写场次的起止，不写他实际几点到的
         return ((g.end_time - g.start_time).total_seconds() / 3600, "",
                 g.start_time, g.end_time)
-    checkout, kind = effective_checkout(rec, g, still_open)
+    checkout, kind = effective_checkout(rec, g, still_open, fallback)
     if checkout is None:
-        end = min(t, g.end_time)
+        end = min(t, fallback)
         return ((end - rec.checkin_at).total_seconds() / 3600, "pending",
                 rec.checkin_at, end)
     return ((checkout - rec.checkin_at).total_seconds() / 3600,
@@ -1111,14 +1173,19 @@ def checkin_segments(db: OrmSession, act: Activity) -> dict[str, dict]:
                  .options(selectinload(HoursRecord.segments))
                  .filter(HoursRecord.activity_id == act.id).all()}
     out: dict[str, dict] = {}
-    open_by_shift: dict[str, bool] = {}   # 这一场还能不能自己签退，一场查一次
+    # 还能不能自己签退、没签退按哪个时刻兜底：一场查一次；时间灵活的场次
+    # 一张码一轮，按（场次, 码）各查一次
+    open_by: dict[tuple, tuple[bool, datetime]] = {}
     for rec in records:
         g = db.get(Shift, rec.shift_id)
         if g is None:
             continue
-        if g.id not in open_by_shift:
-            open_by_shift[g.id] = checkout_open(db, g, t)
-        hours, flag, start, end = shift_hours(rec, g, t, open_by_shift[g.id])
+        key = (g.id, rec.task_id if g.flexible_time else "")
+        if key not in open_by:
+            task = db.get(CheckinTask, rec.task_id) if g.flexible_time else None
+            open_by[key] = (checkout_open(db, g, t, task), record_deadline(g, task))
+        still_open, fallback = open_by[key]
+        hours, flag, start, end = shift_hours(rec, g, t, still_open, fallback)
         mine = out.setdefault(rec.user_id, {"segments": [], "total": 0.0,
                                             "flags": set()})
         if flag:
@@ -1200,7 +1267,7 @@ def compute_hours(db: OrmSession, act: Activity,
                      "student_id": u.student_id, "college": u.college},
             "hours": counted + pay,
             "pending": "pending" in fl,      # 未签退（码还开着）
-            "auto_checkout": "auto" in fl,   # 码关了/过期仍未签退，按场次结束时间
+            "auto_checkout": "auto" in fl,   # 码关了/过期仍未签退，按场次结束（时间灵活的场次按那张码的截止）
             "confirmed": existing is not None,
             # 手动加的那几段要能删，得让前端拿到这一笔的 id（还没确认过的人
             # 没有记录，也就没有可删的段）

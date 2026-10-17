@@ -155,6 +155,8 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
                                all_positions[i]
                                for i in (q.applies_to_positions or [])
                                if i in all_positions],
+                           applies_to_campuses=list(q.applies_to_campuses or []),
+                           applies_to_stages=list(q.applies_to_stages or []),
                            sort=q.sort)
         db.add(row)
         question_map[q.id] = row.id

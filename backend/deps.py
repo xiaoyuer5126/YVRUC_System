@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import secrets
-from datetime import timedelta
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session as OrmSession
@@ -39,13 +38,17 @@ def _authorize(db: OrmSession, token: str) -> User:
     row = db.get(Session, token)
     if row is None:
         raise HTTPException(401, "登录已过期，请重新登录")
-    if row.expires_at <= now():
+    t = now()
+    if row.expires_at <= t:
         db.delete(row)
         db.commit()
         raise HTTPException(401, "登录已过期，请重新登录")
     user = db.get(User, row.user_id)
     if user is None:
         raise HTTPException(401, "用户不存在")
+    # 滑动续期，见 config.SESSION_TTL。随后的 _release 会把它提交掉
+    if row.expires_at <= t + config.SESSION_TTL - config.SESSION_RENEW_AFTER:
+        row.expires_at = t + config.SESSION_TTL
     return user
 
 
@@ -244,6 +247,6 @@ def require_archive_page(user: User = Depends(current_user)) -> User:
 def create_session(db: OrmSession, user: User) -> str:
     token = secrets.token_urlsafe(32)
     db.add(Session(token=token, user_id=user.id,
-                   expires_at=now() + timedelta(hours=config.SESSION_HOURS)))
+                   expires_at=now() + config.SESSION_TTL))
     db.commit()
     return token
