@@ -31,9 +31,9 @@ from ..perm import (activity_manager_ids, add_manager,
 from ..integrations import msgcenter
 from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
                       Attachment, AttireRecord, AttireTask, AuditLog,
-                      CheckinRecord, CheckinTask, Enrollment, FormQuestion,
-                      Notification, Position, Shift, User, VbConfirm,
-                      iso, like_pattern, now, parse_local_dt, uid)
+                      CheckinRecord, CheckinTask, Department, Enrollment,
+                      FormQuestion, Notification, Position, Shift, User,
+                      VbConfirm, iso, like_pattern, now, parse_local_dt, uid)
 from ..serializers import (activity_brief, admin_status_of, applies_text,
                            load_trees, published_hint)
 from .screening import answers_out
@@ -1975,12 +1975,13 @@ def manager_candidates(activity_id: str, db: OrmSession = Depends(db_session),
                        user: User = Depends(require_manager)):
     """能被加进共管名单的人，按层级分组。
 
-    共管名单十有八九加的是同一批人：会长团、归口部长、自己手下的骨干与成员。
+    共管名单十有八九加的是同一批人：会长团、各部门部长、活动归口部门的骨干、
+    自己手下的骨干与成员。
     每次都去问学工号再手输一遍太笨。名单只列**已经有 活动发起方/青协 身份**
     的人——列出来点了才被后端拒，等于白列。
     """
     ensure_activity_manager(db, user, activity_id)
-    _act(db, activity_id)
+    act = _act(db, activity_id)
     already = set(activity_manager_ids(db, activity_id))
     groups: list[dict] = []
 
@@ -1998,10 +1999,22 @@ def manager_candidates(activity_id: str, db: OrmSession = Depends(db_session),
     qingxie = [u for u in db.query(User).all() if u.has_role("qingxie", real=True)]
     add("会长团", [u for u in qingxie if u.qingxie_post == "council"])
     add("各部门部长", [u for u in qingxie if u.qingxie_post == "head"])
-    if user.post() in ("head", "core") and user.department_id:
-        same = [u for u in qingxie if u.department_id == user.department_id]
+    # 活动归口部门的骨干：谁来管这个活动都看得到。归口没定（草稿还没提交
+    # 审批）时按操作人自己的部门；两样都没有就不出这一组
+    own_dept = user.department_id if user.post() else None
+    dept_id = act.approval_dept_id or own_dept
+    act_dept = db.get(Department, dept_id) if dept_id else None
+    if act_dept is not None:
+        add(f"{act_dept.name}骨干",
+            [u for u in qingxie if u.department_id == act_dept.id
+             and u.qingxie_post == "core"])
+    # 下面几组按操作人自己的部门
+    if user.post() in ("head", "core") and own_dept:
+        same = [u for u in qingxie if u.department_id == own_dept]
         if user.post() == "head":
-            add("本部门骨干", [u for u in same if u.qingxie_post == "core"])
+            # 归口就是本部门时，这批骨干上面已经列过
+            if dept_id != own_dept:
+                add("本部门骨干", [u for u in same if u.qingxie_post == "core"])
             add("本部门成员", [u for u in same if u.qingxie_post == "member"])
         else:
             add("我管理的成员", [u for u in same

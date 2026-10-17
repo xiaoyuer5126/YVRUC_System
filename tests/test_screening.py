@@ -1235,3 +1235,113 @@ def test_新题不用先保存就能当显示条件的来源(client, admin, db):
                          {"ref": "new-1", "kind": "single", "title": "会外语吗",
                           "options": ["会", "不会"]}]})
     assert bad.status_code == 400 and "前面" in bad.json()["detail"]
+
+
+# ======================= 适用校区、适用学段 =======================
+
+def _scoped_person(client, db, take_student, campus, stage):
+    sid = take_student()
+    u = student_row(db, sid)
+    u.campus, u.stage = campus, stage
+    db.commit()
+    return login(client, sid)
+
+
+def test_题目按适用校区学段出现(client, admin, db, take_student):
+    """挂了适用校区/学段的题只问对得上的人：对不上的看不到，必填也不用答，
+    答了也不存；与适用岗位同时满足才问。"""
+    act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
+    gid, pids = _pick_shift(client, admin, act_id)
+    form = client.get(f"/api/staff/activities/{act_id}/form", headers=admin).json()
+    assert "苏州校区" in form["campuses"] and "博士研究生" in form["stages"]
+
+    # 不认识的校区、学段保存时拦下
+    r = _save_form(client, admin, act_id, q, {
+        "kind": "text", "title": "住哪", "applies_to_campuses": ["火星校区"]})
+    assert r.status_code == 400 and "适用校区" in r.json()["detail"]
+    r = _save_form(client, admin, act_id, q, {
+        "kind": "text", "title": "住哪", "applies_to_stages": ["幼儿园"]})
+    assert r.status_code == 400 and "适用学段" in r.json()["detail"]
+
+    r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
+                   json={"questions": _form_with(q, {
+                       "kind": "text", "title": "苏州博士住哪栋楼", "required": True,
+                       "applies_to_campuses": ["苏州校区", "苏州校区"],
+                       "applies_to_stages": ["博士研究生"]}) + [
+                       {"kind": "text", "title": "苏州引导岗带不带喇叭",
+                        "required": True, "applies_to_campuses": ["苏州校区"],
+                        "applies_to_positions": [pids[0]]}]})
+    assert r.status_code == 200, r.text
+    saved = {x["title"]: x for x in r.json()["questions"]}
+    dorm = saved["苏州博士住哪栋楼"]
+    horn = saved["苏州引导岗带不带喇叭"]
+    assert dorm["applies_to_campuses"] == ["苏州校区"]      # 去重
+    assert dorm["applies_to_stages"] == ["博士研究生"]
+    assert saved["参加过吗"]["applies_to_campuses"] == []
+    db.get(Activity, act_id).status = "published"
+    db.commit()
+
+    def asked(h, pid):
+        d = client.get(f"/api/activities/{act_id}/form?positions={pid}",
+                       headers=h).json()
+        return {x["id"] for x in d["questions"]}
+
+    # 中关村的本科生：两道都不问，不答照样交得了，硬塞的答案也不存
+    t = _scoped_person(client, db, take_student, "中关村校区", "本科生")
+    assert not {dorm["id"], horn["id"]} & asked(t, pids[0])
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"position_ids": [pids[0]],
+                          "answers": {**_answers(q), dorm["id"]: "3 号楼"}})
+    assert r.status_code == 200, r.text
+    mine = client.get(f"/api/activities/{act_id}/form", headers=t).json()["mine"]
+    assert dorm["id"] not in mine["answers"]
+
+    # 苏州的硕士选了登记岗：学段不对、岗位不对，都不问
+    t = _scoped_person(client, db, take_student, "苏州校区", "硕士研究生")
+    assert not {dorm["id"], horn["id"]} & asked(t, pids[1])
+    # 选了引导岗：校区、岗位都对上，喇叭那道要答；学段不对，住哪那道不问
+    assert asked(t, pids[0]) & {dorm["id"], horn["id"]} == {horn["id"]}
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"position_ids": [pids[0]], "answers": _answers(q)})
+    assert r.status_code == 400 and "喇叭" in r.json()["detail"]
+
+    # 苏州的博士：住哪那道是必填
+    t = _scoped_person(client, db, take_student, "苏州校区", "博士研究生")
+    assert dorm["id"] in asked(t, pids[1])
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"position_ids": [pids[1]], "answers": _answers(q)})
+    assert r.status_code == 400 and "住哪栋楼" in r.json()["detail"]
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"position_ids": [pids[1]],
+                          "answers": {**_answers(q), dorm["id"]: "3 号楼"}})
+    assert r.status_code == 200, r.text
+    mine = client.get(f"/api/activities/{act_id}/form", headers=t).json()["mine"]
+    assert mine["answers"][dorm["id"]] == "3 号楼"
+
+
+def test_即选即得的题目按学段跳过必填(client, admin, db, open_group, take_student):
+    """报名弹窗里同一口径：学段对不上的必填题不用答。"""
+    act, g = open_group(3)
+    db.get(Activity, act.id).status = "draft"
+    db.commit()
+    r = client.put(f"/api/staff/activities/{act.id}/form", headers=admin,
+                   json={"questions": [
+                       {"kind": "text", "title": "导师是谁", "required": True,
+                        "applies_to_stages": ["硕士研究生", "博士研究生"]}]})
+    assert r.status_code == 200, r.text
+    qid = r.json()["questions"][0]["id"]
+    db.get(Activity, act.id).status = "published"
+    db.commit()
+    url = f"/api/activities/{act.id}/shifts/{g.id}/enroll"
+
+    master = _scoped_person(client, db, take_student, "中关村校区", "硕士研究生")
+    r = client.post(url, headers=master, json={"position_id": g.test_position_id})
+    assert r.status_code == 400 and "导师是谁" in r.json()["detail"]
+
+    undergrad = _scoped_person(client, db, take_student, "中关村校区", "本科生")
+    r = client.post(url, headers=undergrad,
+                    json={"position_id": g.test_position_id, "answers": {qid: "x"}})
+    assert r.status_code == 200, r.text
+    enr = (db.query(Enrollment).filter(Enrollment.shift_id == g.id,
+                                       Enrollment.status == "enrolled").one())
+    assert qid not in (enr.answers or {})

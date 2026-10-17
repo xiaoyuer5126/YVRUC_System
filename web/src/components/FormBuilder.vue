@@ -6,8 +6,8 @@
   <div v-loading="loading">
     <div class="fb-head">
       <span class="dim">
-        {{ screened ? '志愿者申请时填写，意向场次无需出题'
-                    : '选填。志愿者报名时填写，答案在「志愿者管理」中查看' }}
+        {{ screened ? '志愿者申请时填写，意向场次、个人信息无需出题询问'
+                    : '选填。志愿者报名时填写，个人信息无需出题询问，答案在「志愿者管理」中查看' }}
       </span>
       <el-button v-if="editable" type="primary" size="small" :loading="saving"
                  style="margin-left:auto" @click="save">保存报名问卷</el-button>
@@ -22,6 +22,9 @@
         <div v-if="q.options?.length" class="dim">选项：{{ q.options.join(' / ') }}</div>
         <div v-if="q.applies_to_positions?.length" class="dim">
           只问：{{ q.applies_to_positions.map(positionName).join('、') }}
+        </div>
+        <div v-if="q.applies_to_campuses.length || q.applies_to_stages.length" class="dim">
+          {{ scopeText(q) }}
         </div>
         <div v-if="q.condQ" class="dim">{{ condText(q) }}</div>
       </li>
@@ -53,6 +56,21 @@
             <el-option v-for="p in g.positions" :key="p.id" :value="p.id"
                        :label="p.name" />
           </el-option-group>
+        </el-select>
+      </div>
+      <!-- 适用校区 / 学段：按志愿者个人信息里的校区、学段圈人。留空 = 不限 -->
+      <div class="fb-cond">
+        <span class="dim">适用校区</span>
+        <el-select v-model="q.applies_to_campuses" multiple collapse-tags
+                   collapse-tags-tooltip clearable placeholder="不限"
+                   style="width:220px" :disabled="!editable">
+          <el-option v-for="c in campuses" :key="c" :value="c" :label="c" />
+        </el-select>
+        <span class="dim">适用学段</span>
+        <el-select v-model="q.applies_to_stages" multiple collapse-tags
+                   collapse-tags-tooltip clearable placeholder="不限"
+                   style="width:220px" :disabled="!editable">
+          <el-option v-for="t in stages" :key="t" :value="t" :label="t" />
         </el-select>
       </div>
       <!-- 显示条件：只能挂在前面某道选择题的某几个选项上 -->
@@ -121,7 +139,7 @@
       </template>
     </div>
     <div v-if="editable" class="dim" style="margin-top:8px">
-      适用岗位留空 = 人人都答；显示条件只能挂在前面的选择题上。
+      适用岗位、校区、学段留空 = 不限，几项同时满足才问；显示条件只能挂在前面的选择题上。
     </div>
     <el-empty v-else-if="!questions.length" description="没有设置题目" />
   </div>
@@ -144,6 +162,8 @@ const emit = defineEmits(['count'])
 const KINDS = { single: '单选', multi: '多选', text: '填空', file: '文件上传' }
 const questions = ref([])
 const positionGroups = ref([])            // 出题时挑「这道题问谁」用
+const campuses = ref([])
+const stages = ref([])
 const positionName = id => positionGroups.value
   .flatMap(g => g.positions).find(p => p.id === id)?.name || '已删除的岗位'
 const loading = ref(false)
@@ -154,6 +174,8 @@ async function load() {
   try {
     const d = await api.get(`/api/staff/activities/${props.activityId}/form`)
     questions.value = d.questions.map(toRow)
+    campuses.value = d.campuses
+    stages.value = d.stages
     // 占位岗位（「待分配」）不是真岗位，随时会被删掉（开放选岗、切回「报名即选
     // 岗位」），题目挂上去就悬空了，所以不列进下拉；一场真实岗位都没建的场次也
     // 不占一组
@@ -174,12 +196,15 @@ const toRow = q => ({
   ...q, key: q.id, optionsText: (q.options || []).join('\n'),
   condQ: q.show_if?.question_id || '', condValues: q.show_if?.values || [],
   applies_to_positions: q.applies_to_positions || [],
+  applies_to_campuses: q.applies_to_campuses || [],
+  applies_to_stages: q.applies_to_stages || [],
 })
 
 function add() {
   questions.value.push({ id: '', key: newKey(), kind: 'single', title: '', optionsText: '',
                          required: true, condQ: '', condValues: [],
-                         applies_to_positions: [] })
+                         applies_to_positions: [], applies_to_campuses: [],
+                         applies_to_stages: [] })
 }
 
 // 能当条件的：排在这道题前面的单选/多选题。往后指会绕成环
@@ -190,6 +215,8 @@ function conditionSources(index) {
 const optionsOf = key => (questions.value.find(q => q.key === key)?.optionsText || '')
   .split('\n').map(s => s.trim()).filter(Boolean)
 const clearCondValues = q => { q.condValues = [] }
+const scopeText = q => '只问：' + [q.applies_to_campuses.join('、'),
+                                   q.applies_to_stages.join('、')].filter(Boolean).join(' · ')
 const condText = q => `仅当「${questions.value.find(x => x.key === q.condQ)?.title || ''}」`
   + `选了 ${q.condValues.join(' / ')} 时显示`
 function move(i, delta) {
@@ -268,7 +295,8 @@ function addDrafted() {
     questions.value.push({ id: '', key: newKey(), kind: q.kind, title: q.title,
                            required: q.required,
                            optionsText: q.options.join('\n'), condQ: '', condValues: [],
-                           applies_to_positions: q.applies_to_positions })
+                           applies_to_positions: q.applies_to_positions,
+                           applies_to_campuses: [], applies_to_stages: [] })
   }
   closeAi()
   ElMessage.success(`已加进 ${drafted.length} 道题，核对后点「保存报名问卷」`)
@@ -282,6 +310,8 @@ async function save() {
       options: q.optionsText.split('\n').map(s => s.trim()).filter(Boolean),
       show_if: q.condQ ? { question_id: q.condQ, values: q.condValues } : {},
       applies_to_positions: q.applies_to_positions || [],
+      applies_to_campuses: q.applies_to_campuses,
+      applies_to_stages: q.applies_to_stages,
     }))
     const d = await api.put(`/api/staff/activities/${props.activityId}/form`,
                             { questions: body })

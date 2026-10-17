@@ -167,6 +167,7 @@
               </div>
             </div>
           </el-card>
+          <div v-if="showPickRule" class="dim">{{ PICK_RULE }}</div>
         </div>
 
         <!-- 窄屏：场次与岗位改成竖排卡片。手机上选岗位是最要紧的动作，
@@ -329,6 +330,7 @@
               </el-tag>
             </div>
           </el-card>
+          <div v-if="showPickRule" class="dim">{{ PICK_RULE }}</div>
         </div>
 
         <el-card v-else shadow="never">
@@ -399,9 +401,6 @@
                         </template>
                       </el-table-column>
                     </el-table>
-                    <div v-if="!isTeacher" class="dim" style="margin-top:8px">
-                      同场次只能选一个岗位，候补将在名额释放后转正，转正后需在确认窗口内确认（2 小时，夜间 23:00–8:00 不计时）。
-                    </div>
                   </template>
                   <p v-else class="dim" style="margin:4px 0">本场次尚未设置岗位，请联系负责人。</p>
 
@@ -526,6 +525,7 @@
               </template>
             </el-table-column>
           </el-table>
+          <div v-if="showPickRule" class="dim pick-rule">{{ PICK_RULE }}</div>
         </el-card>
       </el-col>
 
@@ -726,10 +726,15 @@ const queued = ref({})       // vuecheck: script-only（模板经 queuedShift / 
 const QUEUE_NOTE = '排队中，请勿刷新'
 const queuedShift = g => g.id in queued.value
 const queuedHere = (g, s) => queued.value[g.id] === (s ? s.id : '')
-// 挂了适用岗位的题只问报这个岗位的人
+// 挂了适用岗位的题只问报这个岗位的人；适用校区、学段按个人信息里填的算，
+// 和后端校验（FormQuestion.fits）同一口径
 const enrollQuestions = computed(() => (act.value?.questions || []).filter(q => {
   const scope = q.applies_to_positions || []
-  return !scope.length || scope.includes(enrollDlg.value.position?.id)
+  const campuses = q.applies_to_campuses || []
+  const stages = q.applies_to_stages || []
+  return (!scope.length || scope.includes(enrollDlg.value.position?.id))
+    && (!campuses.length || campuses.includes(auth.user?.campus))
+    && (!stages.length || stages.includes(auth.user?.stage))
 }))
 const willWaitlist = computed(() => {
   const { shift: g, position } = enrollDlg.value
@@ -765,6 +770,10 @@ const navUrl = computed(() => {
 })
 // 老师不参与志愿报名：安排照看，报名、申请入口都不给
 const isTeacher = computed(() => auth.user?.user_type === 'teacher')
+// 选岗规则：各场次通用，全部场次（或岗位）列完之后说一次
+const PICK_RULE = '同场次只能选一个岗位，候补将在名额释放后转正，转正后需在确认窗口内确认（2 小时，夜间 23:00–8:00 不计时）。'
+const showPickRule = computed(() =>
+  !isTeacher.value && act.value?.shifts.some(g => g.positions.length))
 
 function pct(g) {
   return Math.min(100, Math.round((g.enrolled / Math.max(1, g.capacity)) * 100))
@@ -1063,6 +1072,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 </script>
 
 <style scoped>
+.pick-rule { margin-top: 12px; }
 /* 页头：宽屏标题与标签同一行，窄屏标签落到下一行 */
 .hd-title { font-weight: 600; }
 .hd-tags { display: inline-flex; gap: 8px; margin-left: 12px; vertical-align: middle; }

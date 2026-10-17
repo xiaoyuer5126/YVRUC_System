@@ -29,7 +29,7 @@ from . import config, hours as hours_flow, scoring
 from .serializers import admin_status_of, recruit_scope_text
 from .models import (Activity, Attachment, CheckinRecord, Department, Enrollment,
                      FormQuestion, HoursClaim, HoursRecord, HoursSegment,
-                     Position, Shift, User, ViolationRecord, now, span_text)
+                     Position, Shift, User, ViolationRecord, days_text, now)
 
 MATERIAL_DIR = config.MATERIAL_DIR
 
@@ -212,10 +212,8 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
         for c in (activity.contacts or []) if isinstance(c, dict)
     ).strip("；")
     overview.append(["联系人", contact_text or "—"])
-    span = activity.time_span()
-    if span:
-        overview.append(["活动时间",
-                         f"{span[0]:%Y-%m-%d %H:%M} ~ {span[1]:%Y-%m-%d %H:%M}"])
+    if activity.time_span():
+        overview.append(["活动时间", activity.time_text()])
     overview.append([])
     overview.append(["场次", "类型", "时间段", "模式", "已报名/名额", "已到岗"])
     checked = _checked_records(db, activity.id)
@@ -649,7 +647,7 @@ def build_activities_summary_workbook(
         bad = violations.get(act.id, 0)
         ws.append([act.id, act.title, act.organizer, act.co_organizer or "",
                    depts.get(act.approval_dept_id or "", SUMMARY_EMPTY),
-                   span_text(*span), label, place, recruit_scope_text(act),
+                   days_text(*span), label, place, recruit_scope_text(act),
                    people, seats, round(counted, 1), round(paid, 1), bad])
         seats_total += seats
         volunteer_total += counted

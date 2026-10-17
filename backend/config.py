@@ -13,6 +13,7 @@ import contextlib
 import json
 import logging
 import os
+from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -47,7 +48,11 @@ DATABASE_URL = os.environ["YVRUC_DATABASE_URL"]
 REDIS_URL = os.environ["YVRUC_REDIS_URL"]
 
 # —— 会话 ——
-SESSION_HOURS = 24          # 令牌有效期；接 SSO 后由统一身份认证接管
+# 滑动有效期：连续 3 天没用过才过期，天天用的人不会被踢下线。每次鉴权都把
+# 到期时间往后推，等于每个请求都写一次库；所以距上次续期满 SESSION_RENEW_AFTER
+# 才续——3 天的有效期少算这一小时无关紧要，写库次数降到每会话每小时至多一次。
+SESSION_TTL = timedelta(days=3)
+SESSION_RENEW_AFTER = timedelta(hours=1)
 
 # OAuth state 有效期：一次一用，够走完「跳去 CAS → 输密码（可能还有二次验证）
 # → 跳回来」即可。给太短会在动作慢的人身上莫名其妙失败，给太长只是白白拉长

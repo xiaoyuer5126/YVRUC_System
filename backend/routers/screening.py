@@ -62,6 +62,8 @@ class QuestionBody(BaseModel):
     required: bool = True
     show_if: dict = {}            # {"question_id": ..., "values": [...]}
     applies_to_positions: list[str] = []   # 空 = 人人都答
+    applies_to_campuses: list[str] = []    # 空 = 不限校区
+    applies_to_stages: list[str] = []      # 空 = 不限学段
 
 
 class FormBody(BaseModel):
@@ -84,7 +86,9 @@ def staff_form(activity_id: str, db: OrmSession = Depends(db_session),
                                       for p in sorted(g.positions,
                                                       key=lambda x: x.sort)
                                       if not p.is_placeholder]}
-                       for g in sorted(act.main_shifts(), key=lambda x: x.sort)]}
+                       for g in sorted(act.main_shifts(), key=lambda x: x.sort)],
+            # 「适用校区」「适用学段」的选项，和个人信息里能填的是同一份
+            "campuses": config.CAMPUSES, "stages": config.STAGES}
 
 
 @router.put("/staff/activities/{activity_id}/form")
@@ -119,6 +123,9 @@ def save_form(activity_id: str, body: FormBody,
             raw_if["question_id"] = refs[raw_if["question_id"]]
         show_if = _clean_show_if(raw_if, earlier, title)
         scope = _clean_scope(positions, q.applies_to_positions, title)
+        campuses = _clean_choices(q.applies_to_campuses, config.CAMPUSES,
+                                  title, "校区")
+        stages = _clean_choices(q.applies_to_stages, config.STAGES, title, "学段")
         row = existing.get(q.id) if q.id else None
         if row is None:
             row = FormQuestion(id=uid("q"), activity_id=activity_id, kind=q.kind)
@@ -129,6 +136,8 @@ def save_form(activity_id: str, body: FormBody,
             q.kind, title, options, q.required, i)
         row.show_if = show_if
         row.applies_to_positions = scope
+        row.applies_to_campuses = campuses
+        row.applies_to_stages = stages
         keep.add(row.id)
         if q.kind in ("single", "multi"):
             earlier[row.id] = options
@@ -176,20 +185,31 @@ def _clean_scope(positions: dict[str, Position], raw: list[str],
     return out
 
 
-def scoped_questions(questions: list[FormQuestion],
+def _clean_choices(raw: list[str], allowed: list[str], title: str,
+                   what: str) -> list[str]:
+    """校验一道题的适用校区或学段，返回去重后的取值。空 = 不限。"""
+    out = list(dict.fromkeys(raw))
+    bad = [v for v in out if v not in allowed]
+    if bad:
+        raise HTTPException(400, f"「{title}」的适用{what}不认识：{'、'.join(bad)}")
+    return out
+
+
+def scoped_questions(questions: list[FormQuestion], user: User,
                      positions: list[str] | None = None) -> list[FormQuestion]:
-    """只按已选岗位筛出这个人该看的题，不看显示条件。
+    """按这个人的校区、学段与已选岗位筛出他该看的题，不看显示条件。
 
     填表这一步把题先发给页面，页面按作答实时的答案决定露出哪几道（见
     web/src/components/QuestionFields.vue）。服务端这时候还没有答案，照着
     显示条件筛会把带条件的题连同挂在它下面的题一并筛掉——选了触发选项也
     再也出不来，题上写了必填就卡死在「为必填」上，志愿者连题都看不见。
 
-    positions 是这个人当前的岗位，None 表示调用方要整份表（列表预览用），
-    此时不做岗位过滤。
+    positions 是这个人当前的岗位，None 表示不按岗位筛。校区、学段总要筛
+    （见 FormQuestion.fits）。
     """
+    questions = [q for q in questions if q.fits(user)]
     if positions is None:
-        return list(questions)
+        return questions
     chosen = set(positions)
     # 适用岗位是管理者圈定的一小撮岗位，与已选岗位没有交集就不问这个人。
     # 圈里的岗位被删掉（占位岗位被清理、岗位被删）时，这道题的 scope 和谁都
@@ -200,14 +220,14 @@ def scoped_questions(questions: list[FormQuestion],
             if not q.applies_to_positions or chosen & set(q.applies_to_positions)]
 
 
-def visible_questions(questions: list[FormQuestion], answers: dict,
+def visible_questions(questions: list[FormQuestion], answers: dict, user: User,
                       positions: list[str] | None = None) -> list[FormQuestion]:
-    """按已选岗位与已填答案算出这份表当前该显示哪几道题。
+    """按这个人的校区学段、已选岗位与已填答案算出这份表当前该显示哪几道题。
 
-    两层筛：先看岗位——挂了适用岗位的题，只问选了那些岗位的人；再看显示条件。
-    positions 是这个人当前的岗位，None 表示调用方要整份表（列表预览用），
-    此时不做岗位过滤。题目按 sort 排，条件只指向前面的题，所以一遍扫下来就够了：
-    被条件挡掉的题，挂在它下面的题也跟着挡掉。
+    三层筛：先看校区、学段（FormQuestion.fits）；再看岗位——挂了适用岗位的题，
+    只问选了那些岗位的人；最后看显示条件。positions 是这个人当前的岗位，None
+    表示不按岗位筛。题目按 sort 排，条件只指向前面的题，所以一遍扫下来就够了：
+    被挡掉的题（不论挡在哪一层），挂在它下面的题也跟着挡掉。
 
     提交时按这份名单校验与存答案：页面按同一套规则露出题，两边说的是同一批题。
     发题给页面用 scoped_questions——那一步还没有答案，筛不了显示条件。
@@ -215,6 +235,8 @@ def visible_questions(questions: list[FormQuestion], answers: dict,
     chosen = set(positions or [])
     shown, out = set(), []
     for q in questions:
+        if not q.fits(user):
+            continue
         scope = q.applies_to_positions or []
         if scope and positions is not None and not (chosen & set(scope)):
             continue
@@ -253,7 +275,7 @@ def student_form(activity_id: str, positions: str = "",
     if positions:
         picked = [p for p in positions.split(",") if p]
         out["questions"] = [q.out() for q in scoped_questions(
-            _questions(db, act.id), picked)]
+            _questions(db, act.id), user, picked)]
     return out
 
 
@@ -414,9 +436,10 @@ def _wanted_positions(db: OrmSession, act: Activity,
 
 def validate_answers(db: OrmSession, act: Activity, user: User, raw: dict,
                      positions: list[str] | None = None) -> dict:
-    """逐题校验。岗位或显示条件挡掉的题不校验也不存——它对这个人不存在。"""
+    """逐题校验。校区学段、岗位或显示条件挡掉的题不校验也不存——它对这个人
+    不存在。"""
     out = {}
-    for q in visible_questions(_questions(db, act.id), raw, positions):
+    for q in visible_questions(_questions(db, act.id), raw, user, positions):
         v = raw.get(q.id)
         empty = v is None or v == "" or v == []
         if q.required and empty:

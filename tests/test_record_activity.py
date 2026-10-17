@@ -175,6 +175,8 @@ def test_导入名单_成功与跳过清单(client, admin, db, approved, take_st
     rows = client.get(f"/api/staff/activities/{approved}/record-roster",
                       headers=admin).json()
     assert rows["editable"] and rows["total_hours"] == 42
+    # 名单页上的活动时间和其他页面的「活动时间」同一个写法
+    assert rows["held_text"] == db.get(Activity, approved).time_text() != "待定"
     by_sid = {x["user"]["student_id"]: x for x in rows["items"]}
     assert by_sid[b]["note"] == "场外支援 半天"
     db.expire_all()

@@ -220,6 +220,25 @@ def test_不计时长的场合不产生时长(client, admin, db, act_with_positi
     assert u.student_id not in [x["user"]["student_id"] for x in items]
 
 
+def test_活动时间只写年月日带星期():
+    """「2026-10-16（周五）~ 2026-10-17（周六）」；同一天只写一个日期；没场次写待定。"""
+    from datetime import datetime
+
+    def act_with(*spans):
+        act = Activity(id=uid("act"), title="x", recruit_mode="pick")
+        act.shifts = [Shift(id=uid("s"), name=f"第{i}场", kind="service",
+                            start_time=a, end_time=b)
+                      for i, (a, b) in enumerate(spans)]
+        return act
+
+    two_days = act_with((datetime(2026, 10, 16, 9), datetime(2026, 10, 16, 12)),
+                        (datetime(2026, 10, 17, 14), datetime(2026, 10, 17, 17)))
+    assert two_days.time_text() == "2026-10-16（周五）~ 2026-10-17（周六）"
+    one_day = act_with((datetime(2026, 10, 16, 9), datetime(2026, 10, 16, 17)))
+    assert one_day.time_text() == "2026-10-16（周五）"
+    assert act_with().time_text() == "待定"
+
+
 def test_附属场次不占活动的名额与时间跨度(client, admin, db, act_with_positions):
     """彩排常排在正式服务前一周，算进去广场上的时间会从彩排那天开始。"""
     act, g, _e, _c = act_with_positions
@@ -357,7 +376,7 @@ def test_招募文案按校青协定的格式拼(client, admin, db, act_with_pos
     # 活动时间一整段起止，和网页上的「活动时间」同一个写法
     assert lines[6] == "【活动时间】"
     assert lines[7] == act.time_text()
-    assert re.fullmatch(r"\d\d-\d\d \d\d:\d\d ~ \d\d-\d\d \d\d:\d\d", lines[7])
+    assert re.fullmatch(r"\d{4}-\d\d-\d\d（周.）(~ \d{4}-\d\d-\d\d（周.）)?", lines[7])
     assert client.get(f"/api/activities/{act.id}", headers=admin).json()["time_text"] == lines[7]
     # 选填的段有内容才出现，夹在「服务内容」和「志愿者保障」之间
     assert [s for s in lines if s.startswith("【")] == [
