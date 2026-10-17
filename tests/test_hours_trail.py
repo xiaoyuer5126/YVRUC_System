@@ -97,6 +97,39 @@ def test_预览后名单被改_确认被拒且不写(client, admin, db, take_stu
     assert len(client.get(_base(club.id), headers=admin).json()["items"]) == 1
 
 
+def test_预览后有人刚建档_确认被拒(client, admin, db, take_student):
+    """预览时某学号还没建档、列在「找不到」里；确认前他刚建了档，名单本身没变，
+    但这次确认会把他导进去——这不是管理者看过的那份结果，要重新预览。"""
+    from backend.models import User, uid
+    from backend.seed import fake_id_card
+    a = take_student()
+    club = _record_activity(db)
+    newcomer = f"8{uid('s')[-8:]}"[:10]
+    text = f"{a} 2\n{newcomer} 3"
+    d = client.post(f"{_base(club.id)}/import/preview", headers=admin,
+                    json={"text": text}).json()
+    assert [x["student_id"] for x in d["not_found"]] == [newcomer]
+
+    db.add(User(id=uid("u"), student_id=newcomer, name="刚建档同学", gender="女",
+                college="明理书院", grade="2024", campus="中关村校区",
+                phone="13911112222", email=f"{newcomer}@test.local",
+                wechat=f"wx_{newcomer}", id_card=fake_id_card("20050101", 77),
+                user_type="student", roles=["student"]))
+    db.commit()
+
+    r = client.post(f"{_base(club.id)}/import", headers=admin,
+                    json={"text": text, "fingerprint": d["fingerprint"]})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "ROSTER_CHANGED"
+    assert client.get(_base(club.id), headers=admin).json()["items"] == []
+    # 重新预览后他就在「新增」里，按新指纹确认才写入
+    d = client.post(f"{_base(club.id)}/import/preview", headers=admin,
+                    json={"text": text}).json()
+    assert {x["student_id"] for x in d["added"]} == {a, newcomer}
+    r = client.post(f"{_base(club.id)}/import", headers=admin,
+                    json={"text": text, "fingerprint": d["fingerprint"]})
+    assert r.status_code == 200, r.text
+
+
 def test_核准后导入_预览就说会撤销核准(client, admin, db, take_student):
     a = take_student()
     club = _record_activity(db)

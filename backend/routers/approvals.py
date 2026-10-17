@@ -33,6 +33,20 @@ router = APIRouter(prefix="/api/staff", tags=["approvals"])
 _dept_head = liaison.dept_head
 
 
+def assignee_text(db: OrmSession, act: Activity) -> str:
+    """「等谁审批」显示的名字。审批挂在归口部门的部长名下时，本部门任一部长都能拍，
+    列出全部在岗部长（顿号连接）；只写挂名的那一位，别的部长会以为这事不归自己。"""
+    who = db.get(User, act.approval_assignee_id) if act.approval_assignee_id else None
+    if who is None:
+        return ""
+    if (act.approval_dept_id and who.department_id == act.approval_dept_id
+            and who.qingxie_post == "head"):
+        heads = liaison.dept_heads(db, act.approval_dept_id)
+        if heads:
+            return "、".join(h.name for h in heads)
+    return who.name
+
+
 def _in_dept(db: OrmSession, act: Activity) -> bool:
     """这条审批眼下还在归口部门手里：审批人是本部门的人。
     转给会长团（没有部门）时归口不动，但事情已经交出去了，部门不再插手。"""
@@ -144,6 +158,10 @@ def delete_department(dept_id: str, db: OrmSession = Depends(db_session),
     acts = db.query(Activity).filter(Activity.approval_dept_id == d.id).count()
     if acts:
         raise HTTPException(409, f"「{d.name}」归口着 {acts} 场活动，不能删除")
+    # 会长团的催办范围里去掉这个部门；去掉后空了就是接收全部部门
+    for u in db.query(User).filter(User.qingxie_post == "council").all():
+        if d.id in (u.remind_dept_ids or []):
+            u.remind_dept_ids = [x for x in u.remind_dept_ids if x != d.id]
     audit_log(db, actor=user, action="delete", target_type="department",
               target_id=d.id, target_label=d.name, activity_id=None,
               summary=f"删除部门「{d.name}」")
@@ -154,7 +172,7 @@ def delete_department(dept_id: str, db: OrmSession = Depends(db_session),
 
 class DeptBody(BaseModel):
     name: str = ""
-    note: str = ""
+    note: str | None = None                     # 不传就不动说明
     head_student_id: str | None = None          # 新增/指定部长；空串=清空全部部长
     remove_head_student_id: str | None = None   # 移除某位部长（降为部门成员）
 
@@ -171,7 +189,7 @@ def update_department(dept_id: str, body: DeptBody,
     if body.name.strip() and body.name.strip() != d.name:
         changed.append(f"名称 {d.name}→{body.name.strip()}")
         d.name = body.name.strip()
-    if body.note.strip() != d.note:
+    if body.note is not None and body.note.strip() != d.note:
         d.note = body.note.strip()
         changed.append("说明")
     if body.remove_head_student_id is not None:
@@ -510,7 +528,6 @@ def my_approvals(db: OrmSession = Depends(db_session),
         if not _can_decide(db, user, act):
             continue
         dept = db.get(Department, act.approval_dept_id) if act.approval_dept_id else None
-        who = db.get(User, act.approval_assignee_id) if act.approval_assignee_id else None
         creator = db.get(User, act.created_by)
         # 提交时写的说明。审批人做决定的这个页面是最该看到那句话的地方，
         # 光存进流水、发进通知是不够的。
@@ -530,7 +547,7 @@ def my_approvals(db: OrmSession = Depends(db_session),
             "record_only": act.is_record(),
             "submitted_at": iso(act.submitted_at),
             "department": dept.name if dept else "",
-            "assignee": who.name if who else "",
+            "assignee": assignee_text(db, act),
             # 在我名下（会长团接管别人名下的那种不算）：前端据此标「当前审批人」
             "mine": (act.approval_assignee_id == user.id
                      or ((liaison.is_dept_handler(db, user, act.approval_dept_id)
@@ -560,12 +577,11 @@ def approval_detail(activity_id: str, db: OrmSession = Depends(db_session),
             .filter(ApprovalEvent.activity_id == activity_id)
             .order_by(ApprovalEvent.created_at).all())
     dept = db.get(Department, act.approval_dept_id) if act.approval_dept_id else None
-    who = db.get(User, act.approval_assignee_id) if act.approval_assignee_id else None
     dept_names = {d.id: d.name for d in db.query(Department).all()}
     return {
         "status": act.status, "status_label": act.label_status(),
         "department": dept.name if dept else "",
-        "assignee": who.name if who else "",
+        "assignee": assignee_text(db, act),
         # 启用值班的部门：通知实际发给了谁（管理者看「等谁处理」要看这个）
         "on_duty": (d.name if (d := liaison.on_duty(db, dept)) else ""),
         "can_decide": _can_decide(db, user, act) and act.status == "pending",

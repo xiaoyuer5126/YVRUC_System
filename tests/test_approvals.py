@@ -486,3 +486,60 @@ def test_审批人打开活动管理页能直接去审批(client, initiator, lia
     assert client.get(url, headers=head).json()["can_decide"] is True
     assert aid in [a["id"] for a in client.get("/api/staff/approvals",
                                                headers=head).json()]
+
+
+def test_多部长时等谁审批列全部部长_移除一位只动他(client, admin, db, draft,
+                                       take_student):
+    """审批挂在部长名下时本部门任一部长都能拍，「等谁审批」要列出全部在岗部长；
+    在部门编辑里移除其中一位，他降为本部门成员，别的部长和部门说明都不动。"""
+    from conftest import student_row
+    dept = _liaison(db)
+    note_before = dept.note
+    u = student_row(db, take_student())
+    try:
+        assert client.put(f"/api/staff/roles/{u.id}", headers=admin,
+                          json={"roles": ["student", "qingxie"], "qingxie_post": "head",
+                                "department_id": dept.id}).status_code == 200
+        r = client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                        json={"department_id": dept.id})
+        assert r.status_code == 200, r.text
+        both = f"周砚、{u.name}"
+        detail = client.get(f"/api/staff/activities/{draft}/approval",
+                            headers=admin).json()
+        assert detail["assignee"] == both
+        row = next(x for x in client.get("/api/staff/approvals", headers=admin).json()
+                   if x["id"] == draft)
+        assert row["assignee"] == both
+
+        # 部门编辑里移除新加的那位：只传学号，不带说明
+        r = client.patch(f"/api/staff/departments/{dept.id}", headers=admin,
+                         json={"remove_head_student_id": u.student_id})
+        assert r.status_code == 200, r.text
+        db.expire_all()
+        assert db.get(User, u.id).qingxie_post == "member"
+        assert db.get(User, u.id).department_id == dept.id
+        assert _liaison(db).note == note_before
+        heads = next(d for d in client.get("/api/staff/departments", headers=admin).json()
+                     if d["id"] == dept.id)["heads"]
+        assert [h["name"] for h in heads] == ["周砚"]
+        assert client.get(f"/api/staff/activities/{draft}/approval",
+                          headers=admin).json()["assignee"] == "周砚"
+        # 不是这个部门的部长：报 404，不误动别人
+        r = client.patch(f"/api/staff/departments/{dept.id}", headers=admin,
+                         json={"remove_head_student_id": u.student_id})
+        assert r.status_code == 404
+    finally:
+        assert client.put(f"/api/staff/roles/{u.id}", headers=admin,
+                          json={"roles": ["student"]}).status_code == 200
+
+
+def test_转给个人的审批只显示那个人(client, admin, db, draft):
+    dept = _liaison(db)
+    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                json={"department_id": dept.id})
+    act = db.get(Activity, draft)
+    core = db.query(User).filter(User.student_id == CORE).one()
+    from backend.routers.approvals import assignee_text
+    act.approval_assignee_id = core.id
+    assert assignee_text(db, act) == core.name
+    db.rollback()

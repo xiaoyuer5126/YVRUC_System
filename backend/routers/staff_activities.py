@@ -130,12 +130,16 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
     看到的那条一致。所以每条返回的 display_status / display_label 是管理端口径
     ——草稿、待审批、待发布分开，别的几天几档与广场相同。
 
-    分页返回：每条都要数场次、报名与候补。先按状态定下这一页是哪几条，再只为
-    这一页装场次岗位，条数不随活动总数涨。
+    分页返回：每条都要数场次、报名与候补，只为这一页装场次岗位，条数不随活动
+    总数涨。不筛状态时直接在 SQL 里分页；筛状态时展示状态要按场次时间现算，
+    得先把候选行的状态都算完、筛过，再切这一页。
     """
+    size = max(1, min(size, 100))
+    page = max(1, page)
+    # created_at 相同的几条再按 id 定序：分页靠 offset，次序不稳的话翻页会重复或漏条
     rows = (db.query(Activity.id, Activity.status, Activity.reg_start,
                      Activity.reg_end)
-            .order_by(Activity.created_at.desc()))
+            .order_by(Activity.created_at.desc(), Activity.id.desc()))
     managed = managed_activity_ids(db, user)
     if managed is not None:
         rows = rows.filter(Activity.id.in_(managed or ['__none__']))
@@ -144,10 +148,13 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
                                                 escape="\\"))
     if status:
         rows = rows.filter(Activity.status.in_(ADMIN_FILTER_BASIS.get(status, ())))
-    rows = rows.all()
+        rows = rows.all()
+    else:
+        total = rows.order_by(None).count()
+        rows = rows.offset((page - 1) * size).limit(size).all()
 
     # 服务场次的跨度与最晚开场时刻：算展示状态要用（同 Activity.time_span /
-    # last_shift_start，只算服务场次）。只查筛出来的这些活动
+    # last_shift_start，只算服务场次）。只查上面取出来的这些活动
     ids = [r[0] for r in rows]
     spans = {aid: ((first, last), last_start) for aid, first, last, last_start in
              db.query(Shift.activity_id, func.min(Shift.start_time),
@@ -155,17 +162,16 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
              .filter(Shift.kind == "service", Shift.activity_id.in_(ids))
              .group_by(Shift.activity_id).all()} if ids else {}
 
-    matched = []
-    for aid, st, reg_start, reg_end in rows:
-        span, last_start = spans.get(aid, (None, None))
-        code = admin_status_of(st, reg_start, reg_end, span, last_start)[0]
-        if status and code != status:
-            continue
-        matched.append(aid)
-
-    size = max(1, min(size, 100))
-    page = max(1, page)
-    picked = matched[(page - 1) * size: page * size]
+    if status:
+        matched = []
+        for aid, st, reg_start, reg_end in rows:
+            span, last_start = spans.get(aid, (None, None))
+            if admin_status_of(st, reg_start, reg_end, span, last_start)[0] == status:
+                matched.append(aid)
+        total = len(matched)
+        picked = matched[(page - 1) * size: page * size]
+    else:
+        picked = ids
     acts = (db.query(Activity).filter(Activity.id.in_(picked)).all()
             if picked else [])
     # 场次、岗位、人数各一次查完，条数不随一页多少个活动涨
@@ -182,7 +188,7 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
             by_id[aid].status, by_id[aid].reg_start, by_id[aid].reg_end,
             spans.get(aid, (None, None))[0], spans.get(aid, (None, None))[1])
         out.append(item)
-    return {"items": out, "total": len(matched), "page": page, "size": size}
+    return {"items": out, "total": total, "page": page, "size": size}
 
 
 class ActivityBody(BaseModel):

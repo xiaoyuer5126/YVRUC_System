@@ -1037,12 +1037,19 @@ def _hours_approvers(db: OrmSession, act: Activity) -> list[User]:
 
 def council_members(db: OrmSession, dept_id: str | None = None) -> list[User]:
     """会长团。按真实身份：问的是这些人是谁，不是当前操作者此刻的视角。
-    传入 dept_id 时，按每个人的 remind_dept_ids 过滤（空列表 = 接收全部部门）。"""
+    传入 dept_id 时，按每个人的 remind_dept_ids 过滤（空列表 = 接收全部部门）。
+    范围里已经不存在的部门先去掉，去掉后为空同样按全部部门算：要是不去掉，
+    一个只勾了已删部门的人就哪个部门的催办都收不到了。"""
     rows = [u for u in db.query(User).filter(User.qingxie_post == "council").all()
             if u.is_council(real=True)]
     if not dept_id:
         return rows
-    return [u for u in rows if not u.remind_dept_ids or dept_id in u.remind_dept_ids]
+    valid = {d.id for d in db.query(Department.id).all()}
+
+    def wants(u: User) -> bool:
+        scope = [d for d in (u.remind_dept_ids or []) if d in valid]
+        return not scope or dept_id in scope
+    return [u for u in rows if wants(u)]
 
 
 def _hours_notify_targets(db: OrmSession, act: Activity) -> list[User]:

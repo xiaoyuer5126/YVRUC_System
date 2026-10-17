@@ -241,4 +241,5 @@ def test_业务回滚了就不推(db, take_student, monkeypatch):
     msgcenter.send_user(db, user, "custom", title="标题", content="正文")
     db.rollback()
     db.commit()
+    msgcenter.flush()      # 推送是异步的：等发送队列走完再看，免得还没轮到就断言
     assert sent == []

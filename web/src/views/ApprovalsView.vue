@@ -236,10 +236,16 @@
           <el-input v-model="dd.note" placeholder="选填，显示在归口部门下拉里" />
         </el-form-item>
         <el-form-item v-if="dd.row" label="部长">
-          <el-input v-model="dd.studentId"
-                    :placeholder="dd.row.head_name
-                                  ? `现任 ${dd.row.head_name}，填新学号即换人，留空不动`
-                                  : '青协成员的学号，暂不指定可留空'" />
+          <div class="head-list">
+            <div v-for="h in dd.row.heads || []" :key="h.id" class="head-item">
+              <span>{{ h.name }} <span class="dim">{{ h.student_id }}</span></span>
+              <el-button size="small" link type="danger" :loading="dd.removing === h.id"
+                         @click="removeHead(h)">移除</el-button>
+            </div>
+            <p v-if="!(dd.row.heads || []).length" class="dim" style="margin:0">尚未指定部长</p>
+            <el-input v-model="dd.studentId"
+                      placeholder="填学号即新增一位部长，留空不动" />
+          </div>
         </el-form-item>
       </el-form>
       <p v-if="!dd.row" class="dim" style="margin:0">
@@ -322,14 +328,36 @@ const cd = ref({ visible: false, kind: '', row: null, approve: true, title: '', 
                  audience: '', approveLabel: '通过', rejectLabel: '驳回',
                  templates: [], rejectTemplates: [] })
 // 部门的维护：管理员或会长团
-const dd = ref({ visible: false, row: null, name: '', note: '', studentId: '', busy: false })
+const dd = ref({ visible: false, row: null, name: '', note: '', studentId: '', busy: false,
+                 removing: '' })
 const isAdmin = computed(() =>
   auth.activeIdentity === 'admin'
   || (auth.activeIdentity === 'qingxie' && auth.user?.qingxie_post === 'council'))
 
 function openDept(row) {
   dd.value = { visible: true, row, name: row?.name || '', note: row?.note || '',
-               studentId: '', busy: false }
+               studentId: '', busy: false, removing: '' }
+}
+
+// 移除一位部长：降为本部门成员，其余部长不动
+async function removeHead(h) {
+  const d = dd.value
+  try {
+    await ElMessageBox.confirm(`确定移除「${d.row.name}」的部长 ${h.name}（${h.student_id}）？`
+                               + '移除后他留在本部门，层级改为部门成员。',
+                               '移除部长', { type: 'warning' })
+  } catch { return }
+  d.removing = h.id
+  try {
+    // 名称、说明按这一行现有的值带上，未保存的编辑不在这里提交
+    await api.patch(`/api/staff/departments/${d.row.id}`,
+                    { name: d.row.name, note: d.row.note || '',
+                      remove_head_student_id: h.student_id })
+    ElMessage.success(`已移除部长 ${h.name}`)
+    depts.value = await api.get('/api/staff/departments')
+    const fresh = depts.value.find(x => x.id === d.row.id)
+    if (fresh) d.row = fresh
+  } finally { d.removing = '' }
 }
 
 async function saveDept() {
@@ -338,7 +366,7 @@ async function saveDept() {
   d.busy = true
   try {
     if (d.row) {
-      // 部长这一格留空表示「不动」，清空部长请在角色管理里改这个人的层级
+      // 学号一栏只用来新增部长，留空表示不动；移除用列表里每位后面的按钮
       const body = { name: d.name.trim(), note: d.note.trim() }
       if (d.studentId.trim()) body.head_student_id = d.studentId.trim()
       await api.patch(`/api/staff/departments/${d.row.id}`, body)
@@ -483,5 +511,7 @@ async function submitTransfer() {
 .item { margin-bottom: 12px; border-radius: 12px; }
 .item.focused { border-color: var(--el-color-warning); box-shadow: 0 0 0 2px var(--el-color-warning-light-7); }
 .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.head-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.head-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .title { font-size: 15px; color: var(--el-color-primary); cursor: pointer; }
 </style>

@@ -11,8 +11,12 @@ import { authHeaders } from '../api'
 export function useAuthedImage(source) {
   const src = ref('')
   let made = ''        // 已经发出去的 blob 地址，换图或卸载时要收回来
+  // 第几次取图。换图或卸载都让它加一：慢的那次取回来时序号已经过时，
+  // 要是照样显示，旧图会盖掉新图（卸载后还会漏掉一个收不回的 blob 地址）
+  let seq = 0
 
   function release() {
+    seq += 1
     if (made.startsWith('blob:')) URL.revokeObjectURL(made)
     made = ''
     src.value = ''
@@ -20,6 +24,7 @@ export function useAuthedImage(source) {
 
   async function load(url) {
     release()
+    const mine = seq
     if (!url) return
     if (url.startsWith('data:')) {
       made = url
@@ -28,9 +33,15 @@ export function useAuthedImage(source) {
     }
     try {
       const resp = await fetch(url, { headers: authHeaders() })
-      if (!resp.ok) return          // 取不到（没权限、文件丢了）就留空
-      made = URL.createObjectURL(await resp.blob())
-      src.value = made
+      if (mine !== seq || !resp.ok) return   // 已换图，或取不到（没权限、文件丢了）就留空
+      const blob = await resp.blob()
+      const local = URL.createObjectURL(blob)
+      if (mine !== seq) {
+        URL.revokeObjectURL(local)
+        return
+      }
+      made = local
+      src.value = local
     } catch {
       // 网络断了同样只是显示不出这张图，不打断页面
     }

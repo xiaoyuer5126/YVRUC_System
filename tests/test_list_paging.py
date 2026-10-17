@@ -119,3 +119,42 @@ def test_消息同一时刻发出的几条翻页时不重不漏(client, db, take
         got += [n["id"] for n in client.get(
             f"/api/me/notifications?page={page}&size=3", headers=h).json()["items"]]
     assert sorted(got) == sorted(ids)
+
+
+def test_管理端活动列表分页_同一时刻建的也不重不漏(client, admin, db):
+    """不筛状态时在 SQL 里分页：总数照算全部，按建立时间倒序；同一时刻建的几条
+    按 id 定序，翻到底不重不漏，和筛「草稿」时翻出来的次序一致。"""
+    from backend.models import Activity
+    tag = f"列表翻页{uid('t')[-6:]}"
+    ids = []
+    for i in range(7):
+        r = client.post("/api/staff/activities", headers=admin,
+                        json={"title": f"{tag}-{i}", "organizer": "文学院青协",
+                              "location": "世纪馆", "intro": "x", "contact_group_qr": "x",
+                              "contacts": [{"name": "王", "phone": "13900000000"}],
+                              "reg_start": now().isoformat(),
+                              "reg_end": (now() + timedelta(days=5)).isoformat()})
+        assert r.status_code == 200, r.text
+        ids.append(r.json()["id"])
+    base = now() - timedelta(hours=1)
+    for i, aid in enumerate(ids):
+        # 前四条同一时刻，后三条依次更晚
+        db.get(Activity, aid).created_at = base + timedelta(minutes=max(0, i - 3))
+    db.commit()
+    expected = [a.id for a in sorted((db.get(Activity, x) for x in ids),
+                                     key=lambda a: (a.created_at, a.id), reverse=True)]
+
+    def pages(url):
+        got, page = [], 1
+        while True:
+            d = client.get(f"{url}&page={page}&size=3", headers=admin).json()
+            if not d["items"]:
+                return d["total"], got
+            assert all(x["display_status"] == "draft" for x in d["items"])
+            got += [x["id"] for x in d["items"]]
+            page += 1
+
+    assert pages(f"/api/staff/activities?q={tag}") == (7, expected)
+    assert pages(f"/api/staff/activities?q={tag}&status=draft") == (7, expected)
+    d = client.get(f"/api/staff/activities?q={tag}&status=pending", headers=admin).json()
+    assert d["total"] == 0 and d["items"] == []

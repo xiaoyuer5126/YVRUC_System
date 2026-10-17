@@ -274,22 +274,22 @@ def test_批量添加与移除青协身份(client, admin, db, take_student):
 
 
 def test_批量调整的边界(client, admin, db, take_student):
-    """管理员/学生不批量，部长不批量；部长批量时越界的人跳过并写明原因。"""
+    """管理员/志愿者不批量，部长不批量；部长批量时越界的人跳过并写明原因。"""
     dept = db.query(Department).first()
     r = client.post("/api/staff/roles/batch", headers=admin,
                     json={"action": "add", "role": "admin", "student_ids": ["x"]})
-    assert r.status_code == 400 and "批量只支持" in r.json()["detail"]
+    assert r.status_code == 400 and "管理员、志愿者不批量" in r.json()["detail"]
     assert client.post("/api/staff/roles/batch", headers=admin,
                        json={"action": "eat", "role": "initiator",
                              "student_ids": ["x"]}).status_code == 400
     assert client.post("/api/staff/roles/batch", headers=admin,
                        json={"action": "add", "role": "qingxie",
                              "student_ids": []}).status_code == 400
-    # 批量设部长：一个部门只有一位，谁顶谁说不清，逐个来
+    # 部长决定一个部门的审批由谁拍，逐个设
     r = client.post("/api/staff/roles/batch", headers=admin,
                     json={"action": "add", "role": "qingxie", "qingxie_post": "head",
                           "department_id": dept.id, "student_ids": ["x"]})
-    assert r.status_code == 400 and "逐个设置" in r.json()["detail"]
+    assert r.status_code == 400 and "部长请逐个设置" in r.json()["detail"]
 
     head_dept = db.query(Department).filter(Department.name == "对外联络部").one()
     head = db.query(User).filter(User.department_id == head_dept.id,
@@ -358,3 +358,62 @@ def test_会长团可配置催办接收部门范围(client, admin, db, take_stud
         client.put(f"/api/staff/roles/{u.id}", headers=admin,
                    json={"roles": ["student"]})
 
+
+
+def test_批量调整后不是会长团就清掉催办范围(client, admin, db, take_student):
+    """催办范围只对会长团有意义。批量撤下青协后留着旧范围，下次再设成会长团
+    就会莫名其妙只收一部分部门的催办；仍是会长团的（只动发起方身份）不受影响。"""
+    d1 = db.query(Department).order_by(Department.sort).first()
+    a, b = student_row(db, take_student()), student_row(db, take_student())
+    for u in (a, b):
+        assert client.put(f"/api/staff/roles/{u.id}", headers=admin,
+                          json={"roles": ["student", "qingxie"],
+                                "qingxie_post": "council",
+                                "remind_dept_ids": [d1.id]}).status_code == 200
+    r = client.post("/api/staff/roles/batch", headers=admin,
+                    json={"action": "remove", "role": "qingxie",
+                          "student_ids": [a.student_id]})
+    assert r.status_code == 200 and len(r.json()["updated"]) == 1, r.text
+    r = client.post("/api/staff/roles/batch", headers=admin,
+                    json={"action": "add", "role": "initiator",
+                          "student_ids": [b.student_id]})
+    assert r.status_code == 200 and len(r.json()["updated"]) == 1, r.text
+    db.expire_all()
+    assert db.get(User, a.id).remind_dept_ids == []
+    assert db.get(User, b.id).remind_dept_ids == [d1.id]
+    client.put(f"/api/staff/roles/{b.id}", headers=admin, json={"roles": ["student"]})
+
+
+def test_催办范围里已删的部门不算数(client, admin, db, take_student):
+    """范围里只剩已删部门的会长团按「全部部门」收催办，列表也不露出原始 id；
+    删部门时顺手把它从各人的范围里去掉。"""
+    from backend.routers.staff_ops import council_members
+    d1 = db.query(Department).order_by(Department.sort).first()
+    gone = client.post("/api/staff/departments", headers=admin,
+                       json={"name": "测试催办待删部门"}).json()["id"]
+    u = student_row(db, take_student())
+    try:
+        assert client.put(f"/api/staff/roles/{u.id}", headers=admin,
+                          json={"roles": ["student", "qingxie"],
+                                "qingxie_post": "council",
+                                "remind_dept_ids": [gone]}).status_code == 200
+        db.expire_all()
+        assert u.id not in {m.id for m in council_members(db, d1.id)}
+        assert client.delete(f"/api/staff/departments/{gone}",
+                             headers=admin).status_code == 200
+        db.expire_all()
+        assert db.get(User, u.id).remind_dept_ids == []
+        assert u.id in {m.id for m in council_members(db, d1.id)}
+
+        # 库里残留的失效 id（删部门之外的途径留下的）：照样按全部部门算、不往外给
+        row = db.get(User, u.id)
+        row.remind_dept_ids = ["dep_gone_long_ago"]
+        db.commit()
+        db.expire_all()
+        assert u.id in {m.id for m in council_members(db, d1.id)}
+        items = client.get("/api/staff/roles", headers=admin,
+                           params={"q": u.student_id}).json()["items"]
+        mine = next(x for x in items if x["id"] == u.id)
+        assert mine["remind_dept_ids"] == []
+    finally:
+        client.put(f"/api/staff/roles/{u.id}", headers=admin, json={"roles": ["student"]})
