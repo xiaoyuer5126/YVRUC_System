@@ -1,6 +1,12 @@
-<!-- 签到状态标签。场次结束后仍未签退的是「未签退」，不是「服务中」。 -->
+<!-- 签到状态标签。场次结束后仍未签退的是「未签退」，不是「服务中」。
+     时间灵活的场次一张码签一轮，显示一共签过几次，这一轮没签退的标「服务中」。 -->
 <template>
-  <template v-if="row.checked_in">
+  <template v-if="row.shift?.flexible_time && row.checkin_count">
+    <el-tag type="success" effect="light">已签到 {{ row.checkin_count }} 次</el-tag>
+    <el-tag v-if="row.checked_in && !row.checkout_at" type="warning" effect="light"
+            size="small">服务中</el-tag>
+  </template>
+  <template v-else-if="row.checked_in">
     <el-tag type="success" effect="light">已到岗</el-tag>
     <span v-if="row.checkout_at" class="dim">
       签退 {{ row.checkout_at.slice(11, 16) }}

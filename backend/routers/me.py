@@ -15,7 +15,7 @@ from .. import hours as hours_flow
 from ..database import db_session
 from ..deps import current_user
 from ..integrations import msgcenter
-from ..models import (Activity, CheckinRecord, Enrollment,
+from ..models import (Activity, Enrollment,
                       HoursAppeal, HoursRecord, Notification, Shift, Position,
                       User, iso, now, uid)
 from ..notify import notify_managers
@@ -73,9 +73,12 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
     act = db.get(Activity, enr.activity_id)
     g = db.get(Shift, enr.shift_id)
     st = db.get(Position, enr.position_id) if enr.position_id else None
-    rec = db.query(CheckinRecord).filter(
-        CheckinRecord.user_id == enr.user_id,
-        CheckinRecord.shift_id == enr.shift_id).first()
+    from .checkin import checkin_count, find_record, resolve_task
+
+    # 时间灵活的场次一张码一轮：签到/签退按钮跟着现在开着的那张码走，这张码上
+    # 没有他的记录就是「签到」（新的一轮）；签过几轮另给 checkin_count
+    task = (resolve_task(db, g.id, enr.position_id) if g.flexible_time else None)
+    rec = find_record(db, enr.user_id, g, task)
     ck = (_checkin_state(db, enr, g) if enr.status == "enrolled" else None)
     # 刚签完到的这段时间里点了「签退」也是白点：服务端十分钟内不认（防手滑，
     # 见 config.CHECKOUT_MIN_GAP_MINUTES），扫完码只会被挡回来。把「几点之后
@@ -95,6 +98,7 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
                   # 培训/彩排随服务场次的报名产生，学生不能单独退，只能请假
                   "kind": g.kind, "kind_label": g.kind_label(),
                   "attached": g.is_attached(),
+                  "flexible_time": g.flexible_time,
                   "hours_mode": g.hours_mode},
         "position": ({"id": st.id, "name": st.name, "time_text": st.time_text(),
                      "location": st.location} if st else None),
@@ -112,6 +116,8 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "joined_at": iso_of(enr.joined_at),
         "confirm_deadline": iso_of(enr.confirm_deadline),
         "checked_in": rec is not None,
+        "checkin_count": (checkin_count(db, enr.user_id, g) if g.flexible_time
+                          else int(rec is not None)),
         "checkin_at": iso(rec.checkin_at) if rec else None,
         "checkout_at": iso(rec.checkout_at) if rec else None,
         "checkin": ck,

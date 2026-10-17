@@ -110,7 +110,7 @@ def test_一位录取一位不录取_结论不会被后提交的盖掉(client, a
         return lambda c: c.post(
             f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
             json={"application_ids": [app_id], "accept": accept,
-                  "targets": [{"shift_id": ids[0]}]})
+                  "picks": {app_id: [{"shift_id": ids[0]}]}})
     first, second = _race(decide(True), decide(False))
 
     assert first.status_code == 200, first.text
@@ -125,7 +125,8 @@ def test_一位录取一位不录取_结论不会被后提交的盖掉(client, a
 def test_两位管理者同时把两个人录到同一批场次_最后一个名额只给一人(
         client, admin, db, take_student, monkeypatch):
     """两份申请都录到第 1、2 场，第 2 场只剩一个名额。两个请求锁的是同一批场次
-    （按 id 排序加锁），只会一先一后：后到的看得见先到的那一个，整份拦下。"""
+    （按 id 排序加锁），只会一先一后：后到的看得见先到的那一个，这个人整份不录，
+    逐人结果里写明名额不够。"""
     from backend.models import Shift
     act_id, ids, q = _create_screened(client, admin, db)
     db.get(Shift, ids[1]).placeholder().quota = 1
@@ -147,8 +148,10 @@ def test_两位管理者同时把两个人录到同一批场次_最后一个名�
                   "picks": {app_id: [{"shift_id": ids[i]} for i in order]}})
     first, second = _race(decide(app_ids[0], (0, 1)), decide(app_ids[1], (1, 0)))
 
-    assert first.status_code == 200, first.text
-    assert second.status_code == 409 and "名额" in second.json()["detail"], second.text
+    assert first.status_code == 200 and first.json()["count"] == 1, first.text
+    assert second.status_code == 200, second.text
+    (res,) = second.json()["results"]
+    assert not res["ok"] and "名额" in res["reason"], second.text
     db.expire_all()
     assert db.get(Application, app_ids[1]).status == "applied"
     enrolled = (db.query(Enrollment)

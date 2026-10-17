@@ -1,4 +1,5 @@
 /** 极简 fetch 封装：自动带 token、统一错误提示。 */
+import { h } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { auth, clearAuth } from './store'
 import { router } from './router'
@@ -69,7 +70,8 @@ async function request(method, url, body, opts = {}) {
     const detail = typeof data.detail === 'string'
       ? data.detail
       : (data.detail?.message || JSON.stringify(data.detail) || `请求失败(${resp.status})`)
-    if (!opts.silent && !opts.skipErrorToast) {
+    // 时段冲突由调用方弹确认框（见 withConflictConfirm），这里不再报一遍错
+    if (!opts.silent && !opts.skipErrorToast && data.detail?.code !== TIME_CONFLICT) {
       // 部门成员走完整个流程、在最后一步被拦下，这是设计好的学习权限，不是出错
       if (data.detail?.code === 'TRAINEE_READONLY') ElMessage.warning(detail)
       else ElMessage.error(detail)
@@ -88,6 +90,44 @@ export const api = {
   put: (url, body, opts) => request('PUT', url, body, opts),
   patch: (url, body, opts) => request('PATCH', url, body, opts),
   del: (url, opts) => request('DELETE', url, undefined, opts),
+}
+
+const TIME_CONFLICT = 'time_conflict'
+
+/** 冲突列表的一行：本活动的写「本活动 xx」，别的活动写活动名。纯文本。 */
+export function conflictLine(c, activityId = '') {
+  const where = activityId && c.activity_id === activityId
+    ? '本活动 ' : `「${c.activity_title}」`
+  return `${where}${c.shift_name}（${c.time}）${c.waiting ? '（候补中）' : ''}`
+}
+
+/** 后端回「时段冲突」（409，code=time_conflict）时先问一句，确认后带上
+ *  confirm_conflict 重发。send(confirm) 发请求、返回 promise；取消返回 null，
+ *  别的错误照常抛出。冲突只提示不硬拦，是不是真去不了由人自己判断。
+ *
+ *  head 是列表上方那句话，传 null 就用后端的 message（里面已写明哪几场撞了）。
+ *  列表用 h() 拼成节点、文字走文本插值：活动名是别人填的，不能当 HTML 渲染。 */
+export async function withConflictConfirm(send, { title = '时间冲突', ask = '仍要继续？',
+                                                  head = '与以下场次时间冲突：',
+                                                  activityId = '' } = {}) {
+  try {
+    return await send(false)
+  } catch (e) {
+    if (e?.data?.code !== TIME_CONFLICT) throw e
+    const lines = (e.data.conflicts || []).map(c => conflictLine(c, activityId))
+    try {
+      await ElMessageBox.confirm(
+        h('div', [
+          h('p', { style: 'margin:0 0 8px' }, head ?? e.data.message),
+          ...lines.map(l => h('div', { style: 'margin:4px 0' }, l)),
+          h('p', { style: 'margin:8px 0 0' }, ask),
+        ]),
+        title, { type: 'warning', confirmButtonText: '仍要继续', cancelButtonText: '取消' })
+    } catch {
+      return null
+    }
+    return await send(true)
+  }
 }
 
 export function fmtDT(iso) {

@@ -877,3 +877,166 @@ def test_签到那张码关了但同场另开了新码仍算待定(client, admin
     _past_checkout_gap(db, g)
     assert client.post(f"/api/checkin/task/{new.json()['token']}",
                        headers=h).json()["action"] == "checkout"
+
+
+# ---------- 时间灵活的场次：一张码一轮，可以签好几轮 ----------
+
+@pytest.fixture
+def flex_group(db, live_group):
+    act, g, h, token = live_group
+    g.flexible_time = True
+    db.commit()
+    return act, g, h, token
+
+
+def _rec_of(db, g, task_id) -> CheckinRecord:
+    db.expire_all()
+    return (db.query(CheckinRecord)
+            .filter(CheckinRecord.shift_id == g.id,
+                    CheckinRecord.task_id == task_id).one())
+
+
+def _new_task(client, admin, g) -> dict:
+    r = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks", headers=admin,
+                    json={"mode": "shift"})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_时间灵活场次两张码各签一轮_时长累加(client, admin, db, flex_group):
+    act, g, h, token = flex_group
+    tid_a = task_id_of(client, admin, act)
+    t0 = now().replace(second=0, microsecond=0)
+
+    # 第一轮：A 码签到、签退
+    assert client.post(f"/api/checkin/task/{token}", headers=h).json()["action"] == "checkin"
+    rec = _rec_of(db, g, tid_a)
+    rec.checkin_at = t0 - timedelta(hours=2, minutes=30)
+    db.commit()
+    assert client.post(f"/api/checkin/task/{token}", headers=h).json()["action"] == "checkout"
+    rec = _rec_of(db, g, tid_a)
+    rec.checkout_at = t0 - timedelta(hours=1, minutes=30)
+    db.commit()
+    # 同一张码签退后再扫：挡回去，叫他扫新码
+    r = client.post(f"/api/checkin/task/{token}", headers=h)
+    assert r.status_code == 409 and "新开的签到码" in r.json()["detail"]
+
+    # 第二轮：关掉 A、开 B，扫 B 是新的一轮签到
+    client.patch(f"/api/staff/checkin-tasks/{tid_a}", headers=admin, json={"active": False})
+    b = _new_task(client, admin, g)
+    d = client.post(f"/api/checkin/task/{b['token']}", headers=h).json()
+    assert d["action"] == "checkin" and "第 2 次" in d["message"]
+    rec = _rec_of(db, g, b["id"])
+    rec.checkin_at = t0 - timedelta(hours=1)
+    db.commit()
+    assert client.post(f"/api/checkin/task/{b['token']}",
+                       headers=h).json()["action"] == "checkout"
+    rec = _rec_of(db, g, b["id"])
+    rec.checkout_at = t0
+    db.commit()
+
+    info = client.get(f"/api/checkin/task/{b['token']}", headers=h).json()
+    assert info["flexible_time"] and info["checkin_count"] == 2
+    assert info["checked_in"] and info["checked_out"]
+
+    # 时长两段各按那一轮的实际起止，合计 2 小时
+    row = _hours_row(client, admin, act, _vol(db, g).id)
+    assert row["pending"] is False and row["auto_checkout"] is False
+    assert sorted(p["hours"] for p in row["parts"]) == [1.0, 1.0]
+    from backend.models import span_text
+    assert {p["time"] for p in row["parts"]} == {
+        span_text(t0 - timedelta(hours=2, minutes=30), t0 - timedelta(hours=1, minutes=30)),
+        span_text(t0 - timedelta(hours=1), t0)}
+    assert row["hours"] == 2.0
+
+    # 我的报名：显示签过 2 次；没有开着的码，就没有「这一轮」
+    mine = row_of(client, h, g)
+    assert mine["checkin_count"] == 2 and mine["shift"]["flexible_time"] is True
+
+
+def test_时间灵活场次没签退按那张码的截止兜底并待核(client, admin, db, flex_group):
+    act, g, h, token = flex_group
+    tid_a = task_id_of(client, admin, act)
+    client.post(f"/api/checkin/task/{token}", headers=h)
+    rec = _rec_of(db, g, tid_a)
+    rec.checkin_at = now() - timedelta(hours=1, minutes=30)
+    db.commit()
+    _expire(client, admin, tid_a)
+    deadline = db.get(CheckinTask, tid_a)
+    db.refresh(deadline)
+    # 过了截止的码还算开着，同场再开新码要先关掉它
+    client.patch(f"/api/staff/checkin-tasks/{tid_a}", headers=admin, json={"active": False})
+
+    # 另开了新码也不影响这一轮：它只能在 A 码上签退，A 已截止
+    b = _new_task(client, admin, g)
+    row = _hours_row(client, admin, act, _vol(db, g).id)
+    assert row["auto_checkout"] is True and row["pending"] is False
+    assert row["parts"][0]["time"].endswith(f"{deadline.valid_to:%H:%M}")
+    assert not row["parts"][0]["time"].endswith(f"{g.end_time:%H:%M}")
+
+    # 扫新码是新的一轮签到，不是给 A 那轮签退
+    assert client.post(f"/api/checkin/task/{b['token']}",
+                       headers=h).json()["action"] == "checkin"
+    db.expire_all()
+    assert db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id).count() == 2
+    row = _hours_row(client, admin, act, _vol(db, g).id)
+    assert row["auto_checkout"] is True and row["pending"] is True
+
+
+def test_时间灵活场次补签落在开着的那张码上(client, admin, db, flex_group):
+    act, g, h, token = flex_group
+    vol = _vol(db, g)
+    tid_a = task_id_of(client, admin, act)
+    batch = lambda tid, action: client.post(  # noqa: E731
+        f"/api/staff/checkin-tasks/{tid}/batch", headers=admin,
+        json={"action": action, "student_ids": [vol.student_id]})
+
+    d = batch(tid_a, "checkin").json()
+    assert d["done"] == 1
+    assert batch(tid_a, "checkin").json()["skipped"]          # 这张码上已签到
+    assert batch(tid_a, "checkout").json()["done"] == 1
+    # 码关了就不能往它上面补：要补先开码
+    client.patch(f"/api/staff/checkin-tasks/{tid_a}", headers=admin, json={"active": False})
+    r = batch(tid_a, "checkin")
+    assert r.status_code == 409 and "开启签到码" in r.json()["detail"]
+    b = _new_task(client, admin, g)
+    assert batch(b["id"], "checkin").json()["done"] == 1
+    db.expire_all()
+    assert {r.task_id for r in db.query(CheckinRecord)
+            .filter(CheckinRecord.shift_id == g.id)} == {tid_a, b["id"]}
+    # 到岗大屏按开着的码这一轮显示，另给共签到几次
+    board = client.get(f"/api/staff/shifts/{g.id}/board", headers=admin).json()
+    assert board["flexible_time"] is True
+    (item,) = board["records"]
+    assert item["checked_in"] and not item["checkout_at"] and item["checkin_count"] == 2
+
+
+def test_时间灵活场次时长不能按场次时长固定计(client, admin, db):
+    r = client.post("/api/staff/activities", headers=admin,
+                    json={"title": f"灵活场次 {uid('t')}", "organizer": "校青协",
+                          "intro": "x", "location": "东门", "contact_group_qr": "q",
+                          "contacts": [{"name": "王", "phone": "13900000000"}],
+                          "reg_start": now().isoformat(),
+                          "reg_end": (now() + timedelta(days=1)).isoformat()})
+    assert r.status_code == 200, r.text
+    act_id = r.json()["id"]
+    start = now() + timedelta(days=3)
+    body = {"name": "长期", "mode": "assign", "capacity": 5, "flexible_time": True,
+            "start_time": start.isoformat(),
+            "end_time": (start + timedelta(days=30)).isoformat()}
+    r = client.post(f"/api/staff/activities/{act_id}/shifts", headers=admin,
+                    json={**body, "hours_mode": "fixed"})
+    assert r.status_code == 400 and "固定" in r.json()["detail"]
+    r = client.post(f"/api/staff/activities/{act_id}/shifts", headers=admin, json=body)
+    assert r.status_code == 200, r.text
+    gid = r.json()["id"]
+    r = client.patch(f"/api/staff/shifts/{gid}", headers=admin, json={"hours_mode": "fixed"})
+    assert r.status_code == 400
+    assert client.patch(f"/api/staff/shifts/{gid}", headers=admin,
+                        json={"hours_mode": "none"}).status_code == 200
+    # 先改成不灵活，才能固定计
+    assert client.patch(f"/api/staff/shifts/{gid}", headers=admin,
+                        json={"flexible_time": False,
+                              "hours_mode": "fixed"}).status_code == 200
+    r = client.patch(f"/api/staff/shifts/{gid}", headers=admin, json={"flexible_time": True})
+    assert r.status_code == 400

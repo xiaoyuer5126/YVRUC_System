@@ -49,7 +49,7 @@
             <div class="shift-name">
               {{ g.name }} · {{ g.time_text }}
               <span class="dim">（{{ g.location || act.location || '地点待定' }}）</span>
-              <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain" style="margin-left:4px">时间灵活·不计冲突</el-tag>
+              <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain" style="margin-left:4px">时间灵活·可多次签到</el-tag>
             </div>
             <!-- 截止后统一分配的场次只能勾「待分配」：真实岗位由负责人分 -->
             <div v-for="p in choosable(g)" :key="p.id" class="pos-line">
@@ -116,7 +116,7 @@
 <script setup>
 import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api, fmtDT } from '../api'
+import { api, fmtDT, withConflictConfirm } from '../api'
 import QuestionFields from './QuestionFields.vue'
 
 const props = defineProps({ act: { type: Object, required: true } })
@@ -177,10 +177,14 @@ async function submit() {
   if (error) return ElMessage.warning(error)
   submitting.value = true
   try {
-    const d = await api.post(`/api/activities/${props.act.id}/apply`,
-                             { position_ids: form.position_ids, answers,
-                               leader_willing: form.leader_willing,
-                               allow_reassign: form.allow_reassign })
+    // 意向场次与已报名的活动时间冲突时先问一句，确认了才带 confirm_conflict 重发
+    const d = await withConflictConfirm(confirm => api.post(
+      `/api/activities/${props.act.id}/apply`,
+      { position_ids: form.position_ids, answers,
+        leader_willing: form.leader_willing,
+        allow_reassign: form.allow_reassign, confirm_conflict: confirm }),
+    { ask: '仍要提交申请？' })
+    if (!d) return
     ElMessage.success(d.message)
     emit('changed')
   } finally { submitting.value = false }

@@ -544,7 +544,8 @@ def test_补招只能勾对这个岗位生效的彩排(client, admin, db, act_wi
     assert r.status_code == 400 and "不生效" in r.json()["detail"]
 
 
-def test_彩排时段冲突要强制(client, admin, db, act_with_positions, take_student):
+def test_补招时彩排时段冲突先提示_确认后照报(client, admin, db, act_with_positions,
+                                        take_student):
     act, g, east, _check = act_with_positions
     rehearsal = _add_attached(client, admin, act, g, days=5)
     sid = take_student()
@@ -564,10 +565,17 @@ def test_彩排时段冲突要强制(client, admin, db, act_with_positions, take
                       joined_at=now()))
     db.commit()
     r = _walkin(client, admin, g, sid, position_id=east.id, attached_ids=[rehearsal])
-    assert r.status_code == 409 and "彩排" in r.json()["detail"]
+    detail = r.json()["detail"]
+    assert r.status_code == 409 and detail["code"] == "time_conflict"
+    assert "彩排" in detail["message"] and detail["conflicts"][0]["shift_name"] == "撞车场"
+    # 勾强制不管用：强制只管名额，冲突要确认
     r = _walkin(client, admin, g, sid, position_id=east.id, attached_ids=[rehearsal],
                 force=True)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "time_conflict"
+    r = _walkin(client, admin, g, sid, position_id=east.id, attached_ids=[rehearsal],
+                confirm_conflict=True)
     assert r.status_code == 200 and r.json()["attached"] == [rehearsal]
+    assert any("冲突" in x for x in r.json()["forced_reasons"])
 
 
 def _walkin_notice(client, sid, act):

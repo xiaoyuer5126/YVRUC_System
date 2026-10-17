@@ -15,6 +15,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 from . import pubcache
 from .enroll_logic import (Occupancy, active_rows, applies_to_shift, conflicts_among,
+                           dedupe_conflicts,
                            enroll_deadline, group_leader_task, group_needs_leader, lock_at,
                            shift_counts, unmet_for_tags, waitlist_position)
 from .models import (Activity, Application, Attachment, AuditLog, Enrollment,
@@ -194,7 +195,7 @@ def opens_in(act: Activity, t=None) -> int:
 # 给所有人共用（见 pubcache）。所以凡是随「谁在看」而变的字段，一律不许
 # 进 _detail_public / _brief_public，只能在 _for_viewer 里每次现算：
 #
-#   活动      my_time_conflicts   我别的活动里与本活动场次压上时的提示（本活动不算）
+#   活动      my_time_conflicts   我的有效报名里与本活动场次压上时的提示（含本活动别的场次）
 #             application         报名后筛选：题目 + **我的**申请
 #             contact_group_qr    联络群二维码，只给管理者
 #             attire_issued       只给管理者（后台有没有服装台账）
@@ -714,24 +715,17 @@ def _for_viewer(db: OrmSession, act: Activity, out: dict, user,
     if out["recruit_mode"] == "screened":
         out["application"] = application_out(db, act, user)
     # 「您有时间冲突的活动」（报名前预检用）：我的有效报名查一次，逐场次在内存里比。
-    # 本活动自己的报名不比——它就在志愿者正看着的那几场里，拿它跟本活动的场次比
-    # 等于自己跟自己撞。列表里同一条报名也只留一行：本活动有几个场次跟它压上，
-    # 那也只是别的活动里的同一段报名。
+    # 本活动里我报了的场次也比：它跟本活动别的场次压着，再报那一场就是同一时间
+    # 两头跑（比某一场时不算那一场自己，见 conflicts_among）。本活动的意向记录
+    # （筛选活动的 applied）不比：意向之间本来就可以重叠，他只是说这几场都能来。
+    # 列表里同一条报名只留一行：本活动有几个场次跟它压上，那也只是同一段报名。
     if user is not None:
-        rows = [r for r in active_rows(db, user) if r[2].id != act.id]
-        flex_ids = {g["id"] for g in out.get("shifts", [])
-                    if g.get("flexible_time")}
+        rows = [r for r in active_rows(db, user)
+                if r[2].id != act.id or r[0].status != "applied"]
         clashes: list[dict] = []
-        seen: set[str] = set()
         for sid, start, end, _deadline, _lock in basis["shifts"]:
-            if sid in flex_ids:
-                continue
-            for c in conflicts_among(rows, sid, _dt(start), _dt(end)):
-                if c["enrollment_id"] in seen:
-                    continue
-                seen.add(c["enrollment_id"])
-                clashes.append(c)
-        out["my_time_conflicts"] = clashes
+            clashes += conflicts_among(rows, sid, _dt(start), _dt(end))
+        out["my_time_conflicts"] = dedupe_conflicts(clashes)
     return with_times(out)
 
 

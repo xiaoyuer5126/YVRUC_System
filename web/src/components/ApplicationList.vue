@@ -1,4 +1,4 @@
-<!-- 报名后筛选：申请名单。看答案与档案，勾人批量录取 / 不录取。 -->
+<!-- 报名后筛选：申请名单。看答案与档案，逐人或勾选几人录取 / 不录取。 -->
 <template>
   <el-card shadow="never" v-loading="loading">
     <template #header>
@@ -14,29 +14,18 @@
         </el-radio-group>
         <span class="dim">导出仍是全部申请</span>
         <span class="al-actions">
-          <el-select v-model="targetShifts" multiple clearable collapse-tags
-                     collapse-tags-tooltip size="small" style="width:260px"
-                     placeholder="录取到：各自的第一意向">
-            <el-option v-for="g in shifts" :key="g.id" :value="g.id"
-                       :label="`${g.name}（${g.enrolled}/${g.capacity}）`" />
-          </el-select>
-          <!-- 选岗位的场次可以在这里统一改岗位；不选就用各人勾的意向岗位 -->
-          <template v-for="g in targetPickShifts" :key="g.id">
-            <el-select v-model="targetPositions[g.id]" clearable size="small"
-                       style="width:200px" :placeholder="`${g.name}：按各人意向`">
-              <el-option v-for="p in g.positions" :key="p.id" :value="p.id"
-                         :label="`${g.name} · ${p.name}（${p.quota} 人）`" />
-            </el-select>
-          </template>
+          <span class="dim">{{ shiftsLoad }}</span>
           <el-button type="success" size="small" :disabled="!selected.length"
-                     :loading="busy" @click="decide(true)">录取</el-button>
+                     :loading="busy" @click="decide(true, selected)">录取所选</el-button>
           <el-button type="danger" size="small" plain :disabled="!selected.length"
-                     :loading="busy" @click="decide(false)">不录取</el-button>
+                     :loading="busy" @click="decide(false, selected)">不录取所选</el-button>
         </span>
       </div>
     </template>
     <p class="dim" style="margin:0 0 8px">
-      一个人可以录到他意向里的一场或几场（时间不能重叠），没选中的意向场次随即作废。
+      每行勾选录到他意向里的哪几场（默认全勾），选岗位的场次可以改岗位，再点这一行的「录取」；
+      也可以勾选几个人后点上方「录取所选」，每人按自己那一行勾的场次录取。没勾的意向场次随即作废。
+      名额不够、时间冲突只拦那一个人，其余照常处理，结果逐人列出；时间冲突的人可以确认后仍录取。
       统一分配的场次先落在「待分配」，再分配岗位；不录取只发送通知，不留记录。
       场次开始时仍未处理的申请会自动落选并通知志愿者。
     </p>
@@ -77,50 +66,73 @@
           <span v-else class="dim">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="意向场次" min-width="180">
+      <!-- 意向场次就是录取去向：还在申请中的意向逐场勾选（默认全勾），选岗位的
+           场次后面跟岗位下拉，默认他自己勾的意向岗位；已处理的意向只显示结果 -->
+      <el-table-column label="意向场次（勾选录取到哪几场）" min-width="300">
         <template #default="{ row }">
-          <el-tag v-for="w in row.wanted" :key="w.shift_id" size="small" effect="plain"
-                  style="margin:0 8px 4px 0"
-                  :type="w.status === 'enrolled' ? 'success' : (w.status === 'applied' ? 'primary' : 'info')">
-            {{ w.shift_name }}{{ w.position_name ? ' · ' + w.position_name : '' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <!-- 录取到哪：默认他的第一意向，逐人可改成一场或几场、每场定岗位；
-           上面那排下拉只是批量默认值 -->
-      <el-table-column label="录取到" width="280">
-        <template #default="{ row }">
-          <template v-if="row.status === 'applied'">
-            <el-select :model-value="pickOf(row).map(p => p.shift_id)" multiple
-                       size="small" style="width:100%" placeholder="场次"
-                       @update:model-value="v => setShifts(row, v)">
-              <el-option v-for="w in row.wanted.filter(x => x.status === 'applied')"
-                         :key="w.shift_id" :value="w.shift_id"
-                         :label="shiftName(w.shift_id)" />
-            </el-select>
-            <div v-for="p in pickOf(row).filter(x => positionsOf(x.shift_id).length)"
-                 :key="p.shift_id" class="al-pick">
-              <span class="dim">{{ shiftName(p.shift_id) }}</span>
-              <el-select :model-value="p.position_id" size="small" clearable
-                         style="width:160px" placeholder="岗位（按意向）"
-                         @update:model-value="v => setPosition(row, p.shift_id, v)">
-                <el-option v-for="o in positionsOf(p.shift_id)" :key="o.id" :value="o.id"
+          <div v-for="w in row.wanted" :key="w.shift_id" class="al-pick">
+            <template v-if="row.status === 'applied' && w.status === 'applied' && choice[row.id]">
+              <el-checkbox v-model="choice[row.id][w.shift_id].on">{{ w.shift_name }}</el-checkbox>
+              <el-select v-if="isPick(w.shift_id)" v-model="choice[row.id][w.shift_id].position_id"
+                         size="small" style="width:160px" placeholder="岗位"
+                         :disabled="!choice[row.id][w.shift_id].on">
+                <el-option v-for="o in positionsOf(w.shift_id)" :key="o.id" :value="o.id"
                            :label="`${o.name}（${o.quota} 人）`" />
               </el-select>
-            </div>
+              <span v-else class="dim">{{ w.position_name || '待分配' }}</span>
+            </template>
+            <el-tag v-else size="small" effect="plain"
+                    :type="w.status === 'enrolled' ? 'success' : (w.status === 'applied' ? 'primary' : 'info')">
+              {{ w.shift_name }}{{ w.position_name ? ' · ' + w.position_name : '' }}
+            </el-tag>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="130">
+        <template #default="{ row }">
+          <template v-if="row.status === 'applied'">
+            <el-button size="small" type="success" link :disabled="busy"
+                       @click="decide(true, [row])">录取</el-button>
+            <el-button size="small" type="danger" link :disabled="busy"
+                       @click="decide(false, [row])">不录取</el-button>
           </template>
-          <span v-else class="dim">—</span>
         </template>
       </el-table-column>
     </el-table>
     <el-empty v-if="!apps.length && !loading" description="还没有人申请" />
+
+    <!-- 逐人结果：成功的写录到哪儿，失败的写原因；时间冲突的可以确认后仍录取 -->
+    <el-dialog v-model="result.visible" title="处理结果" width="600">
+      <p class="dim" style="margin:0 0 8px">
+        成功 {{ result.rows.filter(r => r.ok).length }} 人，未处理 {{ result.rows.filter(r => !r.ok).length }} 人
+      </p>
+      <div v-for="r in result.rows" :key="r.application_id" class="al-result">
+        <el-tag size="small" :type="r.ok ? 'success' : (r.code === 'time_conflict' ? 'warning' : 'danger')">
+          {{ r.ok ? '成功' : (r.code === 'time_conflict' ? '时间冲突' : '未处理') }}
+        </el-tag>
+        <div>
+          <b>{{ r.name }}</b> <span class="dim">{{ r.student_id }}</span>
+          <div v-if="r.ok && r.placed" class="dim">{{ r.placed }}</div>
+          <div v-if="!r.ok">{{ r.reason }}</div>
+          <div v-for="c in r.conflicts || []" :key="c.enrollment_id" class="dim">
+            {{ conflictLine(c, activityId) }}
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="result.visible = false">关闭</el-button>
+        <el-button v-if="clashRows.length" type="warning" :loading="busy" @click="confirmClashes">
+          确认时间冲突，仍录取这 {{ clashRows.length }} 人
+        </el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { api, downloadExport, fmtDT } from '../api'
+import { api, conflictLine, downloadExport, fmtDT } from '../api'
 import ScoreAlert from './ScoreAlert.vue'
 import AnswerList from './AnswerList.vue'
 
@@ -129,39 +141,38 @@ const emit = defineEmits(['archive', 'changed'])
 
 const STATUS_TYPE = { applied: 'primary', accepted: 'success', rejected: 'info', withdrawn: 'info' }
 const apps = ref([])
-const shifts = ref([])
+const shifts = ref([])   // vuecheck: script-only，模板经 positionsOf / isPick / shiftsLoad 读它
 const selected = ref([])
-// 整批录取到哪几场；选岗位的场次再各定一个整批岗位（场次 id → 岗位 id）
-const targetShifts = ref([])
-const targetPositions = ref({})
-const targetPickShifts = computed(() => shifts.value
-  .filter(g => targetShifts.value.includes(g.id) && g.positions.length))
-// 逐人指定的录取去向（[{shift_id, position_id}]）：只存改过的人，其余跟批量下拉走
-const picks = ref({})   // vuecheck: script-only，模板只通过 pickOf 读它
-const shiftName = id => shifts.value.find(g => g.id === id)?.name || id
+// 每行勾了哪几场、各录到哪个岗位：申请 id → 场次 id → { on, position_id }。
+// 载入时给每个待处理的人建好：还在申请中的意向全勾上，岗位取他自己勾的意向岗位；
+// 刷新时已经改过的保留，录了一部分人之后剩下的人不用重勾
+const choice = ref({})
 const positionsOf = id => shifts.value.find(g => g.id === id)?.positions || []
-const batchTargets = () => targetShifts.value
-  .map(id => ({ shift_id: id, position_id: targetPositions.value[id] || '' }))
-function pickOf(row) {
-  const hit = picks.value[row.id]
-  if (hit) return hit
-  const wanted = row.wanted.find(w => w.status === 'applied') || row.wanted[0]
-  const chosen = targetShifts.value.length ? batchTargets()
-    : (wanted ? [{ shift_id: wanted.shift_id, position_id: '' }] : [])
-  return chosen.map(p => ({ ...p, position_id: p.position_id || wantedPositionId(row, p.shift_id) }))
+const isPick = id => shifts.value.find(g => g.id === id)?.mode === 'pick'
+  && positionsOf(id).length > 0
+// 各场次已录/上限，放在上方按钮旁边，录人时心里有数
+const shiftsLoad = computed(() => shifts.value
+  .map(g => `${g.name} ${g.enrolled}/${g.capacity}`).join(' · '))
+function initChoice(rows) {
+  const out = {}
+  for (const row of rows) {
+    if (row.status !== 'applied') continue
+    const before = choice.value[row.id] || {}
+    out[row.id] = Object.fromEntries(row.wanted
+      .filter(w => w.status === 'applied')
+      .map(w => [w.shift_id, before[w.shift_id] || {
+        on: true,
+        position_id: positionsOf(w.shift_id).some(p => p.id === w.position_id)
+          ? w.position_id : '',
+      }]))
+  }
+  choice.value = out
 }
-// 他在这一场勾的意向岗位；名单只给岗位名，按名字对回 id
-function wantedPositionId(row, shiftId) {
-  const name = row.wanted.find(w => w.shift_id === shiftId)?.position_name
-  return (name && positionsOf(shiftId).find(p => p.name === name)?.id) || ''
-}
-function setShifts(row, ids) {
-  const before = Object.fromEntries(pickOf(row).map(p => [p.shift_id, p.position_id]))
-  picks.value[row.id] = ids.map(id => ({ shift_id: id, position_id: before[id] || '' }))
-}
-function setPosition(row, shiftId, v) {
-  picks.value[row.id] = pickOf(row)
-    .map(p => (p.shift_id === shiftId ? { ...p, position_id: v || '' } : p))
+/** 这一行勾的场次，按接口要的样子：[{ shift_id, position_id }] */
+function picksOf(row) {
+  return Object.entries(choice.value[row.id] || {})
+    .filter(([, c]) => c.on)
+    .map(([sid, c]) => ({ shift_id: sid, position_id: isPick(sid) ? c.position_id : '' }))
 }
 const loading = ref(false)
 const busy = ref(false)
@@ -187,36 +198,83 @@ async function load() {
   loading.value = true
   try {
     const d = await api.get(`/api/staff/activities/${props.activityId}/applications`)
-    apps.value = d.applications
     shifts.value = d.shifts
-    picks.value = {}
+    initChoice(d.applications)
+    apps.value = d.applications
   } finally { loading.value = false }
 }
 onMounted(load)
 
-async function decide(accept) {
-  const empty = selected.value.filter(a => !pickOf(a).length)
-  if (accept && empty.length) {
-    ElMessage.warning(`${empty.map(a => a.user.name).join('、')} 还没选录取到哪一场`)
-    return
+// 逐人结果；clashRows 是因时间冲突没录上的那几个人。sent 记下提交时各人勾的
+// 场次（[{ id, picks }]），确认冲突后按原样重提，不受名单刷新影响
+const result = ref({ visible: false, rows: [], sent: [] })
+const clashRows = computed(() => result.value.rows
+  .filter(r => !r.ok && r.code === 'time_conflict'))
+
+function post(items, accept, confirm) {
+  return api.post(`/api/staff/activities/${props.activityId}/applications/decide`, {
+    application_ids: items.map(a => a.id), accept, confirm_conflict: confirm,
+    picks: accept ? Object.fromEntries(items.map(a => [a.id, a.picks])) : {},
+  })
+}
+
+async function finish(rows, accept, d) {
+  // 只处理一个人、又只是撞了时间：直接问一句，确认了就带 confirm_conflict 重提
+  if (rows.length === 1 && accept && d.results.length === 1
+      && d.results[0].code === 'time_conflict') {
+    const r = d.results[0]
+    try {
+      await ElMessageBox.confirm(
+        `${r.reason}。仍要录取 ${r.name}？`, '时间冲突',
+        { type: 'warning', confirmButtonText: '仍要录取', cancelButtonText: '取消' })
+    } catch { return }
+    d = await post(rows, true, true)
   }
-  const names = selected.value.map(a => a.user.name).join('、')
-  const target = targetShifts.value.map(shiftName).join('」「')
+  if (rows.length === 1 && d.results.length === 1) {
+    const r = d.results[0]
+    if (r.ok) ElMessage.success(`${accept ? '已录取' : '已处理'} ${r.name}`)
+    else ElMessage.error(`${r.name}：${r.reason}`)
+  } else {
+    result.value = { visible: true, rows: d.results, sent: rows }
+  }
+  if (d.count) {
+    await load()
+    emit('changed')
+  }
+}
+
+async function decide(accept, list) {
+  const rows = list.map(a => ({ id: a.id, name: a.user.name, picks: picksOf(a) }))
+  if (accept) {
+    const empty = rows.filter(a => !a.picks.length)
+    if (empty.length) {
+      ElMessage.warning(`${empty.map(a => a.name).join('、')} 没有勾选录取到哪一场`)
+      return
+    }
+  }
+  const names = rows.map(a => a.name).join('、')
   await ElMessageBox.confirm(
-    accept ? `录取 ${names} 到「${target || '各自的第一意向场次'}」？逐人改过的按各人所选。通知将立即发送。`
+    accept ? `录取 ${names}？各人按自己那一行勾的场次录取，通知将立即发送。`
            : `不录取 ${names}？将发送通知，不留记录。`,
     accept ? '确认录取' : '确认不录取', { type: accept ? 'success' : 'warning' })
   busy.value = true
   try {
-    const d = await api.post(`/api/staff/activities/${props.activityId}/applications/decide`,
-      { application_ids: selected.value.map(a => a.id), accept,
-        targets: batchTargets(),
-        picks: Object.fromEntries(selected.value
-          .filter(a => picks.value[a.id])
-          .map(a => [a.id, picks.value[a.id]])) })
-    ElMessage.success(`${accept ? '已录取' : '已处理'} ${d.count} 人`)
-    await load()
-    emit('changed')
+    await finish(rows, accept, await post(rows, accept, false))
+  } finally { busy.value = false }
+}
+
+/** 结果框里时间冲突的那几个人：管理者看过冲突，确认后带 confirm_conflict 重提 */
+async function confirmClashes() {
+  const ids = new Set(clashRows.value.map(r => r.application_id))
+  const rows = result.value.sent.filter(a => ids.has(a.id))
+  busy.value = true
+  try {
+    const d = await post(rows, true, true)
+    result.value = { visible: true, rows: d.results, sent: rows }
+    if (d.count) {
+      await load()
+      emit('changed')
+    }
   } finally { busy.value = false }
 }
 </script>
@@ -224,5 +282,7 @@ async function decide(accept) {
 <style scoped>
 .al-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .al-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.al-pick { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.al-pick { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.al-result { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0;
+             border-bottom: 1px solid var(--el-border-color-lighter); }
 </style>

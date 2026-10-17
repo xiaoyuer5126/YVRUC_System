@@ -1088,7 +1088,7 @@ class ShiftBody(BaseModel):
     # 开场前多少小时自动锁定名单，0 = 不自动锁定
     lock_hours: int = Field(default=config.LOCK_HOURS_DEFAULT, ge=0,
                             le=config.LOCK_HOURS_MAX)
-    # 时间灵活/待定的场次：不参与跨活动时间冲突检测
+    # 时间灵活/待定的场次：每张签到码各签一次到、一次退，可以签好几轮
     flexible_time: bool = False
 
 
@@ -1106,6 +1106,14 @@ def _clean_lock_hours(v) -> int:
 def _validate_shift_times(start: datetime, end: datetime):
     if end <= start:
         raise HTTPException(400, "结束时间必须晚于开始时间")
+
+
+def _validate_flexible_hours(g: Shift) -> None:
+    """时间灵活的场次一人能签好几轮到，「按场次时长固定计」会把每一轮都算成
+    整场，所以只能按签到签退计或不计时长。"""
+    if g.flexible_time and g.hours_mode == "fixed":
+        raise HTTPException(400, "时间灵活的场次时长只能按签到签退计或不计时长，"
+                                 "不能按场次时长固定计")
 
 
 def _clean_applies(act: Activity, ids: list[str]) -> list[str]:
@@ -1272,6 +1280,7 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                       flexible_time=bool(body.flexible_time) and body.kind == "service")
     _apply_shift_mode(db, g, body.mode)
     _apply_attachment(db, g, body, act)
+    _validate_flexible_hours(g)
     db.add(g)
     db.flush()
     # 占位岗位要等场次落库拿到 id 之后再建
@@ -1298,7 +1307,7 @@ SHIFT_FIELDS = {"name": "场次名", "start_time": "开始时间", "end_time": "
                 "mode": "岗位模式", "note": "备注",
                 "location": "地点", "hours_mode": "时长认定",
                 "requirement_tags": "条件要求", "lock_hours": "开场前自动锁定（小时）",
-                "flexible_time": "时间灵活（不计冲突）"}
+                "flexible_time": "时间灵活（可多次签到）"}
 
 
 @router.patch("/shifts/{shift_id}")
@@ -1340,6 +1349,7 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
         g.applies_to_positions = _clean_applies(act, body["applies_to_positions"])
         _resync_training(db, act, g)
     _validate_shift_times(g.start_time, g.end_time)
+    _validate_flexible_hours(g)
     # 名额与候补落到占位岗位上；没传就沿用它当前的值
     holder = g.placeholder()
     _sync_placeholder(db, g,
@@ -2566,12 +2576,13 @@ def add_walkin(shift_id: str, body: dict,
                user: User = Depends(require_manager)):
     """管理员直接添加志愿者（现场补招）。
 
-    时段冲突、名额超出都拦一道，勾选强制才放行——补招是常规操作，
-    不该顺手把场次搞超员；真要超也得是明确按下去的，且留痕。
+    名额超出拦一道，勾选强制才放行——补招是常规操作，不该顺手把场次搞超员；
+    真要超也得是明确按下去的，且留痕。时段冲突先提示（code=time_conflict），
+    管理者确认后带 confirm_conflict 重发，同样留痕。
 
     attached_ids：一并报上的培训/彩排（本场次下、对这个岗位生效的）。
     补招**不自动**连带：现场临时加进来的人，赶不赶得上培训、要不要去彩排，
-    得负责人自己判断，所以只报勾上的那几场。它们的时段冲突同样要强制才放行。
+    得负责人自己判断，所以只报勾上的那几场。它们的时段冲突一并提示。
     """
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
@@ -2586,7 +2597,10 @@ def add_walkin(shift_id: str, body: dict,
         raise HTTPException(400, "老师类型用户不参与志愿报名，无法补招")
 
     force = bool(body.get("force"))
-    reasons: list[str] = []
+    confirm = bool(body.get("confirm_conflict"))
+    reasons: list[str] = []         # 名额超出：要勾强制
+    clashes: list[dict] = []        # 时段冲突：要确认
+    clash_notes: list[str] = []
     db.commit()          # 还连接再抢锁，理由同 enroll（routers/activities.py）
     # 连同这个人的用户锁：下面要判时段冲突，本人可能正同时在别的场次报名
     # （见 locks 的「用户锁」；先场次后用户，不会死锁）
@@ -2607,9 +2621,10 @@ def add_walkin(shift_id: str, body: dict,
             if position is None or position.shift_id != g.id:
                 raise HTTPException(400, "岗位不属于该场次")
 
-        clashes = logic.time_conflicts(db, u, g)
-        if clashes:
-            reasons.append(f"时段与{logic.conflict_message(clashes)}冲突")
+        hit = logic.time_conflicts(db, u, g)
+        if hit:
+            clashes += hit
+            clash_notes.append(f"时段与{logic.conflict_message(hit, g.activity_id)}冲突")
 
         wanted = list(dict.fromkeys(body.get("attached_ids") or []))
         allowed = {s.id: s for s in logic.attached_shifts(
@@ -2625,9 +2640,13 @@ def add_walkin(shift_id: str, body: dict,
                 continue            # 已经在那场里了（比如之前连带报过），不重复加
             hit = logic.time_conflicts(db, u, s)
             if hit:
-                reasons.append(f"{s.kind_label()}「{s.name}」时段与"
-                               f"{logic.conflict_message(hit)}冲突")
+                clashes += hit
+                clash_notes.append(f"{s.kind_label()}「{s.name}」时段与"
+                                   f"{logic.conflict_message(hit, g.activity_id)}冲突")
             extra.append(s)
+        if clashes and not confirm:
+            raise logic.conflict_error(f"{u.name}：{'；'.join(clash_notes)}",
+                                       logic.dedupe_conflicts(clashes))
 
         if not logic.has_room(db, g, position):
             reasons.append(f"「{position.name}」名额已满（上限{position.quota}人）"
@@ -2639,6 +2658,8 @@ def add_walkin(shift_id: str, body: dict,
         if reasons and not force:
             raise HTTPException(409, f"{u.name}：{'；'.join(reasons)}。"
                                      f"确认添加请勾选强制")
+        # 留痕与名单上的「强制」标记两样都算：都是管理者越过了一道提示
+        reasons += clash_notes
 
         # 党校同学只能这样加进来：时长带「党校」标签，不进导出表、不计入本人累计
         source = hours_flow.PARTY_SCHOOL if body.get("party_school") else "admin"

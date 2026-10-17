@@ -658,7 +658,9 @@ class Shift(Base):
     # 自动锁定已经生效过：管理者过了锁定点再手动解锁，不会被自动锁回去
     auto_lock_spent: Mapped[bool] = mapped_column(Boolean, default=False)
     sort: Mapped[int] = mapped_column(Integer, default=0)
-    # 时间待定/长期活动场次：不计入报名和申请的时间冲突检查
+    # 时间待定/长期活动场次：每张签到码各签一次到、一次退，换码可以再签一轮，
+    # 时长按各轮累加（见 routers/checkin.py）。所以时长只能按签到签退计或不计，
+    # 不能是 fixed
     flexible_time: Mapped[bool] = mapped_column(Boolean, default=False)
     # 签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
     reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
