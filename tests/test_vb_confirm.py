@@ -1,7 +1,11 @@
 """志愿北京并入时长审核：管理者提交时长审核时一并填志愿北京活动名称（可多个）→
 时长审核通过、锁定 → 名称推给对外联络部（值班人，没人值班是部长），不论活动归口
 哪个部门 → 外联确认即「已完成」，或退回（必填理由）→ 管理者改名称重提（时长
-保持锁定）→ 外联再确认。解锁时外联确认作废，重新锁定再推。
+保持锁定）→ 外联再确认。
+
+志愿北京是时长锁定之后的附加步骤，确认和退回都不回头动时长：解锁不作废外联确认，
+重新锁定、名称没变的沿用上一次结果；活动已完成之后，管理者还可以改名称再推一次，
+活动保持「已完成」。
 
 以及：审批意见（通过选填、驳回/退回必填）、提醒（外联超时催一次、退回后管理者
 迟迟不重提每天提醒）、时长审批的通知口径、旧的志愿北京登记与截图接口已移除。"""
@@ -262,7 +266,8 @@ def test_退回必须写理由_管理者改名称重提_外联再次收到(clien
 # ======================= 解锁 =======================
 
 @pytest.mark.parametrize("confirm_first", [False, True])
-def test_解锁后外联确认作废_重新锁定再推(client, admin, db, liaison, confirm_first):
+def test_解锁不作废外联确认_名称没变重新锁定沿用(client, admin, db, liaison,
+                                              confirm_first):
     act = _approved_act(db, _office(db).id)
     _lock(client, admin, act)
     row = _pending_confirm(client, admin, act)
@@ -280,20 +285,90 @@ def test_解锁后外联确认作废_重新锁定再推(client, admin, db, liais
     db.expire_all()
     a = db.get(Activity, act.id)
     assert a.status == "finished" and a.hours_locked_at is None
-    assert {x.status for x in db.query(VbConfirm)
-            .filter(VbConfirm.activity_id == act.id).all()} == {"void"}
-    assert _pending_confirm(client, admin, act) is None
+    # 解锁不动外联确认：已确认的仍然有效，待确认的继续等外联
+    kept = db.get(VbConfirm, row["id"])
+    assert kept.status == ("confirmed" if confirm_first else "pending")
+    if not confirm_first:
+        assert _pending_confirm(client, admin, act)["id"] == row["id"]
     got = inbox(db, ADMIN, f"时长解锁已通过｜{act.title}")
     assert got and "同意，改完重新提交" in got[0].content
+
+    # 名称没变，重新锁定沿用上一次的结果，不再让外联重复核对
+    _lock(client, admin, act, names=None)
+    assert _status(db, act) == ("completed" if confirm_first else "vb_pending")
+    db.expire_all()
+    assert db.query(VbConfirm).filter(VbConfirm.activity_id == act.id).count() == 1
+    assert len(inbox(db, LIAISON_HEAD, f"志愿北京待确认｜{act.title}")) == 1
+
+
+def test_解锁后改名重新锁定_旧的待确认作废推新的(client, admin, db, liaison):
+    act = _approved_act(db, _office(db).id)
+    _lock(client, admin, act)
+    row = _pending_confirm(client, admin, act)
+    r = client.post(f"/api/staff/activities/{act.id}/hours/unlock-request",
+                    headers=admin, json={"reason": "名称也写错了"})
+    assert client.post(f"/api/staff/hours-requests/{r.json()['id']}/decide",
+                       headers=admin, json={"approve": True}).status_code == 200
     # 解锁之后名称又能改了
     assert client.put(f"/api/staff/activities/{act.id}/vb-names", headers=admin,
                       json={"names": ["改过的名称"]}).status_code == 200
 
     _lock(client, admin, act, names=None)
     assert _status(db, act) == "vb_pending"
-    again = _pending_confirm(client, admin, act)
-    assert again and again["id"] != row["id"] and again["names"] == ["改过的名称"]
+    db.expire_all()
+    assert db.get(VbConfirm, row["id"]).status == "void"
+    rows = (db.query(VbConfirm).filter(VbConfirm.activity_id == act.id)
+            .order_by(VbConfirm.submitted_at).all())
+    assert [x.status for x in rows] == ["void", "pending"]
+    assert rows[-1].names == ["改过的名称"]
     assert len(inbox(db, LIAISON_HEAD, f"志愿北京待确认｜{act.title}")) == 2
+
+
+def test_已完成可以再次推送_活动保持已完成(client, admin, db, liaison):
+    _set_duty(client, db, liaison)
+    act = _approved_act(db, _office(db).id)
+    url = f"/api/staff/activities/{act.id}/vb-confirms/repush"
+    _lock(client, admin, act)
+    row = _pending_confirm(client, admin, act)
+    # 还在等外联确认时，这条路不开放
+    assert client.post(url, headers=admin,
+                       json={"names": ["重新建的活动"]}).status_code == 409
+    assert client.post(f"/api/staff/vb-confirms/{row['id']}/decide", headers=admin,
+                       json={"approve": True}).status_code == 200
+    assert _status(db, act) == "completed"
+
+    # 非管理者不能推；名称照样校验
+    assert client.post(url, headers=login(client, INITIATOR),
+                       json={"names": ["重新建的活动"]}).status_code == 403
+    assert client.post(url, headers=admin,
+                       json={"names": [" "]}).status_code == 400
+    assert _history(client, admin, act)["can_repush"] is True
+
+    new = ["校运会志愿服务（补录场）"]
+    r = client.post(url, headers=admin, json={"names": new})
+    assert r.status_code == 200 and r.json()["kind"] == "repush", r.text
+    assert _status(db, act) == "completed"
+    db.expire_all()
+    assert db.get(Activity, act.id).vb_names == new
+
+    # 外联收到新的一条
+    core = login(client, LIAISON_CORE)
+    pending = _pending_confirm(client, core, act)
+    assert pending and pending["names"] == new and pending["kind"] == "repush"
+
+    # 再推一次：没处理的旧待确认作废
+    r = client.post(url, headers=admin, json={"names": ["第三个名称"]})
+    assert r.status_code == 200
+    db.expire_all()
+    assert db.get(VbConfirm, pending["id"]).status == "void"
+    latest = _pending_confirm(client, core, act)
+    assert latest["names"] == ["第三个名称"]
+
+    # 退回也只动记录，活动仍是已完成
+    assert client.post(f"/api/staff/vb-confirms/{latest['id']}/decide", headers=core,
+                       json={"approve": False,
+                             "reply": "这个名称在志愿北京上也没有"}).status_code == 200
+    assert _status(db, act) == "completed"
 
 
 # ======================= 审批意见 =======================

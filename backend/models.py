@@ -833,16 +833,19 @@ class VbConfirm(Base):
     对外联络部，值班人（没人值班是部长）上志愿北京核对。
 
     一次推送一条：时长审核通过时推一次（kind=lock）；外联退回、管理者改了
-    名称重提再推一次（kind=resubmit，时长保持锁定，不重走时长审核）。
-    确认 = 活动落「已完成」；退回必须写理由，发给管理者。时长解锁时没处理完
-    的和已确认的一并作废（void）——改过的时长要重新锁定、重新推送。
+    名称重提再推一次（kind=resubmit，时长保持锁定，不重走时长审核）；活动已
+    完成后管理者再推一次（kind=repush，活动保持已完成）。
+    确认 = 活动在「待外联确认」时落「已完成」；退回必须写理由，发给管理者。
+    志愿北京是时长之后的附加步骤，确认和退回都只落在这条记录上，不改时长；
+    时长解锁也不作废它。
     记录都留着，审核页签里就是这场活动的全部往来。
     """
     __tablename__ = "vb_confirms"
 
     STATUS_LABELS = {"pending": "待外联确认", "confirmed": "已确认",
                      "returned": "已退回", "void": "已作废"}
-    KIND_LABELS = {"lock": "时长锁定后推送", "resubmit": "管理者重提"}
+    KIND_LABELS = {"lock": "时长锁定后推送", "resubmit": "管理者重提",
+                   "repush": "完成后再次推送"}
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)

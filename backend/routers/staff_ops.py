@@ -2152,8 +2152,8 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
     志愿北京活动名称推给对外联络部（外联确认后才算已完成）；驳回则解冻，
     管理者改完重新核准，再提交一次。
     解锁通过 = 回到「已结束」：不管此前停在待外联确认还是已完成，账重新
-    打开就回到结账之前。外联确认随之作废（确认的是改之前的时长），重新锁定
-    时再推一次。
+    打开就回到结账之前。志愿北京确认是时长之后的附加步骤，解锁不动它：已经
+    确认的继续有效，重新锁定、名称没变的直接回到「已完成」。
     通过可以附意见（选填），驳回必须写理由；意见随通知发给申请人。
     """
     req = db.get(HoursRequest, request_id)
@@ -2174,11 +2174,6 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
     elif body.approve:
         act.hours_locked_at = None
         act.status = "finished"
-        if liaison.void_vb_confirms(db, act):
-            audit_log(db, actor=user, action="vb_confirm", target_type="activity",
-                      target_id=act.id, target_label=act.title,
-                      activity_id=act.id,
-                      summary="时长解锁，志愿北京外联确认作废，重新锁定后再推送")
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=(f"同意{req.kind_label()}时长（{req.reason}）"
@@ -2189,13 +2184,14 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
         notify(db, requester,
                f"时长{req.kind_label()}{'已通过' if body.approve else '未通过'}"
                f"｜{act.title}",
-               _decide_text(act, req, body.approve, reply),
+               _decide_text(db, act, req, body.approve, reply),
                data={"activity_id": act.id, "route": "manage", "tab": "hours"})
     db.commit()
     return {"ok": True, "status": req.status}
 
 
-def _decide_text(act: Activity, req, approve: bool, reply: str) -> str:
+def _decide_text(db: OrmSession, act: Activity, req, approve: bool,
+                 reply: str) -> str:
     if not approve:
         return (f"时长{req.kind_label()}申请未通过。意见：{reply}\n"
                 + ("请修改后重新核准，再提交一次审批。" if req.kind == "lock"
@@ -2204,9 +2200,15 @@ def _decide_text(act: Activity, req, approve: bool, reply: str) -> str:
     if req.kind == "lock":
         if act.status == "completed":
             return f"「{act.title}」的志愿时长已通过校青协审核并锁定，活动已完成。{tail}"
-        return (f"「{act.title}」的志愿时长已通过校青协审核并锁定。\n"
-                f"志愿北京活动名称{liaison.names_text(act.vb_names)}已推给对外联络部，"
-                f"外联在志愿北京核对确认后活动即标记为已完成。{tail}")
+        names = liaison.names_text(act.vb_names)
+        last = liaison.latest_vb_confirm(db, act.id)
+        if last is not None and last.status == "returned":
+            nxt = (f"志愿北京活动名称{names}此前被对外联络部退回，请到「审核」页签"
+                   f"修改后重新提交，外联确认后活动即标记为已完成。")
+        else:
+            nxt = (f"志愿北京活动名称{names}已推给对外联络部，"
+                   f"外联在志愿北京核对确认后活动即标记为已完成。")
+        return f"「{act.title}」的志愿时长已通过校青协审核并锁定。\n{nxt}{tail}"
     return f"「{act.title}」的时长已解锁，修改后请重新核准。{tail}"
 
 
