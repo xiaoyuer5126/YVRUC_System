@@ -54,7 +54,7 @@ conftest 还堵住了 urllib 出网，全量 pytest 不会触达学校接口。
 
 ## 提交
 
-- 小修改合在一起提交，commit 少而完整。
+- 在 cheese 上开发的 agent 一处改动一次 commit（见上）；人开发者不受这条约束。
 - 不提交 `tmp/`、`.env`、上传件和构建产物。
 
 ## 这台机器
