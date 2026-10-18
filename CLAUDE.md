@@ -33,7 +33,10 @@
 
 ## 验证
 
-改完至少跑这几样，结果如实写进提交说明：
+在 cheese 上开发的 agent 不搭本地环境，提交推送后看 GitHub CI 的结果：全量 pytest、
+`vuecheck` / `spacecheck`、页面自检都在里面。
+
+人开发者在自己的机器上、环境齐备时，改完至少跑这几样，结果如实写进提交说明：
 
 ```sh
 docker compose --profile test run --rm --build tests python -m pytest -q  # 必须 --build，否则跑的是旧镜像
@@ -47,7 +50,7 @@ conftest 还堵住了 urllib 出网，全量 pytest 不会触达学校接口。
 页面检查（`scripts/viewcheck.mjs`，手机 390×844、桌面 1440×900 两个视口）在 CI 的
 「页面自检」里跑：PR 改到 web/、backend/、scripts/ 时自动执行，出 ✗ 不合并。红了先看
 那次运行的日志，再下载附件 viewcheck（出 ✗ 页面的截图、两遍输出、后端日志）。
-本地要跑按 viewcheck.mjs 文件头的说明。
+人开发者本地要跑时按 viewcheck.mjs 文件头的说明。
 
 ## 提交
 
