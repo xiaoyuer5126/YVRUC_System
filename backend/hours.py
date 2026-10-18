@@ -200,9 +200,11 @@ def lock_hours(db: OrmSession, act: Activity, actor: User | None,
 
     没表态的人按「没问题 + 各段都记志愿时长」处理，锁定时补上确认时间；
     这样锁定之后每条记录都有本人（或视同本人）的确认。
-    锁定还不是终点：活动落「待外联确认」，管理者提交时长审核时填的志愿北京
-    活动名称推给对外联络部，外联在志愿北京核对并确认后才算「已完成」
-    （见 routers/liaison.decide_vb_confirm）。内部、外部活动一样走这一步。
+    锁定之后还有志愿北京这一步：管理者提交时长审核时填的志愿北京活动名称
+    推给对外联络部，外联在志愿北京核对并确认后活动才算「已完成」（见
+    routers/liaison.decide_vb_confirm）。内部、外部活动一样走这一步。解锁后
+    重新锁定、名称没变的，接着上一次推送的结果走，不再让外联重复核对（见
+    liaison.settle_vb_on_lock）。
     to_liaison=False：一条时长都没有，志愿北京那边没什么可录的，直接完成。
     """
     from . import liaison
@@ -218,14 +220,17 @@ def lock_hours(db: OrmSession, act: Activity, actor: User | None,
             r.confirmed_at = t
             r.clear_pay()
     act.hours_locked_at = t
-    act.status = "vb_pending" if to_liaison else "completed"
+    if to_liaison:
+        liaison.settle_vb_on_lock(db, act, actor)
+        detail = ("志愿北京确认沿用，活动已完成" if act.status == "completed"
+                  else f"志愿北京活动名称{liaison.names_text(act.vb_names)}"
+                       f"推送对外联络部确认")
+    else:
+        act.status = "completed"
+        detail = "活动已完成"
     audit_log(db, actor=actor, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=(f"锁定志愿时长，志愿北京活动名称"
-                       f"{liaison.names_text(act.vb_names)}推送对外联络部确认（{reason}）"
-                       if to_liaison else f"锁定志愿时长，活动已完成（{reason}）"))
-    if to_liaison:
-        liaison.push_vb_confirm(db, act, actor, "lock")
+              summary=f"锁定志愿时长，{detail}（{reason}）")
     for r in rows:
         u = db.get(User, r.user_id)
         if u is not None:

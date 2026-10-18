@@ -305,11 +305,17 @@ def names_text(names: list[str]) -> str:
     return "、".join(f"「{n}」" for n in names or [])
 
 
+def same_names(a, b) -> bool:
+    """两次填的名称算不算同一组。只调顺序不算改。"""
+    return set(a or []) == set(b or [])
+
+
 def push_vb_confirm(db: OrmSession, act: Activity, actor: User | None,
                     kind: str) -> VbConfirm:
     """把活动当前的志愿北京名称推给对外联络部核对。不提交事务。
 
-    kind=lock：时长审核通过、刚锁定；kind=resubmit：被退回后管理者改了名称重提。
+    kind=lock：时长审核通过、刚锁定；kind=resubmit：被退回后管理者改了名称重提；
+    kind=repush：活动已完成，管理者再推一次。
     """
     from .notify import notify
 
@@ -319,24 +325,47 @@ def push_vb_confirm(db: OrmSession, act: Activity, actor: User | None,
                     submitted_at=now())
     db.add(row)
     act.vb_reminded_on = None           # 重提了，「迟迟不重提」的提醒从头算
-    again = kind == "resubmit"
+    if kind == "resubmit":
+        lead = "，管理者按退回意见改了志愿北京活动名称，重新提交。"
+    elif kind == "repush":
+        lead = "，活动已完成，管理者重新提交了志愿北京活动名称。"
+    else:
+        lead = "。"
     for u in vb_contacts(db):
         notify(db, u, f"志愿北京待确认｜{act.title}",
-               f"「{act.title}」（{act.organizer_text()}）的志愿时长已锁定"
-               + ("，管理者按退回意见改了志愿北京活动名称，重新提交。" if again else "。")
+               f"「{act.title}」（{act.organizer_text()}）的志愿时长已锁定" + lead
                + f"\n志愿北京活动名称：{names_text(row.names)}\n"
                f"请到志愿北京核对后，在「活动审批」确认或退回。",
                data={"activity_id": act.id, "route": "approvals"})
     return row
 
 
-def void_vb_confirms(db: OrmSession, act: Activity) -> int:
-    """时长解锁：这场活动还算数的外联确认（待确认、已退回、已确认）一并作废。
-    改过的时长重新锁定时再推一次。不提交事务。"""
+def void_pending_vb_confirms(db: OrmSession, act: Activity) -> int:
+    """把还没处理的待确认作废：名称要换掉时，旧的不能再让外联照着确认。
+    不提交事务。"""
     rows = (db.query(VbConfirm)
             .filter(VbConfirm.activity_id == act.id,
-                    VbConfirm.status != "void").all())
+                    VbConfirm.status == "pending").all())
     for r in rows:
         r.status = "void"
-    act.vb_reminded_on = None
     return len(rows)
+
+
+def settle_vb_on_lock(db: OrmSession, act: Activity, actor: User | None) -> None:
+    """时长锁定后接上志愿北京这一步：解锁重新锁定时，名称没变的沿用上一次的结果，
+    不再让外联重复核对。不提交事务。
+
+    名称变了才推一条新的待确认；旧的待确认同时作废，免得外联照着旧名称确认。
+    """
+    last = latest_vb_confirm(db, act.id)
+    if last is not None and same_names(last.names, act.vb_names):
+        if last.status == "confirmed":
+            act.status = "completed"
+            return
+        if last.status in ("pending", "returned"):
+            # 待确认的接着等外联；已退回的等管理者改名称重提
+            act.status = "vb_pending"
+            return
+    void_pending_vb_confirms(db, act)
+    act.status = "vb_pending"
+    push_vb_confirm(db, act, actor, "lock")

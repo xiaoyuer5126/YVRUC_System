@@ -64,80 +64,7 @@
                        @changed="loadTemplates" />
     </el-card>
 
-    <!-- 志愿北京外联确认：时长锁定后管理者填的名称推到这里（不论活动归口哪个部门），
-         外联上志愿北京核对，确认即活动完成；退回写理由，管理者改好名称重提 -->
-    <template v-if="vbConfirms.length">
-      <div class="section-title">志愿北京待确认</div>
-      <el-card v-for="v in vbConfirms" :key="v.id" shadow="never" class="item">
-        <div class="head">
-          <b class="title" @click="$router.push('/manage/' + v.activity_id + '?tab=review')">
-            {{ v.activity_title }}
-          </b>
-          <el-tag v-if="v.kind === 'resubmit'" size="small" type="warning" effect="plain">
-            退回后重提
-          </el-tag>
-          <span class="btn-row" style="margin-left:auto">
-            <el-button size="small" type="success" @click="openVb(v, true)">确认</el-button>
-            <el-button size="small" type="danger" plain @click="openVb(v, false)">退回</el-button>
-          </span>
-        </div>
-        <div class="submit-note">
-          <b>志愿北京活动名称</b>
-          <div v-for="n in v.names" :key="n">{{ n }}</div>
-        </div>
-        <div v-if="v.last_return" class="submit-note">
-          <b>上次退回理由</b><span class="pre">{{ v.last_return }}</span>
-        </div>
-        <div class="dim" style="margin-top:8px">
-          {{ v.organizer_text }} · 时长锁定于 {{ fmtDT(v.locked_at) }} ·
-          {{ v.submitted_by }} {{ v.kind === 'resubmit' ? '重提' : '推送' }}于 {{ fmtDT(v.submitted_at) }}
-          · 在志愿北京核对后确认，活动即标记为已完成
-        </div>
-      </el-card>
-    </template>
-
-    <!-- 时长的两道审批：锁定（批的是这场活动的账能不能结）与解锁（结完还要改）。
-         批的都是「能不能」，改成多少仍由管理者填 -->
-    <template v-if="hoursReqs.length">
-      <div class="section-title">时长审批</div>
-      <el-card v-for="u in hoursReqs" :key="u.id" shadow="never" class="item">
-        <div class="head">
-          <b class="title" @click="$router.push('/manage/' + u.activity_id + '?tab=hours')">
-            {{ u.activity_title }}
-          </b>
-          <el-tag size="small" :type="u.kind === 'lock' ? 'primary' : 'warning'"
-                  effect="plain">
-            {{ u.kind === 'lock' ? '时长待审核' : '申请解锁时长' }}
-          </el-tag>
-          <span class="btn-row" style="margin-left:auto">
-            <el-button size="small" type="success" @click="decideHours(u, true)">同意</el-button>
-            <el-button size="small" type="danger" plain
-                       @click="decideHours(u, false)">驳回</el-button>
-          </span>
-        </div>
-        <div class="submit-note">
-          <b>说明</b><span class="pre">{{ u.reason }}</span>
-        </div>
-        <div v-if="u.vb_names?.length" class="submit-note">
-          <b>志愿北京活动名称</b>
-          <div v-for="n in u.vb_names" :key="n">{{ n }}</div>
-        </div>
-        <!-- 盖章材料就在这里看：审批人多半不是这场活动的管理者，进不了活动管理页 -->
-        <div v-if="u.files?.length" class="submit-note">
-          <b>盖章材料</b>
-          <div v-for="f in u.files" :key="f.id">
-            {{ f.label }}：<el-link type="primary" underline="never"
-                                   @click="download(`/api/materials/${f.id}`)">{{ f.title }}</el-link>
-          </div>
-        </div>
-        <div class="dim" style="margin-top:8px">
-          {{ u.requested_by }} 提交于 {{ fmtDT(u.created_at) }} ·
-          {{ u.kind === 'lock' ? '通过即锁定时长，志愿北京名称推给对外联络部确认；驳回退回管理者修改'
-                               : '通过后解锁，外联确认作废，管理者改完须重新核准' }}
-        </div>
-      </el-card>
-    </template>
-    <div v-if="hoursReqs.length || vbConfirms.length" class="section-title">待审批活动</div>
+    <div v-if="rows.length" class="section-title">待审批活动</div>
 
     <el-empty v-if="!rows.length && !loading"
               :description="duties.length && !duties.some(d => d.can_handover || d.can_assign)
@@ -191,6 +118,84 @@
                  @click="$router.push('/activity/' + a.id)">查看完整安排</el-link>
       </div>
     </el-card>
+
+    <!-- 时长的两道审批：锁定（批的是这场活动的账能不能结）与解锁（结完还要改）。
+         批的都是「能不能」，改成多少仍由管理者填 -->
+    <template v-if="hoursReqs.length">
+      <div class="section-title">时长审批</div>
+      <el-card v-for="u in hoursReqs" :key="u.id" shadow="never" class="item">
+        <div class="head">
+          <b class="title" @click="$router.push('/manage/' + u.activity_id + '?tab=hours')">
+            {{ u.activity_title }}
+          </b>
+          <el-tag size="small" :type="u.kind === 'lock' ? 'primary' : 'warning'"
+                  effect="plain">
+            {{ u.kind === 'lock' ? '时长待审核' : '申请解锁时长' }}
+          </el-tag>
+          <span class="btn-row" style="margin-left:auto">
+            <el-button size="small" type="success" @click="decideHours(u, true)">同意</el-button>
+            <el-button size="small" type="danger" plain
+                       @click="decideHours(u, false)">驳回</el-button>
+          </span>
+        </div>
+        <div class="submit-note">
+          <b>说明</b><span class="pre">{{ u.reason }}</span>
+        </div>
+        <div v-if="u.vb_names?.length" class="submit-note">
+          <b>志愿北京活动名称</b>
+          <div v-for="n in u.vb_names" :key="n">{{ n }}</div>
+        </div>
+        <!-- 盖章材料就在这里看：审批人多半不是这场活动的管理者，进不了活动管理页 -->
+        <div v-if="u.files?.length" class="submit-note">
+          <b>盖章材料</b>
+          <div v-for="f in u.files" :key="f.id">
+            {{ f.label }}：<el-link type="primary" underline="never"
+                                   @click="download(`/api/materials/${f.id}`)">{{ f.title }}</el-link>
+          </div>
+        </div>
+        <div class="dim" style="margin-top:8px">
+          {{ u.requested_by }} 提交于 {{ fmtDT(u.created_at) }} ·
+          {{ u.kind === 'lock' ? '通过即锁定时长，志愿北京名称推给对外联络部确认；驳回退回管理者修改'
+                               : '通过后解锁，接下来的核准与锁定照常走' }}
+        </div>
+      </el-card>
+    </template>
+
+    <!-- 志愿北京外联确认：时长锁定后管理者填的名称推到这里（不论活动归口哪个部门），
+         外联上志愿北京核对；退回写理由，管理者改好名称重提 -->
+    <template v-if="vbConfirms.length">
+      <div class="section-title">志愿北京待确认</div>
+      <el-card v-for="v in vbConfirms" :key="v.id" shadow="never" class="item">
+        <div class="head">
+          <b class="title" @click="$router.push('/manage/' + v.activity_id + '?tab=review')">
+            {{ v.activity_title }}
+          </b>
+          <el-tag v-if="v.kind === 'resubmit'" size="small" type="warning" effect="plain">
+            退回后重提
+          </el-tag>
+          <el-tag v-else-if="v.kind === 'repush'" size="small" type="info" effect="plain">
+            完成后再次推送
+          </el-tag>
+          <span class="btn-row" style="margin-left:auto">
+            <el-button size="small" type="success" @click="openVb(v, true)">确认</el-button>
+            <el-button size="small" type="danger" plain @click="openVb(v, false)">退回</el-button>
+          </span>
+        </div>
+        <div class="submit-note">
+          <b>志愿北京活动名称</b>
+          <div v-for="n in v.names" :key="n">{{ n }}</div>
+        </div>
+        <div v-if="v.last_return" class="submit-note">
+          <b>上次退回理由</b><span class="pre">{{ v.last_return }}</span>
+        </div>
+        <div class="dim" style="margin-top:8px">
+          {{ v.organizer_text }} · 时长锁定于 {{ fmtDT(v.locked_at) }} ·
+          {{ v.submitted_by }}
+          {{ v.kind === 'resubmit' ? '重提' : v.kind === 'repush' ? '再次推送' : '推送' }}
+          于 {{ fmtDT(v.submitted_at) }} · 在志愿北京核对后确认
+        </div>
+      </el-card>
+    </template>
 
     <!-- 校外时长补登：志愿者本人在校外参加的活动，由对外联络部核对材料后审批 -->
     <HoursClaimQueue />

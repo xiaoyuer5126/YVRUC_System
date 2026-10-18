@@ -185,6 +185,12 @@ def _can_resubmit(db: OrmSession, act: Activity) -> bool:
             and last.status == "returned")
 
 
+def _can_repush(act: Activity) -> bool:
+    """活动已完成：管理者可以改名称再次推送给外联（志愿北京上没来得及录、
+    建错了重建一个之类）。活动保持已完成。"""
+    return act.status == "completed"
+
+
 @router.get("/activities/{activity_id}/vb-confirms")
 def activity_vb_confirms(activity_id: str, db: OrmSession = Depends(db_session),
                          user: User = Depends(require_manager)):
@@ -208,6 +214,8 @@ def activity_vb_confirms(activity_id: str, db: OrmSession = Depends(db_session),
             # 提交时长审核之前随时可以先存；锁定后只能在被退回时重提
             "can_edit": writer and not block, "edit_block": block if manager else "",
             "can_resubmit": writer and _can_resubmit(db, act),
+            # 已完成之后：管理者可以改名称再推一次，活动状态不动
+            "can_repush": writer and _can_repush(act),
             "handler": (f"{duty.name}（值班）" if duty
                         else "、".join(u.name for u in contacts))}
 
@@ -257,6 +265,39 @@ def resubmit_vb(activity_id: str, body: VbNamesBody,
     return _vbc_out(db, row)
 
 
+@router.post("/activities/{activity_id}/vb-confirms/repush")
+def repush_vb(activity_id: str, body: VbNamesBody,
+              db: OrmSession = Depends(db_session),
+              user: User = Depends(require_manager)):
+    """活动已完成之后，管理者改好名称再推一次给外联。
+
+    志愿北京是时长锁定之后的附加步骤，这一步只动名称和记录，活动保持已完成：
+    外联确认或退回都只落在那条记录上。没处理的旧待确认一并作废，免得外联照着
+    旧名称确认。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    if not _can_repush(act):
+        raise HTTPException(409, "只有已完成的活动可以再次推送志愿北京名称")
+    try:
+        names = liaison.clean_vb_names(body.names)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    before = liaison.names_text(act.vb_names)
+    dropped = liaison.void_pending_vb_confirms(db, act)
+    act.vb_names = names
+    row = liaison.push_vb_confirm(db, act, user, "repush")
+    audit_log(db, actor=user, action="vb_confirm", target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=(f"活动已完成，再次推送志愿北京活动名称给对外联络部："
+                       f"{liaison.names_text(names)}"
+                       + (f"（原为 {before}）" if before != liaison.names_text(names)
+                          else "（名称未改）")
+                       + (f"；作废 {dropped} 条待确认" if dropped else "")))
+    db.commit()
+    return _vbc_out(db, row)
+
+
 class VbDecideBody(BaseModel):
     approve: bool
     reply: str = ""
@@ -266,8 +307,13 @@ class VbDecideBody(BaseModel):
 def decide_vb_confirm(confirm_id: str, body: VbDecideBody,
                       db: OrmSession = Depends(db_session),
                       user: User = Depends(require_manager)):
-    """外联在志愿北京上核对过了：确认（活动落「已完成」，意见选填）或退回
-    （必须写理由，通知管理者改名称重提）。"""
+    """外联在志愿北京上核对过了：确认（意见选填）或退回（必须写理由，通知
+    管理者改名称重提）。
+
+    志愿北京是时长锁定之后的附加步骤，确认和退回都只落在这条记录上，不回头
+    动时长：活动正在「待外联确认」时确认才把它落「已完成」；时长解锁期间、
+    或活动已完成后再次推送的，活动状态不动。
+    """
     if not liaison.vb_decider(db, user):
         raise HTTPException(403, "只有对外联络部的值班人或部长可以确认志愿北京")
     # 两位审批人可能同时打开同一条待办。锁住记录再判状态：后一位等前一位
@@ -282,22 +328,22 @@ def decide_vb_confirm(confirm_id: str, body: VbDecideBody,
     if not body.approve and len(reply) < 2:
         raise HTTPException(400, "退回必须写明理由，会发给活动管理者")
     act = _act(db, r.activity_id)
-    if act.status != "vb_pending" or not act.hours_locked():
-        raise HTTPException(409, "活动已不在待外联确认阶段，请刷新后重试")
     r.status = "confirmed" if body.approve else "returned"
     r.handled_by, r.handled_at, r.reply = user.id, now(), reply
     names = liaison.names_text(r.names)
-    if body.approve:
+    if body.approve and act.status == "vb_pending":
         act.status = "completed"
     audit_log(db, actor=user, action="vb_confirm", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=((f"外联确认志愿北京活动名称 {names}，活动已完成"
+              summary=((f"外联确认志愿北京活动名称 {names}"
+                        + ("，活动已完成" if act.status == "completed" else "")
                         if body.approve else f"外联退回志愿北京活动名称 {names}")
                        + (f"：{reply}" if reply else "")))
     notify_managers(
         db, act.id,
         f"志愿北京{'已确认' if body.approve else '被退回'}｜{act.title}",
-        (f"对外联络部已在志愿北京核对 {names}，「{act.title}」已完成。"
+        (f"对外联络部已在志愿北京核对 {names}"
+         + ("，「" + act.title + "」已完成。" if act.status == "completed" else "。")
          if body.approve else
          f"对外联络部退回了 {names}。\n请到活动管理的「审核」页签修改志愿北京"
          f"活动名称后重新提交（时长保持锁定，不用重新审核）。")
