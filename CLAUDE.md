@@ -3,6 +3,16 @@
 中国人民大学青年志愿者协会志愿服务管理平台。怎么跑、目录结构、环境变量见 README。
 下面是 README 里没有、但每次改代码都要守的几条。
 
+## 在 cheese 上开发的 agent
+
+下面两条只约束在 cheese 上开发的 agent；其他 agent 和人开发者不用遵守。
+
+- **一处改动一次 commit。** 每处改动单独提交，不要攒成一批。几处小改动可以放在同一个
+  PR 里，但改动本身要一次一处地 commit。机器随时可能被回收，没提交的改动、或提交了
+  没推的改动都会丢；子 agent 手里的改动也一样，不推上去别人拿不到。
+- **不配置本地测试环境。** 不装 yum/apt、pip/uv 依赖，不装 `node_modules`，不在本机
+  起 Postgres/Redis。把代码提交推上去，测试交给 GitHub CI，看 CI 结果。
+
 ## 写法
 
 - **注释和文档只讲现在的做法，不讲历史。** 不写「从前 / 以前 / 原先 / 原来的 /
@@ -23,7 +33,10 @@
 
 ## 验证
 
-改完至少跑这几样，结果如实写进提交说明：
+在 cheese 上开发的 agent 不搭本地环境，提交推送后看 GitHub CI 的结果：全量 pytest、
+`vuecheck` / `spacecheck`、页面自检都在里面。
+
+人开发者在自己的机器上、环境齐备时，改完至少跑这几样，结果如实写进提交说明：
 
 ```sh
 docker compose --profile test run --rm --build tests python -m pytest -q  # 必须 --build，否则跑的是旧镜像
@@ -37,11 +50,11 @@ conftest 还堵住了 urllib 出网，全量 pytest 不会触达学校接口。
 页面检查（`scripts/viewcheck.mjs`，手机 390×844、桌面 1440×900 两个视口）在 CI 的
 「页面自检」里跑：PR 改到 web/、backend/、scripts/ 时自动执行，出 ✗ 不合并。红了先看
 那次运行的日志，再下载附件 viewcheck（出 ✗ 页面的截图、两遍输出、后端日志）。
-本地要跑按 viewcheck.mjs 文件头的说明。
+人开发者本地要跑时按 viewcheck.mjs 文件头的说明。
 
 ## 提交
 
-- 小修改合在一起提交，commit 少而完整。
+- 在 cheese 上开发的 agent 一处改动一次 commit（见上）；人开发者不受这条约束。
 - 不提交 `tmp/`、`.env`、上传件和构建产物。
 
 ## 这台机器
