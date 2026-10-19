@@ -1385,7 +1385,8 @@
           <el-input v-model="submitDlg.note" type="textarea" :rows="2"
                     placeholder="选填" />
         </el-form-item>
-        <el-form-item label="通过之后">
+        <!-- 补记录活动审批通过后直接「已结束」，不经过发布，这一项对它没有作用 -->
+        <el-form-item v-if="!isRecord" label="通过之后">
           <div>
             <el-radio-group v-model="submitDlg.autoPublish">
               <el-radio :value="true">通过即发布</el-radio>
