@@ -324,10 +324,11 @@
             <div v-if="g.my_enrollment" class="m-reassign">
               <span class="dim">岗位调剂：</span>
               <el-tag size="small" effect="plain"
-                      :type="g.my_enrollment.allow_reassign ? 'success' : 'info'"
-                      @click="toggleReassign(g)">
+                      :type="g.my_enrollment.allow_reassign ? 'success' : 'info'">
                 {{ g.my_enrollment.allow_reassign ? '接受' : '不接受' }}
               </el-tag>
+              <el-switch :model-value="g.my_enrollment.allow_reassign" size="small"
+                         style="margin-left:8px" @change="toggleReassign(g)" />
             </div>
           </el-card>
           <div v-if="showPickRule" class="dim">{{ PICK_RULE }}</div>
@@ -432,17 +433,18 @@
                     </el-button>
                   </div>
 
-                  <!-- 调剂意愿：点一下即可改，只作为负责人排班时的参考 -->
+                  <!-- 调剂意愿：状态用标签显示，切换走右边的开关 -->
                   <div v-if="g.my_enrollment" class="shift-bar">
                     <span class="dim">岗位调剂：</span>
                     <el-tooltip content="仅在名额不足时可能进行调剂，负责人可看到你的意愿"
                                 placement="top">
-                      <el-tag size="small" effect="plain" style="cursor:pointer"
-                              :type="g.my_enrollment.allow_reassign ? 'success' : 'info'"
-                              @click="toggleReassign(g)">
+                      <el-tag size="small" effect="plain"
+                              :type="g.my_enrollment.allow_reassign ? 'success' : 'info'">
                         {{ g.my_enrollment.allow_reassign ? '接受调剂' : '不接受调剂' }}
                       </el-tag>
                     </el-tooltip>
+                    <el-switch :model-value="g.my_enrollment.allow_reassign" size="small"
+                               style="margin-left:8px" @change="toggleReassign(g)" />
                   </div>
 
                   <!-- 已报名：把自己岗位的培训内容与材料直接摊开 -->
