@@ -283,7 +283,8 @@ class Department(Base):
     # 每晚给部长的值班日报发到了哪一天：清扫每分钟一轮、多进程抢主，
     # 落库才能保证一天只发一次（进程重启也不补发第二遍）
     duty_digest_on: Mapped[date | None] = mapped_column(Date, nullable=True)
-    # 每周日 21:00 给当前值班人的未处理事项与交接班提醒发到了哪一天
+    # 给当前值班人的未处理事项与交接班提醒发到了哪一天（每周一次，见
+    # scheduled.send_duty_handover_reminders）
     duty_remind_on: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 
