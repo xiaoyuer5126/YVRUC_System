@@ -366,7 +366,9 @@ def import_rows(db: OrmSession, act: Activity, user: User,
     if skipped:
         parts.append(f"跳过 {len(skipped)} 行")
     if not_found:
-        parts.append(f"{len(not_found)} 个学号平台里找不到（未建档）")
+        parts.append(f"{len(not_found)} 个学号平台里找不到（未建档，"
+                     f"请提醒志愿者登录平台，登录后自动创建账户；"
+                     f"或核对名单后重新导入）")
     if reapproval_required:
         parts.append("原时长核准已撤销，请到时长管理重新核准" if apply
                      else "确认后原时长核准会撤销，需要重新核准")

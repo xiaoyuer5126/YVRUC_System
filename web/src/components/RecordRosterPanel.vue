@@ -80,7 +80,7 @@
         {{ result.unchanged }} 人与当前名单一致，不改动
       </div>
       <div v-if="result.not_found.length" style="margin-top:8px">
-        <span class="dim">平台里找不到这些学号（未建档，请核对后重新导入）：</span>
+        <span class="dim">平台里找不到这些学号（未建档，请提醒志愿者登录平台，登录后自动创建账户；或核对名单后重新导入）：</span>
         <el-tag v-for="x in result.not_found" :key="x.line" type="danger" effect="plain"
                 size="small" style="margin:4px 4px 0 0">
           第 {{ x.line }} 行 {{ x.student_id }}
