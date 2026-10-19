@@ -44,7 +44,7 @@
           <HoursParts :parts="row.parts" style="margin-top:8px" />
         </template>
         <template #actions="{ row }">
-          <el-button v-if="row.can_confirm" size="small" type="primary"
+          <el-button v-if="canReconfirm(row)" size="small" type="primary"
                      :plain="!!row.confirmed_at" @click="openConfirm(row)">
             {{ row.confirmed_at ? '改报酬方式' : '确认无误' }}
           </el-button>
@@ -70,7 +70,7 @@
         <el-table-column label="状态" width="290">
           <template #default="{ row }">
             <el-tag :type="stateOf(row).type" effect="light">{{ stateOf(row).text }}</el-tag>
-            <span v-if="row.can_confirm || row.can_appeal" class="dim" style="margin-left:8px">
+            <span v-if="canReconfirm(row) || row.can_appeal" class="dim" style="margin-left:8px">
               截止 {{ fmtDT(row.appeal_deadline) }}
             </span>
             <AppealTag :row="row" />
@@ -82,14 +82,14 @@
         <el-table-column label="操作" width="200">
           <template #default="{ row }">
             <div class="btn-row">
-              <el-button v-if="row.can_confirm" size="small" type="primary"
+              <el-button v-if="canReconfirm(row)" size="small" type="primary"
                          :plain="!!row.confirmed_at" @click="openConfirm(row)">
                 {{ row.confirmed_at ? '改报酬方式' : '确认无误' }}
               </el-button>
               <el-button v-if="row.can_appeal" size="small" plain @click="openAppeal(row)">
                 有异议
               </el-button>
-              <span v-if="!row.can_confirm && !row.can_appeal" class="dim">—</span>
+              <span v-if="!canReconfirm(row) && !row.can_appeal" class="dim">—</span>
             </div>
           </template>
         </el-table-column>
@@ -186,6 +186,10 @@ const AppealTag = (props) => {
     ? h(ElTooltip, { content: a.reply, placement: 'top', popperClass: 'pre-tip' }, () => tag)
     : tag
 }
+
+/** 能不能点确认：没确认过就确认；确认过之后只有这笔账里有可选劳务的段，
+ *  才有「改报酬方式」可做，没有就不再给按钮。 */
+const canReconfirm = row => row.can_confirm && (!row.confirmed_at || row.pay_allowed)
 
 const cf = ref({ visible: false, row: null, parts: [], busy: false })
 function openConfirm(row) {
