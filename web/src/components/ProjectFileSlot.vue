@@ -24,12 +24,13 @@
                :accept="exts.map(e => '.' + e).join(',')">
       <el-button size="small" :loading="busy">{{ file ? '更换' : '上传' }}{{ label }}</el-button>
     </el-upload>
+    <div v-if="canUpload" class="dim">{{ typeHint }}</div>
     <div v-else-if="block" class="dim">{{ block }}</div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Document } from '@element-plus/icons-vue'
 import { download, fmtDT, uploadFile } from '../api'
@@ -51,6 +52,11 @@ const props = defineProps({
 const emit = defineEmits(['changed'])
 const busy = ref(false)
 const LIMIT_MB = 50
+// 上传按钮下面直接写清收什么、多大：类型由后端给，大小与这里拦的一致
+const typeHint = computed(() => {
+  const types = props.exts.length ? props.exts.join('/') + '，' : ''
+  return `${types}单份不超过 ${LIMIT_MB}MB`
+})
 
 async function upload(f) {
   if (f.size > LIMIT_MB * 1024 * 1024) {

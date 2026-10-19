@@ -53,7 +53,7 @@
       <template v-if="files?.external">
         <div class="dim">
           对外活动提交时长审核必须附盖章立项书和盖章结项书；活动发布后、时长锁定前可随时更换。
-          收 PDF 或图片，每份只留一个文件，多页的请合成一个 PDF。
+          每份只留一个文件，多页的请合成一个 PDF。
         </div>
         <ProjectFileSlot v-for="s in STAMPED" :key="s.kind" :activity-id="activityId"
                          :kind="s.kind" :label="s.label" :file="files[s.kind]"
