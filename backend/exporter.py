@@ -499,7 +499,7 @@ SUMMARY_STATUSES = ("published", "closed", "finished", "vb_pending", "completed"
 # 跟主办一致；地点与范围跟着时间状态走，后面才是人数时数。
 SUMMARY_HEADER = ("活动编号", "活动名称", "组织单位", "联合主办方", "归口审批部门",
                   "时间", "状态", "活动地点", "招募范围", "志愿者人数", "人次",
-                  "志愿时数", "劳务时数", "违规条数")
+                  "总志愿时数", "劳务时数", "违规条数")
 # 表底的口径说明：拿到表的人不必回头问人数怎么算、时数为什么不是整数。
 # 写在合计行下面空一行处，表头与数据行的位置不因此挪动（见 _rows 用例）
 SUMMARY_NOTES = (
@@ -658,7 +658,7 @@ def build_activities_summary_workbook(
     total = [""] * len(SUMMARY_HEADER)
     total[0] = "合计"
     for name, value in (("人次", seats_total),
-                        ("志愿时数", round(volunteer_total, 1)),
+                        ("总志愿时数", round(volunteer_total, 1)),
                         ("劳务时数", round(pay_total, 1)),
                         ("违规条数", bad_total)):
         total[SUMMARY_HEADER.index(name)] = value
