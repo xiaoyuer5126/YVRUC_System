@@ -226,19 +226,17 @@ def test_manual_reminder_skips_checked_in(client, db, admin, make_activity,
     assert r.json()["detail"] == "全场次没有需要提醒的志愿者"
 
 
-def test_值班交接提醒每周一次_按接班的星期几(db, monkeypatch):
+def test_值班交接提醒每周一次_按接班的星期几(db, monkeypatch, extra_core):
     from datetime import datetime
-    from backend.models import Department, DutyHandover, Notification, User, uid
+    from backend.models import Department, DutyHandover, Notification, uid
     dept = db.query(Department).filter(Department.name == "对外联络部").one()
-    core = db.query(User).filter(User.department_id == dept.id,
-                                 User.qingxie_post == "core").first()
-    assert core is not None
-    old_duty = dept.duty_user_id
-    dept.duty_user_id = core.id
+    # 用现建的一位骨干：别人留下的交接流水不会混进这一轮的「接班时间」
+    dept.duty_user_id = extra_core.id
     dept.duty_remind_on = None
     # 这一轮值班从 2026-10-14（周三）10:00 接班
-    row = DutyHandover(id=uid("dty"), dept_id=dept.id, to_user_id=core.id,
-                       actor_id=core.id, created_at=datetime(2026, 10, 14, 10, 0))
+    row = DutyHandover(id=uid("dty"), dept_id=dept.id, to_user_id=extra_core.id,
+                       actor_id=extra_core.id,
+                       created_at=datetime(2026, 10, 14, 10, 0))
     db.add(row)
     db.commit()
     try:
@@ -253,7 +251,7 @@ def test_值班交接提醒每周一次_按接班的星期几(db, monkeypatch):
         assert scheduled.send_duty_handover_reminders(db) >= 1
         assert scheduled.send_duty_handover_reminders(db) == 0
         ntf = (db.query(Notification)
-               .filter(Notification.user_id == core.id,
+               .filter(Notification.user_id == extra_core.id,
                        Notification.title == f"值班交接提醒｜{dept.name}")
                .first())
         assert ntf is not None and "值班交接" in ntf.content
@@ -262,7 +260,7 @@ def test_值班交接提醒每周一次_按接班的星期几(db, monkeypatch):
         assert scheduled.send_duty_handover_reminders(db) >= 1
     finally:
         db.delete(row)
-        dept.duty_user_id = old_duty
+        dept.duty_user_id = None
         dept.duty_remind_on = None
         db.commit()
 
