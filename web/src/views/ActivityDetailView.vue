@@ -328,7 +328,7 @@
                 {{ g.my_enrollment.allow_reassign ? '接受' : '不接受' }}
               </el-tag>
               <el-switch :model-value="g.my_enrollment.allow_reassign" size="small"
-                         style="margin-left:8px" @change="toggleReassign(g)" />
+                         @change="toggleReassign(g)" />
             </div>
           </el-card>
           <div v-if="showPickRule" class="dim">{{ PICK_RULE }}</div>
@@ -444,7 +444,7 @@
                       </el-tag>
                     </el-tooltip>
                     <el-switch :model-value="g.my_enrollment.allow_reassign" size="small"
-                               style="margin-left:8px" @change="toggleReassign(g)" />
+                               @change="toggleReassign(g)" />
                   </div>
 
                   <!-- 已报名：把自己岗位的培训内容与材料直接摊开 -->
