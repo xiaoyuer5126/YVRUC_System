@@ -200,7 +200,9 @@ async function withdraw() {
 <style scoped>
 .apply-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .shift-block { margin-bottom: 12px; }
-.shift-name { font-weight: 600; margin-bottom: 4px; }
+/* 场次标题在复选框组里，组上的 font-size: 0 会让这行字不显示：
+   自己写回字号与行高，复选框本身的字号由组件自己给 */
+.shift-name { font-weight: 600; margin-bottom: 4px; font-size: 14px; line-height: 1.5; }
 .pos-line { display: flex; align-items: center; gap: 8px; padding-left: 10px; }
 .preview { margin: 8px 0 0; padding-left: 20px; line-height: 1.6; }
 </style>
