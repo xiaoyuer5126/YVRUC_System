@@ -41,7 +41,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "「{activity}」· {shift} 名额已满，您已报名候补，当前队列第 {pos} 位。"
         "\n有名额时将通知您确认，需于转正通知2小时内确认。"),
     "hours_approved": (
-        "志愿时长已核准｜{activity}",
+        "请确认志愿时长｜{activity}",
         "「{activity}」的志愿时长已核准：您本次记 {hours} 小时。"
         "\n请于 {deadline} 前到「志愿时长」页确认或提出申诉，超时未确认则视为无误，"
         "之后修改需报审批。{pay_line}"),

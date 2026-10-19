@@ -15,7 +15,7 @@ from . import config
 from .audit import log as audit_log
 from .enroll_logic import expire_stale_promotions
 from .integrations import msgcenter
-from .models import (Activity, ApprovalEvent, AuditLog, Department,
+from .models import (Activity, ApprovalEvent, AuditLog, Department, DutyHandover,
                      Enrollment, HoursClaim, HoursRequest, Shift, User, VbConfirm,
                      now)
 from .notify import (notify_checkin, notify_edit_changes, notify_enrolled,
@@ -42,7 +42,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("vb_confirms", remind_stale_vb_confirms),
                       ("vb_resubmit", remind_vb_resubmit),
                       ("duty_digests", send_duty_digests),
-                      ("sunday_duty_reminders", send_sunday_duty_reminders),
+                      ("duty_handover_reminders", send_duty_handover_reminders),
                       ("hours_lock_requests", submit_lock_when_due),
                       ("unlocked", release_stale_edit_locks),
                       ("sessions", purge_expired_sessions),
@@ -537,13 +537,16 @@ def send_duty_digests(db: OrmSession) -> int:
     return sent
 
 
-def send_sunday_duty_reminders(db: OrmSession) -> int:
-    """每周日 DUTY_DIGEST_HOUR（21:00）提醒当前值班人处理未完成的任务并交接班。"""
+def send_duty_handover_reminders(db: OrmSession) -> int:
+    """DUTY_DIGEST_HOUR（21:00）提醒当前值班人处理未完成的任务并交接班。
+
+    值班不一定从周一开始，周期按接班那天算：接班是周几，之后每周那天的
+    21:00 提醒一次，第一次落在接班后的第 8 天。"""
     from sqlalchemy import or_, update
     from . import liaison
 
     t = now()
-    if t.weekday() != 6 or t.hour < config.DUTY_DIGEST_HOUR:
+    if t.hour < config.DUTY_DIGEST_HOUR:
         return 0
     today = t.date()
     day_start = t.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -551,7 +554,7 @@ def send_sunday_duty_reminders(db: OrmSession) -> int:
     for dept in (db.query(Department)
                  .filter(Department.name.in_(liaison.DUTY_DEPTS)).all()):
         duty = liaison.on_duty(db, dept)
-        if duty is None:
+        if duty is None or not _duty_reminder_due(db, dept, duty, t):
             continue
         claimed = db.execute(
             update(Department)
@@ -570,15 +573,32 @@ def send_sunday_duty_reminders(db: OrmSession) -> int:
                 + "\n请尽快处理未完成的任务，并在完成后于「活动审批」页面办理值班交接。"
             )
         else:
-            pending_part = "本周待办事项已全部处理完毕，请在「活动审批」页面办理值班交接。"
+            pending_part = "待办事项已全部处理完毕，请在「活动审批」页面办理值班交接。"
         msgcenter.send_user(
             db, duty, "custom", data={"route": "approvals"},
-            title=f"周日值班提醒与交接班｜{dept.name}",
+            title=f"值班交接提醒｜{dept.name}",
             content=pending_part)
         db.commit()
         sent += 1
-        logger.info("周日值班交接提醒已发给 %s（%s）", duty.name, dept.name)
+        logger.info("值班交接提醒已发给 %s（%s）", duty.name, dept.name)
     return sent
+
+
+def _duty_reminder_due(db: OrmSession, dept: Department, duty: User, t
+                       ) -> bool:
+    """这一轮值班今天该不该提醒。
+
+    接班那天是周几，之后就在每周那天的 DUTY_DIGEST_HOUR 点提醒：接班是周三，
+    第一次提醒落在下周三（接班后的第 8 天）。找不到交接记录可查的部门退回
+    按周日提醒。"""
+    last = (db.query(DutyHandover)
+            .filter(DutyHandover.dept_id == dept.id,
+                    DutyHandover.to_user_id == duty.id)
+            .order_by(DutyHandover.created_at.desc()).first())
+    if last is None:
+        return t.weekday() == 6
+    return (t.weekday() == last.created_at.weekday()
+            and t.date() > last.created_at.date())
 
 
 def _duty_digest_lines(db: OrmSession, dept: Department, since

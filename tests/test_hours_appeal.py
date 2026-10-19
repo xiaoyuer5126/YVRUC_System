@@ -229,7 +229,7 @@ def test_核准前看不到也申诉不了(client, admin, db, served):
     assert rec["approved"] and rec["can_appeal"] and rec["appeal_deadline"]
     assert (db.query(Notification)
             .filter(Notification.user_id == u.id,
-                    Notification.title.like("志愿时长已核准%")).count() == 1)
+                    Notification.title.like("请确认志愿时长%")).count() == 1)
 
 
 def test_到点无人申诉自动提交审批_通过后才锁定(client, admin, db, served):
@@ -466,7 +466,7 @@ def test_再次核准只惊动申诉过或数值变过的人(client, admin, db, 
     def approved_notices(user_id):
         return (db.query(Notification)
                 .filter(Notification.user_id == user_id,
-                        Notification.title.like("志愿时长已核准%")).count())
+                        Notification.title.like("请确认志愿时长%")).count())
 
     r = client.post(f"/api/staff/activities/{act.id}/hours/approve",
                     headers=admin, json={})
@@ -674,7 +674,7 @@ def test_时长核准通知把人带到我的志愿时长(client, admin, db, ser
     _confirm(client, admin, act)
     n = (db.query(Notification)
          .filter(Notification.user_id == u.id,
-                 Notification.title.like("志愿时长已核准%")).first())
+                 Notification.title.like("请确认志愿时长%")).first())
     assert n is not None and n.data == {"route": "hours"}
 
 

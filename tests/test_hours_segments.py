@@ -712,7 +712,7 @@ def test_核准后手动加时_撤销核准且重新核准通知到他(client, a
     assert r.status_code == 200 and r.json()["count"] == 1
     assert (db.query(Notification)
             .filter(Notification.user_id == u.id,
-                    Notification.title.like("志愿时长已核准%")).count()) == 2
+                    Notification.title.like("请确认志愿时长%")).count()) == 2
 
     # 删掉那段同样撤销核准
     rec = _invariant(db, act, u)

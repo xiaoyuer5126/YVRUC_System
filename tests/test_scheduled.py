@@ -226,35 +226,41 @@ def test_manual_reminder_skips_checked_in(client, db, admin, make_activity,
     assert r.json()["detail"] == "全场次没有需要提醒的志愿者"
 
 
-def test_sunday_duty_reminder_at_21(db, monkeypatch):
+def test_值班交接提醒每周一次_按接班的星期几(db, monkeypatch, extra_core):
     from datetime import datetime
-    from backend.models import Department, Notification, User
+    from backend.models import Department, DutyHandover, Notification, uid
     dept = db.query(Department).filter(Department.name == "对外联络部").one()
-    core = db.query(User).filter(User.department_id == dept.id,
-                                 User.qingxie_post == "core").first()
-    assert core is not None
-    old_duty = dept.duty_user_id
-    dept.duty_user_id = core.id
+    # 用现建的一位骨干：别人留下的交接流水不会混进这一轮的「接班时间」
+    dept.duty_user_id = extra_core.id
     dept.duty_remind_on = None
+    # 这一轮值班从 2026-10-14（周三）10:00 接班
+    row = DutyHandover(id=uid("dty"), dept_id=dept.id, to_user_id=extra_core.id,
+                       actor_id=extra_core.id,
+                       created_at=datetime(2026, 10, 14, 10, 0))
+    db.add(row)
     db.commit()
     try:
-        # 周六 21:30 不触发
-        monkeypatch.setattr(scheduled, "now", lambda: datetime(2026, 10, 17, 21, 30))
-        assert scheduled.send_sunday_duty_reminders(db) == 0
-        # 周日 20:30 不触发
-        monkeypatch.setattr(scheduled, "now", lambda: datetime(2026, 10, 18, 20, 30))
-        assert scheduled.send_sunday_duty_reminders(db) == 0
-        # 周日 21:05 触发一次，且同一天不重复发
-        monkeypatch.setattr(scheduled, "now", lambda: datetime(2026, 10, 18, 21, 5))
-        assert scheduled.send_sunday_duty_reminders(db) >= 1
-        assert scheduled.send_sunday_duty_reminders(db) == 0
+        # 下周二 21:30 还没到第 8 天，不触发
+        monkeypatch.setattr(scheduled, "now", lambda: datetime(2026, 10, 20, 21, 30))
+        assert scheduled.send_duty_handover_reminders(db) == 0
+        # 下周三 20:30 不到 21 点
+        monkeypatch.setattr(scheduled, "now", lambda: datetime(2026, 10, 21, 20, 30))
+        assert scheduled.send_duty_handover_reminders(db) == 0
+        # 下周三 21:05 触发一次，且同一天不重复发
+        monkeypatch.setattr(scheduled, "now", lambda: datetime(2026, 10, 21, 21, 5))
+        assert scheduled.send_duty_handover_reminders(db) >= 1
+        assert scheduled.send_duty_handover_reminders(db) == 0
         ntf = (db.query(Notification)
-               .filter(Notification.user_id == core.id,
-                       Notification.title == f"周日值班提醒与交接班｜{dept.name}")
+               .filter(Notification.user_id == extra_core.id,
+                       Notification.title == f"值班交接提醒｜{dept.name}")
                .first())
         assert ntf is not None and "值班交接" in ntf.content
+        # 再下一周的周三 21:05 还会提醒
+        monkeypatch.setattr(scheduled, "now", lambda: datetime(2026, 10, 28, 21, 5))
+        assert scheduled.send_duty_handover_reminders(db) >= 1
     finally:
-        dept.duty_user_id = old_duty
+        db.delete(row)
+        dept.duty_user_id = None
         dept.duty_remind_on = None
         db.commit()
 
