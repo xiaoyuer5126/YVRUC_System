@@ -589,7 +589,9 @@ def transfer(activity_id: str, body: TransferBody,
                    "传好后对外联络部才能审批。" if need_proposal else ""), act,
                 route="manage", tab="review")
     db.commit()
-    return {"ok": True, "assignee": "、".join(c.name for c in contacts)}
+    return {"ok": True,
+            "assignee": "会长团" if body.to_council
+                        else "、".join(c.name for c in contacts)}
 
 
 @router.get("/approvals")
