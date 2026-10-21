@@ -14,7 +14,8 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session as OrmSession
 
-from .models import (Activity, ActivityManager, Attachment, FormQuestion, Position, Shift, User, uid)
+from .models import (Activity, ActivityManager, Attachment, FormQuestion,
+                     Position, Shift, ShiftPeriod, User, uid)
 
 
 def copy_attachments(db: OrmSession, src_type: str, src_id: str,
@@ -112,8 +113,6 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
 
     def clone(src_shift: Shift, position_map: dict[str, str]) -> Shift:
         shift = Shift(id=uid("s"), activity_id=act.id, name=src_shift.name,
-                      start_time=src_shift.start_time + delta,
-                      end_time=src_shift.end_time + delta,
                       mode=src_shift.mode,
                       flexible_time=src_shift.flexible_time,
                       note=src_shift.note, sort=src_shift.sort,
@@ -125,6 +124,11 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
                           for i in (src_shift.applies_to_positions or [])
                           if i in position_map])
         db.add(shift)
+        db.flush()
+        for i, p in enumerate(src_shift.sorted_periods()):
+            shift.periods.append(ShiftPeriod(
+                id=uid("sp"), shift_id=shift.id, sort=i,
+                start_time=p.start_time + delta, end_time=p.end_time + delta))
         db.flush()
         return shift
 
