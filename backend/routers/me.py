@@ -15,7 +15,7 @@ from .. import hours as hours_flow
 from ..database import db_session
 from ..deps import current_user
 from ..integrations import msgcenter
-from ..models import (Activity, Enrollment,
+from ..models import (Activity, CheckinRecord, Enrollment,
                       HoursAppeal, HoursRecord, Notification, Shift, Position,
                       User, iso, now, uid)
 from ..notify import notify_managers
