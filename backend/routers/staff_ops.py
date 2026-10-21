@@ -33,7 +33,7 @@ from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
                       ViolationRecord, day_of, iso, new_checkin_token, now,
                       parse_local_dt, part_is_pay, segment_out, span_text, uid)
 from ..serializers import applies_text, iso_of, recruit_scope_phrase
-from .checkin import checkout_open, find_record
+from .checkin import active_period, checkout_open, find_record
 from .geo import tiles_configured
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
@@ -53,24 +53,29 @@ def _act(db: OrmSession, activity_id: str, *,
 
 class TaskBody(BaseModel):
     mode: str = "shift"                 # shift 统一签到 / position 分岗位
+    # 哪一段的码：多时段场次必填；只有一个时段的场次可以不给
+    period_id: str | None = None
     position_id: str | None = None      # 单岗位（旧的调用方式）
     position_ids: list[str] = []        # 分岗位时可选多个，一个岗位一张码
     valid_from: str | None = None
     valid_to: str | None = None
 
 
-def live_task_conflict(db: OrmSession, shift_id: str, position_id: str | None,
+def live_task_conflict(db: OrmSession, shift_id: str, period_id: str,
+                       position_id: str | None,
                        *, exclude_id: str | None = None) -> CheckinTask | None:
-    """这一场里有没有已经开着的码跟它冲突。
+    """这一段的码里有没有已经开着的跟它冲突。
 
-    **整场的码算「所有岗位」**：整场开着的时候，再给某个岗位开一张，学生扫的
-    是哪张、记录落到哪张任务下都说不清（看板还会各算各的）。反过来也一样——
-    某个岗位开着码时再开整场的，同样会让两拨人扫到不同的任务。
+    **统一码算「这一段的所有岗位」**：统一码开着的时候，再给某个岗位开一张，
+    学生扫的是哪张、记录落到哪张任务下都说不清（看板还会各算各的）。反过来也
+    一样——某个岗位开着码时再开统一的，同样会让两拨人扫到不同的任务。
+    不同的时段互不冲突：上午一张、下午一张才是常态。
 
     自己跟自己不算冲突（改时段、重新开启时要把自己排除掉）。
     """
     q = (db.query(CheckinTask)
          .filter(CheckinTask.shift_id == shift_id,
+                 CheckinTask.period_id == period_id,
                  CheckinTask.active.is_(True)))
     if exclude_id:
         q = q.filter(CheckinTask.id != exclude_id)
@@ -102,6 +107,15 @@ def create_task(shift_id: str, body: TaskBody,
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
     ensure_not_finished(act)
+    periods = g.sorted_periods()
+    if body.period_id:
+        period = g.period_of(body.period_id)
+        if period is None:
+            raise HTTPException(400, "所选时段不属于该场次")
+    elif len(periods) == 1:
+        period = periods[0]
+    else:
+        raise HTTPException(400, "这场有多个时段，请指定是哪个时段的签到码")
     positions: list[Position] = []
     if body.mode == "position":
         # 可多选：一个岗位一张码。只认本场次下的岗位
@@ -122,7 +136,7 @@ def create_task(shift_id: str, body: TaskBody,
         raise HTTPException(400, "时间格式不对") from None
     # 一次一张地查冲突：多选时只要有一个岗位撞上就整体拒绝，别做一半
     for st in (positions or [None]):
-        live = live_task_conflict(db, g.id, st.id if st else None)
+        live = live_task_conflict(db, g.id, period.id, st.id if st else None)
         if live is not None:
             raise HTTPException(409, _conflict_message(db, live, g))
     pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
@@ -132,12 +146,13 @@ def create_task(shift_id: str, body: TaskBody,
             db, CheckinTask.token, new_checkin_token,
             lambda code, st=st: CheckinTask(
                 id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+                period_id=period.id,
                 position_id=st.id if st else None,
                 mode=body.mode, token=code,
-                valid_from=valid_from or g.start_time - pad,
-                valid_to=valid_to or g.end_time + pad,
+                valid_from=valid_from or period.start_time - pad,
+                valid_to=valid_to or period.end_time + pad,
                 created_by=user.id))
-        label = st.name if st else f"{g.name}·统一签到"
+        label = st.name if st else f"{g.name}·{period.text()}·统一签到"
         audit_log(db, actor=user, action="checkin_task", target_type="checkin",
                   target_id=task.id, target_label=f"{act.title}·{label}",
                   activity_id=act.id,
@@ -165,6 +180,7 @@ def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
     out = []
     for t in tasks:
         g = db.get(Shift, t.shift_id)
+        period = g.period_of(t.period_id)
         st = db.get(Position, t.position_id) if t.position_id else None
         n = (db.query(func.count(CheckinRecord.id))
              .filter(CheckinRecord.task_id == t.id).scalar() or 0)
@@ -173,9 +189,13 @@ def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
                     # shift_id 前端要用：一个活动多场次时，码表要按场次分辨，
                     # 手动补签也只能打到当前这块大屏对应的那一场上
                     "shift_id": t.shift_id, "shift_name": g.name,
-                    # 截止早于场次结束、或场次没完就关码，前端要先提醒：
-                    # 那之后没签退的人都按场次结束兜底、进待核
-                    "shift_end": iso(g.end_time),
+                    # 这张码属于哪一段：多时段的场次一个时段一张码
+                    "period_id": t.period_id,
+                    "period_text": period.text() if period else "",
+                    "period_count": len(g.periods),
+                    # 截止早于这一段结束、或这一段没完就关码，前端要先提醒：
+                    # 那之后没签退的人都按这一段结束兜底、进待核
+                    "shift_end": iso(period.end_time if period else g.end_time),
                     "shift_kind": g.kind, "shift_kind_label": g.kind_label(),
                     "position_name": st.name if st else "",
                     "valid_from": iso(t.valid_from), "valid_to": iso(t.valid_to),
@@ -416,8 +436,8 @@ def toggle_task(task_id: str, body: dict,
     if "active" in body:
         want = bool(body["active"])
         if want:
-            live = live_task_conflict(db, task.shift_id, task.position_id,
-                                      exclude_id=task.id)
+            live = live_task_conflict(db, task.shift_id, task.period_id,
+                                      task.position_id, exclude_id=task.id)
             if live is not None:
                 raise HTTPException(
                     409, _conflict_message(db, live, db.get(Shift, task.shift_id)))
@@ -431,6 +451,8 @@ class ReminderBody(BaseModel):
     """范围三选一：整场次 / 指定岗位组 / 指定岗位。"""
     position_ids: list[str] = []
     group_name: str = ""
+    # 多时段的场次催的是哪一段；不给就取此刻正在进行的、或下一段
+    period_id: str | None = None
     need_ack: bool = False   # 要求志愿者点「我已知悉」，管理端能看到谁没回
 
 
@@ -466,12 +488,18 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
         ids = list(body.position_ids)
         scope = "岗位" + "、".join(f"「{known[i].name}」" for i in ids)
 
+    period = (g.period_of(body.period_id) if body.period_id
+              else active_period(g, now()))
+    if period is None:
+        raise HTTPException(400, "该场次没有服务时段")
+    if len(g.periods) > 1:
+        scope = f"{scope}·{period.text()}"
     batch_id = uid("bat") if body.need_ack else None
-    n = notify_checkin(db, g, position_ids=ids, need_ack=body.need_ack,
-                       batch_id=batch_id)
+    n = notify_checkin(db, g, period=period, position_ids=ids,
+                       need_ack=body.need_ack, batch_id=batch_id)
     if not n:
         raise HTTPException(400, f"{scope}没有需要提醒的志愿者")
-    g.reminder_sent_at = now()
+    period.reminder_sent_at = now()
     audit_log(db, actor=user, action="update", target_type="notify",
               target_id=g.id, target_label=g.name, activity_id=g.activity_id,
               summary=f"手动补发签到提醒：{scope} {n} 人（未签到）"
@@ -496,8 +524,10 @@ def board(task_id: str, db: OrmSession = Depends(db_session),
               .filter(Enrollment.shift_id == g.id,
                       Enrollment.status == "enrolled")
               .order_by(User.college, User.name).all())
+    # 这一段的码：大屏说的是这一段到了多少人，不把上午的记录算进下午
     recs = (db.query(CheckinRecord)
-            .filter(CheckinRecord.shift_id == g.id)
+            .filter(CheckinRecord.shift_id == g.id,
+                    CheckinRecord.period_id == task.period_id)
             .order_by(CheckinRecord.checkin_at).all())
     rec_by_user, rounds = _board_records(g, recs, task)
 
@@ -539,6 +569,9 @@ def board(task_id: str, db: OrmSession = Depends(db_session),
         "task": {"id": task.id, "token": task.token, "mode": task.mode,
                  "active": task.active},
         "activity_title": act.title, "shift_name": g.name,
+        "period_id": task.period_id,
+        "period_text": (g.period_of(task.period_id).text()
+                        if task.period_id else ""),
         "expected": len(roster), "checked": checked,
         "checked_out": checked_out,
         "positions": positions, "records": items[:500],
@@ -564,40 +597,47 @@ def _board_records(g: Shift, recs: list[CheckinRecord],
     return by_user, rounds
 
 
-def _live_task(db: OrmSession, g: Shift) -> CheckinTask | None:
-    """这一场现在开着的那张码（同一时间只开一张，见 live_task_conflict；
+def _live_task(db: OrmSession, g: Shift, period) -> CheckinTask | None:
+    """这一段现在开着的那张码（同一时间只开一张，见 live_task_conflict；
     分岗位的码可能有几张，取最新的，跟签到面板补签用的那张一致）。"""
     return (db.query(CheckinTask)
-            .filter(CheckinTask.shift_id == g.id, CheckinTask.active.is_(True))
+            .filter(CheckinTask.shift_id == g.id,
+                    CheckinTask.period_id == period.id,
+                    CheckinTask.active.is_(True))
             .order_by(CheckinTask.created_at.desc()).first())
 
 
 @router.get("/shifts/{shift_id}/board")
-def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
+def shift_board(shift_id: str, period_id: str = "",
+                db: OrmSession = Depends(db_session),
                 user: User = Depends(require_manager)):
     """按场次聚合的签到实时大屏（不依赖激活的签到任务，
     任务关闭/不存在时仍可查看到场名单）。前端 5s 轮询。
 
     以已报名报名（Enrollment.status=enrolled）join User 为主表，
-    每人配上该场次的签到记录：一般场次一人至多一条；时间灵活的场次一人可能
+    每人配上这一段的签到记录：一般场次一人一段一条；时间灵活的场次一人可能
     签过好几轮，配哪一轮见 _board_records。
+    给了 period_id 就只看这一段；不给时把各段合在一起看。
     """
     g = db.get(Shift, shift_id)
     if g is None:
         raise HTTPException(404, "场次不存在")
     ensure_activity_manager(db, user, g.activity_id)
     act = db.get(Activity, g.activity_id)
+    period = g.period_of(period_id) if period_id else None
 
     roster = (db.query(Enrollment, User)
               .join(User, Enrollment.user_id == User.id)
               .filter(Enrollment.shift_id == g.id,
                       Enrollment.status == "enrolled")
               .order_by(User.college, User.name).all())
-    recs = (db.query(CheckinRecord)
-            .filter(CheckinRecord.shift_id == g.id)
-            .order_by(CheckinRecord.checkin_at).all())
-    rec_by_user, rounds = _board_records(
-        g, recs, _live_task(db, g) if g.flexible_time else None)
+    q = db.query(CheckinRecord).filter(CheckinRecord.shift_id == g.id)
+    if period is not None:
+        q = q.filter(CheckinRecord.period_id == period.id)
+    recs = q.order_by(CheckinRecord.checkin_at).all()
+    show_period = period or active_period(g, now())
+    task = (_live_task(db, g, show_period) if g.flexible_time else None)
+    rec_by_user, rounds = _board_records(g, recs, task)
     rows = [(enr, u, rec_by_user.get(u.id)) for enr, u in roster]
 
     items = []
@@ -642,6 +682,11 @@ def shift_board(shift_id: str, db: OrmSession = Depends(db_session),
         "activity_id": act.id, "activity_title": act.title,
         "shift_id": g.id, "shift_name": g.name,
         "kind": g.kind, "kind_label": g.kind_label(),
+        # 多时段的场次：大屏可以按段切换；不给段时是各段合在一起看的数
+        "periods": [{**p.out(),
+                     "active": show_period is not None and p.id == show_period.id}
+                    for p in g.sorted_periods()],
+        "period_id": period.id if period else "",
         # 时间灵活的场次：到岗、签退说的是当前开着的那张码这一轮
         "flexible_time": g.flexible_time,
         # 请假的人不进应到岗的分母：他事先说了不来，不该拉低到岗率
@@ -708,6 +753,7 @@ def batch_op(task_id: str, body: dict,
             db.add(CheckinRecord(id=uid("ckr"), task_id=task.id,
                                  activity_id=task.activity_id,
                                  shift_id=task.shift_id,
+                                 period_id=task.period_id,
                                  position_id=enr.position_id, user_id=u.id,
                                  method="manual", by_user=user.id))
             done.append(u.name)
@@ -954,7 +1000,7 @@ def poster(activity_id: str, request: Request, base: str = "",
             assign = (f"招募 {hold.quota if hold else g.total_capacity()} 人，"
                       f"岗位于报名截止后统一分配")
         if len(mains) > 1:
-            L.append(f"◆ {g.name}　{_cn_span(g.start_time, g.end_time)}"
+            L.append(f"◆ {g.name}　{g.span_text()}"
                      + (f"　{assign}" if assign else ""))
         elif assign:
             L.append(assign)
@@ -969,7 +1015,7 @@ def poster(activity_id: str, request: Request, base: str = "",
             if extra:
                 L.append("    " + "；".join(extra))
     attached = [
-        f"{_cn_span(s.start_time, s.end_time)} {s.kind_label()}"
+        f"{s.span_text()} {s.kind_label()}"
         + (f"，{s.location}" if s.location else "")
         + f"（{applies_text(act, s)}需参加，"
           f"{'不计时长' if s.hours_mode == 'none' else '计入时长'}）"
@@ -1075,9 +1121,9 @@ def effective_checkout(rec: CheckinRecord, g: Shift, still_open: bool,
          → 按 fallback 兜底（auto，待核）；
        · 未签退、码还开着没过截止 → None（时长待定，pending）。
 
-    still_open 由调用方用 checkin.checkout_open 算好传进来（一场算一次；时间
-    灵活的场次一张码算一次）。fallback 一般是场次结束时间；时间灵活的场次
-    一张码一轮，是这条记录那张码的截止时间（见 record_deadline）。
+    still_open 由调用方用 checkin.checkout_open 算好传进来（一段算一次；时间
+    灵活的场次一张码算一次）。fallback 一般是这一段的结束时间；时间灵活的
+    场次一张码一轮，是这条记录那张码的截止时间（见 record_deadline）。
     签退没有另外的宽限：自己能签退的时段就是码的可签时段，两边必须说同一件事。
     关掉的码再开、或把截止往后改，只要人还没被补签，这里就回到 pending——
     判定是每次现算的，不落库。"""
@@ -1088,23 +1134,23 @@ def effective_checkout(rec: CheckinRecord, g: Shift, still_open: bool,
     return None, "pending"
 
 
-def record_deadline(g: Shift, task: CheckinTask | None) -> datetime:
+def record_deadline(g: Shift, period, task: CheckinTask | None) -> datetime:
     """一条签到记录没签退时按哪个时刻兜底：时间灵活的场次是那张码的截止，
-    别的场次是场次结束。"""
+    别的场次是这一段的结束。"""
     if g.flexible_time and task is not None:
-        return task.window(g)[1]
-    return g.end_time
+        return task.window(period)[1]
+    return period.end_time
 
 
-def shift_hours(rec: CheckinRecord, g: Shift, t: datetime, still_open: bool,
-                fallback: datetime):
-    """一条签到记录在该场次记多少小时、要不要人工过目，**以及按哪段时间算的**。
+def shift_hours(rec: CheckinRecord, g: Shift, period, t: datetime,
+                still_open: bool, fallback: datetime):
+    """一条签到记录在这一段记多少小时、要不要人工过目，**以及按哪段时间算的**。
 
     时长认定方式是建场次时定下的一次决定，不是事后逐条判断：
-      fixed  到场即按场次时长计——两小时的彩排人就在那儿，不值得卡分钟，
+      fixed  到场即按这一段时长计——两小时的彩排人就在那儿，不值得卡分钟，
              顺带消灭了「忘记签退」这类麻烦的一大半；
       none   只记出勤，不产生时长（线上培训）；
-      checkin 签退 − 签到，码关了/过了截止还没签退的按 fallback（场次结束；
+      checkin 签退 − 签到，码关了/过了截止还没签退的按 fallback（这一段结束；
              时间灵活的场次是那张码的截止）兜底并标记待核。
 
     返回 (小时数, 待核标记, 计时起点, 计时终点)。时段跟着一起给：备注里写的
@@ -1113,9 +1159,9 @@ def shift_hours(rec: CheckinRecord, g: Shift, t: datetime, still_open: bool,
     if g.hours_mode == "none":
         return 0.0, "", None, None
     if g.hours_mode == "fixed":
-        # 到场即按场次时长：写场次的起止，不写他实际几点到的
-        return ((g.end_time - g.start_time).total_seconds() / 3600, "",
-                g.start_time, g.end_time)
+        # 到场即按这一段时长：写这一段的起止，不写他实际几点到的
+        return ((period.end_time - period.start_time).total_seconds() / 3600, "",
+                period.start_time, period.end_time)
     checkout, kind = effective_checkout(rec, g, still_open, fallback)
     if checkout is None:
         end = min(t, fallback)
@@ -1167,25 +1213,30 @@ def checkin_segments(db: OrmSession, act: Activity) -> dict[str, dict]:
     # 本人已经给哪几段选了劳务：按（场次, 岗位）认段，重算时原样带上——
     # 不然管理者每点一次「确认全部」，本人的选择就被抹回志愿时长
     # 明细一次带出来：逐条记录各取一次，查询条数就跟着人数涨了
-    chose_pay = {r.user_id: {(s.shift_id, s.position_id)
+    chose_pay = {r.user_id: {(s.shift_id, s.period_id, s.position_id)
                              for s in r.live_segments() if s.is_pay()}
                  for r in db.query(HoursRecord)
                  .options(selectinload(HoursRecord.segments))
                  .filter(HoursRecord.activity_id == act.id).all()}
     out: dict[str, dict] = {}
-    # 还能不能自己签退、没签退按哪个时刻兜底：一场查一次；时间灵活的场次
-    # 一张码一轮，按（场次, 码）各查一次
+    # 还能不能自己签退、没签退按哪个时刻兜底：一段查一次；时间灵活的场次
+    # 一张码一轮，按（场次, 时段, 码）各查一次
     open_by: dict[tuple, tuple[bool, datetime]] = {}
     for rec in records:
         g = db.get(Shift, rec.shift_id)
         if g is None:
             continue
-        key = (g.id, rec.task_id if g.flexible_time else "")
+        period = g.period_of(rec.period_id)
+        if period is None:
+            continue
+        key = (g.id, period.id, rec.task_id if g.flexible_time else "")
         if key not in open_by:
             task = db.get(CheckinTask, rec.task_id) if g.flexible_time else None
-            open_by[key] = (checkout_open(db, g, t, task), record_deadline(g, task))
+            open_by[key] = (checkout_open(db, g, t, period, task),
+                            record_deadline(g, period, task))
         still_open, fallback = open_by[key]
-        hours, flag, start, end = shift_hours(rec, g, t, still_open, fallback)
+        hours, flag, start, end = shift_hours(rec, g, period, t, still_open,
+                                              fallback)
         mine = out.setdefault(rec.user_id, {"segments": [], "total": 0.0,
                                             "flags": set()})
         if flag:
@@ -1206,16 +1257,18 @@ def checkin_segments(db: OrmSession, act: Activity) -> dict[str, dict]:
             pos = db.get(Position, enr.position_id) if enr and enr.position_id else None
         # 岗位后来关了劳务的，这一段回到志愿时长
         reward = ("pay" if pos is not None and pos.pay_optional
-                  and (g.id, pos.id) in chose_pay.get(rec.user_id, ()) else "")
+                  and (g.id, period.id, pos.id) in chose_pay.get(rec.user_id, ())
+                  else "")
         mine["segments"].append({
             "kind": "shift",
-            # 服务日期是场次开始的那一天：跨天的场次算开头那天
-            "date": day_of(g.start_time),
+            # 服务日期是这一段开始的那一天：跨天的时段算开头那天
+            "date": day_of(period.start_time),
             "hours": round(hours, 2), "reward": reward,
             "label": g.name if not g.is_attached() else f"{g.name}（{g.kind_label()}）",
             "position_name": pos.name if pos and not pos.is_placeholder else "",
-            "time_text": span_text(start, end) if start and end else g.span_text(),
-            "shift_id": g.id, "position_id": pos.id if pos else None})
+            "time_text": span_text(start, end) if start and end else period.text(),
+            "shift_id": g.id, "period_id": period.id,
+            "position_id": pos.id if pos else None})
     return out
 
 
@@ -1331,15 +1384,16 @@ def _segment_day(rec: HoursRecord, act: Activity) -> datetime:
 def _align_shift_segments(rec: HoursRecord, computed: list[dict]) -> None:
     """把这一笔里签到算出来的那几段对齐到现算的结果。
 
-    同一（场次, 岗位）的就地改写：seq 不动，明细的顺序就还是写入的顺序——
+    同一（场次, 时段, 岗位）的就地改写：seq 不动，明细的顺序就还是写入的顺序——
     管理者加了手动段之后再点一次「确认全部」，签到段不会跑到手动段后面去。
     签到记录改了、场次没了的那几段删掉，新出现的补上。
     """
     left = list(rec.live_segments())
     for fields in computed:
-        key = (fields["shift_id"], fields["position_id"])
+        key = (fields["shift_id"], fields["period_id"], fields["position_id"])
         seg = next((s for s in left
-                    if s.kind == "shift" and (s.shift_id, s.position_id) == key),
+                    if s.kind == "shift"
+                    and (s.shift_id, s.period_id, s.position_id) == key),
                    None)
         if seg is None:
             rec.add_segment(**fields)
@@ -1817,6 +1871,7 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
                               "locked": p.list_locked,
                               "full": n >= p.quota})
         rows.append({"id": g.id, "name": g.name, "time": g.span_text(),
+                     "periods": [p.out() for p in g.sorted_periods()],
                      "mode": g.mode, "started": g.start_time <= t,
                      "enrolled": occ.shift_enrolled(g.id),
                      "occupied": occ.shift_occupied(g.id),

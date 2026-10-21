@@ -16,8 +16,8 @@ from .audit import log as audit_log
 from .enroll_logic import expire_stale_promotions
 from .integrations import msgcenter
 from .models import (Activity, ApprovalEvent, AuditLog, Department, DutyHandover,
-                     Enrollment, HoursClaim, HoursRequest, Shift, User, VbConfirm,
-                     now)
+                     Enrollment, HoursClaim, HoursRequest, Shift, ShiftPeriod,
+                     User, VbConfirm, now)
 from .notify import (notify_checkin, notify_edit_changes, notify_enrolled,
                      notify_managers)
 from .perm import activity_manager_ids
@@ -731,25 +731,28 @@ def release_stale_edit_locks(db: OrmSession) -> int:
 # ======================= 签到提醒 =======================
 
 def send_checkin_reminders(db: OrmSession) -> int:
-    """场次开始前 CHECKIN_REMINDER_MINUTES 分钟推一次签到提醒。
+    """每一段开始前 CHECKIN_REMINDER_MINUTES 分钟推一次签到提醒。
 
-    只推一次（reminder_sent_at 落库），且只推还没开始的场次——服务停过一段时间
-    再起来，不该把早就结束的场次的提醒补发出去。
+    按段提醒：一个场次有几个时段就提醒几次，上午的提醒不该在下午再用一次。
+    每段只推一次（ShiftPeriod.reminder_sent_at 落库），且只推还没开始的段——
+    服务停过一段时间再起来，不该把早就结束的段的提醒补发出去。
     """
     t = now()
-    shifts = (db.query(Shift)
-              .join(Activity, Shift.activity_id == Activity.id)
-              .filter(Shift.reminder_sent_at.is_(None),
-                      Shift.start_time > t,
-                      Shift.start_time <= t + REMINDER_LEAD,
-                      Activity.status.in_(("published", "closed"))).all())
+    rows = (db.query(ShiftPeriod, Shift)
+            .join(Shift, ShiftPeriod.shift_id == Shift.id)
+            .join(Activity, Shift.activity_id == Activity.id)
+            .filter(ShiftPeriod.reminder_sent_at.is_(None),
+                    ShiftPeriod.start_time > t,
+                    ShiftPeriod.start_time <= t + REMINDER_LEAD,
+                    Activity.status.in_(("published", "closed"))).all())
     sent = 0
-    for g in shifts:
-        n = notify_checkin(db, g)
-        g.reminder_sent_at = t
+    for period, g in rows:
+        n = notify_checkin(db, g, period=period)
+        period.reminder_sent_at = t
         sent += n
-        logger.info("场次「%s」签到提醒已发送 %d 人", g.name, n)
-    if shifts:
+        logger.info("场次「%s」%s 签到提醒已发送 %d 人",
+                    g.name, period.text(), n)
+    if rows:
         db.commit()
     return sent
 
@@ -829,7 +832,7 @@ def send_roster_digests(db: OrmSession) -> int:
             gap = max(0, capacity - enrolled)
             lines.append(f"当前 {enrolled}/{capacity} 人"
                          + (f"，缺 {gap} 人。" if gap else "，人数已满。"))
-        lines.append(f"场次开始：{g.start_time:%m-%d %H:%M}")
+        lines.append(f"服务时间：{g.span_text()}")
         act = db.get(Activity, g.activity_id)
         notify_managers(db, act.id, f"[人员变动] {act.title} · {g.name}",
                         "\n".join(lines), duty="roster", tab="roster")
