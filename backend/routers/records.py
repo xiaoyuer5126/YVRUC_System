@@ -421,7 +421,7 @@ def record_roster(activity_id: str, db: OrmSession = Depends(db_session),
             "total_hours": round(sum(r.settled_hours() for r in rows), 1),
             "editable": not block, "block_reason": block,
             "warn_hours": config.RECORD_WARN_HOURS,
-            "held_text": act.held_text() if act.held_rows() else ""}
+            "held_text": act.time_text() if act.held_rows() else ""}
 
 
 class ImportBody(BaseModel):
