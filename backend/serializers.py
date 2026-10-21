@@ -19,7 +19,7 @@ from .enroll_logic import (Occupancy, active_rows, applies_to_shift, conflicts_a
                            enroll_deadline, group_leader_task, group_needs_leader, lock_at,
                            shift_counts, unmet_for_tags, waitlist_position)
 from .models import (Activity, Application, Attachment, AuditLog, Enrollment,
-                     FormQuestion, Position, Shift, User, iso, now)
+                     FormQuestion, Position, Shift, ShiftPeriod, User, iso, now)
 
 
 def iso_of(dt):
@@ -277,10 +277,10 @@ def with_times(out: dict, t=None) -> dict:
 
 
 def load_trees(db: OrmSession, acts: list[Activity]) -> None:
-    """一批活动的场次与岗位，两条 SQL 装好。
+    """一批活动的场次、时段与岗位，三条 SQL 装好。
 
-    懒加载的话是一个活动一条（场次）、一个场次一条（岗位），广场一页十几张卡片、
-    详情页十几个场次，条数跟着涨。已经加载过的不重查。
+    懒加载的话是一个活动一条（场次）、一个场次一条（时段、岗位），广场一页
+    十几张卡片、详情页十几个场次，条数跟着涨。已经加载过的不重查。
     """
     todo = [a for a in acts if "shifts" not in a.__dict__]
     if todo:
@@ -291,14 +291,24 @@ def load_trees(db: OrmSession, acts: list[Activity]) -> None:
             by_act[g.activity_id].append(g)
         for a in todo:
             set_committed_value(a, "shifts", by_act[a.id])
-    shifts = [g for a in acts for g in a.shifts if "positions" not in g.__dict__]
-    if shifts:
+    shifts = [g for a in acts for g in a.shifts]
+    todo = [g for g in shifts if "periods" not in g.__dict__]
+    if todo:
+        by_shift = defaultdict(list)
+        for p in (db.query(ShiftPeriod)
+                  .filter(ShiftPeriod.shift_id.in_([g.id for g in todo]))
+                  .order_by(ShiftPeriod.start_time, ShiftPeriod.sort).all()):
+            by_shift[p.shift_id].append(p)
+        for g in todo:
+            set_committed_value(g, "periods", by_shift[g.id])
+    todo = [g for g in shifts if "positions" not in g.__dict__]
+    if todo:
         by_shift = defaultdict(list)
         for p in (db.query(Position)
-                  .filter(Position.shift_id.in_([g.id for g in shifts]))
+                  .filter(Position.shift_id.in_([g.id for g in todo]))
                   .order_by(Position.sort).all()):
             by_shift[p.shift_id].append(p)
-        for g in shifts:
+        for g in todo:
             set_committed_value(g, "positions", by_shift[g.id])
 
 
@@ -470,6 +480,7 @@ def _attached_public(s: Shift, occ: Occupancy) -> dict:
         "excused_count": occ.shift_excused(s.id),
         "id": s.id, "name": s.name, "kind": s.kind, "kind_label": s.kind_label(),
         "start_time": iso_of(s.start_time), "end_time": iso_of(s.end_time),
+        "periods": [p.out() for p in s.sorted_periods()],
         "time_text": s.span_text(), "location": s.location,
         "note": s.note,
         "hours_mode": s.hours_mode, "hours_label": s.hours_label(),
@@ -489,6 +500,8 @@ def _shift_public(g: Shift, occ: Occupancy, n_materials: dict) -> dict:
         "id": g.id, "name": g.name,
         "activity_id": g.activity_id,
         "start_time": iso_of(g.start_time), "end_time": iso_of(g.end_time),
+        # 时段明细：编辑表单、签到面板选时段、「这几天上午/下午」的展示都靠它
+        "periods": [p.out() for p in g.sorted_periods()],
         "time_text": g.span_text(),
         "enroll_deadline": iso_of(enroll_deadline(g.activity, g)),
         # 名额一律是各岗位之和；assign 场次的名额挂在占位岗位上
@@ -723,8 +736,8 @@ def _for_viewer(db: OrmSession, act: Activity, out: dict, user,
         rows = [r for r in active_rows(db, user)
                 if r[2].id != act.id or r[0].status != "applied"]
         clashes: list[dict] = []
-        for sid, start, end, _deadline, _lock in basis["shifts"]:
-            clashes += conflicts_among(rows, sid, _dt(start), _dt(end))
+        for g in act.shifts:
+            clashes += conflicts_among(rows, g)
         out["my_time_conflicts"] = dedupe_conflicts(clashes)
     return with_times(out)
 

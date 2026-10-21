@@ -29,11 +29,12 @@ from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, is_activity_manager,
                      managed_activity_ids, remove_manager)
 from ..integrations import msgcenter
-from ..models import (Activity, ActivityManager, Application, ApprovalEvent,
-                      Attachment, AttireRecord, AttireTask, AuditLog,
-                      CheckinRecord, CheckinTask, Department, Enrollment,
-                      FormQuestion, Notification, Position, Shift, User,
-                      VbConfirm, iso, like_pattern, now, parse_local_dt, uid)
+from ..models import (Activity, ActivityManager, Application,
+                      ApprovalEvent, Attachment, AttireRecord, AttireTask,
+                      AuditLog, CheckinRecord, CheckinTask, Department,
+                      Enrollment, FormQuestion, Notification, Position, Shift,
+                      ShiftPeriod, User, VbConfirm, iso, like_pattern, now,
+                      parse_local_dt, uid)
 from ..serializers import (activity_brief, admin_status_of, applies_text,
                            load_trees, published_hint)
 from .screening import answers_out
@@ -1075,10 +1076,15 @@ SHIFT_KINDS = ("service", "training", "rehearsal")
 HOURS_MODES = ("checkin", "fixed", "none")
 
 
+class PeriodBody(BaseModel):
+    """一个服务时段，精确到分钟。"""
+    start_time: str = ""
+    end_time: str = ""
+
+
 class ShiftBody(BaseModel):
     name: str = Field(max_length=128)
-    start_time: str
-    end_time: str
+    periods: list[PeriodBody] = []
     mode: str = "pick"          # pick 报名即选岗位 / assign 截止后统一分配
     # 只有 assign 模式用得上：报名时还没有岗位可选，名额只能记在场次上
     capacity: int = Field(default=0, ge=0)
@@ -1109,9 +1115,60 @@ def _clean_lock_hours(v) -> int:
     return n
 
 
-def _validate_shift_times(start: datetime, end: datetime):
-    if end <= start:
-        raise HTTPException(400, "结束时间必须晚于开始时间")
+def _clean_periods(items) -> list[dict]:
+    """校验并摊平客户端传来的时段。
+
+    每段都要有起止、结束晚于开始。同一场次里的时段不能互相压着——
+    那样同一段时间会被签到、时长算两遍。
+    """
+    if not items:
+        raise HTTPException(400, "请至少填写一个服务时段")
+    rows = []
+    for item in items:
+        raw_start = (getattr(item, "start_time", "") or "").strip()
+        raw_end = (getattr(item, "end_time", "") or "").strip()
+        if not raw_start:
+            raise HTTPException(400, "每个时段都要填开始时间")
+        if not raw_end:
+            raise HTTPException(400, "请填写时段的结束时间")
+        start, end = _parse_dt(raw_start), _parse_dt(raw_end)
+        if start is None or end is None:
+            raise HTTPException(400, "时段的时间格式不对")
+        if end <= start:
+            raise HTTPException(400, "时段的结束时间必须晚于开始时间")
+        rows.append({"start_time": start, "end_time": end})
+    rows.sort(key=lambda r: r["start_time"])
+    for a, b in zip(rows, rows[1:]):
+        if b["start_time"] < a["end_time"]:
+            raise HTTPException(400, "同一场次里的时段不能重叠")
+    return rows
+
+
+def _set_periods(db: OrmSession, g: Shift, rows: list[dict]) -> None:
+    """把这一场的时段设成 rows。
+
+    段数不变时就地改时间，段的 id 不动：签到记录和时长明细都按段的 id 认
+    是哪一段，换了 id 它们就成了找不到时段的孤儿。已经生成过签到码的场次
+    不允许增减段数，要重组就先停用签到码、删了重建。
+    """
+    existing = g.sorted_periods()
+    if len(existing) == len(rows):
+        for i, (p, row) in enumerate(zip(existing, rows)):
+            p.start_time, p.end_time, p.sort = (
+                row["start_time"], row["end_time"], i)
+    else:
+        if g.id and db.query(CheckinTask).filter(
+                CheckinTask.shift_id == g.id).first():
+            raise HTTPException(
+                409, "这一场已经生成过签到码，不能再增减时段；"
+                     "可以改已有时段的时间，或先停用签到码")
+        g.periods.clear()
+        for i, row in enumerate(rows):
+            g.periods.append(ShiftPeriod(id=uid("sp"), shift_id=g.id,
+                                         sort=i, **row))
+    db.flush()
+    # 跨度是按库里时段算出来的：换过时段后要让下次读取重新查一遍
+    db.expire(g, ["start_time", "end_time"])
 
 
 def _validate_flexible_hours(g: Shift) -> None:
@@ -1277,10 +1334,8 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
     act = _ensure_editing(db, activity_id)
     if act.is_record():
         raise HTTPException(409, "补记录活动不设场次与岗位，时长在审批通过后导入名单")
-    start, end = _parse_dt(body.start_time), _parse_dt(body.end_time)
-    _validate_shift_times(start, end)
+    periods = _clean_periods(body.periods)
     g = Shift(id=uid("g"), activity_id=act.id, name=body.name.strip(),
-                      start_time=start, end_time=end,
                       note=body.note.strip(), sort=len(act.shifts),
                       location=body.location.strip(), lock_hours=body.lock_hours,
                       flexible_time=bool(body.flexible_time) and body.kind == "service")
@@ -1288,7 +1343,7 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
     _apply_attachment(db, g, body, act)
     _validate_flexible_hours(g)
     db.add(g)
-    db.flush()
+    _set_periods(db, g, periods)
     # 占位岗位要等场次落库拿到 id 之后再建
     _sync_placeholder(db, g, body.capacity, body.waitlist_quota)
     db.flush()
@@ -1309,11 +1364,12 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
 
 
 # 名额与候补不在这张表里：它们记在占位岗位上，由 _sync_placeholder 处理
-SHIFT_FIELDS = {"name": "场次名", "start_time": "开始时间", "end_time": "结束时间",
+SHIFT_FIELDS = {"name": "场次名",
                 "mode": "岗位模式", "note": "备注",
                 "location": "地点", "hours_mode": "时长认定",
                 "requirement_tags": "条件要求", "lock_hours": "开场前自动锁定（小时）",
                 "flexible_time": "时间灵活（可多次签到）"}
+SHIFT_LABELS = {**SHIFT_FIELDS, "periods": "时间"}
 
 
 @router.patch("/shifts/{shift_id}")
@@ -1324,22 +1380,25 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
     before_raw = {k: getattr(g, k) for k in SHIFT_FIELDS}
+    before_periods = g.span_text()
+    new_periods = (_clean_periods([PeriodBody(**x) for x in body["periods"]])
+                   if "periods" in body else None)
     # 锁定时刻跟着 N 和开场时间走，两者真变了才重算：先按改之前的时刻把锁定
     # 状态落实下来，已经锁上的不会因为锁定点往后挪而自己解开；新锁定点已过的
     # 立即锁定（见 logic.set_lock_hours）。只改了名字之类的不碰，不然手动解锁过的
     # 场次一保存又被锁回去
     new_hours = (_clean_lock_hours(body["lock_hours"]) if "lock_hours" in body
                  else g.lock_hours)
-    new_start = _parse_dt(body["start_time"]) if "start_time" in body else g.start_time
+    new_start = new_periods[0]["start_time"] if new_periods else g.start_time
     if new_hours != g.lock_hours or new_start != g.start_time:
         logic.set_lock_hours(g, new_hours)
+    if new_periods is not None:
+        _set_periods(db, g, new_periods)
     for key in SHIFT_FIELDS:
         if key not in body or key == "lock_hours":
             continue
         v = body[key]
-        if key in ("start_time", "end_time"):
-            setattr(g, key, _parse_dt(v))
-        elif key == "mode":
+        if key == "mode":
             _apply_shift_mode(db, g, v)
         elif key == "hours_mode":
             if v not in HOURS_MODES:
@@ -1354,7 +1413,6 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
     if "applies_to_positions" in body and g.is_attached():
         g.applies_to_positions = _clean_applies(act, body["applies_to_positions"])
         _resync_training(db, act, g)
-    _validate_shift_times(g.start_time, g.end_time)
     _validate_flexible_hours(g)
     # 名额与候补落到占位岗位上；没传就沿用它当前的值
     holder = g.placeholder()
@@ -1369,9 +1427,12 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
         if isinstance(v, bool):
             return "是" if v else "否"
         return v
-    changes = diff_changes({k: fmt(v) for k, v in before_raw.items()},
-                           {k: fmt(getattr(g, k)) for k in SHIFT_FIELDS},
-                           SHIFT_FIELDS)
+    changes = diff_changes(
+        {"periods": before_periods,
+         **{k: fmt(v) for k, v in before_raw.items()}},
+        {"periods": g.span_text(),
+         **{k: fmt(getattr(g, k)) for k in SHIFT_FIELDS}},
+        SHIFT_LABELS)
     audit_log(db, actor=user, action="update", target_type="group",
               target_id=g.id, target_label=f"{act.title}·{g.name}",
               activity_id=act.id,
