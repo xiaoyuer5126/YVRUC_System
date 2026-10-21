@@ -64,7 +64,7 @@ def test_点开去哪页只有一份规则():
     # 名单外的 route 不猜，退回看活动 id；什么都没有就不跳
     assert page("custom", {"activity_id": "a1", "route": "unknown"}) == "/activity/a1"
     assert page("custom", {"route": "unknown"}) == ""
-    assert page("checkin_reminder", {}) == ""
+    assert page("checkin_reminder", {}) == "/my"
 
 
 def test_站点根地址只留协议域名和路径():

@@ -118,6 +118,8 @@ TEMPLATE_PAGE: dict[str, str] = {
     "leader_appointed": "/my",
     "hours_approved": "/hours",
     "hours_locked": "/hours",
+    # 提醒签到是叫人去现场、看自己去哪一场，活动详情页反而要再点一层
+    "checkin_reminder": "/my",
 }
 
 # data.route 能直接当页面路径的取值。名单外的不猜，认错页面比不跳更糟。
