@@ -36,7 +36,7 @@ from sqlalchemy.orm import util as orm_util
 from . import locks
 from .database import SessionLocal
 from .models import (Activity, Attachment, AuditLog, Enrollment, FormQuestion,
-                     Position, Shift)
+                     Position, Shift, ShiftPeriod)
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,7 @@ def invalidate(activity_ids) -> None:
 # —— 提交之后按活动作废 ——
 
 _DIRTY = "pubcache_dirty"
-# 带 activity_id 列的：直接取。岗位没有，得经场次找过去
+# 带 activity_id 列的：直接取。岗位和时段没有，得经场次找过去
 _DIRECT = (Shift, Enrollment, Attachment, FormQuestion, AuditLog)
 
 
@@ -159,7 +159,7 @@ def _collect(session, _ctx) -> None:
             ids.add(obj.id)
         elif isinstance(obj, _DIRECT):
             ids.add(obj.activity_id)
-        elif isinstance(obj, Position):
+        elif isinstance(obj, (Position, ShiftPeriod)):
             g = obj.__dict__.get("shift") or session.identity_map.get(
                 orm_util.identity_key(Shift, obj.shift_id))
             if g is not None:
