@@ -96,12 +96,18 @@ def _events_many(db: OrmSession, user_ids: list[str]) -> dict[str, list[_Event]]
             out[key[0]].append(_Event(end, config.SCORE_PER_ACTIVITY, "顺利参与",
                                       titles[key], key[1]))
     # 补记录活动：签到这一条对它不适用，名单里有他就算参与过（导入即参与）
+    # 一个人一场补记录活动只加一次：同一份名单里可能有多条时长记录，
+    # 这里在内存里去重。JSON 列在 PostgreSQL 里没有相等运算符，不能放进 DISTINCT。
+    seen = set()
     for user_id, aid, title, held in (
             db.query(HoursRecord.user_id, Activity.id, Activity.title,
                      Activity.held_periods)
             .join(Activity, HoursRecord.activity_id == Activity.id)
             .filter(HoursRecord.user_id.in_(ids),
-                    Activity.recruit_mode == config.RECORD_MODE).distinct().all()):
+                    Activity.recruit_mode == config.RECORD_MODE).all()):
+        if (user_id, aid) in seen:
+            continue
+        seen.add((user_id, aid))
         ends = [parse_local_dt(p["end_time"]) for p in held or []]
         end = max(ends) if ends else None
         if end is not None and end < t and (user_id, aid) not in violated:
