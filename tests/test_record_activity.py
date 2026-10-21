@@ -554,7 +554,7 @@ def test_补录活动时间可以分几段(client, admin, db, take_student):
     assert _import(client, admin, aid, f"{sid} 2").status_code == 200
     rec = db.query(HoursRecord).filter(HoursRecord.activity_id == aid).one()
     seg = rec.segments[0]
-    assert seg.date == moved.date() and f"{moved:%m-%d}" in seg.time_text
+    assert seg.date.date() == moved.date() and f"{moved:%m-%d}" in seg.time_text
 
     # 提示分按最后一段结束时间加分
     event = next(x for x in scoring.detail(db, student_row(db, sid))["items"]
