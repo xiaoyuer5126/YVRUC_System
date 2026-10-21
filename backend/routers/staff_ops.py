@@ -663,6 +663,8 @@ def shift_board(shift_id: str, period_id: str = "",
             "record_id": rec.id if rec else "",
             "name": u.name, "student_id": u.student_id,
             "college": u.college or "",
+            # 现场联系不上人时才找得到人：手机号和微信号跟着名单一起给
+            "phone": u.phone or "", "wechat": u.wechat or "",
             "position": st.name if st else "待分配",
             "is_leader": enr.is_leader,
             "checked_in": bool(rec),

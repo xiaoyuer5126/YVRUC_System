@@ -13,7 +13,8 @@ COUNCIL = "2025003"             # 张远航，会长团
 CORE = "2025005"                # 林骁，对外联络部骨干
 
 
-def _make_draft(client, admin, *, reg_start_in=timedelta(days=-1)) -> str:
+def _make_draft(client, admin, *, reg_start_in=timedelta(days=-1),
+                proposal=True) -> str:
     """一个结构完整、可以提交审批的草稿。reg_start_in 是报名开始距现在多久。"""
     r = client.post("/api/staff/activities", headers=admin,
                     json={"contact_group_qr": "x", "title": f"待审批活动 {uid('t')}", "organizer": "文学院青协",
@@ -32,7 +33,8 @@ def _make_draft(client, admin, *, reg_start_in=timedelta(days=-1)) -> str:
                     json={"name": "引导", "quota": 3, **POSITION_TEXT})
     assert r.status_code == 200, r.text
     # 这里的用例大多交给对外联络部（种子里唯一有部长的部门），它要立项书
-    upload_proposal(client, admin, aid)
+    if proposal:
+        upload_proposal(client, admin, aid)
     return aid
 
 
@@ -543,3 +545,77 @@ def test_转给个人的审批只显示那个人(client, admin, db, draft):
     act.approval_assignee_id = core.id
     assert assignee_text(db, act) == core.name
     db.rollback()
+
+
+# ======================= 归口会长团 =======================
+
+def test_提交会长团_只通知会长_其他会长团照样能批(client, admin, db, draft):
+    """归口存空，按内部活动审批：不要部长，也不收立项书。"""
+    # 会长标记是全局的：先确保标在张远航身上，别受别的用例改动影响
+    db.query(User).update({"is_president": False})
+    db.query(User).filter(User.student_id == COUNCIL).one().is_president = True
+    db.commit()
+    r = client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                    json={"department_id": "council", "note": "直接对接会长团"})
+    assert r.status_code == 200, r.text
+    assert r.json()["assignee"] == "会长团"
+    db.expire_all()
+    act = db.get(Activity, draft)
+    assert act.status == "pending"
+    assert act.approval_dept_id is None and act.approval_assignee_id is None
+
+    # 只通知标了会长的张远航；同样在会长团的王砚秋（提交人本人）不收
+    assert _my_notes(client, login(client, COUNCIL), draft, "志愿活动待审批")
+    assert _my_notes(client, admin, draft, "志愿活动待审批") == []
+
+    # 审批页显示归口会长团，不能留白
+    head = login(client, COUNCIL)
+    row = next(a for a in client.get("/api/staff/approvals", headers=head).json()
+               if a["id"] == draft)
+    assert row["department"] == "会长团" and row["assignee"] == "会长团"
+    assert row["mine"] is True and row["external"] is False
+
+    # 其他会长团成员照样能批
+    r = client.post(f"/api/staff/activities/{draft}/decide", headers=admin,
+                    json={"approve": True})
+    assert r.status_code == 200 and r.json()["status"] == "published"
+    detail = client.get(f"/api/staff/activities/{draft}/approval",
+                        headers=admin).json()
+    assert detail["department"] == "会长团"
+    assert detail["events"][0]["to"] == "会长团"
+
+
+def test_会长团审批不收立项书(client, admin):
+    """归口不是对外联络部，本来就不收立项书；会长团同理。"""
+    draft = _make_draft(client, admin, proposal=False)
+    r = client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                    json={"department_id": "council"})
+    assert r.status_code == 200, r.text
+
+
+def test_转交审批可以转回会长团(client, admin, db, draft):
+    from backend.models import ApprovalEvent
+    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                json={"department_id": _liaison(db).id})
+    r = client.post(f"/api/staff/activities/{draft}/transfer-approval",
+                    headers=admin,
+                    json={"to_council": True, "reason": "改由会长团直接对接"})
+    assert r.status_code == 200 and r.json()["assignee"] == "会长团"
+    db.expire_all()
+    act = db.get(Activity, draft)
+    assert act.approval_dept_id is None and act.approval_assignee_id is None
+    assert db.query(ApprovalEvent).filter(
+        ApprovalEvent.activity_id == draft,
+        ApprovalEvent.kind == "transfer").one().dept_id is None
+    detail = client.get(f"/api/staff/activities/{draft}/approval",
+                        headers=admin).json()
+    assert detail["department"] == "会长团"
+    assert detail["events"][-1]["to"] == "会长团"
+    # 已经在会长团名下的不能再转一次
+    r = client.post(f"/api/staff/activities/{draft}/transfer-approval",
+                    headers=admin, json={"to_council": True, "reason": "再转一次"})
+    assert r.status_code == 400 and "已经在会长团" in r.json()["detail"]
+    # 会长团能拍这一条
+    r = client.post(f"/api/staff/activities/{draft}/decide", headers=admin,
+                    json={"approve": True})
+    assert r.status_code == 200, r.text

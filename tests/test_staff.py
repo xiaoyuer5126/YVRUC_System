@@ -737,8 +737,9 @@ def test_志愿者保障必填_没填就是默认那句(client, admin, db):
     from backend.models import now
     from datetime import timedelta
     r = _new_activity(client, admin, recruit_mode="record", volunteer_benefit="",
-                      held_start=(now() - timedelta(days=3)).isoformat(),
-                      held_end=(now() - timedelta(days=3, hours=-2)).isoformat())
+                      held_periods=[{
+                          "start_time": (now() - timedelta(days=3)).isoformat(),
+                          "end_time": (now() - timedelta(days=3, hours=-2)).isoformat()}])
     assert r.status_code == 200, r.text
 
 
@@ -784,8 +785,9 @@ def test_活动地点定位选填_详情里带着(client, admin, db):
     # 补记录活动没有人要导航，传了也不收
     r = _new_activity(client, admin, recruit_mode="record",
                       location_point={"lat": 39.97, "lng": 116.31},
-                      held_start=(now() - timedelta(days=3)).isoformat(),
-                      held_end=(now() - timedelta(days=3, hours=-2)).isoformat())
+                      held_periods=[{
+                          "start_time": (now() - timedelta(days=3)).isoformat(),
+                          "end_time": (now() - timedelta(days=3, hours=-2)).isoformat()}])
     assert r.status_code == 200, r.text
     assert client.get(f"/api/activities/{r.json()['id']}", headers=admin).json()[
         "location_point"] is None

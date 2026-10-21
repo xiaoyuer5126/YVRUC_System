@@ -266,10 +266,15 @@ def remind_stale_approvals(db: OrmSession) -> int:
         text = (f"「{act.title}」（{act.organizer_text()}）已提交 {waited} 小时未处理。\n"
                 f"请到「活动审批」通过或驳回，如不该由您审批可以转交。")
         copied = {u.id for u in contacts if u is not None}
-        targets = contacts + [
-            p for p in council_members(db, act.approval_dept_id)
-            if p is not None and p.id not in copied
-        ]
+        if who is None and dept is None:
+            # 归口会长团的审批：待办只找会长；没标会长（换届空档）才发全体会长团
+            council = council_members(db)
+            targets = [u for u in council if u.is_president] or council
+        else:
+            targets = contacts + [
+                p for p in council_members(db, act.approval_dept_id)
+                if p is not None and p.id not in copied
+            ]
         for t in targets:
             if t is None:
                 continue

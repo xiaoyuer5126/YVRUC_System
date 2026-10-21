@@ -219,6 +219,27 @@ def test_会长团设得上去(client, admin, db, take_student):
     assert db.get(User, u.id).is_council()
 
 
+def test_会长标记只标一位_换届可改(client, admin, db, take_student):
+    """会长只作通知对象：标了新会长，上一位自动撤下；不是会长团就清掉。"""
+    first = student_row(db, take_student())
+    second = student_row(db, take_student())
+    body = {"roles": ["student", "qingxie"], "qingxie_post": "council",
+            "is_president": True}
+    assert client.put(f"/api/staff/roles/{first.id}", headers=admin,
+                      json=body).status_code == 200
+    assert client.put(f"/api/staff/roles/{second.id}", headers=admin,
+                      json=body).status_code == 200
+    db.expire_all()
+    assert db.get(User, first.id).is_president is False
+    assert db.get(User, second.id).is_president is True
+
+    # 不再是会长团，标记跟着清掉
+    assert client.put(f"/api/staff/roles/{second.id}", headers=admin,
+                      json={"roles": ["student"]}).status_code == 200
+    db.expire_all()
+    assert db.get(User, second.id).is_president is False
+
+
 def test_改身份要留痕(client, admin, db, take_student):
     from backend.models import AuditLog
 

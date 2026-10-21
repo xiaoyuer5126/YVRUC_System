@@ -127,6 +127,11 @@
            待在里面的话组件跟着重来一次，「更新于」被清空 -->
       <RefreshBar ref="boardRefresh" :load="loadBoard" :at="boardAt" />
     </div>
+    <!-- 固定计时的培训/彩排也要扫码：不扫就没有到场记录，也就没有时长 -->
+    <div v-if="boardShift?.kind !== 'service' && boardShift?.hours_mode === 'fixed'"
+         class="dim" style="margin-top:8px">
+      固定计时仍要志愿者扫码签到，没扫码不计时长；签退不用管。
+    </div>
 
     <!-- 到岗看板：按场次拉取，不依赖激活任务 -->
     <template v-if="board">
@@ -195,7 +200,8 @@
         <DataCards v-if="narrow" :rows="board.records" title-key="name"
                row-key="student_id" :selectable="!!batchTaskId && !hoursFrozen"
                @selection-change="onSelect"
-               :fields="[{ key: 'student_id', label: '学号' },
+               :fields="[{ key: 'phone', label: '手机号' },
+                         { key: 'wechat', label: '微信号' },
                          { key: 'position', label: '岗位' },
                          { key: 'time', label: '签到', hideEmpty: true },
                          { key: 'checkout_at', label: '签退', hideEmpty: true }]"
@@ -231,8 +237,12 @@
                       style="margin-left:4px">组长</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="student_id" label="学号" width="120" />
-          <el-table-column prop="college" label="学院" min-width="140" />
+          <el-table-column label="手机号" width="140">
+            <template #default="{row}">{{ row.phone || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="微信号" width="160">
+            <template #default="{row}">{{ row.wechat || '—' }}</template>
+          </el-table-column>
           <el-table-column prop="position" label="岗位" min-width="120" />
           <el-table-column v-if="board.flexible_time" label="共签到" width="80">
             <template #default="{row}">{{ row.checkin_count }} 次</template>

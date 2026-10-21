@@ -15,7 +15,7 @@
   没有锁定后退出，加一次 SCORE_PER_ACTIVITY；时间 = 他报的主场次里最后
   一个的结束时间，还没到就先不加。
   补记录活动（不公开招募）没有报名和签到：**导入名单即视为参与**，没有违规
-  记录就加一次；时间 = 活动结束时间（held_end）。它不可能有锁定后退出。
+  记录就加一次；时间 = 活动最后一段的结束时间。它不可能有锁定后退出。
 
 分数自己能长回来——不能让人因为一次失误就永远挂着感叹号。
 """
@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from . import config
 from .models import (Activity, CheckinRecord, Enrollment, HoursRecord, Shift,
-                     User, ViolationRecord, iso, now)
+                     User, ViolationRecord, iso, now, parse_local_dt)
 
 
 @dataclass(frozen=True)
@@ -96,12 +96,20 @@ def _events_many(db: OrmSession, user_ids: list[str]) -> dict[str, list[_Event]]
             out[key[0]].append(_Event(end, config.SCORE_PER_ACTIVITY, "顺利参与",
                                       titles[key], key[1]))
     # 补记录活动：签到这一条对它不适用，名单里有他就算参与过（导入即参与）
-    for user_id, aid, title, end in (
+    # 一个人一场补记录活动只加一次：同一份名单里可能有多条时长记录，
+    # 这里在内存里去重。JSON 列在 PostgreSQL 里没有相等运算符，不能放进 DISTINCT。
+    seen = set()
+    for user_id, aid, title, held in (
             db.query(HoursRecord.user_id, Activity.id, Activity.title,
-                     Activity.held_end)
+                     Activity.held_periods)
             .join(Activity, HoursRecord.activity_id == Activity.id)
             .filter(HoursRecord.user_id.in_(ids),
-                    Activity.recruit_mode == config.RECORD_MODE).distinct().all()):
+                    Activity.recruit_mode == config.RECORD_MODE).all()):
+        if (user_id, aid) in seen:
+            continue
+        seen.add((user_id, aid))
+        ends = [parse_local_dt(p["end_time"]) for p in held or []]
+        end = max(ends) if ends else None
         if end is not None and end < t and (user_id, aid) not in violated:
             out[user_id].append(_Event(end, config.SCORE_PER_ACTIVITY, "顺利参与",
                                        title, aid))

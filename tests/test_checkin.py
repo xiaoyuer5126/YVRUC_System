@@ -611,6 +611,21 @@ def test_分岗位的应到岗是分到的人数不是名额(client, admin, db, 
     assert card["checked"] == 1 and card["expected"] == 1
 
 
+def test_到场名单带手机号和微信号(client, admin, db, live_group, take_student):
+    """现场联系不上人时靠这两列，只有能进这场签到管理的人拿得到。"""
+    act, g, _h, _token = live_group
+    enr = db.query(Enrollment).filter(Enrollment.shift_id == g.id).one()
+    u = db.get(User, enr.user_id)
+
+    item = client.get(f"/api/staff/shifts/{g.id}/board",
+                      headers=admin).json()["records"][0]
+    assert item["phone"] == u.phone and item["wechat"] == u.wechat
+
+    other = login(client, take_student())
+    assert client.get(f"/api/staff/shifts/{g.id}/board",
+                      headers=other).status_code == 403
+
+
 def test_请假的人不算进岗位的应到岗(client, admin, db, live_group):
     """场次总数一直是这么算的（请假的人不进分母），岗位卡片跟着一致。"""
     act, g, h, token = live_group

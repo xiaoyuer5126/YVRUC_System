@@ -15,7 +15,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session as OrmSession
 
 from .models import (Activity, ActivityManager, Attachment, FormQuestion,
-                     Position, Shift, ShiftPeriod, User, uid)
+                     Position, Shift, ShiftPeriod, User, iso, parse_local_dt, uid)
 
 
 def copy_attachments(db: OrmSession, src_type: str, src_id: str,
@@ -102,8 +102,10 @@ def copy_activity(db: OrmSession, src: Activity, operator: User, *,
                    status="draft",
                    reg_start=(src.reg_start + delta) if src.reg_start else None,
                    reg_end=(src.reg_end + delta) if src.reg_end else None,
-                   held_start=(src.held_start + delta) if src.held_start else None,
-                   held_end=(src.held_end + delta) if src.held_end else None,
+                   held_periods=[
+                       {"start_time": iso(parse_local_dt(p["start_time"]) + delta),
+                        "end_time": iso(parse_local_dt(p["end_time"]) + delta)}
+                       for p in src.held_periods or []],
                    created_by=operator.id)
     db.add(act)
     db.flush()

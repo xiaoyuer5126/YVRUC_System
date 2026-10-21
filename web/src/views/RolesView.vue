@@ -74,6 +74,8 @@
         <template #default="{ row }">
           <template v-if="row.roles.includes('qingxie')">
             {{ row.post_label }}
+            <el-tag v-if="row.is_president" size="small" type="warning" effect="plain"
+                    style="margin-left:4px">会长</el-tag>
             <span v-if="row.department" class="dim">· {{ row.department }}</span>
             <span v-if="row.supervisor" class="dim">· 归属 {{ row.supervisor }}</span>
             <span v-if="row.qingxie_post === 'council'" class="dim">
@@ -128,6 +130,12 @@
               会长团：除平台公告、操作日志、意见反馈外与管理员同权 · 部长：审批本部门活动，管理本部门骨干与成员 ·
               骨干：只管理自己参与的活动 · 成员：可见范围与归属骨干一致，可查看但不能保存
             </div>
+          </el-form-item>
+          <el-form-item v-if="dlg.post === 'council'" label="会长">
+            <el-checkbox v-model="dlg.isPresident">
+              标为会长（会长团审批的待办通知只发这一位）
+            </el-checkbox>
+            <div class="dim">只标一位；换届时改标到新会长名下。其他会长团成员照样能审批。</div>
           </el-form-item>
           <el-form-item v-if="dlg.post === 'council'" label="催办部门">
             <el-checkbox-group v-model="dlg.remindDeptIds">
@@ -327,6 +335,7 @@ function open(row) {
     deptId: row.department_id || (headOnly.value ? auth.user.department_id : ''),
     supervisorId: row.supervisor_id || '',
     remindDeptIds: remindIds(row),
+    isPresident: !!row.is_president,
     busy: false,
   }
   loadCores()
@@ -350,7 +359,8 @@ async function save() {
     await api.put(`/api/staff/roles/${d.row.id}`,
                   { roles: d.roles, qingxie_post: d.post, department_id: d.deptId,
                     supervisor_id: d.supervisorId,
-                    remind_dept_ids: d.post === 'council' ? d.remindDeptIds : [] })
+                    remind_dept_ids: d.post === 'council' ? d.remindDeptIds : [],
+                    is_president: d.post === 'council' && d.isPresident })
     ElMessage.success('已保存')
     d.visible = false
     load()

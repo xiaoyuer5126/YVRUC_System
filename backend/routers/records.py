@@ -41,7 +41,7 @@ from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import require_manager
 from ..models import (Activity, HoursAppeal, HoursRecord, HoursSegment, User,
-                      day_of, iso, now, span_text, uid)
+                      day_of, iso, now, uid)
 from ..notify import notify
 from ..perm import ensure_activity_manager
 from ..stage import ensure_hours_editable
@@ -84,10 +84,10 @@ def _import_fields(act: Activity, hours: float, note: str) -> dict:
 
     导出的备注、志愿者看到的明细都靠它说明这几个小时是哪一天的。活动时间是
     给人看的紧凑写法，服务日期是完整的那一天。"""
+    rows = act.held_rows()
     return {"kind": "import", "hours": hours, "label": note,
-            "date": day_of(act.held_start or act.created_at or now()),
-            "time_text": (span_text(act.held_start, act.held_end)
-                          if act.held_start and act.held_end else "")}
+            "date": day_of(rows[0].start_time if rows else act.created_at or now()),
+            "time_text": act.held_text() if rows else ""}
 
 
 def _import_segment(rec: HoursRecord) -> HoursSegment | None:
@@ -421,8 +421,7 @@ def record_roster(activity_id: str, db: OrmSession = Depends(db_session),
             "total_hours": round(sum(r.settled_hours() for r in rows), 1),
             "editable": not block, "block_reason": block,
             "warn_hours": config.RECORD_WARN_HOURS,
-            "held_text": (act.time_text()
-                          if act.held_start and act.held_end else "")}
+            "held_text": act.time_text() if act.held_rows() else ""}
 
 
 class ImportBody(BaseModel):

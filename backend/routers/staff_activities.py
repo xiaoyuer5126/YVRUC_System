@@ -51,7 +51,7 @@ ACTIVITY_FIELDS = {
     "recruit_campuses": "招募校区", "recruit_stages": "招募学段",
     "recruit_colleges": "招募学院",
     "reg_start": "报名开始", "reg_end": "报名截止",
-    "held_start": "活动开始", "held_end": "活动结束",
+    "held_periods": "活动时间",
 }
 # 必填的文字字段：新建时逐个查过，修改时也不能改成空的
 REQUIRED_TEXT = {"title": "活动名称", "organizer": "组织单位", "location": "活动地点",
@@ -192,6 +192,12 @@ def list_all(q: str = "", status: str = "", page: int = 1, size: int = 20,
     return {"items": out, "total": total, "page": page, "size": size}
 
 
+class PeriodBody(BaseModel):
+    """一个服务时段或一段活动时间，精确到分钟。"""
+    start_time: str = ""
+    end_time: str = ""
+
+
 class ActivityBody(BaseModel):
     title: str = Field(max_length=128)
     organizer: str = Field(default="", max_length=64)
@@ -213,9 +219,8 @@ class ActivityBody(BaseModel):
     recruit_colleges: list[str] = []
     reg_start: str | None = None
     reg_end: str | None = None
-    # 补记录活动的活动时间（它没有场次，只能直接填）
-    held_start: str | None = None
-    held_end: str | None = None
+    # 补记录活动的活动时间（它没有场次，只能直接填），可以有好几段
+    held_periods: list[PeriodBody] = []
 
 
 def _clean_point(raw) -> dict | None:
@@ -236,12 +241,17 @@ def _point_text(p: dict | None) -> str:
     return f"{p['lat']:.5f}, {p['lng']:.5f}" if p else "未定位"
 
 
-def _check_held_span(start: datetime | None, end: datetime | None) -> None:
-    """补记录活动的活动时间：起止都要有，结束晚于开始。"""
-    if start is None or end is None:
-        raise HTTPException(400, "请填写活动开始与结束时间")
-    if end <= start:
-        raise HTTPException(400, "活动结束时间要晚于开始时间")
+def _clean_held_periods(items) -> list[dict]:
+    """补记录活动的活动时间：至少一段，每段结束晚于开始，段与段不重叠。
+    落库的是紧凑的本地时间串，读的时候再解析回来。"""
+    rows = _clean_periods(items, label="活动时段")
+    return [{"start_time": iso(r["start_time"]), "end_time": iso(r["end_time"])}
+            for r in rows]
+
+
+def _check_held_periods(raw) -> None:
+    """改完活动时间后再校验一遍落库的这一版。"""
+    _clean_held_periods([PeriodBody(**p) for p in raw or []])
 
 
 def _clean_scope(raw: list[str], allowed: list[str], label: str) -> list[str]:
@@ -397,12 +407,11 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
         config.DEFAULT_VOLUNTEER_BENEFIT if record else "")
     if not benefit:
         raise HTTPException(400, "请填写志愿者保障")
-    held_start = held_end = None
+    held_periods = []
     if record:
         # 补记录：线下已经办完，不公开、不报名——没有联络群、报名时间与招募
         # 范围，传了也不收；要的是这场活动实际是什么时候办的
-        held_start, held_end = _parse_dt(body.held_start), _parse_dt(body.held_end)
-        _check_held_span(held_start, held_end)
+        held_periods = _clean_held_periods(body.held_periods)
         body.contact_group_qr = ""
         body.reg_start = body.reg_end = None
         body.recruit_campuses, body.recruit_stages, body.recruit_colleges = [], [], []
@@ -427,7 +436,7 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                                                config.STAGES, "学段"),
                    recruit_colleges=_clean_colleges(body.recruit_colleges),
                    reg_start=reg_start, reg_end=reg_end,
-                   held_start=held_start, held_end=held_end,
+                   held_periods=held_periods,
                    # 归口部门：青协的人建的活动归自己部门，部长从草稿期就看得到；
                    # 会长团与发起方建的留空，提交审批时再选
                    approval_dept_id=(user.department_id
@@ -463,7 +472,7 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
             continue
         if act.is_record() and key in RECORD_UNUSED_FIELDS:
             continue
-        if not act.is_record() and key in ("held_start", "held_end"):
+        if not act.is_record() and key == "held_periods":
             continue
         value = body[key]
         if key in REQUIRED_TEXT:
@@ -474,8 +483,10 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
                 raise HTTPException(400, f"{REQUIRED_TEXT[key]}不能为空")
         if key == "title" and str(value).strip() != act.title:
             ensure_unique_title(db, str(value), exclude_id=act.id)
-        if key in ("reg_start", "reg_end", "held_start", "held_end"):
+        if key in ("reg_start", "reg_end"):
             setattr(act, key, _parse_dt(value))
+        elif key == "held_periods":
+            act.held_periods = _clean_held_periods(value)
         elif key == "contacts":
             act.contacts = _clean_contacts(value)
         elif key == "location_point":
@@ -503,9 +514,8 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
         ensure_reg_times(act, future=act.reg_end != before["reg_end"])
     if "reg_end" in body and not act.is_record():
         ensure_reg_end_in_range(act)
-    if act.is_record() and ("held_start" in body or "held_end" in body
-                            or "recruit_mode" in body):
-        _check_held_span(act.held_start, act.held_end)
+    if act.is_record() and ("held_periods" in body or "recruit_mode" in body):
+        _check_held_periods(act.held_periods)
     if any(k in body for k in ("recruit_campuses", "recruit_stages",
                                "recruit_colleges")) \
             and not body.get("keep_outsiders"):
@@ -513,6 +523,10 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
     def shown(k, v):
         if isinstance(v, datetime):
             return iso(v)
+        if k == "held_periods":
+            return "、".join(
+                f"{_parse_dt(p['start_time']):%m-%d %H:%M}-"
+                f"{_parse_dt(p['end_time']):%H:%M}" for p in v or [])
         return _point_text(v) if k == "location_point" else v
     changes = diff_changes({k: shown(k, v) for k, v in before.items()},
                            {k: shown(k, getattr(act, k)) for k in ACTIVITY_FIELDS},
@@ -592,7 +606,7 @@ def _apply_recruit_mode(db: OrmSession, act: Activity, value: str) -> None:
         act.reg_start = act.reg_end = None
         act.recruit_campuses, act.recruit_stages, act.recruit_colleges = [], [], []
     elif act.recruit_mode == config.RECORD_MODE:
-        act.held_start = act.held_end = None
+        act.held_periods = []
     act.recruit_mode = value
 
 
@@ -852,7 +866,7 @@ def ensure_ready_to_publish(act: Activity) -> None:
 
     补记录活动不上线，只看基本信息：活动时间得有。"""
     if act.is_record():
-        _check_held_span(act.held_start, act.held_end)
+        _check_held_periods(act.held_periods)
         return
     if not act.contact_group_qr:
         raise HTTPException(400, "请先在基本信息里上传志愿者联络群二维码")
@@ -1076,12 +1090,6 @@ SHIFT_KINDS = ("service", "training", "rehearsal")
 HOURS_MODES = ("checkin", "fixed", "none")
 
 
-class PeriodBody(BaseModel):
-    """一个服务时段，精确到分钟。"""
-    start_time: str = ""
-    end_time: str = ""
-
-
 class ShiftBody(BaseModel):
     name: str = Field(max_length=128)
     periods: list[PeriodBody] = []
@@ -1115,32 +1123,36 @@ def _clean_lock_hours(v) -> int:
     return n
 
 
-def _clean_periods(items) -> list[dict]:
+def _clean_periods(items, *, label: str = "服务时段") -> list[dict]:
     """校验并摊平客户端传来的时段。
 
-    每段都要有起止、结束晚于开始。同一场次里的时段不能互相压着——
+    每段都要有起止、结束晚于开始。同一组里的时段不能互相压着——
     那样同一段时间会被签到、时长算两遍。
     """
     if not items:
-        raise HTTPException(400, "请至少填写一个服务时段")
+        raise HTTPException(400, f"请至少填写一个{label}")
     rows = []
     for item in items:
-        raw_start = (getattr(item, "start_time", "") or "").strip()
-        raw_end = (getattr(item, "end_time", "") or "").strip()
+        if isinstance(item, dict):
+            raw_start = str(item.get("start_time") or "").strip()
+            raw_end = str(item.get("end_time") or "").strip()
+        else:
+            raw_start = (getattr(item, "start_time", "") or "").strip()
+            raw_end = (getattr(item, "end_time", "") or "").strip()
         if not raw_start:
-            raise HTTPException(400, "每个时段都要填开始时间")
+            raise HTTPException(400, f"{label}要填开始时间")
         if not raw_end:
-            raise HTTPException(400, "请填写时段的结束时间")
+            raise HTTPException(400, f"请填写{label}的结束时间")
         start, end = _parse_dt(raw_start), _parse_dt(raw_end)
         if start is None or end is None:
-            raise HTTPException(400, "时段的时间格式不对")
+            raise HTTPException(400, f"{label}的时间格式不对")
         if end <= start:
-            raise HTTPException(400, "时段的结束时间必须晚于开始时间")
+            raise HTTPException(400, f"{label}的结束时间必须晚于开始时间")
         rows.append({"start_time": start, "end_time": end})
     rows.sort(key=lambda r: r["start_time"])
     for a, b in zip(rows, rows[1:]):
         if b["start_time"] < a["end_time"]:
-            raise HTTPException(400, "同一场次里的时段不能重叠")
+            raise HTTPException(400, "同一组里的时段不能重叠")
     return rows
 
 

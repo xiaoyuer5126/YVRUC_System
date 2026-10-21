@@ -10,8 +10,8 @@ export function emptyActivity() {
     contacts: [{ name: '', phone: '' }], intro: '',
     volunteer_requirement: '', volunteer_benefit: '', contact_group_qr: '',
     recruit_campuses: [], recruit_stages: [], recruit_colleges: [],
-    // 补记录活动（不公开招募）自己的活动时间：它没有场次可算
-    held_start: '', held_end: '',
+    // 补记录活动（不公开招募）自己的活动时间：它没有场次可算，可以有好几段
+    held_periods: [],
   }
 }
 
@@ -34,7 +34,7 @@ export function activityToForm(act) {
     recruit_campuses: act.recruit_campuses || [],
     recruit_stages: act.recruit_stages || [],
     recruit_colleges: act.recruit_colleges || [],
-    held_start: act.held_start || '', held_end: act.held_end || '',   // iso 带 T，各端都认
+    held_periods: act.held_periods || [],   // iso 带 T，各端都认
   }
 }
 
@@ -51,8 +51,13 @@ export function validateActivity(f, range) {
   }
   // 补记录活动不公开、不报名：要活动时间，不要报名时间和联络群
   if (f.recruit_mode === RECORD_MODE) {
-    if (!f.held_start || !f.held_end) return '请填写活动开始与结束时间'
-    if (new Date(f.held_end) <= new Date(f.held_start)) return '活动结束时间要晚于开始时间'
+    if (!f.held_periods?.length) return '请至少填写一段活动时间'
+    for (const p of f.held_periods) {
+      if (!p.start_time || !p.end_time) return '每段活动时间都要填开始与结束时间'
+      if (new Date(p.end_time) <= new Date(p.start_time)) {
+        return '活动结束时间要晚于开始时间'
+      }
+    }
     if (!f.intro?.trim()) return '请填写活动简介'
     return ''
   }
@@ -80,8 +85,9 @@ export function activityBody(f, range) {
     const { contact_group_qr: _qr, recruit_campuses: _c, recruit_stages: _s,
             recruit_colleges: _cl, ...rest } = f
     return { ...rest, contacts,
-             held_start: toISO(f.held_start), held_end: toISO(f.held_end) }
+             held_periods: (f.held_periods || []).map(p => ({
+               start_time: toISO(p.start_time), end_time: toISO(p.end_time) })) }
   }
-  const { held_start: _hs, held_end: _he, ...rest } = f
+  const { held_periods: _hp, ...rest } = f
   return { ...rest, contacts, reg_start: toISO(range[0]), reg_end: toISO(range[1]) }
 }

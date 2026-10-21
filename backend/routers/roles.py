@@ -202,6 +202,8 @@ def _row(u: User, me: User, depts: dict[str, str]) -> dict:
         "supervisor": depts.get(u.supervisor_id, ""),
         # 已删掉的部门不往外给：前端没处查它的名字，只会露出一串 id
         "remind_dept_ids": [d for d in (u.remind_dept_ids or []) if d in depts],
+        # 会长团里标了「会长」的那一位：待办通知只发他
+        "is_president": bool(u.is_president),
         "is_me": u.id == me.id,
     }
 
@@ -277,6 +279,7 @@ class RoleBody(BaseModel):
     department_id: str = ""
     supervisor_id: str = ""     # 部门成员归属哪位骨干
     remind_dept_ids: list[str] = []  # 会长团超时催办接收部门范围（空列表=全部部门）
+    is_president: bool = False       # 会长团里的会长标记（只标一位）
 
 
 @router.put("/roles/{user_id}")
@@ -332,14 +335,29 @@ def set_roles(user_id: str, body: RoleBody,
                 d for d in dict.fromkeys(body.remind_dept_ids or [])
                 if d in valid_depts
             ]
+            was_president = target.is_president
+            target.is_president = bool(body.is_president)
+            if target.is_president:
+                # 只标一位：换人时把上一位的标记撤掉
+                (db.query(User)
+                 .filter(User.is_president.is_(True), User.id != target.id)
+                 .update({"is_president": False}, synchronize_session=False))
+            if was_president != target.is_president:
+                audit_log(db, actor=user, action="update", target_type="user",
+                          target_id=target.id,
+                          target_label=f"{target.name}（{target.student_id}）",
+                          summary=("标为会长" if target.is_president
+                                   else "取消会长标记"))
         else:
             target.remind_dept_ids = []
+            target.is_president = False
     else:
         # 不是青协了，层级与部门一并清掉，免得留下「非青协的部长」
         target.qingxie_post = "member"
         target.department_id = None
         target.supervisor_id = None
         target.remind_dept_ids = []
+        target.is_president = False
 
     after = (target.roles, target.qingxie_post, target.department_id)
     _audit_role_change(db, user, target, before, after)
@@ -484,6 +502,7 @@ def batch_roles(body: BatchRoleBody, db: OrmSession = Depends(db_session),
             # 一律清空，免得以后再设成会长团时带着一份旧范围
             if not ("qingxie" in roles and post == "council"):
                 u.remind_dept_ids = []
+                u.is_president = False
             _audit_role_change(db, user, u, before, after[:3],
                                prefix="批量调整身份：")
         updated.append({"student_id": sid, "name": u.name,
