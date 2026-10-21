@@ -7,7 +7,8 @@ import pytest
 
 from backend import enroll_logic
 from backend.models import (Activity, ActivityManager, CheckinRecord,
-                            Enrollment, Position, Shift, now, uid)
+                            CheckinTask, Enrollment, Position, Shift, now,
+                            new_checkin_token, uid)
 from conftest import (ADMIN, POSITION_TEXT, login, mk_shift, student_row)
 from test_enroll import enroll
 
@@ -104,12 +105,21 @@ def test_时长按段累加(client, admin, db, take_student):
     db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
                       user_id=u.id, position_id=g.test_position_id,
                       status="enrolled", joined_at=now()))
-    db.add(CheckinRecord(id=uid("ckr"), task_id=uid("tsk"), activity_id=act.id,
+    admin_user = student_row(db, ADMIN)
+    tasks = []
+    for p in g.periods:
+        t = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+                        period_id=p.id, mode="shift",
+                        token=new_checkin_token(), created_by=admin_user.id)
+        db.add(t)
+        tasks.append(t)
+    db.flush()
+    db.add(CheckinRecord(id=uid("ckr"), task_id=tasks[0].id, activity_id=act.id,
                          shift_id=g.id, period_id=g.periods[0].id,
                          position_id=g.test_position_id, user_id=u.id,
                          method="manual", checkin_at=p1s + timedelta(minutes=10),
                          checkout_at=p1e))
-    db.add(CheckinRecord(id=uid("ckr"), task_id=uid("tsk"), activity_id=act.id,
+    db.add(CheckinRecord(id=uid("ckr"), task_id=tasks[1].id, activity_id=act.id,
                          shift_id=g.id, period_id=g.periods[1].id,
                          position_id=g.test_position_id, user_id=u.id,
                          method="manual", checkin_at=p2s,

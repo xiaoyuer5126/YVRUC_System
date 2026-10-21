@@ -194,7 +194,7 @@ def test_接口里的明细键名与顺序(client, admin, db, take_student):
     assert [p["kind"] for p in parts] == ["shift", "shift", "manual", "manual"]
     assert [p["label"] for p in parts] == ["上午场", "下午场", "场外搬运", "中途离场"]
     keys = {"id", "label", "time", "position", "hours", "kind", "shift_id",
-            "position_id", "date"}
+            "period_id", "position_id", "date"}
     for p in parts:
         assert set(p) == keys, p            # 没选劳务就只有这套键，没有 reward
     assert [p["date"] for p in parts] == [f"{g1.start_time:%Y-%m-%d}"] * 2 \

@@ -503,7 +503,8 @@ def test_时长带明细且导出时长记录(client, admin, db, served, take_st
     assert seg.pop("id")                       # 每段都有编号
     assert rec["parts"] == [{"label": "服务场", "time": g.span_text(),
                              "position": "引导", "hours": 4.0, "kind": "shift",
-                             "shift_id": g.id, "position_id": pos.id,
+                             "shift_id": g.id, "period_id": g.periods[0].id,
+                             "position_id": pos.id,
                              "date": f"{g.start_time:%Y-%m-%d}",
                              "pay_ok": False, "pay_note": "", "reward": "hours"}]
 
