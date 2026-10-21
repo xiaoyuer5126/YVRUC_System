@@ -7,7 +7,7 @@
 <template>
   <AiAssist ref="assist" title="智能起草场次岗位" :run="run"
             placeholder="把排班安排、立项书里的人员分工贴在这里，如：10 月 18 日 7:30-12:00，检录引导 6 人、颁奖礼仪 4 人（女生）；10 月 16 日晚 7 点全体彩排……"
-            hint="按原文起草场次（一段服务时间）和岗位（这段时间里的分工与名额），原文里有时间的培训、彩排挂在对应场次下。只会新建，不改已有的场次岗位。">
+            hint="按原文起草场次（一次报名对应的一份安排，可以含多段服务时间）和岗位（这些时段里的分工与名额），原文里有时间的培训、彩排挂在对应场次下。只会新建，不改已有的场次岗位。">
     <template #preview>
       <el-empty v-if="!draft.length" description="原文里没找到能用的场次安排" />
       <div v-for="(g, gi) in draft" :key="gi" class="ai-shift">
@@ -15,12 +15,7 @@
           <el-input v-model="g.name" placeholder="场次名" style="flex:1 1 160px" />
           <el-button link type="danger" @click="draft.splice(gi, 1)">删掉这个场次</el-button>
         </div>
-        <div class="two-col">
-          <DateTimeField v-model="g.start_time" placeholder="开始时间"
-                         :default-time="DAY_START" />
-          <DateTimeField v-model="g.end_time" placeholder="结束时间"
-                         :default-time="DAY_END" />
-        </div>
+        <PeriodEditor v-model="g.periods" />
         <div class="ai-head">
           <span class="dim">开场前</span>
           <el-input-number v-model="g.lock_hours" :min="0" :max="72" style="width:120px" />
@@ -52,12 +47,7 @@
             <el-input v-model="a.name" placeholder="名称" style="flex:1 1 120px" />
             <el-button link type="danger" @click="g.attached.splice(ti, 1)">删掉</el-button>
           </div>
-          <div class="two-col">
-            <DateTimeField v-model="a.start_time" placeholder="开始时间"
-                           :default-time="DAY_START" />
-            <DateTimeField v-model="a.end_time" placeholder="结束时间"
-                           :default-time="DAY_END" />
-          </div>
+          <PeriodEditor v-model="a.periods" />
           <div class="dim pre">{{ attachedText(g, a) }}</div>
         </div>
       </div>
@@ -78,9 +68,8 @@ import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { aiForm } from '../ai'
-import { DAY_END, DAY_START } from '../store'
 import AiAssist from './AiAssist.vue'
-import DateTimeField from './DateTimeField.vue'
+import PeriodEditor from './PeriodEditor.vue'
 
 const props = defineProps({ activityId: { type: String, required: true } })
 const emit = defineEmits(['created'])
@@ -137,14 +126,24 @@ function attachedText(g, a) {
   ].filter(Boolean).join('\n')
 }
 
-const badSpan = s => new Date(s.end_time) <= new Date(s.start_time)
+/** 时段填全了没有；返回空串是没问题。 */
+function badPeriods(list) {
+  if (!list?.length) return '请至少填写一个服务时段'
+  for (const p of list) {
+    if (!p.start_time || !p.end_time) return '请把每个时段的起止时间填完整'
+    if (new Date(p.end_time) <= new Date(p.start_time)) {
+      return '时段的结束时间要晚于开始时间'
+    }
+  }
+  return ''
+}
 
 /** 建之前先在前端过一遍：后端照样会查，但建到一半才被拦，前面那几个已经落库了 */
 function problem() {
   for (const g of draft.value) {
     if (!g.name.trim()) return '有场次没写名字'
-    if (!g.start_time || !g.end_time) return `请填写「${g.name}」的开始和结束时间`
-    if (badSpan(g)) return `「${g.name}」的结束时间要晚于开始时间`
+    const bad = badPeriods(g.periods)
+    if (bad) return `「${g.name}」：${bad}`
     for (const p of g.positions) {
       if (!p.name.trim()) return `「${g.name}」里有岗位没写名字`
       if (!p.service_task.trim()) return `请填写岗位「${p.name}」的服务任务`
@@ -152,8 +151,8 @@ function problem() {
     }
     for (const a of g.attached) {
       if (!a.name.trim()) return `「${g.name}」里有培训/彩排没写名字`
-      if (!a.start_time || !a.end_time) return `请填写「${a.name}」的开始和结束时间`
-      if (badSpan(a)) return `「${a.name}」的结束时间要晚于开始时间`
+      const badAttached = badPeriods(a.periods)
+      if (badAttached) return `「${a.name}」：${badAttached}`
       // 一个都不剩就成了「全场次都要来」，和原文的意思反了
       if (a.keys.length && !a.keys.some(k => posName(g, k))) {
         return `「${a.name}」要参加的岗位都删掉了：删掉这一场，或者建好后再手动设置`
@@ -176,7 +175,7 @@ async function create(close) {
       // 场次建过了（上一次停在它的岗位上）就跳过，接着建剩下的
       if (!g.createdId) {
         g.createdId = (await api.post(`/api/staff/activities/${props.activityId}/shifts`, {
-          name: g.name.trim(), start_time: g.start_time, end_time: g.end_time,
+          name: g.name.trim(), periods: g.periods,
           mode: 'pick', requirement_tags: g.requirement_tags, lock_hours: g.lock_hours,
         })).id
         shifts += 1

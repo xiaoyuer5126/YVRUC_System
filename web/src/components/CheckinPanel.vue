@@ -26,6 +26,7 @@
         </el-tag>
       </template>
       <template #body="{ row }">
+        <div v-if="row.period_count > 1" class="dim">{{ row.period_text }}</div>
         <div class="dim">
           <template v-if="row.shift_id === boardShiftId">当前大屏 · </template>
           {{ row.mode === 'position' ? `分岗位·${row.position_name}` : '统一签到' }} ·
@@ -53,6 +54,7 @@
       <el-table-column label="场次" min-width="150">
         <template #default="{row}">
           {{ row.shift_name }}
+          <div v-if="row.period_count > 1" class="dim">{{ row.period_text }}</div>
           <el-tag v-if="row.shift_kind !== 'service'" size="small" effect="plain">
             {{ row.shift_kind_label }}
           </el-tag>
@@ -106,7 +108,7 @@
          两件事同时在做，共用一个选择等于互相打架。 -->
     <div class="toolbar">
       <span>大屏场次</span>
-      <el-select v-model="boardShiftId" style="width:280px" @change="onSwitchBoard">
+      <el-select v-model="boardShiftId" style="width:280px" @change="onSwitchShift">
         <el-option v-for="g in shiftOptions" :key="g.id" :value="g.id"
                    :label="`${g.name}（${g.time_text}）`">
           <span>{{ g.name }}</span>
@@ -114,6 +116,12 @@
                   style="margin-left:8px">{{ g.kind_label }}</el-tag>
           <span class="dim" style="margin-left:8px">{{ g.time_text }}</span>
         </el-option>
+      </el-select>
+      <el-select v-if="(boardShift?.periods || []).length > 1"
+                 v-model="boardPeriodId" style="width:240px"
+                 @change="onSwitchBoard">
+        <el-option v-for="p in boardShift.periods" :key="p.id" :value="p.id"
+                   :label="p.text" />
       </el-select>
       <!-- 刷新条放在这里而不是看板里：换场次时看板会整块卸载重建，
            待在里面的话组件跟着重来一次，「更新于」被清空 -->
@@ -263,6 +271,14 @@
                       style="margin-left:8px">{{ g.kind_label }}</el-tag>
               <span class="dim" style="margin-left:8px">{{ g.time_text }}</span>
             </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="(formShift?.periods || []).length > 1"
+                      label="签到时段" required>
+          <el-select v-model="form.period_id" style="width:100%"
+                     @change="onPickPeriod">
+            <el-option v-for="p in formShift.periods" :key="p.id" :value="p.id"
+                       :label="p.text" />
           </el-select>
         </el-form-item>
         <el-form-item label="签到模式">
@@ -485,6 +501,8 @@ const formShift = computed(
 const boardShiftId = ref('')
 const boardShift = computed(
   () => shiftOptions.value.find(g => g.id === boardShiftId.value))
+// 多时段的场次：大屏看哪一段。单时段时留空，后端按唯一那一段落。
+const boardPeriodId = ref('')
 
 const narrow = useNarrow()
 const tasks = ref([])
@@ -573,7 +591,8 @@ onUnmounted(stopCode)
 // 结果整屏人被判成「非本场次确认志愿者」全部跳过。后端列表按创建时间倒序，
 // 故本场次第一个激活的即最新。
 const batchTaskId = computed(() => tasks.value.find(
-  t => t.active && t.shift_id === boardShiftId.value)?.id || '')
+  t => t.active && t.shift_id === boardShiftId.value
+    && (!boardPeriodId.value || t.period_id === boardPeriodId.value))?.id || '')
 
 async function loadTasks() {
   tasks.value = await api.get(`/api/staff/activities/${actId.value}/checkin-tasks`)
@@ -582,8 +601,9 @@ async function loadTasks() {
 /** 到岗看板 + 码列表一起拉：现场补签会同时改这两处的数字。 */
 async function loadBoard() {
   if (!boardShiftId.value) return
+  const q = boardPeriodId.value ? `?period_id=${boardPeriodId.value}` : ''
   const [b] = await Promise.all([
-    api.get(`/api/staff/shifts/${boardShiftId.value}/board`),
+    api.get(`/api/staff/shifts/${boardShiftId.value}/board${q}`),
     loadTasks(),
   ])
   board.value = b
@@ -597,6 +617,20 @@ function onSwitchBoard() {
   selected.value = []
   manualSid.value = ''
   boardRefresh.value?.fire()
+}
+
+/** 换场次：时段从头挑，再换看板。 */
+function onSwitchShift() {
+  boardPeriodId.value = pickDefaultPeriod(boardShift.value)
+  onSwitchBoard()
+}
+
+/** 换场次：默认看正在进行的、或下一段；单时段就是它自己。 */
+function pickDefaultPeriod(g) {
+  const list = g?.periods || []
+  if (list.length <= 1) return list[0]?.id || ''
+  const t = Date.now()
+  return (list.find(p => new Date(p.end_time) > t) || list[list.length - 1]).id
 }
 
 function onSelect(rows) { selected.value = rows }
@@ -630,6 +664,7 @@ async function quick(action) {
 onMounted(async () => {
   await loadTasks()
   boardShiftId.value = shiftOptions.value[0]?.id || ''
+  boardPeriodId.value = pickDefaultPeriod(boardShift.value)
   await loadBoard()
 })
 
@@ -637,27 +672,43 @@ onMounted(async () => {
  *
  * 卡着场次时间开闸的话，提前到岗的人签不了、拖堂散场的人也签不了。
  */
-function defaultRange(g) {
+function defaultRange(g, period) {
   const pad = WINDOW_PAD * 60 * 1000
-  const s = new Date((g?.start_time || '').replace(' ', 'T'))
-  const e = new Date((g?.end_time || '').replace(' ', 'T'))
+  const s = new Date((period?.start_time || g?.start_time || '').replace(' ', 'T'))
+  const e = new Date((period?.end_time || g?.end_time || '').replace(' ', 'T'))
   if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return []
   return [new Date(s.getTime() - pad), new Date(e.getTime() + pad)]
 }
 
+function formPeriod() {
+  const g = formShift.value
+  if (!g) return null
+  if (form.value.period_id) return g.periods.find(p => p.id === form.value.period_id)
+  return g.periods.length === 1 ? g.periods[0] : null
+}
+
 function openCreate() {
   const g = boardShift.value || shiftOptions.value[0]
-  form.value = { shift_id: g?.id || '', mode: 'shift', position_ids: [],
-                 range: defaultRange(g) }
+  const period = boardPeriodId.value
+    ? g?.periods?.find(p => p.id === boardPeriodId.value)
+    : g?.periods?.[0]
+  form.value = { shift_id: g?.id || '', period_id: period?.id || '',
+                 mode: 'shift', position_ids: [], range: defaultRange(g, period) }
   creating.value = true
 }
 
 /** 换了场次：时段跟着换，岗位清空——旧岗位不属于新场次，后端会 400。 */
 function onPickShift() {
   const g = formShift.value
-  form.value.range = defaultRange(g)
+  form.value.period_id = g?.periods?.[0]?.id || ''
+  form.value.range = defaultRange(g, formPeriod())
   form.value.position_ids = []
   if (!g?.positions?.length) form.value.mode = 'shift'
+}
+
+/** 换时段：可签时段跟着那一段走，别把上午的默认值带到下午。 */
+function onPickPeriod() {
+  form.value.range = defaultRange(formShift.value, formPeriod())
 }
 
 async function createTask() {
@@ -666,12 +717,13 @@ async function createTask() {
     return ElMessage.warning('请选择岗位')
   const body = {
     mode: form.value.mode,
+    period_id: form.value.period_id || undefined,
     position_ids: form.value.mode === 'position' ? form.value.position_ids : [],
   }
   const [f1, f2] = form.value.range || []
   if (f1) body.valid_from = toISO(f1)
   if (f2) body.valid_to = toISO(f2)
-  if (f2 && !await confirmEarlyDeadline(f2, formShift.value?.end_time)) return
+  if (f2 && !await confirmEarlyDeadline(f2, formPeriod()?.end_time)) return
   const d = await api.post(`/api/staff/shifts/${form.value.shift_id}/checkin-tasks`,
                            body)
   ElMessage.success(`已生成 ${d.tasks?.length || 1} 张签到码`)
@@ -829,6 +881,7 @@ function openReminder() {
 
 async function sendReminder() {
   const body = { need_ack: reminderAck.value }
+  if (boardPeriodId.value) body.period_id = boardPeriodId.value
   if (reminderScope.value === 'group') {
     if (!reminderGroup.value) return ElMessage.warning('请选择岗位组')
     body.group_name = reminderGroup.value

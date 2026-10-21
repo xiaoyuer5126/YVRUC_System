@@ -1159,12 +1159,8 @@
         <el-alert type="info" :closable="false">
           这里只填本场次的<b>服务时间</b>。培训、彩排等在场次建好后用「添加培训/彩排」单独添加。
         </el-alert>
-        <el-form-item label="开始时间" required>
-          <DateTimeField v-model="groupForm.start_time" :default-time="DAY_START"
-                         @change="onShiftStartPicked" />
-        </el-form-item>
-        <el-form-item label="结束时间" required>
-          <DateTimeField v-model="groupForm.end_time" :default-time="DAY_END" />
+        <el-form-item label="服务时段" required>
+          <PeriodEditor v-model="groupForm.periods" />
         </el-form-item>
         <el-form-item label="时间灵活">
           <el-checkbox v-model="groupForm.flexible_time">
@@ -1234,11 +1230,8 @@
         <el-form-item label="名称" required>
           <el-input v-model="attForm.name" placeholder="如：集中培训" />
         </el-form-item>
-        <el-form-item label="开始时间" required>
-          <DateTimeField v-model="attForm.start_time" :default-time="DAY_START" />
-        </el-form-item>
-        <el-form-item label="结束时间" required>
-          <DateTimeField v-model="attForm.end_time" :default-time="DAY_END" />
+        <el-form-item label="服务时段" required>
+          <PeriodEditor v-model="attForm.periods" />
         </el-form-item>
         <el-form-item label="地点">
           <el-input v-model="attForm.location" placeholder="如：明德楼 0201 、线上等（留空则用活动地点）" />
@@ -1587,11 +1580,8 @@
         </el-form-item>
         <template v-else>
           <el-form-item label="场次名" required><el-input v-model="slotDlg.name" /></el-form-item>
-          <el-form-item label="开始时间" required>
-            <DateTimeField v-model="slotDlg.start" :default-time="DAY_START" />
-          </el-form-item>
-          <el-form-item label="结束时间" required>
-            <DateTimeField v-model="slotDlg.end" :default-time="DAY_END" />
+          <el-form-item label="服务时段" required>
+            <PeriodEditor v-model="slotDlg.periods" />
           </el-form-item>
         </template>
       </el-form>
@@ -1767,6 +1757,7 @@ import RecordRosterPanel from '../components/RecordRosterPanel.vue'
 import ActivityOverviewCard from '../components/ActivityOverviewCard.vue'
 import VbNamesInput from '../components/VbNamesInput.vue'
 import ProjectFileSlot from '../components/ProjectFileSlot.vue'
+import PeriodEditor from '../components/PeriodEditor.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'
 import { DAY_END, DAY_START, auth, canSee } from '../store'
@@ -2104,10 +2095,12 @@ const allShifts = computed(() => [
   ...shifts.value.map(g => ({
     id: g.id, name: g.name, kind: g.kind, kind_label: g.kind_label,
     time_text: g.time_text, start_time: g.start_time, end_time: g.end_time,
+    periods: g.periods || [],
     positions: g.positions || [] })),
   ...(act.value?.trainings || []).map(a => ({
     id: a.id, name: a.name, kind: a.kind, kind_label: a.kind_label,
     time_text: a.time_text, start_time: a.start_time, end_time: a.end_time,
+    periods: a.periods || [],
     // 培训/彩排自己不设岗位（用 applies_to_positions 圈人），只能统一签到
     positions: [] })),
 ])
@@ -2141,13 +2134,14 @@ const trainingsOf = r => (act.value?.trainings || []).filter(t => !t.applies_to_
   || r.slots.some(x => t.applies_to_positions.includes(x.p.id)))
 
 const slotDlg = ref({ visible: false, role: null, mode: 'existing', shiftId: '',
-                      name: '', start: '', end: '', busy: false })
+                      name: '', periods: [{ start_time: '', end_time: '' }],
+                      busy: false })
 // 能放进去的场次：还没有这个岗位的服务场次
 const slotTargets = computed(() => (slotDlg.value.role
   ? shifts.value.filter(g => !slotDlg.value.role.slots.some(x => x.g.id === g.id)) : []))
 function openAddSlot(r) {
   slotDlg.value = { visible: true, role: r, mode: 'existing', shiftId: '',
-                    name: r.name, start: '', end: '', busy: false }
+                    name: r.name, periods: [emptyPeriod()], busy: false }
   if (!slotTargets.value.length) slotDlg.value.mode = 'new'
 }
 /** 改岗位信息：打开第一个时段的表单，默认勾上「同时修改其他时段」 */
@@ -2161,12 +2155,13 @@ async function saveSlot() {
   if (d.mode === 'existing' && !shiftId) return ElMessage.warning('请选择场次')
   if (d.mode === 'new') {
     if (!d.name.trim()) return ElMessage.warning('请填写场次名')
-    if (!d.start || !d.end) return ElMessage.warning('请选择起止时间')
+    const bad = badPeriods(d.periods)
+    if (bad) return ElMessage.warning(bad)
     d.busy = true
     try {
       shiftId = (await api.post(`/api/staff/activities/${activityId}/shifts`, {
         name: d.name.trim(), mode: 'pick', capacity: 0,
-        start_time: toISO(d.start), end_time: toISO(d.end) })).id
+        periods: d.periods })).id
       await loadAll()
     } finally { d.busy = false }
   }
@@ -2193,20 +2188,26 @@ const promoShiftIds = computed(() => new Set(shifts.value
 const confirmedCount = computed(() => hours.value.filter(h => h.confirmed).length)
 
 // —— 场次 CRUD ——
-// 选完开始时间，结束时间自动落到当天最后一刻；已经填过就不动
-function onShiftStartPicked(v) {
-  if (!v || groupForm.value.end_time) return
-  const end = new Date(v)
-  end.setHours(23, 59, 59, 0)
-  groupForm.value.end_time = end
+const emptyPeriod = () => ({ start_time: '', end_time: '' })
+const periodCopy = p => ({ start_time: p.start_time, end_time: p.end_time })
+
+/** 时段填全了没有；返回空串是没问题。 */
+function badPeriods(list) {
+  if (!list?.length) return '请至少填写一个服务时段'
+  for (const p of list) {
+    if (!p.start_time || !p.end_time) return '请把每个时段的起止时间填完整'
+    if (new Date(p.end_time) <= new Date(p.start_time)) {
+      return '时段的结束时间要晚于开始时间'
+    }
+  }
+  return ''
 }
 
 function openShift(g) {
   shiftDlg.value.editing = g || null
   groupForm.value = g ? {
     name: g.name,
-    start_time: new Date(g.start_time.replace(' ', 'T')),
-    end_time: new Date(g.end_time.replace(' ', 'T')),
+    periods: (g.periods || [emptyPeriod()]).map(periodCopy),
     capacity: g.capacity, mode: g.mode || 'pick', note: g.note,
     waitlist_quota: g.waitlist_quota ?? 3,
     lock_hours: g.lock_hours ?? 12,
@@ -2214,7 +2215,7 @@ function openShift(g) {
     hours_mode: g.hours_mode,
     campusReq: g.requirement_tags?.校区 || [],
     stageReq: g.requirement_tags?.学段 || [],
-  } : { name: '', start_time: '', end_time: '', capacity: 10, note: '',
+  } : { name: '', periods: [emptyPeriod()], capacity: 10, note: '',
         mode: act.value.recruit_mode === 'screened' ? 'assign' : 'pick',   // 筛选活动多半先不定岗
         waitlist_quota: 3, lock_hours: 12, flexible_time: false, campusReq: [], stageReq: [] }
   shiftDlg.value.visible = true
@@ -2236,7 +2237,8 @@ const modeSwitchCost = computed(() => {
 async function saveShift() {
   const f = groupForm.value
   if (!f.name?.trim()) return ElMessage.warning('请填写场次名称')
-  if (!f.start_time || !f.end_time) return ElMessage.warning('请选择起止时间')
+  const bad = badPeriods(f.periods)
+  if (bad) return ElMessage.warning(bad)
   savingGroup.value = true
   try {
     const body = {
@@ -2244,7 +2246,7 @@ async function saveShift() {
       waitlist_quota: f.waitlist_quota ?? 3, lock_hours: f.lock_hours ?? 12,
       flexible_time: !!f.flexible_time,
       ...(flexibleFixed.value ? { hours_mode: 'checkin' } : {}),
-      start_time: toISO(f.start_time), end_time: toISO(f.end_time),
+      periods: f.periods,
       requirement_tags: scopeTags(f.campusReq, f.stageReq),
     }
     if (shiftDlg.value.editing) {
@@ -2332,25 +2334,26 @@ function openAttached(s, preset = []) {
   attDlg.value = { visible: true, editing: s, busy: false }
   attForm.value = s ? {
     kind: s.kind, name: s.name, location: s.location, note: s.note || '',
-    start_time: new Date(s.start_time.replace(' ', 'T')),
-    end_time: new Date(s.end_time.replace(' ', 'T')),
+    periods: (s.periods || [emptyPeriod()]).map(periodCopy),
     applies_to_positions: [...s.applies_to_positions],
     hours_mode: s.hours_mode,
-  } : { kind: 'rehearsal', name: '', location: '', note: '', start_time: '', end_time: '',
+  } : { kind: 'rehearsal', name: '', location: '', note: '',
+        periods: [emptyPeriod()],
         applies_to_positions: [...preset], hours_mode: 'fixed' }
 }
 
 async function saveAttached() {
   const f = attForm.value
   if (!f.name?.trim()) return ElMessage.warning('请填写名称')
-  if (!f.start_time || !f.end_time) return ElMessage.warning('请选择起止时间')
+  const bad = badPeriods(f.periods)
+  if (bad) return ElMessage.warning(bad)
   attDlg.value.busy = true
   try {
     const body = {
       name: f.name, kind: f.kind, location: f.location, note: f.note || '',
       applies_to_positions: f.applies_to_positions,
       hours_mode: f.hours_mode,
-      start_time: toISO(f.start_time), end_time: toISO(f.end_time),
+      periods: f.periods,
     }
     if (attDlg.value.editing) {
       await api.patch(`/api/staff/shifts/${attDlg.value.editing.id}`, body)

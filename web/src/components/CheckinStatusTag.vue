@@ -23,7 +23,8 @@ import { computed } from 'vue'
 const props = defineProps({ row: { type: Object, required: true } })
 
 const ended = computed(() => {
-  const t = props.row.shift?.end_time
+  // 多时段看此刻那一段的结束时间；没有就退回整场的结束时间
+  const t = props.row.shift?.period_end || props.row.shift?.end_time
   return !!t && new Date(t) < new Date()
 })
 </script>
