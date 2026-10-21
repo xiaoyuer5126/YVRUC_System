@@ -30,8 +30,8 @@ def assign_shift(client, admin, db):
     aid = r.json()["id"]
     r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
                     json={**ASSIGN,
-                          "start_time": (now() + timedelta(days=6)).isoformat(),
-                          "end_time": (now() + timedelta(days=6, hours=4)).isoformat()})
+                          "periods": [{"start_time": (now() + timedelta(days=6)).isoformat(),
+                          "end_time": (now() + timedelta(days=6, hours=4)).isoformat()}]})
     assert r.status_code == 200, r.text
     return aid, db.get(Shift, r.json()["id"])
 

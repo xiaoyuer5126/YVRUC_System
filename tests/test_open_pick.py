@@ -26,8 +26,8 @@ def published(client, admin, db):
     r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
                     json={"name": "统一分配场", "mode": "assign", "capacity": 3,
                           "waitlist_quota": 2,
-                          "start_time": (now() + timedelta(days=6)).isoformat(),
-                          "end_time": (now() + timedelta(days=6, hours=4)).isoformat()})
+                          "periods": [{"start_time": (now() + timedelta(days=6)).isoformat(),
+                          "end_time": (now() + timedelta(days=6, hours=4)).isoformat()}]})
     assert r.status_code == 200, r.text
     db.get(Activity, aid).status = "published"
     db.commit()

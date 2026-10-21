@@ -9,6 +9,7 @@ from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, HoursRecord, Notification,
                             Position, Shift, User, new_checkin_token, now,
                             span_text, uid)
+from conftest import mk_shift
 from conftest import ADMIN, POSITION_TEXT, login, student_row
 
 # 手动加/扣时长那一段的服务日期
@@ -29,7 +30,7 @@ def served(db, take_student):
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin.id, added_by=admin.id))
     start = now().replace(microsecond=0) - timedelta(days=2)
-    g = Shift(id=uid("g"), activity_id=act.id, name="服务场",
+    g = mk_shift(id=uid("g"), activity_id=act.id, name="服务场",
               start_time=start, end_time=start + timedelta(hours=4),
               mode="pick", sort=0)
     db.add(g)
@@ -43,13 +44,15 @@ def served(db, take_student):
                       user_id=u.id, position_id=pos.id, status="enrolled",
                       joined_at=now()))
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+                       period_id=g.periods[0].id,
                        mode="shift", token=new_checkin_token(),
                        created_by=admin.id,
                        valid_from=g.start_time, valid_to=g.end_time)
     db.add(task)
     db.flush()
     db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
-                         shift_id=g.id, position_id=pos.id, user_id=u.id,
+                         shift_id=g.id, period_id=g.periods[0].id,
+                         position_id=pos.id, user_id=u.id,
                          method="manual", checkin_at=g.start_time,
                          checkout_at=g.end_time))
     db.commit()
@@ -500,7 +503,8 @@ def test_时长带明细且导出时长记录(client, admin, db, served, take_st
     assert seg.pop("id")                       # 每段都有编号
     assert rec["parts"] == [{"label": "服务场", "time": g.span_text(),
                              "position": "引导", "hours": 4.0, "kind": "shift",
-                             "shift_id": g.id, "position_id": pos.id,
+                             "shift_id": g.id, "period_id": g.periods[0].id,
+                             "position_id": pos.id,
                              "date": f"{g.start_time:%Y-%m-%d}",
                              "pay_ok": False, "pay_note": "", "reward": "hours"}]
 
@@ -764,7 +768,7 @@ def test_多个岗位就是多句话(client, admin, db, served):
     from openpyxl import load_workbook
 
     act, g, u = served
-    g2 = Shift(id=uid("g"), activity_id=act.id, name="晚场",
+    g2 = mk_shift(id=uid("g"), activity_id=act.id, name="晚场",
                start_time=g.end_time + timedelta(days=1),
                end_time=g.end_time + timedelta(days=1, hours=3),
                mode="pick", sort=1)
@@ -775,6 +779,7 @@ def test_多个岗位就是多句话(client, admin, db, served):
     db.add(pos2)
     db.flush()
     task2 = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g2.id,
+                        period_id=g2.periods[0].id,
                         mode="shift", token=new_checkin_token(),
                         created_by=act.created_by, valid_from=g2.start_time,
                         valid_to=g2.end_time)
@@ -784,7 +789,8 @@ def test_多个岗位就是多句话(client, admin, db, served):
                       user_id=u.id, position_id=pos2.id, status="enrolled",
                       joined_at=now()))
     db.add(CheckinRecord(id=uid("ckr"), task_id=task2.id, activity_id=act.id,
-                         shift_id=g2.id, position_id=pos2.id, user_id=u.id,
+                         shift_id=g2.id, period_id=g2.periods[0].id,
+                         position_id=pos2.id, user_id=u.id,
                          method="manual", checkin_at=g2.start_time,
                          checkout_at=g2.end_time))
     db.commit()

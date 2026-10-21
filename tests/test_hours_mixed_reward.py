@@ -14,6 +14,7 @@ from openpyxl import load_workbook
 from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, HoursRecord, Position,
                             Shift, User, new_checkin_token, now, uid)
+from conftest import mk_shift
 from conftest import ADMIN, POSITION_TEXT, login, student_row
 
 
@@ -32,9 +33,9 @@ def mixed(db, take_student):
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin.id, added_by=admin.id))
     day = now().replace(hour=8, minute=0, second=0, microsecond=0) - timedelta(days=2)
-    am = Shift(id=uid("g"), activity_id=act.id, name="上午场", start_time=day,
+    am = mk_shift(id=uid("g"), activity_id=act.id, name="上午场", start_time=day,
                end_time=day + timedelta(hours=4), mode="pick", sort=0)
-    pm = Shift(id=uid("g"), activity_id=act.id, name="下午场",
+    pm = mk_shift(id=uid("g"), activity_id=act.id, name="下午场",
                start_time=day + timedelta(hours=5),
                end_time=day + timedelta(hours=8), mode="pick", sort=1)
     db.add_all([am, pm])
@@ -53,13 +54,15 @@ def mixed(db, take_student):
                           user_id=u.id, position_id=pos.id, status="enrolled",
                           joined_at=now()))
         task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+                           period_id=g.periods[0].id,
                            mode="shift", token=new_checkin_token(),
                            created_by=admin.id,
                            valid_from=g.start_time, valid_to=g.end_time)
         db.add(task)
         db.flush()
         db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
-                             shift_id=g.id, position_id=pos.id, user_id=u.id,
+                             shift_id=g.id, period_id=g.periods[0].id,
+                             position_id=pos.id, user_id=u.id,
                              method="manual", checkin_at=g.start_time,
                              checkout_at=g.end_time))
     db.commit()

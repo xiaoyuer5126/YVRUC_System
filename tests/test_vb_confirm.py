@@ -597,6 +597,6 @@ def test_待外联确认与已完成都算活动已结束(client, admin, db, lia
     assert d["status"] == "vb_pending" and d["status_label"] == "待外联确认"
     r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
                     json={"name": "补一场", "mode": "pick",
-                          "start_time": (now() + timedelta(days=1)).isoformat(),
-                          "end_time": (now() + timedelta(days=1, hours=2)).isoformat()})
+                          "periods": [{"start_time": (now() + timedelta(days=1)).isoformat(),
+                          "end_time": (now() + timedelta(days=1, hours=2)).isoformat()}]})
     assert r.status_code == 409

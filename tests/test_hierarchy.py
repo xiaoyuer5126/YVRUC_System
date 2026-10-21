@@ -39,8 +39,8 @@ def dept_activity(client, db):
     aid = r.json()["id"]
     g = client.post(f"/api/staff/activities/{aid}/shifts", headers=head,
                     json={"name": "上午场", "mode": "pick",
-                          "start_time": (now() + timedelta(days=9)).isoformat(),
-                          "end_time": (now() + timedelta(days=9, hours=3)).isoformat()}
+                          "periods": [{"start_time": (now() + timedelta(days=9)).isoformat(),
+                          "end_time": (now() + timedelta(days=9, hours=3)).isoformat()}]}
                     ).json()["id"]
     client.post(f"/api/staff/shifts/{g}/positions", headers=head,
                 json={"name": "引导", "quota": 3, **POSITION_TEXT})

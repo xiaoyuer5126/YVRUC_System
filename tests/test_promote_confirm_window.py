@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from types import SimpleNamespace
 
 import pytest
 
 from backend.enroll_logic import confirm_deadline_from, promote_confirm_deadline
-from backend.models import Enrollment
+from backend.models import Enrollment, Shift, ShiftPeriod
 from test_list_lock import _fill_and_queue, _raise_quota
 
 
@@ -35,7 +34,10 @@ def test_夜间不计时(start, want):
 
 
 def _shift(start, hours=3):
-    return SimpleNamespace(start_time=start, end_time=start + timedelta(hours=hours))
+    g = Shift(id="g", activity_id="a", name="场次")
+    g.periods = [ShiftPeriod(id="p", shift_id="g", start_time=start,
+                             end_time=start + timedelta(hours=hours))]
+    return g
 
 
 def test_截止不晚于场次开始():

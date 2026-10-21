@@ -19,6 +19,7 @@ from backend import pubcache
 from backend.database import engine
 from backend.models import (Activity, ActivityManager, Attachment, Enrollment,
                             Position, Shift, now, uid)
+from conftest import mk_shift
 from conftest import ADMIN, POSITION_TEXT, login, student_row
 
 
@@ -69,12 +70,12 @@ def build(db, take_student, per_shift: int, title: str = "") -> dict:
     first_pos = None
     for k in range(2):
         start = now() + timedelta(days=day + k, hours=2)
-        g = Shift(id=uid("g"), activity_id=act.id, name=f"场次{k}",
+        g = mk_shift(id=uid("g"), activity_id=act.id, name=f"场次{k}",
                   start_time=start, end_time=start + timedelta(hours=3),
                   mode="pick", sort=k)
         db.add(g)
         db.flush()
-        db.add(Shift(id=uid("g"), activity_id=act.id, name=f"培训{k}",
+        db.add(mk_shift(id=uid("g"), activity_id=act.id, name=f"培训{k}",
                      kind="training",
                      start_time=start - timedelta(hours=2),
                      end_time=start - timedelta(hours=1)))

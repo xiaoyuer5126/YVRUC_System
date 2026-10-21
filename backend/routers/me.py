@@ -15,7 +15,7 @@ from .. import hours as hours_flow
 from ..database import db_session
 from ..deps import current_user
 from ..integrations import msgcenter
-from ..models import (Activity, Enrollment,
+from ..models import (Activity, CheckinRecord, Enrollment,
                       HoursAppeal, HoursRecord, Notification, Shift, Position,
                       User, iso, now, uid)
 from ..notify import notify_managers
@@ -51,14 +51,15 @@ def _checkin_state(db: OrmSession, enr: Enrollment, g: Shift) -> dict:
     """
     from .checkin import geo_anchor, resolve_task
 
-    task = resolve_task(db, g.id, enr.position_id)
+    task = resolve_task(db, g, enr.position_id)
     if task is None:
         return {"state": "none", "method": "scan", "open": False}
     method = "geo" if geo_anchor(db, task) else "scan"
     t = now()
+    period = g.period_of(task.period_id)
     # 和扫码那边同一个时段（老数据留空的一端按默认补上），按钮亮不亮才跟
     # 扫了能不能成对得上。签退也在这段里：过了「to」就不能自己签退了
-    start, end = task.window(g)
+    start, end = task.window(period)
     if t < start:
         state = "early"
     elif t > end:
@@ -66,19 +67,33 @@ def _checkin_state(db: OrmSession, enr: Enrollment, g: Shift) -> dict:
     else:
         state = "active"
     return {"state": state, "method": method, "open": state == "active",
-            "from": iso_of(start), "to": iso_of(end)}
+            "from": iso_of(start), "to": iso_of(end),
+            "period_id": period.id, "period_text": period.text()}
 
 
 def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
     act = db.get(Activity, enr.activity_id)
     g = db.get(Shift, enr.shift_id)
     st = db.get(Position, enr.position_id) if enr.position_id else None
-    from .checkin import checkin_count, find_record, resolve_task
+    from .checkin import (active_period, checkin_count, find_record,
+                          resolve_task)
 
+    # 多时段的场次：哪几段已经签到、签退，报名卡片上逐段给出来，不让人猜
+    # 「这一场的签到做完了没有」。一人一段一条记录，按段号对上
+    period_recs = (db.query(CheckinRecord)
+                   .filter(CheckinRecord.shift_id == g.id,
+                           CheckinRecord.user_id == enr.user_id).all())
     # 时间灵活的场次一张码一轮：签到/签退按钮跟着现在开着的那张码走，这张码上
-    # 没有他的记录就是「签到」（新的一轮）；签过几轮另给 checkin_count
-    task = (resolve_task(db, g.id, enr.position_id) if g.flexible_time else None)
-    rec = find_record(db, enr.user_id, g, task)
+    # 没有他的记录就是「签到」（新的一轮）；签过几轮另给 checkin_count。
+    # 一般场次看的是此刻该签的那一段，上一段的记录不能算成「已经签过了」
+    period = active_period(g, now())
+    if g.flexible_time:
+        task = resolve_task(db, g, enr.position_id)
+        rec = find_record(db, enr.user_id, g, task)
+    else:
+        task = None
+        rec = next((r for r in period_recs
+                    if period is not None and r.period_id == period.id), None)
     ck = (_checkin_state(db, enr, g) if enr.status == "enrolled" else None)
     # 刚签完到的这段时间里点了「签退」也是白点：服务端十分钟内不认（防手滑，
     # 见 config.CHECKOUT_MIN_GAP_MINUTES），扫完码只会被挡回来。把「几点之后
@@ -94,6 +109,16 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "shift": {"id": g.id, "name": g.name, "time_text": g.span_text(),
                   "start_time": iso_of(g.start_time),
                   "end_time": iso_of(g.end_time),
+                  # 此刻该看的那一段的结束时间：判断「服务中 / 未签退」用它，
+                  # 拿整场最后一段会被前一段的漏签退骗过去
+                  "period_end": iso_of(period.end_time) if period else None,
+                  "periods": [{**p.out(),
+                               "checked_in": any(r.period_id == p.id
+                                                 for r in period_recs),
+                               "checked_out": any(r.period_id == p.id
+                                                  and r.checkout_at
+                                                  for r in period_recs)}
+                              for p in g.sorted_periods()],
                   "location": g.location,
                   # 培训/彩排随服务场次的报名产生，学生不能单独退，只能请假
                   "kind": g.kind, "kind_label": g.kind_label(),

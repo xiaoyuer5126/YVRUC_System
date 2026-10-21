@@ -12,6 +12,8 @@ from datetime import timedelta
 import pytest
 
 from backend.models import Activity, Shift, now, uid
+from conftest import set_shift_time
+from conftest import mk_shift
 from conftest import POSITION_TEXT, login
 
 
@@ -28,8 +30,8 @@ def two_shifts(client, admin, db):
     for day in (3, 9):
         g = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
                         json={"name": f"第 {day} 天", "mode": "pick",
-                              "start_time": (now() + timedelta(days=day)).isoformat(),
-                              "end_time": (now() + timedelta(days=day, hours=3)).isoformat()}
+                              "periods": [{"start_time": (now() + timedelta(days=day)).isoformat(),
+                              "end_time": (now() + timedelta(days=day, hours=3)).isoformat()}]}
                         ).json()["id"]
         client.post(f"/api/staff/shifts/{g}/positions", headers=admin,
                     json={"name": "引导", "quota": 3, **POSITION_TEXT})
@@ -83,8 +85,8 @@ def test_所有场次都开过了就不给恢复报名(client, admin, db, two_sh
     act = db.get(Activity, two_shifts)
     act.status = "closed"
     for g in act.shifts:
-        g.start_time = now() - timedelta(hours=5)
-        g.end_time = now() - timedelta(hours=2)
+        set_shift_time(db, g, now() - timedelta(hours=5),
+                       now() - timedelta(hours=2))
     db.commit()
 
     r = client.post(f"/api/staff/activities/{two_shifts}/reopen", headers=admin,
@@ -104,7 +106,7 @@ def test_场次开过了就报不进去_同活动没开场的照常报(client, d
     from backend.models import Position
 
     act, g = open_group(3, day_offset=0, start_in_hours=5)
-    past = Shift(id=uid("g"), activity_id=act.id, name="昨天那场",
+    past = mk_shift(id=uid("g"), activity_id=act.id, name="昨天那场",
                  start_time=now() - timedelta(days=1, hours=3),
                  end_time=now() - timedelta(days=1), mode="assign",
                  sort=1)
@@ -128,7 +130,7 @@ def test_场次开过了就报不进去_同活动没开场的照常报(client, d
 def test_详情里给出每场自己的报名闸门(client, db, open_group, take_student):
     """前端据此灰按钮，不能让人点了才知道这一场早过了。"""
     act, g = open_group(3, day_offset=0, start_in_hours=5)
-    past = Shift(id=uid("g"), activity_id=act.id, name="昨天那场",
+    past = mk_shift(id=uid("g"), activity_id=act.id, name="昨天那场",
                  start_time=now() - timedelta(days=1, hours=3),
                  end_time=now() - timedelta(days=1), mode="assign",
                  sort=1)

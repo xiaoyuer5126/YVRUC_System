@@ -24,6 +24,7 @@ from backend.main import app
 from backend.models import (Activity, ActivityManager, CheckinRecord, CheckinTask,
                             Enrollment, HoursRecord, HoursSegment, Position, Shift,
                             User, day_of, new_checkin_token, now, span_text, uid)
+from conftest import mk_shift
 from conftest import ADMIN, POSITION_TEXT, import_roster, login, student_row
 
 MANUAL_DATE = "2026-10-05"
@@ -51,7 +52,7 @@ def _make(db, sid: str, spans: list[tuple[str, float]], *, pay_idx=(),
     out = []
     for i, (name, hours) in enumerate(spans):
         start = day + timedelta(hours=6 * i)
-        g = Shift(id=uid("g"), activity_id=act.id, name=name, start_time=start,
+        g = mk_shift(id=uid("g"), activity_id=act.id, name=name, start_time=start,
                   end_time=start + timedelta(hours=hours), mode="pick", sort=i)
         db.add(g)
         db.flush()
@@ -65,13 +66,15 @@ def _make(db, sid: str, spans: list[tuple[str, float]], *, pay_idx=(),
                               joined_at=now()))
         if checkin:
             task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+                               period_id=g.periods[0].id,
                                mode="shift", token=new_checkin_token(),
                                created_by=admin.id,
                                valid_from=g.start_time, valid_to=g.end_time)
             db.add(task)
             db.flush()
             db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
-                                 shift_id=g.id, position_id=pos.id, user_id=u.id,
+                                 shift_id=g.id, period_id=g.periods[0].id,
+                                 position_id=pos.id, user_id=u.id,
                                  method="manual", checkin_at=g.start_time,
                                  checkout_at=g.end_time))
         out.append((g, pos))
@@ -191,7 +194,7 @@ def test_接口里的明细键名与顺序(client, admin, db, take_student):
     assert [p["kind"] for p in parts] == ["shift", "shift", "manual", "manual"]
     assert [p["label"] for p in parts] == ["上午场", "下午场", "场外搬运", "中途离场"]
     keys = {"id", "label", "time", "position", "hours", "kind", "shift_id",
-            "position_id", "date"}
+            "period_id", "position_id", "date"}
     for p in parts:
         assert set(p) == keys, p            # 没选劳务就只有这套键，没有 reward
     assert [p["date"] for p in parts] == [f"{g1.start_time:%Y-%m-%d}"] * 2 \

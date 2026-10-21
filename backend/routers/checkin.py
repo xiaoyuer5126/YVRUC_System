@@ -58,30 +58,47 @@ def _load_task(db: OrmSession, code: str) -> tuple[CheckinTask, Activity, Shift]
     return task, act, g
 
 
-def resolve_task(db: OrmSession, shift_id: str, position_id: str | None
-                 ) -> CheckinTask | None:
-    """这一场次、这个岗位该认哪张签到任务：优先本岗位那张码，没有就退回统一的那张。
+def active_period(g: Shift, t: datetime):
+    """此刻该看哪一段：正在进行的，没有就取下一段，都完了取最后一段。
+
+    「我的报名」上的签到按钮和定位签到入口都按它选码，才不会拿上一段的码
+    去签下一段的到。
+    """
+    periods = g.sorted_periods()
+    if not periods:
+        return None
+    return (g.current_period(t) or g.next_period(t) or periods[-1])
+
+
+def resolve_task(db: OrmSession, g: Shift, position_id: str | None,
+                 t: datetime | None = None) -> CheckinTask | None:
+    """这一场次、这个岗位、此刻该认哪张签到任务：优先本岗位那张码，
+    没有就退回这一段的统一码。
 
     「我的报名」那边亮不亮按钮、这边落不落记录，两边必须指向同一个任务——
     各判各的，就会出现「按钮亮的是定位签到、提交时算的却是扫码那张」。
     """
+    period = active_period(g, t or now())
+    if period is None:
+        return None
     tasks = (db.query(CheckinTask)
-             .filter(CheckinTask.shift_id == shift_id,
+             .filter(CheckinTask.shift_id == g.id,
+                     CheckinTask.period_id == period.id,
                      CheckinTask.active.is_(True))
              .order_by(CheckinTask.created_at.desc()).all())
     if not tasks:
         return None
-    return (next((t for t in tasks if t.position_id == position_id), None)
-            or next((t for t in tasks if not t.position_id), None) or tasks[0])
+    return (next((x for x in tasks if x.position_id == position_id), None)
+            or next((x for x in tasks if not x.position_id), None) or tasks[0])
 
 
 def find_record(db: OrmSession, user_id: str, g: Shift,
                 task: CheckinTask | None) -> CheckinRecord | None:
     """扫这张码该落在哪条签到记录上。
 
-    一般场次按「人 + 场次」只有一条：签到用 A 码、A 关了再开 B 码，扫 B 照样
-    是给 A 那条签退。时间灵活的场次一张码一轮，按「人 + 场次 + 码」找——
-    这张码上没有他的记录，扫了就是新的一轮签到。
+    一般场次按「人 + 场次 + 时段」只有一条：签到用 A 码、A 关了再开 B 码，
+    扫 B 照样是给这一时段那条签退。时间灵活的场次一张码一轮，按
+    「人 + 场次 + 码」找——这张码上没有他的记录，扫了就是新的一轮签到。
     """
     q = db.query(CheckinRecord).filter(CheckinRecord.user_id == user_id,
                                        CheckinRecord.shift_id == g.id)
@@ -89,6 +106,8 @@ def find_record(db: OrmSession, user_id: str, g: Shift,
         if task is None:
             return None
         q = q.filter(CheckinRecord.task_id == task.id)
+    elif task is not None:
+        q = q.filter(CheckinRecord.period_id == task.period_id)
     return q.order_by(CheckinRecord.checkin_at.desc()).first()
 
 
@@ -100,24 +119,24 @@ def checkin_count(db: OrmSession, user_id: str, g: Shift) -> int:
 
 
 def checkout_open(db: OrmSession, g: Shift, t: datetime,
-                  task: CheckinTask | None = None) -> bool:
-    """这一场此刻还能不能自己签退：场次下有任一张签到码开着、且没过截止。
+                  period, task: CheckinTask | None = None) -> bool:
+    """这一段的码此刻还能不能自己签退：这一段下有任一张签到码开着、且没过截止。
 
-    看的是**整场**的码而不只是签到时扫的那张：find_record 按「人 + 场次」
-    找记录，签到用 A 码、A 关了再开 B 码，扫 B 照样能签退。只看 A 的话，
-    人明明还能签退，时长这边却已经按场次结束兜底了，两边说的不是一回事。
-    签到时那张码被删了也一样，只看这一场现在还有没有能用的码。
+    看的是**这一段**的码而不只是签到时扫的那张：签到用 A 码、A 关了再开 B 码，
+    扫 B 照样能签退。只看 A 的话，人明明还能签退，时长这边却已经按这一段结束
+    兜底了，两边说的不是一回事。签到时那张码被删了也一样。
 
     时间灵活的场次一张码一轮，只看这条记录签到时那张码（task）：它关了或过了
     截止，这一轮就签不了退了，换新码签的是下一轮。
     """
     if g.flexible_time:
         return (task is not None and task.active
-                and t <= task.window(g)[1])
+                and t <= task.window(period)[1])
     tasks = (db.query(CheckinTask)
              .filter(CheckinTask.shift_id == g.id,
+                     CheckinTask.period_id == period.id,
                      CheckinTask.active.is_(True)).all())
-    return any(t <= task.window(g)[1] for task in tasks)
+    return any(t <= x.window(period)[1] for x in tasks)
 
 
 def geo_anchor(db: OrmSession, task: CheckinTask) -> CheckinGeo | None:
@@ -150,11 +169,14 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
     扫码那一侧，定位签到就悄悄成了「当场签退」的后门。
     """
     t = now()
+    period = g.period_of(task.period_id)
+    if period is None:
+        raise HTTPException(409, "这张签到码没有对应的服务时段，请联系负责人")
     # 签到和签退一样卡在可签时段里：签退没有另外的宽限。过了截止还没签退的，
-    # 时长由系统按场次结束时间兜底、标记待核，不是让人事后再补扫
+    # 时长由系统按这一段的结束时间兜底、标记待核，不是让人事后再补扫
     if not task.active:
         raise HTTPException(409, "该签到任务已关闭")
-    start, end = task.window(g)
+    start, end = task.window(period)
     if t < start:
         raise HTTPException(409, f"签到未开始（{start:%H:%M} 起）")
     if t > end:
@@ -175,7 +197,7 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
     if rec is None:
         # ---- 签到 ----
         rec = CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
-                            shift_id=g.id,
+                            shift_id=g.id, period_id=period.id,
                             position_id=(enr.position_id
                                         or (position.id if position else None)),
                             user_id=user.id, method=method, checkin_at=t)
@@ -220,8 +242,9 @@ def task_info(token: str, db: OrmSession = Depends(db_session),
     task, act, g = _load_task(db, token)
     position = db.get(Position, task.position_id) if task.position_id else None
     t = now()
+    period = g.period_of(task.period_id)
     rec = find_record(db, user.id, g, task)
-    start, end = task.window(g)
+    start, end = task.window(period)
     state = "active"
     if not task.active:
         state = "closed"
@@ -235,6 +258,8 @@ def task_info(token: str, db: OrmSession = Depends(db_session),
     return {
         "activity_title": act.title, "shift_name": g.name,
         "group_time": g.span_text(),
+        # 这张码属于哪一段：多时段的场次里，签到页要让人认得出今天这一场
+        "period_text": period.text(), "period_id": period.id,
         "position": ({"name": position.name, "time_text": position.time_text(),
                      "location": position.location} if position else None),
         "mode": task.mode, "state": state,
@@ -307,7 +332,7 @@ def geo_checkin(enrollment_id: str, body: GeoBody,
     if g is None or act is None:
         raise HTTPException(404, "场次不存在")
 
-    task = resolve_task(db, enr.shift_id, enr.position_id)
+    task = resolve_task(db, g, enr.position_id)
     if task is None:
         raise HTTPException(409, "本场次还没有签到任务，请联系负责人")
     geo = geo_anchor(db, task)

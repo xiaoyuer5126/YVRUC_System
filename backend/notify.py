@@ -148,12 +148,15 @@ def notify_edit_changes(db: OrmSession, act: Activity, since: datetime) -> int:
     return n
 
 
-def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
+def notify_checkin(db: OrmSession, g: Shift, *, period=None,
+                   skip_checked_in: bool = True,
                    position_ids: list[str] | None = None,
                    need_ack: bool = False,
                    batch_id: str | None = None) -> int:
     """给某场次的正式志愿者发签到提醒，地点按各自岗位给到人。
 
+    period 是这一条提醒说的那一段：多时段的场次按时段各提醒一次，
+    只跳过在这一段已经签过到的人，消息里也写清是哪一段。
     position_ids 限定范围：现场催场往往是「东门那三个人没到」，
     整场次群发会打扰到已经在岗的其他岗位。
     need_ack=True 时要求本人点「我已知悉」，管理端按 batch_id 看谁还没回。
@@ -169,8 +172,11 @@ def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
     rows = q.all()
     checked: set[str] = set()
     if skip_checked_in:
-        checked = {r[0] for r in db.query(CheckinRecord.user_id)
-                   .filter(CheckinRecord.shift_id == g.id).all()}
+        qc = db.query(CheckinRecord.user_id).filter(
+            CheckinRecord.shift_id == g.id)
+        if period is not None:
+            qc = qc.filter(CheckinRecord.period_id == period.id)
+        checked = {r[0] for r in qc.all()}
     n = 0
     for enr in rows:
         if enr.user_id in checked:
@@ -186,8 +192,11 @@ def notify_checkin(db: OrmSession, g: Shift, *, skip_checked_in: bool = True,
             label = g.kind_label()          # 「培训」「彩排」，不是「待分配」
         else:
             label = position.name if position else "待分配"
+        # 多时段时把这一段写进消息：「· 检录组（10-25（周六）上午）」
+        where = (f"{g.name}（{period.text()}）"
+                 if period is not None and len(g.periods) > 1 else g.name)
         msgcenter.send_user(db, u, "checkin_reminder", activity=act.title,
-                        shift=g.name, position=label,
+                        shift=where, position=label,
                         loc=loc,
                         # activity_id 是「提醒未签收」判权限的依据，不能省
                         data={"activity_id": act.id},

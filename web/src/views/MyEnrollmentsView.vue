@@ -20,6 +20,14 @@
           </el-tag>
           {{ row.shift.name }} · {{ row.shift.time_text }}
         </div>
+        <div v-if="(row.shift.periods || []).length > 1 && row.status === 'enrolled'"
+             class="dim">
+          <el-tag v-for="p in row.shift.periods" :key="p.id" size="small" effect="plain"
+                  :type="p.checked_out ? 'success' : p.checked_in ? 'warning' : 'info'"
+                  style="margin:0 4px 4px 0">
+            {{ p.text }} · {{ p.checked_out ? '已签退' : p.checked_in ? '已签到' : '未签到' }}
+          </el-tag>
+        </div>
         <div v-if="row.shift.attached" class="dim">
           随服务场次的报名产生；不能参加请到活动页请假
           <template v-if="row.shift.location"> · {{ row.shift.location }}</template>

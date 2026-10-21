@@ -7,6 +7,7 @@ import pytest
 
 from backend.models import (Activity, ActivityManager, Enrollment, Position,
                             Shift, User, now, uid)
+from conftest import mk_shift
 from conftest import ADMIN, POSITION_TEXT, login, student_row
 
 
@@ -22,7 +23,7 @@ def attire_activity(db, take_student):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin.id, added_by=admin.id))
-    g = Shift(id=uid("g"), activity_id=act.id, name="当日",
+    g = mk_shift(id=uid("g"), activity_id=act.id, name="当日",
               start_time=now() + timedelta(days=3),
               end_time=now() + timedelta(days=3, hours=4), mode="pick", sort=0)
     db.add(g)
@@ -200,7 +201,7 @@ def two_campus(db, attire_activity, take_student):
     """在那个活动里再加两个人：一个别的场次、一个别的校区。"""
     act, a, _b = attire_activity
     g = db.query(Shift).filter(Shift.activity_id == act.id).one()
-    g2 = Shift(id=uid("g"), activity_id=act.id, name="次日",
+    g2 = mk_shift(id=uid("g"), activity_id=act.id, name="次日",
                start_time=now() + timedelta(days=4),
                end_time=now() + timedelta(days=4, hours=4), mode="pick", sort=1)
     db.add(g2)
@@ -310,7 +311,7 @@ def test_勾多个场次是或不是且(client, admin, db, two_campus, take_stud
     """勾了「当日」和「次日」= 这两场的人都要，不是要求两场都报了名。"""
     act, g, g2, a, other_shift, other_campus = two_campus
     # 再加一场没勾的，才看得出筛选真的生效了，而不是整场全发
-    g3 = Shift(id=uid("g"), activity_id=act.id, name="第三日",
+    g3 = mk_shift(id=uid("g"), activity_id=act.id, name="第三日",
                start_time=now() + timedelta(days=5),
                end_time=now() + timedelta(days=5, hours=4), mode="pick", sort=2)
     db.add(g3)

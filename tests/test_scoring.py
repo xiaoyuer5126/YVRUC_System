@@ -14,6 +14,7 @@ from backend import config, scoring
 from backend.database import engine
 from backend.models import (Activity, ActivityManager, CheckinRecord, CheckinTask,
                             Enrollment, Shift, ViolationRecord, iso, now, uid)
+from conftest import mk_shift
 from conftest import ADMIN, student_row
 
 W = config.VIOLATION_WEIGHTS
@@ -33,7 +34,7 @@ def _activity(db, *ends, title="提示分测试"):
                            added_by=admin.id))
     shifts = []
     for i, end in enumerate(ends):
-        g = Shift(id=uid("g"), activity_id=act.id, name=f"第{i + 1}场",
+        g = mk_shift(id=uid("g"), activity_id=act.id, name=f"第{i + 1}场",
                   start_time=end - timedelta(hours=3), end_time=end,
                   mode="pick", sort=i)
         db.add(g)
@@ -51,11 +52,13 @@ def _enroll(db, u, act, g, *, cancel_type="", cancelled_at=None):
 
 def _checkin(db, u, act, g, method="scan"):
     t = CheckinTask(id=uid("ckt"), activity_id=act.id, shift_id=g.id,
+                    period_id=g.periods[0].id,
                     token=uid("k")[-16:], created_by=u.id)
     db.add(t)
     db.flush()
     db.add(CheckinRecord(id=uid("ckr"), task_id=t.id, activity_id=act.id,
-                         shift_id=g.id, user_id=u.id, method=method,
+                         shift_id=g.id, period_id=g.periods[0].id,
+                         user_id=u.id, method=method,
                          checkin_at=g.start_time))
 
 

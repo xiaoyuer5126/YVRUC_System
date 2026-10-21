@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from backend import config, scheduled
 from backend.models import Activity, Enrollment, Notification, now
+from conftest import mk_shift
 from conftest import POSITION_TEXT, editing, login
 
 
@@ -139,8 +140,8 @@ def test_已发布活动不进编辑态改不了场次与岗位(client, admin, d
     assert denied(client.post(f"/api/staff/activities/{act.id}/shifts",
                               headers=admin,
                               json={"name": "新场次", "mode": "pick",
-                                    "start_time": (now() + timedelta(days=9)).isoformat(),
-                                    "end_time": (now() + timedelta(days=9, hours=2)).isoformat()}))
+                                    "periods": [{"start_time": (now() + timedelta(days=9)).isoformat(),
+                                    "end_time": (now() + timedelta(days=9, hours=2)).isoformat()}]}))
     assert denied(client.post(f"/api/staff/shifts/{shift.id}/positions",
                               headers=admin, json={"name": "新岗位", "quota": 2}))
     assert denied(client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
@@ -242,7 +243,7 @@ def test_删掉有报名的场次_发布时告诉被取消的人(client, admin, 
     from backend.models import Position, Shift, uid
     from conftest import student_row
     act, shift, _u = enrolled_activity
-    extra = Shift(id=uid("s"), activity_id=act.id, name="下午场",
+    extra = mk_shift(id=uid("s"), activity_id=act.id, name="下午场",
                   start_time=shift.start_time + td(hours=5),
                   end_time=shift.end_time + td(hours=5), mode="pick", sort=1)
     db.add(extra)
@@ -364,6 +365,7 @@ def test_生成过签到码的场次不能删(client, admin, db, enrolled_activi
     from backend.models import CheckinTask, Shift, new_checkin_token, uid
     act, shift, u = enrolled_activity
     db.add(CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=shift.id,
+                       period_id=shift.periods[0].id,
                        mode="shift", token=new_checkin_token(), created_by=u.id))
     db.commit()
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
@@ -394,6 +396,7 @@ def test_有报名历史的岗位不能删(client, admin, db, enrolled_activity)
     (db.query(Enrollment).filter(Enrollment.position_id == pos.id)
      .update({"position_id": None}, synchronize_session=False))
     db.add(CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=shift.id,
+                       period_id=shift.periods[0].id,
                        position_id=pos.id, mode="position",
                        token=new_checkin_token(), created_by=u.id))
     db.commit()
@@ -429,8 +432,8 @@ def test_待审批和待发布的活动也直接改(client, admin, db):
         assert r.status_code == 200, r.text
         r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
                         json={"name": "下午场", "mode": "pick",
-                              "start_time": (now() + timedelta(days=9, hours=4)).isoformat(),
-                              "end_time": (now() + timedelta(days=9, hours=6)).isoformat()})
+                              "periods": [{"start_time": (now() + timedelta(days=9, hours=4)).isoformat(),
+                              "end_time": (now() + timedelta(days=9, hours=6)).isoformat()}]})
         assert r.status_code == 200, r.text
         r = client.post(f"/api/staff/shifts/{r.json()['id']}/positions",
                         headers=admin, json={"name": "引导", "quota": 2,

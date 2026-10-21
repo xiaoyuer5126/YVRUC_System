@@ -6,6 +6,8 @@ from datetime import timedelta
 import pytest
 
 from backend.models import Activity, Enrollment, Position, Shift, User, now, uid
+from conftest import set_shift_time
+from conftest import mk_shift
 from conftest import ADMIN, POSITION_TEXT, editing, login, student_row
 
 
@@ -24,7 +26,7 @@ def act_with_positions(db, take_student):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin.id, added_by=admin.id))
-    g = Shift(id=uid("g"), activity_id=act.id, name="演出当日",
+    g = mk_shift(id=uid("g"), activity_id=act.id, name="演出当日",
               start_time=now() + timedelta(days=10),
               end_time=now() + timedelta(days=10, hours=4),
               mode="pick", sort=0)
@@ -49,8 +51,8 @@ def _add_attached(client, admin, act, parent, *, kind="rehearsal",
                               "applies_to_positions": list(positions),
                               "hours_mode": hours_mode,
                               "location": "排练厅",
-                              "start_time": start.isoformat(),
-                              "end_time": (start + timedelta(hours=2)).isoformat()})
+                              "periods": [{"start_time": start.isoformat(),
+                              "end_time": (start + timedelta(hours=2)).isoformat()}]})
     assert r.status_code == 200, r.text
     return r.json()["id"]
 
@@ -62,13 +64,15 @@ def _checkin(db, act, shift_id, u):
     g = db.get(Shift, shift_id)
     admin = db.query(User).filter(User.student_id == ADMIN).one()
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=shift_id,
+                       period_id=g.periods[0].id,
                        mode="shift", token=new_checkin_token(),
                        created_by=admin.id,
                        valid_from=g.start_time, valid_to=g.end_time)
     db.add(task)
     db.flush()
     db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
-                         shift_id=shift_id, user_id=u.id, method="manual"))
+                         shift_id=shift_id, period_id=g.periods[0].id,
+                         user_id=u.id, method="manual"))
     db.commit()
 
 
@@ -170,7 +174,7 @@ def test_彩排时间冲突会拦住报名(client, admin, db, act_with_positions
     db.add(other)
     db.add(ActivityManager(id=uid("mgr"), activity_id=other.id,
                            user_id=admin_user.id, added_by=admin_user.id))
-    og = Shift(id=uid("g"), activity_id=other.id, name="同晚场次",
+    og = mk_shift(id=uid("g"), activity_id=other.id, name="同晚场次",
                start_time=now() + timedelta(days=5),
                end_time=now() + timedelta(days=5, hours=2), mode="pick", sort=0)
     db.add(og)
@@ -226,7 +230,7 @@ def test_活动时间只写年月日带星期():
 
     def act_with(*spans):
         act = Activity(id=uid("act"), title="x", recruit_mode="pick")
-        act.shifts = [Shift(id=uid("s"), name=f"第{i}场", kind="service",
+        act.shifts = [mk_shift(id=uid("s"), name=f"第{i}场", kind="service",
                             start_time=a, end_time=b)
                       for i, (a, b) in enumerate(spans)]
         return act
@@ -259,7 +263,7 @@ def test_附属场次不占活动的名额与时间跨度(client, admin, db, act
 
 def _second_shift(db, act, g):
     """再加一个场次，也有「检录台」：同一个岗位的另一个时段。"""
-    g2 = Shift(id=uid("g"), activity_id=act.id, name="第二天",
+    g2 = mk_shift(id=uid("g"), activity_id=act.id, name="第二天",
                start_time=g.start_time + timedelta(days=1),
                end_time=g.end_time + timedelta(days=1), mode="pick", sort=1)
     db.add(g2)
@@ -492,7 +496,7 @@ def test_开始后不能再改请假(client, admin, db, act_with_positions, take
                                       Enrollment.user_id == u.id).one()
 
     s = db.get(Shift, sid)
-    s.start_time = now() - timedelta(minutes=5)
+    set_shift_time(db, s, start=now() - timedelta(minutes=5))
     db.commit()
 
     r = client.post(f"/api/activities/enrollments/{enr.id}/excuse", headers=h,
@@ -556,7 +560,7 @@ def test_补招时彩排时段冲突先提示_确认后照报(client, admin, db,
     db.add(other_act)
     db.flush()
     rs = db.get(Shift, rehearsal)
-    other = Shift(id=uid("g"), activity_id=other_act.id, name="撞车场",
+    other = mk_shift(id=uid("g"), activity_id=other_act.id, name="撞车场",
                   start_time=rs.start_time, end_time=rs.end_time, mode="pick", sort=0)
     db.add(other)
     db.flush()                  # 会话不自动 flush：先让场次落库，报名的外键才对得上
@@ -600,8 +604,8 @@ def test_场次结束后补招_通知写补记而不叫人来(client, admin, db,
                                   take_student):
     act, g, east, _check = act_with_positions
     s = db.get(Shift, g.id)
-    s.start_time = now() - timedelta(hours=5)
-    s.end_time = now() - timedelta(hours=1)
+    set_shift_time(db, s, start=now() - timedelta(hours=5),
+                   end=now() - timedelta(hours=1))
     db.commit()
     sid = take_student()
     assert _walkin(client, admin, g, sid, position_id=east.id,

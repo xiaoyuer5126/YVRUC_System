@@ -107,6 +107,22 @@ def _when(v) -> str:
         return ""
 
 
+def _periods(v) -> list[dict]:
+    """模型给的时段：起止都认出来才算数，只认出开始的留着半截让人补。"""
+    out = []
+    for p in _list(v)[:60]:
+        if not isinstance(p, dict):
+            continue
+        start, end = _when(p.get("start_time")), _when(p.get("end_time"))
+        if not start:
+            continue
+        if end and end <= start:
+            end = ""
+        out.append({"start_time": start, "end_time": end})
+    out.sort(key=lambda x: x["start_time"])
+    return out
+
+
 def _pick(v, allowed: list[str]) -> list[str]:
     """多选值只留在可选集合里的：这些值要和志愿者档案逐字比对，错一个字就永远匹配不上。"""
     return [x for x in dict.fromkeys(_strs(v)) if x in allowed]
@@ -201,14 +217,20 @@ def activity_draft(text: str, images: list[str] = ()) -> dict:
 # ======================= 场次与岗位 =======================
 
 STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草一场活动的「场次」和「岗位」。
-场次 = 一段服务时间（如「上午场 9:00-12:00」）；岗位 = 这段时间里的一种分工，带名额（如「检录引导 6 人」）。
+场次 = 一次报名对应的一份服务安排，可以含一个或多个服务时段；岗位 = 这些时段里的一种分工，带名额（如「检录引导 6 人」）。
+报名按场次算：写进同一个场次的人，要在它列出的每个时段都到场。
+原文说「10.25–28、10.31–11.3 都要同一批人」这类跨几个不连续日期、要求同一批人的，写成一个场次、多个时段，
+不要为了日期不连续拆成两个场次；每天的服务时间不同的，每个时段各写各的时间。
 同一时间段的不同分工是同一个场次下的多个岗位，不要拆成多个场次。
-场次时间必须严格按照岗位的时间来定：只有起止时间完全相同的岗位才能放进同一个场次；
+场次时间必须严格按照岗位的时间来定：只有时段完全相同的岗位才能放进同一个场次；
 岗位时间不同（哪怕只差几分钟、或者一段包含另一段）就分成不同的场次，不要合并，也不要取并集或按大致时段归并。
-培训、彩排不是服务场次：原文给了具体时间的，写进它所服务的那个场次的 attached；
+每个时段写起止时间「YYYY-MM-DD HH:MM」。原文只说上午 / 下午 / 全天的，按
+08:00-12:00 / 13:00-18:00 / 08:00-18:00 写一个大概的钟点，管理者会自己改；
+「10.25–28 上午」要写成 10-25、10-26、10-27、10-28 四段，不要合成一段。
+培训、彩排不是服务场次：原文给了具体时间的，写进它所服务的那个场次的 attached（时间同样用 periods 写）；
 没有具体时间、只是到岗前要知道的培训内容，写进岗位的 training_note。
 原文可能含上传文件转出的表格（一行一行，单元格用「 | 」隔开）和图片，排班常常就在表里。
-只根据原文提取，原文没有的留空字符串，不要编造。今天是 {today}；时间写成「YYYY-MM-DD HH:MM」（北京时间），
+只根据原文提取，原文没有的留空，不要编造。今天是 {today}；时间按北京时间，
 原文只说「当天」的，用下面活动信息里能推出的日期。
 
 活动信息：
@@ -217,11 +239,10 @@ STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草�
 只输出一个 json 对象：
 {{
   "shifts": [{{
-    "name": "场次名，如「开幕式当天」「第一天上午」",
-    "start_time": "开始时间",
-    "end_time": "结束时间",
+    "name": "场次名，如「开幕式当天」「赛会全程」",
+    "periods": [{{"start_time": "开始时间", "end_time": "结束时间"}}],
     "requirement_tags": {{"校区": ["只能从这些里选：{campuses}"], "学段": ["只能从这些里选：{stages}"]}},
-    "lock_hours": 开场前多少小时锁定名单（0～{lock_max} 的整数）。原文说了「提前多久确定名单 / 之后不能退出」就按原文换算成小时，如「活动前一天」写 24；没说写 {lock_default},
+    "lock_hours": 开场前多少小时锁定名单（0～{lock_max} 的整数，按第一个时段算）。原文说了「提前多久确定名单 / 之后不能退出」就按原文换算成小时，如「活动前一天」写 24；没说写 {lock_default},
     "positions": [{{
       "name": "岗位名",
       "quota": 名额（正整数，原文没写就按分工合理估一个）,
@@ -241,8 +262,7 @@ STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草�
     "attached": [{{
       "kind": "training 或 rehearsal：培训写 training，彩排写 rehearsal",
       "name": "如「集中培训」「开幕式彩排」",
-      "start_time": "开始时间",
-      "end_time": "结束时间",
+      "periods": [{{"start_time": "开始时间", "end_time": "结束时间"}}],
       "location": "和活动地点一样就空",
       "note": "备注，没有就空",
       "positions": ["需要参加的岗位名，和上面 positions 里的岗位名一字不差；这个场次的人都要参加就给空数组"],
@@ -327,8 +347,7 @@ def _attached(a: dict, names: list[str]) -> dict:
     return {
         "kind": kind,
         "name": _text(a.get("name"), 128) or ("集中培训" if kind == "training" else "彩排"),
-        "start_time": _when(a.get("start_time")),
-        "end_time": _when(a.get("end_time")),
+        "periods": _periods(a.get("periods")),
         "location": _text(a.get("location"), 128),
         "note": _text(a.get("note"), 1000),
         "positions": [n for n in dict.fromkeys(_strs(a.get("positions"))) if n in names],
@@ -349,12 +368,17 @@ def _lock_hours(v) -> int:
 
 
 def _structure_missing(shifts: list[dict]) -> list[str]:
-    """缺的起止时间、服务任务。岗位多了只报个数：预览里缺服务任务的已经标红。"""
+    """缺的时段、服务任务。岗位多了只报个数：预览里缺服务任务的已经标红。"""
     out = []
     for g in shifts:
         for s in (g, *g["attached"]):
-            if not (s["start_time"] and s["end_time"]):
-                out.append(f"「{s['name']}」的起止时间")
+            if not s["periods"]:
+                out.append(f"「{s['name']}」的服务时段")
+                continue
+            for p in s["periods"]:
+                if not (p["start_time"] and p["end_time"]):
+                    out.append(f"「{s['name']}」的时段起止时间")
+                    break
     tasks = list(dict.fromkeys(p["name"] for g in shifts for p in g["positions"]
                                if not p["service_task"]))
     if tasks:
@@ -386,8 +410,7 @@ def structure_draft(act: Activity, text: str, images: list[str] = ()) -> dict:
                     lost.append(attached[-1]["name"])
         shifts.append({
             "name": _text(g.get("name"), 128) or f"场次 {len(shifts) + 1}",
-            "start_time": _when(g.get("start_time")),
-            "end_time": _when(g.get("end_time")),
+            "periods": _periods(g.get("periods")),
             "requirement_tags": _tags(g.get("requirement_tags"), SHIFT_TAGS),
             "lock_hours": _lock_hours(g.get("lock_hours")),
             "positions": positions,

@@ -13,6 +13,7 @@ import pytest
 from backend import serializers
 from backend.models import now
 from backend.routers import activities as activities_router
+from conftest import mk_shift
 from conftest import login
 
 
@@ -72,7 +73,7 @@ def test_两场之间还收人就是报名中(client, db, open_group, take_stude
     from conftest import POSITION_TEXT
 
     act, g1 = open_group(3)
-    g2 = Shift(id=uid("g"), activity_id=act.id, name="第二场",
+    g2 = mk_shift(id=uid("g"), activity_id=act.id, name="第二场",
                start_time=g1.start_time + timedelta(days=1),
                end_time=g1.end_time + timedelta(days=1), mode="pick", sort=1)
     db.add(g2)
@@ -80,7 +81,7 @@ def test_两场之间还收人就是报名中(client, db, open_group, take_stude
     p2 = Position(id=uid("p"), shift_id=g2.id, name="第二场岗位", quota=3,
                   waitlist_quota=3, sort=0, **POSITION_TEXT)
     db.add(p2)
-    db.add(Shift(id=uid("g"), activity_id=act.id, name="复盘培训",
+    db.add(mk_shift(id=uid("g"), activity_id=act.id, name="复盘培训",
                  kind="training", start_time=g2.end_time + timedelta(hours=1),
                  end_time=g2.end_time + timedelta(hours=2), sort=2))
     db.commit()

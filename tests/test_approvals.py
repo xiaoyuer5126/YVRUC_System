@@ -25,8 +25,8 @@ def _make_draft(client, admin, *, reg_start_in=timedelta(days=-1)) -> str:
     aid = r.json()["id"]
     r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
                     json={"name": "上午场", "mode": "pick",
-                          "start_time": (now() + timedelta(days=9)).isoformat(),
-                          "end_time": (now() + timedelta(days=9, hours=3)).isoformat()})
+                          "periods": [{"start_time": (now() + timedelta(days=9)).isoformat(),
+                          "end_time": (now() + timedelta(days=9, hours=3)).isoformat()}]})
     assert r.status_code == 200, r.text
     r = client.post(f"/api/staff/shifts/{r.json()['id']}/positions", headers=admin,
                     json={"name": "引导", "quota": 3, **POSITION_TEXT})

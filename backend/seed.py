@@ -27,7 +27,7 @@ from .audit import log as audit_log
 from . import migrate
 from .database import SessionLocal, engine
 from .qrcodes import qr_svg
-from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, User, ViolationRecord, day_of, uid)
+from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, ShiftPeriod, User, ViolationRecord, day_of, uid)
 # 已确认的时长要连明细一起种：明细不是另写的一段文字，是这套算法从签到记录
 # 里推出来的，所以直接借过来用，免得演示数据和线上算出来的两套口径
 from .routers.records import _import_fields
@@ -83,6 +83,15 @@ def dt(days=0, hours=0, minutes=0, base=None):
     """相对时间工具：支持小数小时（如 10.5 → 10:30）。"""
     b = base or datetime.now().replace(second=0, microsecond=0)
     return b + timedelta(days=days, hours=float(hours), minutes=minutes)
+
+
+def mk_shift(db, *, start_time, end_time, **kw) -> Shift:
+    """演示数据里的场次都是一个精确时段：起止直接作为唯一的一段。"""
+    g = Shift(**kw)
+    db.add(g)
+    g.periods.append(ShiftPeriod(id=uid("sp"), shift_id=g.id, sort=0,
+                                 start_time=start_time, end_time=end_time))
+    return g
 
 
 def main() -> None:
@@ -229,14 +238,14 @@ def main() -> None:
                          created_by=wang.id, created_at=dt(days=-4))
         db.add(sport)
 
-        m1 = Shift(id=uid("g"), activity_id=sport.id, name="上午场",
-                           start_time=dt(days=3, base=t0.replace(hour=8)),
-                           end_time=dt(days=3, base=t0.replace(hour=12)),
-                           mode="pick", sort=0)
-        m2 = Shift(id=uid("g"), activity_id=sport.id, name="下午场",
-                           start_time=dt(days=3, base=t0.replace(hour=14)),
-                           end_time=dt(days=3, base=t0.replace(hour=17, minute=30)),
-                           mode="pick", sort=1)
+        m1 = mk_shift(db, id=uid("g"), activity_id=sport.id, name="上午场",
+                      start_time=dt(days=3, base=t0.replace(hour=8)),
+                      end_time=dt(days=3, base=t0.replace(hour=12)),
+                      mode="pick", sort=0)
+        m2 = mk_shift(db, id=uid("g"), activity_id=sport.id, name="下午场",
+                      start_time=dt(days=3, base=t0.replace(hour=14)),
+                      end_time=dt(days=3, base=t0.replace(hour=17, minute=30)),
+                      mode="pick", sort=1)
         db.add_all([m1, m2])
         db.flush()
 
@@ -317,12 +326,12 @@ def main() -> None:
                         reg_start=dt(days=-2), reg_end=dt(days=3),
                         created_by=wang.id, created_at=dt(days=-3))
         db.add(book)
-        b1 = Shift(id=uid("g"), activity_id=book.id, name="周六全天场",
-                           start_time=dt(days=5, base=t0.replace(hour=9)),
-                           end_time=dt(days=5, base=t0.replace(hour=17)),
-                           mode="assign",
-                           note="具体岗位（分拣/搬运/上架）报名截止后由排班程序统一分配",
-                           sort=0)
+        b1 = mk_shift(db, id=uid("g"), activity_id=book.id, name="周六全天场",
+                      start_time=dt(days=5, base=t0.replace(hour=9)),
+                      end_time=dt(days=5, base=t0.replace(hour=17)),
+                      mode="assign",
+                      note="具体岗位（分拣/搬运/上架）报名截止后由排班程序统一分配",
+                      sort=0)
         db.add(b1)
         db.flush()
         # 「截止后统一分配」的场次自带一个占位岗位，名额记在它头上，
@@ -367,10 +376,10 @@ def main() -> None:
                         reg_end=dt(days=4), created_by=zhang.id,
                         created_at=dt(days=-2))
         db.add(fair)
-        f1 = Shift(id=uid("g"), activity_id=fair.id, name="下午讲解场",
-                           start_time=dt(days=5, base=t0.replace(hour=13)),
-                           end_time=dt(days=5, base=t0.replace(hour=17)),
-                           mode="pick", sort=0)
+        f1 = mk_shift(db, id=uid("g"), activity_id=fair.id, name="下午讲解场",
+                      start_time=dt(days=5, base=t0.replace(hour=13)),
+                      end_time=dt(days=5, base=t0.replace(hour=17)),
+                      mode="pick", sort=0)
         db.add(f1)
         db.flush()
         f1_pos = stn(f1, "校园讲解", "明德主楼北门", 10,
@@ -408,10 +417,10 @@ def main() -> None:
                         status="closed", reg_start=dt(days=-6), reg_end=dt(days=-2),
                         created_by=zhang.id, created_at=dt(days=-7))
         db.add(gala)
-        c1 = Shift(id=uid("g"), activity_id=gala.id, name="晚会当日班",
-                           start_time=dt(base=t0.replace(hour=8, minute=0)),
-                           end_time=dt(base=t0.replace(hour=23, minute=30)),
-                           mode="pick", sort=0)
+        c1 = mk_shift(db, id=uid("g"), activity_id=gala.id, name="晚会当日班",
+                      start_time=dt(base=t0.replace(hour=8, minute=0)),
+                      end_time=dt(base=t0.replace(hour=23, minute=30)),
+                      mode="pick", sort=0)
         db.add(c1)
         db.flush()
         c_s1 = stn(c1, "嘉宾引导", "明德堂前厅", 4)
@@ -421,6 +430,7 @@ def main() -> None:
         gala_users = students[38:50]
         assigned_map = [c_s1] * 4 + [c_s2] * 4 + [c_s3] * 4
         task_gala = CheckinTask(id=uid("tsk"), activity_id=gala.id, shift_id=c1.id,
+                                period_id=c1.periods[0].id,
                                 mode="shift", token="GALA01",
                                 valid_from=c1.start_time, valid_to=c1.end_time,
                                 active=True, created_by=wang.id)
@@ -436,10 +446,12 @@ def main() -> None:
                 ck_at = max(c1.start_time, t0 - timedelta(minutes=35 + i * 12))
                 db.add(CheckinRecord(id=uid("ckr"), task_id=task_gala.id,
                                      activity_id=gala.id, shift_id=c1.id,
+                                     period_id=c1.periods[0].id,
                                      position_id=st_.id, user_id=u.id,
                                      method="scan", checkin_at=ck_at))
         task_back = CheckinTask(id=uid("tsk"), activity_id=gala.id,
-                                shift_id=c1.id, position_id=c_s2.id,
+                                shift_id=c1.id, period_id=c1.periods[0].id,
+                                position_id=c_s2.id,
                                 mode="position", token="BACK02",
                                 valid_from=c1.start_time,
                                 valid_to=c1.end_time, active=True,
@@ -478,16 +490,17 @@ def main() -> None:
                          reg_end=dt(days=-12), created_by=limu.id,
                          created_at=dt(days=-22))
         db.add(elder)
-        e1 = Shift(id=uid("g"), activity_id=elder.id, name="上周六场",
-                           start_time=dt(days=-7, base=t0.replace(hour=9)),
-                           end_time=dt(days=-7, base=t0.replace(hour=12)),
-                           mode="pick", sort=0)
+        e1 = mk_shift(db, id=uid("g"), activity_id=elder.id, name="上周六场",
+                      start_time=dt(days=-7, base=t0.replace(hour=9)),
+                      end_time=dt(days=-7, base=t0.replace(hour=12)),
+                      mode="pick", sort=0)
         db.add(e1)
         db.flush()
         e1_pos = stn(e1, "陪伴服务", "海淀区敬老院", 10)
         db.flush()
         elder_task = CheckinTask(id=uid("tsk"), activity_id=elder.id,
-                                 shift_id=e1.id, mode="shift", token="ELDER9",
+                                 shift_id=e1.id, period_id=e1.periods[0].id,
+                                 mode="shift", token="ELDER9",
                                  valid_from=e1.start_time, valid_to=e1.end_time,
                                  active=False, created_by=wang.id)
         db.add(elder_task)
@@ -501,6 +514,7 @@ def main() -> None:
                               joined_at=joined, assigned_at=joined))
             db.add(CheckinRecord(id=uid("ckr"), task_id=elder_task.id,
                                  activity_id=elder.id, shift_id=e1.id,
+                                 period_id=e1.periods[0].id,
                                  user_id=u.id, method="scan",
                                  checkin_at=e1.start_time + timedelta(minutes=5 + i)))
 
@@ -534,10 +548,10 @@ def main() -> None:
         db.flush()
         fresh_shifts, holders = [], []
         for i, (name, h0, h1) in enumerate([("报到日上午", 8, 12), ("报到日下午", 13, 17)]):
-            g = Shift(id=uid("g"), activity_id=fresh.id, name=name,
-                      start_time=dt(days=8, base=t0.replace(hour=h0, minute=0)),
-                      end_time=dt(days=8, base=t0.replace(hour=h1, minute=0)),
-                      mode="assign", sort=i, location="东门迎新广场")
+            g = mk_shift(db, id=uid("g"), activity_id=fresh.id, name=name,
+                         start_time=dt(days=8, base=t0.replace(hour=h0, minute=0)),
+                         end_time=dt(days=8, base=t0.replace(hour=h1, minute=0)),
+                         mode="assign", sort=i, location="东门迎新广场")
             db.add(g)
             db.flush()
             holder = Position(id=uid("p"), shift_id=g.id, name="待分配",
