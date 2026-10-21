@@ -27,7 +27,7 @@ from .audit import log as audit_log
 from . import migrate
 from .database import SessionLocal, engine
 from .qrcodes import qr_svg
-from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, ShiftPeriod, User, ViolationRecord, day_of, uid)
+from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, ShiftPeriod, User, ViolationRecord, day_of, iso, uid)
 # 已确认的时长要连明细一起种：明细不是另写的一段文字，是这套算法从签到记录
 # 里推出来的，所以直接借过来用，免得演示数据和线上算出来的两套口径
 from .routers.records import _import_fields
@@ -604,8 +604,9 @@ def main() -> None:
                         location="人文楼报告厅",
                         contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
                         status="finished",
-                        held_start=dt(days=-10, base=t0.replace(hour=14)),
-                        held_end=dt(days=-10, base=t0.replace(hour=17)),
+                        held_periods=[{
+                            "start_time": iso(dt(days=-10, base=t0.replace(hour=14))),
+                            "end_time": iso(dt(days=-10, base=t0.replace(hour=17)))}],
                         approved_at=dt(days=-9),
                         created_by=limu.id, created_at=dt(days=-12))
         db.add(club)

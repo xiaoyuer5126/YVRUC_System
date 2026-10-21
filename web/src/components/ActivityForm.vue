@@ -60,14 +60,9 @@
         </el-button>
       </div>
     </el-form-item>
-    <!-- 补记录活动没有场次：线下哪天办的直接填 -->
+    <!-- 补记录活动没有场次：线下哪几段办的直接填 -->
     <el-form-item v-if="isRecord" label="活动时间" required>
-      <div class="two-col">
-        <DateTimeField v-model="f.held_start" placeholder="活动开始时间"
-                       :default-time="DAY_START" />
-        <DateTimeField v-model="f.held_end" placeholder="活动结束时间"
-                       :default-time="DAY_END" />
-      </div>
+      <PeriodEditor v-model="f.held_periods" />
       <div class="dim">线下实际开展的时间，会写进时长明细与导出备注。</div>
     </el-form-item>
     <!-- 招募范围：全都留空 = 面向全校。更细的差别走场次/岗位的条件要求 -->
@@ -155,6 +150,7 @@ import { uploadImage } from '../composables/uploadImage'
 import { useAuthedImage } from '../composables/authedImage'
 import { RECORD_MODE } from '../composables/activityForm'
 import DateTimeField from './DateTimeField.vue'
+import PeriodEditor from './PeriodEditor.vue'
 import GeoPicker from './GeoPicker.vue'
 
 const props = defineProps({

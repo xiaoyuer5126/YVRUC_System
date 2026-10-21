@@ -89,10 +89,13 @@ def _record_activity(db):
                    organizer="文学院青年志愿者协会", recruit_mode="record",
                    location="人文楼报告厅", status="finished",
                    contacts=[{"name": "测试", "phone": "13900000000"}],
-                   held_start=now().replace(hour=14, minute=0, second=0,
-                                            microsecond=0) - timedelta(days=9),
-                   held_end=now().replace(hour=17, minute=0, second=0,
-                                          microsecond=0) - timedelta(days=9),
+                   held_periods=[{
+                       "start_time": (now().replace(hour=14, minute=0, second=0,
+                                                    microsecond=0)
+                                      - timedelta(days=9)).isoformat(timespec="minutes"),
+                       "end_time": (now().replace(hour=17, minute=0, second=0,
+                                                  microsecond=0)
+                                    - timedelta(days=9)).isoformat(timespec="minutes")}],
                    created_by=admin.id)
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id, user_id=admin.id,
@@ -174,8 +177,8 @@ def test_三种段都能建_服务日期与时段对(client, admin, db, take_stu
     rec2 = _invariant(db, club, u)
     imp = rec2.segments[0]
     assert imp.kind == "import" and imp.hours == 3.0 and imp.label == "场地布置"
-    assert imp.date == day_of(club.held_start)
-    assert imp.time_text == span_text(club.held_start, club.held_end)
+    assert imp.date == day_of(club.held_rows()[0].start_time)
+    assert imp.time_text == club.held_text()
 
 
 def test_接口里的明细键名与顺序(client, admin, db, take_student):

@@ -16,6 +16,7 @@ import secrets
 import string
 import uuid
 from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 
 from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Index,
                         Integer, String, Text, UniqueConstraint, event, func,
@@ -385,11 +386,11 @@ class Activity(Base):
 
     reg_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reg_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    # 补记录活动（recruit_mode="record"）自己的活动时间：它没有场次，线下哪天
-    # 办的只能直接填。广场不展示它，这两项用在管理端、审批页、时长明细与
-    # 提示分（导入即视为参与，加分时间记在活动结束这一刻）。别的活动留空。
-    held_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    held_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 补记录活动（recruit_mode="record"）自己的活动时间：它没有场次，线下
+    # 哪几段办的直接填。每段 {"start_time", "end_time"}，只作记录，没有报名
+    # 语义；广场不展示它，用在管理端、审批页、时长明细与提示分（导入即视为
+    # 参与，加分时间记在最后一段结束这一刻）。别的活动留空。
+    held_periods: Mapped[list] = mapped_column(JSON, default=list)
 
     # —— 志愿时长 ——
     # 核准 = 把这场活动的时长定下来，通知每个人查看，并给一段申诉时间。
@@ -467,6 +468,31 @@ class Activity(Base):
         """不公开招募（补记录）：没有场次、不收报名，时长靠导入名单。"""
         return self.recruit_mode == config.RECORD_MODE
 
+    def held_rows(self) -> list:
+        """补记录活动的各段活动时间，按开始时间排。解析不了的段跳过——
+        库里落的是接口校验过的串，读到坏数据说明有人绕过接口写过库。"""
+        rows = []
+        for p in self.held_periods or []:
+            try:
+                start = parse_local_dt(p.get("start_time"))
+                end = parse_local_dt(p.get("end_time"))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            rows.append(SimpleNamespace(start_time=start, end_time=end))
+        return sorted(rows, key=lambda r: r.start_time)
+
+    def held_span(self) -> tuple[datetime, datetime] | None:
+        """补记录活动的整体起止：最早一段开始 / 最晚一段结束。"""
+        rows = self.held_rows()
+        if not rows:
+            return None
+        return rows[0].start_time, rows[-1].end_time
+
+    def held_text(self) -> str:
+        """补记录活动的各段时间，按段读出来，不把空档算成连续服务。"""
+        rows = self.held_rows()
+        return periods_text(rows) if rows else "待定"
+
     def recruit_label(self) -> str:
         return config.recruit_name(self.recruit_mode)
 
@@ -487,9 +513,7 @@ class Activity(Base):
         """
         if self.is_record():
             # 补记录活动没有场次，活动时间是建活动时直接填的
-            if self.held_start and self.held_end:
-                return self.held_start, self.held_end
-            return None
+            return self.held_span()
         rows = self.main_shifts()
         if not rows:
             return None

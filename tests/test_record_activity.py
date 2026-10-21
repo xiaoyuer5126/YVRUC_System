@@ -14,7 +14,8 @@ import pytest
 from openpyxl import Workbook, load_workbook
 
 from backend import config, scoring, scheduled
-from backend.models import Activity, AuditLog, HoursRecord, HoursRequest, Notification, User, now, uid
+from backend.models import (Activity, AuditLog, HoursRecord, HoursRequest,
+                            Notification, User, iso, now, uid)
 from conftest import (ADMIN, INITIATOR, dl_url, import_roster,
                       import_roster_file, login, student_row, upload_proposal,
                       upload_stamped)
@@ -26,8 +27,9 @@ def _create(client, headers, **extra) -> str:
     body = {"title": f"补记录 {uid('t')}", "organizer": "文学院青协",
             "recruit_mode": "record", "intro": "线下已办", "location": "世纪馆",
             "contacts": [{"name": "王", "phone": "13900000000"}],
-            "held_start": (now() - timedelta(days=3, hours=4)).isoformat(),
-            "held_end": (now() - timedelta(days=3)).isoformat(), **extra}
+            "held_periods": [{
+                "start_time": (now() - timedelta(days=3, hours=4)).isoformat(),
+                "end_time": (now() - timedelta(days=3)).isoformat()}], **extra}
     r = client.post("/api/staff/activities", headers=headers, json=body)
     assert r.status_code == 200, r.text
     return r.json()["id"]
@@ -65,10 +67,10 @@ def test_创建不要联络群和报名时间_要活动时间(client, admin, db)
             "intro": "x", "location": "x",
             "contacts": [{"name": "王", "phone": "13900000000"}]}
     r = client.post("/api/staff/activities", headers=admin, json=base)
-    assert r.status_code == 400 and "活动开始与结束时间" in r.json()["detail"]
+    assert r.status_code == 400 and "活动时段" in r.json()["detail"]
     r = client.post("/api/staff/activities", headers=admin, json={
-        **base, "held_start": now().isoformat(),
-        "held_end": (now() - timedelta(hours=1)).isoformat()})
+        **base, "held_periods": [{"start_time": now().isoformat(),
+                                  "end_time": (now() - timedelta(hours=1)).isoformat()}]})
     assert r.status_code == 400 and "晚于开始" in r.json()["detail"]
 
     # 招募相关的字段传了也不收
@@ -77,7 +79,7 @@ def test_创建不要联络群和报名时间_要活动时间(client, admin, db)
     act = db.get(Activity, aid)
     assert act.recruit_mode == "record" and act.is_record()
     assert act.contact_group_qr == "" and act.reg_start is None
-    assert act.recruit_campuses == [] and act.held_end is not None
+    assert act.recruit_campuses == [] and act.held_periods
     d = client.get(f"/api/activities/{aid}", headers=admin).json()
     assert d["record_only"] and d["recruit_label"] == "不公开招募（补记录）"
     assert d["time_text"] != "待定"
@@ -507,11 +509,54 @@ def test_提示分_导入即参与_有违规不加(client, admin, db, approved, 
 
 
 def test_活动还没结束不加分(client, admin, db, take_student):
-    aid = _create(client, admin,
-                  held_start=(now() - timedelta(hours=1)).isoformat(),
-                  held_end=(now() + timedelta(days=1)).isoformat())
+    aid = _create(client, admin, held_periods=[{
+        "start_time": (now() - timedelta(hours=1)).isoformat(),
+        "end_time": (now() + timedelta(days=1)).isoformat()}])
     _submit_and_approve(client, admin, aid)
     sid = take_student()
     assert _import(client, admin, aid, f"{sid} 2").status_code == 200
     assert "顺利参与" not in [x["label"] for x in
                              scoring.detail(db, student_row(db, sid))["items"]]
+
+
+# ======================= 活动时间分多段 =======================
+
+def test_补录活动时间可以分几段(client, admin, db, take_student):
+    """活动线下分两段办时，时间按段记；整体起止取最早开始、最晚结束。"""
+    first = (now() - timedelta(days=8)).replace(hour=9, minute=0, second=0,
+                                                microsecond=0)
+    second = (now() - timedelta(days=5)).replace(hour=14, minute=0, second=0,
+                                                 microsecond=0)
+    aid = _create(client, admin, held_periods=[
+        {"start_time": first.isoformat(), "end_time": (first + timedelta(hours=2)).isoformat()},
+        {"start_time": second.isoformat(),
+         "end_time": (second + timedelta(hours=3)).isoformat()},
+    ])
+    act = db.get(Activity, aid)
+    assert len(act.held_periods) == 2
+    d = client.get(f"/api/activities/{aid}", headers=admin).json()
+    assert len(d["held_periods"]) == 2
+    assert f"{first:%m-%d}" in d["time_text"] and f"{second:%m-%d}" in d["time_text"]
+
+    # 修改时也能整组换掉
+    moved = first + timedelta(days=1)
+    r = client.patch(f"/api/staff/activities/{aid}", headers=admin, json={
+        "held_periods": [{"start_time": moved.isoformat(),
+                          "end_time": (moved + timedelta(hours=2)).isoformat()}]})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(Activity, aid).held_periods[0]["start_time"] == moved.isoformat(
+        timespec="minutes")
+
+    # 导入名单时，明细写各段的说法，服务日期取第一段
+    assert _submit_and_approve(client, admin, aid)["status"] == "finished"
+    sid = take_student()
+    assert _import(client, admin, aid, f"{sid} 2").status_code == 200
+    rec = db.query(HoursRecord).filter(HoursRecord.activity_id == aid).one()
+    seg = rec.segments[0]
+    assert seg.date == moved.date() and f"{moved:%m-%d}" in seg.time_text
+
+    # 提示分按最后一段结束时间加分
+    event = next(x for x in scoring.detail(db, student_row(db, sid))["items"]
+                 if x["label"] == "顺利参与")
+    assert event["at"] == iso(moved + timedelta(hours=2))

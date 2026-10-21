@@ -60,7 +60,8 @@ def _activity(db, title, start=None, end=None, *, status="finished",
     db.flush()
     g = None
     if mode == "record":
-        act.held_start, act.held_end = start, end
+        act.held_periods = [{"start_time": start.isoformat(timespec="minutes"),
+                             "end_time": end.isoformat(timespec="minutes")}]
     elif shift:
         g = mk_shift(id=uid("g"), activity_id=act.id, name="上午场", mode="pick",
                   start_time=start, end_time=end, sort=0)

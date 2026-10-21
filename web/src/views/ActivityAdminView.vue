@@ -1932,7 +1932,7 @@ const mh = ref({ userIds: [], sign: 'add', hours: 0.5, note: '', date: '' })
  */
 function serviceDateOf(a) {
   const first = a?.shifts?.[0]
-  const raw = first?.start_time || a?.held_start || ''
+  const raw = first?.start_time || a?.held_periods?.[0]?.start_time || ''
   return String(raw).slice(0, 10)
 }
 

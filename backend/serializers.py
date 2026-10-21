@@ -336,9 +336,11 @@ def _brief_public(act: Activity, counts: dict) -> dict:
         "time_start": iso_of(span[0]) if span else None,
         "time_end": iso_of(span[1]) if span else None,
         "reg_start": iso_of(act.reg_start), "reg_end": iso_of(act.reg_end),
-        # 补记录活动（不公开招募）：没有场次，活动时间直接填在这两项上
+        # 补记录活动（不公开招募）：没有场次，活动时间直接填在这几段上
         "record_only": act.is_record(),
-        "held_start": iso_of(act.held_start), "held_end": iso_of(act.held_end),
+        "held_periods": [{"start_time": iso_of(x.start_time),
+                          "end_time": iso_of(x.end_time)}
+                         for x in act.held_rows()],
         "contacts": act.contacts or [],
         "editing": act.editing_since is not None,
         "pinned": act.pinned_at is not None,

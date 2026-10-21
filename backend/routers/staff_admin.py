@@ -261,12 +261,12 @@ def _archive(db: OrmSession, u: User) -> dict:
                    .join(Activity, HoursRecord.activity_id == Activity.id)
                    .filter(HoursRecord.user_id == u.id,
                            Activity.recruit_mode == config.RECORD_MODE).all()):
-        start = a.held_start or rec.created_at
+        rows = a.held_rows()
+        start = rows[0].start_time if rows else rec.created_at
         dated.append((start, {
             "enrollment_id": f"rec_{rec.id}", "activity_id": a.id,
             "activity_title": a.title, "shift_name": "补记录",
-            "time_text": (span_text(a.held_start, a.held_end)
-                          if a.held_start and a.held_end else ""),
+            "time_text": a.held_text() if rows else "",
             "status": "recorded", "cancel_type": "", "checked_in": True,
         }))
     dated.sort(key=lambda x: x[0], reverse=True)
