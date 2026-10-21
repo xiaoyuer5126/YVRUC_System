@@ -383,7 +383,7 @@ def apply(activity_id: str, body: ApplyBody,
             if unmet:
                 raise HTTPException(
                     403, f"您不满足「{p.name}」的报名条件：{'；'.join(unmet)}")
-        hit = logic.conflicts_among(rows, g.id, g.start_time, g.end_time)
+        hit = logic.conflicts_among(rows, g)
         if hit and not clashes:
             where = g.name
         clashes += hit
@@ -627,7 +627,7 @@ def _check_clash(db: OrmSession, act: Activity, u: User, rows: list[Enrollment],
     clashes, parts = [], []
     for i, (_ta, a, _pa) in enumerate(chosen):
         for tb, b, _pb in chosen[i + 1:]:
-            if logic.overlaps(a.start_time, a.end_time, b.start_time, b.end_time):
+            if logic.periods_overlap(a.periods, b.periods):
                 parts.append(f"选中的「{a.name}」（{a.span_text()}）与"
                              f"「{b.name}」（{b.span_text()}）时间重叠")
                 clashes.append({"enrollment_id": tb.id, "activity_id": act.id,
@@ -637,7 +637,7 @@ def _check_clash(db: OrmSession, act: Activity, u: User, rows: list[Enrollment],
     own = {e.id for e in rows}
     others = [r for r in logic.active_rows(db, u) if r[0].id not in own]
     for _t, g, _p in chosen:
-        hit = logic.conflicts_among(others, g.id, g.start_time, g.end_time)
+        hit = logic.conflicts_among(others, g)
         if hit:
             parts.append(f"「{g.name}」与{logic.conflict_message(hit, act.id)}冲突")
             clashes += hit

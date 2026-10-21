@@ -386,8 +386,7 @@ def _check_time_conflicts(rows, g: Shift, attached: list[Shift]) -> None:
     """
     clashes, where = [], ""
     for target in [g] + attached:
-        hit = logic.conflicts_among(rows, target.id, target.start_time,
-                                    target.end_time)
+        hit = logic.conflicts_among(rows, target)
         if hit and not clashes and target is not g:
             where = f"（{target.kind_label()}：{target.name}）"
         clashes += hit

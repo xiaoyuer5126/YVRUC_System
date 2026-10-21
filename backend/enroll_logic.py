@@ -22,13 +22,13 @@ from typing import NamedTuple
 
 from fastapi import HTTPException
 from sqlalchemy import case, func, or_, select
-from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy.orm import Session as OrmSession, selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
 from . import config
 from .integrations import msgcenter
-from .models import (Activity, CheckinRecord, Enrollment, Shift, Position,
-                     User, now, uid)
+from .models import (Activity, CheckinRecord, Enrollment, Shift, ShiftPeriod,
+                     Position, User, now, uid)
 
 # 申请中的场次同样占着时段：申请时就提示冲突，不等录取
 ACTIVE = ("applied", "enrolled", "waitlisted", "pending_confirm")
@@ -40,33 +40,40 @@ def overlaps(a1, a2, b1, b2) -> bool:
 
 
 def active_rows(db: OrmSession, user: User) -> list[tuple]:
-    """该用户全部有效报名（跨活动），连同场次与活动。
+    """该用户全部有效报名（跨活动），连同场次、时段与活动。
 
     活动详情页要拿它和本活动的每个场次各比一遍：逐场次去查就是一个场次
     一条 SQL，查一次在内存里比就够了——见 conflicts_among。
     """
     return (db.query(Enrollment, Shift, Activity)
+            .options(selectinload(Shift.periods))
             .join(Shift, Enrollment.shift_id == Shift.id)
             .join(Activity, Enrollment.activity_id == Activity.id)
             .filter(Enrollment.user_id == user.id,
                     Enrollment.status.in_(ACTIVE)).all())
 
 
+def periods_overlap(left: list[ShiftPeriod],
+                    right: list[ShiftPeriod]) -> bool:
+    """两组时段里任意两段是否重叠。一个场次有几个时段就比几段，不拿整段跨度比：
+    10-25~28 与 10-31~11-03 之间空着的那几天不该算冲突。"""
+    return any(overlaps(a.start_time, a.end_time, b.start_time, b.end_time)
+               for a in left for b in right)
+
+
 def time_conflicts(db: OrmSession, user: User,
                    target: Shift) -> list[dict]:
-    """该用户有效报名中与 target 组时间段重叠的记录（跨活动）。"""
-    return conflicts_among(active_rows(db, user), target.id,
-                           target.start_time, target.end_time)
+    """该用户有效报名中与 target 的时段重叠的记录（跨活动）。"""
+    return conflicts_among(active_rows(db, user), target)
 
 
-def conflicts_among(rows, target_id: str, start: datetime,
-                    end: datetime) -> list[dict]:
-    """在 active_rows 查回来的报名里挑出与 [start, end) 重叠的（本场次自己除外）。"""
+def conflicts_among(rows, target: Shift) -> list[dict]:
+    """在 active_rows 查回来的报名里挑出与 target 的时段重叠的（本场次自己除外）。"""
     out = []
     for enr, g, act in rows:
-        if enr.shift_id == target_id:
+        if enr.shift_id == target.id:
             continue
-        if overlaps(g.start_time, g.end_time, start, end):
+        if periods_overlap(g.periods, target.periods):
             out.append({
                 "enrollment_id": enr.id, "activity_id": act.id,
                 "activity_title": act.title, "shift_name": g.name,
@@ -74,6 +81,11 @@ def conflicts_among(rows, target_id: str, start: datetime,
                 "waiting": enr.status != "enrolled",
             })
     return out
+
+
+def clash_with(pairs: list[tuple[Shift, Shift]]) -> bool:
+    """两两之间有没有时段重叠（录取时比选中的几场）。"""
+    return any(periods_overlap(a.periods, b.periods) for a, b in pairs)
 
 
 def enroll_deadline(act: Activity, shift: Shift) -> datetime:
@@ -379,8 +391,8 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
         whole_shift（报的是占位岗位）时按整场数，同 has_room；
       · 候补：waitlist_rows——waitlisted + pending_confirm，限本场次本岗位。
         待确认既占名额又在队列里，两边都算；
-      · 冲突：time_conflicts——本人 ACTIVE 的报名，场次与 targets 里任一场
-        （主场次和它的培训/彩排）区间重叠，比某一场时不算那一场自己。
+      · 冲突：time_conflicts——本人 ACTIVE 的报名，时段与 targets 里任一场
+        （主场次和它的培训/彩排）的任一时段重叠，比某一场时不算那一场自己。
         这里只要「有没有」；真有的话调用方再走 active_rows 拼出详细的提示，
         那是少见的路径，常见路径省下一个往返。本人已确认冲突仍要报时，调用方
         不看这一项。
@@ -391,14 +403,18 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
     seats = (Enrollment.shift_id == shift_id) if whole_shift else at_pos
     editing = (select(Activity.editing_since.isnot(None))
                .where(Activity.id == activity_id).scalar_subquery())
+    target_ids = [t.id for t in targets]
+    against = (select(ShiftPeriod.start_time, ShiftPeriod.end_time)
+               .where(ShiftPeriod.shift_id.in_(target_ids)).subquery())
     clash = (select(Enrollment.id)
              .join(Shift, Enrollment.shift_id == Shift.id)
+             .join(ShiftPeriod, ShiftPeriod.shift_id == Shift.id)
              .where(Enrollment.user_id == user_id,
                     Enrollment.status.in_(ACTIVE),
-                    or_(*[(Enrollment.shift_id != t.id)
-                          & (Shift.start_time < t.end_time)
-                          & (Shift.end_time > t.start_time)
-                          for t in targets]))
+                    Enrollment.shift_id.notin_(target_ids),
+                    select(1).where(
+                        against.c.start_time < ShiftPeriod.end_time,
+                        against.c.end_time > ShiftPeriod.start_time).exists())
              .exists())
     gone = ~select(Position.id).where(Position.id == position_id).exists()
     flags = ([select(getattr(Shift, c)).where(Shift.id == shift_id).scalar_subquery()
@@ -774,23 +790,23 @@ def confirm_deadline_from(start: datetime) -> datetime:
 
 
 def promote_confirm_deadline(start: datetime, shift: Shift) -> datetime:
-    """转正确认窗的截止时间：夜间不计时（confirm_deadline_from），再按场次封顶。
+    """转正确认窗的截止时间：夜间不计时（confirm_deadline_from），再按
+    **下一个还没结束的时段**封顶。
 
     封顶规则：
-      · 场次还没开始 → 截止不晚于场次开始。手动转正可能贴着开场（比如开场前
-        1 小时、或前一晚 23 点后转正），过了开场还在等确认没有意义——人要么
-        来了，要么位子该让负责人另想办法。窗口因此可能短于 2 小时，这是负责人
-        选择贴近开场转正的代价，通知里写的是封顶后的时间，本人看得到。
-      · 场次已经开始（活动进行中手动补人）→ 不晚于场次结束；
-      · 场次也已结束 → 不封顶，照常给满窗口（封到过去就等于一转正就超时，
+      · 下一段还没开始 → 截止不晚于这一段开始。手动转正可能贴着开场（比如
+        开场前 1 小时、或前一晚 23 点后转正），过了开场还在等确认没有意义——
+        人要么来了，要么位子该让负责人另想办法。窗口因此可能短于 2 小时，
+        这是负责人选择贴近开场转正的代价，通知里写的是封顶后的时间。
+      · 正处在一段里（活动进行中手动补人）→ 不晚于这一段结束；
+      · 各段都已结束 → 不封顶，照常给满窗口（封到过去就等于一转正就超时，
         白白记本人一次放弃）。
     """
     deadline = confirm_deadline_from(start)
-    if shift.start_time > start:
-        return min(deadline, shift.start_time)
-    if shift.end_time and shift.end_time > start:
-        return min(deadline, shift.end_time)
-    return deadline
+    nxt = shift.next_period(start)
+    if nxt is None:
+        return deadline
+    return min(deadline, nxt.start_time if nxt.start_time > start else nxt.end_time)
 
 
 def start_confirm(db: OrmSession, enr: Enrollment, shift: Shift) -> Enrollment:
