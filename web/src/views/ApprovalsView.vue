@@ -277,6 +277,14 @@
                它可能有好几行，换行的样式在 styles.css 的 .dept-popper 里 -->
           <el-select v-model="tr.deptId" placeholder="选择部门（活动归口随之改为该部门）"
                      popper-class="dept-popper" style="width:100%" clearable>
+            <el-option value="council" label="会长团（内部活动，不归部门）">
+              <div class="dept-opt">
+                <div>会长团 <span class="dim">内部活动，不归部门</span></div>
+                <div class="dept-opt-note">
+                  转回会长团后归口存空，不收立项书、结项书；待办通知只发会长。
+                </div>
+              </div>
+            </el-option>
             <el-option v-for="d in depts" :key="d.id" :value="d.id"
                        :label="d.name + (d.head_name ? `（部长 ${d.head_name}）` : '（未设部长）')"
                        :disabled="!d.has_head">
@@ -496,10 +504,14 @@ async function submitTransfer() {
   const t = tr.value
   if (!t.deptId && !t.studentId.trim()) return ElMessage.warning('请选择部门或指定人')
   if (t.reason.trim().length < 2) return ElMessage.warning('请写明转交理由')
+  // 会长团占的是同一个下拉：转它时归口存空，按内部活动审批
+  const toCouncil = t.deptId === 'council'
   t.busy = true
   try {
     const d = await api.post(`/api/staff/activities/${t.row.id}/transfer-approval`,
-      { department_id: t.deptId, student_id: t.studentId, reason: t.reason })
+      { department_id: toCouncil ? '' : t.deptId,
+        student_id: toCouncil ? '' : t.studentId,
+        to_council: toCouncil, reason: t.reason })
     ElMessage.success(`已转交给 ${d.assignee}`)
     t.visible = false
     load()

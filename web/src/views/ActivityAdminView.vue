@@ -1348,6 +1348,14 @@
                必须能换行，不然会把下拉撑破，右边直接看不见 -->
           <el-select v-model="submitDlg.deptId" placeholder="选择归属部门"
                      popper-class="dept-popper" style="width:100%">
+            <el-option value="council" label="会长团（内部活动，不归部门）">
+              <div class="dept-opt">
+                <div>会长团 <span class="dim">内部活动，不归部门</span></div>
+                <div class="dept-opt-note">
+                  待办通知只发会长，其他会长团成员也能审批；不收立项书、结项书。
+                </div>
+              </div>
+            </el-option>
             <el-option v-for="d in depts" :key="d.id" :value="d.id" :disabled="!d.has_head"
                        :label="d.name + (d.head_name ? `（部长 ${d.head_name}）` : '（未设部长）')">
               <div class="dept-opt">

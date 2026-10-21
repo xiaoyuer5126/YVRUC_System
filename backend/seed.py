@@ -142,6 +142,7 @@ def main() -> None:
         # 12 个部门由迁移铺好（见 migrations/versions/*_seed_departments.py）
         from backend.models import Department
         zhang.qingxie_post = "council"
+        zhang.is_president = True          # 演示数据里张远航是会长
         wang.qingxie_post = "council"      # 管理员同时在会长团
         liaison = (db.query(Department)
                    .filter(Department.name == "对外联络部").one())

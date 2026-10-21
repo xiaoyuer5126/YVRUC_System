@@ -32,13 +32,34 @@ router = APIRouter(prefix="/api/staff", tags=["approvals"])
 
 _dept_head = liaison.dept_head
 
+# 提交审批时归口选它：归口存空，按内部活动审批，不走部门部长，也不收立项书
+COUNCIL_DEPT = "council"
+
+
+def _council_contacts(db: OrmSession) -> list[User]:
+    """会长团审批的待办通知对象：标了会长只发他；没标（换届空档）发全体会长团。
+    其他会长团成员照样能在审批页看到并批。"""
+    from .staff_ops import council_members
+    rows = council_members(db)
+    return [u for u in rows if u.is_president] or rows
+
+
+def _dept_text(act: Activity, dept: Department | None) -> str:
+    """归口怎么说。归口存空 = 会长团（见 submit）；还没提交过的草稿不显示。"""
+    if dept is not None:
+        return dept.name
+    return ("会长团" if act.approval_dept_id is None
+            and (act.status != "draft" or act.submitted_at) else "")
+
 
 def assignee_text(db: OrmSession, act: Activity) -> str:
     """「等谁审批」显示的名字。审批挂在归口部门的部长名下时，本部门任一部长都能拍，
     列出全部在岗部长（顿号连接）；只写挂名的那一位，别的部长会以为这事不归自己。"""
     who = db.get(User, act.approval_assignee_id) if act.approval_assignee_id else None
     if who is None:
-        return ""
+        # 会长团名下没有具体审批人：显示整个组织，不能留白
+        return ("会长团" if act.approval_dept_id is None
+                and (act.status != "draft" or act.submitted_at) else "")
     if (act.approval_dept_id and who.department_id == act.approval_dept_id
             and who.qingxie_post == "head"):
         heads = liaison.dept_heads(db, act.approval_dept_id)
@@ -77,6 +98,20 @@ def can_review(db: OrmSession, user: User, act: Activity) -> bool:
     return db.query(ApprovalEvent).filter(
         ApprovalEvent.activity_id == act.id,
         ApprovalEvent.actor_id == user.id).first() is not None
+
+
+def _event_to(db: OrmSession, e: ApprovalEvent, dept: Department | None,
+              dept_names: dict[str, str]) -> str:
+    """流水里「交给谁」怎么写。提交写归口（空 = 会长团），转交写具体人；
+    转回会长团没有具体人，写会长团。"""
+    if e.kind == "submit":
+        return dept_names.get(e.dept_id, "") if e.dept_id else "会长团"
+    if e.to_user_id:
+        who = db.get(User, e.to_user_id)
+        return who.name if who else ""
+    if e.kind == "transfer" and e.dept_id is None:
+        return "会长团"
+    return ""
 
 
 def _event(db: OrmSession, act: Activity, kind: str, actor: User, **kw) -> None:
@@ -246,9 +281,38 @@ def submit_check(activity_id: str, db: OrmSession = Depends(db_session),
 
 
 class SubmitBody(BaseModel):
-    department_id: str = ""      # 留空 = 沿用活动的归口部门
+    department_id: str = ""      # 留空 = 沿用活动的归口部门；council = 会长团
     note: str = ""
     auto_publish: bool = True    # 通过即发布；不勾就停在「待发布」
+
+
+def _submit_council(db: OrmSession, act: Activity, user: User,
+                    body: SubmitBody) -> dict:
+    """归口会长团：不要求部门部长，归口存空，按内部活动审批——
+    立项书、结项书都不收。待办通知只发会长，其他会长团成员照样能批。"""
+    contacts = _council_contacts(db)
+    if not contacts:
+        raise HTTPException(400, "还没有会长团成员，不能提交会长团审批")
+    act.status = "pending"
+    act.auto_publish = body.auto_publish
+    act.approval_dept_id = None
+    act.approval_assignee_id = None
+    act.approval_comment = ""
+    act.submitted_at = now()
+    act.approval_reminded_at = None
+    note = body.note.strip()
+    _event(db, act, "submit", user, dept_id=None, to_user_id=None, comment=note)
+    audit_log(db, actor=user, action="submit", target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary="提交「会长团」审批")
+    for c in contacts:
+        _notify(db, c, f"志愿活动待审批｜{act.title}",
+                f"{user.name} 提交了「{act.title}」，组织单位：{act.organizer_text()}。\n"
+                f"归口：会长团。\n"
+                + (f"备注：{note}\n" if note else "")
+                + "请到「活动审批」处理。", act, route="approvals")
+    db.commit()
+    return {"ok": True, "assignee": "会长团"}
 
 
 @router.post("/activities/{activity_id}/submit")
@@ -267,6 +331,8 @@ def submit(activity_id: str, body: SubmitBody,
     # 归口部门：这活动归哪个部门，就由那个部门的部长审。青协的人建活动时
     # 已经按所在部门预填了，提交时可以改；发起方建的在这里选。
     dept_id = body.department_id.strip() or act.approval_dept_id or ""
+    if dept_id == COUNCIL_DEPT:
+        return _submit_council(db, act, user, body)
     dept = db.get(Department, dept_id) if dept_id else None
     if dept is None:
         raise HTTPException(400, "请选择归口部门")
@@ -414,6 +480,7 @@ def decide(activity_id: str, body: DecideBody,
 class TransferBody(BaseModel):
     department_id: str = ""
     student_id: str = ""
+    to_council: bool = False       # 转回会长团：归口存空，按内部活动审批
     reason: str
 
 
@@ -424,8 +491,8 @@ def transfer(activity_id: str, body: TransferBody,
     """把审批转交给别的部门或别的人。必须写理由，三方都会收到通知。
 
     转交审批就是改归口：转给哪个部门（或哪个部门的人），活动就归那个部门，
-    部长的活动列表、部门成员的可见范围都跟着变。转给会长团（没有部门）时
-    归口不动，只是换个人拍板。
+    部长的活动列表、部门成员的可见范围都跟着变。转回会长团时归口存空，
+    按内部活动审批，不收立项书、结项书。
 
     立项书跟着归口走：从对外联络部转出去就是内部活动，已传的立项书删掉，
     免得发起方以为还要照着它走外联的流程；转进对外联络部而还没有立项书的，
@@ -443,7 +510,15 @@ def transfer(activity_id: str, body: TransferBody,
         raise HTTPException(400, "请写明转交理由")
 
     dept = act.approval_dept_id and db.get(Department, act.approval_dept_id)
-    if body.student_id.strip():
+    council_contacts: list[User] = []
+    if body.to_council:
+        if act.approval_dept_id is None and act.approval_assignee_id is None:
+            raise HTTPException(400, "这条审批已经在会长团名下")
+        council_contacts = _council_contacts(db)
+        if not council_contacts:
+            raise HTTPException(400, "还没有会长团成员，不能转交会长团")
+        dept, target, target_name = None, None, "会长团"
+    elif body.student_id.strip():
         target = db.query(User).filter(
             User.student_id == body.student_id.strip()).first()
         if target is None:
@@ -455,6 +530,7 @@ def transfer(activity_id: str, body: TransferBody,
             raise HTTPException(400, f"{target.name} 是部门成员（学习权限），不能审批")
         if target.department_id:
             dept = db.get(Department, target.department_id)
+        target_name = target.name
     elif body.department_id:
         dept = db.get(Department, body.department_id)
         if dept is None:
@@ -462,46 +538,52 @@ def transfer(activity_id: str, body: TransferBody,
         target = _dept_head(db, dept.id)
         if target is None:
             raise HTTPException(400, f"「{dept.name}」还没有指定部长")
+        target_name = target.name
     else:
-        raise HTTPException(400, "请选择要转交的部门或指定审批人")
-    if target.id == act.approval_assignee_id:
+        raise HTTPException(400, "请选择要转交的部门、指定审批人或会长团")
+    if target is not None and target.id == act.approval_assignee_id:
         raise HTTPException(400, "转交对象就是当前审批人")
 
     before = db.get(User, act.approval_assignee_id) if act.approval_assignee_id else None
     was_external = liaison.is_external(db, act)
     act.approval_dept_id = dept.id if dept else None
-    act.approval_assignee_id = target.id
+    act.approval_assignee_id = target.id if target is not None else None
     act.approval_reminded_at = None
     _event(db, act, "transfer", user, dept_id=dept.id if dept else None,
-           to_user_id=target.id, comment=reason)
+           to_user_id=target.id if target is not None else None, comment=reason)
     external = liaison.is_external(db, act)
     dropped = (liaison.drop_project_file(db, act.id, "proposal")
                if was_external and not external else None)
     need_proposal = external and liaison.project_file(db, act.id, "proposal") is None
+    to_text = dept.name if dept else "会长团"
     audit_log(db, actor=user, action="update", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"审批转交：{before.name if before else '—'} → {target.name}"
-                      f"（{dept.name if dept else '未归口'}）；理由：{reason}"
+              summary=f"审批转交：{before.name if before else '—'} → {target_name}"
+                      f"（{to_text}）；理由：{reason}"
                       + (f"；转为内部活动，立项书《{dropped.title}》已删除"
                          if dropped else ""))
-    # 转给部门的（审批人落在部长身上）通知该部门的值班人或全体部长；点名转给某人的就是他
-    contacts = [target]
-    if not body.student_id.strip() and dept is not None:
+    # 转给部门的（审批人落在部长身上）通知该部门的值班人或全体部长；点名转给某人的就是他；
+    # 转回会长团的通知同提交：标了会长只发他，没标发全体
+    if body.to_council:
+        contacts = council_contacts
+    elif not body.student_id.strip() and dept is not None:
         contacts = liaison.approval_contacts(db, dept.id) or [target]
+    else:
+        contacts = [target]
     for c in contacts:
         _notify(db, c, f"转来一条待审批｜{act.title}",
                 f"{user.name} 把「{act.title}」的审批转交给您。\n理由：{reason}"
                 + ("\n这场活动还没有上传立项书，已通知活动管理者补传。" if need_proposal else ""),
                 act, route="approvals")
     _notify(db, before, f"审批已转出｜{act.title}",
-            f"您名下的「{act.title}」已由 {user.name} 转交给 {target.name}。\n"
+            f"您名下的「{act.title}」已由 {user.name} 转交给 {target_name}。\n"
             f"理由：{reason}", act)
     from ..models import ActivityManager
     for row in db.query(ActivityManager).filter(
             ActivityManager.activity_id == act.id).all():
         _notify(db, db.get(User, row.user_id), f"审批已转交｜{act.title}",
-                f"「{act.title}」的审批已转交给 {target.name}"
-                f"（{dept.name if dept else '未归口'}）。"
+                f"「{act.title}」的审批已转交给 {target_name}"
+                f"（{to_text}）。"
                 + ("\n现在按内部活动审批，已上传的立项书已删除。" if dropped else "")
                 + ("\n对外联络部归口的活动须上传立项书：请到活动管理的「审核」页签上传，"
                    "传好后对外联络部才能审批。" if need_proposal else ""), act,
@@ -546,10 +628,12 @@ def my_approvals(db: OrmSession = Depends(db_session),
             "shifts_count": len(act.main_shifts()),
             "record_only": act.is_record(),
             "submitted_at": iso(act.submitted_at),
-            "department": dept.name if dept else "",
+            "department": _dept_text(act, dept),
             "assignee": assignee_text(db, act),
-            # 在我名下（会长团接管别人名下的那种不算）：前端据此标「当前审批人」
+            # 在我名下（会长团接管别人名下的那种不算）：前端据此标「当前审批人」。
+            # 归口会长团的没有具体审批人，会长团成员都算「在名下」，不挂这个标签
             "mine": (act.approval_assignee_id == user.id
+                     or (act.approval_dept_id is None and user.has_full_access())
                      or ((liaison.is_dept_handler(db, user, act.approval_dept_id)
                           or liaison.is_head_of(user, dept))
                          and _in_dept(db, act))),
@@ -580,7 +664,7 @@ def approval_detail(activity_id: str, db: OrmSession = Depends(db_session),
     dept_names = {d.id: d.name for d in db.query(Department).all()}
     return {
         "status": act.status, "status_label": act.label_status(),
-        "department": dept.name if dept else "",
+        "department": _dept_text(act, dept),
         "assignee": assignee_text(db, act),
         # 启用值班的部门：通知实际发给了谁（管理者看「等谁处理」要看这个）
         "on_duty": (d.name if (d := liaison.on_duty(db, dept)) else ""),
@@ -590,10 +674,7 @@ def approval_detail(activity_id: str, db: OrmSession = Depends(db_session),
             "kind": e.kind, "kind_label": e.kind_label(),
             "actor": (db.get(User, e.actor_id).name
                       if db.get(User, e.actor_id) else "?"),
-            "to": (dept_names.get(e.dept_id, dept.name if dept else "")
-                   if e.kind == "submit" else
-                   (db.get(User, e.to_user_id).name
-                    if e.to_user_id and db.get(User, e.to_user_id) else "")),
+            "to": _event_to(db, e, dept, dept_names),
             "comment": e.comment, "created_at": iso(e.created_at),
         } for e in rows],
     }

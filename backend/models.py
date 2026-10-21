@@ -140,6 +140,9 @@ class User(Base):
     # 只对 qingxie_post="member" 有意义。
     supervisor_id: Mapped[str | None] = mapped_column(
         String(32), nullable=True, index=True)
+    # 会长团里标一位「会长」：会长团审批的待办通知只发他，其他会长团成员照样
+    # 能在审批页看到并批。换届时在角色管理里改标；不标就通知全体会长团。
+    is_president: Mapped[bool] = mapped_column(Boolean, default=False)
     # 会长团可配置的超时催办接收部门范围（空列表 = 全部部门）
     remind_dept_ids: Mapped[list] = mapped_column(JSON, default=list)
 
