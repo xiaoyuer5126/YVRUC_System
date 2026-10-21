@@ -127,7 +127,7 @@ def test_时长按段累加(client, admin, db, take_student):
     db.commit()
 
     rows = client.get(f"/api/staff/activities/{act.id}/hours",
-                      headers=admin).json()
+                      headers=admin).json()["items"]
     mine = next(x for x in rows if x["user"]["id"] == u.id)
     assert len(mine["parts"]) == 2
     assert sum(p["hours"] for p in mine["parts"]) == pytest.approx(4.83, abs=0.01)
