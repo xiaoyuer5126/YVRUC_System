@@ -20,9 +20,10 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Index,
                         Integer, String, Text, UniqueConstraint, event, func,
                         inspect as sa_inspect, select, text)
+from sqlalchemy.ext.hybrid import hybrid_property
 # 会话类在这里叫 OrmSession：本模块还有一个自己的 Session（登录会话那张表），
 # 直接用 Session 这个名字会被它盖掉
-from sqlalchemy.orm import (Mapped, Session as OrmSession, column_property,
+from sqlalchemy.orm import (Mapped, Session as OrmSession,
                             mapped_column, object_session, relationship)
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -701,14 +702,27 @@ class Shift(Base):
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
     # 跨度：最早一段开始 / 最晚一段结束。由时段派生，库里不另存。
-    start_time = column_property(
-        select(func.min(ShiftPeriod.start_time))
-        .where(ShiftPeriod.shift_id == id)
-        .correlate_except(ShiftPeriod).scalar_subquery())
-    end_time = column_property(
-        select(func.max(ShiftPeriod.end_time))
-        .where(ShiftPeriod.shift_id == id)
-        .correlate_except(ShiftPeriod).scalar_subquery())
+    # 用 hybrid：在内存里直接读时段（刚建好、还没落库的场次也有值），
+    # 在 SQL 里变成相关子查询，筛选、排序照常写 Shift.start_time。
+    @hybrid_property
+    def start_time(self):
+        return min((p.start_time for p in self.periods), default=None)
+
+    @start_time.expression
+    def start_time(cls):
+        return (select(func.min(ShiftPeriod.start_time))
+                .where(ShiftPeriod.shift_id == cls.id)
+                .correlate_except(ShiftPeriod).scalar_subquery())
+
+    @hybrid_property
+    def end_time(self):
+        return max((p.end_time for p in self.periods), default=None)
+
+    @end_time.expression
+    def end_time(cls):
+        return (select(func.max(ShiftPeriod.end_time))
+                .where(ShiftPeriod.shift_id == cls.id)
+                .correlate_except(ShiftPeriod).scalar_subquery())
     location: Mapped[str] = mapped_column(String(128), default="")
     mode: Mapped[str] = mapped_column(String(12), default="pick")
     # —— 培训/彩排 ——

@@ -117,7 +117,6 @@ def set_shift_time(db, g, start=None, end=None):
         p.start_time = start
     if end is not None:
         p.end_time = end
-    db.expire(g, ["start_time", "end_time"])
 
 
 @pytest.fixture

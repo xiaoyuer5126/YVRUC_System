@@ -1167,8 +1167,6 @@ def _set_periods(db: OrmSession, g: Shift, rows: list[dict]) -> None:
             g.periods.append(ShiftPeriod(id=uid("sp"), shift_id=g.id,
                                          sort=i, **row))
     db.flush()
-    # 跨度是按库里时段算出来的：换过时段后要让下次读取重新查一遍
-    db.expire(g, ["start_time", "end_time"])
 
 
 def _validate_flexible_hours(g: Shift) -> None:
