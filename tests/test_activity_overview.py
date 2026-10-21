@@ -6,6 +6,7 @@ from datetime import timedelta
 from backend.models import (Activity, ActivityManager, CheckinRecord, CheckinTask,
                             Enrollment, HoursRecord, Position, Shift,
                             ViolationRecord, day_of, now, uid)
+from conftest import mk_shift
 from conftest import ADMIN, POSITION_TEXT, login, student_row
 from test_query_budget import sql_of
 
@@ -27,7 +28,7 @@ def _activity(db, **kw) -> Activity:
 
 
 def _shift(db, act, name, start, **kw) -> Shift:
-    g = Shift(id=uid("g"), activity_id=act.id, name=name, start_time=start,
+    g = mk_shift(id=uid("g"), activity_id=act.id, name=name, start_time=start,
               end_time=start + timedelta(hours=3), **kw)
     db.add(g)
     db.flush()
@@ -52,7 +53,7 @@ def _enr(db, act, g, p, u, status="enrolled", **kw) -> Enrollment:
 
 def _checkin(db, act, g, task, u, out=False):
     db.add(CheckinRecord(id=uid("ck"), task_id=task.id, activity_id=act.id,
-                         shift_id=g.id, user_id=u.id,
+                         shift_id=g.id, period_id=g.periods[0].id, user_id=u.id,
                          checkin_at=now() - timedelta(minutes=30),
                          checkout_at=now() if out else None))
 
@@ -93,6 +94,7 @@ def test_概况各项数字(client, admin, db, take_student):
     _enr(db, act, tr, None, u3)
 
     task = CheckinTask(id=uid("ct"), activity_id=act.id, shift_id=s1.id,
+                       period_id=s1.periods[0].id,
                        token=uid("t")[-12:], created_by=u1.id)
     db.add(task)
     db.flush()
@@ -165,6 +167,7 @@ def _crowd(db, take_student, n: int) -> str:
         g = _shift(db, act, f"场次{k}", now() - timedelta(days=next(_days) % 7 + 1),
                    mode="pick", sort=k)
         task = CheckinTask(id=uid("ct"), activity_id=act.id, shift_id=g.id,
+                           period_id=g.periods[0].id,
                            token=uid("t")[-12:], created_by=act.created_by)
         db.add(task)
         db.flush()

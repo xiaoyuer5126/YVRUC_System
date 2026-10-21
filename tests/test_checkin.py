@@ -11,6 +11,7 @@ from backend import config
 from backend.locks import CHECKIN_CODE_LEN
 from backend.models import (Activity, ActivityManager, CheckinRecord, CheckinTask,
                             Enrollment, Position, Shift, User, now, uid)
+from conftest import mk_shift
 from conftest import ADMIN, login, student_row
 
 
@@ -28,7 +29,7 @@ def live_group(client, db, admin, take_student):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin_user.id, added_by=admin_user.id))
-    g = Shift(id=uid("g"), activity_id=act.id, name="进行中场次",
+    g = mk_shift(id=uid("g"), activity_id=act.id, name="进行中场次",
               start_time=now() - timedelta(minutes=30),
               end_time=now() + timedelta(hours=3),
               mode="pick", sort=0)
@@ -129,13 +130,13 @@ def two_shift_act(client, db, admin):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin_user.id, added_by=admin_user.id))
-    am = Shift(id=uid("g"), activity_id=act.id, name="上午场",
+    am = mk_shift(id=uid("g"), activity_id=act.id, name="上午场",
                start_time=now() + timedelta(days=2),
                end_time=now() + timedelta(days=2, hours=4), mode="pick", sort=0)
     db.add(am)
     db.flush()
     db.add(Position(id=uid("p"), shift_id=am.id, name="引导", quota=5, sort=0))
-    train = Shift(id=uid("g"), activity_id=act.id, name="赛前培训",
+    train = mk_shift(id=uid("g"), activity_id=act.id, name="赛前培训",
                   kind="training",
                   start_time=now() + timedelta(days=1),
                   end_time=now() + timedelta(days=1, hours=2),
@@ -1022,8 +1023,8 @@ def test_时间灵活场次时长不能按场次时长固定计(client, admin, d
     act_id = r.json()["id"]
     start = now() + timedelta(days=3)
     body = {"name": "长期", "mode": "assign", "capacity": 5, "flexible_time": True,
-            "start_time": start.isoformat(),
-            "end_time": (start + timedelta(days=30)).isoformat()}
+            "periods": [{"start_time": start.isoformat(),
+            "end_time": (start + timedelta(days=30)).isoformat()}]}
     r = client.post(f"/api/staff/activities/{act_id}/shifts", headers=admin,
                     json={**body, "hours_mode": "fixed"})
     assert r.status_code == 400 and "固定" in r.json()["detail"]

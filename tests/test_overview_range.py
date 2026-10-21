@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from backend.models import (Activity, Enrollment, HoursRecord, Shift, day_of, now,
                             uid)
+from conftest import mk_shift
 from conftest import ADMIN, login, student_row
 
 COUNCIL = "2025003"      # 张远航，会长团：进得了数据总览
@@ -27,7 +28,7 @@ def _activity(db, title, start, end, *, status="finished"):
                    created_by=student_row(db, ADMIN).id)
     db.add(act)
     db.flush()
-    g = Shift(id=uid("g"), activity_id=act.id, name="上午场", mode="pick",
+    g = mk_shift(id=uid("g"), activity_id=act.id, name="上午场", mode="pick",
               start_time=start, end_time=end, sort=0)
     db.add(g)
     db.commit()

@@ -21,6 +21,7 @@ from backend.exporter import SUMMARY_NOTES
 from backend.models import (Activity, AuditLog, Department, Enrollment,
                             HoursRecord, Notification, Position, Shift,
                             ViolationRecord, day_of, now, uid)
+from conftest import mk_shift
 from conftest import ADMIN, dl_url, login, student_row
 
 COUNCIL = "2025003"    # 张远航，会长团：数据总览这一页的另一个身份
@@ -61,7 +62,7 @@ def _activity(db, title, start=None, end=None, *, status="finished",
     if mode == "record":
         act.held_start, act.held_end = start, end
     elif shift:
-        g = Shift(id=uid("g"), activity_id=act.id, name="上午场", mode="pick",
+        g = mk_shift(id=uid("g"), activity_id=act.id, name="上午场", mode="pick",
                   start_time=start, end_time=end, sort=0)
         db.add(g)
     db.commit()
@@ -152,7 +153,7 @@ def test_人数按人去重而人次是报名条数(client, db, take_student):
     """一个人报两个场次：人数算一个、人次算两个（都数服务场次的报名）。"""
     admin = login(client, ADMIN)
     act, morning = _activity(db, "汇总六月两场", dt("06-03 09:00"), dt("06-03 12:00"))
-    afternoon = Shift(id=uid("g"), activity_id=act.id, name="下午场", mode="pick",
+    afternoon = mk_shift(id=uid("g"), activity_id=act.id, name="下午场", mode="pick",
                       start_time=dt("06-03 14:00"), end_time=dt("06-03 17:00"),
                       sort=1)
     db.add(afternoon)

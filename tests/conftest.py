@@ -96,6 +96,30 @@ INITIATOR = "2025002"    # 李慕清，活动发起方（只管自己的活动�
 QINGXIE = "2025003"      # 张远航，青协
 
 
+def mk_shift(*, start_time=None, end_time=None, periods=None, **kw):
+    """用例里建一个场次：给了起止就当作一个精确时段；要多时段就传 periods。
+
+    场次的时间现在挂在时段上，直接 Shift(start_time=…) 是建不出时间的。
+    """
+    from backend.models import Shift, ShiftPeriod, uid
+
+    g = Shift(**kw)
+    rows = periods or [{"start_time": start_time, "end_time": end_time}]
+    for i, p in enumerate(rows):
+        g.periods.append(ShiftPeriod(id=uid("sp"), shift_id=g.id, sort=i, **p))
+    return g
+
+
+def set_shift_time(db, g, start=None, end=None):
+    """改一个单时段场次的起止（用例里模拟时间已经过去）。"""
+    p = g.periods[0]
+    if start is not None:
+        p.start_time = start
+    if end is not None:
+        p.end_time = end
+    db.expire(g, ["start_time", "end_time"])
+
+
 @pytest.fixture
 def client():
     with TestClient(app) as c:
@@ -183,10 +207,10 @@ def open_group(db, open_group_days):
         db.add(act)
         db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                                user_id=admin.id, added_by=admin.id))
-        g = Shift(id=uid("g"), activity_id=act.id, name="测试场次",
-                  start_time=now() + start,
-                  end_time=now() + start + timedelta(hours=3),
-                  mode=mode, sort=0, lock_hours=lock_hours)
+        g = mk_shift(id=uid("g"), activity_id=act.id, name="测试场次",
+                     start_time=now() + start,
+                     end_time=now() + start + timedelta(hours=3),
+                     mode=mode, sort=0, lock_hours=lock_hours)
         db.add(g)
         db.flush()
         # 名额一律在岗位上。assign 模式的场次带的是「待分配」占位岗位——
@@ -278,10 +302,10 @@ def make_enrolled_activity(db, take_student):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin_user.id, added_by=admin_user.id))
-    shift = Shift(id=uid("s"), activity_id=act.id, name="上午场",
-                  start_time=now() + timedelta(days=3),
-                  end_time=now() + timedelta(days=3, hours=4),
-                  mode="pick", sort=0)
+    shift = mk_shift(id=uid("s"), activity_id=act.id, name="上午场",
+                     start_time=now() + timedelta(days=3),
+                     end_time=now() + timedelta(days=3, hours=4),
+                     mode="pick", sort=0)
     db.add(shift)
     db.flush()
     pos = Position(id=uid("p"), shift_id=shift.id, name="引导", quota=5,
@@ -466,8 +490,8 @@ def make_draft(client, headers, *, proposal: bool = True) -> str:
     aid = r.json()["id"]
     r = client.post(f"/api/staff/activities/{aid}/shifts", headers=headers,
                     json={"name": "上午场", "mode": "pick",
-                          "start_time": (now() + timedelta(days=9)).isoformat(),
-                          "end_time": (now() + timedelta(days=9, hours=3)).isoformat()})
+                          "periods": [{"start_time": (now() + timedelta(days=9)).isoformat(),
+                          "end_time": (now() + timedelta(days=9, hours=3)).isoformat()}]})
     assert r.status_code == 200, r.text
     r = client.post(f"/api/staff/shifts/{r.json()['id']}/positions", headers=headers,
                     json={"name": "引导", "quota": 3, **POSITION_TEXT})

@@ -84,8 +84,9 @@ def test_创建不要联络群和报名时间_要活动时间(client, admin, db)
 
     # 不建场次、不设问卷、不发布
     r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
-                    json={"name": "x", "start_time": now().isoformat(),
-                          "end_time": (now() + timedelta(hours=1)).isoformat()})
+                    json={"name": "x",
+                          "periods": [{"start_time": now().isoformat(),
+                          "end_time": (now() + timedelta(hours=1)).isoformat()}]})
     assert r.status_code == 409 and "不设场次" in r.json()["detail"]
     r = client.put(f"/api/staff/activities/{aid}/form", headers=admin,
                    json={"questions": []})

@@ -14,6 +14,7 @@ from backend import config
 from backend.models import (Activity, ActivityManager, Position, Shift, User,
                             now, uid)
 from backend.qrcodes import qr_svg
+from conftest import mk_shift
 from conftest import ADMIN, POSITION_TEXT
 
 # TestClient 的默认 base_url；不传 base 时后端按请求头兜底出来的就是它
@@ -33,7 +34,7 @@ def qr_activity(client, admin, db):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin_user.id, added_by=admin_user.id))
-    g = Shift(id=uid("g"), activity_id=act.id, name="当日",
+    g = mk_shift(id=uid("g"), activity_id=act.id, name="当日",
               start_time=now() + timedelta(days=3),
               end_time=now() + timedelta(days=3, hours=4), mode="pick", sort=0)
     db.add(g)

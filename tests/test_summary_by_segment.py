@@ -17,6 +17,7 @@ from io import BytesIO
 from openpyxl import load_workbook
 
 from backend.models import Enrollment, HoursRecord, Shift, uid
+from conftest import mk_shift
 from conftest import login
 from test_export_summary import (COUNCIL, HOURS, NOTES, PAY, PEOPLE, SEATS,
                                 _activity, _enroll, _hours, _row, _rows, _seg, dt)
@@ -73,11 +74,11 @@ def test_场次跨月整场算在结束那个月(client, db, take_student):
     council = login(client, COUNCIL)
     act, dec = _activity(db, "报名跨月", dt("12-08 09:00"), dt("12-08 12:00"))
     jan_start = datetime(2020, 1, 3, 9, 0)
-    jan = Shift(id=uid("g"), activity_id=act.id, name="一月场", mode="pick",
+    jan = mk_shift(id=uid("g"), activity_id=act.id, name="一月场", mode="pick",
                 start_time=jan_start, end_time=jan_start + timedelta(hours=3),
                 sort=1)
     # 培训的报名是跟着服务场次自动挂上的，进不了人数与人次
-    train = Shift(id=uid("g"), activity_id=act.id, name="培训", kind="training",
+    train = mk_shift(id=uid("g"), activity_id=act.id, name="培训", kind="training",
                   mode="pick", start_time=dt("12-07 09:00"),
                   end_time=dt("12-07 12:00"), sort=2)
     db.add_all([jan, train])

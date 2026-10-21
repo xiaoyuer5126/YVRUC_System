@@ -6,6 +6,7 @@ from urllib.parse import unquote
 
 from backend.models import (Activity, Application, Enrollment, Notification,
                             User, now)
+from conftest import set_shift_time
 from conftest import dl_url, login, student_row
 
 
@@ -24,8 +25,8 @@ def _create_screened(client, admin, db, *, status="published", shifts=2):
         start = now() + timedelta(days=5, hours=i * 5)
         r = client.post(f"/api/staff/activities/{act_id}/shifts", headers=admin,
                         json={"name": f"第{i + 1}场", "mode": "assign", "capacity": 10,
-                              "start_time": start.isoformat(),
-                              "end_time": (start + timedelta(hours=3)).isoformat()})
+                              "periods": [{"start_time": start.isoformat(),
+                              "end_time": (start + timedelta(hours=3)).isoformat()}]})
         assert r.status_code == 200, r.text
         ids.append(r.json()["id"])
     r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
@@ -63,8 +64,8 @@ def _pick_shift(client, admin, act_id, name="选岗场", *, days=6, positions=("
     start = now() + timedelta(days=days)
     r = client.post(f"/api/staff/activities/{act_id}/shifts", headers=admin,
                     json={"name": name, "mode": "pick",
-                          "start_time": start.isoformat(),
-                          "end_time": (start + timedelta(hours=3)).isoformat()})
+                          "periods": [{"start_time": start.isoformat(),
+                          "end_time": (start + timedelta(hours=3)).isoformat()}]})
     assert r.status_code == 200, r.text
     gid = r.json()["id"]
     pids = []
@@ -554,7 +555,7 @@ def test_申请时时段冲突先提示_确认后照交(client, admin, db, enrol
     # 把筛选活动的场次挪到跟已报名的场次同一时段
     from backend.models import Shift
     g = db.get(Shift, ids[0])
-    g.start_time, g.end_time = shift.start_time, shift.end_time
+    set_shift_time(db, g, shift.start_time, shift.end_time)
     db.commit()
     r = client.post(f"/api/activities/{act_id}/apply", headers=mine,
                     json={"position_ids": _holders(db, ids), "answers": _answers(q)})
@@ -767,8 +768,8 @@ def test_录取时选中的场次时间重叠先提示_确认后照录(client, a
     from backend.models import Shift
     act_id, ids, q = _create_screened(client, admin, db, shifts=2)
     a, b = db.get(Shift, ids[0]), db.get(Shift, ids[1])
-    b.start_time = a.start_time + timedelta(hours=1)
-    b.end_time = a.end_time + timedelta(hours=1)
+    set_shift_time(db, b, a.start_time + timedelta(hours=1),
+                   a.end_time + timedelta(hours=1))
     db.commit()
     sid = take_student()
     u, app = _apply(client, db, act_id, q, sid, ids)
@@ -794,8 +795,8 @@ def test_录取只录一场时自己另一场意向不算冲突(client, admin, d
     from backend.models import Shift
     act_id, ids, q = _create_screened(client, admin, db, shifts=2)
     a, b = db.get(Shift, ids[0]), db.get(Shift, ids[1])
-    b.start_time = a.start_time + timedelta(hours=1)
-    b.end_time = a.end_time + timedelta(hours=1)
+    set_shift_time(db, b, a.start_time + timedelta(hours=1),
+                   a.end_time + timedelta(hours=1))
     db.commit()
     u, app = _apply(client, db, act_id, q, take_student(), ids)
     assert _one(_decide(client, admin, act_id, app.id, [{"shift_id": ids[1]}]))["ok"]
@@ -810,7 +811,7 @@ def test_录取时和已报名的其他活动冲突也提示(client, admin, db, 
     _u, app = _apply(client, db, act_id, q, u.student_id, ids)
     # 申请之后场次改了时间，撞上他已报名的那一场
     g = db.get(Shift, ids[0])
-    g.start_time, g.end_time = shift.start_time, shift.end_time
+    set_shift_time(db, g, shift.start_time, shift.end_time)
     db.commit()
 
     x = _one(_decide(client, admin, act_id, app.id, [{"shift_id": ids[0]}]))
@@ -832,7 +833,7 @@ def test_批量录取时冲突的人标出来_确认后重提(client, admin, db,
     _u, clash = _apply(client, db, act_id, q, u.student_id, ids)
     _v, fine = _apply(client, db, act_id, q, take_student(), ids)
     g = db.get(Shift, ids[0])
-    g.start_time, g.end_time = shift.start_time, shift.end_time
+    set_shift_time(db, g, shift.start_time, shift.end_time)
     db.commit()
     picks = {a.id: [{"shift_id": ids[0]}] for a in (clash, fine)}
     r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
@@ -1135,7 +1136,8 @@ def test_报名问卷没有附件时附件包404(client, admin, db, take_student
 def _start_now(db, shift_id):
     """让场次一分钟前已经开始（结束时间照旧在后面）。"""
     from backend.models import Shift
-    db.get(Shift, shift_id).start_time = now() - timedelta(minutes=1)
+    set_shift_time(db, db.get(Shift, shift_id),
+                   start=now() - timedelta(minutes=1))
     db.commit()
 
 
@@ -1265,8 +1267,8 @@ def test_录取到两场共用同一培训_培训只报一次(client, admin, db,
                     json={"name": "岗前培训", "kind": "training",
                           "applies_to_positions": [], "hours_mode": "none",
                           "location": "排练厅",
-                          "start_time": start.isoformat(),
-                          "end_time": (start + timedelta(hours=2)).isoformat()})
+                          "periods": [{"start_time": start.isoformat(),
+                          "end_time": (start + timedelta(hours=2)).isoformat()}]})
     assert r.status_code == 200, r.text
     training = r.json()["id"]
     db.get(Activity, act_id).status = "published"

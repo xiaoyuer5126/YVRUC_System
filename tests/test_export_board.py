@@ -87,13 +87,15 @@ def test_大屏以确认名单为主表并标出组长(client, admin, db, enroll
            .filter(Enrollment.position_id == pos.id,
                    Enrollment.status == "enrolled").all())
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=shift.id,
+                       period_id=shift.periods[0].id,
                        mode="group", token=new_checkin_token(),
                        valid_from=shift.start_time, valid_to=shift.end_time,
                        created_by="system")
     db.add(task)
     db.flush()
     db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
-                         shift_id=shift.id, position_id=pos.id,
+                         shift_id=shift.id, period_id=shift.periods[0].id,
+                         position_id=pos.id,
                          user_id=enr[0].user_id, method="manual",
                          checkin_at=now()))
     db.commit()

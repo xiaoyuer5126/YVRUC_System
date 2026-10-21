@@ -9,6 +9,7 @@ from backend import scheduled
 from backend.models import (Activity, ActivityManager, Enrollment,
                             Notification, Position, Shift, User, new_checkin_token,
                             now, uid)
+from conftest import mk_shift
 from conftest import ADMIN, POSITION_TEXT, editing, login
 
 
@@ -32,7 +33,7 @@ def make_activity(db):
         db.add(act)
         db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                                user_id=admin.id, added_by=admin.id))
-        g = Shift(id=uid("g"), activity_id=act.id, name="场次",
+        g = mk_shift(id=uid("g"), activity_id=act.id, name="场次",
                   start_time=now() + timedelta(hours=start_in_hours),
                   end_time=now() + timedelta(hours=start_in_hours
                                              + duration_hours),
@@ -213,13 +214,15 @@ def test_manual_reminder_skips_checked_in(client, db, admin, make_activity,
     # 该志愿者签到后再补发，就没人需要提醒了
     from backend.models import CheckinRecord, CheckinTask
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+                       period_id=g.periods[0].id,
                        mode="group", token=new_checkin_token(),
                        valid_from=g.start_time, valid_to=g.end_time,
                        created_by="system")
     db.add(task)
     db.flush()
     db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
-                         shift_id=g.id, user_id=u.id, method="manual"))
+                         shift_id=g.id, period_id=g.periods[0].id,
+                         user_id=u.id, method="manual"))
     db.commit()
     r = client.post(f"/api/staff/shifts/{g.id}/checkin-reminder", headers=admin)
     assert r.status_code == 400

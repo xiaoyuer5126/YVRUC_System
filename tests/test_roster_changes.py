@@ -6,6 +6,7 @@ from datetime import timedelta
 from backend import config, scheduled
 from backend.models import (Enrollment, Notification, Position, Shift, now,
                             uid)
+from conftest import mk_shift
 from conftest import POSITION_TEXT, editing, login, student_row
 
 
@@ -135,7 +136,7 @@ def _digest_bodies(db, act, g) -> list[str]:
 
 def _second_shift(db, act, g, name: str, *, hours_later: float) -> Shift:
     """同一活动里再加一场服务，岗位名额与第一场相同。"""
-    g2 = Shift(id=uid("g"), activity_id=act.id, name=name,
+    g2 = mk_shift(id=uid("g"), activity_id=act.id, name=name,
                start_time=g.start_time + timedelta(hours=hours_later),
                end_time=g.end_time + timedelta(hours=hours_later),
                mode="pick", sort=1)
@@ -156,8 +157,8 @@ def _add_training(client, admin, act, *, hours: float) -> Shift:
                         json={"name": "岗前培训", "kind": "training",
                               "applies_to_positions": [], "hours_mode": "fixed",
                               "location": "排练厅",
-                              "start_time": start.isoformat(),
-                              "end_time": (start + timedelta(hours=2)).isoformat()})
+                              "periods": [{"start_time": start.isoformat(),
+                              "end_time": (start + timedelta(hours=2)).isoformat()}]})
     assert r.status_code == 200, r.text
     return r.json()["id"]
 

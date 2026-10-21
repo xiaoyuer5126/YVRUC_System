@@ -8,6 +8,8 @@ import pytest
 from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, FormQuestion, Shift,
                             Position, User, new_checkin_token, now, uid)
+from conftest import set_shift_time
+from conftest import mk_shift
 from conftest import (ADMIN, POSITION_TEXT, QINGXIE, approve, editing,
                       upload_proposal,
                       login, student_row)
@@ -25,7 +27,7 @@ def draft_activity(db):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin.id, added_by=admin.id))
-    db.add(Shift(id=uid("g"), activity_id=act.id, name="草稿场次",
+    db.add(mk_shift(id=uid("g"), activity_id=act.id, name="草稿场次",
                          start_time=now() + timedelta(days=40),
                          end_time=now() + timedelta(days=40, hours=3),
                           mode="assign", sort=0))
@@ -75,7 +77,7 @@ def assigned_group(db):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin.id, added_by=admin.id))
-    g = Shift(id=uid("g"), activity_id=act.id, name="待分配场次",
+    g = mk_shift(id=uid("g"), activity_id=act.id, name="待分配场次",
                       start_time=now() + timedelta(days=50),
                       end_time=now() + timedelta(days=50, hours=4),
                           mode="assign", sort=0)
@@ -172,13 +174,14 @@ def test_unchecked_out_hours_need_review(client, admin, db, take_student):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin_user.id, added_by=admin_user.id))
-    g = Shift(id=uid("g"), activity_id=act.id, name="已结束场次",
+    g = mk_shift(id=uid("g"), activity_id=act.id, name="已结束场次",
                       start_time=now() - timedelta(days=2),
                       end_time=now() - timedelta(days=2) + timedelta(hours=4),
                           mode="assign", sort=0)
     db.add(g)
     db.flush()
     task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+                       period_id=g.periods[0].id,
                        mode="group", token=new_checkin_token(),
                        valid_from=g.start_time, valid_to=g.end_time,
                        created_by=admin_user.id)
@@ -191,7 +194,8 @@ def test_unchecked_out_hours_need_review(client, admin, db, take_student):
         db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
                           user_id=u.id, status="enrolled", joined_at=now()))
         db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
-                             shift_id=g.id, user_id=u.id, method="scan",
+                             shift_id=g.id, period_id=g.periods[0].id,
+                             user_id=u.id, method="scan",
                              checkin_at=g.start_time, checkout_at=checkout))
     db.commit()
 
@@ -258,7 +262,7 @@ def test_copy_activity_shifts_times_and_drops_enrollments(
 def test_copy_positions_skips_duplicate_names(client, admin, db,
                                               assigned_group):
     act, g, _p1, _p2 = assigned_group
-    other = Shift(id=uid("s"), activity_id=act.id, name="第二场",
+    other = mk_shift(id=uid("s"), activity_id=act.id, name="第二场",
                   start_time=g.start_time + timedelta(days=1),
                   end_time=g.end_time + timedelta(days=1),
                   mode="pick", sort=1)
@@ -366,8 +370,8 @@ def test_没有岗位的场次不能发布(client, admin, db):
     aid = r.json()["id"]
     r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
                     json={"name": "上午场", "mode": "pick",
-                          "start_time": (now() + timedelta(days=5)).isoformat(),
-                          "end_time": (now() + timedelta(days=5, hours=3)).isoformat()})
+                          "periods": [{"start_time": (now() + timedelta(days=5)).isoformat(),
+                          "end_time": (now() + timedelta(days=5, hours=3)).isoformat()}]})
     shift_id = r.json()["id"]
 
     # 结构不全在**提交审批**就被拦下，不必等到发布，也不该让审批人替他查
@@ -400,7 +404,7 @@ def test_恢复报名必须重设截止时间(client, admin, db, take_student):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin_user.id, added_by=admin_user.id))
-    db.add(Shift(id=uid("g"), activity_id=act.id, name="将来场次",
+    db.add(mk_shift(id=uid("g"), activity_id=act.id, name="将来场次",
                  start_time=now() + timedelta(days=5),
                  end_time=now() + timedelta(days=5, hours=3),
                  mode="pick", sort=0))
@@ -442,7 +446,7 @@ def test_场次都开过了就不能恢复报名(client, admin, db):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin_user.id, added_by=admin_user.id))
-    db.add(Shift(id=uid("g"), activity_id=act.id, name="进行中",
+    db.add(mk_shift(id=uid("g"), activity_id=act.id, name="进行中",
                  start_time=now() - timedelta(hours=1),
                  end_time=now() + timedelta(hours=2), mode="pick", sort=0))
     db.commit()
@@ -503,8 +507,8 @@ def test_删除草稿要连带清干净引用(client, admin, db):
     # 每一步都得真的建成——哪步悄悄失败了，删除时就少验一种引用
     r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
                     json={"name": "上午场", "mode": "pick",
-                          "start_time": (now() + timedelta(days=6)).isoformat(),
-                          "end_time": (now() + timedelta(days=6, hours=3)).isoformat()})
+                          "periods": [{"start_time": (now() + timedelta(days=6)).isoformat(),
+                          "end_time": (now() + timedelta(days=6, hours=3)).isoformat()}]})
     assert r.status_code == 200, r.text
     g = r.json()["id"]
     r = client.post(f"/api/staff/shifts/{g}/positions", headers=admin,
@@ -819,7 +823,8 @@ def test_场次时间带周几_跨天两头都带(client, open_group, take_stude
     assert shift["time_text"] == want
 
     # 跨天：两头都带周几
-    g.end_time = s.replace(hour=0, minute=0) + timedelta(days=1, hours=2)
+    set_shift_time(db, g, end=s.replace(hour=0, minute=0)
+                   + timedelta(days=1, hours=2))
     db.commit()
     got = client.get(f"/api/activities/{act.id}", headers=h).json()
     shift = next(x for x in got["shifts"] if x["id"] == g.id)

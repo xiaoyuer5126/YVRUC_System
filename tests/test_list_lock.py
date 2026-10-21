@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from backend.models import Enrollment, Position, Shift, now, uid
+from conftest import mk_shift
 from conftest import POSITION_TEXT, inbox, login
 
 
@@ -138,8 +139,9 @@ def test_新建场次带N_超出范围拒绝(client, admin, db, open_group):
     act, g = open_group(3)
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    body = {"name": "晚场", "start_time": (g.start_time + timedelta(days=1)).isoformat(),
-            "end_time": (g.end_time + timedelta(days=1)).isoformat(), "lock_hours": 30}
+    body = {"name": "晚场",
+            "periods": [{"start_time": (g.start_time + timedelta(days=1)).isoformat(),
+            "end_time": (g.end_time + timedelta(days=1)).isoformat()}], "lock_hours": 30}
     r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin, json=body)
     assert r.status_code == 200, r.text
     assert db.get(Shift, r.json()["id"]).lock_hours == 30
@@ -353,7 +355,7 @@ def test_待分配与培训不单独锁定_学生不能锁(client, admin, db, op
     r = client.post(f"/api/staff/positions/{g.test_position_id}/lock", headers=admin,
                     json={"locked": True})
     assert r.status_code == 400 and "整个场次" in r.json()["detail"]
-    att = Shift(id=uid("g"), activity_id=act.id, name="彩排", kind="rehearsal",
+    att = mk_shift(id=uid("g"), activity_id=act.id, name="彩排", kind="rehearsal",
                 start_time=g.start_time, end_time=g.end_time, sort=1)
     db.add(att)
     db.commit()

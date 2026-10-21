@@ -92,8 +92,8 @@ def test_筹备期的改动不进志愿者的变更记录(client, admin, db, tak
     aid = r.json()["id"]
     r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
                     json={"name": "上午场", "mode": "pick",
-                          "start_time": (now() + timedelta(days=5)).isoformat(),
-                          "end_time": (now() + timedelta(days=5, hours=3)).isoformat()})
+                          "periods": [{"start_time": (now() + timedelta(days=5)).isoformat(),
+                          "end_time": (now() + timedelta(days=5, hours=3)).isoformat()}]})
     assert r.status_code == 200, r.text
     gid = r.json()["id"]
     r = client.post(f"/api/staff/shifts/{gid}/positions", headers=admin,

@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 from backend.database import SessionLocal
 from backend.main import app
 from backend.models import Enrollment, Position, Shift, now, uid
+from conftest import set_shift_time
+from conftest import mk_shift
 from conftest import POSITION_TEXT, editing, login, student_row
 
 
@@ -60,7 +62,7 @@ def test_确认冲突也绕不过名额(client, open_group, take_student):
 
 def test_本活动两场重叠也提示(client, db, open_group, take_student):
     act, g1 = open_group(5, day_offset=202, start_in_hours=4)
-    g2 = Shift(id=uid("g"), activity_id=act.id, name="同日第二场",
+    g2 = mk_shift(id=uid("g"), activity_id=act.id, name="同日第二场",
                start_time=g1.start_time + timedelta(hours=1),
                end_time=g1.end_time + timedelta(hours=1), mode="pick", sort=1)
     db.add(g2)
@@ -107,7 +109,7 @@ def test_详情页冲突提示含本活动别的场次且一条报名只一行(c
     act, g1 = open_group(5, day_offset=340, start_in_hours=4)
     h = login(client, take_student())
     assert enroll(client, h, act, g1).status_code == 200
-    db.add(Shift(id=uid("g"), activity_id=act.id, name="同日第二场",
+    db.add(mk_shift(id=uid("g"), activity_id=act.id, name="同日第二场",
                  start_time=g1.start_time + timedelta(hours=1),
                  end_time=g1.end_time + timedelta(hours=1),
                  mode="pick", sort=1))
@@ -248,8 +250,8 @@ def test_assign_shift_requires_capacity(client, admin, open_group):
     with editing(client, admin, act.id):
         r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
                         json={"name": "待分配场次", "mode": "assign", "capacity": 0,
-                              "start_time": (now() + timedelta(days=401)).isoformat(),
-                              "end_time": (now() + timedelta(days=401, hours=2)).isoformat()})
+                              "periods": [{"start_time": (now() + timedelta(days=401)).isoformat(),
+                              "end_time": (now() + timedelta(days=401, hours=2)).isoformat()}]})
         assert r.status_code == 400 and "人数上限" in r.json()["detail"]
 
 
@@ -321,8 +323,7 @@ def test_时间灵活场次照常提示冲突(client, db, open_group, take_stude
     act1, g1 = open_group(2, waitlist_quota=0)
     act2, g2 = open_group(2, waitlist_quota=0)
     g1.flexible_time = True
-    g2.start_time = g1.start_time
-    g2.end_time = g1.end_time
+    set_shift_time(db, g2, start=g1.start_time, end=g1.end_time)
     db.commit()
 
     assert enroll(client, headers, act1, g1).status_code == 200

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from backend.models import Position, Shift, uid
+from conftest import mk_shift
 from conftest import POSITION_TEXT, login
 from test_screening import _answers, _create_screened, _holders
 
@@ -39,7 +40,7 @@ def test_待分配与培训不单独暂停_学生不能切(client, admin, db, op
     r = client.post(f"/api/staff/positions/{g.placeholder().id}/pause", headers=admin,
                     json={"paused": True})
     assert r.status_code == 400 and "整个场次" in r.json()["detail"]
-    att = Shift(id=uid("g"), activity_id=act.id, name="彩排", kind="rehearsal",
+    att = mk_shift(id=uid("g"), activity_id=act.id, name="彩排", kind="rehearsal",
                 start_time=g.start_time, end_time=g.end_time, sort=1)
     db.add(att)
     db.commit()
