@@ -127,6 +127,11 @@
            待在里面的话组件跟着重来一次，「更新于」被清空 -->
       <RefreshBar ref="boardRefresh" :load="loadBoard" :at="boardAt" />
     </div>
+    <!-- 固定计时的培训/彩排也要扫码：不扫就没有到场记录，也就没有时长 -->
+    <div v-if="boardShift?.kind !== 'service' && boardShift?.hours_mode === 'fixed'"
+         class="dim" style="margin-top:8px">
+      固定计时仍要志愿者扫码签到，没扫码不计时长；签退不用管。
+    </div>
 
     <!-- 到岗看板：按场次拉取，不依赖激活任务 -->
     <template v-if="board">

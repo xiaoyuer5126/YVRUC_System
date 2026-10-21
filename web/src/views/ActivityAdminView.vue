@@ -2094,11 +2094,13 @@ const currentShift = computed(() => shifts.value.find(g => g.id === currentGroup
 const allShifts = computed(() => [
   ...shifts.value.map(g => ({
     id: g.id, name: g.name, kind: g.kind, kind_label: g.kind_label,
+    hours_mode: g.hours_mode,
     time_text: g.time_text, start_time: g.start_time, end_time: g.end_time,
     periods: g.periods || [],
     positions: g.positions || [] })),
   ...(act.value?.trainings || []).map(a => ({
     id: a.id, name: a.name, kind: a.kind, kind_label: a.kind_label,
+    hours_mode: a.hours_mode,
     time_text: a.time_text, start_time: a.start_time, end_time: a.end_time,
     periods: a.periods || [],
     // 培训/彩排自己不设岗位（用 applies_to_positions 圈人），只能统一签到
@@ -2312,7 +2314,7 @@ async function onMaterialChanged() {
 
 // —— 培训 / 彩排 ——
 const HOURS_HINT = {
-  fixed: '到场即按本场时长计，不要求签退。彩排和集中培训人就在那儿，不值得卡分钟，也就没有「忘记签退」这回事。',
+  fixed: '到场即按本场时长计，不要求签退。彩排和集中培训人就在那儿，不值得卡分钟，也就没有「忘记签退」这回事。固定计时仍要志愿者扫码签到，没扫码不计时长。',
   checkin: '签退 − 签到，与服务场次一致。适合来去时间确实不一样的场合。',
   none: '只记出勤，不产生志愿时长。适合线上培训。',
 }

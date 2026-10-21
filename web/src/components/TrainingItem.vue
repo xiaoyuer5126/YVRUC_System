@@ -12,6 +12,7 @@
     <span>{{ s.time_text }}</span>
     <span class="dim">{{ s.location || location || '地点待定' }}</span>
     <span v-if="full" class="dim">{{ s.hours_mode === 'none' ? '不计时长' : '计入志愿时长' }}</span>
+    <span v-if="s.hours_mode === 'fixed'" class="dim">到场请扫码签到</span>
     <span v-if="s.note" class="dim">备注：{{ s.note }}</span>
     <template v-if="s.mine">
       <el-tag size="small" :type="s.excused ? 'info' : 'primary'" effect="plain">
