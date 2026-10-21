@@ -18,12 +18,12 @@ import uuid
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Index,
-                        Integer, String, Text, UniqueConstraint, event,
-                        inspect as sa_inspect, text)
+                        Integer, String, Text, UniqueConstraint, event, func,
+                        inspect as sa_inspect, select, text)
 # 会话类在这里叫 OrmSession：本模块还有一个自己的 Session（登录会话那张表），
 # 直接用 Session 这个名字会被它盖掉
-from sqlalchemy.orm import (Mapped, Session as OrmSession, mapped_column,
-                            object_session, relationship)
+from sqlalchemy.orm import (Mapped, Session as OrmSession, column_property,
+                            mapped_column, object_session, relationship)
 from sqlalchemy.orm.attributes import flag_modified
 
 from . import config
@@ -428,7 +428,7 @@ class Activity(Base):
     editing_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     shifts: Mapped[list["Shift"]] = relationship(
-        back_populates="activity", order_by="Shift.start_time",
+        back_populates="activity", order_by="(Shift.start_time, Shift.sort)",
         cascade="all, delete-orphan")
 
     STATUS_LABELS = {"draft": "草稿", "pending": "待审批", "approved": "待发布",
@@ -609,8 +609,79 @@ def span_text(start: datetime, end: datetime) -> str:
     return f"{day_text(start)}{start:%H:%M} ~ {day_text(end)}{end:%H:%M}"
 
 
+class ShiftPeriod(Base):
+    """场次的一个服务时段。
+
+    场次可以有不连续的多个时段（10-25~28、10-31~11-03 都要求同一批人来）。
+    报名、名额、候补、名单仍在场次这一层，只占一份；时段是时间的最小单位，
+    冲突检测、签到码、时长明细都按段算。
+    """
+    __tablename__ = "shift_periods"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    shift_id: Mapped[str] = mapped_column(ForeignKey("shifts.id"), index=True)
+    start_time: Mapped[datetime] = mapped_column(DateTime)
+    end_time: Mapped[datetime] = mapped_column(DateTime)
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+    # 自动签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True)
+
+    shift: Mapped["Shift"] = relationship(back_populates="periods")
+
+    def text(self) -> str:
+        return span_text(self.start_time, self.end_time)
+
+    def out(self) -> dict:
+        return {"id": self.id, "start_time": iso(self.start_time),
+                "end_time": iso(self.end_time), "text": self.text()}
+
+
+def _period_run_key(p: ShiftPeriod):
+    return (p.start_time.time(), p.end_time.time(),
+            p.end_time - p.start_time)
+
+
+def periods_text(periods: list[ShiftPeriod]) -> str:
+    """一组时段怎么读：「10-25（周六）09:00-12:00、10-31（周六）09:00-12:00」。
+
+    连续几天、每天钟点相同的合成一段，八天的活动写成两个日期范围，不用把
+    八段各念一遍。
+    """
+    rows = sorted(periods, key=lambda p: p.start_time)
+    if not rows:
+        return "待定"
+    out, run = [], [rows[0]]
+    for p in rows[1:]:
+        if (_period_run_key(p) == _period_run_key(run[-1])
+                and p.start_time.date()
+                == run[-1].start_time.date() + timedelta(days=1)):
+            run.append(p)
+            continue
+        out.append(_period_run_text(run))
+        run = [p]
+    out.append(_period_run_text(run))
+    return "、".join(out)
+
+
+def _period_run_text(run: list[ShiftPeriod]) -> str:
+    if len(run) == 1:
+        return run[0].text()
+    first, last = run[0], run[-1]
+    span = f"{day_text(first.start_time)}~ {day_text(last.start_time)}"
+    return f"{span} {first.start_time:%H:%M}-{first.end_time:%H:%M}"
+
+
 class Shift(Base):
-    """场次：一段服务时间。**时间只存在于这一层**，用于时段冲突检测。
+    """场次：一次报名对应的一份服务安排，可含多个服务时段。
+
+    时间挂在 ShiftPeriod 上：一个场次可以有多个不连续的时段（10-25~28、
+    10-31~11-03），也可以只有一段。报名、名额、候补、名单都在这层，只占一份；
+    冲突检测、签到码、时长明细按段各算各的。
+
+    start_time / end_time 是最早一段开始、最晚一段结束，只用来回答「这一场从
+    哪天到哪天」以及锁定、报名截止这类取开头的问题；要精确到某一段时直接用
+    periods。
 
     场次下挂具体岗位。两种模式：
       pick    报名即选岗位：名额与候补都在岗位上
@@ -629,8 +700,15 @@ class Shift(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
-    start_time: Mapped[datetime] = mapped_column(DateTime)
-    end_time: Mapped[datetime] = mapped_column(DateTime)
+    # 跨度：最早一段开始 / 最晚一段结束。由时段派生，库里不另存。
+    start_time = column_property(
+        select(func.min(ShiftPeriod.start_time))
+        .where(ShiftPeriod.shift_id == id)
+        .correlate_except(ShiftPeriod).scalar_subquery())
+    end_time = column_property(
+        select(func.max(ShiftPeriod.end_time))
+        .where(ShiftPeriod.shift_id == id)
+        .correlate_except(ShiftPeriod).scalar_subquery())
     location: Mapped[str] = mapped_column(String(128), default="")
     mode: Mapped[str] = mapped_column(String(12), default="pick")
     # —— 培训/彩排 ——
@@ -663,12 +741,14 @@ class Shift(Base):
     # 时长按各轮累加（见 routers/checkin.py）。所以时长只能按签到签退计或不计，
     # 不能是 fixed
     flexible_time: Mapped[bool] = mapped_column(Boolean, default=False)
-    # 签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
-    reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # 人员变动日报发到哪一天了，防止一天推多条
     digest_sent_on: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     activity: Mapped[Activity] = relationship(back_populates="shifts")
+    periods: Mapped[list["ShiftPeriod"]] = relationship(
+        back_populates="shift",
+        order_by="(ShiftPeriod.start_time, ShiftPeriod.sort)",
+        cascade="all, delete-orphan")
     positions: Mapped[list["Position"]] = relationship(
         back_populates="shift", order_by="Position.sort",
         cascade="all, delete-orphan")
@@ -690,7 +770,26 @@ class Shift(Base):
         return self.kind != "service"
 
     def span_text(self) -> str:
-        return span_text(self.start_time, self.end_time)
+        return periods_text(self.periods)
+
+    def sorted_periods(self) -> list[ShiftPeriod]:
+        return sorted(self.periods, key=lambda p: p.start_time)
+
+    def next_period(self, t: datetime) -> ShiftPeriod | None:
+        """此刻还没结束的第一个时段（正在进行的也算）；都结束了为 None。"""
+        return next((p for p in self.sorted_periods() if p.end_time > t), None)
+
+    def current_period(self, t: datetime) -> ShiftPeriod | None:
+        return next((p for p in self.sorted_periods()
+                     if p.start_time <= t < p.end_time), None)
+
+    def period_of(self, period_id: str | None) -> ShiftPeriod | None:
+        return next((p for p in self.periods if p.id == period_id), None)
+
+    def total_hours(self) -> float:
+        """各时段时长之和：固定计时的场次按这个数记。"""
+        return sum((p.end_time - p.start_time).total_seconds() / 3600
+                   for p in self.periods)
 
     def mode_label(self) -> str:
         return self.MODE_LABELS.get(self.mode, self.mode)
@@ -1020,7 +1119,10 @@ class Enrollment(Base):
 # ======================= 签到 =======================
 
 class CheckinTask(Base):
-    """签到任务：整场次一个统一码，或每个岗位一个独立码。
+    """签到任务：一个时段一张码，可以整场统一，也可以每个岗位一张。
+
+    场次有多个时段时，每个时段各建一张码：志愿者到场扫当天那张，签到签退
+    各算各的，时长按段累加。同一时段里再分不分岗位，是 mode 决定的。
 
     token 是**固定码**——建任务时生成、一直在册，可以打印出来贴到现场。
     日常用的动态码不落这张表，它只活在 Redis 里（见 locks.py 那一节）。
@@ -1030,6 +1132,8 @@ class CheckinTask(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
     shift_id: Mapped[str] = mapped_column(ForeignKey("shifts.id"), index=True)
+    period_id: Mapped[str | None] = mapped_column(
+        ForeignKey("shift_periods.id"), nullable=True, index=True)
     position_id: Mapped[str | None] = mapped_column(ForeignKey("positions.id"), nullable=True)
     mode: Mapped[str] = mapped_column(String(12), default="shift")   # shift / position
     token: Mapped[str] = mapped_column(String(16), unique=True)
@@ -1039,18 +1143,18 @@ class CheckinTask(Base):
     created_by: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
-    def window(self, shift: Shift) -> tuple[datetime, datetime]:
+    def window(self, period: ShiftPeriod) -> tuple[datetime, datetime]:
         """实际生效的可签时段 (起, 止)。签到、签退都只在这段时间里、且任务开着时能做。
 
-        起止在库里都该有值：生成时默认取场次起止各外扩
+        起止在库里都该有值：生成时默认取这一段起止各外扩
         CHECKIN_WINDOW_PAD_MINUTES，改时段也不许留空。列本身允许为空，万一碰上
         空值就按生成时的默认值补上。签退截止
-        必须是个确定的时刻：过了它还没签退的人按场次结束时间兜底（见
+        必须是个确定的时刻：过了它还没签退的人按这一段的结束时间兜底（见
         routers/staff_ops.effective_checkout），「不限」就永远判不出来。
         """
         pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
-        return (self.valid_from or shift.start_time - pad,
-                self.valid_to or shift.end_time + pad)
+        return (self.valid_from or period.start_time - pad,
+                self.valid_to or period.end_time + pad)
 
 
 class CheckinGeo(Base):
@@ -1082,6 +1186,8 @@ class CheckinRecord(Base):
     task_id: Mapped[str] = mapped_column(ForeignKey("checkin_tasks.id"), index=True)
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
     shift_id: Mapped[str] = mapped_column(String(32), index=True)
+    # 这一条签到属于哪个时段：多时段的场次一人每个时段各一条，时长按段累加
+    period_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     position_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
     method: Mapped[str] = mapped_column(String(12), default="scan")  # scan / manual
@@ -1125,6 +1231,7 @@ def segment_out(fields: dict) -> dict:
            "position": fields.get("position_name", ""),
            "hours": fields.get("hours", 0.0), "kind": fields.get("kind", ""),
            "shift_id": fields.get("shift_id"),
+           "period_id": fields.get("period_id"),
            "position_id": fields.get("position_id"),
            "date": f"{fields['date']:%Y-%m-%d}" if fields.get("date") else ""}
     if part_is_pay(out["kind"], fields.get("reward", "")):
@@ -1174,6 +1281,8 @@ class HoursSegment(Base):
     position_name: Mapped[str] = mapped_column(String(64), default="")
     time_text: Mapped[str] = mapped_column(String(64), default="")
     shift_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 签到段按（场次, 时段, 岗位）认：多时段场次一人每个时段各一段
+    period_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     position_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     @staticmethod
@@ -1206,6 +1315,7 @@ class HoursSegment(Base):
                             "label": self.label, "time_text": self.time_text,
                             "position_name": self.position_name,
                             "shift_id": self.shift_id,
+                            "period_id": self.period_id,
                             "position_id": self.position_id})
 
 
