@@ -670,7 +670,7 @@ def _period_run_key(p: ShiftPeriod):
             p.end_time - p.start_time)
 
 
-def periods_text(periods: list[ShiftPeriod]) -> str:
+def periods_text(periods: list) -> str:
     """一组时段怎么读：「10-25（周六）09:00-12:00、10-31（周六）09:00-12:00」。
 
     连续几天、每天钟点相同的合成一段，八天的活动写成两个日期范围，不用把
@@ -692,9 +692,9 @@ def periods_text(periods: list[ShiftPeriod]) -> str:
     return "、".join(out)
 
 
-def _period_run_text(run: list[ShiftPeriod]) -> str:
+def _period_run_text(run: list) -> str:
     if len(run) == 1:
-        return run[0].text()
+        return span_text(run[0].start_time, run[0].end_time)
     first, last = run[0], run[-1]
     span = f"{day_text(first.start_time)}~ {day_text(last.start_time)}"
     return f"{span} {first.start_time:%H:%M}-{first.end_time:%H:%M}"
