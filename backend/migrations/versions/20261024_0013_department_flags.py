@@ -5,8 +5,8 @@
 部门维护接口开关，代码不再按部门名判断。vb_liaison 全平台至多一个为 True，
 用条件唯一索引兜底。
 
-Revision ID: 0012
-Revises: 0011
+Revision ID: 0013
+Revises: 0012
 Create Date: 2026-10-24
 """
 from __future__ import annotations
@@ -14,8 +14,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0012"
-down_revision = "0011"
+revision = "0013"
+down_revision = "0012"
 branch_labels = None
 depends_on = None
 
