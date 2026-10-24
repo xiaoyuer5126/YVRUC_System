@@ -14,7 +14,7 @@
       </template>
       <template v-else>
         <el-tag :type="mine.status === 'waitlisted' ? 'warning' : 'success'" size="small">
-          {{ mine.status === 'waitlisted' ? `候补第 ${mine.waitlist_position} 位` : '已选中' }}
+          {{ mine.status === 'waitlisted' ? `候补第 ${mine.waitlist_position} 位` : '已报名' }}
         </el-tag>
         <el-button size="small" type="danger" plain
                    :disabled="ctx.paused.value || !ctx.canCancel(g)"

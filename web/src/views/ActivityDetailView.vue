@@ -372,7 +372,7 @@
                             <el-link type="primary" underline="never" style="font-weight:600"
                                      @click="showStationDetail(g, s)">{{ s.display_name }}</el-link>
                             <el-tag v-if="myStationId(g) === s.id" size="small" type="success"
-                                    effect="light" style="margin-left:8px">已选</el-tag>
+                                    effect="light" style="margin-left:8px">已报名</el-tag>
                             <el-tag v-if="s.needs_leader" size="small" type="warning"
                                     effect="plain" style="margin-left:8px">
                               设组长{{ s.leader_name ? `·${s.leader_name}` : '' }}
