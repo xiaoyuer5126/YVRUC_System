@@ -1,5 +1,5 @@
-"""对外联络部值班：谁能值班、指定与交班、审批通知发给值班人、值班人能拍板、
-部长的每晚日报。志愿北京外联确认见 test_vb_confirm.py。"""
+"""部门能力开关（启用值班、对外活动、志愿北京对接）与值班：谁能值班、指定与交班、
+审批通知发给值班人、值班人能拍板、部长的每晚日报。志愿北京外联确认见 test_vb_confirm.py。"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -10,8 +10,8 @@ from backend import scheduled
 from backend.models import (Activity, ActivityManager, AuditLog, Department,
                             DutyHandover, HoursRequest, Notification, User, now, uid)
 from conftest import (ADMIN, INITIATOR, LIAISON_CORE, LIAISON_HEAD, LIAISON_MEMBER,
-                      approve, inbox, is_approval_todo, login, make_draft,
-                      student_row, upload_stamped)
+                      approve, inbox, is_approval_todo, liaison_dept, login,
+                      make_draft, student_row, upload_stamped)
 
 
 def _set_duty(client, headers, dept_id, user_id, note=""):
@@ -335,14 +335,13 @@ def test_日报_九点前不发_九点后发一次(client, admin, db, liaison, m
 
 def test_日报_什么都没有就不发(client, db, monkeypatch, take_student):
     """换一个空部门来验：对外联络部在共享库里总有别的用例留下的待办。"""
-    from backend import liaison as lz
-    dept = Department(id=uid("dep"), name=f"值班测试部{uid('x')[-4:]}", sort=99)
+    dept = Department(id=uid("dep"), name=f"值班测试部{uid('x')[-4:]}", sort=99,
+                      duty_enabled=True)
     db.add(dept)
     boss = student_row(db, take_student())
     boss.roles = ["qingxie", "student"]
     boss.department_id, boss.qingxie_post = dept.id, "head"
     db.commit()
-    monkeypatch.setattr(lz, "DUTY_DEPTS", (dept.name,))
     monkeypatch.setattr(scheduled, "now", lambda: _at(21, 30))
     try:
         assert scheduled.send_duty_digests(db) == 0
@@ -357,3 +356,139 @@ def test_日报_什么都没有就不发(client, db, monkeypatch, take_student):
         db.commit()
         db.delete(db.get(Department, dept.id))
         db.commit()
+
+
+# ======================= 部门能力开关 =======================
+
+def test_迁移后对外联络部三项开关都开着(client, admin, db):
+    d = db.query(Department).filter(Department.name == "对外联络部").one()
+    assert d.duty_enabled and d.external and d.vb_liaison
+    row = next(x for x in client.get("/api/staff/departments",
+                                     headers=admin).json() if x["id"] == d.id)
+    assert (row["duty_enabled"], row["external"], row["vb_liaison"]) == \
+        (True, True, True)
+
+
+def test_部门改名不影响三项开关(client, admin, db, liaison):
+    """三项能力挂在部门 id 上，改名后值班、对外活动、志愿北京对接照样认它。"""
+    new_name = f"测试改名部门 {uid('t')}"
+    try:
+        r = client.patch(f"/api/staff/departments/{liaison.id}", headers=admin,
+                         json={"name": new_name})
+        assert r.status_code == 200, r.text
+        row = next(x for x in client.get("/api/staff/departments",
+                                         headers=admin).json()
+                   if x["id"] == liaison.id)
+        assert row["name"] == new_name
+        assert (row["duty_enabled"], row["external"], row["vb_liaison"]) == \
+            (True, True, True)
+        # 对接部门名是现查的，文案跟着新名字走
+        me = client.get("/api/auth/me", headers=admin).json()["user"]
+        assert me["vb_dept_name"] == new_name
+        # 值班按部门认，不按名字认
+        core = student_row(db, LIAISON_CORE)
+        assert _set_duty(client, admin, liaison.id, core.id).status_code == 200
+        duty = client.get("/api/staff/duty", headers=admin).json()
+        assert next(x for x in duty
+                    if x["dept_id"] == liaison.id)["dept_name"] == new_name
+        # 归口要不要立项书也只看部门开关，不看名字
+        aid = make_draft(client, admin, proposal=False)
+        r = client.post(f"/api/staff/activities/{aid}/submit", headers=admin,
+                        json={"department_id": liaison.id})
+        assert r.status_code == 400 and new_name in r.json()["detail"]
+    finally:
+        r = client.patch(f"/api/staff/departments/{liaison.id}", headers=admin,
+                         json={"name": "对外联络部"})
+        assert r.status_code == 200, r.text
+
+
+def test_志愿北京对接部门只能换不能清空也不能删(client, admin, db):
+    ori_id = liaison_dept(db).id
+    tmp = client.post("/api/staff/departments", headers=admin,
+                      json={"name": f"测试对接部门 {uid('t')}"}).json()["id"]
+    try:
+        r = client.patch(f"/api/staff/departments/{tmp}", headers=admin,
+                         json={"vb_liaison": True})
+        assert r.status_code == 200, r.text
+        db.expire_all()
+        rows = client.get("/api/staff/departments", headers=admin).json()
+        assert [x["id"] for x in rows if x["vb_liaison"]] == [tmp]
+        assert db.get(Department, ori_id).vb_liaison is False
+
+        r = client.patch(f"/api/staff/departments/{tmp}", headers=admin,
+                         json={"vb_liaison": False})
+        assert r.status_code == 400 and "不能清空" in r.json()["detail"]
+
+        r = client.delete(f"/api/staff/departments/{tmp}", headers=admin)
+        assert r.status_code == 409 and "志愿北京对接部门" in r.json()["detail"]
+    finally:
+        assert client.patch(f"/api/staff/departments/{ori_id}", headers=admin,
+                            json={"vb_liaison": True}).status_code == 200
+        assert client.delete(f"/api/staff/departments/{tmp}",
+                             headers=admin).status_code == 200
+
+
+def test_关闭值班撤下当前值班人(client, admin, db, liaison):
+    core = student_row(db, LIAISON_CORE)
+    assert _set_duty(client, admin, liaison.id, core.id).status_code == 200
+    try:
+        r = client.patch(f"/api/staff/departments/{liaison.id}", headers=admin,
+                         json={"duty_enabled": False})
+        assert r.status_code == 200, r.text
+        db.expire_all()
+        d = db.get(Department, liaison.id)
+        assert d.duty_enabled is False and d.duty_user_id is None
+        # 部门不再出现在值班卡片里
+        ids = [x["dept_id"] for x in
+               client.get("/api/staff/duty", headers=admin).json()]
+        assert liaison.id not in ids
+        # 交接记录留下「关闭值班」，不是无名无姓地撤掉
+        log = (db.query(DutyHandover)
+               .filter(DutyHandover.dept_id == liaison.id,
+                       DutyHandover.note == "关闭值班")
+               .order_by(DutyHandover.created_at.desc()).first())
+        assert log is not None and log.from_user_id == core.id \
+            and log.to_user_id is None
+    finally:
+        assert client.patch(f"/api/staff/departments/{liaison.id}", headers=admin,
+                            json={"duty_enabled": True}).status_code == 200
+
+
+def test_普通活动管理者不能开关部门能力(client, initiator, liaison):
+    """这三项改的是全平台的审批去向，只有会长团、管理员能动。"""
+    for body in ({"duty_enabled": False}, {"external": True},
+                 {"vb_liaison": True}):
+        r = client.patch(f"/api/staff/departments/{liaison.id}",
+                         headers=initiator, json=body)
+        assert r.status_code == 403
+
+
+def test_归口对外活动的部门没立项书就不收提交(client, admin, db, take_student):
+    name = f"测试对外部门 {uid('t')}"
+    dept_id = client.post("/api/staff/departments", headers=admin,
+                          json={"name": name}).json()["id"]
+    head = student_row(db, take_student())
+    try:
+        r = client.put(f"/api/staff/roles/{head.id}", headers=admin,
+                       json={"roles": ["student", "qingxie"],
+                             "qingxie_post": "head", "department_id": dept_id})
+        assert r.status_code == 200, r.text
+        row = next(x for x in client.get("/api/staff/departments",
+                                         headers=admin).json()
+                   if x["id"] == dept_id)
+        # 有部长、开关没开：先确认缺立项书之前不会被别的条件拦下
+        assert row["has_head"] is True and row["external"] is False
+
+        assert client.patch(f"/api/staff/departments/{dept_id}", headers=admin,
+                            json={"external": True}).status_code == 200
+        aid = make_draft(client, admin, proposal=False)
+        r = client.post(f"/api/staff/activities/{aid}/submit", headers=admin,
+                        json={"department_id": dept_id})
+        assert r.status_code == 400 and "须先上传立项书" in r.json()["detail"]
+    finally:
+        assert client.patch(f"/api/staff/departments/{dept_id}", headers=admin,
+                            json={"external": False}).status_code == 200
+        assert client.put(f"/api/staff/roles/{head.id}", headers=admin,
+                          json={"roles": ["student"]}).status_code == 200
+        assert client.delete(f"/api/staff/departments/{dept_id}",
+                             headers=admin).status_code == 200

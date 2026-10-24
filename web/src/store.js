@@ -96,10 +96,11 @@ export const canSee = {
   audit: () => ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity),
   volunteers: () => full() || qx('head'),
   roles: () => full() || qx('head', 'core'),   // 骨干进来只为认领本部门成员
-  // 对外联络部的骨干有值班资格：要看得到谁在班、轮到自己时接得了班、处理得了审批
+  // 启用值班的部门的骨干有值班资格：要看得到谁在班、轮到自己时接得了班、处理得了审批
   approvals: () => full() || qx('head') || (qx('core') && !!auth.user?.duty_eligible),
   announcement: () => auth.activeIdentity === 'admin',
   oplogs: () => auth.activeIdentity === 'admin',      // 会长团不行
+  notifyLog: () => auth.activeIdentity === 'admin',   // 会长团不行
   feedback: () => auth.activeIdentity === 'admin',   // 意见反馈的处理端；提交入口人人都有
   personal: () => true,
   pin: () => full(),          // 置顶急招：全校层面的调度，会长团/管理员

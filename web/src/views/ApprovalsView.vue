@@ -4,7 +4,7 @@
     <el-alert type="info" :closable="false">
       通过可以附意见（选填），驳回、退回与转交须写明理由；意见随通知发给申请人，审核页签里也看得到。
     </el-alert>
-    <!-- 值班：对外联络部的审批通知只发给值班的人，没人值班才发部长。
+    <!-- 值班：启用值班的部门的审批通知只发给值班的人，没人值班才发部长。
          部长在这里指定，在班的人在这里交班 -->
     <el-card v-for="d in duties" :key="d.dept_id" shadow="never" class="item duty">
       <div class="head">
@@ -156,7 +156,7 @@
         </div>
         <div class="dim" style="margin-top:8px">
           {{ u.requested_by }} 提交于 {{ fmtDT(u.created_at) }} ·
-          {{ u.kind === 'lock' ? '通过即锁定时长，志愿北京名称推给对外联络部确认；驳回退回管理者修改'
+          {{ u.kind === 'lock' ? `通过即锁定时长，志愿北京名称推给${vbDept}确认；驳回退回管理者修改`
                                : '通过后解锁，接下来的核准与锁定照常走' }}
         </div>
       </el-card>
@@ -202,7 +202,7 @@
       </el-card>
     </template>
 
-    <!-- 校外时长补登：志愿者本人在校外参加的活动，由对外联络部核对材料后审批 -->
+    <!-- 校外时长补登：志愿者本人在校外参加的活动，由志愿北京对接部门核对材料后审批 -->
     <HoursClaimQueue />
 
     <!-- 部门与部长：换届、增设或撤销部门时管理员在这里改 -->
@@ -213,7 +213,9 @@
       </div>
       <el-alert type="info" :closable="false">
         活动由归口部门的部长审批，<b>没有部长的部门无法被选为归口部门</b>，
-        换届后请及时调整。会长团可以接管任何一条审批。
+        换届后请及时调整。会长团可以接管任何一条审批。<br />
+        启用值班的部门由骨干轮流值班收审批通知；需交立项书/结项书的部门，归口它的活动按对外活动走；
+        志愿北京对接部门只有一个，负责志愿北京外联确认、校外时长补登和立项书结项书模板。
       </el-alert>
       <el-table :data="depts" size="small">
         <el-table-column prop="name" label="部门" min-width="140" />
@@ -222,6 +224,30 @@
           <template #default="{ row }">
             <span v-if="row.head_name">{{ row.head_name }}</span>
             <el-tag v-else size="small" type="warning" effect="plain">未指定</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="启用值班" width="100">
+          <template #default="{ row }">
+            <el-switch size="small" :model-value="row.duty_enabled"
+                       :loading="savingDept === row.id"
+                       @change="v => toggleDuty(row, v)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="需交立项书/结项书" width="150">
+          <template #default="{ row }">
+            <el-switch size="small" :model-value="row.external"
+                       :loading="savingDept === row.id"
+                       @change="v => setExternal(row, v)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="志愿北京对接" width="120">
+          <template #default="{ row }">
+            <el-tag v-if="row.vb_liaison" size="small" type="success" effect="plain">
+              对接部门
+            </el-tag>
+            <el-button v-else size="small" link type="primary"
+                       :loading="savingDept === row.id"
+                       @click="setLiaison(row)">设为对接</el-button>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="140">
@@ -362,6 +388,8 @@ const dd = ref({ visible: false, row: null, name: '', note: '', studentId: '', b
 const isAdmin = computed(() =>
   auth.activeIdentity === 'admin'
   || (auth.activeIdentity === 'qingxie' && auth.user?.qingxie_post === 'council'))
+// 志愿北京对接部门的实际名称（登录信息里带下来），文案里别写死部门名
+const vbDept = computed(() => auth.user?.vb_dept_name || '校青协')
 
 function openDept(row) {
   dd.value = { visible: true, row, name: row?.name || '', note: row?.note || '',
@@ -418,6 +446,45 @@ async function removeDept(row) {
   ElMessage.success('已删除')
   load()
 }
+
+// 三个开关：切换就提交，成功重新拉列表（拿到服务端算好的值），失败也重拉回滚显示
+const savingDept = ref('')
+async function patchDept(row, body, okMsg) {
+  savingDept.value = row.id
+  try {
+    await api.patch(`/api/staff/departments/${row.id}`, body)
+    ElMessage.success(okMsg)
+  } finally {
+    savingDept.value = ''
+    depts.value = await api.get('/api/staff/departments')
+  }
+}
+
+async function toggleDuty(row, v) {
+  if (!v) {
+    try {
+      await ElMessageBox.confirm('关闭后不再排值班，当前值班人会被撤下，审批通知直接发给部长。确定关闭？',
+                                 '关闭值班', { type: 'warning' })
+    } catch { return }
+  }
+  await patchDept(row, { duty_enabled: v }, v ? `「${row.name}」已启用值班` : `「${row.name}」已关闭值班`)
+}
+
+async function setExternal(row, v) {
+  await patchDept(row, { external: v },
+                  v ? `「${row.name}」归口的活动按对外活动走` : `「${row.name}」不再按对外活动走`)
+}
+
+async function setLiaison(row) {
+  const oldName = depts.value.find(x => x.vb_liaison)?.name || '（未设）'
+  try {
+    await ElMessageBox.confirm(
+      `把志愿北京对接部门从「${oldName}」换成「${row.name}」？`
+      + '志愿北京外联确认、校外时长补登审批与导出、立项书结项书模板都会交给新部门。',
+      '更换志愿北京对接部门', { type: 'warning' })
+  } catch { return }
+  await patchDept(row, { vb_liaison: true }, `「${row.name}」已设为志愿北京对接部门`)
+}
 const tr = ref({ visible: false, row: null, deptId: '', studentId: '', reason: '', busy: false })
 
 async function load() {
@@ -473,9 +540,9 @@ function openVb(row, approve) {
                templates: [vbConfirmed(row.names || [])], rejectTemplates: [] }
 }
 
-/** 锁定：同意即封账，志愿北京名称推给对外联络部确认；驳回退回管理者改。
+/** 锁定：同意即封账，志愿北京名称推给志愿北京对接部门确认；驳回退回管理者改。
  *  解锁：同意即允许改已经封了的账，外联确认作废，改完他要重新核准。
- *  结项常用语说的是结项材料，只有归口外联的活动有。 */
+ *  结项常用语说的是结项材料，只有对外活动有。 */
 function decideHours(row, approve) {
   const what = row.kind === 'lock' ? '时长审核' : '解锁申请'
   const closing = row.kind === 'lock' && row.external
@@ -503,7 +570,7 @@ async function submitDecision(comment) {
   } else if (kind === 'hours') {
     await api.post(`/api/staff/hours-requests/${row.id}/decide`, { approve, reply: comment })
     ElMessage.success(approve
-      ? (row.kind === 'lock' ? '已通过，时长已锁定，名称已推给对外联络部' : '已同意解锁')
+      ? (row.kind === 'lock' ? `已通过，时长已锁定，名称已推给${vbDept.value}` : '已同意解锁')
       : '已驳回')
   } else {
     await api.post(`/api/staff/vb-confirms/${row.id}/decide`, { approve, reply: comment })

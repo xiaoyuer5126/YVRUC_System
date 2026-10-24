@@ -21,7 +21,7 @@ import logging
 from sqlalchemy import event, update
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, locks, sudy_sign
+from .. import config, locks, oplog, sudy_sign
 from ..database import SessionLocal
 from ..models import Notification, User, uid
 
@@ -103,6 +103,27 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "custom": (
         "{title}",
         "{content}"),
+}
+
+# 模板 key → 中文名。管理端「通知记录」按它显示类型；未知 key 直接显示原 key。
+# custom 是审批待办、提醒、群发这类一次性通知共用的模板，具体是什么看标题。
+TEMPLATE_LABELS: dict[str, str] = {
+    "signup_success": "报名成功",
+    "waitlist_queued": "已加入候补",
+    "hours_approved": "请确认志愿时长",
+    "hours_locked": "志愿时长已锁定",
+    "application_accepted": "录取通知",
+    "application_rejected": "未录取",
+    "waitlist_promoted": "候补转正待确认",
+    "assignment": "岗位分配",
+    "activity_changed": "活动变更",
+    "activity_finished": "活动结束",
+    "leader_appointed": "组长任命",
+    "walkin_added": "补招",
+    "walkin_recorded": "补记志愿者",
+    "checkin_reminder": "签到提醒",
+    "ack_reminder": "签收催办",
+    "custom": "其他",
 }
 
 
@@ -225,6 +246,11 @@ def send_user(db: OrmSession, user: User, template_key: str,
     row = Notification(id=uid("ntf"), user_id=user.id,
                        template_key=template_key, title=title,
                        content=content, data=data or {},
+                       # 演示模式没有外部推送，通道记 "site"（仅站内）；
+                       # 真实模式走企业微信，记 "wecom"
+                       channel="wecom" if real else "site",
+                       # 请求里发出的通知记下触发人；定时任务没有请求上下文，留空
+                       triggered_by=oplog.current_actor_id(),
                        # 真实推送先记未送达，推成功了再改；进程在中间死掉的话，
                        # 库里说的「没送到」至少不是假话
                        delivered=not real,

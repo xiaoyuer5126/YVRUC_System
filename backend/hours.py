@@ -1,5 +1,5 @@
 """志愿时长的结账：核准 → 本人确认或申诉 → 报校青协审批（一并填志愿北京活动
-名称）→ 锁定 → 对外联络部在志愿北京上核对名称并确认 → 活动完成。
+名称）→ 锁定 → 志愿北京对接部门在志愿北京上核对名称并确认 → 活动完成。
 
 一场活动的账一起结，状态记在活动上（hours_approved_at / appeal_deadline /
 hours_locked_at）；每个人的表态记在自己那条 HoursRecord 上（confirmed_at /
@@ -155,11 +155,23 @@ def lock_records(db: OrmSession, activity_id: str) -> list[HoursRecord]:
             .populate_existing().with_for_update().order_by(HoursRecord.id).all())
 
 
-def pay_positions(db: OrmSession, segments: list | None) -> dict[str, Position]:
-    """这些段里开了「可选劳务」的岗位，按岗位 id。
+def is_party_school(db: OrmSession, activity_id: str, user_id: str) -> bool:
+    """这个人是不是以党校同学身份参加这场活动。"""
+    return (db.query(Enrollment.id)
+            .filter(Enrollment.activity_id == activity_id,
+                    Enrollment.user_id == user_id,
+                    Enrollment.source == PARTY_SCHOOL).first() is not None)
 
-    按岗位现在的设置判断：管理者在核准后才给岗位开劳务，本人照样能选。"""
-    ids = {s.position_id for s in (segments or [])
+
+def pay_positions(db: OrmSession, rec: HoursRecord) -> dict[str, Position]:
+    """这笔时长里开了「可选劳务」的岗位，按岗位 id。
+
+    按岗位现在的设置判断：管理者在核准后才给岗位开劳务，本人照样能选。
+    党校同学不能选劳务：他们的时长另作党校学分认定用，只记志愿时长
+    （见 PARTY_SCHOOL），所以这里直接返回空。"""
+    if is_party_school(db, rec.activity_id, rec.user_id):
+        return {}
+    ids = {s.position_id for s in rec.live_segments()
            if s.kind == "shift" and s.position_id}
     if not ids:
         return {}
@@ -171,7 +183,7 @@ def parts_view(db: OrmSession, rec: HoursRecord) -> list[dict]:
     """给本人看的明细：每段带上能不能选劳务（pay_ok）、劳务说明和眼下记的
     报酬方式（reward，同 HoursRecord.split 的口径，跟合计对得上）。"""
     segs = rec.live_segments()
-    pay = pay_positions(db, segs)
+    pay = pay_positions(db, rec)
     out = []
     for s in segs:
         pos = pay.get(s.position_id) if s.kind == "shift" else None
@@ -201,7 +213,7 @@ def lock_hours(db: OrmSession, act: Activity, actor: User | None,
     没表态的人按「没问题 + 各段都记志愿时长」处理，锁定时补上确认时间；
     这样锁定之后每条记录都有本人（或视同本人）的确认。
     锁定之后还有志愿北京这一步：管理者提交时长审核时填的志愿北京活动名称
-    推给对外联络部，外联在志愿北京核对并确认后活动才算「已完成」（见
+    推给志愿北京对接部门，对接部门在志愿北京核对并确认后活动才算「已完成」（见
     routers/liaison.decide_vb_confirm）。内部、外部活动一样走这一步。解锁后
     重新锁定、名称没变的，接着上一次推送的结果走，不再让外联重复核对（见
     liaison.settle_vb_on_lock）。
@@ -224,7 +236,7 @@ def lock_hours(db: OrmSession, act: Activity, actor: User | None,
         liaison.settle_vb_on_lock(db, act, actor)
         detail = ("志愿北京确认沿用，活动已完成" if act.status == "completed"
                   else f"志愿北京活动名称{liaison.names_text(act.vb_names)}"
-                       f"推送对外联络部确认")
+                       f"推送{liaison.vb_dept_name(db)}确认")
     else:
         act.status = "completed"
         detail = "活动已完成"

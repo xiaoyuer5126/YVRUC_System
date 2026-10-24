@@ -55,12 +55,14 @@ const REC = readFileSync(`${S}/record_act.txt`, 'utf8')
 const ATT = readFileSync(`${S}/attire_act.txt`, 'utf8')
 const ATT_TOKEN = readFileSync(`${S}/attire_token.txt`, 'utf8')
 const CHK_TOKEN = readFileSync(`${S}/checkin_token.txt`, 'utf8')
-// [身份, 路由, 名称, 这一页至少该渲染出多少字]
+// [身份, 路由, 名称, 这一页至少该渲染出多少字, 采样前要点开的元素（可省）, 点开后该出现的元素]
 // 最少字数不是凑数：活动管理页的「找不到活动」也是一屏内容，只看「有没有
 // 东西」分不出正常与出错——接口换了返回结构，所有页签都成了这张页，检查
 // 照样全绿。按「这一页该有的量」比，空壳就露馅了。
 const PAGES = [
   ['student', '/square', '活动广场', 100],
+  // 点开按时段筛选：电脑是弹出框、手机是底部抽屉，打开时的报错和撑破都算进来
+  ['student', '/square', '时段浮窗', 100, '.slot-trigger', '.slot-grid'],
   ['student', `/activity/${ACT}`, '活动详情', 200],
   ['student', '/my', '我的报名', 100],
   ['student', '/hours', '志愿时长', 50],
@@ -86,6 +88,7 @@ const PAGES = [
   ['admin', '/roles', '角色管理', 200],
   ['admin', '/announcement', '平台公告', 50],
   ['admin', '/oplogs', '操作日志', 100],
+  ['admin', '/notifications-log', '通知记录', 100],
   ['admin', '/feedback', '意见反馈', 20],
 ]
 const TOK = { student: readFileSync(`${S}/tok.txt`,'utf8'), admin: readFileSync(`${S}/atok.txt`,'utf8') }
@@ -330,7 +333,7 @@ async function settle(cap = 9000) {
   }
 }
 
-for (const [who, route, name, min] of PAGES) {
+for (const [who, route, name, min, open, expect] of PAGES) {
   await send('Page.navigate', { url: 'http://127.0.0.1:8080/' })
   await sleep(700)
   await send('Runtime.evaluate', { expression: `
@@ -340,6 +343,15 @@ for (const [who, route, name, min] of PAGES) {
     window.__vcStale = 1;
     location.assign(${JSON.stringify(route)});` })
   await settle()
+  if (open) {
+    await send('Runtime.evaluate', { expression: `document.querySelector(${JSON.stringify(open)})?.click()` })
+    await sleep(800)      // 等弹出动画放完
+    // 没弹出来也算出错：记进 __errs，下面的 PROBE 会一并报出
+    await send('Runtime.evaluate', { expression: `(() => {
+      const el = document.querySelector(${JSON.stringify(expect)});
+      if (!el || !el.getClientRects().length) window.__errs.push('点开 ${open} 后没有出现 ${expect}');
+    })()` })
+  }
   const r = await send('Runtime.evaluate', { expression: PROBE, returnByValue: true })
   const d = r.timeout
     ? { textLen: 0, errors: ['页面没有响应（主线程卡死？）'], vw: 0, scrollW: 0, over: [], gapsOff: [],

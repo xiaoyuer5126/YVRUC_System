@@ -332,12 +332,13 @@ def test_排班表的页签是概览志愿者信息和各场次名单(client, ad
     assert held["活动时间"] == act.time_text()
 
     info = wb["志愿者信息"]
-    assert [c.value for c in info[1]] == ["姓名", "学号", "学院", "身份证号", "手机号", "微信号"]
+    assert [c.value for c in info[1]] == ["姓名", "学号", "性别", "学院", "年级", "校区",
+                                          "学段", "身份证号", "手机号", "微信号"]
     rows = {r[1]: r for r in ([c.value for c in row] for row in info.iter_rows(min_row=2))}
     assert set(rows) == {u.student_id for u in people}       # 一人一行
-    assert rows[people[0].student_id][3] == "110101200001011234"
-    assert rows[people[1].student_id][3] == "无大陆身份证"
-    assert rows[people[2].student_id][5] == "wx_third"
+    assert rows[people[0].student_id][7] == "110101200001011234"
+    assert rows[people[1].student_id][7] == "无大陆身份证"
+    assert rows[people[2].student_id][9] == "wx_third"
     # 问卷答案不进排班表
     ws = _export_sheet(client, admin, act)
     assert [c.value for c in ws[1]][-2:] == ["签到状态", "签退时间"]

@@ -899,7 +899,9 @@ def _download(buf, filename: str) -> StreamingResponse:
 def export_hours(activity_id: str, db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager_download)):
     """时长记录导出：姓名、学号、身份证号、时长、备注（明细拼一行）。
-    选了劳务的不在其中——平台不给他们记时长。"""
+    选了劳务的不在其中——平台不给他们记时长。
+    另附「劳务」页：本活动有劳务的人一人一行，列出劳务时长与所在时段岗位，
+    给发劳务用；党校同学不能选劳务，不会出现在这页。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     buf = build_hours_workbook(db, act)
@@ -1217,11 +1219,14 @@ def checkin_segments(db: OrmSession, act: Activity) -> dict[str, dict]:
     # 本人已经给哪几段选了劳务：按（场次, 岗位）认段，重算时原样带上——
     # 不然管理者每点一次「确认全部」，本人的选择就被抹回志愿时长
     # 明细一次带出来：逐条记录各取一次，查询条数就跟着人数涨了
+    # 党校同学不带：他们只记志愿时长（见 hours.pay_positions）
+    party = hours_flow.party_school_users(db, act.id)
     chose_pay = {r.user_id: {(s.shift_id, s.period_id, s.position_id)
                              for s in r.live_segments() if s.is_pay()}
                  for r in db.query(HoursRecord)
                  .options(selectinload(HoursRecord.segments))
-                 .filter(HoursRecord.activity_id == act.id).all()}
+                 .filter(HoursRecord.activity_id == act.id,
+                         HoursRecord.user_id.notin_(party or [""])).all()}
     out: dict[str, dict] = {}
     # 还能不能自己签退、没签退按哪个时刻兜底：一段查一次；时间灵活的场次
     # 一张码一轮，按（场次, 时段, 码）各查一次
@@ -1997,7 +2002,7 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
         if body.accept:
             again = "\n请重新确认时长" + (
                 "并重新选择报酬方式（志愿时长或劳务）"
-                if hours_flow.pay_positions(db, rec.live_segments()) else "")
+                if hours_flow.pay_positions(db, rec) else "")
             again += (f"，{act.appeal_deadline:%Y-%m-%d %H:%M} 前未确认默认记为志愿时长。"
                       if act.appeal_deadline else "。")
         msgcenter.send_user(
@@ -2070,7 +2075,7 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
         notified += 1
         # 有哪一段的岗位可选劳务才需要选报酬方式，别人不必看到这一句
         pay_line = ("\n请选择报酬方式志愿时长或劳务，超时未确认默认选择志愿时长。"
-                    if hours_flow.pay_positions(db, r.live_segments()) else "")
+                    if hours_flow.pay_positions(db, r) else "")
         # 点开去「我的志愿时长」而不是活动详情：要确认/要申诉的那笔账在那儿，
         # 活动详情页上看不到本人在这个活动里有多少时长
         msgcenter.send_user(
@@ -2132,7 +2137,7 @@ def hours_lock_request(activity_id: str, body: LockHoursBody | None = None,
     missing = liaison.missing_stamped(db, act)
     if missing:
         raise HTTPException(400, f"对外活动须先上传{'和'.join(missing)}，才能提交时长审核")
-    # 志愿北京活动名称随时长一起报：审的人看得到，锁定后推给对外联络部
+    # 志愿北京活动名称随时长一起报：审的人看得到，锁定后推给志愿北京对接部门
     save_vb_names(db, act, user,
                    body.vb_names if body and body.vb_names is not None
                    else act.vb_names)
@@ -2155,7 +2160,7 @@ def _notify_lock_approvers(db: OrmSession, act: Activity, who: str,
         notify(db, approver, f"时长锁定审批｜{act.title}",
                f"{who}提交了「{act.title}」的志愿时长，等待校青协审核。\n"
                f"说明：{reason}\n志愿北京活动名称：{liaison.names_text(act.vb_names)}\n"
-               f"通过后时长锁定，名称推给对外联络部确认；"
+               f"通过后时长锁定，名称推给{liaison.vb_dept_name(db)}确认；"
                f"驳回则退回管理者修改。\n请到「活动审批」处理。",
                data={"activity_id": act.id, "route": "approvals"})
 
@@ -2208,7 +2213,7 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
     """归口部长（或会长团/管理员）拍板锁不锁、解不解。
 
     锁定通过 = 这场活动的时长经校青协审核，就此封账、活动落「待外联确认」，
-    志愿北京活动名称推给对外联络部（外联确认后才算已完成）；驳回则解冻，
+    志愿北京活动名称推给志愿北京对接部门（外联确认后才算已完成）；驳回则解冻，
     管理者改完重新核准，再提交一次。
     解锁通过 = 回到「已结束」：不管此前停在待外联确认还是已完成，账重新
     打开就回到结账之前。志愿北京确认是时长之后的附加步骤，解锁不动它：已经
@@ -2262,10 +2267,11 @@ def _decide_text(db: OrmSession, act: Activity, req, approve: bool,
         names = liaison.names_text(act.vb_names)
         last = liaison.latest_vb_confirm(db, act.id)
         if last is not None and last.status == "returned":
-            nxt = (f"志愿北京活动名称{names}此前被对外联络部退回，请到「审核」页签"
-                   f"修改后重新提交，外联确认后活动即标记为已完成。")
+            nxt = (f"志愿北京活动名称{names}此前被{liaison.vb_dept_name(db)}退回，"
+                   f"请到「审核」页签修改后重新提交，"
+                   f"外联确认后活动即标记为已完成。")
         else:
-            nxt = (f"志愿北京活动名称{names}已推给对外联络部，"
+            nxt = (f"志愿北京活动名称{names}已推给{liaison.vb_dept_name(db)}，"
                    f"外联在志愿北京核对确认后活动即标记为已完成。")
         return f"「{act.title}」的志愿时长已通过校青协审核并锁定。\n{nxt}{tail}"
     return f"「{act.title}」的时长已解锁，修改后请重新核准。{tail}"

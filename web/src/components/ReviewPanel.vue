@@ -1,6 +1,6 @@
 <!-- 活动管理「审核」页签：这场活动要过的三道审核放在一处看。
      立项审核（发布前）→ 时长审核（结项，一并填志愿北京活动名称）→ 志愿北京外联确认。
-     时长锁定后名称推给对外联络部，外联在志愿北京核对确认，活动才算已完成；
+     时长锁定后名称推给志愿北京对接部门，外联在志愿北京核对确认，活动才算已完成；
      退回的话在这里改名称重提（时长保持锁定）。
      提交动作各在原处（提交审批在页头、提交时长审核在「时长管理」），这里看进度、
      意见与历史，并管理各自要附的材料。 -->
@@ -28,7 +28,7 @@
         </el-timeline-item>
       </el-timeline>
       <div v-else class="dim" style="margin-bottom:8px">还没有提交过审批（在页头点「提交审批」）。</div>
-      <!-- 立项书只在交给对外联络部之后出现：审批中可换，通过后留着下载打印。
+      <!-- 立项书只在对外活动里出现：审批中可换，通过后留着下载打印。
            上传入口在「提交审批」弹窗里；草稿阶段就摆出来，内部活动的发起方
            会以为自己也得传一份 -->
       <template v-if="files?.external && act && act.status !== 'draft'">
@@ -97,7 +97,7 @@
         <el-tag v-if="act?.status === 'vb_pending'" size="small" type="warning" effect="plain"
                 style="margin-left:8px">待外联确认</el-tag>
         <span class="dim" style="margin-left:8px">
-          时长锁定后，志愿北京活动名称推给对外联络部
+          时长锁定后，志愿北京活动名称推给{{ vbDept }}
           <template v-if="vbc.handler">（{{ vbc.handler }}）</template>核对，确认即完成
         </span>
       </template>
@@ -111,7 +111,7 @@
       </template>
       <template v-else-if="vbc.can_resubmit">
         <el-alert type="error" show-icon :closable="false" style="margin-bottom:8px"
-                  :title="`对外联络部退回：${vbc.items[0]?.reply || ''}`"
+                  :title="`${vbDept}退回：${vbc.items[0]?.reply || ''}`"
                   description="改好志愿北京活动名称后重新提交给外联；时长保持锁定，不用重新审核。" />
         <VbNamesInput v-model="draftNames" />
         <div class="toolbar" style="margin-top:8px">
@@ -190,6 +190,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
+import { auth } from '../store'
 import ApprovalCommentDialog from './ApprovalCommentDialog.vue'
 import { vbConfirmed } from '../replyTemplates'
 import ProjectFileSlot from './ProjectFileSlot.vue'
@@ -198,6 +199,8 @@ import VbNamesInput from './VbNamesInput.vue'
 const props = defineProps({ activityId: { type: String, required: true },
                             act: { type: Object, default: null } })
 const emit = defineEmits(['changed', 'status-changed'])
+// 志愿北京对接部门的实际名称（登录信息里带下来），文案里别写死部门名
+const vbDept = computed(() => auth.user?.vb_dept_name || '校青协')
 
 const VBC_TAG = { pending: 'warning', confirmed: 'success', returned: 'danger', void: 'info' }
 const REQ_TAG = { pending: 'warning', approved: 'success', rejected: 'danger' }
@@ -251,7 +254,7 @@ async function resubmit() {
   try {
     await api.post(`/api/staff/activities/${props.activityId}/vb-confirms/resubmit`,
                    { names: draftNames.value })
-    ElMessage.success('已重新提交，等对外联络部确认')
+    ElMessage.success(`已重新提交，等${vbDept.value}确认`)
     load()
   } finally { vbBusy.value = false }
 }
@@ -264,7 +267,7 @@ async function repush() {
     await api.post(`/api/staff/activities/${props.activityId}/vb-confirms/repush`,
                    { names: draftNames.value, reason: repushReason.value })
     repushReason.value = ''
-    ElMessage.success('已再次推送，等对外联络部确认')
+    ElMessage.success(`已再次推送，等${vbDept.value}确认`)
     load()
   } finally { vbBusy.value = false }
 }

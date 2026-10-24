@@ -412,7 +412,10 @@ def confirm_hours(record_id: str, body: ConfirmHoursBody,
                     HoursAppeal.status == "pending").first()):
         raise HTTPException(409, "您的申诉正在处理中，处理完成后会重新核准")
     segments = r.live_segments()
-    pay_ok = hours_flow.pay_positions(db, segments)
+    pay_ok = hours_flow.pay_positions(db, r)
+    # 党校同学只记志愿时长（见 hours.PARTY_SCHOOL）：下面按岗位的报错文案是
+    # 「岗位没有开放劳务」，对党校同学说不通，这里单独挡一道、说明原因
+    is_party = hours_flow.is_party_school(db, r.activity_id, r.user_id)
     segs = {(s.shift_id, s.position_id): s for s in segments if s.kind == "shift"}
     chosen: dict[tuple, str] = {}
     for it in body.parts:
@@ -426,6 +429,8 @@ def confirm_hours(record_id: str, body: ConfirmHoursBody,
             # 悄悄不生效的话，本人以为选了劳务，账上还是志愿时长
             raise HTTPException(400, "这笔时长里没有这一段：签到重算后段可能"
                                      "已经变了，请刷新后重试")
+        if reward == "pay" and is_party:
+            raise HTTPException(400, "党校同学只记志愿时长，不能选劳务")
         if reward == "pay" and key[1] not in pay_ok:
             raise HTTPException(400, f"「{seg.label}」{seg.position_name}的岗位"
                                      f"没有开放劳务，只能记志愿时长")

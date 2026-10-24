@@ -116,9 +116,9 @@ def main() -> None:
             ("2025001", "王砚秋", "teacher", ["admin", "qingxie", "initiator"]),  # 管理员：见全部
             ("2025002", "李慕清", "teacher", ["initiator"]),          # 发起方：仅自己管理的活动
             ("2025003", "张远航", "student", ["qingxie", "student"]), # 青协：会长团
-            ("2025004", "周砚", "student", ["qingxie", "student"]),     # 青协：对外联络部部长
-            ("2025005", "林骁", "student", ["qingxie", "student"]),     # 青协：对外联络部骨干
-            ("2025006", "苏昀", "student", ["qingxie", "student"]),     # 青协：对外联络部成员（学习权限）
+            ("2025004", "周砚", "student", ["qingxie", "student"]),     # 青协：对接部门部长
+            ("2025005", "林骁", "student", ["qingxie", "student"]),     # 青协：对接部门骨干
+            ("2025006", "苏昀", "student", ["qingxie", "student"]),     # 青协：对接部门成员（学习权限）
         ]
         users: dict[str, User] = {}
         for sid, name, utype, roles in staff_specs:
@@ -152,7 +152,7 @@ def main() -> None:
             users[sid].qingxie_post = post
         # 成员跟着骨干：苏昀看到的活动与林骁一模一样
         users["2025006"].supervisor_id = users["2025005"].id
-        # 对外联络部启用值班（见 liaison.py），但种子里不预设值班人：没人值班时
+        # 这个部门带「启用值班」开关（由部门迁移标上），但种子里不预设值班人：没人值班时
         # 审批通知回落给部长，演示时由周砚在「活动审批」页指定林骁值班，两种情形都看得到
         db.commit()
 

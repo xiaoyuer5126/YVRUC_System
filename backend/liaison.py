@@ -1,23 +1,21 @@
-"""对外联络部：值班、立项书与结项书、志愿北京名称的外联确认。
+"""值班、立项书与结项书、志愿北京名称的外联确认。
 
-二级志愿团体的活动都归口对外联络部，审批量远超其他部门，部长一个人盯不过来：
+启用值班的部门（Department.duty_enabled）：审批量大、部长一个人盯不过来时，
 由部门骨干轮流值班，这个部门的审批（活动发布、时长锁定/解锁、志愿北京确认）
 通知只发给值班的人，值班的人和部长一样能拍板；部长每晚收一份日报。
-没人值班就回落给部长——审批不能因为排班空档没人收。
+没人值班就回落给部长——审批不能因为排班空档没人收。哪些部门启用值班是部门
+维护里的开关，由会长团/管理员打开或关闭。
 
-值班按部门做成通用的（Department.duty_user_id），但只在 DUTY_DEPTS 里的部门
-启用；别的部门行为一概不变。部门按名字认：部门是页面上可以增删改的数据，
-没有别的稳定标识，改了名就等于关掉值班——宁可关掉，也别套到别的部门上。
-
-「对外活动」= 归口对外联络部的活动：提交审批要带立项书，时长报批要带盖章立项书
-和盖章结项书。这几份文件都挂在 Attachment 上（owner_type = proposal / stamped /
-closing，owner_id = 活动 id），存储与一次性票据下载沿用学习材料那一套。
-立项书、结项书的空白模板由外联部长上传，发起方下载了照着填（owner_type =
-template，owner_id = 格子名，不挂活动）。
+「对外活动」= 归口开了 external 的部门的活动：提交审批要带立项书，时长报批要带
+盖章立项书和盖章结项书。这几份文件都挂在 Attachment 上（owner_type = proposal /
+stamped / closing，owner_id = 活动 id），存储与一次性票据下载沿用学习材料那一套。
+立项书、结项书的空白模板由志愿北京对接部门的部长上传，发起方下载了照着填
+（owner_type = template，owner_id = 格子名，不挂活动）。
 
 志愿北京确认不分内外：所有活动提交时长审核时都要填志愿北京上的活动名称，
-时长审核通过（锁定）后名称推给对外联络部核对，确认了活动才算「已完成」。
-活动本身归口哪个部门都一样——志愿北京那边的账只有对外联络部对。
+时长审核通过（锁定）后名称推给志愿北京对接部门核对，确认了活动才算「已完成」。
+活动本身归口哪个部门都一样——志愿北京那边的账只有对接部门对。哪个部门对接
+志愿北京也是部门维护里的开关（Department.vb_liaison，全平台至多一个）。
 """
 from __future__ import annotations
 
@@ -25,8 +23,6 @@ from sqlalchemy.orm import Session as OrmSession
 
 from .models import Activity, Attachment, Department, User, VbConfirm, now, uid
 
-LIAISON_DEPT = "对外联络部"
-DUTY_DEPTS = (LIAISON_DEPT,)
 # 能值班的：部门骨干与部长。部门成员是学习权限，拍不了板。
 ELIGIBLE_POSTS = ("core", "head")
 
@@ -49,11 +45,18 @@ DOC_TEMPLATE_EXTS = ("docx",)
 # ======================= 部门与值班 =======================
 
 def duty_enabled(dept: Department | None) -> bool:
-    return dept is not None and dept.name in DUTY_DEPTS
+    return dept is not None and dept.duty_enabled
 
 
-def liaison_dept(db: OrmSession) -> Department | None:
-    return db.query(Department).filter(Department.name == LIAISON_DEPT).first()
+def vb_dept(db: OrmSession) -> Department | None:
+    """志愿北京对接部门。全平台至多一个（部门表上有条件唯一索引）。"""
+    return db.query(Department).filter(Department.vb_liaison.is_(True)).first()
+
+
+def vb_dept_name(db: OrmSession) -> str:
+    """志愿北京对接部门的名字，给通知和报错文案用。没设就笼统称「校青协」。"""
+    dept = vb_dept(db)
+    return dept.name if dept is not None else "校青协"
 
 
 def dept_heads(db: OrmSession, dept_id: str) -> list[User]:
@@ -142,7 +145,7 @@ def is_on_duty(cur: User | None, user: User) -> bool:
 def handler_dept_ids(db: OrmSession, user: User) -> list[str]:
     """这个人以值班人/部长身份负责的部门。审批列表按它筛。"""
     return [d.id for d in db.query(Department)
-            .filter(Department.name.in_(DUTY_DEPTS)).all()
+            .filter(Department.duty_enabled.is_(True)).all()
             if is_dept_handler(db, user, d.id)]
 
 
@@ -157,12 +160,13 @@ def duty_eligible(db: OrmSession, user: User, *, real: bool = False) -> bool:
 
 
 def session_user(db: OrmSession, user: User) -> dict:
-    """登录、刷新个人信息时下发的用户信息：full() 再加上值班资格。
+    """登录、刷新个人信息时下发的用户信息：full() 再加上值班资格和对接部门名。
 
     值班资格要查部门，放不进 User.full()——那个方法在名册列表里逐行调用，
     多一次查询就是多几百次。
     """
-    return {**user.full(), "duty_eligible": duty_eligible(db, user, real=True)}
+    return {**user.full(), "duty_eligible": duty_eligible(db, user, real=True),
+            "vb_dept_name": vb_dept_name(db)}
 
 
 # ======================= 对外活动与立项书 =======================
@@ -177,11 +181,11 @@ def is_published(act: Activity) -> bool:
 
 
 def is_external(db: OrmSession, act: Activity) -> bool:
-    """对外活动：归口对外联络部。"""
+    """对外活动：归口部门开了「归口活动算对外活动」。"""
     if not act.approval_dept_id:
         return False
     dept = db.get(Department, act.approval_dept_id)
-    return dept is not None and dept.name == LIAISON_DEPT
+    return dept is not None and dept.external
 
 
 def project_file(db: OrmSession, activity_id: str, slot: str) -> Attachment | None:
@@ -220,8 +224,8 @@ def doc_template(db: OrmSession, slot: str) -> Attachment | None:
 
 
 def can_manage_templates(db: OrmSession, user: User) -> bool:
-    """立项书、结项书模板由外联部长更换；会长团和管理员同样可以。"""
-    return user.has_full_access() or is_head_of(user, liaison_dept(db))
+    """立项书、结项书模板由志愿北京对接部门的部长更换；会长团和管理员同样可以。"""
+    return user.has_full_access() or is_head_of(user, vb_dept(db))
 
 
 def can_see_project_files(db: OrmSession, user: User, act: Activity) -> bool:
@@ -262,18 +266,18 @@ def clean_vb_names(raw) -> list[str]:
 
 
 def vb_decider(db: OrmSession, user: User) -> bool:
-    """谁来确认志愿北京：对外联络部的值班人与部长（跟当前身份），会长团、管理员。"""
+    """谁来确认志愿北京：对接部门的值班人与部长（跟当前身份），会长团、管理员。"""
     if user.has_full_access():
         return True
-    dept = liaison_dept(db)
+    dept = vb_dept(db)
     return dept is not None and is_dept_handler(db, user, dept.id)
 
 
 def vb_contacts(db: OrmSession) -> list[User]:
-    """外联确认逐条通知谁：对外联络部的值班人，没人值班发部长——不看活动本身
+    """外联确认逐条通知谁：对接部门的值班人，没人值班发部长——不看活动本身
     归口哪个部门。部门没了、也没设部长就兜底发会长团（按真实身份），
     不然这一条没人知道。"""
-    dept = liaison_dept(db)
+    dept = vb_dept(db)
     contacts = approval_contacts(db, dept.id) if dept else []
     if contacts:
         return contacts
@@ -288,7 +292,7 @@ def claim_contacts(db: OrmSession, submitter: User) -> list[User]:
     out = [u for u in vb_contacts(db) if u.id != submitter.id]
     if out:
         return out
-    dept = liaison_dept(db)
+    dept = vb_dept(db)
     heads = [h for h in (dept_heads(db, dept.id) if dept else []) if h.id != submitter.id]
     if heads:
         return heads
@@ -312,10 +316,10 @@ def same_names(a, b) -> bool:
 
 def push_vb_confirm(db: OrmSession, act: Activity, actor: User | None,
                     kind: str, reason: str = "") -> VbConfirm:
-    """把活动当前的志愿北京名称推给对外联络部核对。不提交事务。
+    """把活动当前的志愿北京名称推给志愿北京对接部门核对。不提交事务。
 
     kind=lock：时长审核通过、刚锁定；kind=resubmit：被退回后管理者改了名称重提；
-    kind=repush：活动已完成，管理者再推一次，reason 是他写的原因，随通知给外联。
+    kind=repush：活动已完成，管理者再推一次，reason 是他写的原因，随通知发给对接部门。
     """
     from .notify import notify
 
