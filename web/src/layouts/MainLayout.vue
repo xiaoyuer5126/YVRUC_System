@@ -109,7 +109,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { isNavigationFailure, NavigationFailureType, useRoute, useRouter } from 'vue-router'
 import { ArrowDown, Bell, ChatDotRound, Check, Fold } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { auth, clearAuth, isTrainee, ROLE_LABELS, takeAnnouncementTurn } from '../store'
+import { auth, clearAuth, isTrainee, ROLE_LABELS, takeAnnouncementTurn, unreadState } from '../store'
 import { switchIdentity } from '../router'
 import { useNarrow } from '../composables/useNarrow'
 import AnnouncementDialog from '../components/AnnouncementDialog.vue'
@@ -121,7 +121,7 @@ const router = useRouter()
 const route = useRoute()
 const narrow = useNarrow()
 const drawer = ref(false)
-const unread = ref(0)
+const unread = computed(() => unreadState.count)
 let timer = null
 
 // 当前视角的称呼：没有对应身份时（比如还没被授予任何身份的老师，默认视角是
@@ -141,7 +141,7 @@ async function poll() {
     // 只问数字：完整那个接口会把一页通知的正文一并拉回来，
     // 而这儿只用得上一个 unread。30 秒一次 × 每个开着的页面，省下来不少
     const d = await api.get('/api/me/notifications/unread', { silent: true })
-    unread.value = d.unread
+    unreadState.count = d.unread
   } catch { /* 静默 */ }
 }
 

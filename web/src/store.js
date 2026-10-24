@@ -24,6 +24,9 @@ auth.activeIdentity = storedUser && (storedUser.roles || []).includes(storedIden
   ? storedIdentity
   : (storedUser ? pickDefaultIdentity(storedUser) : '')
 
+// 顶栏铃铛的未读数：主框架轮询写它，消息页标已读后立刻改，不用等下一轮轮询
+export const unreadState = reactive({ count: 0 })
+
 export function setAuth(token, user) {
   auth.token = token
   auth.user = user

@@ -43,10 +43,11 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
+import { unreadState } from '../store'
 
 const router = useRouter()
 
@@ -58,7 +59,7 @@ const router = useRouter()
 async function openMessage(n) {
   if (!n.read) {
     n.read = true
-    unread.value = Math.max(0, unread.value - 1)
+    unreadState.count = Math.max(0, unreadState.count - 1)
     api.post(`/api/me/notifications/${n.id}/read`, {}, { silent: true })
       .catch(() => { n.read = false })
   }
@@ -66,7 +67,7 @@ async function openMessage(n) {
 }
 
 const items = ref([])
-const unread = ref(0)
+const unread = computed(() => unreadState.count)
 const pendingAck = ref(0)
 const acking = ref('')
 const page = ref(1)
@@ -88,7 +89,7 @@ const tagType = k => TAGS[k]?.[0] || 'info'
 const tagLabel = k => TAGS[k]?.[1] || '通知'
 
 function apply(d) {
-  unread.value = d.unread
+  unreadState.count = d.unread
   pendingAck.value = d.pending_ack
   hasMore.value = d.has_more
 }
@@ -118,7 +119,7 @@ async function loadMore() {
 async function readAll() {
   await api.post('/api/me/notifications/read-all')
   items.value.forEach(n => { n.read = true })
-  unread.value = 0
+  unreadState.count = 0
 }
 
 async function ack(n) {
@@ -126,7 +127,7 @@ async function ack(n) {
   try {
     const d = await api.post(`/api/me/notifications/${n.id}/ack`)
     ElMessage.success('签收成功')
-    if (!n.read) unread.value = Math.max(0, unread.value - 1)
+    if (!n.read) unreadState.count = Math.max(0, unreadState.count - 1)
     n.read = true
     n.acked_at = d.acked_at
     pendingAck.value = Math.max(0, pendingAck.value - 1)
