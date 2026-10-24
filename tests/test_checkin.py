@@ -116,6 +116,21 @@ def test_checkin_needs_login(client, live_group):
     assert client.post(f"/api/checkin/task/{token}").status_code == 401
 
 
+def test_封账的活动扫签到码被挡(client, db, admin, live_group):
+    """账封了再冒出一条签到记录，部长看的和被封的就不是同一份了。"""
+    act, _g, h, token = live_group
+    act = db.get(Activity, act.id)
+    act.hours_locked_at = now()
+    db.commit()
+
+    r = client.post(f"/api/checkin/task/{token}", headers=h)
+    assert r.status_code == 409 and "封账" in r.json()["detail"]
+
+    db.expire_all()
+    assert (db.query(CheckinRecord)
+            .filter(CheckinRecord.shift_id == _g.id).count() == 0)
+
+
 # ======================= 多场次：码属于哪一场要看得出来 =======================
 
 @pytest.fixture

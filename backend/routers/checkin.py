@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import config
+from .. import hours as hours_flow
 from ..database import db_session
 from ..deps import current_user
 from ..locks import redeem_checkin_code
@@ -168,6 +169,12 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
     挡回去」是同一件事。各写一遍早晚会分叉——比如 10 分钟那道保护窗只加在
     扫码那一侧，定位签到就悄悄成了「当场签退」的后门。
     """
+    # 时长封账或正等校青协核准，这场活动就不能再产生签到/签退记录：记录一变
+    # 时长就要重算，而部长看的和最终封的必须同一份账。面向志愿者的说法和管理端
+    # 的 ensure_hours_editable 不同，另行写。
+    if act.hours_locked() or hours_flow.pending_lock(db, act.id) is not None:
+        raise HTTPException(409, "本活动的志愿时长已封账，不能再签到签退，请联系负责人")
+
     t = now()
     period = g.period_of(task.period_id)
     if period is None:
