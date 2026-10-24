@@ -225,6 +225,9 @@ def send_user(db: OrmSession, user: User, template_key: str,
     row = Notification(id=uid("ntf"), user_id=user.id,
                        template_key=template_key, title=title,
                        content=content, data=data or {},
+                       # 演示模式没有外部推送，通道记 "site"（仅站内）；
+                       # 真实模式走企业微信，记 "wecom"
+                       channel="wecom" if real else "site",
                        # 真实推送先记未送达，推成功了再改；进程在中间死掉的话，
                        # 库里说的「没送到」至少不是假话
                        delivered=not real,
