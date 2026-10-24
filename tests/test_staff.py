@@ -818,10 +818,10 @@ def test_场次时间带周几_跨天两头都带(client, open_group, take_stude
     got = client.get(f"/api/activities/{act.id}", headers=h).json()
     shift = next(x for x in got["shifts"] if x["id"] == g.id)
     if s.date() == e.date():
-        want = f"{s:%m-%d}（周{days[s.weekday()]}）{s:%H:%M}-{e:%H:%M}"
+        want = f"{s:%Y-%m-%d}（周{days[s.weekday()]}）{s:%H:%M}-{e:%H:%M}"
     else:
-        want = (f"{s:%m-%d}（周{days[s.weekday()]}）{s:%H:%M} ~ "
-                f"{e:%m-%d}（周{days[e.weekday()]}）{e:%H:%M}")
+        want = (f"{s:%Y-%m-%d}（周{days[s.weekday()]}）{s:%H:%M} ~ "
+                f"{e:%Y-%m-%d}（周{days[e.weekday()]}）{e:%H:%M}")
     assert shift["time_text"] == want
 
     # 跨天：两头都带周几
@@ -831,5 +831,5 @@ def test_场次时间带周几_跨天两头都带(client, open_group, take_stude
     got = client.get(f"/api/activities/{act.id}", headers=h).json()
     shift = next(x for x in got["shifts"] if x["id"] == g.id)
     e = g.end_time
-    assert shift["time_text"] == (f"{s:%m-%d}（周{days[s.weekday()]}）{s:%H:%M} ~ "
-                                  f"{e:%m-%d}（周{days[e.weekday()]}）{e:%H:%M}")
+    assert shift["time_text"] == (f"{s:%Y-%m-%d}（周{days[s.weekday()]}）{s:%H:%M} ~ "
+                                  f"{e:%Y-%m-%d}（周{days[e.weekday()]}）{e:%H:%M}")
