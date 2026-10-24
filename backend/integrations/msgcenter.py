@@ -106,6 +106,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
 }
 
 # 模板 key → 中文名。管理端「通知记录」按它显示类型；未知 key 直接显示原 key。
+# custom 是审批待办、提醒、群发这类一次性通知共用的模板，具体是什么看标题。
 TEMPLATE_LABELS: dict[str, str] = {
     "signup_success": "报名成功",
     "waitlist_queued": "已加入候补",
@@ -122,7 +123,7 @@ TEMPLATE_LABELS: dict[str, str] = {
     "walkin_recorded": "补记志愿者",
     "checkin_reminder": "签到提醒",
     "ack_reminder": "签收催办",
-    "custom": "自定义通知",
+    "custom": "其他",
 }
 
 

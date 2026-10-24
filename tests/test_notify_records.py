@@ -54,7 +54,7 @@ def test_请求触发的通知记下发请求的人(client, db, take_student):
     assert row["recipient_sid"] == ADMIN
     assert row["trigger_sid"] == sid
     assert row["trigger_name"] == student_row(db, sid).name
-    assert row["template_label"] == "自定义通知"
+    assert row["template_label"] == "其他"
     # 演示模式没有外部推送，通道只是站内
     assert row["status"] == "site" and row["status_label"] == "仅站内"
 
