@@ -201,6 +201,15 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
     if enr is None:
         raise HTTPException(403, f"您不是「{act.title}·{g.name}」的志愿者")
 
+    # 分岗位的码只认本岗位的人：码是这个摊位专有的凭据，别的岗位的人扫了它、
+    # 记录就落到这个摊位名下。还没定岗（position_id 还是占位岗位「待分配」或
+    # 为空）的人也不认这张——他们的码是整场那张统一码。
+    if task.position_id is not None and enr.position_id != task.position_id:
+        pos = db.get(Position, task.position_id)
+        raise HTTPException(
+            403, f"这是「{pos.name if pos else '本岗位'}」的签到码，"
+                 f"您的岗位不是它，请扫本岗位的码")
+
     rec = find_record(db, user.id, g, task)
 
     if rec is None:
