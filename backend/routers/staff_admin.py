@@ -2,7 +2,8 @@
 
 页面可见性：
   · 数据总览 → 管理员 / 会长团
-  · 审计日志 → 活动发起方/青协/管理员（非全权者只看自己能管的活动）
+  · 审计日志 → 活动发起方/青协/管理员（非全权者只看自己能管的活动）；
+    部门成员不给，留痕里有违规明细
   · 志愿者档案（全校名册）→ 管理员 / 会长团 / 部长；
     活动内点姓名看档案 → 该活动的管理者，且只限报了这场活动的人
 """
@@ -186,6 +187,10 @@ def audit_logs(activity_id: str = "", target_type: str = "",
                visible: str = "", page: int = 1, size: int = 20,
                db: OrmSession = Depends(db_session),
                user: User = Depends(require_manager)):
+    # 部门成员是学习权限：留痕里有一条条违规登记（撤回的也在），比违规接口
+    # 本身露出得还多。违规接口已经不给他们看，这里同样关掉。
+    if user.is_trainee():
+        raise HTTPException(403, "部门成员为学习权限，不能查看操作日志")
     q = db.query(AuditLog)
     managed = managed_activity_ids(db, user)
     if activity_id:

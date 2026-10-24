@@ -187,6 +187,19 @@ def test_部门成员不能导出也不能查档案(client, db, dept_activity):
     assert client.get("/api/staff/users", headers=member).status_code == 403
 
 
+def test_部门成员看不了审计日志里的违规(client, db, dept_activity):
+    """违规接口本身不给部门成员看，留痕中心里却挂着一条条「违规登记」——
+    露出得比违规接口还多。审计日志也得一起关掉。"""
+    aid, _g = dept_activity
+    _add_core_manager(db, aid)
+    member = login(client, MEMBER)
+    for url in (f"/api/staff/audit-logs?activity_id={aid}",
+                f"/api/staff/audit-logs?activity_id={aid}&target_type=user"):
+        r = client.get(url, headers=member)
+        assert r.status_code == 403, (url, r.text)
+        assert "学习权限" in r.json()["detail"]
+
+
 def test_部门成员的导出一个都下不到(client, db, dept_activity):
     """不只排班表：时长记录（带身份证号）和报名问卷结果也得拦。
     以后新加的导出（.xlsx/.zip 下载或附件数）也得点名拦，这里按路由表查一遍。"""
