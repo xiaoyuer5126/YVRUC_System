@@ -3,7 +3,7 @@
   <el-tag v-if="row.status === 'applied'" type="primary">待筛选</el-tag>
   <el-tag v-else-if="row.status === 'enrolled'" type="success">已报名</el-tag>
   <el-tag v-else-if="row.status === 'waitlisted'" type="warning">
-    候补中{{ row.waitlist_position ? ` 第${row.waitlist_position}位` : '' }}
+    {{ row.waitlist_position ? `候补第 ${row.waitlist_position} 位` : '候补中' }}
   </el-tag>
   <el-countdown v-else-if="row.status === 'pending_confirm'" format="HH:mm:ss"
                 :value="deadlineTs">

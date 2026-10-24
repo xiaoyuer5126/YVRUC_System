@@ -128,6 +128,10 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "position": ({"id": st.id, "name": st.name, "time_text": st.time_text(),
                      "location": st.location} if st else None),
         "status": enr.status, "cancel_type": enr.cancel_type,
+        # 候补第几位：队列按岗位排（见 logic.waitlist_position），报上名的人
+        # 没有名次，给 0
+        "waitlist_position": (logic.waitlist_position(db, enr)
+                              if enr.status == "waitlisted" else 0),
         "excused": enr.excused, "excuse_reason": enr.excuse_reason,
         # 名单已锁定（整场或他的岗位）：此时退出会记一次「锁定后退出」
         "list_locked": logic.position_locked(g, st),
