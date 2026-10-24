@@ -603,6 +603,7 @@ def _detail_public(db: OrmSession, act: Activity) -> dict:
         "intro": act.intro,
         "location_point": act.location_point,
         "volunteer_requirement": act.volunteer_requirement,
+        "precautions": act.precautions,
         "recruit_campuses": act.recruit_campuses or [],
         "recruit_stages": act.recruit_stages or [],
         "recruit_colleges": act.recruit_colleges or [],

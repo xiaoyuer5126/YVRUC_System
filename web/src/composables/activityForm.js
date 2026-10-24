@@ -8,7 +8,7 @@ export function emptyActivity() {
   return {
     title: '', organizer: '', co_organizer: '', recruit_mode: 'instant', location: '', location_point: null,
     contacts: [{ name: '', phone: '' }], intro: '',
-    volunteer_requirement: '', volunteer_benefit: '', contact_group_qr: '',
+    volunteer_requirement: '', precautions: '', volunteer_benefit: '', contact_group_qr: '',
     recruit_campuses: [], recruit_stages: [], recruit_colleges: [],
     // 补记录活动（不公开招募）自己的活动时间：它没有场次可算，可以有好几段
     held_periods: [],
@@ -29,6 +29,7 @@ export function activityToForm(act) {
     location: act.location, location_point: act.location_point || null,
     contacts, intro: act.intro,
     volunteer_requirement: act.volunteer_requirement || '',
+    precautions: act.precautions || '',
     volunteer_benefit: act.volunteer_benefit || '',
     contact_group_qr: act.contact_group_qr || '',
     recruit_campuses: act.recruit_campuses || [],

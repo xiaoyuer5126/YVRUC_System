@@ -352,6 +352,9 @@ class Activity(Base):
     # 这两条讲的是整个活动共通的：着装、集合、餐食、时长、纪念品。
     # 要求选填；保障必填，招募文案里固定有这一段，默认见 config
     volunteer_requirement: Mapped[str] = mapped_column(Text, default="")
+    # 注意事项（选填）：体力活要穿深色衣服、花粉过敏慎报这类提醒，和「要求」
+    # 分开写，免得挤在一段里志愿者分不清哪句是门槛、哪句是提醒
+    precautions: Mapped[str] = mapped_column(Text, default="")
     volunteer_benefit: Mapped[str] = mapped_column(
         Text, default=config.DEFAULT_VOLUNTEER_BENEFIT)
     # 招募范围：限定校区、学段与学院，空列表 = 不限。整个活动一刀切，

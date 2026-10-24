@@ -36,6 +36,7 @@ const LABELS = [
   ['location', '活动地点'],
   ['contacts', '联系人', v => v.map(c => `${c.name} ${c.phone}`.trim()).join('\n')],
   ['intro', '活动简介'], ['volunteer_requirement', '志愿者要求'],
+  ['precautions', '注意事项'],
   ['volunteer_benefit', '志愿者保障'],
   ['recruit_campuses', '招募校区', v => v.join('、')],
   ['recruit_stages', '招募学段', v => v.join('、')],

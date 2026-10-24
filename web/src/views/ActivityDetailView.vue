@@ -45,11 +45,15 @@
               {{ act.recruit_scope_text }}
             </el-descriptions-item>
           </el-descriptions>
-          <div v-if="act.volunteer_requirement || act.volunteer_benefit"
+          <div v-if="act.volunteer_requirement || act.precautions || act.volunteer_benefit"
                style="margin-top:12px">
             <div v-if="act.volunteer_requirement" class="side-note">
               <b>志愿者要求</b>
               <p>{{ act.volunteer_requirement }}</p>
+            </div>
+            <div v-if="act.precautions" class="side-note">
+              <b>注意事项</b>
+              <p>{{ act.precautions }}</p>
             </div>
             <div v-if="act.volunteer_benefit" class="side-note benefit">
               <b>志愿者保障</b>

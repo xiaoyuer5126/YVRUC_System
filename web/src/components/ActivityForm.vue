@@ -102,6 +102,10 @@
       <el-input v-model="f.volunteer_requirement" type="textarea" :rows="2"
                 placeholder="选填。整个活动共通的要求，如：着深色衣裤、提前 20 分钟集合" />
     </el-form-item>
+    <el-form-item v-if="!isRecord" label="注意事项">
+      <el-input v-model="f.precautions" type="textarea" :rows="2"
+                placeholder="选填。提醒类的话，如：有体力劳动请穿深色衣服、自备口罩；花粉过敏者慎报" />
+    </el-form-item>
     <el-form-item v-if="!isRecord" label="志愿者保障" required>
       <el-input v-model="f.volunteer_benefit" type="textarea" :rows="2"
                 placeholder="提供什么，如：志愿时长、午餐与饮水、纪念证书、意外险" />

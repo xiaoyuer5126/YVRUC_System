@@ -47,7 +47,8 @@ ACTIVITY_FIELDS = {
     "co_organizer": "联合主办方",
     "contacts": "联系人",
     "contact_group_qr": "志愿者联络群二维码",
-    "volunteer_requirement": "志愿者要求", "volunteer_benefit": "志愿者保障",
+    "volunteer_requirement": "志愿者要求", "precautions": "注意事项",
+    "volunteer_benefit": "志愿者保障",
     "recruit_campuses": "招募校区", "recruit_stages": "招募学段",
     "recruit_colleges": "招募学院",
     "reg_start": "报名开始", "reg_end": "报名截止",
@@ -212,6 +213,7 @@ class ActivityBody(BaseModel):
     cover_hue: int = 0
     # 整体要求（着装、集合）选填；保障（时长、餐食、纪念品）必填，没传就是默认那句
     volunteer_requirement: str = ""
+    precautions: str = ""
     volunteer_benefit: str = config.DEFAULT_VOLUNTEER_BENEFIT
     # 招募范围：限定校区/学段/学院，空 = 不限
     recruit_campuses: list[str] = []
@@ -429,6 +431,7 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                    contact_group_qr=body.contact_group_qr.strip(),
                    cover_hue=body.cover_hue,
                    volunteer_requirement=body.volunteer_requirement.strip(),
+                   precautions=body.precautions.strip(),
                    volunteer_benefit=benefit,
                    recruit_campuses=_clean_scope(body.recruit_campuses,
                                                  config.CAMPUSES, "校区"),

@@ -367,6 +367,7 @@ def test_招募文案按校青协定的格式拼(client, admin, db, act_with_pos
     assert client.patch(f"/api/staff/activities/{act.id}", headers=admin,
                         json={"intro": "演出当天需要引导与检录。", "organizer": "校团委",
                               "volunteer_requirement": "需全程站立",
+                              "precautions": "请穿深色衣服，自备口罩",
                               "volunteer_benefit": "提供午餐与纪念徽章",
                               "recruit_stages": [config.STAGES[0]]}).status_code == 200
     base = "https://v.ruc.edu.cn"           # 测试环境配的正式域名
@@ -385,8 +386,11 @@ def test_招募文案按校青协定的格式拼(client, admin, db, act_with_pos
     # 选填的段有内容才出现，夹在「服务内容」和「志愿者保障」之间
     assert [s for s in lines if s.startswith("【")] == [
         "【活动内容简介】", "【活动主办单位】", "【活动时间】", "【活动地点】",
-        "【服务内容及招募人数】", "【培训与彩排】", "【志愿者要求】", "【志愿者保障】",
-        "【报名方式】"]
+        "【服务内容及招募人数】", "【培训与彩排】", "【志愿者要求】", "【注意事项】",
+        "【志愿者保障】", "【报名方式】"]
+    assert lines[lines.index("【注意事项】") + 1] == "请穿深色衣服，自备口罩"
+    assert client.get(f"/api/activities/{act.id}",
+                      headers=admin).json()["precautions"] == "请穿深色衣服，自备口罩"
     assert "  · 东门引导 3人：无特殊要求" in lines and "    岗位地点：北门" in lines
     assert any("排练厅（东门引导需参加，计入时长）" in s for s in lines)
     assert lines[lines.index("【志愿者保障】") + 1] == "提供午餐与纪念徽章"
@@ -397,8 +401,9 @@ def test_招募文案按校青协定的格式拼(client, admin, db, act_with_pos
     assert "报名截止" not in text and "13900000000" not in text and "学号" not in text
 
     client.patch(f"/api/staff/activities/{act.id}", headers=admin,
-                 json={"volunteer_requirement": ""})
-    assert "【志愿者要求】" not in client.get(url, headers=admin).json()["text"]
+                 json={"volunteer_requirement": "", "precautions": ""})
+    text = client.get(url, headers=admin).json()["text"]
+    assert "【志愿者要求】" not in text and "【注意事项】" not in text
     # base 只认本平台域名
     r = client.get(f"/api/staff/activities/{act.id}/poster?base=https://evil.example",
                    headers=admin)
