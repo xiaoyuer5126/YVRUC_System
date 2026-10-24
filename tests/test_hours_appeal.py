@@ -361,6 +361,33 @@ def test_同一条时长申请只处理一次(client, admin, db, served):
     assert row.hours_locked_at is not None and row.status == "vb_pending"
 
 
+def test_本人审批时长申请会标出本人(client, admin, db, served):
+    """自己提交、自己拍板：待办、审批记录和收到的意见都标「本人审批」。"""
+    act, _g, _u = served
+    _confirm(client, admin, act)
+    r = client.post(f"/api/staff/activities/{act.id}/hours/lock-request",
+                    headers=admin, json={})
+    assert r.status_code == 200, r.text
+    todo = [x for x in client.get("/api/staff/hours-requests",
+                                  headers=admin).json()
+            if x["activity_id"] == act.id]
+    assert len(todo) == 1 and todo[0]["self_review"] is True
+    _approve_lock(client, admin, act)
+    rows = [x for x in client.get(
+                f"/api/staff/activities/{act.id}/hours-requests",
+                headers=admin).json()["items"] if x["kind"] == "lock"]
+    assert len(rows) == 1
+    assert rows[0]["self_review"] is True
+    assert rows[0]["reply"].startswith("【本人审批】")
+    # 申请人自己收到的意见也带着标记
+    db.expire_all()
+    admin_user = db.query(User).filter(User.student_id == ADMIN).one()
+    note = (db.query(Notification)
+            .filter(Notification.user_id == admin_user.id,
+                    Notification.title == f"时长锁定已通过｜{act.title}").one())
+    assert "【本人审批】" in note.content
+
+
 def test_锁定后改时长要报审批(client, admin, db, served):
     act, _g, _u = served
     _confirm(client, admin, act)

@@ -2246,11 +2246,16 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
         raise HTTPException(409, f"该申请{req.status_label()}")
     if user.id not in {u.id for u in _hours_approvers(db, act)}:
         raise HTTPException(403, f"只有归口部门的部长可以处理时长{req.kind_label()}申请")
-    reply = body.reply.strip()[:512]
+    reply = body.reply.strip()
     if not body.approve and len(reply) < 2:
         raise HTTPException(400, "驳回必须写明理由")
+    # 自己提的申请自己拍板：审批记录和意见里都标出来，事后看得出是本人批的
+    self_review = req.requested_by == user.id
+    prefix = "【本人审批】" if self_review else ""
+    # 先拼再截：截在前面会把标记吃掉，落库的意见就看不出是本人批的
+    marked_reply = (f"{prefix}{reply}")[:512]
     req.status = "approved" if body.approve else "rejected"
-    req.reply, req.handled_by, req.handled_at = reply, user.id, now()
+    req.reply, req.handled_by, req.handled_at = marked_reply, user.id, now()
     if body.approve and req.kind == "lock":
         hours_flow.lock_hours(db, act, user, f"校青协审核通过（{req.reason}）")
     elif body.approve:
@@ -2258,15 +2263,16 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
         act.status = "finished"
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=(f"同意{req.kind_label()}时长（{req.reason}）"
-                       + (f"；意见：{reply}" if reply else "") if body.approve
-                       else f"驳回时长{req.kind_label()}申请：{reply}"))
+              summary=prefix + (f"同意{req.kind_label()}时长（{req.reason}）"
+                                + (f"；意见：{reply}" if reply else "")
+                                if body.approve
+                                else f"驳回时长{req.kind_label()}申请：{reply}"))
     requester = db.get(User, req.requested_by)
     if requester is not None:
         notify(db, requester,
                f"时长{req.kind_label()}{'已通过' if body.approve else '未通过'}"
                f"｜{act.title}",
-               _decide_text(db, act, req, body.approve, reply),
+               _decide_text(db, act, req, body.approve, marked_reply),
                data={"activity_id": act.id, "route": "manage", "tab": "hours"})
     db.commit()
     return {"ok": True, "status": req.status}
@@ -2330,6 +2336,8 @@ def activity_hours_requests(activity_id: str, db: OrmSession = Depends(db_sessio
             "created_at": iso(r.created_at),
             "handled_by": name(r.handled_by),
             "handled_at": iso_of(r.handled_at),
+            # 申请人自己批的：前端把这条标成「本人审批」
+            "self_review": bool(r.handled_by and r.handled_by == r.requested_by),
         } for r in rows],
     }
 
@@ -2360,5 +2368,6 @@ def my_hours_requests(db: OrmSession = Depends(db_session),
                               for s in liaison.STAMPED_SLOTS
                               if (f := liaison.project_file(db, act.id, s))],
                     "requested_by": who.name if who else "系统",
+                    "self_review": req.requested_by == user.id,
                     "created_at": iso(req.created_at)})
     return out
