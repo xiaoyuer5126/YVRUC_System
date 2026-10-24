@@ -95,6 +95,7 @@ export const canSee = {
   approvals: () => full() || qx('head') || (qx('core') && !!auth.user?.duty_eligible),
   announcement: () => auth.activeIdentity === 'admin',
   oplogs: () => auth.activeIdentity === 'admin',      // 会长团不行
+  notifyLog: () => auth.activeIdentity === 'admin',   // 会长团不行
   feedback: () => auth.activeIdentity === 'admin',   // 意见反馈的处理端；提交入口人人都有
   personal: () => true,
   pin: () => full(),          // 置顶急招：全校层面的调度，会长团/管理员

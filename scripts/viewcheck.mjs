@@ -86,6 +86,7 @@ const PAGES = [
   ['admin', '/roles', '角色管理', 200],
   ['admin', '/announcement', '平台公告', 50],
   ['admin', '/oplogs', '操作日志', 100],
+  ['admin', '/notifications-log', '通知记录', 100],
   ['admin', '/feedback', '意见反馈', 20],
 ]
 const TOK = { student: readFileSync(`${S}/tok.txt`,'utf8'), admin: readFileSync(`${S}/atok.txt`,'utf8') }
