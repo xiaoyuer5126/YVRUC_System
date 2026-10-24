@@ -133,6 +133,26 @@ def test_撤销违规登记(client, admin, db, enrolled_activity):
     assert vid not in [v["id"] for v in d["violations"]]
 
 
+
+def test_本活动违规一览_可撤销(client, admin, db, enrolled_activity):
+    """概览上点「违规记录」：列出本活动全部违规，带人、类型、登记人；撤了就不在了。"""
+    act, _shift, u = enrolled_activity
+    url = f"/api/staff/activities/{act.id}/violations"
+    assert client.get(url, headers=admin).json()["items"] == []
+    vid = client.post("/api/staff/violations", headers=admin,
+                      json={"user_id": u.id, "activity_id": act.id,
+                            "kind": "late", "detail": "迟到半小时"}).json()["id"]
+    items = client.get(url, headers=admin).json()["items"]
+    assert [(v["id"], v["user_name"], v["student_id"], v["kind_label"], v["detail"])
+            for v in items] == [(vid, u.name, u.student_id, "迟到早退", "迟到半小时")]
+    assert items[0]["operator_name"]
+    # 部门成员是学习权限，看不了
+    assert client.get(url, headers=login(client, MEMBER)).status_code == 403
+
+    assert client.delete(f"/api/staff/violations/{vid}", headers=admin).status_code == 200
+    assert client.get(url, headers=admin).json()["items"] == []
+
+
 # ======================= 谁能看档案 =======================
 
 def test_全校名册只给管理员会长团部长(client, db, take_student):

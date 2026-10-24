@@ -8,6 +8,7 @@
               :title="`本活动已登记 ${existing.length} 条`" style="margin-bottom:12px">
       <div v-for="v in existing" :key="v.id">
         {{ v.kind_label }} · {{ fmtDT(v.created_at) }} · {{ v.operator_name || '—' }}：{{ v.detail }}
+        <el-button size="small" link type="danger" @click="revoke(v)">撤销</el-button>
       </div>
     </el-alert>
     <el-form label-width="88px">
@@ -35,6 +36,7 @@
 import { h, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT } from '../api'
+import { revokeViolation } from '../composables/violations'
 
 const props = defineProps({ activityId: { type: String, required: true } })
 const emit = defineEmits(['saved'])
@@ -62,6 +64,12 @@ function open(user) {
     .catch(() => {})
 }
 defineExpose({ open })
+
+async function revoke(v) {
+  if (!await revokeViolation(v, row.value?.name)) return
+  existing.value = existing.value.filter(x => x.id !== v.id)
+  emit('saved')
+}
 
 async function save() {
   if (!form.value.detail.trim()) return ElMessage.warning('请填写情况简述')

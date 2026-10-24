@@ -7,9 +7,10 @@
     <div v-if="!d" class="dim">{{ failed ? '概览加载失败，点「刷新」重试' : '正在加载…' }}</div>
     <template v-else>
       <div class="ov-kpis">
-        <div v-for="k in kpis" :key="k.label" class="ov-kpi" :class="k.tone">
+        <div v-for="k in kpis" :key="k.label" class="ov-kpi"
+             :class="[k.tone, { link: k.open }]" @click="k.open?.()">
           <div class="ov-v">{{ k.value }}</div>
-          <div class="dim">{{ k.label }}</div>
+          <div class="dim">{{ k.label }}<template v-if="k.open"> ›</template></div>
           <div v-if="k.sub" class="ov-sub dim">{{ k.sub }}</div>
         </div>
       </div>
@@ -58,6 +59,7 @@
         </div>
       </div>
     </template>
+    <ViolationListDialog ref="vioDlg" :activity-id="activityId" @changed="load" />
   </el-card>
 </template>
 
@@ -70,11 +72,13 @@
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
 import RefreshBar from './RefreshBar.vue'
+import ViolationListDialog from './ViolationListDialog.vue'
 
 const props = defineProps({ activityId: { type: String, required: true } })
 
 const d = ref(null)
 const at = ref(0)
+const vioDlg = ref(null)
 const failed = ref(false)
 
 async function load() {
@@ -103,7 +107,9 @@ const kpis = computed(() => {
     value: fmtH(h.total),
     sub: h.party_school ? `含党校同学 ${fmtH(h.party_school)}` : '',
   }
-  const vio = { label: '违规记录', value: x.violations, tone: x.violations ? 'warn' : '' }
+  // 有违规才能点开：列出本活动全部违规，登记错了在那里撤
+  const vio = { label: '违规记录', value: x.violations, tone: x.violations ? 'warn' : '',
+                open: x.violations ? () => vioDlg.value?.open() : null }
   if (x.record) return [{ label: '名单人数', value: x.roster }, hours, vio]
   const e = x.enroll, c = x.checkin
   return [
@@ -127,6 +133,8 @@ const kpis = computed(() => {
 .ov-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
 .ov-kpi { background: #f7f8fa; border-radius: 8px; padding: 8px 12px; min-width: 0; }
 .ov-kpi.warn .ov-v { color: var(--el-color-danger); }
+.ov-kpi.link { cursor: pointer; }
+.ov-kpi.link:hover { background: #eef1f6; }
 .ov-v { font-size: 20px; font-weight: 700; line-height: 1.4; }
 .ov-sub { font-size: 12px; }
 .ov-shifts { margin-top: 16px; }
