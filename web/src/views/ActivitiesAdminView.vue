@@ -116,8 +116,8 @@
                              @confirm="transition(row, 'close')">
                 <template #reference><el-button size="small" type="warning" link>截止</el-button></template>
               </el-popconfirm>
-              <el-popconfirm v-if="['published','closed'].includes(row.status)"
-                             title="结束活动后可进行时长录入，确认结束？"
+              <el-popconfirm v-if="row.status === 'closed'"
+                             title="结束活动后不能再修改活动信息，确认结束？"
                              @confirm="transition(row, 'finish')">
                 <template #reference><el-button size="small" type="danger" link>结束</el-button></template>
               </el-popconfirm>
