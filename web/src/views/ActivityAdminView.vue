@@ -2274,9 +2274,17 @@ async function saveShift() {
 }
 async function delShift(g) {
   try {
-    await api.del(`/api/staff/shifts/${g.id}`)
+    await api.del(`/api/staff/shifts/${g.id}`, { silent: true })
   } catch (e) {
-    await ElMessageBox.confirm(e.message + '，是否强制删除？', '确认', { type: 'warning' })
+    if (e.status !== 409 || !String(e.message).includes('需强制执行')) {
+      ElMessage.error(e.message || '删除失败')
+      return
+    }
+    try {
+      await ElMessageBox.confirm(e.message + '，是否强制删除？', '确认', { type: 'warning' })
+    } catch {
+      return
+    }
     await api.del(`/api/staff/shifts/${g.id}?force=1`)
   }
   ElMessage.success('已删除')
