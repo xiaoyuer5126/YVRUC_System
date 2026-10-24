@@ -24,7 +24,7 @@ from ..audit import diff_changes, log as audit_log, value_text
 from ..database import db_session
 from ..deps import current_user_download, require_council, require_manager
 from ..locks import invalidate_gates, shift_lock, urgent_lock
-from ..notify import notify_edit_changes, notify_enrolled
+from ..notify import notify_edit_changes, notify_enrolled, notify_finished
 from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, is_activity_manager,
                      managed_activity_ids, remove_manager)
@@ -47,7 +47,8 @@ ACTIVITY_FIELDS = {
     "co_organizer": "联合主办方",
     "contacts": "联系人",
     "contact_group_qr": "志愿者联络群二维码",
-    "volunteer_requirement": "志愿者要求", "volunteer_benefit": "志愿者保障",
+    "volunteer_requirement": "志愿者要求", "precautions": "注意事项",
+    "volunteer_benefit": "志愿者保障",
     "recruit_campuses": "招募校区", "recruit_stages": "招募学段",
     "recruit_colleges": "招募学院",
     "reg_start": "报名开始", "reg_end": "报名截止",
@@ -212,6 +213,7 @@ class ActivityBody(BaseModel):
     cover_hue: int = 0
     # 整体要求（着装、集合）选填；保障（时长、餐食、纪念品）必填，没传就是默认那句
     volunteer_requirement: str = ""
+    precautions: str = ""
     volunteer_benefit: str = config.DEFAULT_VOLUNTEER_BENEFIT
     # 招募范围：限定校区/学段/学院，空 = 不限
     recruit_campuses: list[str] = []
@@ -429,6 +431,7 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                    contact_group_qr=body.contact_group_qr.strip(),
                    cover_hue=body.cover_hue,
                    volunteer_requirement=body.volunteer_requirement.strip(),
+                   precautions=body.precautions.strip(),
                    volunteer_benefit=benefit,
                    recruit_campuses=_clean_scope(body.recruit_campuses,
                                                  config.CAMPUSES, "校区"),
@@ -608,6 +611,19 @@ def _apply_recruit_mode(db: OrmSession, act: Activity, value: str) -> None:
     elif act.recruit_mode == config.RECORD_MODE:
         act.held_periods = []
     act.recruit_mode = value
+
+
+def _notify_finished_bg(activity_id: str):
+    """后台发活动结束通知，见 notify.notify_finished；放后台的理由同下。"""
+    from ..database import SessionLocal
+    db = SessionLocal()
+    try:
+        act = db.get(Activity, activity_id)
+        if act is not None:
+            notify_finished(db, act)
+            db.commit()
+    finally:
+        db.close()
 
 
 def _notify_activity_bg(activity_id: str, template: str, **kw):
@@ -930,9 +946,7 @@ def _transition(activity_id: str, target: str, action: str, summary: str,
               summary=summary)
     db.commit()
     if action == "finish":
-        bg.add_task(_notify_activity_bg, act.id, "activity_changed",
-                    activity=act.title,
-                    change_summary="活动已结束，感谢您的参与。时长将陆续录入。")
+        bg.add_task(_notify_finished_bg, act.id)
     return {"ok": True}
 
 

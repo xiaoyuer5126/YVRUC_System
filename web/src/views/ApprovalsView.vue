@@ -185,6 +185,9 @@
           <b>志愿北京活动名称</b>
           <div v-for="n in v.names" :key="n">{{ n }}</div>
         </div>
+        <div v-if="v.reason" class="submit-note">
+          <b>推送原因</b><span class="pre">{{ v.reason }}</span>
+        </div>
         <div v-if="v.last_return" class="submit-note">
           <b>上次退回理由</b><span class="pre">{{ v.last_return }}</span>
         </div>

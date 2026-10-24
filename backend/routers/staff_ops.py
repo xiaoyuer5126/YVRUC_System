@@ -1027,6 +1027,8 @@ def poster(activity_id: str, request: Request, base: str = "",
         L += ["【培训与彩排】", *attached]
     if (act.volunteer_requirement or "").strip():
         L += ["【志愿者要求】", act.volunteer_requirement.strip()]
+    if (act.precautions or "").strip():
+        L += ["【注意事项】", act.precautions.strip()]
     L += ["【志愿者保障】",
           (act.volunteer_benefit or "").strip() or config.DEFAULT_VOLUNTEER_BENEFIT,
           "【报名方式】",

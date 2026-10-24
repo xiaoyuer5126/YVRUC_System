@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
-from sqlalchemy import case, func
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 
@@ -18,7 +18,7 @@ from .. import locks
 from ..locks import (GATE_FULL, GATE_OK, invalidate_gates, may_recheck_gate,
                      new_gate_ticket, settle_gate, shift_lock,
                      sync_and_take_gate, take_gate)
-from ..models import (Activity, Application, Enrollment, Shift, Position,
+from ..models import (Activity, Application, Enrollment, Shift, ShiftPeriod, Position,
                       User, like_pattern, now, parse_local_dt, uid)
 from ..perm import is_activity_manager, managed_activity_ids
 from ..qrcodes import page_qr
@@ -126,6 +126,55 @@ def _date_range(start: str, end: str) -> tuple[datetime | None, datetime | None]
     return lo, hi
 
 
+# 按可参与时段筛：一格两小时，从 8 点排到 22 点
+SLOT_HOURS = (8, 10, 12, 14, 16, 18, 20)
+SLOT_LEN = timedelta(hours=2)
+SLOT_MAX = 7 * len(SLOT_HOURS) * 5      # 翻着周选，五周的格子够用了
+
+
+def _slots(raw: str) -> list[tuple[datetime, datetime]]:
+    """「2026-10-26T08,2026-10-26T10」→ 各格的 [起, 止)。格子只能落在整两小时上。"""
+    out = []
+    for part in [p for p in raw.split(",") if p.strip()]:
+        try:
+            t = datetime.strptime(part.strip(), "%Y-%m-%dT%H")
+        except ValueError:
+            raise HTTPException(400, "时段格式不对") from None
+        if t.hour not in SLOT_HOURS:
+            raise HTTPException(400, "时段格式不对")
+        out.append((t, t + SLOT_LEN))
+    if len(out) > SLOT_MAX:
+        raise HTTPException(400, "选的时段太多了，少选几格再试")
+    return out
+
+
+def _slot_hits(db: OrmSession, slots: list[tuple[datetime, datetime]],
+               activity_ids=None):
+    """和所选格子沾边的服务场次：(活动 id, 场次 id, 时段数, 是否时间灵活)。
+
+    有一段和任一格重叠就算：多时段的场次要求同一批人每段都来，卡片上另外
+    标出共几段，由志愿者自己判断。时间灵活的场次钟点只是个大概，所选格子
+    所在的日子里有它的时段就算。
+    """
+    exact = or_(*[and_(ShiftPeriod.start_time < hi, ShiftPeriod.end_time > lo)
+                  for lo, hi in slots])
+    days = {lo.date() for lo, _hi in slots}
+    loose = or_(*[and_(ShiftPeriod.start_time < datetime.combine(d, datetime.min.time())
+                       + timedelta(days=1),
+                       ShiftPeriod.end_time > datetime.combine(d, datetime.min.time()))
+                  for d in days])
+    n_periods = (db.query(func.count(ShiftPeriod.id))
+                 .filter(ShiftPeriod.shift_id == Shift.id)
+                 .correlate(Shift).scalar_subquery())
+    q = (db.query(Shift.activity_id, Shift.id, n_periods, Shift.flexible_time)
+         .join(ShiftPeriod, ShiftPeriod.shift_id == Shift.id)
+         .filter(Shift.kind == "service",
+                 or_(exact, and_(Shift.flexible_time.is_(True), loose))))
+    if activity_ids is not None:
+        q = q.filter(Shift.activity_id.in_(activity_ids))
+    return q.distinct()
+
+
 # 广场上各展示状态的先后（见 list_activities）
 SQUARE_ORDER = {"published": 0, "upcoming": 1, "closed": 2, "ongoing": 3,
                 "finished": 4}
@@ -134,6 +183,7 @@ SQUARE_ORDER = {"published": 0, "upcoming": 1, "closed": 2, "ongoing": 3,
 @router.get("")
 def list_activities(q: str = "", mode: str = "", organizer: str = "",
                     status: str = "", start: str = "", end: str = "",
+                    slots: str = "",
                     page: int = 1, size: int = 12,
                     db: OrmSession = Depends(db_session),
                     user: User = Depends(current_user)):
@@ -143,6 +193,8 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
     「全部公开活动」，活动攒到几千条时每个请求都要把它拉一遍，所以时间范围和
     「报名中 / 未开始 / 已截止 / 进行中」先用一条宽松的条件把候选行砍下来。
     SQL 只做预筛，最终展示状态仍按 display_status_of 按时间算，口径不变。
+
+    slots 是按可参与时段筛选选中的格子（见 _slots），只看报名中的活动。
     """
     rows = db.query(Activity.id, Activity.status, Activity.reg_start,
                     Activity.reg_end, Activity.recruit_campuses,
@@ -166,6 +218,12 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
         if hi is not None:
             hit = hit.filter(Shift.start_time < hi)
         rows = rows.filter(Activity.id.in_(hit))
+    # 可参与时段：找的是现在还能报的，只看报名中
+    picked_slots = _slots(slots)
+    if picked_slots:
+        status = "published"
+        rows = rows.filter(Activity.id.in_(
+            _slot_hits(db, picked_slots).with_entities(Shift.activity_id)))
     # 状态预筛：这几种展示状态只可能从这几个业务状态里出来，先把历史活动砍掉
     if status in ("published", "upcoming"):
         rows = rows.filter(Activity.status == "published")
@@ -217,8 +275,19 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
     found = pubcache.get_many("brief", [i for i in picked if i not in fresh],
                               lambda want: brief_parts(db, want))
     found.update(brief_parts(db, fresh))
+    items = [with_times(found[i]) for i in picked if i in found]
+    if picked_slots and items:
+        # 卡片上提醒一句：沾边的场次里有要来好几段的、或者钟点只是个大概的
+        notes: dict[str, dict] = {}
+        for aid, _gid, n, flexible in _slot_hits(db, picked_slots,
+                                                 [x["id"] for x in items]):
+            note = notes.setdefault(aid, {"periods": 1, "flexible": False})
+            note["periods"] = max(note["periods"], n)
+            note["flexible"] = note["flexible"] or bool(flexible)
+        for x in items:
+            x["slot_note"] = notes.get(x["id"])
     return {
-        "items": [with_times(found[i]) for i in picked if i in found],
+        "items": items,
         "total": len(ids), "page": page, "size": size,
         "organizers": [o for (o,) in
                        db.query(Activity.organizer)

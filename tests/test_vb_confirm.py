@@ -332,21 +332,26 @@ def test_已完成可以再次推送_活动保持已完成(client, admin, db, li
     row = _pending_confirm(client, admin, act)
     # 还在等外联确认时，这条路不开放
     assert client.post(url, headers=admin,
-                       json={"names": ["重新建的活动"]}).status_code == 409
+                       json={"names": ["重新建的活动"], "reason": "漏录"}).status_code == 409
     assert client.post(f"/api/staff/vb-confirms/{row['id']}/decide", headers=admin,
                        json={"approve": True}).status_code == 200
     assert _status(db, act) == "completed"
 
     # 非管理者不能推；名称照样校验
     assert client.post(url, headers=login(client, INITIATOR),
-                       json={"names": ["重新建的活动"]}).status_code == 403
+                       json={"names": ["重新建的活动"], "reason": "漏录"}).status_code == 403
     assert client.post(url, headers=admin,
-                       json={"names": [" "]}).status_code == 400
+                       json={"names": [" "], "reason": "漏录"}).status_code == 400
+    # 原因必填：已完成的活动又推过去，外联得知道为什么
+    r = client.post(url, headers=admin, json={"names": ["重新建的活动"], "reason": " "})
+    assert r.status_code == 400 and "原因" in r.json()["detail"]
     assert _history(client, admin, act)["can_repush"] is True
 
     new = ["校运会志愿服务（补录场）"]
-    r = client.post(url, headers=admin, json={"names": new})
+    r = client.post(url, headers=admin,
+                    json={"names": new, "reason": "志愿北京上漏录了补录场"})
     assert r.status_code == 200 and r.json()["kind"] == "repush", r.text
+    assert r.json()["reason"] == "志愿北京上漏录了补录场"
     assert _status(db, act) == "completed"
     db.expire_all()
     assert db.get(Activity, act.id).vb_names == new
@@ -355,9 +360,13 @@ def test_已完成可以再次推送_活动保持已完成(client, admin, db, li
     core = login(client, LIAISON_CORE)
     pending = _pending_confirm(client, core, act)
     assert pending and pending["names"] == new and pending["kind"] == "repush"
+    assert pending["reason"] == "志愿北京上漏录了补录场"
+    assert any("推送原因：志愿北京上漏录了补录场" in n.content
+               for who in (LIAISON_CORE, LIAISON_HEAD)
+               for n in inbox(db, who, f"志愿北京待确认｜{act.title}"))
 
     # 再推一次：没处理的旧待确认作废
-    r = client.post(url, headers=admin, json={"names": ["第三个名称"]})
+    r = client.post(url, headers=admin, json={"names": ["第三个名称"], "reason": "名称建错了"})
     assert r.status_code == 200
     db.expire_all()
     assert db.get(VbConfirm, pending["id"]).status == "void"

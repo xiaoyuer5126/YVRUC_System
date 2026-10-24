@@ -406,6 +406,28 @@ def activity_volunteer_violations(activity_id: str, user_id: str,
     return {"items": _same_activity_violations(db, activity_id, user_id)}
 
 
+@router.get("/activities/{activity_id}/violations")
+def activity_violations(activity_id: str, db: OrmSession = Depends(db_session),
+                        operator: User = Depends(require_manager)):
+    """本活动登记过的全部违规，新的在前。概览上点「违规记录」看，登记错了在这里撤。"""
+    if operator.is_trainee():
+        raise HTTPException(403, "部门成员为学习权限，不能查看违规记录")
+    ensure_activity_manager(db, operator, activity_id)
+    rows = (db.query(ViolationRecord)
+            .filter(ViolationRecord.activity_id == activity_id)
+            .order_by(ViolationRecord.created_at.desc()).all())
+    people = {u.id: u for u in db.query(User).filter(
+        User.id.in_({v.user_id for v in rows} | {v.operator_id for v in rows
+                                                 if v.operator_id}))} if rows else {}
+    return {"items": [{
+        "id": v.id, "kind": v.kind, "kind_label": v.kind_label(),
+        "detail": v.detail, "created_at": iso(v.created_at),
+        "user_name": people[v.user_id].name if v.user_id in people else "",
+        "student_id": people[v.user_id].student_id if v.user_id in people else "",
+        "operator_name": people[v.operator_id].name if v.operator_id in people else "",
+    } for v in rows]}
+
+
 @router.post("/violations")
 def create_violation(body: ViolationBody,
                      db: OrmSession = Depends(db_session),
@@ -450,7 +472,7 @@ def create_violation(body: ViolationBody,
 @router.delete("/violations/{record_id}")
 def delete_violation(record_id: str, db: OrmSession = Depends(db_session),
                      operator: User = Depends(require_manager)):
-    """登记错了可以撤，留痕。"""
+    """登记错了可以撤，留痕。能登记的人就能撤；提示分按记录现算，撤了就回来。"""
     v = db.get(ViolationRecord, record_id)
     if v is None:
         raise HTTPException(404, "记录不存在")

@@ -11,7 +11,8 @@
       <!-- 筛选都用「全部」那一项（空串）回到不筛，不带清除按钮：清除会把值置成
            undefined，拼进查询串就成了 mode=undefined。empty-values 让空串照常
            显示成「全部…」，而不是被当作没选、显示占位文字 -->
-      <el-select v-model="f.status" :empty-values="[null, undefined]"
+      <!-- 按时段筛选时只看报名中的，状态下拉暂时用不上 -->
+      <el-select v-model="f.status" :empty-values="[null, undefined]" :disabled="slots.length > 0"
                  style="width:140px" @change="reload">
         <el-option v-for="s in STATUS_OPTIONS" :key="s.value"
                    :value="s.value" :label="s.label" />
@@ -32,7 +33,12 @@
                       :shortcuts="DATE_SHORTCUTS" start-placeholder="开始日期"
                       end-placeholder="结束日期" :clearable="true"
                       :style="{ width: narrow ? '100%' : '260px' }" @change="reload" />
+      <el-button :type="slotOpen || slots.length ? 'primary' : ''" plain
+                 @click="slotOpen = !slotOpen">
+        按时段筛选<template v-if="slots.length">（{{ slots.length }}）</template>
+      </el-button>
     </div>
+    <SlotPicker v-if="slotOpen" v-model="slots" />
 
     <div v-if="list.length" class="card-grid">
       <div v-for="a in list" :key="a.id" class="act-card square-card"
@@ -50,6 +56,13 @@
         <div v-if="a.organizer_text" class="meta-row"><el-icon><OfficeBuilding /></el-icon>{{ a.organizer_text }}</div>
         <div class="meta-row"><el-icon><Clock /></el-icon>{{ a.time_text }}</div>
         <div class="meta-row"><el-icon><Location /></el-icon>{{ a.location || '待定' }}</div>
+        <!-- 按时段筛出来的：要来好几段、或者钟点只是个大概的，卡片上先说一声 -->
+        <div v-if="a.slot_note && (a.slot_note.periods > 1 || a.slot_note.flexible)" class="meta-row">
+          <el-tag v-if="a.slot_note.periods > 1" size="small" type="warning" effect="plain">
+            场次共 {{ a.slot_note.periods }} 段，需每段到场
+          </el-tag>
+          <el-tag v-if="a.slot_note.flexible" size="small" type="success" effect="plain">时间灵活</el-tag>
+        </div>
         <div class="meta-row">
           <!-- 还没开始报名：这张卡上最要紧的信息是「还有多久」，不是剩几个名额 -->
           <span v-if="a.opensAt" class="countdown-row">
@@ -64,7 +77,8 @@
       </div>
     </div>
     <el-empty v-else
-              :description="f.start || f.end ? '这个时间范围内没有活动，换个范围试试' : '暂无活动'" />
+              :description="slots.length ? '所选时段里没有报名中的活动，换几格试试'
+                : f.start || f.end ? '这个时间范围内没有活动，换个范围试试' : '暂无活动'" />
 
     <el-pagination v-if="total > f.size" class="pager" layout="prev, pager, next"
                    background :current-page="f.page" :page-size="f.size"
@@ -73,9 +87,10 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
+import SlotPicker from '../components/SlotPicker.vue'
 import { MODE_COLORS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 
@@ -130,6 +145,15 @@ const DATE_SHORTCUTS = [
   { text: '未来 7 天', value: () => [new Date(), _plusDays(6)] },
   { text: '未来 30 天', value: () => [new Date(), _plusDays(29)] },
 ]
+// 按可参与时段筛选选中的格子：不进地址栏，离开广场就不记了
+const slotOpen = ref(false)
+const slots = ref([])
+let slotTimer = null
+watch(slots, () => {
+  clearTimeout(slotTimer)
+  slotTimer = setTimeout(reload, 400)     // 连点几格只拉一次
+})
+
 const list = ref([])
 const organizers = ref([])
 const total = ref(0)
@@ -167,13 +191,14 @@ function unlock(a) {
   clearTimeout(refreshTimer)
   refreshTimer = setTimeout(load, Math.random() * 3000)
 }
-onBeforeUnmount(() => clearTimeout(refreshTimer))
+onBeforeUnmount(() => { clearTimeout(refreshTimer); clearTimeout(slotTimer) })
 
 async function load() {
   const query = new URLSearchParams({
     q: f.q, status: f.status, mode: f.mode, organizer: f.organizer,
     start: f.start, end: f.end, page: f.page, size: f.size,
   })
+  if (slots.value.length) query.set('slots', slots.value.join(','))
   const d = await api.get(`/api/activities?${query}`)
   const at = Date.now()
   for (const a of d.items) {

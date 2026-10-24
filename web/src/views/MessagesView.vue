@@ -80,6 +80,7 @@ const TAGS = {
   waitlist_promoted: ['danger', '候补转正'],
   assignment: ['primary', '岗位分配'],
   activity_changed: ['warning', '活动变更'],
+  activity_finished: ['info', '活动结束'],
   checkin_reminder: ['info', '签到提醒'],
   hours_approved: ['success', '时长核准'],
 }

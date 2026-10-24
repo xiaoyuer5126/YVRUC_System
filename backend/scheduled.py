@@ -18,7 +18,7 @@ from .integrations import msgcenter
 from .models import (Activity, ApprovalEvent, AuditLog, Department, DutyHandover,
                      Enrollment, HoursClaim, HoursRequest, Shift, ShiftPeriod,
                      User, VbConfirm, now)
-from .notify import (notify_checkin, notify_edit_changes, notify_enrolled,
+from .notify import (notify_checkin, notify_edit_changes, notify_finished,
                      notify_managers)
 from .perm import activity_manager_ids
 
@@ -99,8 +99,7 @@ def auto_advance_activities(db: OrmSession) -> int:
         if act.status == "closed" and span and t > span[1]:
             _advance(db, act, "finished", "finish",
                      f"全部场次已于 {span[1]:%m-%d %H:%M} 结束，系统自动结束活动")
-            notify_enrolled(db, act, "activity_changed", activity=act.title,
-                            change_summary="活动已结束，感谢您的参与。时长将陆续录入。")
+            notify_finished(db, act)
             changed += 1
     if changed:
         db.commit()

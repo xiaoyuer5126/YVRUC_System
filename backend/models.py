@@ -352,6 +352,9 @@ class Activity(Base):
     # 这两条讲的是整个活动共通的：着装、集合、餐食、时长、纪念品。
     # 要求选填；保障必填，招募文案里固定有这一段，默认见 config
     volunteer_requirement: Mapped[str] = mapped_column(Text, default="")
+    # 注意事项（选填）：体力活要穿深色衣服、花粉过敏慎报这类提醒，和「要求」
+    # 分开写，免得挤在一段里志愿者分不清哪句是门槛、哪句是提醒
+    precautions: Mapped[str] = mapped_column(Text, default="")
     volunteer_benefit: Mapped[str] = mapped_column(
         Text, default=config.DEFAULT_VOLUNTEER_BENEFIT)
     # 招募范围：限定校区、学段与学院，空列表 = 不限。整个活动一刀切，
@@ -998,6 +1001,9 @@ class VbConfirm(Base):
     handled_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
     handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reply: Mapped[str] = mapped_column(String(512), default="")
+    # 完成后再次推送时管理者写的原因（必填）：外联得知道为什么已完成的活动又来一次，
+    # 是志愿北京上漏录了、还是建错了要重建
+    reason: Mapped[str] = mapped_column(String(512), default="")
     # 放太久没人确认就催外联一次，催过记下时间，只催这一次
     reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
