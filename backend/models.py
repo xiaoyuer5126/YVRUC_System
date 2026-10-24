@@ -1827,15 +1827,20 @@ class Notification(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
     template_key: Mapped[str] = mapped_column(String(32), default="")   # 见 integrations/msgcenter.py 模板库
-    # 通道名，固定 "wecom"。它记的是「走的哪个通道」（企业微信＝开放平台的通道 4），
-    # 不是「哪个模块发的」，所以不跟发送模块 msgcenter 同名。
+    # 通道名，两个取值：
+    #   "wecom"：企业微信（开放平台的通道 4），真实模式下的外部推送；
+    #   "site"：仅站内，演示模式下只落库不往外推。
+    # 它记的是「走的哪个通道」，不是「哪个模块发的」，所以不跟发送模块 msgcenter 同名。
     channel: Mapped[str] = mapped_column(String(16), default="wecom")
     title: Mapped[str] = mapped_column(String(128))
     content: Mapped[str] = mapped_column(Text, default="")
     data: Mapped[dict] = mapped_column(JSON, default=dict)
     delivered: Mapped[bool] = mapped_column(Boolean, default=True)      # Mock 模式下恒 True
     read: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+    # 发出这条通知的请求是谁触发的（User.id）；定时任务等没有请求上下文时留空。
+    # 管理端「通知记录」按它显示触发人。
+    triggered_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # —— 签收 ——
     # 「已读」是打开消息中心就会置上的，证明不了人真的看到了；需要确认到人的

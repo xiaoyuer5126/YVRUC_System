@@ -22,6 +22,9 @@
       <el-menu-item v-if="canSee.oplogs()" index="/oplogs">
         <el-icon><List /></el-icon>操作日志
       </el-menu-item>
+      <el-menu-item v-if="canSee.notifyLog()" index="/notifications-log">
+        <el-icon><Bell /></el-icon>通知记录
+      </el-menu-item>
       <el-menu-item v-if="canSee.feedback()" index="/feedback">
         <el-icon><ChatDotRound /></el-icon>意见反馈
       </el-menu-item>

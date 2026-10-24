@@ -131,8 +131,8 @@ TRAINEE_DENIED_READS = {
     "export_application_attachments",
     # 校外时长补登表：含身份证号，只有对外联络部那几个人能导
     "export_claims",
-    # 操作日志导出本来只给管理员，列在这里是让「导出都点了名」这件事没有例外
-    "export_oplogs",
+    # 操作日志、通知记录导出本来只给管理员，列在这里是让「导出都点了名」这件事没有例外
+    "export_oplogs", "export_notifications",
     # 活动汇总：数据总览那一页的导出，只给管理员/会长团，同样点名
     "export_activities_summary",
 }

@@ -1,6 +1,7 @@
-"""平台级的两样东西：操作日志的查看与导出、平台弹窗公告。
+"""平台级的三样东西：操作日志的查看与导出、通知记录的查看与导出、平台弹窗公告。
 
   · 操作日志 → 仅管理员（会长团不行）。记录本身在文件里，见 oplog.py。
+  · 通知记录 → 仅管理员。从 notifications 表读，每条通知是谁发的、发给了谁。
   · 平台公告 → 管理员编辑；所有登录用户读当前生效的那一条。公告的修改
     不另写审计日志：改公告的请求本身进操作日志。
 """
@@ -12,14 +13,16 @@ from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, Query
 from openpyxl import Workbook
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session as OrmSession
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session as OrmSession, aliased
 
 from .. import config, downloads, oplog
 from ..database import db_session
 from ..deps import current_user, require_admin, require_admin_download
 from ..exporter import disarm_formulas
-from ..models import (Activity, Announcement, User, iso, like_pattern, now,
-                      parse_local_dt)
+from ..integrations import msgcenter
+from ..models import (Activity, Announcement, Notification, User, iso,
+                      like_pattern, now, parse_local_dt)
 
 router = APIRouter(tags=["platform"])
 
@@ -134,6 +137,169 @@ def export_oplogs(start: str = "", end: str = "", person: str = "",
     wb.save(buf)
     buf.seek(0)
     filename = f"操作日志_{now().strftime('%Y%m%d%H%M')}.xlsx"
+    return downloads.stream_response(buf, filename, downloads.XLSX)
+
+
+# ======================= 通知记录 =======================
+
+# 推送状态：site 是演示模式下只落库的「仅站内」，其余按是否送达分成功、失败
+NOTIFY_STATUS_LABELS = {"ok": "成功", "failed": "失败", "site": "仅站内"}
+
+
+def _notify_status(row: Notification) -> str:
+    """一条通知的推送状态。"""
+    if row.channel == "site":
+        return "site"
+    return "ok" if row.delivered else "failed"
+
+
+def _notify_query(db: OrmSession, start: str, end: str, person: str,
+                  activity: str, template: str, status: str):
+    """通知记录的查询：收件人、触发人、筛选条件都在这儿定。
+
+    收件人和触发人都用 User 联查，触发人外联——定时任务发的通知没有触发人，
+    但记录本身要留着。
+    """
+    if status and status not in NOTIFY_STATUS_LABELS:
+        raise HTTPException(400, "未知推送状态")
+    lo, hi = _window(start, end)
+    recipient = aliased(User)
+    trigger = aliased(User)
+    q = (db.query(Notification, recipient.student_id, recipient.name,
+                  trigger.student_id, trigger.name)
+         .outerjoin(recipient, recipient.id == Notification.user_id)
+         .outerjoin(trigger, trigger.id == Notification.triggered_by)
+         .filter(Notification.created_at >= lo, Notification.created_at <= hi))
+    person = person.strip()
+    if person:
+        q = q.filter(or_(recipient.student_id == person,
+                         recipient.name.like(like_pattern(person), escape="\\")))
+    activity_ids = _activity_ids(db, activity)
+    if activity_ids is not None:
+        q = q.filter(Notification.data["activity_id"].as_string().in_(activity_ids))
+    template = template.strip()
+    if template:
+        q = q.filter(Notification.template_key == template)
+    if status == "site":
+        q = q.filter(Notification.channel == "site")
+    elif status == "ok":
+        q = q.filter(Notification.channel != "site",
+                     Notification.delivered.is_(True))
+    elif status == "failed":
+        q = q.filter(Notification.channel != "site",
+                     Notification.delivered.is_(False))
+    return q, lo, hi
+
+
+def _notify_titles(db: OrmSession, rows) -> dict[str, str]:
+    """这批通知涉及的活动标题。data 里的 activity_id 可能是数字，统一按字符串查。"""
+    ids = {str((row[0].data or {}).get("activity_id") or "") for row in rows}
+    return _titles(db, ids - {""})
+
+
+def _notify_out(row: Notification, rec_sid: str | None, rec_name: str | None,
+                trg_sid: str | None, trg_name: str | None,
+                titles: dict[str, str]) -> dict:
+    """一条通知摊成前端要的字段。"""
+    activity_id = str((row.data or {}).get("activity_id") or "")
+    status = _notify_status(row)
+    return {
+        "id": row.id, "created_at": iso(row.created_at),
+        "recipient_sid": rec_sid or "", "recipient_name": rec_name or "",
+        "template_key": row.template_key,
+        "template_label": msgcenter.TEMPLATE_LABELS.get(row.template_key,
+                                                        row.template_key),
+        "title": row.title, "content": row.content,
+        "activity_id": activity_id, "activity_title": titles.get(activity_id, ""),
+        "status": status, "status_label": NOTIFY_STATUS_LABELS[status],
+        "read": row.read, "need_ack": row.need_ack,
+        "acked_at": iso(row.acked_at), "batch_id": row.batch_id,
+        # 没有触发人就是定时任务等系统行为
+        "trigger_sid": trg_sid or "", "trigger_name": trg_name or "系统",
+    }
+
+
+def _notify_excel_row(row: Notification, rec_sid: str | None,
+                      rec_name: str | None, trg_sid: str | None,
+                      trg_name: str | None, titles: dict[str, str]) -> list:
+    """一条通知摊平成表格的一行，顺序与表头一致。"""
+    activity_id = str((row.data or {}).get("activity_id") or "")
+    status = _notify_status(row)
+    if not row.need_ack:
+        ack = "不需签收"
+    elif row.acked_at:
+        ack = "已签收 " + row.acked_at.strftime("%Y-%m-%d %H:%M")
+    else:
+        ack = "未签收"
+    return [row.created_at.strftime("%Y-%m-%d %H:%M:%S"), rec_sid or "",
+            rec_name or "",
+            msgcenter.TEMPLATE_LABELS.get(row.template_key, row.template_key),
+            row.title, row.content, titles.get(activity_id, activity_id),
+            NOTIFY_STATUS_LABELS[status], "是" if row.read else "否", ack,
+            trg_name or "系统"]
+
+
+@router.get("/api/staff/notifications")
+def list_notifications(start: str = "", end: str = "", person: str = "",
+                       activity: str = "", template: str = "", status: str = "",
+                       page: int = Query(1, ge=1),
+                       size: int = Query(20, ge=1, le=100),
+                       db: OrmSession = Depends(db_session),
+                       user: User = Depends(require_admin)):
+    """通知记录列表：按收件人、时间段、活动、类型、推送状态筛选，新的在前。"""
+    q, _lo, _hi = _notify_query(db, start, end, person, activity, template,
+                                status)
+    total = q.count()
+    rows = (q.order_by(Notification.created_at.desc(), Notification.id.desc())
+            .offset((page - 1) * size).limit(size).all())
+    titles = _notify_titles(db, rows)
+    # 今日数字不受筛选影响：页顶看的是「今天整体发了多少、失败多少」
+    day_start = now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_total = (db.query(func.count(Notification.id))
+                   .filter(Notification.created_at >= day_start).scalar() or 0)
+    today_failed = (db.query(func.count(Notification.id))
+                    .filter(Notification.created_at >= day_start,
+                            Notification.channel != "site",
+                            Notification.delivered.is_(False)).scalar() or 0)
+    return {"total": total,
+            "items": [_notify_out(*row, titles) for row in rows],
+            "templates": msgcenter.TEMPLATE_LABELS,
+            "today": {"total": today_total, "failed": today_failed},
+            "max_days": config.OPLOG_QUERY_MAX_DAYS}
+
+
+@router.get("/api/staff/notifications.xlsx")
+def export_notifications(start: str = "", end: str = "", person: str = "",
+                         activity: str = "", template: str = "",
+                         status: str = "",
+                         db: OrmSession = Depends(db_session),
+                         user: User = Depends(require_admin_download)):
+    """导出通知记录：筛选条件与列表相同，全部符合条件的记录，新的在前。"""
+    q, _lo, _hi = _notify_query(db, start, end, person, activity, template,
+                                status)
+    rows = (q.order_by(Notification.created_at.desc(), Notification.id.desc())
+            .limit(config.OPLOG_EXPORT_MAX_ROWS + 1).all())
+    if len(rows) > config.OPLOG_EXPORT_MAX_ROWS:
+        raise HTTPException(
+            400, f"这段时间的通知超过 {config.OPLOG_EXPORT_MAX_ROWS} 条，"
+                 "请缩短时间段再导")
+    titles = _notify_titles(db, rows)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "通知记录"
+    header = ["时间", "收件人学号", "收件人姓名", "类型", "标题", "正文", "活动",
+              "推送状态", "已读", "签收", "触发人"]
+    ws.append(header)
+    for row in rows:
+        ws.append(_notify_excel_row(*row, titles))
+    for col, w in zip("ABCDEFGHIJK", (20, 14, 12, 18, 30, 50, 24, 10, 8, 20, 12)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"
+    disarm_formulas(wb)
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"通知记录_{now().strftime('%Y%m%d%H%M')}.xlsx"
     return downloads.stream_response(buf, filename, downloads.XLSX)
 
 
