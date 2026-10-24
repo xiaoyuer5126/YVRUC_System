@@ -24,7 +24,7 @@ from ..audit import diff_changes, log as audit_log, value_text
 from ..database import db_session
 from ..deps import current_user_download, require_council, require_manager
 from ..locks import invalidate_gates, shift_lock, urgent_lock
-from ..notify import notify_edit_changes, notify_enrolled
+from ..notify import notify_edit_changes, notify_enrolled, notify_finished
 from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, is_activity_manager,
                      managed_activity_ids, remove_manager)
@@ -610,6 +610,19 @@ def _apply_recruit_mode(db: OrmSession, act: Activity, value: str) -> None:
     act.recruit_mode = value
 
 
+def _notify_finished_bg(activity_id: str):
+    """后台发活动结束通知，见 notify.notify_finished；放后台的理由同下。"""
+    from ..database import SessionLocal
+    db = SessionLocal()
+    try:
+        act = db.get(Activity, activity_id)
+        if act is not None:
+            notify_finished(db, act)
+            db.commit()
+    finally:
+        db.close()
+
+
 def _notify_activity_bg(activity_id: str, template: str, **kw):
     """后台任务入口：自带数据库会话，避免拖慢接口响应。
 
@@ -930,9 +943,7 @@ def _transition(activity_id: str, target: str, action: str, summary: str,
               summary=summary)
     db.commit()
     if action == "finish":
-        bg.add_task(_notify_activity_bg, act.id, "activity_changed",
-                    activity=act.title,
-                    change_summary="活动已结束，感谢您的参与。时长将陆续录入。")
+        bg.add_task(_notify_finished_bg, act.id)
     return {"ok": True}
 
 

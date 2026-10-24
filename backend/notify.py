@@ -45,6 +45,23 @@ def notify_enrolled(db: OrmSession, act: Activity, template: str, **kw) -> int:
     return len(users)
 
 
+def notify_finished(db: OrmSession, act: Activity) -> int:
+    """活动结束（系统到点结束或管理者手动结束），告诉参加了的人时长随后录入。
+
+    只发正式报上名的人：候补和待确认转正的人没参加，发「感谢您的参与」
+    是在谢一个没来的人。不提交，由调用方决定事务边界。
+    """
+    ids = (db.query(Enrollment.user_id)
+           .filter(Enrollment.activity_id == act.id,
+                   Enrollment.status == "enrolled")
+           .distinct().all())
+    users = _users_of(db, ids)
+    for u in users:
+        msgcenter.send_user(db, u, "activity_finished",
+                            data={"activity_id": act.id}, activity=act.title)
+    return len(users)
+
+
 # 改了也不单独告诉志愿者的字段：条件要求是给报名把关用的，已经在岗的人
 # 不受影响，存的又是一串结构化数据，原样念给人听只会让人看不懂
 _QUIET_FIELDS = {"requirement_tags"}

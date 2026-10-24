@@ -267,3 +267,25 @@ def test_值班交接提醒每周一次_按接班的星期几(db, monkeypatch, e
         dept.duty_remind_on = None
         db.commit()
 
+
+
+
+def test_活动结束只通知正式报上名的人(db, make_activity, take_student):
+    """候补、待确认转正的人没参加，不该收到「感谢您的参与」；标题是「活动已结束」，
+    不是「活动变更提醒」。"""
+    act, g = make_activity("closed", reg_end_in_hours=-72, start_in_hours=-10)
+    took = _enroll(db, act, g, take_student())
+    others = []
+    for status in ("waitlisted", "pending_confirm"):
+        u = db.query(User).filter(User.student_id == take_student()).one()
+        db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                          user_id=u.id, position_id=g.test_position_id,
+                          status=status, joined_at=now()))
+        others.append(u.id)
+    db.commit()
+
+    scheduled.auto_advance_activities(db)
+    got = (db.query(Notification)
+           .filter(Notification.user_id.in_([took.id, *others]),
+                   Notification.title.contains(act.title)).all())
+    assert [(n.user_id, n.title) for n in got] == [(took.id, f"活动已结束｜{act.title}")]

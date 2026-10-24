@@ -1,7 +1,7 @@
 """消息中心适配：模板消息推送。
 
 模板库覆盖以下场景：
-  报名成功 / 候补转正 / 岗位分配 / 活动变更警告
+  报名成功 / 候补转正 / 岗位分配 / 活动变更警告 / 活动结束
 
 Mock 模式：把消息落库（notifications 表），前端「消息中心」即收件箱。
 真实模式（YVRUC_MSGCENTER_ENABLED=1）：落库之外，再经学校开放平台的消息中心
@@ -71,6 +71,9 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "activity_changed": (
         "活动变更提醒｜{activity}",
         "「{activity}」信息变更：\n{change_summary}\n\n请留意最新安排。"),
+    "activity_finished": (
+        "活动已结束｜{activity}",
+        "「{activity}」已结束，感谢您的参与。时长将陆续录入。"),
     "leader_appointed": (
         "您已成为岗位组长｜{activity}",
         "您在「{activity}」已被负责人选为岗位「{position}」组长。\n"
