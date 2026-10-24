@@ -76,6 +76,12 @@
         </template>
 
       </template>
+      <el-result v-else-if="!loading" icon="warning" title="签到码无效"
+                 :sub-title="errorText">
+        <template #extra>
+          <el-button type="primary" @click="$router.push('/')">返回首页</el-button>
+        </template>
+      </el-result>
     </el-card>
   </div>
 </template>
@@ -83,7 +89,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { auth } from '../store'
 
@@ -91,6 +96,7 @@ const route = useRoute()
 const router = useRouter()
 const task = ref(null)
 const loading = ref(true)
+const errorText = ref('')
 const done = ref(false)
 const doneAt = ref('')
 const doneAction = ref('签到')
@@ -111,9 +117,9 @@ async function load() {
   } catch (e) {
     // 动态码只活一分钟，登录这几步走完就过期了。只说「签到码无效」会让人
     // 对着屏幕反复刷新——直接告诉他回现场再扫一次。
-    ElMessage.error(afterLogin.value
+    errorText.value = afterLogin.value
       ? '这个签到码已经失效了（现场码每分钟更换），请重新扫一次现场的二维码'
-      : e.message)
+      : (e.message || '签到码无效或已过期')
   } finally {
     loading.value = false
   }
