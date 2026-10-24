@@ -5,7 +5,7 @@ import re
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession, selectinload
 
@@ -442,7 +442,9 @@ def confirm_hours(record_id: str, body: ConfirmHoursBody,
 
 
 class AppealBody(BaseModel):
-    claimed_hours: float
+    # NaN/inf 跟任何数比都是假，会一路混进时长的比较和格式化里，落库之后
+    # 每个返回这笔账的接口都序列化不出 JSON。这一层先挡掉，回 422。
+    claimed_hours: float = Field(allow_inf_nan=False)
     reason: str
 
 

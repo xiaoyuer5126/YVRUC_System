@@ -184,6 +184,28 @@ def test_理由太短会被挡住(client, admin, db, served):
     assert r.status_code == 400
 
 
+def test_NaN_时长挡在校验层(client, admin, db, served):
+    """NaN 跟谁比都是假，混进时长就会落库、之后每个接口都 500。"""
+    act, _g, u = served
+    _confirm(client, admin, act)
+    stu = login(client, u.student_id)
+    rec = _record(client, stu)
+
+    r = client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu,
+                    json={"claimed_hours": "NaN", "reason": "随手填的"})
+    assert r.status_code == 422
+
+    # 申诉本身合法时，采纳那一步给的 NaN 也要挡
+    client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu,
+                json={"claimed_hours": 3, "reason": "忘记签退了"})
+    a = client.get(f"/api/staff/activities/{act.id}/hours-appeals",
+                   headers=admin).json()[0]
+    r = client.post(f"/api/staff/hours-appeals/{a['id']}/resolve", headers=admin,
+                    json={"accept": True, "hours": "NaN", "reply": "改判"})
+    assert r.status_code == 422
+    assert _record(client, stu)["hours"] == 4.0     # 没被写坏
+
+
 def test_不能申诉别人的时长(client, admin, db, served, take_student):
     act, _g, _u = served
     _confirm(client, admin, act)

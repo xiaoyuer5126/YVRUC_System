@@ -1942,7 +1942,9 @@ def list_appeals(activity_id: str, db: OrmSession = Depends(db_session),
 
 class ResolveAppealBody(BaseModel):
     accept: bool
-    hours: float | None = None    # 采纳时可改判成第三个数，留空则按申报值
+    # 可改判成第三个数，留空则按申报值。NaN/inf 挡在这一层：它会一路混进
+    # 时长比较和格式化，落库后每个返回这笔账的接口都序列化不出 JSON。
+    hours: float | None = Field(default=None, allow_inf_nan=False)
     reply: str = ""
 
 
