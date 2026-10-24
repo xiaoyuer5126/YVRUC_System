@@ -58,9 +58,18 @@
                          @confirm="transition(row, 'publish')">
             <template #reference><el-button size="small" type="success" plain>发布</el-button></template>
           </el-popconfirm>
+          <el-popconfirm v-if="row.status === 'draft'"
+                         title="删除草稿不可恢复，确认删除？" @confirm="delActivity(row)">
+            <template #reference><el-button size="small" type="danger" plain>删除</el-button></template>
+          </el-popconfirm>
           <el-popconfirm v-if="row.status === 'published'" title="将截止报名，确认截止？"
                          @confirm="transition(row, 'close')">
             <template #reference><el-button size="small" type="warning" plain>截止</el-button></template>
+          </el-popconfirm>
+          <el-popconfirm v-if="row.status === 'closed'"
+                         title="结束活动后不能再修改活动信息，确认结束？"
+                         @confirm="transition(row, 'finish')">
+            <template #reference><el-button size="small" type="danger" plain>结束</el-button></template>
           </el-popconfirm>
         </template>
       </DataCards>
