@@ -235,6 +235,18 @@ def test_核准前看不到也申诉不了(client, admin, db, served):
                     Notification.title.like("请确认志愿时长%")).count() == 1)
 
 
+def test_活动没结束不能核准时长(client, admin, db, open_group):
+    """报名中的活动还没有时长账，核准不能把它直接锁成已完成。"""
+    act, _g = open_group(5)
+    db.expire_all()
+    assert db.get(Activity, act.id).status == "published"
+    r = client.post(f"/api/staff/activities/{act.id}/hours/approve",
+                    headers=admin, json={})
+    assert r.status_code == 409 and "活动结束后" in r.json()["detail"]
+    db.expire_all()
+    assert db.get(Activity, act.id).status == "published"
+
+
 def test_到点无人申诉自动提交审批_通过后才锁定(client, admin, db, served):
     from backend import scheduled
 

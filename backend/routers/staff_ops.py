@@ -2040,6 +2040,8 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id, for_update=True)
     ensure_hours_editable(db, act)
+    if act.status != "finished":
+        raise HTTPException(409, "活动结束后才能核准时长")
     deadline = _parse_deadline(body.appeal_deadline)
     rows = (db.query(HoursRecord)
             .filter(HoursRecord.activity_id == act.id).all())
@@ -2131,6 +2133,8 @@ def hours_lock_request(activity_id: str, body: LockHoursBody | None = None,
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id, for_update=True)
     ensure_hours_editable(db, act)
+    if act.status != "finished":
+        raise HTTPException(409, "活动结束后才能提交时长审核")
     if act.hours_approved_at is None:
         raise HTTPException(409, "请先核准时长")
     # 对外活动的时长要凭盖章立项书和盖章结项书报批，缺一份都不往上送

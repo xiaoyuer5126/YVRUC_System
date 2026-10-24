@@ -134,7 +134,8 @@ def submit_lock_when_due(db: OrmSession) -> int:
         act = (db.query(Activity).filter(Activity.id == row.id)
                .populate_existing().with_for_update().one())
         if (act.hours_locked_at is not None or act.hours_approved_at is None
-                or act.appeal_deadline is None or act.appeal_deadline >= t):
+                or act.appeal_deadline is None or act.appeal_deadline >= t
+                or act.status != "finished"):
             continue
         pending = (db.query(HoursAppeal)
                    .filter(HoursAppeal.activity_id == act.id,
