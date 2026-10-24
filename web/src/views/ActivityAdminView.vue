@@ -86,7 +86,7 @@
                 ? '补记录活动不公开发布：审批通过后在「名单导入」里导入学号与时长。'
                 : act.auto_publish
                   ? '审批期间可以继续调整安排，审批通过后活动立即公开发布，到点准时开始报名。'
-                  : '审批期间可以继续调整安排，审批通过后由你点「发布」。'" />
+                  : '审批期间可以继续调整安排，审批通过后由你点「保存并发布」。'" />
     <el-alert v-else-if="act.status === 'approved'" type="success" show-icon :closable="false" title="审批已通过，可以发布了"
               :description="approval?.comment ? ('审批意见：' + approval.comment) : ''" />
     <el-alert v-else-if="act.status === 'draft' && approval?.comment" type="error" show-icon
@@ -1732,7 +1732,9 @@
                     :status="act.status" />
       <template #footer>
         <el-button @click="editBase = false">取消</el-button>
-        <el-button type="primary" :loading="savingBase" @click="saveBase()">保存并通知变更</el-button>
+        <el-button type="primary" :loading="savingBase" @click="saveBase()">
+          {{ isPublic && !act.editing ? '保存并通知变更' : '保存' }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -2648,7 +2650,8 @@ async function saveBase(keepOutsiders = false) {
                     { ...activityBody(baseForm.value, baseRange.value),
                       keep_outsiders: keepOutsiders },
                     { skipErrorToast: true })
-    ElMessage.success('已保存，变更将推送提醒志愿者')
+    ElMessage.success(isPublic.value && !act.value.editing
+      ? '已保存，变更将推送提醒志愿者' : '已保存')
     editBase.value = false
     loadAll()
   } catch (e) {
