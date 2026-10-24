@@ -737,10 +737,12 @@ def batch_op(task_id: str, body: dict,
         if u is None:
             skipped.append(f"{sid}（学号不存在）")
             continue
+        # 行锁读这一人的报名行：同一人同场次的补签/退签（含志愿者自己扫码）
+        # 在这里串行，下面「找记录再插入」不会各插一条重复签到
         enr = (db.query(Enrollment)
                .filter(Enrollment.shift_id == task.shift_id,
                        Enrollment.user_id == u.id,
-                       Enrollment.status == "enrolled").first())
+                       Enrollment.status == "enrolled").with_for_update().first())
         if enr is None:
             # 不回姓名：这条提示等于「输个学号就能查出他叫什么」——不是本场次
             # 的人，管理者本来也不该从这儿认识他。学号是他自己填进来的，还给他

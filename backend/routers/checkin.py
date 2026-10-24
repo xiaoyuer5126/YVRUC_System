@@ -185,10 +185,12 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
     # 岗位模式只用于按摊位分别核验；岗位无独立时间，可签时段 = 场次时段
     position = db.get(Position, task.position_id) if task.position_id else None
 
-    # 必须是该场次的正式成员
+    # 必须是该场次的正式成员。行锁读本人的报名行：同一人同场次的签到/签退
+    # （相机连读两下、或与管理员补签相撞）在这里串行，下面去找记录再插入
+    # 不会各插一条的重复签到记录
     enr = (db.query(Enrollment)
            .filter(Enrollment.shift_id == g.id, Enrollment.user_id == user.id,
-                   Enrollment.status == "enrolled").first())
+                   Enrollment.status == "enrolled").with_for_update().first())
     if enr is None:
         raise HTTPException(403, f"您不是「{act.title}·{g.name}」的志愿者")
 
