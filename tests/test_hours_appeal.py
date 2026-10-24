@@ -247,6 +247,20 @@ def test_活动没结束不能核准时长(client, admin, db, open_group):
     assert db.get(Activity, act.id).status == "published"
 
 
+def test_部分确认不能给没报名的人记时长(client, admin, db, served,
+                                        take_student):
+    """点名确认只认这场活动的报名者，没报名的学号不能凭空多出一笔账。"""
+    act, _g, _u = served
+    other = take_student()
+    r = client.post(f"/api/staff/activities/{act.id}/hours/confirm",
+                    headers=admin,
+                    json={"items": [{"student_id": other, "hours": 1}]})
+    assert r.status_code == 400 and "没有报名" in r.json()["detail"]
+    db.expire_all()
+    assert (db.query(HoursRecord)
+            .filter(HoursRecord.activity_id == act.id).count()) == 0
+
+
 def test_到点无人申诉自动提交审批_通过后才锁定(client, admin, db, served):
     from backend import scheduled
 

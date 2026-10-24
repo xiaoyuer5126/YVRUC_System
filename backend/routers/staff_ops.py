@@ -1733,11 +1733,19 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
                 hours = float(it.get("hours"))
             except (TypeError, ValueError):
                 raise HTTPException(400, f"学号 {sid} 的时长不是数字")
+            if not math.isfinite(hours):
+                raise HTTPException(400, f"学号 {sid} 的时长不是有效数字")
             if hours < 0:
                 raise HTTPException(400, f"学号 {sid} 的时长不能为负数")
             u = db.query(User).filter(User.student_id == sid).first()
             if u is None:
                 raise HTTPException(404, f"学号 {sid} 不存在")
+            if u.user_type == "teacher":
+                raise HTTPException(400, "老师类型用户不参与志愿，不记时长")
+            if not _enrolled(db, act, u):
+                raise HTTPException(
+                    400, f"{u.name}（{u.student_id}）没有报名这场活动，不能直接加时长；"
+                         f"这类时长请在补记录活动里记")
             targets[u.id] = round(hours, 2)
         for uid_, h in targets.items():
             # 逐个点名改，就是人判的，照改
