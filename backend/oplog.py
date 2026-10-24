@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -63,6 +64,11 @@ _disk_checked_at = 0.0
 
 FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-\d+\.jsonl$")
 
+# 当前请求的触发人。存的是可变 dict：同步依赖由 anyio 在线程池里跑，会拷贝一份
+# 上下文，在依赖里 set 新值传不回处理函数；dict 是同一个对象，往里写谁都看得见。
+_request_actor: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "oplog_request_actor", default=None)
+
 
 # ======================= 采集 =======================
 
@@ -75,6 +81,15 @@ def mark_actor(request, user) -> None:
         "uid": user.id, "sid": user.student_id, "name": user.name,
         "identity": user.view() or "",
     }
+    actor = _request_actor.get()
+    if actor is not None:
+        actor["uid"] = user.id
+
+
+def current_actor_id() -> str | None:
+    """这次请求的触发人用户 id；定时任务等没有请求上下文时返回 None。"""
+    actor = _request_actor.get()
+    return actor.get("uid") if actor else None
 
 
 def mark_login(request, *, student_id: str = "", user=None) -> None:
@@ -141,6 +156,7 @@ class OplogMiddleware:
                 status["code"] = message["status"]
             await send(message)
 
+        token = _request_actor.set({})
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
@@ -151,6 +167,8 @@ class OplogMiddleware:
                     record(entry)
             except Exception:  # noqa: BLE001
                 logger.exception("操作日志采集出错")
+            finally:
+                _request_actor.reset(token)
 
 
 def _entry(scope, at: datetime, status: int, ms: int) -> dict | None:

@@ -21,7 +21,7 @@ import logging
 from sqlalchemy import event, update
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, locks, sudy_sign
+from .. import config, locks, oplog, sudy_sign
 from ..database import SessionLocal
 from ..models import Notification, User, uid
 
@@ -228,6 +228,8 @@ def send_user(db: OrmSession, user: User, template_key: str,
                        # 演示模式没有外部推送，通道记 "site"（仅站内）；
                        # 真实模式走企业微信，记 "wecom"
                        channel="wecom" if real else "site",
+                       # 请求里发出的通知记下触发人；定时任务没有请求上下文，留空
+                       triggered_by=oplog.current_actor_id(),
                        # 真实推送先记未送达，推成功了再改；进程在中间死掉的话，
                        # 库里说的「没送到」至少不是假话
                        delivered=not real,
