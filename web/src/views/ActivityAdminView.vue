@@ -1,5 +1,5 @@
 <template>
-  <div class="page page-wide" v-if="loading" v-loading="loading" style="min-height:300px"></div>
+  <div class="page page-wide" v-if="loading && !act" v-loading="loading" style="min-height:300px"></div>
   <div class="page page-wide" v-else-if="notFound">
     <el-result icon="warning" title="活动不存在"
                sub-title="可能已被删除，或演示数据重置后 ID 已变化">
@@ -2038,6 +2038,7 @@ let activityId = ''
 
 async function loadAll() {
   loading.value = true
+  loadError.value = ''
   try {
     // 活动不存在、或者这个人不共管它：两种情况给同一张「找不到」页，
     // 别让后面每个接口各弹一次 403
@@ -2616,7 +2617,6 @@ watch(() => route.params.id, (id) => {
   if (!id || id === activityId) return
   activityId = id
   notFound.value = false
-  loadError.value = ''
   currentGroupId.value = ''
   loadAll()
 })
