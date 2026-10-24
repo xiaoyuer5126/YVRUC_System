@@ -1,4 +1,4 @@
-<!-- 校外时长补登：在校外自行报名参加的活动，本人登记、对外联络部审批，通过即
+<!-- 校外时长补登：在校外自行报名参加的活动，本人登记、志愿北京对接部门审批，通过即
      计入志愿时长。这条账不属于任何平台活动（没有场次、报名、签到），所以单独
      一节，和上面按活动结的时长明细分开。 -->
 <template>
@@ -6,7 +6,7 @@
     <template #header>
       <b>校外时长补登</b>
       <span class="dim" style="margin-left:8px">
-        在校外自行报名参加的志愿活动，登记后由对外联络部审批，通过即计入时长
+        在校外自行报名参加的志愿活动，登记后由{{ vbDept }}审批，通过即计入时长
       </span>
     </template>
 
@@ -130,15 +130,18 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { auth } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
 
 const emit = defineEmits(['total'])
 const narrow = useNarrow()
+// 志愿北京对接部门的实际名称（登录信息里带下来），文案里别写死部门名
+const vbDept = computed(() => auth.user?.vb_dept_name || '校青协')
 const STATUS_TYPES = { pending: 'warning', approved: 'success',
                        rejected: 'danger', revoked: 'info' }
 const MAX_HOURS = 24
@@ -205,7 +208,7 @@ async function submit() {
     f.proofs.forEach(x => body.append('proofs', x.raw))
     f.photos.forEach(x => body.append('photos', x.raw))
     await api.post('/api/me/hours-claims', body)
-    ElMessage.success('已提交，对外联络部审批后会通知你')
+    ElMessage.success(`已提交，${vbDept.value}审批后会通知你`)
     f.visible = false
     load()
   } finally { f.busy = false }

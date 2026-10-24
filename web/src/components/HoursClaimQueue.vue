@@ -1,4 +1,4 @@
-<!-- 校外时长补登的审批队列：对外联络部核对证明材料后通过或驳回。
+<!-- 校外时长补登的审批队列：志愿北京对接部门核对证明材料后通过或驳回。
      审批人是「外联那摊事」的同一批（值班人/部长 + 会长团/管理员），见后端
      liaison.vb_decider；别的能进审批页的人后端回空表，这块整个不显示。
      通过可核定一个不一样的时长，已通过的能撤销；自己的补登要由别人批、别人撤。 -->
@@ -101,7 +101,7 @@
         <FeedbackShots :images="cur.files.photos" />
 
         <div v-if="cur.status === 'pending' && cur.mine" class="dim" style="margin-top:12px">
-          这是您本人提交的补登，要由对外联络部的其他人审批。
+          这是您本人提交的补登，要由{{ vbDept }}的其他人审批。
         </div>
         <template v-else-if="cur.status === 'pending'">
           <div class="section-title">审批</div>
@@ -128,7 +128,7 @@
         </template>
         <div v-else-if="cur.status === 'approved' && cur.mine" class="dim"
              style="margin-top:12px">
-          这是您本人提交的补登，要撤销请找对外联络部的其他人。
+          这是您本人提交的补登，要撤销请找{{ vbDept }}的其他人。
         </div>
         <div v-else-if="cur.status === 'approved'" class="foot">
           <el-button type="danger" plain @click="revoke">撤销这条补登</el-button>
@@ -142,12 +142,15 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
+import { auth } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import FeedbackShots from './FeedbackShots.vue'
 
 const STATUS_TYPES = { pending: 'warning', approved: 'success',
                        rejected: 'danger', revoked: 'info' }
 const narrow = useNarrow()
+// 志愿北京对接部门的实际名称（登录信息里带下来），文案里别写死部门名
+const vbDept = computed(() => auth.user?.vb_dept_name || '校青协')
 const status = ref('pending')
 const items = ref([])
 const total = ref(0)

@@ -10,7 +10,7 @@
             <el-dropdown-menu>
               <el-dropdown-item v-for="t in docTemplates" :key="t.slot" :command="t"
                                 :disabled="!t.file">
-                {{ t.label }}{{ t.file ? '' : '（对外联络部还没上传）' }}
+                {{ t.label }}{{ t.file ? '' : `（${vbDept}还没上传）` }}
               </el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -189,7 +189,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, download } from '../api'
-import { MODE_COLORS } from '../store'
+import { MODE_COLORS, auth } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import { activityBody, emptyActivity, validateActivity } from '../composables/activityForm'
 import { uploadImage } from '../composables/uploadImage'
@@ -200,6 +200,8 @@ import DataCards from '../components/DataCards.vue'
 
 const router = useRouter()
 const narrow = useNarrow()
+// 志愿北京对接部门的实际名称（登录信息里带下来），文案里别写死部门名
+const vbDept = computed(() => auth.user?.vb_dept_name || '校青协')
 const list = ref([])
 const total = ref(0)
 const f = reactive({ q: '', status: '', page: 1, size: 20 })
