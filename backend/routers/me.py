@@ -156,7 +156,9 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
 def my_enrollments(db: OrmSession = Depends(db_session),
                    user=Depends(current_user)):
     from .. import enroll_logic as logic
-    logic.expire_stale_promotions(db)
+    # 只收口本人的超时确认窗：页面只显示自己的报名，没必要、也不该替全站
+    # 逐个场次抢锁（抢报高峰时那会把这条只读请求拖成 503），见函数注释
+    logic.expire_stale_promotions(db, user_id=user.id)
     rows = (db.query(Enrollment)
             .filter(Enrollment.user_id == user.id)
             .order_by(Enrollment.joined_at.desc()).all())

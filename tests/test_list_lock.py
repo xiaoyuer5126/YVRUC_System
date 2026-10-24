@@ -231,6 +231,44 @@ def test_锁定后转正超时也通知管理者_日报也计(client, admin, db,
     assert notes and "候补转正超时未确认：1 人。" in notes[-1].content, notes
 
 
+def test_打开我的报名只收口本人的超时转正(client, admin, db, open_group,
+                                take_student):
+    """「我的报名」是只读页面，打开时顶多替本人收口一次超时的确认窗。
+
+    不带 user_id 去扫全站，抢报高峰时这条只读请求会去抢别人的场次锁，轻则
+    白等 3 秒，重则直接撞上「当前操作人数较多」503——学生什么都没做就看到报错。
+    """
+    # 别人的一场：别的同学候补顶上后超时未确认
+    other_act, og = open_group(1)
+    taker = take_student()
+    t_enr = _enroll(client, other_act, og, taker).json()["enrollment_id"]
+    other = take_student()
+    other_wl = _enroll(client, other_act, og, other).json()["enrollment_id"]
+    assert _cancel(client, taker, t_enr).json()["effect"] == "released"
+    db.get(Enrollment, other_wl).confirm_deadline = now() - timedelta(minutes=1)
+
+    # 本人自己的一场：同样超时未确认
+    me = take_student()
+    my_act, mg = open_group(1)
+    my_taker = take_student()
+    mt_enr = _enroll(client, my_act, mg, my_taker).json()["enrollment_id"]
+    my_wl = _enroll(client, my_act, mg, me).json()["enrollment_id"]
+    assert _cancel(client, my_taker, mt_enr).json()["effect"] == "released"
+    db.get(Enrollment, my_wl).confirm_deadline = now() - timedelta(minutes=1)
+    db.commit()
+    assert db.get(Enrollment, my_wl).status == "pending_confirm"
+    assert db.get(Enrollment, other_wl).status == "pending_confirm"
+
+    r = client.get("/api/me/enrollments", headers=login(client, me))
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    # 本人的超时当场收口，页面上看到的状态和实际一致
+    assert db.get(Enrollment, my_wl).status == "cancelled"
+    assert db.get(Enrollment, my_wl).cancel_type == "expired"
+    # 别人那条不动：只读页面不替全站收口，等后台定时任务处理
+    assert db.get(Enrollment, other_wl).status == "pending_confirm"
+
+
 def test_报名截止后锁定前候补照常递补(client, admin, db, open_group, take_student):
     from backend.models import Activity
     act, g = open_group(1)
