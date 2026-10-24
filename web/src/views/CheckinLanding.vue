@@ -26,7 +26,7 @@
               <el-tag v-else size="small" :type="stateType">{{ stateText }}</el-tag>
             </el-descriptions-item>
             <el-descriptions-item v-if="task.my_checkin_at" label="签到时间">
-              {{ task.my_checkin_at.replace('T', ' ') }}
+              {{ fmtDT(task.my_checkin_at) }}
             </el-descriptions-item>
           </el-descriptions>
 
@@ -57,7 +57,7 @@
                场次按这张码的截止时间）记、待核 -->
           <p v-if="task.checked_in && !task.checked_out" class="dim" style="margin:12px 0 0">
             <template v-if="task.state === 'active' || task.state === 'early'">
-              离岗时请签退，签退截止 {{ task.checkout_deadline.replace('T', ' ') }}；
+              离岗时请签退，签退截止 {{ fmtDT(task.checkout_deadline) }}；
               逾期未签退的，时长按{{ task.flexible_time ? '签到码截止时间' : '场次结束时间' }}记并由负责人核对
             </template>
             <template v-else>
@@ -89,7 +89,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api } from '../api'
+import { api, fmtDT } from '../api'
 import { auth } from '../store'
 
 const route = useRoute()
@@ -148,7 +148,7 @@ async function doCheckin() {
     doneAction.value = d.action === 'checkout' ? '签退' : '签到'
     // 不从 message 里截后半句：那句话是写给「别人」的（「张三 已到岗。」），
     // 放在自己的成功页上既啰嗦又像在念别人的名字。按动作自己说一句。
-    doneAt.value = `${d.time.replace('T', ' ')} · ${d.action === 'checkout'
+    doneAt.value = `${fmtDT(d.time)} · ${d.action === 'checkout'
       ? '本次服务时长将按签到签退计算' : '已到岗'}`
   } finally {
     submitting.value = false
