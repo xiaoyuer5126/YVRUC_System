@@ -184,12 +184,16 @@
           <template v-if="selected.length">
             <span class="dim">已选 {{ selected.length }} 人：</span>
             <el-button type="primary" :disabled="!batchTaskId || hoursFrozen"
+                       :loading="batchBusy === 'checkin'"
                        @click="batch('checkin')">批量签到</el-button>
             <el-button type="warning" :disabled="!batchTaskId || hoursFrozen"
+                       :loading="batchBusy === 'checkout'"
                        @click="batch('checkout')">批量签退</el-button>
             <el-button :disabled="!batchTaskId || hoursFrozen"
+                       :loading="batchBusy === 'cancel_checkout'"
                        @click="batch('cancel_checkout')">取消签退</el-button>
             <el-button type="danger" plain :disabled="!batchTaskId || hoursFrozen"
+                       :loading="batchBusy === 'cancel_checkin'"
                        @click="batch('cancel_checkin')">取消签到</el-button>
             <el-tag v-if="!batchTaskId" size="small" type="warning" effect="plain">请先生成并开启签到码</el-tag>
           </template>
@@ -325,7 +329,7 @@
       </el-form>
       <template #footer>
         <el-button @click="creating = false">取消</el-button>
-        <el-button type="primary" @click="createTask">生成</el-button>
+        <el-button type="primary" :loading="genBusy" @click="createTask">生成</el-button>
       </template>
     </el-dialog>
 
@@ -501,6 +505,8 @@ const METHOD_LABEL = { scan: '扫码', geo: '定位', manual: '补签' }
 const actId = computed(() => props.activityId)   // vuecheck: script-only
 
 const creating = ref(false)
+const genBusy = ref(false)
+const batchBusy = ref('')
 const form = ref({ shift_id: '', mode: 'shift', position_ids: [], range: [] })
 
 const shiftOptions = computed(() => props.allShifts)
@@ -648,13 +654,29 @@ function rowClass({ row }) { return row.checked_in ? '' : 'row-wait' }
 
 async function batch(action) {
   if (!batchTaskId.value) return ElMessage.warning('请先生成并开启签到码')
+  if (batchBusy.value) return
   const sids = selected.value.map(r => r.student_id)
   if (!sids.length) return
-  const d = await api.post(`/api/staff/checkin-tasks/${batchTaskId.value}/batch`,
-    { action, student_ids: sids })
-  ElMessage.success(`${d.done} 人操作成功` +
-    (d.skipped.length ? `；跳过：${d.skipped.join('、')}` : ''))
-  loadBoard()
+  if (action === 'cancel_checkin' || action === 'cancel_checkout') {
+    const label = action === 'cancel_checkin' ? '签到' : '签退'
+    const who = selected.value.length === 1
+      ? selected.value[0].name : `所选 ${selected.value.length} 人`
+    try {
+      await ElMessageBox.confirm(`确认取消${who}的${label}？`, '确认', { type: 'warning' })
+    } catch {
+      return
+    }
+  }
+  batchBusy.value = action
+  try {
+    const d = await api.post(`/api/staff/checkin-tasks/${batchTaskId.value}/batch`,
+      { action, student_ids: sids })
+    ElMessage.success(`${d.done} 人操作成功` +
+      (d.skipped.length ? `；跳过：${d.skipped.join('、')}` : ''))
+    loadBoard()
+  } finally {
+    batchBusy.value = ''
+  }
 }
 
 async function quick(action) {
@@ -722,6 +744,7 @@ function onPickPeriod() {
 }
 
 async function createTask() {
+  if (genBusy.value) return
   if (!form.value.shift_id) return ElMessage.warning('请选择签到场次')
   if (form.value.mode === 'position' && !form.value.position_ids.length)
     return ElMessage.warning('请选择岗位')
@@ -734,11 +757,16 @@ async function createTask() {
   if (f1) body.valid_from = toISO(f1)
   if (f2) body.valid_to = toISO(f2)
   if (f2 && !await confirmEarlyDeadline(f2, formPeriod()?.end_time)) return
-  const d = await api.post(`/api/staff/shifts/${form.value.shift_id}/checkin-tasks`,
-                           body)
-  ElMessage.success(`已生成 ${d.tasks?.length || 1} 张签到码`)
-  creating.value = false
-  await loadTasks()
+  genBusy.value = true
+  try {
+    const d = await api.post(`/api/staff/shifts/${form.value.shift_id}/checkin-tasks`,
+                             body)
+    ElMessage.success(`已生成 ${d.tasks?.length || 1} 张签到码`)
+    creating.value = false
+    await loadTasks()
+  } finally {
+    genBusy.value = false
+  }
 }
 
 // ======================= 截止与场次结束 =======================
