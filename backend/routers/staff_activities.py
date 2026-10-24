@@ -2717,9 +2717,19 @@ def add_walkin(shift_id: str, body: dict,
     """
     g = _shift(db, shift_id)
     ensure_activity_manager(db, user, g.activity_id)
+    act = _act(db, g.activity_id)
+    # 还没上广场的活动一个人都报不进来，补招就等于绕过审批把名单先定下来：
+    # 草稿、待审批、审批通过待发布的都不给补
+    if act.is_unpublished():
+        raise HTTPException(409, "活动还没有发布，不能现场补招；请先发布活动")
+    # 培训/彩排跟着服务场次的报名走，自己不招人；要加人请加到服务场次、
+    # 在那一场补招时勾上它（见 body 的 attached_ids）
+    if g.is_attached():
+        raise HTTPException(409, f"「{g.name}」是本活动的{g.kind_label()}，"
+                                 f"不单独招人；请到服务场次补招，并勾选这一场")
     # 补招卡在「时长封账」而不是「活动结束」：现场漏登记的人事后才补进来，
     # 补进来才好给他记时长
-    ensure_hours_editable(db, _act(db, g.activity_id))
+    ensure_hours_editable(db, act)
     sid = (body.get("student_id") or "").strip()
     u = db.query(User).filter(User.student_id == sid).first()
     if u is None:
@@ -2819,7 +2829,6 @@ def add_walkin(shift_id: str, body: dict,
         # 补招是管理者单方面加进来的：不通知的话，本人那边一点动静都没有——
         # 不知道自己报了名，更不知道哪天要去哪儿。跟候补转正一样得告诉他。
         # 场次已经结束的是事后补登记，只告诉他补记上了，不叫他来
-        act = _act(db, g.activity_id)
         data = {"activity_id": g.activity_id}
         if g.end_time <= now():
             msgcenter.send_user(db, u, "walkin_recorded", data, activity=act.title,

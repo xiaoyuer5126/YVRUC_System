@@ -11,7 +11,7 @@ from backend.models import (Activity, ActivityManager, CheckinRecord,
 from conftest import set_shift_time
 from conftest import mk_shift
 from conftest import (ADMIN, POSITION_TEXT, QINGXIE, approve, editing,
-                      upload_proposal,
+                      make_draft, upload_proposal,
                       login, student_row)
 
 
@@ -653,6 +653,30 @@ def test_时长封账后补招与补签也停(client, admin, db, assigned_group,
     r = client.post(f"/api/staff/checkin-tasks/{tid}/batch", headers=admin,
                     json={"action": "checkin", "student_ids": [sid]})
     assert r.status_code == 409 and "审批" in r.json()["detail"]
+
+
+def test_没发布的活动不能现场补招(client, admin, db, draft_activity, take_student):
+    """补招要先把活动发出去：草稿、待审批、审批通过待发布的活动都还没上广场，
+    一个人都报不进来，补招等于绕过审批先把名单定下来。"""
+    def walkin(aid):
+        db.expire_all()
+        g = db.get(Activity, aid).main_shifts()[0]
+        return client.post(f"/api/staff/shifts/{g.id}/add-walkin", headers=admin,
+                           json={"student_id": take_student(), "force": True})
+
+    r = walkin(draft_activity.id)
+    assert r.status_code == 409 and "还没有发布" in r.json()["detail"], r.text
+
+    pending = make_draft(client, admin)
+    depts = [d for d in client.get("/api/staff/departments", headers=admin).json()
+             if d["has_head"]]
+    r = client.post(f"/api/staff/activities/{pending}/submit", headers=admin,
+                    json={"department_id": depts[0]["id"]})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(Activity, pending).status == "pending"
+    r = walkin(pending)
+    assert r.status_code == 409 and "还没有发布" in r.json()["detail"], r.text
 
 
 def test_活动不许重名(client, admin, db, draft_activity):
