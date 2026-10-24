@@ -250,7 +250,8 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
 
     # ---------- 志愿者信息 Sheet：全活动每人一行 ----------
     info = wb.create_sheet("志愿者信息")
-    header = ["姓名", "学号", "学院", "身份证号", "手机号", "微信号"]
+    header = ["姓名", "学号", "性别", "学院", "年级", "校区", "学段",
+              "身份证号", "手机号", "微信号"]
     info.append(header)
     _style_header(info, len(header))
     seen: set[str] = set()
