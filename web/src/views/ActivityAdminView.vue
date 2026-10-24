@@ -26,9 +26,7 @@
       <template #content>
         <div class="hd-title">
           <b>{{ act.title }}</b>
-          <el-tag size="small" :type="{published:'success',closed:'info',draft:'info',pending:'warning',approved:'primary',finished:'info',vb_pending:'warning',completed:'success'}[act.status]">
-            {{ act.status_label }}
-          </el-tag>
+          <el-tag size="small" :type="headStatus.type">{{ headStatus.label }}</el-tag>
           <el-tag v-if="act.urgent" size="small" type="danger" effect="dark">急招</el-tag>
           <el-tag v-if="isRecord" size="small" type="info" effect="plain">不公开·补记录</el-tag>
         </div>
@@ -1779,6 +1777,20 @@ const narrow = useNarrow()
 const tab = ref(String(route.query.tab || ''))
 // 未发布（草稿/待审批/待发布）只留 岗位设置 / 管理者 / 变更记录：那时一个报名的人
 // 都没有，名单、签到、服装、导出、签收全是空页
+// 页头状态与活动列表同一口径（后端 admin_status_of）：还没公开的三态和等外联
+// 确认的两态照 status 显示，发布之后按时间算，不然报名还没开始也写「报名中」
+const ADMIN_STATUSES = ['draft', 'pending', 'approved', 'vb_pending', 'completed']
+const STATUS_TYPES = {
+  draft: 'info', pending: 'warning', approved: 'primary', upcoming: 'warning',
+  published: 'success', ongoing: 'success', closed: 'info', finished: 'info',
+  vb_pending: 'warning', completed: 'success',
+}
+const headStatus = computed(() => {
+  const a = act.value
+  const own = ADMIN_STATUSES.includes(a.status) || !a.display_status
+  const code = own ? a.status : a.display_status
+  return { type: STATUS_TYPES[code], label: own ? a.status_label : a.display_label }
+})
 const isPublic = computed(() =>
   ['published', 'closed', 'finished', 'vb_pending', 'completed'].includes(act.value?.status))
 // 不公开招募（补记录）：没有场次、报名、签到，只有名单导入与时长结账
