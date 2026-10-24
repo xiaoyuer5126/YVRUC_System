@@ -358,7 +358,9 @@ def submit(activity_id: str, body: SubmitBody,
            user: User = Depends(require_manager)):
     """提交审批。草稿或被驳回的活动都走这里。"""
     ensure_activity_manager(db, user, activity_id)
-    act = db.get(Activity, activity_id)
+    # 行锁读：两次点击同时到，只有一次读到 draft 并提交，另一次等到状态已变后被下面挡下
+    act = (db.query(Activity).filter(Activity.id == activity_id)
+           .populate_existing().with_for_update().one_or_none())
     if act is None:
         raise HTTPException(404, "活动不存在")
     if act.status != "draft":
@@ -424,7 +426,9 @@ def decide(activity_id: str, body: DecideBody,
     广场上，多一步手动发布只是让发起方再登录一次点个按钮。提交审批时可以关掉
     这一项，那就停在「待发布」等发起方自己点。
     """
-    act = db.get(Activity, activity_id)
+    # 行锁读：通过/驳回同时到，只有一次读到 pending 并处理，另一次等到状态已变后被下面挡下
+    act = (db.query(Activity).filter(Activity.id == activity_id)
+           .populate_existing().with_for_update().one_or_none())
     if act is None:
         raise HTTPException(404, "活动不存在")
     if act.status != "pending":
@@ -535,7 +539,9 @@ def transfer(activity_id: str, body: TransferBody,
     免得发起方以为还要照着它走对外流程；转进要求立项书的部门而还没有立项书的，
     通知活动管理者补传（没有它审批人批不了，见 decide）。
     """
-    act = db.get(Activity, activity_id)
+    # 行锁读：两处转交同时到，只有一次读到 pending 并处理，另一次等到状态已变后被下面挡下
+    act = (db.query(Activity).filter(Activity.id == activity_id)
+           .populate_existing().with_for_update().one_or_none())
     if act is None:
         raise HTTPException(404, "活动不存在")
     if act.status != "pending":

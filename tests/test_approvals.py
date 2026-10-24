@@ -108,6 +108,19 @@ def test_提交后由部长通过即发布(client, admin, db):
     assert d["opens_in"] > 0
 
 
+def test_同一条审批拍板两次第二次被挡(client, admin, db, draft):
+    """两次点击同时到现场：张板是行锁读出来的，第二次必然看到状态已变。"""
+    head = login(client, QINGXIE_HEAD)
+    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                json={"department_id": _liaison(db).id})
+    r = client.post(f"/api/staff/activities/{draft}/decide", headers=head,
+                    json={"approve": True})
+    assert r.status_code == 200, r.text
+    r = client.post(f"/api/staff/activities/{draft}/decide", headers=head,
+                    json={"approve": False, "comment": "反悔"})
+    assert r.status_code == 409 and "无需审批" in r.json()["detail"], r.text
+
+
 def test_关掉通过即发布就停在待发布(client, admin, db, draft):
     """想踩着某个时刻自己放出去的，通过后活动还在发起方手里。"""
     head = login(client, QINGXIE_HEAD)
