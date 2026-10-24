@@ -79,11 +79,19 @@ const TAGS = {
   signup_success: ['success', '报名成功'],
   waitlist_queued: ['warning', '进入候补'],
   waitlist_promoted: ['danger', '候补转正'],
+  application_accepted: ['success', '录取通知'],
+  application_rejected: ['info', '报名结果'],
   assignment: ['primary', '岗位分配'],
+  leader_appointed: ['primary', '组长任命'],
   activity_changed: ['warning', '活动变更'],
   activity_finished: ['info', '活动结束'],
   checkin_reminder: ['info', '签到提醒'],
+  walkin_added: ['primary', '已补招'],
+  walkin_recorded: ['info', '已补记'],
   hours_approved: ['success', '时长核准'],
+  hours_locked: ['success', '时长锁定'],
+  ack_reminder: ['warning', '待签收提醒'],
+  custom: ['info', '通知'],
 }
 const tagType = k => TAGS[k]?.[0] || 'info'
 const tagLabel = k => TAGS[k]?.[1] || '通知'
