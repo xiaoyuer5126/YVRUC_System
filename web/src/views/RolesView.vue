@@ -145,7 +145,7 @@
           </el-form-item>
           <el-form-item v-if="dlg.post !== 'council'" label="所属部门" required>
             <el-select v-model="dlg.deptId" placeholder="选择部门" style="width:100%"
-                       :disabled="headOnly">
+                       :disabled="headOnly" @change="onDeptChange">
               <el-option v-for="d in depts" :key="d.id" :value="d.id" :label="d.name" />
             </el-select>
             <div class="dim">骨干与成员须归属部门，部长才能管理</div>
@@ -350,6 +350,11 @@ async function loadCores() {
     : []
 }
 watch(() => dlg.value.deptId, loadCores)
+
+// 换了部门，原来的骨干不属于新部门，清掉归属骨干；候选由上面的 watch 随部门重取
+function onDeptChange() {
+  dlg.value.supervisorId = ''
+}
 
 async function save() {
   const d = dlg.value
