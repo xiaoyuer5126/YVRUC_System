@@ -4,7 +4,7 @@
       <template v-if="task">
         <div class="ok-icon" v-if="done">✓</div>
         <h2 style="margin:8px 0 4px">{{ task.activity_title }}</h2>
-        <p class="dim" style="margin:0 0 12px">{{ task.shift_name }} · {{ task.group_time }}</p>
+        <p class="dim" style="margin:0 0 12px">{{ task.shift_name }} · {{ task.period_text || task.group_time }}</p>
 
         <template v-if="!done">
           <el-descriptions :column="1" border size="small">
