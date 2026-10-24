@@ -752,6 +752,79 @@ def test_修改活动时必填项不能清空(client, admin, db):
         assert r.status_code == 400 and r.json()["detail"] == f"{label}不能为空", key
 
 
+# ============ 改活动 / 场次 / 岗位时超长与类型不对要拦在校验层 ============
+# 这几处 PATCH 直接吃 body 里的值写库。库里 title、location 是 String(128)、
+# organizer/group_name 是 String(64)，超了要到插入那一刻才报错，管理者看到的
+# 是 500；名额填成文字/小数也一样。
+
+def test_改活动超长字段直接400不写库(client, admin, db):
+    aid = _new_activity(client, admin).json()["id"]
+    for key, label, limit in (("title", "活动名称", 128), ("location", "活动地点", 128),
+                              ("organizer", "组织单位", 64)):
+        r = client.patch(f"/api/staff/activities/{aid}", headers=admin,
+                         json={key: "x" * (limit + 1)})
+        assert r.status_code == 400, (key, r.text)
+        assert r.json()["detail"] == f"{label}不能超过 {limit} 个字"
+    # 刚好的长度要能存下
+    r = client.patch(f"/api/staff/activities/{aid}", headers=admin,
+                     json={"title": "t" * 128, "location": "l" * 128,
+                           "organizer": "o" * 64})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    act = db.get(Activity, aid)
+    assert len(act.title) == 128 and len(act.location) == 128
+
+
+def test_改场次超长或错名额直接400(client, admin, db, open_group):
+    act, g = open_group(3)
+    with editing(client, admin, act.id):
+        r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+                         json={"name": "n" * 129})
+        assert r.status_code == 400 and "128" in r.json()["detail"]
+        r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+                         json={"location": "l" * 129})
+        assert r.status_code == 400 and "128" in r.json()["detail"]
+        # 人数上限 / 候补名额填成文字、小数或布尔，都该是 400 而不是 int() 抛 500
+        for bad in ("abc", 1.5, True, None):
+            r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+                             json={"capacity": bad})
+            assert r.status_code == 400, (bad, r.text)
+            assert "整数" in r.json()["detail"]
+        r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+                         json={"waitlist_quota": "many"})
+        assert r.status_code == 400 and "整数" in r.json()["detail"]
+        r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+                         json={"waitlist_quota": -1})
+        assert r.status_code == 400 and "负数" in r.json()["detail"]
+    db.expire_all()
+    assert db.get(Shift, g.id).name != "n" * 129
+
+
+def test_改岗位超长或错名额直接400(client, admin, db, assigned_group):
+    act, g, p1, _p2 = assigned_group
+    with editing(client, admin, act.id):
+        for key, limit in (("name", 128), ("location", 128), ("group_name", 64),
+                           ("leader_task", 256), ("attire_note", 256),
+                           ("pay_note", 256)):
+            r = client.patch(f"/api/staff/positions/{p1.id}", headers=admin,
+                             json={key: "x" * (limit + 1)})
+            assert r.status_code == 400, (key, r.text)
+            assert f"最多 {limit} 个字" in r.json()["detail"], key
+        for bad in ("abc", 2.5, True, None):
+            r = client.patch(f"/api/staff/positions/{p1.id}", headers=admin,
+                             json={"quota": bad})
+            assert r.status_code == 400, (bad, r.text)
+            assert "整数" in r.json()["detail"]
+            r = client.patch(f"/api/staff/positions/{p1.id}", headers=admin,
+                             json={"waitlist_quota": bad})
+            assert r.status_code == 400 and "整数" in r.json()["detail"]
+        r = client.patch(f"/api/staff/positions/{p1.id}", headers=admin,
+                         json={"waitlist_quota": -1})
+        assert r.status_code == 400 and "负数" in r.json()["detail"]
+    db.expire_all()
+    assert db.get(Position, p1.id).quota == 2
+
+
 # ======================= 活动地点定位 =======================
 
 def test_活动地点定位选填_详情里带着(client, admin, db):

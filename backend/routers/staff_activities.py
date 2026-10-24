@@ -61,6 +61,20 @@ REQUIRED_TEXT = {"title": "活动名称", "organizer": "组织单位", "location
 # 报名时间与招募范围。编辑时传了也不认，免得前端一个旧表单把它们又写回来
 RECORD_UNUSED_FIELDS = ("contact_group_qr", "reg_start", "reg_end", "location_point",
                         "recruit_campuses", "recruit_stages", "recruit_colleges")
+# 库里这几列是 String(n)：新建走 Pydantic 的 max_length，修改是 PATCH 任意字段、
+# 直接吃 body 里的值，超了要到插入那一刻才报错，管理者看到的是一个 500
+_ACTIVITY_MAX = {"title": 128, "location": 128, "organizer": 64}
+
+
+def _as_int(v, label: str) -> int:
+    """整数字段：不是整数就拦在校验层。true/false 不认（bool 是 int 的子类），
+    小数、字符串数字、null 也都当填错。"""
+    if isinstance(v, bool) or (isinstance(v, float) and not v.is_integer()):
+        raise HTTPException(400, f"「{label}」要填整数")
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"「{label}」要填整数")
 
 
 def _act(db: OrmSession, activity_id: str) -> Activity:
@@ -484,6 +498,9 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
                 value = config.DEFAULT_VOLUNTEER_BENEFIT
             if not value:
                 raise HTTPException(400, f"{REQUIRED_TEXT[key]}不能为空")
+            limit = _ACTIVITY_MAX.get(key)
+            if limit and len(value) > limit:
+                raise HTTPException(400, f"{REQUIRED_TEXT[key]}不能超过 {limit} 个字")
         if key == "title" and str(value).strip() != act.title:
             ensure_unique_title(db, str(value), exclude_id=act.id)
         if key in ("reg_start", "reg_end"):
@@ -1394,6 +1411,9 @@ SHIFT_FIELDS = {"name": "场次名",
                 "requirement_tags": "条件要求", "lock_hours": "开场前自动锁定（小时）",
                 "flexible_time": "时间灵活（可多次签到）"}
 SHIFT_LABELS = {**SHIFT_FIELDS, "periods": "时间"}
+# 库里 name/location 是 String(n)、note 是 String(512)：修改是 PATCH 任意字段，
+# 超了直接写库会撞列宽 500
+_SHIFT_MAX = {"name": 128, "location": 128, "note": 512}
 
 
 @router.patch("/shifts/{shift_id}")
@@ -1433,17 +1453,27 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
         elif key == "flexible_time":
             g.flexible_time = bool(v) and not g.is_attached()
         else:
-            setattr(g, key, v)
+            if key == "name" and not str(v or "").strip():
+                raise HTTPException(400, "场次名不能为空")
+            limit = _SHIFT_MAX.get(key)
+            if limit and len(str(v or "")) > limit:
+                raise HTTPException(400, f"「{SHIFT_FIELDS[key]}」不能超过 {limit} 个字")
+            setattr(g, key, str(v or "") if key == "location" else v)
     if "applies_to_positions" in body and g.is_attached():
         g.applies_to_positions = _clean_applies(act, body["applies_to_positions"])
         _resync_training(db, act, g)
     _validate_flexible_hours(g)
-    # 名额与候补落到占位岗位上；没传就沿用它当前的值
+    # 名额与候补落到占位岗位上；没传就沿用它当前的值。非整数直接 int() 会抛
+    # ValueError，管理者看到的是 500，所以先过一道校验
     holder = g.placeholder()
-    _sync_placeholder(db, g,
-                      int(body.get("capacity", holder.quota if holder else 0)),
-                      int(body.get("waitlist_quota",
-                                   holder.waitlist_quota if holder else 3)))
+    capacity = (_as_int(body["capacity"], "人数上限") if "capacity" in body
+                else (holder.quota if holder else 0))
+    waitlist_quota = (_as_int(body["waitlist_quota"], "候补名额")
+                      if "waitlist_quota" in body
+                      else (holder.waitlist_quota if holder else 3))
+    if capacity < 0 or waitlist_quota < 0:
+        raise HTTPException(400, "人数上限与候补名额不能是负数")
+    _sync_placeholder(db, g, capacity, waitlist_quota)
 
     def fmt(v):
         if isinstance(v, datetime):
@@ -1629,6 +1659,8 @@ def _validate_position(db: OrmSession, g: Shift, s: Position):
     """
     if s.quota <= 0:
         raise HTTPException(400, "岗位名额必须大于 0")
+    if s.waitlist_quota < 0:
+        raise HTTPException(400, "候补名额不能是负数")
     # 同上：只跟已报名的真人比。空着没填的位子不该挡住与名额无关的修改
     enrolled = logic.position_enrolled_count(db, s.id) if s.id else 0
     if s.quota < enrolled:
@@ -1701,8 +1733,16 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
             continue
         if key == "requirement_tags":
             s.requirement_tags = _clean_requirement_tags(body[key], "岗位")
+        elif key in ("quota", "waitlist_quota"):
+            # 名额填错（小数、文字、布尔）直接写库或比较时，要么报 500 要么
+            # 悄悄算出个怪结果，统一在这里换成 400
+            setattr(s, key, _as_int(body[key], POSITION_FIELDS[key]))
         else:
-            setattr(s, key, body[key])
+            value = body[key]
+            limit = _POSITION_MAX.get(key)
+            if limit and len(str(value or "")) > limit:
+                raise HTTPException(400, f"「{POSITION_FIELDS[key]}」最多 {limit} 个字")
+            setattr(s, key, value)
     _validate_position(db, g, s)
     synced = _sync_group_leader_task(db, s)
     _require_position_text(s)
