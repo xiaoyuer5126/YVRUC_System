@@ -385,7 +385,7 @@ def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
     同学也不导：这张表是给志愿北京录时长的，他们的时长不能同时拿去做学分认定
     （见 hours.PARTY_SCHOOL）。
     「劳务」给发劳务用：本活动所有 pay_hours() > 0 的人，按姓名排序，一人一行；
-    党校同学也在其中，劳务与志愿北京无关。劳务时长是 HoursRecord.pay_hours，
+    党校同学不能选劳务，不会出现在这页。劳务时长是 HoursRecord.pay_hours，
     备注只拼按劳务计的那几段。
     """
     party = hours_flow.party_school_users(db, activity.id)
