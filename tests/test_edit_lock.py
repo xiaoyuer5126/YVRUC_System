@@ -177,6 +177,51 @@ def test_已截止的活动也能进编辑态建岗位(client, admin, db, enroll
                               **POSITION_TEXT}).status_code == 200
 
 
+def test_活动截止后编辑态自动解除_不再推送变更(client, admin, db,
+                                            enrolled_activity):
+    """编辑态只对「报名中」有意义。活动一截止，还留着编辑态的话，负责人
+    之后点「保存并发布」照样过校验，把编辑期间的改动当成新变更推给志愿者。"""
+    act, shift, u = enrolled_activity
+    pos = shift.positions[0]
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                     json={"location": "南门"})
+    assert r.status_code == 200, r.text
+    assert _changed(db, u.id, act) == []
+
+    assert client.post(f"/api/staff/activities/{act.id}/close",
+                       headers=admin).status_code == 200
+    db.expire_all()
+    assert db.get(Activity, act.id).editing_since is None
+
+    r = client.post(f"/api/staff/activities/{act.id}/publish-changes",
+                    headers=admin)
+    assert r.status_code == 409 and "不在编辑态" in r.json()["detail"], r.text
+    assert _changed(db, u.id, act) == []
+
+
+def test_定时自动截止也解除编辑态(client, admin, db, enrolled_activity):
+    """手动截止以外的路径（定时任务把活动移出报名中）同样要解冻。"""
+    act, shift, u = enrolled_activity
+    pos = shift.positions[0]
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                 json={"location": "南门"})
+    db.expire_all()
+    db.get(Activity, act.id).reg_end = now() - timedelta(minutes=1)
+    db.commit()
+
+    assert scheduled.auto_advance_activities(db) >= 1
+    db.expire_all()
+    row = db.get(Activity, act.id)
+    assert row.status == "closed"
+    assert row.editing_since is None
+    r = client.post(f"/api/staff/activities/{act.id}/publish-changes",
+                    headers=admin)
+    assert r.status_code == 409, r.text
+    assert _changed(db, u.id, act) == []
+
+
 # ======================= 编辑期间的改动按人汇总通知 =======================
 
 def _changed(db, user_id, act):
