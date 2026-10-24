@@ -2064,6 +2064,14 @@ async function loadAll() {
       notFound.value = true
       return
     }
+    // 名单先挂到各场次上再赋给 act：页面在刷新时不卸掉，act 一换就按新数据渲染，
+    // 名单没到的话依赖名单的地方会读到 undefined
+    const rosters = await Promise.all(d.shifts.map(g => api.get(`/api/staff/shifts/${g.id}/roster`)))
+    const at = Date.now()
+    d.shifts.forEach((g, i) => {
+      g._roster = rosters[i]
+      g._rosterAt = at
+    })
     act.value = d
     // 手动加/扣时长的服务日期默认落在活动服务的那天：时长多是事后统一录进来，
     // 空着的话每录一条都要自己挑一次日历
@@ -2078,12 +2086,6 @@ async function loadAll() {
       tab.value = 'records'
     }
     if (tab.value === 'overview' && !isPublic.value) tab.value = fallback
-    const rosters = await Promise.all(d.shifts.map(g => api.get(`/api/staff/shifts/${g.id}/roster`)))
-    // 经 act.value 写回：直接改 d 上的对象不触发依赖名单的计算属性（页签叹号）
-    act.value.shifts.forEach((g, i) => {
-      g._roster = rosters[i]
-      g._rosterAt = Date.now()
-    })
     // 弹窗里的表要等打开才加载，题数得自己先问一句，按钮上要写
     formCount.value = (await api.get(
       `/api/staff/activities/${activityId}/form`)).questions.length
