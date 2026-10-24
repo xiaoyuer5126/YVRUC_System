@@ -32,11 +32,13 @@
       <el-popover v-if="!narrow" v-model:visible="slotOpen" trigger="click"
                   placement="bottom-end" :width="620">
         <template #reference>
-          <el-button :type="slotActive ? 'primary' : ''" plain>{{ slotButtonText }}</el-button>
+          <el-button class="slot-trigger" :type="slotActive ? 'primary' : ''" plain>
+            {{ slotButtonText }}
+          </el-button>
         </template>
         <SlotPicker v-model:start="f.start" v-model:end="f.end" v-model:slots="slots" />
       </el-popover>
-      <el-button v-else :type="slotActive ? 'primary' : ''" plain
+      <el-button v-else class="slot-trigger" :type="slotActive ? 'primary' : ''" plain
                  @click="slotOpen = true">{{ slotButtonText }}</el-button>
       <el-drawer v-if="narrow" v-model="slotOpen" direction="btt" size="85%"
                  title="按时段筛选" append-to-body>
