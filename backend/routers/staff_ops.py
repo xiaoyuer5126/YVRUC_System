@@ -31,7 +31,8 @@ from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
                       Department, Enrollment, HoursAppeal, HoursRecord,
                       HoursRequest, HoursSegment, Shift, Position, User,
                       ViolationRecord, day_of, iso, new_checkin_token, now,
-                      parse_local_dt, part_is_pay, segment_out, span_text, uid)
+                      day_text, parse_local_dt, part_is_pay, segment_out,
+                      span_text, uid)
 from ..serializers import applies_text, iso_of, recruit_scope_phrase
 from .checkin import active_period, checkout_open, find_record
 from .geo import tiles_configured
@@ -88,7 +89,7 @@ def live_task_conflict(db: OrmSession, shift_id: str, period_id: str,
 
 def _hm(t: datetime | None) -> str:
     """可签时段的一端；留空表示这一端不限。"""
-    return f"{t:%m-%d %H:%M}" if t else "不限"
+    return f"{t:%Y-%m-%d %H:%M}" if t else "不限"
 
 
 def _conflict_message(db: OrmSession, t: CheckinTask, g: Shift) -> str:
@@ -1567,7 +1568,7 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
         revoked = hours_flow.reopen_record(db, act, rec) or revoked
         # 段的 id 是这一段的编号，删除时按它找（见 hours_manual_delete）
         rec.add_segment(kind="manual", date=day, hours=hours, label=note,
-                        time_text=f"{day:%m-%d}")
+                        time_text=day_text(day))
         # 加完就 flush：同一批里这个人再出现一次时，hours_record_of 查不到刚建的
         # 这条、扣减也看不到刚加上去的那一段（合计是 flush 时按段重算的）
         db.flush()
@@ -2089,7 +2090,7 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
     db.commit()
     return {"ok": True, "locked": False, "count": notified,
             "message": f"已核准并通知 {notified} 人，"
-                       f"{deadline:%m-%d %H:%M} 前无人申诉即自动锁定"}
+                       f"{deadline:%Y-%m-%d %H:%M} 前无人申诉即自动锁定"}
 
 
 class LockHoursBody(BaseModel):

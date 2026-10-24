@@ -1491,11 +1491,11 @@ class HoursRecord(Base):
         if seg is None:
             if delta:
                 self.add_segment(kind=kind, date=date, hours=delta, label=label,
-                                 time_text=f"{date:%m-%d}")
+                                 time_text=day_text(date))
             return
         if delta:
             seg.refill(hours=delta, date=date, label=label,
-                       time_text=f"{date:%m-%d}")
+                       time_text=day_text(date))
         else:
             self.drop_segment(seg)
 
@@ -1563,7 +1563,7 @@ class HoursRecord(Base):
 
     def parts_text(self, *, hours_only: bool = False,
                    pay_only: bool = False) -> str:
-        """明细拼成一行：「09-20 08:00-12:00 东门引导；09-21 …」，不换行。
+        """明细拼成一行：「2026-09-20（周日）08:00-12:00 东门引导；…」，不换行。
         hours_only：只拼计志愿时长的那几段（导出给志愿北京的备注用）。
         pay_only：只拼按劳务计的段（导出给发劳务的备注用），与 hours_only 对称。"""
         return "；".join(" ".join(x for x in (s.time_text,

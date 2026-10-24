@@ -1,19 +1,20 @@
 """时长申诉：志愿者提异议，管理者采纳或驳回，与确认/回传的关系。"""
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
 from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, HoursRecord, Notification,
-                            Position, Shift, User, new_checkin_token, now,
-                            span_text, uid)
+                            Position, Shift, User, day_text, new_checkin_token,
+                            now, span_text, uid)
 from conftest import mk_shift
 from conftest import ADMIN, POSITION_TEXT, login, student_row
 
 # 手动加/扣时长那一段的服务日期
 MANUAL_DATE = "2026-10-05"
+MANUAL_DAY_TEXT = day_text(datetime(2026, 10, 5))
 
 
 @pytest.fixture
@@ -518,7 +519,8 @@ def test_时长带明细且导出时长记录(client, admin, db, served, take_st
     assert by_name[u.name] == (u.name, u.student_id, "110101200001011234", 4.0,
                                f"{g.span_text()} 引导")
     assert by_name[other.name][1] == other.student_id
-    assert by_name[other.name][3] == 2 and by_name[other.name][4] == "10-05 场外搬运"
+    assert (by_name[other.name][3] == 2
+            and by_name[other.name][4] == f"{MANUAL_DAY_TEXT} 场外搬运")
 
     # 选了劳务的不导
     _served_pay_position(db, act)
@@ -572,7 +574,8 @@ def test_手动时长并进本人那一笔(client, admin, db, served):
     r = client.get(f"/api/staff/activities/{act.id}/hours.xlsx", headers=admin)
     xrow = next(x for x in load_workbook(BytesIO(r.content)).active.values
                 if x[0] == u.name)
-    assert xrow[3] == 6.0 and xrow[4] == f"{g.span_text()} 引导；10-05 场外搬运"
+    assert (xrow[3] == 6.0
+            and xrow[4] == f"{g.span_text()} 引导；{MANUAL_DAY_TEXT} 场外搬运")
 
 
 def test_确认全部不会抹掉手动加的那几段(client, admin, db, served):
