@@ -41,7 +41,7 @@
         </el-popconfirm>
       </div>
       <el-table v-if="d.showHistory" :data="d.history" size="small" style="margin-top:8px">
-        <el-table-column label="时间" width="120">
+        <el-table-column label="时间" width="180">
           <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="交接" min-width="160">

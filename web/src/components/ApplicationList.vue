@@ -56,7 +56,7 @@
           <div class="dim">{{ row.user.student_id }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="提交时间" width="110">
+      <el-table-column label="提交时间" width="180">
         <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
       </el-table-column>
       <el-table-column label="学院" prop="user.college" min-width="120" />

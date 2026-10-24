@@ -76,7 +76,7 @@
             <AppealTag :row="row" />
           </template>
         </el-table-column>
-        <el-table-column label="记录时间" width="130">
+        <el-table-column label="记录时间" width="180">
           <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="200">

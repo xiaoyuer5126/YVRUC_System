@@ -40,7 +40,7 @@
       <el-table-column label="申报时长" width="100">
         <template #default="{ row }">{{ row.hours }}h</template>
       </el-table-column>
-      <el-table-column label="提交时间" width="120">
+      <el-table-column label="提交时间" width="180">
         <template #default="{ row }">{{ fmtDT(row.submitted_at) }}</template>
       </el-table-column>
       <el-table-column label="状态" width="150">
