@@ -2,8 +2,14 @@
 <template>
   <!-- 窄屏交给系统自带的选择器：手机上的滚轮比弹层月历好点，
        月历面板在 390px 宽的屏幕上也露不全 -->
-  <input v-if="narrow" type="datetime-local" class="dt-native"
-         :value="nativeValue" @change="onNative" />
+  <!-- 系统选择器空着时不显示 placeholder（iOS 上就是一个空框），
+       不叠一层提示字的话，人看不出这里要填 -->
+  <label v-if="narrow" class="dt-wrap">
+    <!-- 空着时把系统自己画的「年/月/日 --:--」藏掉，免得和提示字叠在一起 -->
+    <input type="datetime-local" class="dt-native" :class="{ empty: !nativeValue }"
+           :value="nativeValue" @change="onNative" />
+    <span v-if="!nativeValue" class="dt-hint">{{ placeholder }}</span>
+  </label>
   <el-date-picker v-else type="datetime" style="width:100%"
                   :model-value="modelValue || ''" :placeholder="placeholder"
                   format="YYYY-MM-DD HH:mm" time-format="HH:mm"
@@ -48,10 +54,16 @@ function onNative(e) {
 </script>
 
 <style scoped>
+.dt-wrap { position: relative; display: block; width: 100%; }
+.dt-hint {
+  position: absolute; left: 12px; top: 0; line-height: 32px;
+  color: var(--el-text-color-placeholder); pointer-events: none;
+}
 .dt-native {
   width: 100%; box-sizing: border-box; height: 32px; padding: 0 11px;
   border: 1px solid var(--el-border-color); border-radius: 4px;
   font: inherit; color: var(--el-text-color-regular); background: #fff;
 }
+.dt-native.empty { color: transparent; }
 .dt-native:focus { outline: none; border-color: var(--el-color-primary); }
 </style>
