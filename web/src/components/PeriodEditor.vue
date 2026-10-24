@@ -57,9 +57,11 @@ function emitAll() {
   emit('update:modelValue', payload())
 }
 
-// 外面换了内容（打开另一场、智能起草回填）才重建；自己发出去的改动不重来
+// 外面换了内容（打开另一场、智能起草回填）才重建；自己发出去的改动不重来。
+// 一行都还没有时不跳过：传进来的是空列表，payload 也是空列表，两边一比
+// 「没变」，就不会放那一行空白时段，人得先点「添加时段」才看得到要填哪
 watch(() => props.modelValue, v => {
-  if (sig(v) === sig(payload())) return
+  if (rows.value.length && sig(v) === sig(payload())) return
   const list = Array.isArray(v) && v.length ? v : [{}]
   rows.value = list.map(normalize)
 }, { immediate: true, deep: true })
