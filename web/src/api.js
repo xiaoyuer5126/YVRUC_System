@@ -59,8 +59,9 @@ async function request(method, url, body, opts = {}) {
     return resp
   }
   const data = await resp.json().catch(() => ({}))
-  if (resp.status === 401) {
-    // 登录接口自己回的 401（口令错）不算「过期」，那时本来就在登录页上
+  // 登录接口自己回的 401（口令错）不算「过期」：那时本来就在登录页上，
+  // 交给下面按普通错误处理，把后端那句提示原样弹出来。
+  if (resp.status === 401 && !url.startsWith('/api/auth/demo-login')) {
     sessionExpired()
     const e = new Error('登录已过期')
     e.status = 401
