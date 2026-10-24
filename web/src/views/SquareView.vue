@@ -28,17 +28,26 @@
         <el-option value="" label="全部组织单位" />
         <el-option v-for="o in organizers" :key="o" :value="o" :label="o" />
       </el-select>
-      <!-- 时间范围：找「这段时间我有空」的活动。跨天的活动沾到任一天就出现 -->
-      <el-date-picker v-model="dateRange" type="daterange" value-format="YYYY-MM-DD"
-                      :shortcuts="DATE_SHORTCUTS" start-placeholder="开始日期"
-                      end-placeholder="结束日期" :clearable="true"
-                      :style="{ width: narrow ? '100%' : '260px' }" @change="reload" />
-      <el-button :type="slotOpen || slots.length ? 'primary' : ''" plain
-                 @click="slotOpen = !slotOpen">
-        按时段筛选<template v-if="slots.length">（{{ slots.length }}）</template>
-      </el-button>
+      <!-- 日期范围与可参与时段都收进浮窗：电脑点按钮弹出，手机从底部抽屉展开 -->
+      <el-popover v-if="!narrow" v-model:visible="slotOpen" trigger="click"
+                  placement="bottom-end" :width="620">
+        <template #reference>
+          <el-button :type="slotActive ? 'primary' : ''" plain>{{ slotButtonText }}</el-button>
+        </template>
+        <SlotPicker v-model:start="f.start" v-model:end="f.end" v-model:slots="slots" />
+      </el-popover>
+      <el-button v-else :type="slotActive ? 'primary' : ''" plain
+                 @click="slotOpen = true">{{ slotButtonText }}</el-button>
+      <el-drawer v-if="narrow" v-model="slotOpen" direction="btt" size="85%"
+                 title="按时段筛选" append-to-body>
+        <SlotPicker v-model:start="f.start" v-model:end="f.end" v-model:slots="slots" />
+        <div class="slot-apply">
+          <el-button type="primary" class="slot-apply-btn" @click="slotOpen = false">
+            {{ slotApplyText }}
+          </el-button>
+        </div>
+      </el-drawer>
     </div>
-    <SlotPicker v-if="slotOpen" v-model="slots" />
 
     <div v-if="list.length" class="card-grid">
       <div v-for="a in list" :key="a.id" class="act-card square-card"
@@ -117,41 +126,26 @@ const f = reactive({
   size: 12,
 })
 
-/** 时间范围选择器 ↔ f.start / f.end（日期串，空 = 不限） */
-const dateRange = computed({
-  get: () => (f.start && f.end ? [f.start, f.end] : null),
-  set: v => {
-    f.start = v?.[0] || ''
-    f.end = v?.[1] || ''
-  },
-})
-
-function _plusDays(n) {
-  const d = new Date()
-  d.setDate(d.getDate() + n)
-  return d
-}
-// 本周末按「最近的周六到周日」算：今天就是周六时，周末是今明两天
-function _thisWeekend() {
-  const d = new Date()
-  const sat = _plusDays((6 - d.getDay() + 7) % 7)
-  const sun = new Date(sat)
-  sun.setDate(sat.getDate() + 1)
-  return [sat, sun]
-}
-const DATE_SHORTCUTS = [
-  { text: '今天', value: () => [new Date(), new Date()] },
-  { text: '本周末', value: _thisWeekend },
-  { text: '未来 7 天', value: () => [new Date(), _plusDays(6)] },
-  { text: '未来 30 天', value: () => [new Date(), _plusDays(29)] },
-]
 // 按可参与时段筛选选中的格子：不进地址栏，离开广场就不记了
 const slotOpen = ref(false)
 const slots = ref([])
+const mmdd = s => s.slice(5)
+const hasDates = computed(() => Boolean(f.start || f.end))   // vuecheck: script-only，模板经 slotActive 读它
+const slotActive = computed(() => hasDates.value || slots.value.length > 0)
+const slotButtonText = computed(() => {
+  let text = '按时段筛选'
+  if (f.start && f.end) text += ` · ${mmdd(f.start)}～${mmdd(f.end)}`
+  if (slots.value.length) text += `（${slots.value.length} 格）`
+  return text
+})
+const slotApplyText = computed(() => (
+  slots.value.length ? '看所选时段的活动'
+    : hasDates.value ? '看这几天的活动' : '看全部活动'
+))
 let slotTimer = null
-watch(slots, () => {
+watch([slots, () => f.start, () => f.end], () => {
   clearTimeout(slotTimer)
-  slotTimer = setTimeout(reload, 400)     // 连点几格只拉一次
+  slotTimer = setTimeout(reload, 400)     // 连点几格、拖日期只拉一次
 })
 
 const list = ref([])
@@ -239,6 +233,8 @@ onMounted(load)
 .hero h2 { margin:0; }
 .filters { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
 .pager { margin-top:16px; justify-content:center; }
+.slot-apply { margin-top:16px; }
+.slot-apply-btn { width:100%; }
 .hero p { margin:8px 0 0; color:#909399; font-size:13px; line-height: 1.6; }
 .square-card { padding:16px 18px; }
 .card-top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
