@@ -1,6 +1,16 @@
 <template>
-  <div class="page" v-if="act">
-    <el-page-header @back="$router.back()" :title="'返回'">
+  <!-- 首次加载还没有内容可显示，放个占位；数据在时刷新走原来的刷新条，不闪 -->
+  <div v-if="loading && !act" class="page" v-loading="loading" style="min-height:300px"></div>
+  <div v-else-if="loadError" class="page">
+    <el-result icon="error" :title="'加载失败：' + loadError">
+      <template #extra>
+        <el-button type="primary" @click="load">重试</el-button>
+        <el-button @click="$router.push('/square')">回活动广场</el-button>
+      </template>
+    </el-result>
+  </div>
+  <div class="page" v-else-if="act">
+    <el-page-header @back="goBack" :title="'返回'">
       <!-- 窄屏下标题与标签分行：三样东西挤一行会被折成三行 -->
       <template #content>
         <span class="hd-title">{{ act.title }}</span>
@@ -701,7 +711,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, conflictLine, fmtDT, withConflictConfirm } from '../api'
 import { auth, MODE_COLORS } from '../store'
@@ -717,9 +727,12 @@ import { useNarrow } from '../composables/useNarrow'
 import { Clock, Warning } from '@element-plus/icons-vue'
 
 const route = useRoute()
+const router = useRouter()
 const narrow = useNarrow()
 const act = ref(null)
 const blocked = ref('')
+const loading = ref(false)
+const loadError = ref('')
 const groupDetail = ref({ visible: false, data: null })
 const enrollDlg = ref({ visible: false, shift: null, position: null,
                         leaderWilling: false, allowReassign: true })
@@ -949,14 +962,20 @@ const openFormat = computed(
 const loadedAt = ref(0)
 
 async function load() {
+  loading.value = true
   let d
   try {
     d = await api.get(`/api/activities/${route.params.id}`, { silent: true })
   } catch (e) {
     if (e.status === 403) { blocked.value = e.message; return }
-    ElMessage.error(e.message)
+    // 已经有内容时刷新失败只弹一句，别把整页换成错误；还没有内容才占住整页
+    if (!act.value) loadError.value = e.message || '请稍后重试'
+    else ElMessage.error(e.message)
     return
+  } finally {
+    loading.value = false
   }
+  loadError.value = ''
   const at = Date.now()
   // 每场的截止也换成本地时间戳，本地开闸时拿它判断这一场还收不收人
   for (const g of d.shifts || []) g.closesAt = at + (g.closes_in_ms ?? Infinity)
@@ -966,6 +985,12 @@ async function load() {
   opensAt.value = ms ? at + ms : 0
 }
 onMounted(load)
+
+/** 「返回」：从通知等外部链接打开时这一窗没有上一页，router.back() 原地不动 */
+function goBack() {
+  if (window.history.state?.back) { router.back(); return }
+  router.push('/square')
+}
 
 /** 倒计时归零：就地开闸，不等重拉。
  *
