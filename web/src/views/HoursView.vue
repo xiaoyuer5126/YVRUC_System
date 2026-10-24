@@ -87,7 +87,7 @@
                 {{ row.confirmed_at ? '改报酬方式' : '确认无误' }}
               </el-button>
               <el-button v-if="row.can_appeal" size="small" plain @click="openAppeal(row)">
-                有异议
+                时长有异议
               </el-button>
               <span v-if="!canReconfirm(row) && !row.can_appeal" class="dim">—</span>
             </div>
