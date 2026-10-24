@@ -756,9 +756,9 @@ async function createTask() {
   const [f1, f2] = form.value.range || []
   if (f1) body.valid_from = toISO(f1)
   if (f2) body.valid_to = toISO(f2)
-  if (f2 && !await confirmEarlyDeadline(f2, formPeriod()?.end_time)) return
   genBusy.value = true
   try {
+    if (f2 && !await confirmEarlyDeadline(f2, formPeriod()?.end_time)) return
     const d = await api.post(`/api/staff/shifts/${form.value.shift_id}/checkin-tasks`,
                              body)
     ElMessage.success(`已生成 ${d.tasks?.length || 1} 张签到码`)
