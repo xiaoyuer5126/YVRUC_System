@@ -84,7 +84,7 @@
                                                      : '本人不接受调剂，调整将计入留痕'">
               <el-tag size="small" effect="plain"
                       :type="row.allow_reassign ? 'success' : 'info'">
-                {{ row.allow_reassign ? '接受调剂' : '不接受' }}
+                {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
               </el-tag>
             </el-tooltip>
           </template>

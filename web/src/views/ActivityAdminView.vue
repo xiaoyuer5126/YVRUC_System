@@ -532,7 +532,7 @@
               <el-tag v-if="row.checked_in" size="small" type="success" effect="light">已到岗</el-tag>
               <el-tag size="small" effect="plain"
                       :type="row.allow_reassign ? 'success' : 'info'">
-                {{ row.allow_reassign ? '接受调剂' : '不接受' }}
+                {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
               </el-tag>
             </template>
             <template #actions="{ row }">
@@ -581,7 +581,7 @@
               <template #default="{row}">
                 <el-tag size="small" effect="plain"
                         :type="row.allow_reassign ? 'success' : 'info'">
-                  {{ row.allow_reassign ? '接受' : '不接受' }}
+                  {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
                 </el-tag>
               </template>
             </el-table-column>

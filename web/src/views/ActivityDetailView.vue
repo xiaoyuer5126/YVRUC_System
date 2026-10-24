@@ -341,7 +341,7 @@
               <span class="dim">岗位调剂：</span>
               <el-tag size="small" effect="plain"
                       :type="g.my_enrollment.allow_reassign ? 'success' : 'info'">
-                {{ g.my_enrollment.allow_reassign ? '接受' : '不接受' }}
+                {{ g.my_enrollment.allow_reassign ? '接受调剂' : '不接受调剂' }}
               </el-tag>
               <el-switch :model-value="g.my_enrollment.allow_reassign" size="small"
                          @change="toggleReassign(g)" />

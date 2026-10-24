@@ -47,7 +47,7 @@
           <template v-if="isActive(row) && !row.shift.attached">
             <el-tag size="small" effect="plain"
                     :type="row.allow_reassign ? 'success' : 'info'">
-              {{ row.allow_reassign ? '接受' : '不接受' }}
+              {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
             </el-tag>
             <el-button size="small" link type="primary"
                        @click="toggleReassign(row)">修改</el-button>
@@ -118,7 +118,7 @@
           <template v-if="isActive(row) && !row.shift.attached">
             <el-tag size="small" effect="plain"
                     :type="row.allow_reassign ? 'success' : 'info'">
-              {{ row.allow_reassign ? '接受' : '不接受' }}
+              {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
             </el-tag>
             <el-tooltip placement="top"
                         content="仅在名额不足时可能进行调剂，负责人可看到你的意愿">
