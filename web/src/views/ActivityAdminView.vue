@@ -728,7 +728,7 @@
             <el-icon><Download /></el-icon>&nbsp;导出时长记录
           </el-button>
           <!-- 说明文字要能换行：窄屏下 toolbar 的子项不收缩，不给宽度就会被裁掉 -->
-          <span class="dim" style="flex:1 1 260px">用于志愿北京时长录入，选择劳务的人和党校同学不在其中，包含身份证号，下载留痕</span>
+          <span class="dim" style="flex:1 1 260px">第一页用于志愿北京时长录入，选择劳务的人和党校同学不在其中，包含身份证号；第二页「劳务」列出有劳务的人和时段，下载留痕</span>
         </div>
 
         <!-- 时长申诉：出了岔子的那一条才走这里，不是全员自报 -->
@@ -2725,7 +2725,8 @@ function doAnswersExport() {
   answersDlg.value.visible = false
   downloadExport(`/api/staff/activities/${activityId}/answers`, q.toString())
 }
-// 时长记录：姓名、身份证号、岗位、时长、备注
+// 时长记录：第一页给志愿北京录时长（姓名、学号、身份证号、时长、备注），
+// 第二页「劳务」列有劳务的人（姓名、学号、学院、劳务时长、所在时段与岗位）
 function doExportHours() { dl(`/api/staff/activities/${activityId}/hours.xlsx`) }
 
 // —— 提交审批 ——
