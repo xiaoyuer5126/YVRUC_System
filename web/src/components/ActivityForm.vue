@@ -91,7 +91,7 @@
         <DateTimeField v-model="regEnd" placeholder="报名截止时间"
                        :default-time="DAY_END" />
       </div>
-      <div class="dim">活动时间不用填，会根据场次时间自动计算。</div>
+      <div class="dim">活动时间不用填：在「岗位设置」里填好各场次的时间，活动时间按场次自动汇总显示。</div>
     </el-form-item>
     <el-form-item label="活动简介" required>
       <el-input v-model="f.intro" type="textarea" :rows="3"
