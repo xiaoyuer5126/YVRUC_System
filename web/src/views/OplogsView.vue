@@ -110,7 +110,8 @@ function query() {
   const q = new URLSearchParams()
   if (f.start) q.set('start', localText(f.start))
   if (f.end) q.set('end', localText(f.end))
-  for (const k of ['person', 'activity', 'kind']) if (f[k].trim()) q.set(k, f[k].trim())
+  // 清空选择框会把值置成 undefined：没值就当没填，不拼进查询串
+  for (const k of ['person', 'activity', 'kind']) if (f[k]?.trim()) q.set(k, f[k].trim())
   return q
 }
 
