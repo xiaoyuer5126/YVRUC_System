@@ -411,7 +411,7 @@ def _slot_block(db: OrmSession, act: Activity, slot: str) -> str:
         return ""
     label = liaison.SLOTS[slot]
     if not liaison.is_external(db, act):
-        return f"{label}只用于归口部门要求交立项书的对外活动"
+        return f"{label}只用于对外活动"
     if not liaison.is_published(act):
         return f"活动正式发布之后才能上传{label}"
     if act.hours_locked():

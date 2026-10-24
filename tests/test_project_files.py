@@ -187,7 +187,7 @@ def test_盖章材料只用于对外活动(client, admin, db, liaison):
     aid = make_draft(client, admin)          # 还没归口任何部门
     for slot, label in (("stamped", "盖章立项书"), ("closing", "盖章结项书")):
         r = _upload(client, admin, aid, slot)
-        assert r.status_code == 409 and r.json()["detail"] == f"{label}只用于对外联络部归口的活动"
+        assert r.status_code == 409 and r.json()["detail"] == f"{label}只用于对外活动"
     d = _files(client, admin, aid)
     assert d["external"] is False
     assert d["can_upload_stamped"] is False and d["can_upload_closing"] is False
