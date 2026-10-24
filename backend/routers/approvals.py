@@ -442,7 +442,7 @@ def decide(activity_id: str, body: DecideBody,
     if body.approve and act.auto_publish and not act.is_record() \
             and act.reg_end is not None and act.reg_end <= now():
         raise HTTPException(
-            400, f"报名截止时间（{act.reg_end:%m-%d %H:%M}）已经过去，通过后没人"
+            400, f"报名截止时间（{act.reg_end:%Y-%m-%d %H:%M}）已经过去，通过后没人"
                  f"报得上。请让发起方先改报名时间再审批，或驳回")
 
     # 部长自己发起的活动归口自己部门、由自己审——允许，但流水里标明是本人

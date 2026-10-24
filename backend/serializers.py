@@ -114,7 +114,7 @@ def published_hint(reg_start, t=None) -> str:
     """
     t = t or now()
     if reg_start is not None and not reg_started(reg_start, t):
-        return f"报名将于 {reg_start:%m-%d %H:%M} 开始"
+        return f"报名将于 {reg_start:%Y-%m-%d %H:%M} 开始"
     return "现在可以报名"
 
 

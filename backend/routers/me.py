@@ -405,7 +405,7 @@ def confirm_hours(record_id: str, body: ConfirmHoursBody,
     if act.hours_locked():
         raise HTTPException(409, "该活动的时长已锁定")
     if act.appeal_deadline and now() > act.appeal_deadline:
-        raise HTTPException(409, f"确认已于 {act.appeal_deadline:%m-%d %H:%M} 截止，"
+        raise HTTPException(409, f"确认已于 {act.appeal_deadline:%Y-%m-%d %H:%M} 截止，"
                                  f"已按志愿时长记")
     if (db.query(HoursAppeal)
             .filter(HoursAppeal.record_id == r.id,
@@ -464,7 +464,7 @@ def appeal_hours(record_id: str, body: AppealBody,
         raise HTTPException(409, "该活动的时长已锁定，不可再申诉；请联系负责人")
     if act.appeal_deadline and now() > act.appeal_deadline:
         raise HTTPException(
-            409, f"申诉已于 {act.appeal_deadline:%m-%d %H:%M} 截止；"
+            409, f"申诉已于 {act.appeal_deadline:%Y-%m-%d %H:%M} 截止；"
                  f"如确有问题请联系负责人")
     if r.confirmed_at is not None:
         # 前端已经不给入口了，这里再挡一道：确认过的时长不能再申诉，
