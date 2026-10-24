@@ -899,7 +899,9 @@ def _download(buf, filename: str) -> StreamingResponse:
 def export_hours(activity_id: str, db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager_download)):
     """时长记录导出：姓名、学号、身份证号、时长、备注（明细拼一行）。
-    选了劳务的不在其中——平台不给他们记时长。"""
+    选了劳务的不在其中——平台不给他们记时长。
+    另附「劳务」页：本活动有劳务的人一人一行，列出劳务时长与所在时段岗位，
+    给发劳务用；党校同学也在这页里，劳务与志愿北京无关。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     buf = build_hours_workbook(db, act)

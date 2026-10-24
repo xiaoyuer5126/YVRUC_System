@@ -5,7 +5,8 @@
   · 问卷结果（build_answers_workbook）：志愿者管理页按场次、岗位挑人导出，
     答案一题一列，上传的文件按「场次/岗位」分文件夹另打附件包。
   · 报名问卷结果（build_application_workbook）：报名后筛选的全部报名者。
-  · 时长记录（build_hours_workbook）：给志愿北京录时长。
+  · 时长记录（build_hours_workbook）：给志愿北京录时长；另附「劳务」页，
+    列出有劳务的人，给发劳务用。
   · 活动汇总（build_activities_summary_workbook）：一场活动一行，给校青协做统计。
 
 每次下载都记审计（见 routers/staff_ops 的导出接口）。
@@ -260,9 +261,9 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
             if u.id in seen:
                 continue
             seen.add(u.id)
-            info.append([u.name, u.student_id, u.college, _id_card_text(u),
-                         u.phone, u.wechat])
-    for col, w in zip("ABCDEF", (12, 14, 16, 22, 15, 16)):
+            info.append([u.name, u.student_id, u.gender, u.college, u.grade,
+                         u.campus, u.stage, _id_card_text(u), u.phone, u.wechat])
+    for col, w in zip("ABCDEFGHIJ", (12, 14, 6, 16, 8, 14, 12, 22, 15, 16)):
         info.column_dimensions[col].width = w
 
     # ---------- 每个场次一个 Sheet ----------
@@ -376,20 +377,27 @@ def build_answers_workbook(db: OrmSession, activity: Activity,
 
 
 def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
-    """时长记录：一人一行，姓名、学号、身份证号、时长、备注。
+    """时长记录与劳务：两页，各一人一行。
 
-    只导计入志愿时长的部分：时长是 HoursRecord.counted_hours，备注只拼记志愿
-    时长的那几段（时段 + 岗位名，分号隔开，不换行）；选了劳务的段平台不给记
-    时长，整笔都选了劳务的人不导。党校同学也不导：这张表是给志愿北京录时长的，
-    他们的时长不能同时拿去做学分认定（见 hours.PARTY_SCHOOL）。
+    「时长记录」给志愿北京录时长：只导计入志愿时长的部分，时长是
+    HoursRecord.counted_hours，备注只拼记志愿时长的那几段（时段 + 岗位名，分号
+    隔开，不换行）；选了劳务的段平台不给记时长，整笔都选了劳务的人不导。党校
+    同学也不导：这张表是给志愿北京录时长的，他们的时长不能同时拿去做学分认定
+    （见 hours.PARTY_SCHOOL）。
+    「劳务」给发劳务用：本活动所有 pay_hours() > 0 的人，按姓名排序，一人一行；
+    党校同学也在其中，劳务与志愿北京无关。劳务时长是 HoursRecord.pay_hours，
+    备注只拼按劳务计的那几段。
     """
     party = hours_flow.party_school_users(db, activity.id)
-    rows = [(rec, u) for rec, u in (
-        db.query(HoursRecord, User)
-        .join(User, HoursRecord.user_id == User.id)
-        .filter(HoursRecord.activity_id == activity.id)
-        .order_by(User.name).all())
-        if u.id not in party and not (rec.pay_hours() > 0 and rec.counted_hours() <= 0)]
+    pairs = (db.query(HoursRecord, User)
+             .join(User, HoursRecord.user_id == User.id)
+             .filter(HoursRecord.activity_id == activity.id)
+             .order_by(User.name).all())
+    rows = [(rec, u) for rec, u in pairs
+            if u.id not in party
+            and not (rec.pay_hours() > 0 and rec.counted_hours() <= 0)]
+    pay_rows = [(rec, u) for rec, u in pairs if rec.pay_hours() > 0]
+
     wb = Workbook()
     ws = wb.active
     ws.title = "时长记录"
@@ -401,6 +409,17 @@ def build_hours_workbook(db: OrmSession, activity: Activity) -> BytesIO:
                    rec.parts_text(hours_only=True)])
     for col, w in zip("ABCDE", (12, 14, 22, 8, 48)):
         ws.column_dimensions[col].width = w
+
+    pay = wb.create_sheet("劳务")
+    pay_header = ["姓名", "学号", "学院", "劳务时长", "所在时段与岗位"]
+    pay.append(pay_header)
+    _style_header(pay, len(pay_header))
+    for rec, u in pay_rows:
+        pay.append([u.name, u.student_id, u.college, rec.pay_hours(),
+                    rec.parts_text(pay_only=True)])
+    for col, w in zip("ABCDE", (12, 14, 16, 10, 48)):
+        pay.column_dimensions[col].width = w
+
     disarm_formulas(wb)
     buf = BytesIO()
     wb.save(buf)
