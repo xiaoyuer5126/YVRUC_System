@@ -105,6 +105,26 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "{content}"),
 }
 
+# 模板 key → 中文名。管理端「通知记录」按它显示类型；未知 key 直接显示原 key。
+TEMPLATE_LABELS: dict[str, str] = {
+    "signup_success": "报名成功",
+    "waitlist_queued": "已加入候补",
+    "hours_approved": "请确认志愿时长",
+    "hours_locked": "志愿时长已锁定",
+    "application_accepted": "录取通知",
+    "application_rejected": "未录取",
+    "waitlist_promoted": "候补转正待确认",
+    "assignment": "岗位分配",
+    "activity_changed": "活动变更",
+    "activity_finished": "活动结束",
+    "leader_appointed": "组长任命",
+    "walkin_added": "补招",
+    "walkin_recorded": "补记志愿者",
+    "checkin_reminder": "签到提醒",
+    "ack_reminder": "签收催办",
+    "custom": "自定义通知",
+}
+
 
 # 各模板点开后落在哪一页（站内路径），配了就以它为准：报名/录取
 # 去「我的报名」看自己的状态和联络群，时长去「我的志愿时长」——确认与申诉的
