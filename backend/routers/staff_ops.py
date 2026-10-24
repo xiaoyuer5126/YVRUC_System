@@ -951,15 +951,14 @@ _WEEKDAYS = "一二三四五六日"
 
 
 def _cn_day(d: datetime) -> str:
-    return f"{d.year}年{d.month}月{d.day}日（周{_WEEKDAYS[d.weekday()]}）"
+    return f"{d.month}月{d.day}日（周{_WEEKDAYS[d.weekday()]}）"
 
 
 def _cn_span(start: datetime, end: datetime) -> str:
-    """招募文案里的时间：2026年10月18日（周六）07:30—12:00，跨天的两头都写日期。
+    """招募文案里的时间：10月18日（周六）07:30—12:00，跨天的两头都写日期。
 
-    月份写「10月18日」这一套是校青协定的对外说法，和站内的
-    models.span_text（「2026-10-18（周六）07:30-12:00」）不一样，所以这里单独写。
-    年份照样带上：一份文案可能跨年用，只写月日就认不出是哪一年。
+    「10月18日」这一套是校青协定的对外格式，和站内的 models.span_text
+    （「2026-10-18（周六）07:30-12:00」）不一样，所以这里单独写。
     """
     if start.date() == end.date():
         return f"{_cn_day(start)}{start:%H:%M}—{end:%H:%M}"
