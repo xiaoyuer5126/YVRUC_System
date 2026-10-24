@@ -190,7 +190,7 @@
                 {{ g.unassigned_count }} 人待分配
               </el-tag>
             </el-tooltip>
-            <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">
+            <el-tag v-if="g.enroll_paused" size="small" type="warning" effect="plain">
               暂停报名
             </el-tag>
             <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
@@ -247,7 +247,7 @@
                 {{ row.enrolled }}/{{ row.quota }}
               </el-tag>
               <el-tag v-if="row.needs_leader" size="small" type="warning" effect="plain">组长</el-tag>
-              <el-tag v-if="row.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
+              <el-tag v-if="row.enroll_paused" size="small" type="warning" effect="plain">暂停报名</el-tag>
               <el-tag v-if="row.list_locked" size="small" type="info">名单已锁定</el-tag>
             </template>
             <template #actions="{ row }">
@@ -366,7 +366,7 @@
               <el-tag v-if="x.g.mode === 'assign'" size="small" type="warning" effect="plain">
                 截止后分配
               </el-tag>
-              <el-tag v-if="x.g.enroll_paused || x.p.enroll_paused" size="small" type="danger"
+              <el-tag v-if="x.g.enroll_paused || x.p.enroll_paused" size="small" type="warning"
                       effect="plain">暂停报名</el-tag>
               <el-tag v-if="x.g.locked || x.p.list_locked" size="small" type="info">名单已锁定</el-tag>
               <span class="slot-acts">
@@ -403,7 +403,7 @@
               <el-tag v-if="g.unassigned_count" size="small" type="warning">
                 {{ g.unassigned_count }} 人待分配
               </el-tag>
-              <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
+              <el-tag v-if="g.enroll_paused" size="small" type="warning" effect="plain">暂停报名</el-tag>
               <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
               <span class="btn-row" style="margin-left:auto">
                 <el-button v-if="isPublic" size="small" :disabled="isOver"
