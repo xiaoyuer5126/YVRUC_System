@@ -336,7 +336,7 @@
           </el-table>
           <p v-else class="dim" style="margin:8px 0 0">
             {{ g.mode === 'assign'
-               ? '截止后统一分配：学生报名只选时间；分工定下来后直接在本场次下建岗位，再到「报名与调配」一键分配或导入排班；排完后可点「开放选岗」，剩余名额让大家按岗位自选。'
+               ? '截止后统一分配：学生报名只选时间；分工定下来后直接在本场次下建岗位，再到「志愿者管理」一键分配或导入排班；排完后可点「开放选岗」，剩余名额让大家按岗位自选。'
                : '还没有岗位，请先设置岗位及名额。' }}
           </p>
 
@@ -466,7 +466,7 @@
         <RecordRosterPanel :activity-id="activityId" @changed="onRecordChanged" />
       </el-tab-pane>
 
-      <!-- ============ 报名与调配 ============ -->
+      <!-- ============ 志愿者管理 ============ -->
       <el-tab-pane v-if="isPublic && !isRecord" name="roster">
         <template #label>志愿者管理
           <el-badge v-if="promoShiftIds.size" value="!" type="danger" />
@@ -703,7 +703,7 @@
 
       <!-- ============ 签到管理 ============ -->
       <el-tab-pane v-if="isPublic && !isRecord" label="签到管理" name="checkin" lazy>
-        <!-- 场次由面板自己选：这一页在盯现场，跟「报名与调配」那边排人是两件事 -->
+        <!-- 场次由面板自己选：这一页在盯现场，跟「志愿者管理」那边排人是两件事 -->
         <CheckinPanel v-if="allShifts.length" :activity-id="act.id"
                       :all-shifts="allShifts" :over="isOver"
                       :hours-frozen="hoursFrozen" />
@@ -1986,19 +1986,19 @@ const treeAlerts = computed(() => shifts.value.flatMap(g => {
   if (g.mode === 'pick') {
     if (!real.length) return alert('还没有岗位，学生无法报名')
     return g.unassigned_count
-      ? alert(`还有 ${g.unassigned_count} 人没有岗位，到「报名与调配」调岗`)
+      ? alert(`还有 ${g.unassigned_count} 人没有岗位，到「志愿者管理」调岗`)
       : []
   }
   if (!regClosed.value) return []
   if (!real.length) {
-    return alert('报名已截止，还没建岗位。在本场次下建好岗位，再到「报名与调配」一键分配或导入排班。')
+    return alert('报名已截止，还没建岗位。在本场次下建好岗位，再到「志愿者管理」一键分配或导入排班。')
   }
   if (!g.unassigned_count) return []
   const room = real.reduce((n, p) => n + Math.max(0, p.quota - p.enrolled), 0)
   return alert(`还有 ${g.unassigned_count} 人在待分配`
     + (room < g.unassigned_count
        ? `，而各岗位空位合计只有 ${room} 个——先加岗位或名额再分配。`
-       : '，到「报名与调配」一键分配或导入排班。'))
+       : '，到「志愿者管理」一键分配或导入排班。'))
 }))
 
 // 手动补时长时要认得出人：同名同姓靠学号，排在哪儿靠场次与岗位。

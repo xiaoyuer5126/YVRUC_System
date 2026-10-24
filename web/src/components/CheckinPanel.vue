@@ -104,7 +104,7 @@
 
     <!-- 这一行只影响下面的大屏（到岗看板与到场名单），跟上面的签到码列表无关
          ——签到码是整个活动的，列的是每一场。所以排在列表之后、大屏之前。
-         本页自己管场次，不跟着「报名与调配」走：那边在排人，这边在盯现场，
+         本页自己管场次，不跟着「志愿者管理」走：那边在排人，这边在盯现场，
          两件事同时在做，共用一个选择等于互相打架。 -->
     <div class="toolbar">
       <span>大屏场次</span>
@@ -513,7 +513,7 @@ const shiftOptions = computed(() => props.allShifts)
 const formShift = computed(
   () => shiftOptions.value.find(g => g.id === form.value.shift_id))
 
-// 本页自己持有的场次选择，与「报名与调配」互不影响
+// 本页自己持有的场次选择，与「志愿者管理」互不影响
 const boardShiftId = ref('')
 const boardShift = computed(
   () => shiftOptions.value.find(g => g.id === boardShiftId.value))
