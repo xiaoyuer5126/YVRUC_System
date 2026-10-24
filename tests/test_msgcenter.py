@@ -165,8 +165,8 @@ def test_Mock_下落库且标记送达(db, take_student):
            .filter(Notification.user_id == user.id,
                    Notification.template_key == "custom").one())
     assert row.delivered is True
-    # 通道名记的是「走的哪个通道」，不是「哪个模块发的」，所以仍是 wecom
-    assert row.channel == "wecom"
+    # 通道名记的是「走的哪个通道」：Mock 下没往外推，只在站内
+    assert row.channel == "site"
 
 
 def test_真实推送在事务提交且场次锁放掉之后才发(client, open_group, take_student,
