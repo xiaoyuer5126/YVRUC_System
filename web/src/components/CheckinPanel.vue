@@ -44,7 +44,7 @@
         <el-button size="small" :disabled="over" @click="openGeo(row)">定位</el-button>
         <el-button size="small" :disabled="over" @click="openWindow(row)">改时段</el-button>
         <el-button size="small" :type="row.active ? 'danger' : 'success'" link
-                   @click="toggle(row)">{{ row.active ? '关闭' : '开启' }}</el-button>
+                   :disabled="over" @click="toggle(row)">{{ row.active ? '关闭' : '开启' }}</el-button>
       </template>
     </DataCards>
     <el-table v-else :data="tasks" size="small" style="margin-bottom:16px">
