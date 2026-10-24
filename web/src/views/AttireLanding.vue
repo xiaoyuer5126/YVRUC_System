@@ -12,7 +12,7 @@
               <el-tag size="small" :type="stateType">{{ stateText }}</el-tag>
             </el-descriptions-item>
             <el-descriptions-item v-if="task.taken_at" label="领取时间">
-              {{ task.taken_at.replace('T', ' ') }}
+              {{ fmtDT(task.taken_at) }}
             </el-descriptions-item>
           </el-descriptions>
 
@@ -40,7 +40,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { api } from '../api'
+import { api, fmtDT } from '../api'
 import { auth } from '../store'
 
 const route = useRoute()
