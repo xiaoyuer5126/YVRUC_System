@@ -419,7 +419,7 @@ LIAISON_MEMBER = "2025006"  # 苏昀，对外联络部成员（学习权限）
 
 def liaison_dept(db):
     from backend.models import Department
-    return db.query(Department).filter(Department.name == "对外联络部").one()
+    return db.query(Department).filter(Department.vb_liaison.is_(True)).one()
 
 
 @pytest.fixture

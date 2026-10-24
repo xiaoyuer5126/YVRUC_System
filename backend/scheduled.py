@@ -156,7 +156,7 @@ def submit_lock_when_due(db: OrmSession) -> int:
                 notify_managers(
                     db, act.id, f"志愿活动请上传材料｜{act.title}",
                     f"「{act.title}」的时长确认已结束，本该自动提交时长审核，"
-                    f"但该活动由对外联络部审批，还没有上传{'、'.join(missing)}。\n"
+                    f"但这是对外活动，还没有上传{'、'.join(missing)}。\n"
                     f"请到活动管理的「审核」页签上传，上传后最多一分钟内系统会自动"
                     f"提交；也可以直接点「提交时长审核」。",
                     duty="hours", tab="review")
@@ -289,7 +289,7 @@ def remind_stale_approvals(db: OrmSession) -> int:
 
 
 def remind_stale_claims(db: OrmSession) -> int:
-    """时长补登放着没人审批：催对外联络部的对接人，抄送会长团。
+    """时长补登放着没人审批：催志愿北京对接部门的对接人，抄送会长团。
 
     时限与别处的催办同源（config.APPROVAL_REMIND_HOURS）。每条只催一次，
     先用条件更新把 reminded_at 占下来再发，多进程也只发一遍。
@@ -319,7 +319,7 @@ def remind_stale_claims(db: OrmSession) -> int:
         waited = int((t - claim.submitted_at).total_seconds() // 3600)
         # 提交人自己批不了自己的，催他没用，抄送也跳过他
         submitter = db.get(User, claim.user_id)
-        dept = liaison.liaison_dept(db)
+        dept = liaison.vb_dept(db)
         contacts = (liaison.claim_contacts(db, submitter) if submitter
                     else liaison.vb_contacts(db))
         copied = {u.id for u in contacts} | {claim.user_id}
@@ -395,7 +395,7 @@ def remind_stale_hours_requests(db: OrmSession) -> int:
 
 def remind_stale_vb_confirms(db: OrmSession) -> int:
     """志愿北京名称推给外联超过 APPROVAL_REMIND_HOURS 小时还没确认：催一次
-    对外联络部的对接人（值班人，没人值班是部长），每条只催这一次，同时长审批。
+    志愿北京对接部门的对接人（值班人，没人值班是部长），每条只催这一次，同时长审批。
 
     只催一次而不是每天催：外联的待确认列表就挂在「活动审批」页上，第一条
     通知要了回执，催一次是兜「通知被淹了」的底；每天催会让人把通知关掉。
@@ -476,7 +476,8 @@ def remind_vb_resubmit(db: OrmSession) -> int:
         days = (t - last.handled_at).days
         notify_managers(
             db, act.id, f"请重新提交志愿北京活动名称｜{act.title}",
-            f"「{act.title}」的志愿北京活动名称已被对外联络部退回 {days} 天，还没有重新提交。\n"
+            f"「{act.title}」的志愿北京活动名称已被"
+            f"{liaison.vb_dept_name(db)}退回 {days} 天，还没有重新提交。\n"
             f"退回理由：{last.reply}\n"
             f"请到活动管理的「审核」页签修改名称后重新提交，活动才会标记为已完成。",
             duty="hours", tab="review")
@@ -506,7 +507,7 @@ def send_duty_digests(db: OrmSession) -> int:
     day_start = t.replace(hour=0, minute=0, second=0, microsecond=0)
     sent = 0
     for dept in (db.query(Department)
-                 .filter(Department.name.in_(liaison.DUTY_DEPTS)).all()):
+                 .filter(Department.duty_enabled.is_(True)).all()):
         heads = liaison.dept_heads(db, dept.id)
         if not heads:
             continue
@@ -556,7 +557,7 @@ def send_duty_handover_reminders(db: OrmSession) -> int:
     day_start = t.replace(hour=0, minute=0, second=0, microsecond=0)
     sent = 0
     for dept in (db.query(Department)
-                 .filter(Department.name.in_(liaison.DUTY_DEPTS)).all()):
+                 .filter(Department.duty_enabled.is_(True)).all()):
         duty = liaison.on_duty(db, dept)
         if duty is None or not _duty_reminder_due(db, dept, duty, t):
             continue
@@ -609,8 +610,8 @@ def _duty_digest_lines(db: OrmSession, dept: Department, since
                        ) -> tuple[list[str], list[str], list[str]]:
     """日报的三栏：今日新增 / 今日处理 / 尚未处理，各是一串人话。
 
-    这个部门的审批 = 归口它的活动审批与时长锁定/解锁；对外联络部另加志愿北京
-    外联确认（不分活动归口哪个部门，都由对外联络部确认）和校外时长补登。
+    这个部门的审批 = 归口它的活动审批与时长锁定/解锁；志愿北京对接部门另加
+    志愿北京外联确认（不分活动归口哪个部门，都由对接部门确认）和校外时长补登。
     """
     from . import liaison
 
@@ -654,8 +655,8 @@ def _duty_digest_lines(db: OrmSession, dept: Department, since
         if r.status == "pending":
             waiting.append(f"{what}（{r.created_at:%m-%d %H:%M} 提交）")
 
-    # 志愿北京外联确认：只算在对外联络部头上
-    if dept.name != liaison.LIAISON_DEPT:
+    # 志愿北京外联确认：只算在志愿北京对接部门头上
+    if not dept.vb_liaison:
         return new, done, waiting
     for v in (db.query(VbConfirm)
               .filter((VbConfirm.submitted_at >= since)

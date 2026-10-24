@@ -335,14 +335,13 @@ def test_日报_九点前不发_九点后发一次(client, admin, db, liaison, m
 
 def test_日报_什么都没有就不发(client, db, monkeypatch, take_student):
     """换一个空部门来验：对外联络部在共享库里总有别的用例留下的待办。"""
-    from backend import liaison as lz
-    dept = Department(id=uid("dep"), name=f"值班测试部{uid('x')[-4:]}", sort=99)
+    dept = Department(id=uid("dep"), name=f"值班测试部{uid('x')[-4:]}", sort=99,
+                      duty_enabled=True)
     db.add(dept)
     boss = student_row(db, take_student())
     boss.roles = ["qingxie", "student"]
     boss.department_id, boss.qingxie_post = dept.id, "head"
     db.commit()
-    monkeypatch.setattr(lz, "DUTY_DEPTS", (dept.name,))
     monkeypatch.setattr(scheduled, "now", lambda: _at(21, 30))
     try:
         assert scheduled.send_duty_digests(db) == 0

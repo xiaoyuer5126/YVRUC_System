@@ -1,5 +1,5 @@
-"""对外联络部的几件事：值班交接、立项书与盖章材料、模板、志愿北京名称的外联确认
-（所有活动收尾都要过的一步：时长锁定后外联在志愿北京核对名称，确认即完成）。
+"""部门里的几件事：值班交接、立项书与盖章材料、模板、志愿北京名称的外联确认
+（所有活动收尾都要过的一步：时长锁定后对接部门在志愿北京核对名称，确认即完成）。
 
 规则本身在 backend/liaison.py，这里只是接口。
 """
@@ -67,7 +67,7 @@ def duty_status(db: OrmSession = Depends(db_session),
     与我无关就是空列表，前端据此决定要不要显示值班卡片。"""
     out = []
     for dept in (db.query(Department)
-                 .filter(Department.name.in_(liaison.DUTY_DEPTS))
+                 .filter(Department.duty_enabled.is_(True))
                  .order_by(Department.sort).all()):
         if user.has_full_access() or liaison.eligible(user, dept, real=False):
             out.append(_duty_out(db, dept, user))
@@ -146,7 +146,7 @@ def _dept_pending_count(db: OrmSession, dept: Department) -> int:
         n += (db.query(HoursRequest)
               .filter(HoursRequest.activity_id.in_(acts),
                       HoursRequest.status == "pending").count())
-    if dept.name == liaison.LIAISON_DEPT:
+    if dept.vb_liaison:
         n += (db.query(VbConfirm)
               .filter(VbConfirm.status == "pending").count())
     return n
@@ -206,7 +206,7 @@ def activity_vb_confirms(activity_id: str, db: OrmSession = Depends(db_session),
     writer = manager and user.can_write()
     block = vb_names_block(db, act)
     contacts = liaison.vb_contacts(db)
-    dept = liaison.liaison_dept(db)
+    dept = liaison.vb_dept(db)
     duty = liaison.on_duty(db, dept) if dept else None
     return {"names": list(act.vb_names or []), "status": act.status,
             "items": [_vbc_out(db, r) for r in rows],
@@ -248,7 +248,8 @@ def resubmit_vb(activity_id: str, body: VbNamesBody,
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     if not _can_resubmit(db, act):
-        raise HTTPException(409, "只有被对外联络部退回的志愿北京名称才需要重新提交")
+        raise HTTPException(409, f"只有被{liaison.vb_dept_name(db)}退回的"
+                                 "志愿北京名称才需要重新提交")
     try:
         names = liaison.clean_vb_names(body.names)
     except ValueError as e:
@@ -258,7 +259,8 @@ def resubmit_vb(activity_id: str, body: VbNamesBody,
     row = liaison.push_vb_confirm(db, act, user, "resubmit")
     audit_log(db, actor=user, action="vb_confirm", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=(f"重新提交志愿北京活动名称给对外联络部：{liaison.names_text(names)}"
+              summary=(f"重新提交志愿北京活动名称给{liaison.vb_dept_name(db)}："
+                       f"{liaison.names_text(names)}"
                        + (f"（原为 {before}）" if before != liaison.names_text(names)
                           else "（名称未改）")))
     db.commit()
@@ -286,7 +288,8 @@ def repush_vb(activity_id: str, body: VbRepushBody,
         raise HTTPException(400, str(e)) from None
     reason = body.reason.strip()
     if not reason:
-        raise HTTPException(400, "请填写再次推送的原因，供对外联络部查看")
+        raise HTTPException(400,
+                            f"请填写再次推送的原因，供{liaison.vb_dept_name(db)}查看")
     if len(reason) > 500:
         raise HTTPException(400, "推送原因不能超过 500 字")
     before = liaison.names_text(act.vb_names)
@@ -295,8 +298,8 @@ def repush_vb(activity_id: str, body: VbRepushBody,
     row = liaison.push_vb_confirm(db, act, user, "repush", reason)
     audit_log(db, actor=user, action="vb_confirm", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=(f"活动已完成，再次推送志愿北京活动名称给对外联络部："
-                       f"{liaison.names_text(names)}"
+              summary=(f"活动已完成，再次推送志愿北京活动名称给"
+                       f"{liaison.vb_dept_name(db)}：{liaison.names_text(names)}"
                        + (f"（原为 {before}）" if before != liaison.names_text(names)
                           else "（名称未改）")
                        + (f"；作废 {dropped} 条待确认" if dropped else "")
@@ -326,7 +329,8 @@ def decide_vb_confirm(confirm_id: str, body: VbDecideBody,
     或活动已完成后再次推送的，活动状态不动。
     """
     if not liaison.vb_decider(db, user):
-        raise HTTPException(403, "只有对外联络部的值班人或部长可以确认志愿北京")
+        raise HTTPException(403, f"只有{liaison.vb_dept_name(db)}的值班人或部长"
+                                 "可以确认志愿北京")
     # 两位审批人可能同时打开同一条待办。锁住记录再判状态：后一位等前一位
     # 提交后会读到最终状态，不能把「已确认」盖成「已退回」。
     r = (db.query(VbConfirm).filter(VbConfirm.id == confirm_id)
@@ -353,10 +357,10 @@ def decide_vb_confirm(confirm_id: str, body: VbDecideBody,
     notify_managers(
         db, act.id,
         f"志愿北京{'已确认' if body.approve else '被退回'}｜{act.title}",
-        (f"对外联络部已在志愿北京核对 {names}"
+        (f"{liaison.vb_dept_name(db)}已在志愿北京核对 {names}"
          + ("，「" + act.title + "」已完成。" if act.status == "completed" else "。")
          if body.approve else
-         f"对外联络部退回了 {names}。\n请到活动管理的「审核」页签修改志愿北京"
+         f"{liaison.vb_dept_name(db)}退回了 {names}。\n请到活动管理的「审核」页签修改志愿北京"
          f"活动名称后重新提交（时长保持锁定，不用重新审核）。")
         + (f"\n{'意见' if body.approve else '理由'}：{reply}" if reply else ""),
         duty="hours", tab="review")
@@ -407,7 +411,7 @@ def _slot_block(db: OrmSession, act: Activity, slot: str) -> str:
         return ""
     label = liaison.SLOTS[slot]
     if not liaison.is_external(db, act):
-        return f"{label}只用于对外联络部归口的活动"
+        return f"{label}只用于归口部门要求交立项书的对外活动"
     if not liaison.is_published(act):
         return f"活动正式发布之后才能上传{label}"
     if act.hours_locked():
@@ -508,7 +512,7 @@ async def upload_doc_template(slot: str, file: UploadFile = File(...),
     if slot not in liaison.DOC_TEMPLATES:
         raise HTTPException(404, "没有这一项")
     if not liaison.can_manage_templates(db, user):
-        raise HTTPException(403, "模板由对外联络部部长更换")
+        raise HTTPException(403, f"模板由{liaison.vb_dept_name(db)}部长更换")
     label = liaison.DOC_TEMPLATES[slot]
     ext, data = await _read_upload(file, label, liaison.DOC_TEMPLATE_EXTS)
     stored = _store(data, ext)
