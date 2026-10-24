@@ -38,7 +38,7 @@
       </DataCards>
 
       <el-table v-else :data="items" size="small" v-loading="loading">
-        <el-table-column label="时间" width="160">
+        <el-table-column label="时间" width="220">
           <template #default="{ row }">{{ fmtTime(row.t) }}</template>
         </el-table-column>
         <el-table-column label="操作人" width="170">
@@ -77,7 +77,7 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { api, download } from '../api'
+import { api, download, fmtDTs } from '../api'
 import { ROLE_LABELS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
@@ -103,7 +103,7 @@ function localText(v) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
        + `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
-const fmtTime = t => (t ? t.replace('T', ' ').slice(0, 19) : '—')
+const fmtTime = fmtDTs
 
 function query() {
   const f = filter.value
