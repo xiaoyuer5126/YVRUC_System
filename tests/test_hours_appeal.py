@@ -346,6 +346,21 @@ def test_锁定审批被驳回后解冻重改(client, admin, db, served):
     assert db.get(Activity, act.id).status == "vb_pending"
 
 
+def test_同一条时长申请只处理一次(client, admin, db, served):
+    """连点两次「通过」：第二次被已处理的状态挡下，账不再动。"""
+    act, _g, _u = served
+    _confirm(client, admin, act)
+    client.post(f"/api/staff/activities/{act.id}/hours/lock-request",
+                headers=admin, json={})
+    row = _approve_lock(client, admin, act)
+    r = client.post(f"/api/staff/hours-requests/{row['id']}/decide",
+                    headers=admin, json={"approve": False, "reply": "撤回"})
+    assert r.status_code == 409 and "已同意" in r.json()["detail"]
+    db.expire_all()
+    row = db.get(Activity, act.id)
+    assert row.hours_locked_at is not None and row.status == "vb_pending"
+
+
 def test_锁定后改时长要报审批(client, admin, db, served):
     act, _g, _u = served
     _confirm(client, admin, act)

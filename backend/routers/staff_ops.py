@@ -2187,7 +2187,8 @@ def request_unlock(activity_id: str, body: UnlockRequestBody,
                    user: User = Depends(require_manager)):
     """锁定之后要改时长，报归口部长审批。"""
     ensure_activity_manager(db, user, activity_id)
-    act = _act(db, activity_id)
+    # 「有没有挂着一条」的判断得在锁里做，两次连点才不会各插一条
+    act = _act(db, activity_id, for_update=True)
     if not act.hours_locked():
         raise HTTPException(409, "时长尚未锁定，可直接修改")
     reason = body.reason.strip()
@@ -2235,9 +2236,14 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
     req = db.get(HoursRequest, request_id)
     if req is None:
         raise HTTPException(404, "申请不存在")
+    # 先锁活动（与核准、提交审批同一个加锁顺序），再拿锁把人读一遍：并发点两次
+    # 「通过」时只有一个请求能看到 pending，另一个进来时已经是已同意/已驳回
+    act = _act(db, req.activity_id, for_update=True)
+    req = (db.query(HoursRequest)
+           .filter(HoursRequest.id == request_id)
+           .populate_existing().with_for_update().one_or_none())
     if req.status != "pending":
         raise HTTPException(409, f"该申请{req.status_label()}")
-    act = _act(db, req.activity_id)
     if user.id not in {u.id for u in _hours_approvers(db, act)}:
         raise HTTPException(403, f"只有归口部门的部长可以处理时长{req.kind_label()}申请")
     reply = body.reply.strip()[:512]
