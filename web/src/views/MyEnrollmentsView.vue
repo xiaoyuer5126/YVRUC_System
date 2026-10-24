@@ -368,7 +368,7 @@ async function cancel(row) {
   const locked = fresh.status === 'enrolled' && fresh.list_locked
   await ElMessageBox.confirm(
     locked ? '名单已锁定，此时退出会被记录一次。确定退出吗？' : '确定退选吗？',
-    '退选确认', { type: 'warning', confirmButtonText: '确定' })
+    '确认退选', { type: 'warning', confirmButtonText: '确定' })
   const d = await api.del(`/api/activities/enrollments/${row.id}`)
   ElMessage[d.effect === 'locked' ? 'warning' : 'success'](d.message)
   load()
