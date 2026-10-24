@@ -125,7 +125,8 @@
       <div class="section-title">时长审批</div>
       <el-card v-for="u in hoursReqs" :key="u.id" shadow="never" class="item">
         <div class="head">
-          <b class="title" @click="$router.push('/manage/' + u.activity_id + '?tab=hours')">
+          <b class="title" :class="{ 'title-static': !hoursHref(u) }"
+             @click="gotoActivity(hoursHref(u))">
             {{ u.activity_title }}
           </b>
           <el-tag size="small" :type="u.kind === 'lock' ? 'primary' : 'warning'"
@@ -167,7 +168,8 @@
       <div class="section-title">志愿北京待确认</div>
       <el-card v-for="v in vbConfirms" :key="v.id" shadow="never" class="item">
         <div class="head">
-          <b class="title" @click="$router.push('/manage/' + v.activity_id + '?tab=review')">
+          <b class="title" :class="{ 'title-static': !vbHref(v) }"
+             @click="gotoActivity(vbHref(v))">
             {{ v.activity_title }}
           </b>
           <el-tag v-if="v.kind === 'resubmit'" size="small" type="warning" effect="plain">
@@ -321,7 +323,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
 import ApprovalCommentDialog from '../components/ApprovalCommentDialog.vue'
@@ -330,9 +332,20 @@ import ProjectFileSlot from '../components/ProjectFileSlot.vue'
 import { closingApproved, closingRejected, projectApproved, projectRejected, vbConfirmed }
   from '../replyTemplates'
 import { useNarrow } from '../composables/useNarrow'
-import { auth } from '../store'
+import { auth, managesAllActivities } from '../store'
 
 const narrow = useNarrow()
+const router = useRouter()
+// 标题点开去哪：能管全部活动的人进管理页；审批人多半只在这一条审批线上，
+// 不是这场活动的管理者，进管理页会看到「活动不存在」，给他们志愿者端的详情页。
+// 补记录活动不公开、志愿者端没有详情页，这种标题就不给点
+const hoursHref = u => managesAllActivities()
+  ? `/manage/${u.activity_id}?tab=hours`
+  : (u.record_only ? '' : `/activity/${u.activity_id}`)
+const vbHref = v => managesAllActivities()
+  ? `/manage/${v.activity_id}?tab=review`
+  : (v.record_only ? '' : `/activity/${v.activity_id}`)
+const gotoActivity = href => { if (href) router.push(href) }
 const rows = ref([])
 const hoursReqs = ref([])
 const vbConfirms = ref([])
@@ -534,4 +547,6 @@ async function submitTransfer() {
 .head-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .head-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .title { font-size: 15px; color: var(--el-color-primary); cursor: pointer; }
+/* 点不开的标题：补记录活动不公开，志愿者端没有详情页，按普通文字显示 */
+.title-static { color: inherit; cursor: default; }
 </style>

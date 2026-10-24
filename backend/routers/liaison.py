@@ -385,6 +385,8 @@ def pending_vb_confirms(db: OrmSession = Depends(db_session),
                     "organizer": act.organizer if act else "",
                     "co_organizer": (act.co_organizer or "") if act else "",
                     "organizer_text": act.organizer_text() if act else "",
+                    # 不公开的补记录活动在志愿者端没有详情页：前端据此决定标题能否点开
+                    "record_only": bool(act and act.is_record()),
                     "locked_at": iso(act.hours_locked_at) if act else "",
                     "last_return": prev.reply if prev else ""})
     return out

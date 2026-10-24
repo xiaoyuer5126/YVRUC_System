@@ -80,6 +80,8 @@ export const post = () => (auth.user?.qingxie_post || '')
 const qx = (...posts) => auth.activeIdentity === 'qingxie' && posts.includes(post())
 // 管理员视角，或会长团视角：除平台公告、操作日志、意见反馈外同权
 const full = () => auth.activeIdentity === 'admin' || qx('council')
+// 能管理全部活动：管理员与会长团。任何一场活动的管理页都进得去（见后端 perm）
+export const managesAllActivities = () => full()
 export const isTrainee = () => auth.activeIdentity === 'qingxie' && post() === 'member'
 
 export const POST_LABELS = { council: '会长团', head: '部长', core: '部门骨干', member: '部门成员' }

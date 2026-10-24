@@ -2328,6 +2328,8 @@ def my_hours_requests(db: OrmSession = Depends(db_session),
                     "activity_title": act.title, "reason": req.reason,
                     # 归口外联的才有结项材料，「结项通过 / 不通过」常用语只给它们
                     "external": liaison.is_external(db, act),
+                    # 不公开的补记录活动在志愿者端没有详情页：前端据此决定标题能否点开
+                    "record_only": act.is_record(),
                     "vb_names": (list(act.vb_names or []) if req.kind == "lock"
                                  else []),
                     # 盖章材料就在这张卡片上给：审批人多半不是这场活动的管理者，
