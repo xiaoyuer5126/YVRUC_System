@@ -2627,6 +2627,8 @@ watch(() => route.params.id, (id) => {
   if (!id || id === activityId) return
   activityId = id
   notFound.value = false
+  // 清掉上一个活动，让整页 loading 出来：不然加载期间显示的还是上一个活动
+  act.value = null
   currentGroupId.value = ''
   loadAll()
 })
