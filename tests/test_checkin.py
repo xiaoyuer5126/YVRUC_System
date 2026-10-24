@@ -222,6 +222,7 @@ def test_分岗位的签到码只认本岗位的人(client, admin, db, live_grou
     other = Position(id=uid("p"), shift_id=g.id, name="另一个岗位",
                      location="东门", quota=3, sort=1)
     db.add(other)
+    db.flush()          # 岗位先落库：下面的报名要引用它（两表之间没有 ORM 关系）
     # 志愿者 b 报的是另一个岗位
     sid = take_student()
     hb = login(client, sid)
