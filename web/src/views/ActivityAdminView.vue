@@ -603,12 +603,12 @@
             <el-table-column label="组长" width="96">
               <template #default="{row}">
                 <el-button v-if="row.is_leader" size="small" link type="warning"
-                           :disabled="isOver" @click="setLeader(row, false)">取消</el-button>
+                           :disabled="isOver" @click="setLeader(row, false)">取消组长</el-button>
                 <el-tooltip v-else-if="canBeLeader(row)" placement="top"
                             content="设为本岗位组组长">
                   <el-button size="small" link :disabled="isOver"
                              @click="setLeader(row, true)">
-                    指定
+                    设为组长
                   </el-button>
                 </el-tooltip>
                 <span v-else class="dim">—</span>
@@ -617,7 +617,7 @@
             <el-table-column label="违规" width="70">
               <template #default="{row}">
                 <el-button size="small" link type="danger"
-                           @click="violationDlg.open(row.user)">登记</el-button>
+                           @click="violationDlg.open(row.user)">登记违规</el-button>
               </template>
             </el-table-column>
             <el-table-column v-if="roster.positions.length" label="调岗" width="210">
@@ -630,7 +630,7 @@
                 </el-select>
                 <el-button size="small" link type="primary"
                            :disabled="isOver || moveSel[row.enrollment_id] === undefined"
-                           @click="applyMove(row)">应用</el-button>
+                           @click="applyMove(row)">调岗</el-button>
               </template>
             </el-table-column>
           </el-table>
