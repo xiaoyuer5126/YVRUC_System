@@ -155,11 +155,23 @@ def lock_records(db: OrmSession, activity_id: str) -> list[HoursRecord]:
             .populate_existing().with_for_update().order_by(HoursRecord.id).all())
 
 
-def pay_positions(db: OrmSession, segments: list | None) -> dict[str, Position]:
-    """这些段里开了「可选劳务」的岗位，按岗位 id。
+def is_party_school(db: OrmSession, activity_id: str, user_id: str) -> bool:
+    """这个人是不是以党校同学身份参加这场活动。"""
+    return (db.query(Enrollment.id)
+            .filter(Enrollment.activity_id == activity_id,
+                    Enrollment.user_id == user_id,
+                    Enrollment.source == PARTY_SCHOOL).first() is not None)
 
-    按岗位现在的设置判断：管理者在核准后才给岗位开劳务，本人照样能选。"""
-    ids = {s.position_id for s in (segments or [])
+
+def pay_positions(db: OrmSession, rec: HoursRecord) -> dict[str, Position]:
+    """这笔时长里开了「可选劳务」的岗位，按岗位 id。
+
+    按岗位现在的设置判断：管理者在核准后才给岗位开劳务，本人照样能选。
+    党校同学不能选劳务：他们的时长另作党校学分认定用，只记志愿时长
+    （见 PARTY_SCHOOL），所以这里直接返回空。"""
+    if is_party_school(db, rec.activity_id, rec.user_id):
+        return {}
+    ids = {s.position_id for s in rec.live_segments()
            if s.kind == "shift" and s.position_id}
     if not ids:
         return {}
@@ -171,7 +183,7 @@ def parts_view(db: OrmSession, rec: HoursRecord) -> list[dict]:
     """给本人看的明细：每段带上能不能选劳务（pay_ok）、劳务说明和眼下记的
     报酬方式（reward，同 HoursRecord.split 的口径，跟合计对得上）。"""
     segs = rec.live_segments()
-    pay = pay_positions(db, segs)
+    pay = pay_positions(db, rec)
     out = []
     for s in segs:
         pos = pay.get(s.position_id) if s.kind == "shift" else None

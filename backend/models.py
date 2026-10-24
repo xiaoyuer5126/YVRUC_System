@@ -1543,13 +1543,16 @@ class HoursRecord(Base):
         """结算合计：两半各自取整到 0.5 之后的和。对外显示、导出、锁定都用它。"""
         return sum(self.split())
 
-    def parts_text(self, *, hours_only: bool = False) -> str:
+    def parts_text(self, *, hours_only: bool = False,
+                   pay_only: bool = False) -> str:
         """明细拼成一行：「09-20 08:00-12:00 东门引导；09-21 …」，不换行。
-        hours_only：只拼计志愿时长的那几段（导出给志愿北京的备注用）。"""
+        hours_only：只拼计志愿时长的那几段（导出给志愿北京的备注用）。
+        pay_only：只拼按劳务计的段（导出给发劳务的备注用），与 hours_only 对称。"""
         return "；".join(" ".join(x for x in (s.time_text,
                                               s.position_name or s.label) if x)
                          for s in self.live_segments()
-                         if not (hours_only and s.is_pay()))
+                         if not (hours_only and s.is_pay())
+                         and not (pay_only and not s.is_pay()))
 
     def reward_label(self) -> str:
         counted, pay = self.split()
