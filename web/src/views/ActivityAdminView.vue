@@ -803,7 +803,7 @@
           <!-- 对外活动凭盖章材料报批：缺了先说，别等点了才被拦 -->
           <el-alert v-if="hoursState.stamped_missing?.length && !hoursState.locked_at"
                     type="warning" :closable="false" show-icon style="flex:1 1 100%"
-                    :title="`对外联络部归口的活动须先上传${hoursState.stamped_missing.join('和')}，才能提交时长审核（到点也不会自动提交）。点「提交时长审核」或到「审核」页签上传`" />
+                    :title="`对外活动须先上传${hoursState.stamped_missing.join('和')}，才能提交时长审核（到点也不会自动提交）。点「提交时长审核」或到「审核」页签上传`" />
           <el-button v-if="hoursState.locked_at" type="warning" plain
                      @click="openUnlock">申请解锁</el-button>
         </div>
@@ -814,7 +814,7 @@
           <div style="line-height:1.6">
             已通过校青协审核，时长不再改动。确需更正请点「申请解锁」，同样由校青协审批
             <template v-if="act.status === 'vb_pending'">
-              <br />志愿北京活动名称已推给对外联络部，外联在志愿北京核对确认后活动标记为「已完成」。
+              <br />志愿北京活动名称已推给{{ vbDept }}，外联在志愿北京核对确认后活动标记为「已完成」。
               <template v-if="hoursState.vb_confirm?.status === 'returned'">
                 <br /><b class="pre">外联退回了名称：{{ hoursState.vb_confirm.reply }}</b>——请到
                 <el-link type="primary" @click="tab = 'review'">「审核」页签</el-link>修改后重新提交。
@@ -834,7 +834,7 @@
                   :closable="false"
                   title="时长已提交校青协审核，审核期间本页只读">
           <div style="line-height:1.6">
-            通过即锁定时长，志愿北京活动名称推给对外联络部，外联确认后活动标记为「已完成」；驳回会退回给你，改完重新核准再提交一次。
+            通过即锁定时长，志愿北京活动名称推给{{ vbDept }}，外联确认后活动标记为「已完成」；驳回会退回给你，改完重新核准再提交一次。
             审核进度与历史见 <el-link type="primary" @click="tab = 'review'">「审核」页签</el-link>。
             <template v-if="hoursState.request">
               <br />提交说明：{{ hoursState.request.reason }}
@@ -1276,7 +1276,7 @@
     <!-- 核准时长：定下账、通知本人，并给一段申诉时间 -->
     <el-dialog v-model="approveDlg.visible" title="确认核准时长" width="480">
       <p class="dim">
-        核准之后，志愿者将会收到确认通知，截止前确认无误或提出申诉。截止后若无申诉，系统自动提交校青协审核（须先在「审核」页签填好志愿北京活动名称）；通过即锁定时长，对外联络部确认志愿北京后活动标记为「已完成」。
+        核准之后，志愿者将会收到确认通知，截止前确认无误或提出申诉。截止后若无申诉，系统自动提交校青协审核（须先在「审核」页签填好志愿北京活动名称）；通过即锁定时长，{{ vbDept }}确认志愿北京后活动标记为「已完成」。
       </p>
       <el-form label-width="100px">
         <el-form-item label="申诉截止" required>
@@ -1292,7 +1292,7 @@
       </template>
     </el-dialog>
 
-    <!-- 提交时长审核：一并填志愿北京活动名称，锁定后推给对外联络部核对 -->
+    <!-- 提交时长审核：一并填志愿北京活动名称，锁定后推给志愿北京对接部门核对 -->
     <el-dialog v-model="lockDlg.visible" title="提交时长审核" width="520">
       <p v-if="lockDlg.early" class="dim">
         申诉期还没结束（截止 {{ fmtDT(hoursState.appeal_deadline) }}）。现在提交，还没确认时长的志愿者就没机会提申诉了；
@@ -1300,7 +1300,7 @@
       </p>
       <p v-if="hoursState.pending_appeals" class="dim">还有 {{ hoursState.pending_appeals }} 条申诉没处理。</p>
       <p class="dim">
-        提交后时长冻结、不能再改，等校青协审核；通过即锁定时长，志愿北京活动名称推给对外联络部，
+        提交后时长冻结、不能再改，等校青协审核；通过即锁定时长，志愿北京活动名称推给{{ vbDept }}，
         外联确认后活动标记为「已完成」；驳回则退回你修改。
       </p>
       <el-form label-position="top">
@@ -1370,8 +1370,8 @@
             </el-option>
           </el-select>
         </el-form-item>
-        <!-- 交对外联络部（二级团体的活动）要带立项书，在这里就能传 -->
-        <el-form-item v-if="submitToLiaison" label="立项书" required>
+        <!-- 归口对外活动的部门要带立项书，在这里就能传 -->
+        <el-form-item v-if="submitExternal" label="立项书" required>
           <ProjectFileSlot v-if="submitFiles" :activity-id="activityId" kind="proposal"
                            label="立项书" :file="submitFiles.proposal"
                            :can-upload="submitFiles.can_upload_proposal"
@@ -2732,6 +2732,8 @@ function doExportHours() { dl(`/api/staff/activities/${activityId}/hours.xlsx`) 
 // —— 提交审批 ——
 const approval = ref(null)
 const depts = ref([])
+// 志愿北京对接部门的实际名称（登录信息里带下来），文案里别写死部门名
+const vbDept = computed(() => auth.user?.vb_dept_name || '校青协')
 const submitDlg = ref({ visible: false, deptId: '', note: '', busy: false })
 
 async function loadApproval() {
@@ -2751,16 +2753,15 @@ async function openSubmit() {
                       note: '', autoPublish: true, busy: false }
 }
 
-// 对外联络部要立项书：选中它时在对话框里就地上传
-const LIAISON_DEPT = '对外联络部'
+// 对外活动要立项书：选中归口开了「需交立项书/结项书」的部门时，在对话框里就地上传
 const submitFiles = ref(null)
-const submitToLiaison = computed(() =>
-  depts.value.find(x => x.id === submitDlg.value.deptId)?.name === LIAISON_DEPT)
+const submitExternal = computed(() =>
+  !!depts.value.find(x => x.id === submitDlg.value.deptId)?.external)
 async function loadSubmitFiles() {
   submitFiles.value = await api.get(`/api/staff/activities/${activityId}/project-files`)
 }
 
-// 立项书、结项书的空白模板（外联部长上传），在要传文件的地方给下载链接
+// 立项书、结项书的空白模板（志愿北京对接部门的部长上传），在要传文件的地方给下载链接
 const docTemplates = ref(null)   // vuecheck: script-only，模板只通过 templates 读它
 const templates = computed(() => Object.fromEntries(
   (docTemplates.value?.items || []).map(x => [x.slot, x.file])))
@@ -2772,8 +2773,9 @@ async function loadDocTemplates() {
 async function doSubmit() {
   const d = submitDlg.value
   if (!d.deptId) return ElMessage.warning('请选择审批部门')
-  if (submitToLiaison.value && !submitFiles.value?.proposal) {
-    return ElMessage.warning('提交对外联络部审批须先上传立项书')
+  if (submitExternal.value && !submitFiles.value?.proposal) {
+    const dept = depts.value.find(x => x.id === d.deptId)?.name
+    return ElMessage.warning(`提交「${dept}」审批须先上传立项书`)
   }
   d.busy = true
   try {
@@ -2953,7 +2955,7 @@ async function doApprove() {
 }
 
 // 时长要由校青协审核过才算数：提交给归口部长，通过之后才锁定。
-// 志愿北京活动名称一并填（预先填上之前存过的），锁定后推给对外联络部核对
+// 志愿北京活动名称一并填（预先填上之前存过的），锁定后推给志愿北京对接部门核对
 // 时长审核要附的两份盖章材料；template 是对应空白模板的格子名
 const STAMPED_SLOTS = [{ kind: 'stamped', label: '盖章立项书', template: 'proposal' },
                        { kind: 'closing', label: '盖章结项书', template: 'closing' }]

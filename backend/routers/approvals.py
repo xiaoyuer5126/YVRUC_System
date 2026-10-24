@@ -9,7 +9,7 @@
 驳回各留一条 ApprovalEvent。审批**永不自动通过**：没人看就一直等着，
 超时只催人，不放行。
 
-对外联络部启用值班（见 liaison.py）：审批人仍挂部长，但通知发给值班的人，
+启用值班的部门（见 liaison.py）：审批人仍挂部长，但通知发给值班的人，
 值班人与部长都能拍这个部门的审批；没人值班就回落给部长。
 """
 from __future__ import annotations
@@ -24,7 +24,8 @@ from ..database import db_session
 from ..deps import (current_user, require_approver, require_council,
                     require_manager)
 from ..integrations import msgcenter
-from ..models import (Activity, ApprovalEvent, Department, User, iso, now, uid)
+from ..models import (Activity, ApprovalEvent, Department, DutyHandover, User,
+                      iso, now, uid)
 from ..perm import ensure_activity_manager
 from ..serializers import published_hint
 
@@ -150,6 +151,9 @@ def list_departments(db: OrmSession = Depends(db_session),
             "heads": [{"id": h.id, "student_id": h.student_id, "name": h.name}
                       for h in heads],
             "has_head": bool(heads),
+            "duty_enabled": d.duty_enabled,
+            "external": d.external,
+            "vb_liaison": d.vb_liaison,
         })
     return out
 
@@ -193,6 +197,9 @@ def delete_department(dept_id: str, db: OrmSession = Depends(db_session),
     acts = db.query(Activity).filter(Activity.approval_dept_id == d.id).count()
     if acts:
         raise HTTPException(409, f"「{d.name}」归口着 {acts} 场活动，不能删除")
+    if d.vb_liaison:
+        raise HTTPException(409, f"「{d.name}」是志愿北京对接部门，"
+                                 "请先把对接部门换成别的部门再删除")
     # 会长团的催办范围里去掉这个部门；去掉后空了就是接收全部部门
     for u in db.query(User).filter(User.qingxie_post == "council").all():
         if d.id in (u.remind_dept_ids or []):
@@ -210,13 +217,16 @@ class DeptBody(BaseModel):
     note: str | None = None                     # 不传就不动说明
     head_student_id: str | None = None          # 新增/指定部长；空串=清空全部部长
     remove_head_student_id: str | None = None   # 移除某位部长（降为部门成员）
+    duty_enabled: bool | None = None            # 不传就不动
+    external: bool | None = None                # 不传就不动
+    vb_liaison: bool | None = None              # 只能设为 True；换部门时把旧的清掉
 
 
 @router.patch("/departments/{dept_id}")
 def update_department(dept_id: str, body: DeptBody,
                       db: OrmSession = Depends(db_session),
                       user: User = Depends(require_council)):
-    """改部门名/说明、增删部长。支持一个部门有多位部长。"""
+    """改部门名/说明、增删部长、开关部门能力。支持一个部门有多位部长。"""
     d = db.get(Department, dept_id)
     if d is None:
         raise HTTPException(404, "部门不存在")
@@ -255,6 +265,33 @@ def update_department(dept_id: str, body: DeptBody,
                                              User.qingxie_post == "head").all():
                 old.qingxie_post = "member"
             changed.append("清空部长")
+    if body.duty_enabled is not None and body.duty_enabled != d.duty_enabled:
+        d.duty_enabled = body.duty_enabled
+        changed.append("启用值班" if body.duty_enabled else "关闭值班")
+        if not body.duty_enabled and d.duty_user_id:
+            # 关了值班，当前值班人一并撤下；交接记录里留一条「关闭值班」
+            db.add(DutyHandover(id=uid("dty"), dept_id=d.id,
+                                from_user_id=d.duty_user_id, to_user_id=None,
+                                actor_id=user.id, note="关闭值班"))
+            d.duty_user_id = None
+    if body.external is not None and body.external != d.external:
+        d.external = body.external
+        changed.append("归口活动需交立项书/结项书：" + ("开" if body.external else "关"))
+    if body.vb_liaison is not None:
+        if not body.vb_liaison and d.vb_liaison:
+            raise HTTPException(400, "志愿北京对接部门不能清空，"
+                                     "请把它指定给别的部门")
+        if body.vb_liaison and not d.vb_liaison:
+            # 全平台至多一个对接部门：先清掉原来的，再设这个
+            others = db.query(Department).filter(
+                Department.vb_liaison.is_(True), Department.id != d.id).all()
+            old_name = others[0].name if others else ""
+            for other in others:
+                other.vb_liaison = False
+            db.flush()
+            d.vb_liaison = True
+            changed.append("设为志愿北京对接部门"
+                           + (f"（原：{old_name}）" if old_name else ""))
     audit_log(db, actor=user, action="update", target_type="department",
               target_id=d.id, target_label=d.name, activity_id=None,
               summary=f"修改部门「{d.name}」：{'、'.join(changed) or '无变化'}")
@@ -342,7 +379,7 @@ def submit(activity_id: str, body: SubmitBody,
     head = heads[0]
     head_names = "、".join(h.name for h in heads)
     # 对外活动要带立项书：审批人看的就是这份东西，没有它批不了
-    if dept.name == liaison.LIAISON_DEPT \
+    if dept.external \
             and liaison.project_file(db, act.id, "proposal") is None:
         raise HTTPException(400, f"提交「{dept.name}」审批须先上传立项书")
     # 审批人仍挂部长（部门的责任人），通知发给值班的人（没人值班发全体部长）
@@ -397,7 +434,7 @@ def decide(activity_id: str, body: DecideBody,
     comment = body.comment.strip()
     if not body.approve and len(comment) < 2:
         raise HTTPException(400, "驳回必须写明理由，会发给发起方")
-    # 转交进对外联络部的活动可能还没传立项书：批之前得有
+    # 转交进要求立项书的部门的活动可能还没传：批之前得有
     if body.approve and liaison.is_external(db, act) \
             and liaison.project_file(db, act.id, "proposal") is None:
         raise HTTPException(400, "这场对外活动还没有上传立项书，请驳回让发起方补传")
@@ -494,9 +531,9 @@ def transfer(activity_id: str, body: TransferBody,
     部长的活动列表、部门成员的可见范围都跟着变。转回会长团时归口存空，
     按内部活动审批，不收立项书、结项书。
 
-    立项书跟着归口走：从对外联络部转出去就是内部活动，已传的立项书删掉，
-    免得发起方以为还要照着它走外联的流程；转进对外联络部而还没有立项书的，
-    通知活动管理者补传（没有它外联批不了，见 decide）。
+    立项书跟着归口走：从要求立项书的部门转出去就是内部活动，已传的立项书删掉，
+    免得发起方以为还要照着它走对外流程；转进要求立项书的部门而还没有立项书的，
+    通知活动管理者补传（没有它审批人批不了，见 decide）。
     """
     act = db.get(Activity, activity_id)
     if act is None:
@@ -585,8 +622,8 @@ def transfer(activity_id: str, body: TransferBody,
                 f"「{act.title}」的审批已转交给 {target_name}"
                 f"（{to_text}）。"
                 + ("\n现在按内部活动审批，已上传的立项书已删除。" if dropped else "")
-                + ("\n对外联络部归口的活动须上传立项书：请到活动管理的「审核」页签上传，"
-                   "传好后对外联络部才能审批。" if need_proposal else ""), act,
+                + (f"\n{to_text}归口的活动须上传立项书：请到活动管理的「审核」页签上传，"
+                   f"传好后{to_text}才能审批。" if need_proposal else ""), act,
                 route="manage", tab="review")
     db.commit()
     return {"ok": True,
@@ -643,7 +680,7 @@ def my_approvals(db: OrmSession = Depends(db_session),
             "creator": creator.name if creator else "",
             "submit_note": submit.comment if submit else "",
             # 对外活动的立项书：审批人就在这一屏拍板，有没有、点开看都在这儿
-            "external": bool(dept and dept.name == liaison.LIAISON_DEPT),
+            "external": bool(dept and dept.external),
             "proposal": ({"id": proposal.id, "title": proposal.title}
                          if proposal else None),
         })

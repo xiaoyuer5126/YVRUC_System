@@ -1,5 +1,5 @@
 """志愿时长的结账：核准 → 本人确认或申诉 → 报校青协审批（一并填志愿北京活动
-名称）→ 锁定 → 对外联络部在志愿北京上核对名称并确认 → 活动完成。
+名称）→ 锁定 → 志愿北京对接部门在志愿北京上核对名称并确认 → 活动完成。
 
 一场活动的账一起结，状态记在活动上（hours_approved_at / appeal_deadline /
 hours_locked_at）；每个人的表态记在自己那条 HoursRecord 上（confirmed_at /
@@ -213,7 +213,7 @@ def lock_hours(db: OrmSession, act: Activity, actor: User | None,
     没表态的人按「没问题 + 各段都记志愿时长」处理，锁定时补上确认时间；
     这样锁定之后每条记录都有本人（或视同本人）的确认。
     锁定之后还有志愿北京这一步：管理者提交时长审核时填的志愿北京活动名称
-    推给对外联络部，外联在志愿北京核对并确认后活动才算「已完成」（见
+    推给志愿北京对接部门，对接部门在志愿北京核对并确认后活动才算「已完成」（见
     routers/liaison.decide_vb_confirm）。内部、外部活动一样走这一步。解锁后
     重新锁定、名称没变的，接着上一次推送的结果走，不再让外联重复核对（见
     liaison.settle_vb_on_lock）。
@@ -236,7 +236,7 @@ def lock_hours(db: OrmSession, act: Activity, actor: User | None,
         liaison.settle_vb_on_lock(db, act, actor)
         detail = ("志愿北京确认沿用，活动已完成" if act.status == "completed"
                   else f"志愿北京活动名称{liaison.names_text(act.vb_names)}"
-                       f"推送对外联络部确认")
+                       f"推送{liaison.vb_dept_name(db)}确认")
     else:
         act.status = "completed"
         detail = "活动已完成"

@@ -272,18 +272,33 @@ class User(Base):
 class Department(Base):
     """校青协的部门。活动审批按部门归口，部长是默认审批人。
 
-    做成表而不是常量：部长每年换届，部门也可能增减；对外联络部还要挂一句
-    给二级团体看的说明。
+    做成表而不是常量：部长每年换届，部门也可能增减；部门还可以挂一句给
+    二级团体看的说明。启用值班、归口活动算对外活动、是否对接志愿北京，
+    都是部门上的开关，在部门维护里由会长团/管理员打开或关闭。
     """
     __tablename__ = "departments"
+    __table_args__ = (
+        # 志愿北京对接部门全平台至多一个：外联确认、校外补登、模板上传
+        # 都只认它。条件索引让这条由数据库兜底。
+        Index("uq_departments_vb_liaison", "vb_liaison", unique=True,
+              postgresql_where=text("vb_liaison")),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(64), unique=True)
     note: Mapped[str] = mapped_column(String(128), default="")
     sort: Mapped[int] = mapped_column(Integer, default=0)
-    # —— 值班（目前只有对外联络部启用，见 duty.py）——
-    # 二级团体的审批量大，部长一个人盯不过来：由骨干轮流值班，审批通知只发给
-    # 值班的人。空 = 没人值班，通知回落给部长。
+    # —— 部门能力开关（部门维护里由会长团/管理员开关）——
+    # 启用值班：二级团体的审批量大，部长一个人盯不过来，由部门骨干轮流值班，
+    # 这个部门的审批通知只发给值班的人。
+    duty_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 归口这个部门的活动算「对外活动」：提交审批要交立项书，时长报批要交
+    # 盖章立项书和盖章结项书。
+    external: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 志愿北京对接部门：负责志愿北京名称外联确认、校外时长补登审批与导出、
+    # 立项书结项书空白模板上传。全平台至多一个为 True。
+    vb_liaison: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 当前值班人。空 = 没人值班，通知回落给部长。
     duty_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # 每晚给部长的值班日报发到了哪一天：清扫每分钟一轮、多进程抢主，
     # 落库才能保证一天只发一次（进程重启也不补发第二遍）
@@ -367,7 +382,7 @@ class Activity(Base):
     status: Mapped[str] = mapped_column(String(16), default="draft")
     # draft 草稿 / pending 待审批 / approved 待发布 / published 报名中 /
     # closed 已截止 / finished 已结束 / vb_pending 待外联确认（时长已锁定，
-    # 等对外联络部在志愿北京上核对管理者填的活动名称）/ completed 已完成
+    # 等志愿北京对接部门在志愿北京上核对管理者填的活动名称）/ completed 已完成
 
     # —— 审批 ——
     # 所有活动发布前都要过校青协。默认通过即发布；提交时可以关掉这一项，
@@ -409,12 +424,12 @@ class Activity(Base):
         DateTime, nullable=True)
     hours_locked_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
-    # 对外联络部归口的活动，时长报批前要交盖章立项书和盖章结项书。申诉期满时
+    # 归口开了「对外活动」的部门，时长报批前要交盖章立项书和盖章结项书。申诉期满时
     # 还没交齐，自动报批就停下来提醒管理者一次；记下时间，别每分钟提醒一遍。
     stamped_reminded_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
     # 志愿北京上对应的活动名称（可以有好几个：分几场建的就填几个）。管理者
-    # 提交时长审核时一并填写，时长锁定后推给对外联络部核对。存的是当前这一版，
+    # 提交时长审核时一并填写，时长锁定后推给志愿北京对接部门核对。存的是当前这一版，
     # 每次推送的快照与核对结果记在 VbConfirm 上。
     vb_names: Mapped[list] = mapped_column(JSON, default=list)
     # 申诉期满本该自动提交时长审核、却还没填志愿北京活动名称：不提交，提醒
@@ -974,7 +989,7 @@ class Attachment(Base):
 
 class VbConfirm(Base):
     """志愿北京名称的外联确认：时长锁定后，把管理者填的志愿北京活动名称推给
-    对外联络部，值班人（没人值班是部长）上志愿北京核对。
+    志愿北京对接部门，值班人（没人值班是部长）上志愿北京核对。
 
     一次推送一条：时长审核通过时推一次（kind=lock）；外联退回、管理者改了
     名称重提再推一次（kind=resubmit，时长保持锁定，不重走时长审核）；活动已
@@ -1713,7 +1728,7 @@ class HoursAppeal(Base):
 
 
 class HoursClaim(Base):
-    """校外自行报名活动的时长补登：本人申报，对外联络部审批。
+    """校外自行报名活动的时长补登：本人申报，志愿北京对接部门审批。
 
     不进 HoursRecord：校外活动在平台上没有场次、没有报名、没有签到，塞进
     「一场活动一起结账」那一套（核准 → 确认/申诉 → 提交审核 → 外联确认），

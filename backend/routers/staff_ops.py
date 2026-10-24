@@ -2137,7 +2137,7 @@ def hours_lock_request(activity_id: str, body: LockHoursBody | None = None,
     missing = liaison.missing_stamped(db, act)
     if missing:
         raise HTTPException(400, f"对外活动须先上传{'和'.join(missing)}，才能提交时长审核")
-    # 志愿北京活动名称随时长一起报：审的人看得到，锁定后推给对外联络部
+    # 志愿北京活动名称随时长一起报：审的人看得到，锁定后推给志愿北京对接部门
     save_vb_names(db, act, user,
                    body.vb_names if body and body.vb_names is not None
                    else act.vb_names)
@@ -2160,7 +2160,7 @@ def _notify_lock_approvers(db: OrmSession, act: Activity, who: str,
         notify(db, approver, f"时长锁定审批｜{act.title}",
                f"{who}提交了「{act.title}」的志愿时长，等待校青协审核。\n"
                f"说明：{reason}\n志愿北京活动名称：{liaison.names_text(act.vb_names)}\n"
-               f"通过后时长锁定，名称推给对外联络部确认；"
+               f"通过后时长锁定，名称推给{liaison.vb_dept_name(db)}确认；"
                f"驳回则退回管理者修改。\n请到「活动审批」处理。",
                data={"activity_id": act.id, "route": "approvals"})
 
@@ -2213,7 +2213,7 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
     """归口部长（或会长团/管理员）拍板锁不锁、解不解。
 
     锁定通过 = 这场活动的时长经校青协审核，就此封账、活动落「待外联确认」，
-    志愿北京活动名称推给对外联络部（外联确认后才算已完成）；驳回则解冻，
+    志愿北京活动名称推给志愿北京对接部门（外联确认后才算已完成）；驳回则解冻，
     管理者改完重新核准，再提交一次。
     解锁通过 = 回到「已结束」：不管此前停在待外联确认还是已完成，账重新
     打开就回到结账之前。志愿北京确认是时长之后的附加步骤，解锁不动它：已经
@@ -2267,10 +2267,11 @@ def _decide_text(db: OrmSession, act: Activity, req, approve: bool,
         names = liaison.names_text(act.vb_names)
         last = liaison.latest_vb_confirm(db, act.id)
         if last is not None and last.status == "returned":
-            nxt = (f"志愿北京活动名称{names}此前被对外联络部退回，请到「审核」页签"
-                   f"修改后重新提交，外联确认后活动即标记为已完成。")
+            nxt = (f"志愿北京活动名称{names}此前被{liaison.vb_dept_name(db)}退回，"
+                   f"请到「审核」页签修改后重新提交，"
+                   f"外联确认后活动即标记为已完成。")
         else:
-            nxt = (f"志愿北京活动名称{names}已推给对外联络部，"
+            nxt = (f"志愿北京活动名称{names}已推给{liaison.vb_dept_name(db)}，"
                    f"外联在志愿北京核对确认后活动即标记为已完成。")
         return f"「{act.title}」的志愿时长已通过校青协审核并锁定。\n{nxt}{tail}"
     return f"「{act.title}」的时长已解锁，修改后请重新核准。{tail}"

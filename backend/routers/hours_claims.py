@@ -1,11 +1,11 @@
-"""校外时长补登：志愿者本人申报，对外联络部审批。
+"""校外时长补登：志愿者本人申报，志愿北京对接部门审批。
 
 校外自行报名的活动在平台上没有场次、没有报名、没有签到，所以这条账不并进
 HoursRecord——那条路是「一场活动一起结账」，核准、确认/申诉、锁定、外联确认
 每一步都按活动判，为一个没有活动的场景到处开岔路不划算。补登自己一条台账，
 通过的条目按活动日期范围导出给志愿北京录入（见 exporter.build_claims_workbook）。
 
-审批人是「外联那摊事」的同一批：对外联络部的值班人与部长，会长团与管理员
+审批人是「外联那摊事」的同一批：志愿北京对接部门的值班人与部长，会长团与管理员
 （liaison.vb_decider），逐条通知也按 vb_contacts 那套找人——同一件事换个人做，
 不再长出第二套权限表。队列和证明材料也只给这批人看：材料里有手机号、本人照片。
 审批人自己的补登要由别人批，通知轮到他时往上找一层（见 decide_claim、
@@ -112,7 +112,7 @@ def _parse_hours(raw) -> float:
 
 
 def _notify_pending(db: OrmSession, claim: HoursClaim, submitter: User) -> None:
-    """新提交的补登告诉对外联络部：通知单独一个事务，出了岔子只记日志。
+    """新提交的补登告诉志愿北京对接部门：通知单独一个事务，出了岔子只记日志。
 
     补登已经提交在先，不能让本人看到「提交失败」再填一遍。
     """
@@ -128,7 +128,7 @@ def _notify_pending(db: OrmSession, claim: HoursClaim, submitter: User) -> None:
         db.commit()
     except Exception:  # noqa: BLE001
         db.rollback()
-        log.exception("时长补登 %s 已提交，通知对外联络部失败", claim.id)
+        log.exception("时长补登 %s 已提交，通知志愿北京对接部门失败", claim.id)
 
 
 def _notify_owner(db: OrmSession, claim: HoursClaim, title: str, body: str,
@@ -273,14 +273,15 @@ def my_claims(db: OrmSession = Depends(db_session),
 def withdraw_claim(claim_id: str, db: OrmSession = Depends(db_session),
                    user: User = Depends(current_user)):
     """撤回还没审批的那条（连证明材料一起删）。审批过的不能自己撤——改数要走
-    外联，留痕在审计里。
+    志愿北京对接部门，留痕在审计里。
 
     行锁和审批互斥：不锁的话撤回撞上通过，会把刚通过的那条连材料一起删掉。"""
     claim = db.get(HoursClaim, claim_id, with_for_update=True)
     if claim is None or claim.user_id != user.id:
         raise HTTPException(404, "补登记录不存在")
     if claim.status != "pending":
-        raise HTTPException(409, "已经审批过的补登不能自己撤回，请联系对外联络部")
+        raise HTTPException(409, "已经审批过的补登不能自己撤回，"
+                                 f"请联系{liaison.vb_dept_name(db)}")
     for row in (db.query(Attachment)
                 .filter(Attachment.owner_type.in_((PROOF, PHOTO)),
                         Attachment.owner_id == claim.id).all()):
@@ -304,7 +305,7 @@ def claim_file(attachment_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(404, "文件不存在")
     path = config.MATERIAL_DIR / row.stored_name
     if not path.is_file():
-        raise HTTPException(404, "文件已丢失，请联系对外联络部")
+        raise HTTPException(404, f"文件已丢失，请联系{liaison.vb_dept_name(db)}")
     ext = row.stored_name.rsplit(".", 1)[-1]
     # 图片内联：前端当缩略图显示。PDF 走下载：内联返回会让浏览器把当前页面换成
     # PDF 阅读器，材料看到一半就找不回审批页了（材料下载接口也是这个口径）
@@ -313,7 +314,7 @@ def claim_file(attachment_id: str, db: OrmSession = Depends(db_session),
         media_type=uploads.EXT_TYPES.get(ext, "application/octet-stream"))
 
 
-# ======================= 对外联络部：队列、审批、撤销、导出 =======================
+# ====================== 志愿北京对接部门：队列、审批、撤销、导出 ======================
 
 @router.get("/staff/hours-claims")
 def list_claims(status: str = "", page: int = 1, size: int = 20,
@@ -364,7 +365,8 @@ def decide_claim(claim_id: str, body: DecideBody,
     if claim is None:
         raise HTTPException(404, "补登记录不存在")
     if claim.user_id == user.id:
-        raise HTTPException(403, "本人提交的补登要由对外联络部的其他人审批")
+        raise HTTPException(403, "本人提交的补登要由"
+                                 f"{liaison.vb_dept_name(db)}的其他人审批")
     if claim.status != "pending":
         raise HTTPException(409, f"这条已经「{claim.status_label()}」了")
     reply = body.reply.strip()
@@ -384,7 +386,8 @@ def decide_claim(claim_id: str, body: DecideBody,
         title, text = (f"时长补登已通过｜{claim.title}",
                        f"您登记的「{claim.title}」"
                        f"（{claim.service_date.isoformat()}）"
-                       f"已通过对外联络部审批，计入志愿时长 {hours:g} 小时。")
+                       f"已通过{liaison.vb_dept_name(db)}审批，"
+                       f"计入志愿时长 {hours:g} 小时。")
     else:
         claim.status = "rejected"
         summary = f"驳回校外时长补登「{claim.title}」：{reply}"
@@ -419,7 +422,8 @@ def revoke_claim(claim_id: str, body: RevokeBody,
     # 和审批一个道理：自己的补登自己批不了，自己撤也不行——撤销同样改的是
     # 计入的时长，本人动手就绕过了「由别人核对」这一道
     if claim.user_id == user.id:
-        raise HTTPException(403, "本人提交的补登要由对外联络部的其他人撤销")
+        raise HTTPException(403, "本人提交的补登要由"
+                                 f"{liaison.vb_dept_name(db)}的其他人撤销")
     if claim.status != "approved":
         raise HTTPException(409, f"只有已通过的能撤销，这条是「{claim.status_label()}」")
     reason = body.reason.strip()

@@ -129,7 +129,7 @@ TRAINEE_DENIED_READS = {
     "export_answers", "export_answer_attachment_count", "export_answer_attachments",
     "export_applications", "export_application_attachment_count",
     "export_application_attachments",
-    # 校外时长补登表：含身份证号，只有对外联络部那几个人能导
+    # 校外时长补登表：含身份证号，只有志愿北京对接部门那几个人能导
     "export_claims",
     # 操作日志、通知记录导出本来只给管理员，列在这里是让「导出都点了名」这件事没有例外
     "export_oplogs", "export_notifications",
@@ -221,19 +221,19 @@ def require_approver(user: User = Depends(current_user),
 
 def require_claim_decider(user: User = Depends(current_user),
                           db: OrmSession = Depends(db_session)) -> User:
-    """审批校外时长补登：对外联络部那摊事的同一批人（值班人/部长 + 会长团/管理员）。"""
-    from .liaison import vb_decider
+    """审批校外时长补登：志愿北京对接部门那摊事的同一批人（值班人/部长 + 会长团/管理员）。"""
+    from .liaison import vb_decider, vb_dept_name
     if not vb_decider(db, user):
-        raise HTTPException(403, "需要 对外联络部（值班人或部长）身份")
+        raise HTTPException(403, f"需要 {vb_dept_name(db)}（值班人或部长）身份")
     return user
 
 
 def require_claim_decider_download(user: User = Depends(current_user_download),
                                    db: OrmSession = Depends(db_session)) -> User:
     """同上的直链下载版：补登表导出走 <a>，带不了 Authorization 头。"""
-    from .liaison import vb_decider
+    from .liaison import vb_decider, vb_dept_name
     if not vb_decider(db, user):
-        raise HTTPException(403, "需要 对外联络部（值班人或部长）身份")
+        raise HTTPException(403, f"需要 {vb_dept_name(db)}（值班人或部长）身份")
     return user
 
 
