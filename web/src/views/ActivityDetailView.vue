@@ -20,7 +20,9 @@
           <p style="white-space:pre-wrap;color:#606266;line-height:1.6">{{ act.intro }}</p>
           <el-descriptions :column="narrow ? 1 : 2" border size="small">
             <el-descriptions-item label="组织单位">{{ act.organizer_text || '—' }}</el-descriptions-item>
-            <el-descriptions-item label="活动时间">{{ act.time_text }}</el-descriptions-item>
+            <el-descriptions-item label="活动时间">
+              {{ actTime.text }}<span v-if="actTime.more" class="dim">（具体时段见下方场次）</span>
+            </el-descriptions-item>
             <el-descriptions-item label="活动地点">
               {{ act.location || '待定' }}
               <!-- 高德的网页版标点：手机上装了高德会问要不要打开 App，没装就在
@@ -824,6 +826,17 @@ const posSpan = ({ row, columnIndex }) => {
   if (!row.attachment) return [1, 1]
   return columnIndex === 0 ? [1, isTeacher.value ? 4 : 5] : [0, 0]
 }
+
+/** 活动时间：所有场次只有同一段时间时写到钟点；有好几段时只写日期范围，
+ * 再提一句去看场次，不然志愿者看着起止日期以为要连着来这么多天 */
+const actTime = computed(() => {
+  const spans = new Map()
+  for (const g of act.value?.shifts || []) {
+    for (const p of g.periods || []) spans.set(`${p.start_time}|${p.end_time}`, p.text)
+  }
+  if (spans.size === 1) return { text: [...spans.values()][0], more: false }
+  return { text: act.value?.time_text || '待定', more: spans.size > 1 }
+})
 
 // —— 按岗位看 ——
 const VIEW_KEY = 'yvruc_detail_view'
