@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from backend import config, scheduled
-from backend.models import Activity, Enrollment, Notification, now
+from backend.models import Activity, Enrollment, Notification, Position, now
 from conftest import mk_shift
 from conftest import POSITION_TEXT, editing, login
 
@@ -288,6 +288,34 @@ def test_超时自动解冻也按人发出改动(client, admin, db, enrolled_act
     scheduled.release_stale_edit_locks(db)
     got = _changed(db, u.id, act)
     assert len(got) == 1 and "北门→西门" in got[0].content
+
+
+def test_超时自动解冻也补位给候补(client, admin, db, enrolled_activity, take_student):
+    """编辑期间扩容、管理者忘了点发布：超时解冻后空出来的位子也要轮到候补，
+    不能干等下一次有人退选。"""
+    from backend.models import uid
+    from conftest import student_row
+    act, shift, _u = enrolled_activity
+    pos = shift.positions[0]
+    w = student_row(db, take_student())
+    enr = Enrollment(id=uid("enr"), activity_id=act.id, shift_id=shift.id,
+                     user_id=w.id, position_id=pos.id, status="waitlisted",
+                     joined_at=now())
+    db.add(enr)
+    db.commit()
+    enr_id = enr.id
+
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    db.expire_all()
+    row = db.get(Activity, act.id)
+    row.editing_since = now() - timedelta(hours=config.EDIT_LOCK_HOURS + 1)
+    # 编辑期间扩容一个名额：这一位空出来，本该轮到队首的候补
+    db.get(Position, pos.id).quota += 1
+    db.commit()
+
+    scheduled.release_stale_edit_locks(db)
+    db.expire_all()
+    assert db.get(Enrollment, enr_id).status == "pending_confirm"
 
 
 def test_不在编辑态改活动信息照样即时通知(client, admin, db, enrolled_activity):
