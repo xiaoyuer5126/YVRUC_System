@@ -11,6 +11,7 @@ from io import BytesIO
 import pytest
 from openpyxl import load_workbook
 
+from backend import hours
 from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, HoursRecord, Position,
                             Shift, User, new_checkin_token, now, uid)
@@ -270,3 +271,26 @@ def test_导出劳务页只列有劳务的人和时段(client, admin, db, mixed)
     assert rows[0][0] == u.name and rows[0][3] == pay_people[0].pay_hours() == 4.0
     # 只有上午「搬运」是劳务，下午「引导」记志愿时长，不在这页的备注里
     assert "搬运" in rows[0][4] and "引导" not in rows[0][4]
+
+
+def test_党校同学不能选劳务(client, admin, db, mixed):
+    """党校同学只记志愿时长：本人页面不给劳务入口，确认时提交劳务被拒。"""
+    act, am, pm, paid, plain, u = mixed
+    # 这个人是这场活动里以党校同学身份补招进来的
+    for enr in (db.query(Enrollment)
+                .filter(Enrollment.activity_id == act.id,
+                        Enrollment.user_id == u.id).all()):
+        enr.source = hours.PARTY_SCHOOL
+    db.commit()
+    _confirm_all(client, admin, act)
+    stu = login(client, u.student_id)
+    rec = _mine(client, stu)["records"][0]
+    # 上午岗位本来可选劳务，但党校同学不给这个入口
+    assert rec["pay_allowed"] is False
+    by_shift = {p["shift_id"]: p for p in rec["parts"]}
+    assert by_shift[am.id]["pay_ok"] is False
+    # 直接提交劳务：被拒，文案点明是党校同学的身份
+    r = _pick(client, stu, rec["id"], (am, paid, "pay"))
+    assert r.status_code == 400 and "党校" in r.json()["detail"]
+    rec = _record(db, act)
+    assert rec.pay_hours() == 0 and rec.confirmed_at is None

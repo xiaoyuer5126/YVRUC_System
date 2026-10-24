@@ -901,7 +901,7 @@ def export_hours(activity_id: str, db: OrmSession = Depends(db_session),
     """时长记录导出：姓名、学号、身份证号、时长、备注（明细拼一行）。
     选了劳务的不在其中——平台不给他们记时长。
     另附「劳务」页：本活动有劳务的人一人一行，列出劳务时长与所在时段岗位，
-    给发劳务用；党校同学也在这页里，劳务与志愿北京无关。"""
+    给发劳务用；党校同学不能选劳务，不会出现在这页。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     buf = build_hours_workbook(db, act)
@@ -1219,11 +1219,14 @@ def checkin_segments(db: OrmSession, act: Activity) -> dict[str, dict]:
     # 本人已经给哪几段选了劳务：按（场次, 岗位）认段，重算时原样带上——
     # 不然管理者每点一次「确认全部」，本人的选择就被抹回志愿时长
     # 明细一次带出来：逐条记录各取一次，查询条数就跟着人数涨了
+    # 党校同学不带：他们只记志愿时长（见 hours.pay_positions）
+    party = hours_flow.party_school_users(db, act.id)
     chose_pay = {r.user_id: {(s.shift_id, s.period_id, s.position_id)
                              for s in r.live_segments() if s.is_pay()}
                  for r in db.query(HoursRecord)
                  .options(selectinload(HoursRecord.segments))
-                 .filter(HoursRecord.activity_id == act.id).all()}
+                 .filter(HoursRecord.activity_id == act.id,
+                         HoursRecord.user_id.notin_(party or [""])).all()}
     out: dict[str, dict] = {}
     # 还能不能自己签退、没签退按哪个时刻兜底：一段查一次；时间灵活的场次
     # 一张码一轮，按（场次, 时段, 码）各查一次
@@ -1999,7 +2002,7 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
         if body.accept:
             again = "\n请重新确认时长" + (
                 "并重新选择报酬方式（志愿时长或劳务）"
-                if hours_flow.pay_positions(db, rec.live_segments()) else "")
+                if hours_flow.pay_positions(db, rec) else "")
             again += (f"，{act.appeal_deadline:%Y-%m-%d %H:%M} 前未确认默认记为志愿时长。"
                       if act.appeal_deadline else "。")
         msgcenter.send_user(
@@ -2072,7 +2075,7 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
         notified += 1
         # 有哪一段的岗位可选劳务才需要选报酬方式，别人不必看到这一句
         pay_line = ("\n请选择报酬方式志愿时长或劳务，超时未确认默认选择志愿时长。"
-                    if hours_flow.pay_positions(db, r.live_segments()) else "")
+                    if hours_flow.pay_positions(db, r) else "")
         # 点开去「我的志愿时长」而不是活动详情：要确认/要申诉的那笔账在那儿，
         # 活动详情页上看不到本人在这个活动里有多少时长
         msgcenter.send_user(
