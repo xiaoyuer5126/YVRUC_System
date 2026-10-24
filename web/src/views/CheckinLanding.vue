@@ -113,7 +113,7 @@ const stateType = computed(() => task.value?.state === 'active' ? 'success' : 'i
 async function load() {
   loading.value = true
   try {
-    task.value = await api.get(`/api/checkin/task/${route.params.token}`)
+    task.value = await api.get(`/api/checkin/task/${route.params.token}`, { silent: true })
   } catch (e) {
     // 动态码只活一分钟，登录这几步走完就过期了。只说「签到码无效」会让人
     // 对着屏幕反复刷新——直接告诉他回现场再扫一次。
