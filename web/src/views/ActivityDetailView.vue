@@ -428,7 +428,7 @@
                       已报名（岗位待分配）
                     </el-tag>
                     <el-tag v-else-if="g.my_enrollment.status === 'waitlisted'" type="warning">
-                      候补中 · 第 {{ g.my_enrollment.waitlist_position }} 位
+                      候补第 {{ g.my_enrollment.waitlist_position }} 位
                     </el-tag>
                     <template v-else>
                       <el-countdown format="HH:mm:ss" :value="deadlineTs(g)">
@@ -469,7 +469,9 @@
                       您的岗位：<b>{{ myPosition(g).name }}</b>
                       <span class="dim">{{ myPosition(g).location || act.location || '地点待定' }}</span>
                       <el-tag v-if="g.my_enrollment?.status === 'waitlisted'"
-                              size="small" type="warning" effect="plain">候补中</el-tag>
+                              size="small" type="warning" effect="plain">
+                        候补第 {{ g.my_enrollment.waitlist_position }} 位
+                      </el-tag>
                     </div>
                     <p v-if="myPosition(g).leader_name" class="mine-note">
                       <b>组长：</b>{{ myPosition(g).leader_name }}
