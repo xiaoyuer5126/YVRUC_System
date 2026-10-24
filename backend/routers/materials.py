@@ -26,6 +26,10 @@ from ..stage import ensure_not_finished
 router = APIRouter(prefix="/api", tags=["materials"])
 
 MATERIAL_DIR = config.MATERIAL_DIR
+# 这条接口管的材料只挂在岗位上（上传/加链接也只认 position）。其余 owner_type
+# 各有自己的写入方：问卷附件 application、反馈截图 feedback、领取凭证 claim_proof/
+# claim_photo、签到二维码、立项书/结项书（PROJECT_SLOTS）、模板 template。
+MATERIAL_OWNER_TYPES = frozenset({"position"})
 EXT_TYPES = {
     "pdf": "application/pdf",
     "doc": "application/msword",
@@ -123,8 +127,10 @@ def add_link(body: LinkBody, db: OrmSession = Depends(db_session),
 def delete_material(material_id: str, db: OrmSession = Depends(db_session),
                     user: User = Depends(require_manager)):
     row = db.get(Attachment, material_id)
-    # 立项书不走这里删：一格只能换不能空，否则「已上传」的前提说没就没
-    if row is None or row.owner_type in PROJECT_SLOTS:
+    # 只删学习材料：挂在岗位上的。别的 owner_type 都各有归属和接口——问卷附件
+    # 是报名者自己传的、反馈截图归提交人、领取凭证归本人、立项书/结项书一格只能
+    # 换不能空。从这条接口删会删掉别人的东西，模板类不带活动还会直接报错。
+    if row is None or row.owner_type not in MATERIAL_OWNER_TYPES:
         raise HTTPException(404, "材料不存在")
     ensure_activity_manager(db, user, row.activity_id)
     ensure_not_finished(db.get(Activity, row.activity_id))
