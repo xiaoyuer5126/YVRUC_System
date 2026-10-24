@@ -131,9 +131,65 @@ export async function withConflictConfirm(send, { title = '时间冲突', ask = 
   }
 }
 
+const WEEKDAYS = '日一二三四五六'
+
+/** 后台给的本地时间串拆成 [年, 月, 日, 时, 分, 秒]，取不到的位是 null。
+ *
+ * 串形如 "2026-10-16T14:00:00" 或 "2026-10-16 14:00"，也可能只有日期。
+ * 手工切字段，不用 `new Date(串)`——那会按浏览器的时区解释，把日期挪一天。
+ */
+function splitDT(iso) {
+  const m = String(iso).match(/(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/)
+  if (!m) return null
+  return [m[1], m[2], m[3], m[4] ?? null, m[5] ?? null, m[6] ?? null]
+}
+
+/** 「周五」。按年月日算，用 Date.UTC 取星期，不受本地时区影响。 */
+function weekdayOf(y, mo, d) {
+  return WEEKDAYS[new Date(Date.UTC(+y, +mo - 1, +d)).getUTCDay()]
+}
+
+/** 「2026-10-16（周五）」的日期部分。 */
+function dayText(y, mo, d) {
+  return `${y}-${mo}-${d}（周${weekdayOf(y, mo, d)}）`
+}
+
+/** 带时间的日期：「2026-10-16（周五）14:00」；只给日期就是「2026-10-16（周五）」。 */
 export function fmtDT(iso) {
   if (!iso) return '—'
-  return iso.replace('T', ' ').slice(5, 16)
+  const p = splitDT(iso)
+  if (!p) return '—'
+  const day = dayText(p[0], p[1], p[2])
+  return p[3] == null ? day : `${day}${p[3]}:${p[4]}`
+}
+
+/** 只要日期：「2026-10-16（周五）」。 */
+export function fmtDate(iso) {
+  if (!iso) return '—'
+  const p = splitDT(iso)
+  if (!p) return '—'
+  return dayText(p[0], p[1], p[2])
+}
+
+/** 带秒的日期时间：「2026-10-16（周五）14:00:05」。操作日志、审计日志用。 */
+export function fmtDTs(iso) {
+  if (!iso) return '—'
+  const p = splitDT(iso)
+  if (!p) return '—'
+  const day = dayText(p[0], p[1], p[2])
+  return p[3] == null ? day : `${day}${p[3]}:${p[4]}:${p[5] ?? '00'}`
+}
+
+/** 窄处用的日期时间，省掉星期但保住年份：「2026-10-16 14:00」。
+ *
+ * 手机和桌面共用的窄格子放不下「（周五）」时用它；拿不准就用 fmtDT。
+ */
+export function fmtDTShort(iso) {
+  if (!iso) return '—'
+  const p = splitDT(iso)
+  if (!p) return '—'
+  const day = `${p[0]}-${p[1]}-${p[2]}`
+  return p[3] == null ? day : `${day} ${p[3]}:${p[4]}`
 }
 
 /** 站内页面的对外网址，二维码与分享链接都用它。
