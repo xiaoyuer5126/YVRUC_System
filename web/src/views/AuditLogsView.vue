@@ -43,7 +43,7 @@
             <AuditChanges :changes="row.changes" />
           </template>
         </el-table-column>
-        <el-table-column label="时间" width="110">
+        <el-table-column label="时间" width="180">
           <template #default="{row}">{{ fmtDT(row.created_at) }}</template>
         </el-table-column>
       </el-table>
