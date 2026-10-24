@@ -264,6 +264,32 @@ def test_单人修改与删除(client, admin, db, approved, take_student):
     assert any("从补记录名单删除" in s for s in summaries)
 
 
+def test_有待处理申诉的记录不能改(client, admin, db, approved, take_student):
+    """申诉批的是改之前的那个数，中途改这条记录会把两次改判搅在一起。"""
+    a = take_student()
+    _import(client, admin, approved, f"{a} 2")
+    url = f"/api/staff/activities/{approved}"
+    client.post(f"{url}/hours/approve", headers=admin,
+                json={"appeal_deadline": (now() + timedelta(days=1)).isoformat()})
+    stu = login(client, a)
+    rec = next(x for x in client.get("/api/me/hours", headers=stu).json()["records"]
+               if x["activity_id"] == approved)
+    assert client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu, json={
+        "claimed_hours": 4, "reason": "实际服务了四个小时"}).status_code == 200
+    r = client.patch(f"{url}/record-roster/{rec['id']}", headers=admin,
+                     json={"hours": 5, "note": "顺手改"})
+    assert r.status_code == 409 and "申诉" in r.json()["detail"]
+    # 申诉处理掉之后就能改了
+    appeal = client.get(f"{url}/hours-appeals", headers=admin).json()[0]
+    assert client.post(f"/api/staff/hours-appeals/{appeal['id']}/resolve",
+                       headers=admin,
+                       json={"accept": True, "reply": "按核对结果采纳"}
+                       ).status_code == 200
+    r = client.patch(f"{url}/record-roster/{rec['id']}", headers=admin,
+                     json={"hours": 5, "note": "再核对"})
+    assert r.status_code == 200 and r.json()["hours"] == 5
+
+
 def test_普通活动不走名单导入(client, admin, open_group):
     act, _g = open_group(3)
     r = _import(client, admin, act.id, "2025001 2")
