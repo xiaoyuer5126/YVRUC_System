@@ -432,9 +432,9 @@ def test_招募文案的时间与招募范围写法():
     from backend.serializers import recruit_scope_phrase
 
     assert _cn_span(datetime(2026, 10, 18, 7, 30), datetime(2026, 10, 18, 12)) == \
-        "10月18日（周日）07:30—12:00"
+        "2026年10月18日（周日）07:30—12:00"
     assert _cn_span(datetime(2026, 10, 1, 22), datetime(2026, 10, 2, 2)) == \
-        "10月1日（周四）22:00—10月2日（周五）02:00"
+        "2026年10月1日（周四）22:00—2026年10月2日（周五）02:00"
 
     def scope(campuses=(), colleges=(), stages=()):
         return recruit_scope_phrase(SimpleNamespace(
