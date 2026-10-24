@@ -31,7 +31,7 @@
 
       <DataCards v-if="narrow" :rows="items" title-key="title" v-loading="loading"
                  :fields="[{ key: 'rec', label: '收件人' },
-                           { key: 't', label: '时间', format: fmtTime },
+                           { key: 'created_at', label: '时间', format: fmtTime },
                            { key: 'template_label', label: '类型' },
                            { key: 'activity_title', label: '活动' },
                            { key: 'read', label: '已读', format: yesNo },
@@ -57,7 +57,7 @@
             <el-tag size="small" effect="plain">{{ row.template_label }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="标题" min-width="180" show-overflow-tooltip>
+        <el-table-column label="标题" min-width="180">
           <template #default="{ row }">
             <el-tooltip :content="row.content" placement="top" :show-after="300">
               <span>{{ row.title }}</span>
