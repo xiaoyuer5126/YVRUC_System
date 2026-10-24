@@ -233,8 +233,14 @@ def update_department(dept_id: str, body: DeptBody,
         raise HTTPException(404, "部门不存在")
     changed = []
     if body.name.strip() and body.name.strip() != d.name:
-        changed.append(f"名称 {d.name}→{body.name.strip()}")
-        d.name = body.name.strip()
+        new_name = body.name.strip()
+        # 名字是部门的标识，重名之后下拉、归口、导出里都分不清是哪一个；
+        # 库里也有唯一约束，先拦在校验层，别让它冒成 500
+        if db.query(Department).filter(Department.name == new_name,
+                                       Department.id != d.id).first():
+            raise HTTPException(409, f"已经有一个部门叫「{new_name}」")
+        changed.append(f"名称 {d.name}→{new_name}")
+        d.name = new_name
     if body.note is not None and body.note.strip() != d.note:
         d.note = body.note.strip()
         changed.append("说明")
@@ -258,6 +264,12 @@ def update_department(dept_id: str, body: DeptBody,
                 raise HTTPException(404, f"学号 {sid} 不存在")
             if not who.has_role("qingxie", real=True):
                 raise HTTPException(400, f"{who.name} 不是青协身份，不能当部长")
+            # 会长团是全平台的层级，不该被一个部门的部长位顺手压下去；
+            # 之前这里是静默降级，点完「指定部长」才发现自己没了会长团权限。
+            # 要先让他当部长，请去角色管理里改层级，那是看得见的动作。
+            if who.is_council(real=True):
+                raise HTTPException(400, f"{who.name} 是会长团成员，"
+                                         "不能改任部门部长；请先在角色管理里调整其层级")
             who.department_id = d.id
             who.qingxie_post = "head"
             # 部长不再是骨干：他本人不再有归属骨干，归到他名下的成员也一并松绑
