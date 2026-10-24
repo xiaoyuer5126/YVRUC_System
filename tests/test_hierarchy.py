@@ -131,6 +131,52 @@ def test_部门成员跟着归属的骨干看同样的活动(client, db, dept_ac
     assert db.get(Activity, aid).title != "改不了"
 
 
+def test_骨干升迁后成员不再继承可见范围(client, db, admin):
+    """成员跟着的是「一位在职骨干」。骨干升进会长团，成员就没有可继承的
+    范围了；库里指着他的那条归属也要清掉，否则名单上还挂着一位早已失效的骨干。"""
+    core_user = _user(db, CORE)
+    core_id = core_user.id
+    member = _user(db, MEMBER)
+    assert member.supervisor_id == core_id
+    dept_id = core_user.department_id
+
+    # 一场与对外联络部无关、骨干也不在共管名单里的活动
+    r = client.post("/api/staff/activities", headers=admin,
+                    json={"contact_group_qr": "x",
+                          "title": f"无关活动 {uid('t')}", "organizer": "校青协",
+                          "intro": "x", "location": "世纪馆",
+                          "contacts": [{"name": "王", "phone": "13900000000"}],
+                          "reg_start": (now() - timedelta(days=1)).isoformat(),
+                          "reg_end": (now() + timedelta(days=5)).isoformat()})
+    assert r.status_code == 200, r.text
+    aid = r.json()["id"]
+
+    m = login(client, MEMBER)
+    # 骨干还在原位：成员继承的只是他管的那几场，这一场不在其中
+    assert client.get(f"/api/staff/activities/{aid}/managers",
+                      headers=m).status_code == 403
+    try:
+        r = client.put(f"/api/staff/roles/{core_id}", headers=admin,
+                       json={"roles": ["student", "qingxie"],
+                             "qingxie_post": "council"})
+        assert r.status_code == 200, r.text
+        # 升进会长团后他本人看得到全部活动；成员不能顺着这条归属跟着全看
+        assert client.get(f"/api/staff/activities/{aid}/managers",
+                          headers=m).status_code == 403
+        db.expire_all()
+        assert _user(db, MEMBER).supervisor_id is None, "失效的归属要当场清掉"
+    finally:
+        # 层级与归属是共享状态，原样复原：后面还有用例指着这对骨干/成员
+        assert client.put(f"/api/staff/roles/{core_id}", headers=admin,
+                          json={"roles": ["student", "qingxie"],
+                                "qingxie_post": "core",
+                                "department_id": dept_id}).status_code == 200
+        db.expire_all()
+        member = _user(db, MEMBER)
+        member.supervisor_id = core_id
+        db.commit()
+
+
 def test_部门成员不能导出也不能查档案(client, db, dept_activity):
     aid, _g = dept_activity
     _add_core_manager(db, aid)

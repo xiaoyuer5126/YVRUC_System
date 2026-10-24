@@ -23,10 +23,18 @@ def _dept_scoped(user: User) -> bool:
 
 
 def _supervisor(db: OrmSession, user: User) -> User | None:
-    """部门成员归属的那位骨干。没指定就没有可见范围可继承。"""
+    """部门成员归属的那位骨干。没指定就没有可见范围可继承。
+
+    归属骨干必须此刻仍是本部门的骨干：他被调走、升迁或换了部门，成员跟着
+    他继承来的可见范围就失效了——成员只跟着一位在职骨干做事。
+    """
     if user.post() != "member" or not user.supervisor_id:
         return None
-    return db.get(User, user.supervisor_id)
+    boss = db.get(User, user.supervisor_id)
+    if (boss is None or boss.post(real=True) != "core"
+            or boss.department_id != user.department_id):
+        return None
+    return boss
 
 
 def managed_activity_ids(db: OrmSession, user: User) -> list[str] | None:

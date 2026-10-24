@@ -28,6 +28,7 @@ from ..models import (Activity, ApprovalEvent, Department, DutyHandover, User,
                       iso, now, uid)
 from ..perm import ensure_activity_manager
 from ..serializers import published_hint
+from .roles import _release_members
 
 router = APIRouter(prefix="/api/staff", tags=["approvals"])
 
@@ -259,6 +260,11 @@ def update_department(dept_id: str, body: DeptBody,
                 raise HTTPException(400, f"{who.name} 不是青协身份，不能当部长")
             who.department_id = d.id
             who.qingxie_post = "head"
+            # 部长不再是骨干：他本人不再有归属骨干，归到他名下的成员也一并松绑
+            who.supervisor_id = None
+            released = _release_members(db, who)
+            if released:
+                changed.append(f"{released} 名成员的归属骨干已清空")
             changed.append(f"部长+{who.name}")
         else:
             for old in db.query(User).filter(User.department_id == d.id,
