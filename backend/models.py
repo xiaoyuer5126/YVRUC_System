@@ -1001,6 +1001,9 @@ class VbConfirm(Base):
     handled_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
     handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reply: Mapped[str] = mapped_column(String(512), default="")
+    # 完成后再次推送时管理者写的原因（必填）：外联得知道为什么已完成的活动又来一次，
+    # 是志愿北京上漏录了、还是建错了要重建
+    reason: Mapped[str] = mapped_column(String(512), default="")
     # 放太久没人确认就催外联一次，催过记下时间，只催这一次
     reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

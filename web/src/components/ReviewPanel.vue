@@ -123,6 +123,9 @@
                   title="活动已完成"
                   description="志愿北京上还没录到、或者建错了重建一个时，改好名称再推一次给外联。确认或退回都只更新记录，不影响活动状态。" />
         <VbNamesInput v-model="draftNames" />
+        <el-input v-model="repushReason" type="textarea" :rows="2" maxlength="500"
+                  show-word-limit style="margin-top:8px"
+                  placeholder="推送原因（必填，外联会看到），如：志愿北京上漏录了这场，请补录" />
         <div class="toolbar" style="margin-top:8px">
           <el-button type="primary" :loading="vbBusy" @click="repush">再次推送给外联</el-button>
         </div>
@@ -141,6 +144,7 @@
           <template #default="{ row }">
             {{ row.kind_label }}
             <div class="dim">{{ row.submitted_by }} · {{ fmtDT(row.submitted_at) }}</div>
+            <div v-if="row.reason" class="dim pre">原因：{{ row.reason }}</div>
           </template>
         </el-table-column>
         <el-table-column label="志愿北京活动名称" min-width="200">
@@ -206,6 +210,7 @@ const vbc = ref({ names: [], items: [], can_edit: false, can_resubmit: false,
                   can_repush: false, can_decide: false, edit_block: '', handler: '' })
 const draftNames = ref([])
 const vbBusy = ref(false)
+const repushReason = ref('')
 const dc = ref({ visible: false, approve: true, row: null })
 // 时长审核要附的两份盖章材料；template 是对应空白模板的格子名（盖章立项书照立项书模板填）
 const STAMPED = [{ kind: 'stamped', label: '盖章立项书', template: 'proposal' },
@@ -253,10 +258,12 @@ async function resubmit() {
 
 async function repush() {
   if (!draftNames.value.length) return ElMessage.warning('请填写志愿北京上的活动名称')
+  if (!repushReason.value.trim()) return ElMessage.warning('请填写再次推送的原因，外联会看到')
   vbBusy.value = true
   try {
     await api.post(`/api/staff/activities/${props.activityId}/vb-confirms/repush`,
-                   { names: draftNames.value })
+                   { names: draftNames.value, reason: repushReason.value })
+    repushReason.value = ''
     ElMessage.success('已再次推送，等对外联络部确认')
     load()
   } finally { vbBusy.value = false }

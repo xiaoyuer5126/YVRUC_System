@@ -311,18 +311,18 @@ def same_names(a, b) -> bool:
 
 
 def push_vb_confirm(db: OrmSession, act: Activity, actor: User | None,
-                    kind: str) -> VbConfirm:
+                    kind: str, reason: str = "") -> VbConfirm:
     """把活动当前的志愿北京名称推给对外联络部核对。不提交事务。
 
     kind=lock：时长审核通过、刚锁定；kind=resubmit：被退回后管理者改了名称重提；
-    kind=repush：活动已完成，管理者再推一次。
+    kind=repush：活动已完成，管理者再推一次，reason 是他写的原因，随通知给外联。
     """
     from .notify import notify
 
     row = VbConfirm(id=uid("vbc"), activity_id=act.id, kind=kind,
                     names=list(act.vb_names or []),
                     submitted_by=actor.id if actor else "system",
-                    submitted_at=now())
+                    submitted_at=now(), reason=reason)
     db.add(row)
     act.vb_reminded_on = None           # 重提了，「迟迟不重提」的提醒从头算
     if kind == "resubmit":
@@ -335,7 +335,8 @@ def push_vb_confirm(db: OrmSession, act: Activity, actor: User | None,
         notify(db, u, f"志愿北京待确认｜{act.title}",
                f"「{act.title}」（{act.organizer_text()}）的志愿时长已锁定" + lead
                + f"\n志愿北京活动名称：{names_text(row.names)}\n"
-               f"请到志愿北京核对后，在「活动审批」确认或退回。",
+               + (f"推送原因：{reason}\n" if reason else "")
+               + f"请到志愿北京核对后，在「活动审批」确认或退回。",
                data={"activity_id": act.id, "route": "approvals"})
     return row
 

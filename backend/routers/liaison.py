@@ -168,7 +168,7 @@ def _vbc_out(db: OrmSession, r: VbConfirm) -> dict:
             "submitted_by": _name(db, r.submitted_by),
             "submitted_at": iso(r.submitted_at),
             "handled_by": _name(db, r.handled_by), "handled_at": iso(r.handled_at),
-            "reply": r.reply}
+            "reply": r.reply, "reason": r.reason}
 
 
 def _act(db: OrmSession, activity_id: str) -> Activity:
@@ -266,14 +266,15 @@ def resubmit_vb(activity_id: str, body: VbNamesBody,
 
 
 @router.post("/activities/{activity_id}/vb-confirms/repush")
-def repush_vb(activity_id: str, body: VbNamesBody,
+def repush_vb(activity_id: str, body: VbRepushBody,
               db: OrmSession = Depends(db_session),
               user: User = Depends(require_manager)):
     """活动已完成之后，管理者改好名称再推一次给外联。
 
     志愿北京是时长锁定之后的附加步骤，这一步只动名称和记录，活动保持已完成：
     外联确认或退回都只落在那条记录上。没处理的旧待确认一并作废，免得外联照着
-    旧名称确认。
+    旧名称确认。原因必填，随通知给外联：已完成的活动又推过来，外联得知道
+    是志愿北京上漏录了、还是建错了要重建。
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
@@ -283,19 +284,29 @@ def repush_vb(activity_id: str, body: VbNamesBody,
         names = liaison.clean_vb_names(body.names)
     except ValueError as e:
         raise HTTPException(400, str(e)) from None
+    reason = body.reason.strip()
+    if not reason:
+        raise HTTPException(400, "请填写再次推送的原因，供对外联络部查看")
+    if len(reason) > 500:
+        raise HTTPException(400, "推送原因不能超过 500 字")
     before = liaison.names_text(act.vb_names)
     dropped = liaison.void_pending_vb_confirms(db, act)
     act.vb_names = names
-    row = liaison.push_vb_confirm(db, act, user, "repush")
+    row = liaison.push_vb_confirm(db, act, user, "repush", reason)
     audit_log(db, actor=user, action="vb_confirm", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=(f"活动已完成，再次推送志愿北京活动名称给对外联络部："
                        f"{liaison.names_text(names)}"
                        + (f"（原为 {before}）" if before != liaison.names_text(names)
                           else "（名称未改）")
-                       + (f"；作废 {dropped} 条待确认" if dropped else "")))
+                       + (f"；作废 {dropped} 条待确认" if dropped else "")
+                       + f"；原因：{reason}"))
     db.commit()
     return _vbc_out(db, row)
+
+
+class VbRepushBody(VbNamesBody):
+    reason: str = ""
 
 
 class VbDecideBody(BaseModel):
