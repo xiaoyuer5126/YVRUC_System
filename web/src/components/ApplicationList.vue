@@ -99,7 +99,6 @@
         </template>
       </el-table-column>
     </el-table>
-    <el-empty v-if="!apps.length && !loading" description="还没有人申请" />
 
     <!-- 逐人结果：成功的写录到哪儿，失败的写原因；时间冲突的可以确认后仍录取 -->
     <el-dialog v-model="result.visible" title="处理结果" width="600">
