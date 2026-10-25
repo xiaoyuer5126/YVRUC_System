@@ -101,8 +101,18 @@
             <template v-if="row.shift.location"> · {{ row.shift.location }}</template>
             <el-tag v-if="row.excused" size="small" type="info" effect="plain">已请假</el-tag>
           </div>
+          <!-- 分段签到的场次：逐段签到状态一并列出，别只给手机端看（C8） -->
+          <div v-if="(row.shift.periods || []).length > 1 && row.status === 'enrolled'"
+               class="dim">
+            <el-tag v-for="p in row.shift.periods" :key="p.id" size="small" effect="plain"
+                    :type="p.checked_out ? 'success' : p.checked_in ? 'warning' : 'info'"
+                    style="margin:4px 4px 0 0">
+              {{ p.text }} · {{ p.checked_out ? '已签退' : p.checked_in ? '已签到' : '未签到' }}
+            </el-tag>
+          </div>
           <div v-if="row.position">
             <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
+            <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
             <!-- 时段跟场次那行重复：这里只留岗位地点（手机端也是这么显示的） -->
             <span v-if="row.position.location" class="dim"> {{ row.position.location }}</span>
           </div>

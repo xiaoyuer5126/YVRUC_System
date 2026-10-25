@@ -327,6 +327,13 @@
               <p v-if="myPosition(g).training_note" class="mine-note">
                 <b>培训内容：</b>{{ myPosition(g).training_note }}
               </p>
+              <!-- 服务任务与岗位要求：宽屏的「您的岗位」里一直有，窄屏漏了（C8） -->
+              <p v-if="myPosition(g).service_task" class="mine-note">
+                <b>服务任务：</b>{{ myPosition(g).service_task }}
+              </p>
+              <p v-if="myPosition(g).position_requirement" class="mine-note">
+                <b>岗位要求：</b>{{ myPosition(g).position_requirement }}
+              </p>
               <p v-if="myPosition(g).attire_text" class="mine-note">
                 <b>志愿服装：</b>{{ myPosition(g).attire_text }}
               </p>
