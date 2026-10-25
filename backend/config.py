@@ -144,6 +144,9 @@ TIANDITU_TK_SERVER = os.environ.get("YVRUC_TIANDITU_TK_SERVER", "").strip()
 # 不如自己先停。
 TIANDITU_DAILY_LIMIT = int(os.environ.get("YVRUC_TIANDITU_DAILY_LIMIT", "").strip() or "10000")
 TIANDITU_WARN_AT = TIANDITU_DAILY_LIMIT * 9 // 10
+# 每人每天最多打多少次上游：地图瓦片对所有管理者共用一把 tk，全局额度是
+# TIANDITU_DAILY_LIMIT；限住单个人，一个管理者刷屏不会把别人的额度一起耗光。
+TILE_USER_DAILY = int(os.environ.get("YVRUC_TILE_USER_DAILY", "").strip() or "1500")
 TILE_CACHE_DIR = DATA_DIR / "tiles"
 TILE_CACHE_DAYS = 30
 
