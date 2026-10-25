@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
@@ -23,10 +24,13 @@ from ..deps import create_session, current_token, current_user
 from ..integrations import sso
 from ..liaison import session_user
 from ..locks import (clear_failures, failure_count, issue_ticket,
-                     note_failure)
+                     note_failure, note_rate, rate_count)
 from ..models import ROLE_LABELS, Session, User, ViolationRecord, uid
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# 发起登录时下发、回调时核对的 nonce cookie：见 sso_login_url 与 sso_callback
+SSO_NONCE_COOKIE = "yvruc_sso_nonce"
 
 # 只数口令错误：一栋楼共用一个出口 IP，按登录次数限流会误伤正常用户
 MAX_FAILED_ATTEMPTS = 10
@@ -52,17 +56,33 @@ def sso_mode():
 
 
 @router.get("/sso-login-url")
-def sso_login_url(next: str = ""):
+def sso_login_url(request: Request, response: Response, next: str = ""):
     """取授权跳转地址。
 
     在**点击时**才生成：state 一次一用且有有效期，页面一打开就生成的话，
     用户看一会儿再点就已经过期了。顺带把「登录后回哪去」放进 state——
     从二维码落地页被弹到登录页的人（CheckinLanding.vue），登录完该回到
     原来那个页面，而不是活动广场。
+
+    这个口子不需要登录，每调一次就往 Redis 写一个 state，所以先按客户端 IP
+    限流、并挡住超长的 next：不然脚本能把 state 灌满 Redis。限流用「先占后
+    判」——先自增再比，两个请求同时进来不会双双看到「还没到上限」。
     """
+    if len(next) > 512:
+        raise HTTPException(400, "登录后去向地址过长")
+    ip = request.client.host if request.client else "unknown"
+    key = f"sso-login-url:{ip}"
+    note_rate(key, 60)
+    if rate_count(key) > config.SSO_LOGIN_URL_PER_MINUTE:
+        raise HTTPException(429, "操作过于频繁，请稍后再试")
     if sso.mode() == "mock":
         raise HTTPException(409, "统一身份认证尚未接通")
-    return {"login_url": sso.login_url(next)}
+    login_url, nonce = sso.login_url(next)
+    response.set_cookie(SSO_NONCE_COOKIE, nonce,  # noqa: S105
+                        max_age=config.SSO_STATE_SECONDS, path="/api/auth",
+                        httponly=True, samesite="lax",
+                        secure=request.url.scheme == "https")
+    return {"login_url": login_url}
 
 
 class DemoLoginBody(BaseModel):
@@ -131,10 +151,13 @@ def sso_callback(body: SsoCallbackBody, request: Request,
     oplog.mark_login(request)
     if sso.mode() == "mock":
         raise HTTPException(409, "统一身份认证尚未接通")
+    # 回调必须带上发起登录时写下的 nonce cookie，否则这次跳转不是本浏览器
+    # 发起的（登录 CSRF），也可能是重放别人的回调地址
+    nonce = request.cookies.get(SSO_NONCE_COOKIE, "")
     try:
-        info = sso.handle_callback(body.code, body.state)
+        info = sso.handle_callback(body.code, body.state, nonce)
     except PermissionError as exc:
-        # state 核销不掉：伪造、已用过或过期，这条回调不该被信任
+        # state 核销不掉或 nonce 对不上：伪造、已用过或过期，这条回调不该被信任
         raise HTTPException(400, str(exc)) from exc
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(502, f"统一身份认证校验失败：{exc}") from exc
@@ -151,8 +174,11 @@ def sso_callback(body: SsoCallbackBody, request: Request,
         _sync_from_school(db, user, info)
     _grant_bootstrap_admin(db, user)
     oplog.mark_login(request, user=user)
-    return {"token": create_session(db, user), "user": session_user(db, user),
-            "mode": sso.mode(), "next": info.get("next") or ""}
+    resp = JSONResponse({"token": create_session(db, user),
+                         "user": session_user(db, user),
+                         "mode": sso.mode(), "next": info.get("next") or ""})
+    resp.delete_cookie(SSO_NONCE_COOKIE, path="/api/auth")  # noqa: S105
+    return resp
 
 
 # 学校是这几项的权威来源：升学年、转专业、改名都会在下次登录时同步过来。

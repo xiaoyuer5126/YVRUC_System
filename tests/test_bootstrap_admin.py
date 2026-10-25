@@ -50,9 +50,9 @@ def sso_login(client, monkeypatch):
 
     def _login(sid: str) -> dict:
         monkeypatch.setattr(sso, "handle_callback",
-                            lambda code, state: {"student_id": sid,
-                                                 "name": "测试同学",
-                                                 "user_type": "student"})
+                            lambda code, state, nonce: {"student_id": sid,
+                                                        "name": "测试同学",
+                                                        "user_type": "student"})
         r = client.post("/api/auth/sso-callback",
                         json={"code": "c", "state": "s"})
         assert r.status_code == 200, r.text

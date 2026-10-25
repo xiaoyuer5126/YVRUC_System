@@ -44,10 +44,10 @@ def _drop_users(*sids: str) -> None:
 # —— state ——
 
 def test_state_一次一用():
-    state = issue_sso_state("/my", 60)
-    assert redeem_sso_state(state) == "/my"
+    state, nonce = issue_sso_state("/my", 60)
+    assert redeem_sso_state(state, nonce) == ("/my", True)
     # 用过就没了：重放同一条回调不该再换出一个会话
-    assert redeem_sso_state(state) is None
+    assert redeem_sso_state(state, nonce) is None
 
 
 def test_没指定去向的_state_是合法的():
@@ -55,14 +55,20 @@ def test_没指定去向的_state_是合法的():
 
     两者混为一谈的话，从活动广场直接点登录的人会被当成伪造的回调拒掉。
     """
-    state = issue_sso_state("", 60)
-    assert redeem_sso_state(state) == ""
-    assert redeem_sso_state(state) is None
+    state, nonce = issue_sso_state("", 60)
+    assert redeem_sso_state(state, nonce) == ("", True)
+    assert redeem_sso_state(state, nonce) is None
 
 
 def test_伪造的_state_核销不掉():
-    assert redeem_sso_state("我自己编的") is None
-    assert redeem_sso_state("") is None
+    assert redeem_sso_state("我自己编的", "n") is None
+    assert redeem_sso_state("", "n") is None
+
+
+def test_nonce_对不上就核销失败():
+    """state 对、nonce 不对：不是发起登录的那个浏览器，不能认。"""
+    state, nonce = issue_sso_state("/my", 60)
+    assert redeem_sso_state(state, nonce + "x") == ("/my", False)
 
 
 # —— 从学校返回里取字段 ——
@@ -248,12 +254,15 @@ def test_未接通时回调直接拒绝(client):
 
 def test_回调建号并开会话(client, monkeypatch):
     monkeypatch.setattr(sso, "mode", lambda: "oauth2")
-    monkeypatch.setattr(sso, "handle_callback",
-                        lambda code, state: {"student_id": TEST_SID,
-                                             "name": "测试同学", "next": "/my"})
+    # state 与 nonce 成对生成，回调时要带上同一个 nonce 的 cookie（登录 CSRF 防护）
+    state, nonce = issue_sso_state("/my", 60)
+    client.cookies.set("yvruc_sso_nonce", nonce)  # noqa: S105
+    monkeypatch.setattr(sso, "_fetch_token", lambda code: "tok")
+    monkeypatch.setattr(sso, "_fetch_profile",
+                        lambda token: {"loginName": TEST_SID, "name": "测试同学"})
     try:
         r = client.post("/api/auth/sso-callback",
-                        json={"code": "c", "state": "s"})
+                        json={"code": "c", "state": state})
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["next"] == "/my"
@@ -270,26 +279,44 @@ def test_回调建号并开会话(client, monkeypatch):
 def test_state_无效时拒绝且不换令牌(client, monkeypatch):
     """伪造的回调不该拿 code 去换令牌，也不该建出任何档案。"""
     monkeypatch.setattr(sso, "mode", lambda: "oauth2")
+    fetched = {"n": 0}
 
-    def reject(code, state):
-        raise PermissionError("登录已过期或来源不可信，请回到首页重新登录")
+    def fetch(code):
+        fetched["n"] += 1
+        return "tok"
 
-    monkeypatch.setattr(sso, "handle_callback", reject)
+    monkeypatch.setattr(sso, "_fetch_token", fetch)
     r = client.post("/api/auth/sso-callback", json={"code": "c", "state": "bad"})
     assert r.status_code == 400
     assert "重新登录" in r.json()["detail"]
+    assert fetched["n"] == 0            # 没拿 code 去换令牌
+    assert db_has(TEST_SID) is False
+
+
+def test_回调没带_nonce_cookie_就拒绝(client, monkeypatch):
+    """state 是我们发的，但浏览器没带 nonce cookie：不是发起登录的那台，
+    可能是别人把回调地址塞过来的（登录 CSRF）。"""
+    monkeypatch.setattr(sso, "mode", lambda: "oauth2")
+    state, _nonce = issue_sso_state("/my", 60)
+    client.cookies.clear()              # 别的浏览器：没有 nonce cookie
+    r = client.post("/api/auth/sso-callback",
+                    json={"code": "c", "state": state})
+    assert r.status_code == 400
     assert db_has(TEST_SID) is False
 
 
 def test_取不到用户时是_502_不是_500(client, monkeypatch):
     """上游失败要如实报成上游的问题，别让人以为是平台崩了。"""
     monkeypatch.setattr(sso, "mode", lambda: "oauth2")
+    state, nonce = issue_sso_state("/my", 60)
+    client.cookies.set("yvruc_sso_nonce", nonce)  # noqa: S105
 
-    def broken(code, state):
+    def broken(code):
         raise RuntimeError("未换到 access_token")
 
-    monkeypatch.setattr(sso, "handle_callback", broken)
-    r = client.post("/api/auth/sso-callback", json={"code": "c", "state": "s"})
+    monkeypatch.setattr(sso, "_fetch_token", broken)
+    r = client.post("/api/auth/sso-callback",
+                    json={"code": "c", "state": state})
     assert r.status_code == 502
 
 
@@ -313,3 +340,24 @@ def test_sso_mode_不回跳转地址(client):
     body = client.get("/api/auth/sso-mode").json()
     assert "login_url" not in body
     assert body["mode"] in {"demo", "unavailable", "oauth2"}
+
+
+def test_登录去向地址过长就400(client):
+    """这个接口不需要登录，超长的 next 会被塞进 state：先挡在门口。"""
+    assert client.get("/api/auth/sso-login-url",
+                      params={"next": "/" + "a" * 600}).status_code == 400
+
+
+def test_取跳转地址按_ip_限流(client, monkeypatch):
+    """每调一次就往 Redis 写一个 state，按客户端 IP 限流，免得被脚本灌满。
+
+    限流在校验之后、mock 判断之前，所以演示模式下也能验到——真正是否 429
+    只看计数。先清掉本 IP 的计数，免得别的用例写过的次数把这里的判断带偏。
+    """
+    from backend import config, locks
+    monkeypatch.setattr(config, "SSO_LOGIN_URL_PER_MINUTE", 1)
+    key = "yvruc:rate:sso-login-url:testclient"
+    locks._client.delete(key)
+    assert client.get("/api/auth/sso-login-url").status_code == 409   # 第 1 次：没超
+    assert client.get("/api/auth/sso-login-url").status_code == 429   # 第 2 次：超了
+    locks._client.delete(key)

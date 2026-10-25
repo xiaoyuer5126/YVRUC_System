@@ -35,8 +35,12 @@ def upstream(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "TILE_CACHE_DIR", tmp_path / "tiles")
     monkeypatch.setattr(config, "TIANDITU_TK_SERVER", "server-tk")
     locks._client.delete(f"yvruc:tiles:{now().date().isoformat()}")
+    for k in locks._client.scan_iter("yvruc:rate:tile-user:*"):
+        locks._client.delete(k)
     yield state
     locks._client.delete(f"yvruc:tiles:{now().date().isoformat()}")
+    for k in locks._client.scan_iter("yvruc:rate:tile-user:*"):
+        locks._client.delete(k)
 
 
 def _token(client, headers) -> str:
@@ -69,15 +73,28 @@ def test_同一小时领到的令牌一样(client, admin, upstream):
 
 def test_没令牌或令牌不对一律401(client, admin, upstream):
     token = _token(client, admin)
-    exp, _, sig = token.partition(".")
-    for t in ("", "garbage", f"{exp}.{'0' * 32}", f"{int(exp) + 3600}.{sig}"):
+    exp, uid, sig = token.split(".")
+    for t in ("", "garbage", f"{exp}.{uid}.{'0' * 32}",
+              f"{int(exp) + 3600}.{uid}.{sig}",     # 改过期时间
+              f"{exp}.other.{sig}",                 # 改 user_id
+              f"{exp}.{sig}"):                      # 少了 user_id
         r = client.get(TILE, params={"t": t})
         assert r.status_code == 401, t
     assert upstream["calls"] == []
 
 
+def test_换了别人id的令牌401(client, admin, upstream):
+    """user_id 也在签名覆盖范围内：把 user_id 换成别人的，签名就对不上。"""
+    token = _token(client, admin)
+    exp, uid, sig = token.split(".")
+    assert geo.verify_token(token) == uid
+    assert geo.verify_token(f"{exp}.{uid}x.{sig}") is None
+    assert client.get(TILE, params={"t": f"{exp}.{uid}x.{sig}"}).status_code == 401
+    assert upstream["calls"] == []
+
+
 def test_过期的令牌401(client, upstream):
-    token, exp = geo.issue_token(time.time() - 8 * 3600)
+    token, exp = geo.issue_token("u_test", time.time() - 8 * 3600)
     assert exp < time.time()
     assert client.get(TILE, params={"t": token}).status_code == 401
 
@@ -250,6 +267,19 @@ def test_超额直接503不打上游(client, admin, upstream, monkeypatch):
     assert r.status_code == 503
     assert len(upstream["calls"]) == 2
     assert _today() == 2
+    # 已经缓存的照样能看
+    assert client.get("/api/geo/tiles/vec/15/1/1", params={"t": t}).status_code == 200
+
+
+def test_每人每天的取图上限_超了429不打上游(client, admin, upstream, monkeypatch):
+    """一个管理者不能把所有人共用的那把 tk 额度刷光。"""
+    monkeypatch.setattr(config, "TILE_USER_DAILY", 1)
+    t = _token(client, admin)
+    assert client.get("/api/geo/tiles/vec/15/1/1", params={"t": t}).status_code == 200
+    r = client.get("/api/geo/tiles/vec/15/1/2", params={"t": t})
+    assert r.status_code == 429
+    assert len(upstream["calls"]) == 1
+    assert _today() == 1
     # 已经缓存的照样能看
     assert client.get("/api/geo/tiles/vec/15/1/1", params={"t": t}).status_code == 200
 

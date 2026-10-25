@@ -64,6 +64,18 @@ def test_频率限制(client, take_student):
     assert len(client.get("/api/feedback/mine", headers=me).json()) == config.FEEDBACK_PER_HOUR
 
 
+def test_限频先占后判(client, take_student, monkeypatch):
+    """先自增再比：上限 1 时第 2 条进来计数已经是 2，直接 429。
+
+    先判后占的话两个请求会双双看到「还没到上限」，一起写进去。
+    """
+    monkeypatch.setattr(config, "FEEDBACK_PER_HOUR", 1)
+    me = login(client, take_student())
+    assert _submit(client, me, "第一条").status_code == 200
+    assert _submit(client, me, "第二条").status_code == 429
+    assert len(client.get("/api/feedback/mine", headers=me).json()) == 1
+
+
 def test_非管理员看不到全部反馈(client, take_student, admin):
     me = login(client, take_student())
     fid = _submit(client, me).json()["id"]

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import json
 import logging
 import os
 import secrets
@@ -362,22 +363,41 @@ def hold_sweeper_lease(token: str, ttl: int = SWEEPER_LEASE_SECONDS) -> bool:
     return result != 0
 
 
-def issue_sso_state(next_url: str, ttl: int) -> str:
+def issue_sso_state(next_url: str, ttl: int) -> tuple[str, str]:
+    """生成 state，返回 (state, nonce)。
+
+    nonce 随 state 一起存：回调时要求浏览器带回来的 cookie 与它对得上。
+    只认 state 的话，别人拿到一个回调地址就能把受害者的浏览器跳进来、
+    以攻击者的身份建会话（登录 CSRF）；nonce 只写进发起登录的那个浏览器，
+    别人的浏览器没有，回调就对不上。
+    """
     state = secrets.token_urlsafe(24)
-    _client.setex(f"yvruc:sso:{state}", ttl, next_url or "")
-    return state
+    nonce = secrets.token_urlsafe(16)
+    _client.setex(f"yvruc:sso:{state}", ttl, json.dumps([next_url or "", nonce]))
+    return state, nonce
 
 
-def redeem_sso_state(state: str) -> str | None:
-    """核销 state，返回当初想去的页面。
+def redeem_sso_state(state: str, nonce: str) -> tuple[str, bool] | None:
+    """核销 state，返回 (当初想去的页面, nonce 是否匹配)。
 
-    **None 表示这个 state 无效**（伪造、已用过或过期）；空串是合法结果，
-    表示「没有指定去向」。调用方必须用 `is None` 判断，不能用真假值——
-    两者混为一谈的话，一个空 next 就会被当成伪造的回调拒掉。
+    **None 表示这个 state 无效**（伪造、已用过或过期）；此时调用方无从判断
+    nonce，该直接拒。nonce 不匹配时 state 照样核销掉，一次一用不受影响。
+    空串是合法的去向，表示「没有指定去向」——调用方必须用 `is None` 判断，
+    不能用真假值，否则一个空 next 就会被当成伪造的回调拒掉。
     """
     if not state:
         return None
-    return _client.getdel(f"yvruc:sso:{state}")
+    try:
+        raw = _client.getdel(f"yvruc:sso:{state}")
+    except redis.RedisError:
+        return None
+    if raw is None:
+        return None
+    try:
+        next_url, saved_nonce = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    return next_url, secrets.compare_digest(str(saved_nonce), nonce or "")
 
 
 # —— 动态签到码 ——
