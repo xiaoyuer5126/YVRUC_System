@@ -26,6 +26,12 @@ def _prepare(user: User, text: str, files: list[UploadFile],
     """
     if not ai.enabled():
         raise HTTPException(409, "智能起草还没有启用，请联系管理员")
+    # 先占后判：先自增再比，两个请求同时进来不会双双看到「还没到上限」。
+    # 放在解析附件之前——附件转文字要读图、花时间，限流拦下来的请求不该先做这些
+    key = f"ai:{user.id}"
+    locks.note_rate(key, 3600)
+    if locks.rate_count(key) > config.AI_HOURLY_LIMIT:
+        raise HTTPException(429, "这一小时用得有点多了，过一会儿再试")
     ex = ai_files.extract(files)
     full = "\n\n".join(x for x in [text.strip(), *ex.texts] if x)
     if len(full) < min_len and not ex.images:
@@ -33,10 +39,6 @@ def _prepare(user: User, text: str, files: list[UploadFile],
     if len(full) > config.AI_INPUT_MAX:
         raise HTTPException(400, f"原文太长了（{len(full)} 字），请删到 "
                                  f"{config.AI_INPUT_MAX} 字以内，或者少传几个文件")
-    key = f"ai:{user.id}"
-    if locks.rate_count(key) >= config.AI_HOURLY_LIMIT:
-        raise HTTPException(429, "这一小时用得有点多了，过一会儿再试")
-    locks.note_rate(key, 3600)
     return full, ex
 
 

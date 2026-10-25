@@ -75,8 +75,11 @@ async def submit_feedback(content: str = Form(""),
         raise HTTPException(400, f"反馈内容不能超过 {config.FEEDBACK_MAX_CHARS} 字")
     # 空文件名的是表单里没选文件时浏览器带上的空占位
     files = [f for f in files if f.filename]
+    # 先占后判：先自增再比，两个请求同时交进来不会双双看到「还没到上限」。
+    # 放在读截图之前——被限流拦下的请求不该先把图读一遍
     rate_key = f"feedback:{user.id}"
-    if locks.rate_count(rate_key) >= config.FEEDBACK_PER_HOUR:
+    locks.note_rate(rate_key, RATE_WINDOW_SECONDS)
+    if locks.rate_count(rate_key) > config.FEEDBACK_PER_HOUR:
         raise HTTPException(429, f"每小时最多提交 {config.FEEDBACK_PER_HOUR} 条反馈，"
                                  f"请稍后再试")
 
@@ -93,7 +96,6 @@ async def submit_feedback(content: str = Form(""),
               target_id=fb.id, target_label=text[:40],
               summary=f"提交意见反馈（{len(text)} 字，截图 {len(images)} 张）")
     db.commit()
-    locks.note_rate(rate_key, RATE_WINDOW_SECONDS)
     # 提交之后的推送是同步外呼（一条最多等 8 秒），放到线程池里做：
     # 这是 async 处理函数，直接调会把整个事件循环卡住，同一进程的请求全跟着等
     await run_in_threadpool(_notify_admins, db, fb, user)

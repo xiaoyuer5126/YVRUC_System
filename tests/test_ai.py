@@ -9,7 +9,7 @@ import json
 import httpx
 import pytest
 
-from backend import ai, config, locks
+from backend import ai, ai_files, config, locks
 from backend.models import Activity
 from conftest import POSITION_TEXT, login, make_draft
 
@@ -287,10 +287,40 @@ def test_原文长短与限频(client, admin, model, monkeypatch):
     r = client.post("/api/staff/ai/activity-draft", headers=admin,
                     data={"text": "长" * (config.AI_INPUT_MAX + 1)})
     assert r.status_code == 400 and "太长" in r.json()["detail"]
-    monkeypatch.setattr(locks, "rate_count", lambda key: config.AI_HOURLY_LIMIT)
+    monkeypatch.setattr(locks, "rate_count", lambda key: config.AI_HOURLY_LIMIT + 1)
     r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT})
     assert r.status_code == 429
     assert not calls                     # 都在打到模型之前拦下
+
+
+def test_限频先占后判_超了不再解析附件(client, admin, model, monkeypatch):
+    """先自增再比：第 N+1 次进来时计数已经是上限+1，直接 429。
+
+    限频要放在解析附件之前——附件转文字要读图、花时间，被拦下的请求不该先做
+    这些。
+    """
+    _calls, replies = model
+    monkeypatch.setattr(config, "AI_HOURLY_LIMIT", 1)
+    counter = {"n": 0}
+
+    def note(key, window):
+        counter["n"] += 1
+
+    monkeypatch.setattr(locks, "note_rate", note)
+    monkeypatch.setattr(locks, "rate_count", lambda key: counter["n"])
+    extracted = {"n": 0}
+
+    def extract(files):
+        extracted["n"] += 1
+        return ai_files.Extracted()
+
+    monkeypatch.setattr(ai_files, "extract", extract)
+    replies.append((200, json.dumps({"title": "第一次"}, ensure_ascii=False)))
+    assert client.post("/api/staff/ai/activity-draft", headers=admin,
+                       data={"text": TEXT}).status_code == 200
+    r = client.post("/api/staff/ai/activity-draft", headers=admin, data={"text": TEXT})
+    assert r.status_code == 429
+    assert extracted["n"] == 1           # 第二次被拦下，没再解析附件
 
 
 @pytest.mark.parametrize("status, content, word", [
