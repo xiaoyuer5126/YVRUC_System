@@ -40,7 +40,18 @@
           <template #reference><el-button plain>撤下值班</el-button></template>
         </el-popconfirm>
       </div>
-      <el-table v-if="d.showHistory" :data="d.history" size="small" style="margin-top:8px">
+      <DataCards v-if="d.showHistory && narrow" :rows="d.history" title-key="actor"
+                 row-key="created_at" style="margin-top:8px" empty="还没有交接记录"
+                 :fields="[{ key: 'created_at', label: '时间', format: fmtDT },
+                           { key: 'from', label: '交接' },
+                           { key: 'actor', label: '操作人' },
+                           { key: 'note', label: '备注' }]">
+        <template #field-from="{ row }">
+          {{ row.from || '无人' }} → {{ row.to || '无人值班' }}
+        </template>
+      </DataCards>
+      <el-table v-else-if="d.showHistory" :data="d.history" size="small"
+                style="margin-top:8px">
         <el-table-column label="时间" width="180">
           <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
         </el-table-column>
@@ -217,7 +228,40 @@
         启用值班的部门由骨干轮流值班收审批通知；需交立项书/结项书的部门，归口它的活动按对外活动走；
         志愿北京对接部门只有一个，负责志愿北京外联确认、校外时长补登和立项书结项书模板。
       </el-alert>
-      <el-table :data="depts" size="small">
+      <DataCards v-if="narrow" :rows="depts" title-key="name" empty="还没有部门"
+                 :fields="[{ key: 'note', label: '说明' },
+                           { key: 'head_name', label: '部长' },
+                           { key: 'duty_enabled', label: '启用值班' },
+                           { key: 'external', label: '立项/结项书' },
+                           { key: 'vb_liaison', label: '志愿北京对接' }]">
+        <template #field-head_name="{ row }">
+          <span v-if="row.head_name">{{ row.head_name }}</span>
+          <el-tag v-else size="small" type="warning" effect="plain">未指定</el-tag>
+        </template>
+        <template #field-duty_enabled="{ row }">
+          <el-switch size="small" :model-value="row.duty_enabled"
+                     :loading="savingDept === row.id"
+                     @change="v => toggleDuty(row, v)" />
+        </template>
+        <template #field-external="{ row }">
+          <el-switch size="small" :model-value="row.external"
+                     :loading="savingDept === row.id"
+                     @change="v => setExternal(row, v)" />
+        </template>
+        <template #field-vb_liaison="{ row }">
+          <el-tag v-if="row.vb_liaison" size="small" type="success" effect="plain">
+            对接部门
+          </el-tag>
+          <el-button v-else size="small" link type="primary"
+                     :loading="savingDept === row.id"
+                     @click="setLiaison(row)">设为对接</el-button>
+        </template>
+        <template #actions="{ row }">
+          <el-button size="small" link type="primary" @click="openDept(row)">编辑</el-button>
+          <el-button size="small" link type="danger" @click="removeDept(row)">删除</el-button>
+        </template>
+      </DataCards>
+      <el-table v-else :data="depts" size="small">
         <el-table-column prop="name" label="部门" min-width="140" />
         <el-table-column prop="note" label="说明" min-width="200" />
         <el-table-column label="部长" width="140">
@@ -353,6 +397,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
 import ApprovalCommentDialog from '../components/ApprovalCommentDialog.vue'
+import DataCards from '../components/DataCards.vue'
 import HoursClaimQueue from '../components/HoursClaimQueue.vue'
 import ProjectFileSlot from '../components/ProjectFileSlot.vue'
 import { closingApproved, closingRejected, projectApproved, projectRejected, vbConfirmed }
