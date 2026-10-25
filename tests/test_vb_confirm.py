@@ -398,8 +398,9 @@ def test_时长审批_通过意见选填_驳回无意见400(client, admin, db, l
     assert _decide_hours(client, admin, act, approve=True).status_code == 200
     items = client.get(f"/api/staff/activities/{act.id}/hours-requests",
                        headers=admin).json()["items"]
+    # 提交与审批都是同一位管理员：两条都标「本人审批」
     assert [(x["status"], x["reply"]) for x in items] == \
-        [("approved", ""), ("rejected", "两人时长对不上")]
+        [("approved", "【本人审批】"), ("rejected", "【本人审批】两人时长对不上")]
 
 
 def test_活动立项_通过意见随通知发出_驳回无意见400(client, admin, db, liaison):

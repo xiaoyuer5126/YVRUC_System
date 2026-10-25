@@ -184,6 +184,28 @@ def test_理由太短会被挡住(client, admin, db, served):
     assert r.status_code == 400
 
 
+def test_NaN_时长挡在校验层(client, admin, db, served):
+    """NaN 跟谁比都是假，混进时长就会落库、之后每个接口都 500。"""
+    act, _g, u = served
+    _confirm(client, admin, act)
+    stu = login(client, u.student_id)
+    rec = _record(client, stu)
+
+    r = client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu,
+                    json={"claimed_hours": "NaN", "reason": "随手填的"})
+    assert r.status_code == 422
+
+    # 申诉本身合法时，采纳那一步给的 NaN 也要挡
+    client.post(f"/api/me/hours/{rec['id']}/appeal", headers=stu,
+                json={"claimed_hours": 3, "reason": "忘记签退了"})
+    a = client.get(f"/api/staff/activities/{act.id}/hours-appeals",
+                   headers=admin).json()[0]
+    r = client.post(f"/api/staff/hours-appeals/{a['id']}/resolve", headers=admin,
+                    json={"accept": True, "hours": "NaN", "reply": "改判"})
+    assert r.status_code == 422
+    assert _record(client, stu)["hours"] == 4.0     # 没被写坏
+
+
 def test_不能申诉别人的时长(client, admin, db, served, take_student):
     act, _g, _u = served
     _confirm(client, admin, act)
@@ -233,6 +255,32 @@ def test_核准前看不到也申诉不了(client, admin, db, served):
     assert (db.query(Notification)
             .filter(Notification.user_id == u.id,
                     Notification.title.like("请确认志愿时长%")).count() == 1)
+
+
+def test_活动没结束不能核准时长(client, admin, db, open_group):
+    """报名中的活动还没有时长账，核准不能把它直接锁成已完成。"""
+    act, _g = open_group(5)
+    db.expire_all()
+    assert db.get(Activity, act.id).status == "published"
+    r = client.post(f"/api/staff/activities/{act.id}/hours/approve",
+                    headers=admin, json={})
+    assert r.status_code == 409 and "活动结束后" in r.json()["detail"]
+    db.expire_all()
+    assert db.get(Activity, act.id).status == "published"
+
+
+def test_部分确认不能给没报名的人记时长(client, admin, db, served,
+                                        take_student):
+    """点名确认只认这场活动的报名者，没报名的学号不能凭空多出一笔账。"""
+    act, _g, _u = served
+    other = take_student()
+    r = client.post(f"/api/staff/activities/{act.id}/hours/confirm",
+                    headers=admin,
+                    json={"items": [{"student_id": other, "hours": 1}]})
+    assert r.status_code == 400 and "没有报名" in r.json()["detail"]
+    db.expire_all()
+    assert (db.query(HoursRecord)
+            .filter(HoursRecord.activity_id == act.id).count()) == 0
 
 
 def test_到点无人申诉自动提交审批_通过后才锁定(client, admin, db, served):
@@ -318,6 +366,48 @@ def test_锁定审批被驳回后解冻重改(client, admin, db, served):
     _approve_lock(client, admin, act)
     db.expire_all()
     assert db.get(Activity, act.id).status == "vb_pending"
+
+
+def test_同一条时长申请只处理一次(client, admin, db, served):
+    """连点两次「通过」：第二次被已处理的状态挡下，账不再动。"""
+    act, _g, _u = served
+    _confirm(client, admin, act)
+    client.post(f"/api/staff/activities/{act.id}/hours/lock-request",
+                headers=admin, json={})
+    row = _approve_lock(client, admin, act)
+    r = client.post(f"/api/staff/hours-requests/{row['id']}/decide",
+                    headers=admin, json={"approve": False, "reply": "撤回"})
+    assert r.status_code == 409 and "已同意" in r.json()["detail"]
+    db.expire_all()
+    row = db.get(Activity, act.id)
+    assert row.hours_locked_at is not None and row.status == "vb_pending"
+
+
+def test_本人审批时长申请会标出本人(client, admin, db, served):
+    """自己提交、自己拍板：待办、审批记录和收到的意见都标「本人审批」。"""
+    act, _g, _u = served
+    _confirm(client, admin, act)
+    r = client.post(f"/api/staff/activities/{act.id}/hours/lock-request",
+                    headers=admin, json={})
+    assert r.status_code == 200, r.text
+    todo = [x for x in client.get("/api/staff/hours-requests",
+                                  headers=admin).json()
+            if x["activity_id"] == act.id]
+    assert len(todo) == 1 and todo[0]["self_review"] is True
+    _approve_lock(client, admin, act)
+    rows = [x for x in client.get(
+                f"/api/staff/activities/{act.id}/hours-requests",
+                headers=admin).json()["items"] if x["kind"] == "lock"]
+    assert len(rows) == 1
+    assert rows[0]["self_review"] is True
+    assert rows[0]["reply"].startswith("【本人审批】")
+    # 申请人自己收到的意见也带着标记
+    db.expire_all()
+    admin_user = db.query(User).filter(User.student_id == ADMIN).one()
+    note = (db.query(Notification)
+            .filter(Notification.user_id == admin_user.id,
+                    Notification.title == f"时长锁定已通过｜{act.title}").one())
+    assert "【本人审批】" in note.content
 
 
 def test_锁定后改时长要报审批(client, admin, db, served):

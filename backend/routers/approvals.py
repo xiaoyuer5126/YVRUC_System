@@ -28,6 +28,7 @@ from ..models import (Activity, ApprovalEvent, Department, DutyHandover, User,
                       iso, now, uid)
 from ..perm import ensure_activity_manager
 from ..serializers import published_hint
+from .roles import _release_members
 
 router = APIRouter(prefix="/api/staff", tags=["approvals"])
 
@@ -232,8 +233,14 @@ def update_department(dept_id: str, body: DeptBody,
         raise HTTPException(404, "部门不存在")
     changed = []
     if body.name.strip() and body.name.strip() != d.name:
-        changed.append(f"名称 {d.name}→{body.name.strip()}")
-        d.name = body.name.strip()
+        new_name = body.name.strip()
+        # 名字是部门的标识，重名之后下拉、归口、导出里都分不清是哪一个；
+        # 库里也有唯一约束，先拦在校验层，别让它冒成 500
+        if db.query(Department).filter(Department.name == new_name,
+                                       Department.id != d.id).first():
+            raise HTTPException(409, f"已经有一个部门叫「{new_name}」")
+        changed.append(f"名称 {d.name}→{new_name}")
+        d.name = new_name
     if body.note is not None and body.note.strip() != d.note:
         d.note = body.note.strip()
         changed.append("说明")
@@ -257,8 +264,19 @@ def update_department(dept_id: str, body: DeptBody,
                 raise HTTPException(404, f"学号 {sid} 不存在")
             if not who.has_role("qingxie", real=True):
                 raise HTTPException(400, f"{who.name} 不是青协身份，不能当部长")
+            # 会长团是全平台的层级，不该被一个部门的部长位顺手压下去；
+            # 之前这里是静默降级，点完「指定部长」才发现自己没了会长团权限。
+            # 要先让他当部长，请去角色管理里改层级，那是看得见的动作。
+            if who.is_council(real=True):
+                raise HTTPException(400, f"{who.name} 是会长团成员，"
+                                         "不能改任部门部长；请先在角色管理里调整其层级")
             who.department_id = d.id
             who.qingxie_post = "head"
+            # 部长不再是骨干：他本人不再有归属骨干，归到他名下的成员也一并松绑
+            who.supervisor_id = None
+            released = _release_members(db, who)
+            if released:
+                changed.append(f"{released} 名成员的归属骨干已清空")
             changed.append(f"部长+{who.name}")
         else:
             for old in db.query(User).filter(User.department_id == d.id,
@@ -358,7 +376,9 @@ def submit(activity_id: str, body: SubmitBody,
            user: User = Depends(require_manager)):
     """提交审批。草稿或被驳回的活动都走这里。"""
     ensure_activity_manager(db, user, activity_id)
-    act = db.get(Activity, activity_id)
+    # 行锁读：两次点击同时到，只有一次读到 draft 并提交，另一次等到状态已变后被下面挡下
+    act = (db.query(Activity).filter(Activity.id == activity_id)
+           .populate_existing().with_for_update().one_or_none())
     if act is None:
         raise HTTPException(404, "活动不存在")
     if act.status != "draft":
@@ -424,7 +444,9 @@ def decide(activity_id: str, body: DecideBody,
     广场上，多一步手动发布只是让发起方再登录一次点个按钮。提交审批时可以关掉
     这一项，那就停在「待发布」等发起方自己点。
     """
-    act = db.get(Activity, activity_id)
+    # 行锁读：通过/驳回同时到，只有一次读到 pending 并处理，另一次等到状态已变后被下面挡下
+    act = (db.query(Activity).filter(Activity.id == activity_id)
+           .populate_existing().with_for_update().one_or_none())
     if act is None:
         raise HTTPException(404, "活动不存在")
     if act.status != "pending":
@@ -535,7 +557,9 @@ def transfer(activity_id: str, body: TransferBody,
     免得发起方以为还要照着它走对外流程；转进要求立项书的部门而还没有立项书的，
     通知活动管理者补传（没有它审批人批不了，见 decide）。
     """
-    act = db.get(Activity, activity_id)
+    # 行锁读：两处转交同时到，只有一次读到 pending 并处理，另一次等到状态已变后被下面挡下
+    act = (db.query(Activity).filter(Activity.id == activity_id)
+           .populate_existing().with_for_update().one_or_none())
     if act is None:
         raise HTTPException(404, "活动不存在")
     if act.status != "pending":

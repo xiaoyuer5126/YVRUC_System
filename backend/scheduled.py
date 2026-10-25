@@ -134,7 +134,8 @@ def submit_lock_when_due(db: OrmSession) -> int:
         act = (db.query(Activity).filter(Activity.id == row.id)
                .populate_existing().with_for_update().one())
         if (act.hours_locked_at is not None or act.hours_approved_at is None
-                or act.appeal_deadline is None or act.appeal_deadline >= t):
+                or act.appeal_deadline is None or act.appeal_deadline >= t
+                or act.status != "finished"):
             continue
         pending = (db.query(HoursAppeal)
                    .filter(HoursAppeal.activity_id == act.id,
@@ -704,6 +705,7 @@ def release_stale_edit_locks(db: OrmSession) -> int:
             .filter(Activity.editing_since.isnot(None),
                     Activity.editing_since < deadline)
             .with_for_update(skip_locked=True).all())
+    published: list[str] = []    # 本轮解冻、且已发布的活动：解冻后要补位
     for act in rows:
         who = db.get(User, act.editing_by) if act.editing_by else None
         since = act.editing_since
@@ -712,6 +714,7 @@ def release_stale_edit_locks(db: OrmSession) -> int:
         # 改到一半的东西也已经生效了：和「保存并发布」一样按人告诉志愿者
         if not act.is_unpublished():
             notify_edit_changes(db, act, since)
+            published.append(act.id)
         audit_log(db, actor=None, action="update", target_type="activity",
                   target_id=act.id, target_label=act.title, activity_id=act.id,
                   summary=f"编辑态超过 {config.EDIT_LOCK_HOURS} 小时未保存，"
@@ -730,6 +733,16 @@ def release_stale_edit_locks(db: OrmSession) -> int:
         logger.info("活动「%s」编辑态超时，已自动解冻", act.title)
     if rows:
         db.commit()
+    # 编辑期间常有扩容（加名额、加岗位），解冻后名额空出来就该轮到候补——
+    # 和「保存并发布」做的是同一件事，否则位子空着队伍排着，要等下一个人退选。
+    # 放在提交之后：补位要给每个场次拿场次锁、自己提交，不能卷进上面那个事务。
+    # 函数内导入避免与 staff_activities 循环引用
+    if published:
+        from .routers.staff_activities import _fill_vacancies
+        for aid in published:
+            act = db.get(Activity, aid)
+            if act is not None:
+                _fill_vacancies(db, act)
     return len(rows)
 
 

@@ -307,11 +307,13 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
         rows.append((enr, positions.get(pid), bool(row.get("force"))))
 
     # 名额：把本次方案与未列入方案的既有分配合并起来算。
+    # 占名额的口径和 enroll_logic 一致：候补转正待确认的位子也已经占住了，
+    # 不能当作空位再塞人。
     planned = {enr.id for enr, _p, _f in rows}
     counts: dict[str, int] = {}
     for enr in (db.query(Enrollment)
                 .filter(Enrollment.shift_id == shift.id,
-                        Enrollment.status == "enrolled").all()):
+                        Enrollment.status.in_(("enrolled", "pending_confirm"))).all()):
         if enr.id not in planned and enr.position_id:
             counts[enr.position_id] = counts.get(enr.position_id, 0) + 1
     for enr, position, force in rows:

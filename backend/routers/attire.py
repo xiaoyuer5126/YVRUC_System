@@ -323,9 +323,10 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
         text = (f"您在「{act.title}」领取的志愿服装尚未归还，"
                 f"请尽快到指定地点扫「归还码」交还。")
     else:
+        # 领过就算数，不看还没还：还了的人已经领过这一次了，再催他去领
+        # 「领取码」只会让他跑两趟
         taken = {r.user_id for r in db.query(AttireRecord)
-                 .filter(AttireRecord.activity_id == activity_id,
-                         AttireRecord.returned_at.is_(None)).all()}
+                 .filter(AttireRecord.activity_id == activity_id).all()}
         targets = [db.get(User, uid_)
                    for uid_ in _need_attire_user_ids(db, activity_id)
                    if uid_ not in taken]

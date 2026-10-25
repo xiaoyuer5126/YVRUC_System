@@ -165,6 +165,20 @@ def test_催领取服装与签收(client, admin, db, attire_activity):
     assert client.get(url, headers=admin).json()["not_taken"] == 0
 
 
+def test_领过又还了的人不再被催领取(client, admin, db, attire_activity):
+    """归还只说明这一轮结束了，这个人已经领过，再催他领只会让他跑两趟。"""
+    act, a, _b = attire_activity
+    _tokens(client, admin, act)
+    url = f"/api/staff/activities/{act.id}/attire"
+    client.post(f"{url}/batch", headers=admin,
+                json={"action": "take", "student_ids": [a.student_id]})
+    client.post(f"{url}/batch", headers=admin,
+                json={"action": "return", "student_ids": [a.student_id]})
+    assert client.get(url, headers=admin).json()["returned"] == 1
+    r = client.post(f"{url}/remind", headers=admin, json={"action": "take"})
+    assert r.status_code == 400 and "已经领了" in r.json()["detail"]
+
+
 def test_非本活动管理者看不到台账(client, initiator, attire_activity):
     act, _a, _b = attire_activity
     assert client.get(f"/api/staff/activities/{act.id}/attire",

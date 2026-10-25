@@ -574,6 +574,22 @@ def _drop_pin_off_published(act: Activity, value, _old, _initiator) -> None:
         flag_modified(act, "pinned_at")
 
 
+@event.listens_for(Activity.status, "set")
+def _drop_edit_lock_off_published(act: Activity, value, _old, _initiator) -> None:
+    """状态离开「报名中」，编辑态随之解除。
+
+    编辑态只对正在报名的活动有意义（暂停报名、暂停退选）。活动一旦截止或
+    结束——手动截止、定时任务自动截止/自动结束、审批通过、时长封账等任何
+    路径——留着编辑态，负责人之后点「保存并发布」还能过校验，把编辑期间的
+    改动当成新的变更推给已报名的志愿者。也挂在属性上，见上一条的理由。
+    """
+    if value != "published":
+        act.editing_since = None
+        act.editing_by = None
+        flag_modified(act, "editing_since")
+        flag_modified(act, "editing_by")
+
+
 class ApprovalEvent(Base):
     """审批流水：提交、转交、通过、驳回各一条，按时间排。
 
