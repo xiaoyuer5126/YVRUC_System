@@ -101,7 +101,7 @@
             <template v-if="row.shift.location"> · {{ row.shift.location }}</template>
             <el-tag v-if="row.excused" size="small" type="info" effect="plain">已请假</el-tag>
           </div>
-          <!-- 分段签到的场次：逐段签到状态一并列出，别只给手机端看（C8） -->
+          <!-- 分段签到的场次：逐段列出签到状态，宽屏窄屏一样 -->
           <div v-if="(row.shift.periods || []).length > 1 && row.status === 'enrolled'"
                class="dim">
             <el-tag v-for="p in row.shift.periods" :key="p.id" size="small" effect="plain"
