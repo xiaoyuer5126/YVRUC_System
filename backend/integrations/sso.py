@@ -168,7 +168,7 @@ def handle_callback(code: str, state: str, nonce: str) -> dict:
     """
     redeemed = redeem_sso_state(state, nonce)
     if redeemed is None or not redeemed[1]:
-        raise PermissionError("登录请求已失效，请回到登录页重新点击登录")
+        raise PermissionError("登录请求已失效，请回到登录页重新登录")
     next_url = redeemed[0]
 
     token = _fetch_token(code)
