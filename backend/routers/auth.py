@@ -174,11 +174,11 @@ def sso_callback(body: SsoCallbackBody, request: Request,
         _sync_from_school(db, user, info)
     _grant_bootstrap_admin(db, user)
     oplog.mark_login(request, user=user)
-    logout = JSONResponse({"token": create_session(db, user),
-                           "user": session_user(db, user),
-                           "mode": sso.mode(), "next": info.get("next") or ""})
-    logout.delete_cookie(SSO_NONCE_COOKIE, path="/api/auth")  # noqa: S105
-    return logout
+    resp = JSONResponse({"token": create_session(db, user),
+                         "user": session_user(db, user),
+                         "mode": sso.mode(), "next": info.get("next") or ""})
+    resp.delete_cookie(SSO_NONCE_COOKIE, path="/api/auth")  # noqa: S105
+    return resp
 
 
 # 学校是这几项的权威来源：升学年、转专业、改名都会在下次登录时同步过来。
