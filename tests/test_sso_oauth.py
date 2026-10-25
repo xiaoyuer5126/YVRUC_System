@@ -313,3 +313,24 @@ def test_sso_mode_不回跳转地址(client):
     body = client.get("/api/auth/sso-mode").json()
     assert "login_url" not in body
     assert body["mode"] in {"demo", "unavailable", "oauth2"}
+
+
+def test_登录去向地址过长就400(client):
+    """这个接口不需要登录，超长的 next 会被塞进 state：先挡在门口。"""
+    assert client.get("/api/auth/sso-login-url",
+                      params={"next": "/" + "a" * 600}).status_code == 400
+
+
+def test_取跳转地址按_ip_限流(client, monkeypatch):
+    """每调一次就往 Redis 写一个 state，按客户端 IP 限流，免得被脚本灌满。
+
+    限流在校验之后、mock 判断之前，所以演示模式下也能验到——真正是否 429
+    只看计数。先清掉本 IP 的计数，免得别的用例写过的次数把这里的判断带偏。
+    """
+    from backend import config, locks
+    monkeypatch.setattr(config, "SSO_LOGIN_URL_PER_MINUTE", 1)
+    key = "yvruc:rate:sso-login-url:testclient"
+    locks._client.delete(key)
+    assert client.get("/api/auth/sso-login-url").status_code == 409   # 第 1 次：没超
+    assert client.get("/api/auth/sso-login-url").status_code == 429   # 第 2 次：超了
+    locks._client.delete(key)

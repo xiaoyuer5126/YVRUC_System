@@ -59,6 +59,11 @@ SESSION_RENEW_AFTER = timedelta(hours=1)
 # 重放窗口。
 SSO_STATE_SECONDS = 600
 
+# 取授权跳转地址按客户端 IP 限流：这个接口不需要登录，每次调用都会往 Redis
+# 写一个 state，不限流的话脚本能把它灌满。正常用户点一次登录才取一次，一分钟
+# 30 次远远够用。
+SSO_LOGIN_URL_PER_MINUTE = int(os.environ.get("YVRUC_SSO_LOGIN_URL_PER_MINUTE", "").strip() or "30")
+
 # 身份证号在库里是加密存的（见 crypto.py），密钥必须与数据库分开保管。
 ID_CARD_KEY = os.environ.get("YVRUC_ID_CARD_KEY", "").strip()
 

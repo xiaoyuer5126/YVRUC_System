@@ -23,7 +23,7 @@ from ..deps import create_session, current_token, current_user
 from ..integrations import sso
 from ..liaison import session_user
 from ..locks import (clear_failures, failure_count, issue_ticket,
-                     note_failure)
+                     note_failure, note_rate, rate_count)
 from ..models import ROLE_LABELS, Session, User, ViolationRecord, uid
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -52,14 +52,25 @@ def sso_mode():
 
 
 @router.get("/sso-login-url")
-def sso_login_url(next: str = ""):
+def sso_login_url(request: Request, next: str = ""):
     """取授权跳转地址。
 
     在**点击时**才生成：state 一次一用且有有效期，页面一打开就生成的话，
     用户看一会儿再点就已经过期了。顺带把「登录后回哪去」放进 state——
     从二维码落地页被弹到登录页的人（CheckinLanding.vue），登录完该回到
     原来那个页面，而不是活动广场。
+
+    这个口子不需要登录，每调一次就往 Redis 写一个 state，所以先按客户端 IP
+    限流、并挡住超长的 next：不然脚本能把 state 灌满 Redis。限流用「先占后
+    判」——先自增再比，两个请求同时进来不会双双看到「还没到上限」。
     """
+    if len(next) > 512:
+        raise HTTPException(400, "登录后去向地址过长")
+    ip = request.client.host if request.client else "unknown"
+    key = f"sso-login-url:{ip}"
+    note_rate(key, 60)
+    if rate_count(key) > config.SSO_LOGIN_URL_PER_MINUTE:
+        raise HTTPException(429, "操作过于频繁，请稍后再试")
     if sso.mode() == "mock":
         raise HTTPException(409, "统一身份认证尚未接通")
     return {"login_url": sso.login_url(next)}
