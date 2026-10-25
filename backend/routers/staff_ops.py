@@ -442,6 +442,17 @@ def toggle_task(task_id: str, body: dict,
             if live is not None:
                 raise HTTPException(
                     409, _conflict_message(db, live, db.get(Shift, task.shift_id)))
+        # 开/关一张码是现场的分水岭：开着才有人能签。改这一次也一样留痕，
+        # 事后才说得清某一刻哪张码是开的
+        if want != task.active:
+            g = db.get(Shift, task.shift_id)
+            st = db.get(Position, task.position_id) if task.position_id else None
+            loc = st.name if st else f"{g.name}·统一签到"
+            audit_log(db, actor=user, action="checkin_task", target_type="checkin",
+                      target_id=task.id,
+                      target_label=f"{_act(db, task.activity_id).title}·{loc}",
+                      activity_id=task.activity_id,
+                      summary=f"{'开启' if want else '关闭'}签到码 {task.token}")
         task.active = want
     db.commit()
     return {"ok": True, "active": task.active,
@@ -732,7 +743,7 @@ def batch_op(task_id: str, body: dict,
     if not sids:
         raise HTTPException(400, "未选择志愿者")
 
-    done, skipped = [], []
+    done, skipped, who = [], [], []
     for sid in sids:
         u = db.query(User).filter(User.student_id == sid).first()
         if u is None:
@@ -762,6 +773,7 @@ def batch_op(task_id: str, body: dict,
                                  position_id=enr.position_id, user_id=u.id,
                                  method="manual", by_user=user.id))
             done.append(u.name)
+            who.append(f"{u.name}（{u.student_id}）")
         elif action == "checkout":
             if not rec:
                 skipped.append(f"{u.name}（尚未签到）")
@@ -773,12 +785,14 @@ def batch_op(task_id: str, body: dict,
             rec.checkout_method = "manual"
             rec.checkout_by = user.id
             done.append(u.name)
+            who.append(f"{u.name}（{u.student_id}）")
         elif action == "cancel_checkin":
             if not rec:
                 skipped.append(f"{u.name}（无签到记录）")
                 continue
             db.delete(rec)
             done.append(u.name)
+            who.append(f"{u.name}（{u.student_id}）")
         else:  # cancel_checkout
             if not rec or not rec.checkout_at:
                 skipped.append(f"{u.name}（无签退记录）")
@@ -787,15 +801,19 @@ def batch_op(task_id: str, body: dict,
             rec.checkout_method = ""
             rec.checkout_by = None
             done.append(u.name)
+            who.append(f"{u.name}（{u.student_id}）")
 
     ACTION_SUMMARY = {
         "checkin": "手动签到", "checkout": "手动签退",
         "cancel_checkin": "取消签到", "cancel_checkout": "取消签退",
     }
+    # 留痕里写清动了谁、学号是多少：只写人数，事后翻这一条根本认不出是哪几个人。
+    # 人多时列前 5 个再报总数，不至于把一条留痕撑成几十个人的名单
+    named = ("：" + "、".join(who[:5]) + (f" 等 {len(who)} 人" if len(who) > 5 else "")) if who else ""
     audit_log(db, actor=user, action="manual_checkin", target_type="checkin",
               target_id=task.id, target_label=g.name,
               activity_id=task.activity_id,
-              summary=f"{ACTION_SUMMARY[action]} {len(done)} 人"
+              summary=f"{ACTION_SUMMARY[action]} {len(done)} 人" + named
                       + (f"；跳过：{'、'.join(skipped[:5])}"
                          + ("…" if len(skipped) > 5 else "") if skipped else ""))
     db.commit()
