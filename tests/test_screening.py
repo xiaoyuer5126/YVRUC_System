@@ -907,6 +907,28 @@ def test_报名问卷文件只有本人和管理者能下载(client, admin, db, 
     assert client.get(f"/api/materials/{att_id}", headers=other).status_code == 404
 
 
+def test_传报名文件要活动在报名期(client, admin, db, take_student):
+    """没发布的活动连详情都看不着，不该还能往里丢文件。"""
+    act_id, _ids, _q = _create_screened(client, admin, db, status="draft")
+    t = login(client, take_student())
+    r = client.post(f"/api/activities/{act_id}/apply/upload", headers=t,
+                    files={"file": ("证明.pdf", b"%PDF-1.4", "application/pdf")})
+    assert r.status_code == 409 and "报名" in r.json()["detail"]
+
+
+def test_申请过就不能再传报名文件(client, admin, db, take_student):
+    act_id, ids, q = _create_screened(client, admin, db)
+    sid = take_student()
+    t = login(client, sid)
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"position_ids": _holders(db, ids),
+                          "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+    r = client.post(f"/api/activities/{act_id}/apply/upload", headers=t,
+                    files={"file": ("证明.pdf", b"%PDF-1.4", "application/pdf")})
+    assert r.status_code == 409 and "已经申请过" in r.json()["detail"]
+
+
 def test_复制活动带报名问卷不带联络群(client, admin, db):
     """题目里指着岗位和前一道题的地方，复制后要指向新活动自己的那份。"""
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)

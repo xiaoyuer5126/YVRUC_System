@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import config
+from .. import hours as hours_flow
 from ..database import db_session
 from ..deps import current_user
 from ..locks import redeem_checkin_code
@@ -168,6 +169,12 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
     挡回去」是同一件事。各写一遍早晚会分叉——比如 10 分钟那道保护窗只加在
     扫码那一侧，定位签到就悄悄成了「当场签退」的后门。
     """
+    # 时长封账或正等校青协核准，这场活动就不能再产生签到/签退记录：记录一变
+    # 时长就要重算，而部长看的和最终封的必须同一份账。面向志愿者的说法和管理端
+    # 的 ensure_hours_editable 不同，另行写。
+    if act.hours_locked() or hours_flow.pending_lock(db, act.id) is not None:
+        raise HTTPException(409, "本活动的志愿时长已封账，不能再签到签退，请联系负责人")
+
     t = now()
     period = g.period_of(task.period_id)
     if period is None:
@@ -185,12 +192,23 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
     # 岗位模式只用于按摊位分别核验；岗位无独立时间，可签时段 = 场次时段
     position = db.get(Position, task.position_id) if task.position_id else None
 
-    # 必须是该场次的正式成员
+    # 必须是该场次的正式成员。行锁读本人的报名行：同一人同场次的签到/签退
+    # （相机连读两下、或与管理员补签相撞）在这里串行，下面去找记录再插入
+    # 不会各插一条的重复签到记录
     enr = (db.query(Enrollment)
            .filter(Enrollment.shift_id == g.id, Enrollment.user_id == user.id,
-                   Enrollment.status == "enrolled").first())
+                   Enrollment.status == "enrolled").with_for_update().first())
     if enr is None:
         raise HTTPException(403, f"您不是「{act.title}·{g.name}」的志愿者")
+
+    # 分岗位的码只认本岗位的人：码是这个摊位专有的凭据，别的岗位的人扫了它、
+    # 记录就落到这个摊位名下。还没定岗（position_id 还是占位岗位「待分配」或
+    # 为空）的人也不认这张——他们的码是整场那张统一码。
+    if task.position_id is not None and enr.position_id != task.position_id:
+        pos = db.get(Position, task.position_id)
+        raise HTTPException(
+            403, f"这是「{pos.name if pos else '本岗位'}」的签到码，"
+                 f"您的岗位不是它，请扫本岗位的码")
 
     rec = find_record(db, user.id, g, task)
 

@@ -867,18 +867,28 @@ def confirm_promotion(db: OrmSession, enr: Enrollment, user: User) -> Enrollment
     return enr
 
 
-def expire_stale_promotions(db: OrmSession) -> int:
+def expire_stale_promotions(db: OrmSession, user_id: str | None = None) -> int:
     """扫掉超时未确认的转正：记放弃 → 计数 → 顺延下一位。
 
-    由 main.py 的后台协程每分钟调用；学生打开「我的报名」时也会顺手触发一次，
-    让页面上看到的状态和实际一致。
+    由 main.py 的后台协程每分钟调用，收口全站超时的确认窗；学生打开「我的
+    报名」时也会顺手触发一次，让页面上看到的状态和实际一致。
+
+    **只读页面进来的那条路带 user_id**：确认窗超时是**本人**的报名在超时，
+    打开自己的页面顶多替自己收口一次就够了。不带 user_id 的话，一次 GET 会
+    去扫全站所有待确认、逐个场次抢咨询锁——抢报高峰时，别人的锁正被报名/
+    退选拿着，这条只读请求要么白等 3 秒，要么直接撞上「当前操作人数较多」
+    503，学生什么都没做就看到报错。分角色收窄后，锁只落在自己待确认的
+    那几场，页面不再替全站背这个锅。
     """
     from . import notify
     from .locks import shift_lock
 
-    expired = (db.query(Enrollment)
-               .filter(Enrollment.status == "pending_confirm",
-                       Enrollment.confirm_deadline < now()).all())
+    q = (db.query(Enrollment)
+         .filter(Enrollment.status == "pending_confirm",
+                 Enrollment.confirm_deadline < now()))
+    if user_id is not None:
+        q = q.filter(Enrollment.user_id == user_id)
+    expired = q.all()
     if not expired:
         return 0
     by_shift: dict[str, list[str]] = defaultdict(list)

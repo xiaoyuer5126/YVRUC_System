@@ -738,10 +738,12 @@ def batch_op(task_id: str, body: dict,
         if u is None:
             skipped.append(f"{sid}（学号不存在）")
             continue
+        # 行锁读这一人的报名行：同一人同场次的补签/退签（含志愿者自己扫码）
+        # 在这里串行，下面「找记录再插入」不会各插一条重复签到
         enr = (db.query(Enrollment)
                .filter(Enrollment.shift_id == task.shift_id,
                        Enrollment.user_id == u.id,
-                       Enrollment.status == "enrolled").first())
+                       Enrollment.status == "enrolled").with_for_update().first())
         if enr is None:
             # 不回姓名：这条提示等于「输个学号就能查出他叫什么」——不是本场次
             # 的人，管理者本来也不该从这儿认识他。学号是他自己填进来的，还给他
@@ -1734,11 +1736,19 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
                 hours = float(it.get("hours"))
             except (TypeError, ValueError):
                 raise HTTPException(400, f"学号 {sid} 的时长不是数字")
+            if not math.isfinite(hours):
+                raise HTTPException(400, f"学号 {sid} 的时长不是有效数字")
             if hours < 0:
                 raise HTTPException(400, f"学号 {sid} 的时长不能为负数")
             u = db.query(User).filter(User.student_id == sid).first()
             if u is None:
                 raise HTTPException(404, f"学号 {sid} 不存在")
+            if u.user_type == "teacher":
+                raise HTTPException(400, "老师类型用户不参与志愿，不记时长")
+            if not _enrolled(db, act, u):
+                raise HTTPException(
+                    400, f"{u.name}（{u.student_id}）没有报名这场活动，不能直接加时长；"
+                         f"这类时长请在补记录活动里记")
             targets[u.id] = round(hours, 2)
         for uid_, h in targets.items():
             # 逐个点名改，就是人判的，照改
@@ -1933,7 +1943,9 @@ def list_appeals(activity_id: str, db: OrmSession = Depends(db_session),
 
 class ResolveAppealBody(BaseModel):
     accept: bool
-    hours: float | None = None    # 采纳时可改判成第三个数，留空则按申报值
+    # 可改判成第三个数，留空则按申报值。NaN/inf 挡在这一层：它会一路混进
+    # 时长比较和格式化，落库后每个返回这笔账的接口都序列化不出 JSON。
+    hours: float | None = Field(default=None, allow_inf_nan=False)
     reply: str = ""
 
 
@@ -2041,6 +2053,8 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id, for_update=True)
     ensure_hours_editable(db, act)
+    if act.status != "finished":
+        raise HTTPException(409, "活动结束后才能核准时长")
     deadline = _parse_deadline(body.appeal_deadline)
     rows = (db.query(HoursRecord)
             .filter(HoursRecord.activity_id == act.id).all())
@@ -2132,6 +2146,8 @@ def hours_lock_request(activity_id: str, body: LockHoursBody | None = None,
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id, for_update=True)
     ensure_hours_editable(db, act)
+    if act.status != "finished":
+        raise HTTPException(409, "活动结束后才能提交时长审核")
     if act.hours_approved_at is None:
         raise HTTPException(409, "请先核准时长")
     # 对外活动的时长要凭盖章立项书和盖章结项书报批，缺一份都不往上送
@@ -2176,7 +2192,8 @@ def request_unlock(activity_id: str, body: UnlockRequestBody,
                    user: User = Depends(require_manager)):
     """锁定之后要改时长，报归口部长审批。"""
     ensure_activity_manager(db, user, activity_id)
-    act = _act(db, activity_id)
+    # 「有没有挂着一条」的判断得在锁里做，两次连点才不会各插一条
+    act = _act(db, activity_id, for_update=True)
     if not act.hours_locked():
         raise HTTPException(409, "时长尚未锁定，可直接修改")
     reason = body.reason.strip()
@@ -2224,16 +2241,26 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
     req = db.get(HoursRequest, request_id)
     if req is None:
         raise HTTPException(404, "申请不存在")
+    # 先锁活动（与核准、提交审批同一个加锁顺序），再拿锁把人读一遍：并发点两次
+    # 「通过」时只有一个请求能看到 pending，另一个进来时已经是已同意/已驳回
+    act = _act(db, req.activity_id, for_update=True)
+    req = (db.query(HoursRequest)
+           .filter(HoursRequest.id == request_id)
+           .populate_existing().with_for_update().one_or_none())
     if req.status != "pending":
         raise HTTPException(409, f"该申请{req.status_label()}")
-    act = _act(db, req.activity_id)
     if user.id not in {u.id for u in _hours_approvers(db, act)}:
         raise HTTPException(403, f"只有归口部门的部长可以处理时长{req.kind_label()}申请")
-    reply = body.reply.strip()[:512]
+    reply = body.reply.strip()
     if not body.approve and len(reply) < 2:
         raise HTTPException(400, "驳回必须写明理由")
+    # 自己提的申请自己拍板：审批记录和意见里都标出来，事后看得出是本人批的
+    self_review = req.requested_by == user.id
+    prefix = "【本人审批】" if self_review else ""
+    # 先拼再截：截在前面会把标记吃掉，落库的意见就看不出是本人批的
+    marked_reply = (f"{prefix}{reply}")[:512]
     req.status = "approved" if body.approve else "rejected"
-    req.reply, req.handled_by, req.handled_at = reply, user.id, now()
+    req.reply, req.handled_by, req.handled_at = marked_reply, user.id, now()
     if body.approve and req.kind == "lock":
         hours_flow.lock_hours(db, act, user, f"校青协审核通过（{req.reason}）")
     elif body.approve:
@@ -2241,15 +2268,16 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
         act.status = "finished"
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=(f"同意{req.kind_label()}时长（{req.reason}）"
-                       + (f"；意见：{reply}" if reply else "") if body.approve
-                       else f"驳回时长{req.kind_label()}申请：{reply}"))
+              summary=prefix + (f"同意{req.kind_label()}时长（{req.reason}）"
+                                + (f"；意见：{reply}" if reply else "")
+                                if body.approve
+                                else f"驳回时长{req.kind_label()}申请：{reply}"))
     requester = db.get(User, req.requested_by)
     if requester is not None:
         notify(db, requester,
                f"时长{req.kind_label()}{'已通过' if body.approve else '未通过'}"
                f"｜{act.title}",
-               _decide_text(db, act, req, body.approve, reply),
+               _decide_text(db, act, req, body.approve, marked_reply),
                data={"activity_id": act.id, "route": "manage", "tab": "hours"})
     db.commit()
     return {"ok": True, "status": req.status}
@@ -2313,6 +2341,8 @@ def activity_hours_requests(activity_id: str, db: OrmSession = Depends(db_sessio
             "created_at": iso(r.created_at),
             "handled_by": name(r.handled_by),
             "handled_at": iso_of(r.handled_at),
+            # 申请人自己批的：前端把这条标成「本人审批」
+            "self_review": bool(r.handled_by and r.handled_by == r.requested_by),
         } for r in rows],
     }
 
@@ -2345,5 +2375,6 @@ def my_hours_requests(db: OrmSession = Depends(db_session),
                               for s in liaison.STAMPED_SLOTS
                               if (f := liaison.project_file(db, act.id, s))],
                     "requested_by": who.name if who else "系统",
+                    "self_review": req.requested_by == user.id,
                     "created_at": iso(req.created_at)})
     return out

@@ -106,3 +106,28 @@ def test_调岗空出的位子候补马上顶上(client, admin, db, open_group, 
     assert r.status_code == 200 and r.json()["promoted"] == 1, r.text
     db.expire_all()
     assert db.get(Enrollment, ids[1]).status == "pending_confirm"
+
+
+def test_调岗不把候补转正待确认的位子当空位(client, admin, db, open_group, take_student):
+    """候补转正待确认已经占住了名额，调岗不能再往这个位子塞人。"""
+    act, g = open_group(1)
+    b = Position(id=uid("p"), shift_id=g.id, name="乙岗", quota=1, sort=1, **POSITION_TEXT)
+    db.add(b)
+    db.commit()
+    # 甲已在「测试岗位」上、转正待确认：这一个名额已经被他占住
+    a_id = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                       headers=login(client, take_student()),
+                       json={"position_id": g.test_position_id}).json()["enrollment_id"]
+    # 乙在「乙岗」上、已确认：本次调岗要把他挪到「测试岗位」
+    c_id = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                       headers=login(client, take_student()),
+                       json={"position_id": b.id}).json()["enrollment_id"]
+    db.get(Enrollment, a_id).status = "pending_confirm"
+    db.commit()
+    assert db.get(Enrollment, c_id).status == "enrolled"
+    r = client.post(f"/api/staff/shifts/{g.id}/assign/apply", headers=admin,
+                    json={"source": "manual", "plan": [
+                        {"enrollment_id": c_id, "position_id": g.test_position_id}]})
+    assert r.status_code == 409 and "超出名额" in r.json()["detail"], r.text
+    db.expire_all()
+    assert db.get(Enrollment, c_id).status == "enrolled"

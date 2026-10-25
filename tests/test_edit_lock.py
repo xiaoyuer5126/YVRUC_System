@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from backend import config, scheduled
-from backend.models import Activity, Enrollment, Notification, now
+from backend.models import Activity, Enrollment, Notification, Position, now
 from conftest import mk_shift
 from conftest import POSITION_TEXT, editing, login
 
@@ -177,6 +177,51 @@ def test_已截止的活动也能进编辑态建岗位(client, admin, db, enroll
                               **POSITION_TEXT}).status_code == 200
 
 
+def test_活动截止后编辑态自动解除_不再推送变更(client, admin, db,
+                                            enrolled_activity):
+    """编辑态只对「报名中」有意义。活动一截止，还留着编辑态的话，负责人
+    之后点「保存并发布」照样过校验，把编辑期间的改动当成新变更推给志愿者。"""
+    act, shift, u = enrolled_activity
+    pos = shift.positions[0]
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                     json={"location": "南门"})
+    assert r.status_code == 200, r.text
+    assert _changed(db, u.id, act) == []
+
+    assert client.post(f"/api/staff/activities/{act.id}/close",
+                       headers=admin).status_code == 200
+    db.expire_all()
+    assert db.get(Activity, act.id).editing_since is None
+
+    r = client.post(f"/api/staff/activities/{act.id}/publish-changes",
+                    headers=admin)
+    assert r.status_code == 409 and "不在编辑态" in r.json()["detail"], r.text
+    assert _changed(db, u.id, act) == []
+
+
+def test_定时自动截止也解除编辑态(client, admin, db, enrolled_activity):
+    """手动截止以外的路径（定时任务把活动移出报名中）同样要解冻。"""
+    act, shift, u = enrolled_activity
+    pos = shift.positions[0]
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                 json={"location": "南门"})
+    db.expire_all()
+    db.get(Activity, act.id).reg_end = now() - timedelta(minutes=1)
+    db.commit()
+
+    assert scheduled.auto_advance_activities(db) >= 1
+    db.expire_all()
+    row = db.get(Activity, act.id)
+    assert row.status == "closed"
+    assert row.editing_since is None
+    r = client.post(f"/api/staff/activities/{act.id}/publish-changes",
+                    headers=admin)
+    assert r.status_code == 409, r.text
+    assert _changed(db, u.id, act) == []
+
+
 # ======================= 编辑期间的改动按人汇总通知 =======================
 
 def _changed(db, user_id, act):
@@ -288,6 +333,34 @@ def test_超时自动解冻也按人发出改动(client, admin, db, enrolled_act
     scheduled.release_stale_edit_locks(db)
     got = _changed(db, u.id, act)
     assert len(got) == 1 and "北门→西门" in got[0].content
+
+
+def test_超时自动解冻也补位给候补(client, admin, db, enrolled_activity, take_student):
+    """编辑期间扩容、管理者忘了点发布：超时解冻后空出来的位子也要轮到候补，
+    不能干等下一次有人退选。"""
+    from backend.models import uid
+    from conftest import student_row
+    act, shift, _u = enrolled_activity
+    pos = shift.positions[0]
+    w = student_row(db, take_student())
+    enr = Enrollment(id=uid("enr"), activity_id=act.id, shift_id=shift.id,
+                     user_id=w.id, position_id=pos.id, status="waitlisted",
+                     joined_at=now())
+    db.add(enr)
+    db.commit()
+    enr_id = enr.id
+
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    db.expire_all()
+    row = db.get(Activity, act.id)
+    row.editing_since = now() - timedelta(hours=config.EDIT_LOCK_HOURS + 1)
+    # 编辑期间扩容一个名额：这一位空出来，本该轮到队首的候补
+    db.get(Position, pos.id).quota += 1
+    db.commit()
+
+    scheduled.release_stale_edit_locks(db)
+    db.expire_all()
+    assert db.get(Enrollment, enr_id).status == "pending_confirm"
 
 
 def test_不在编辑态改活动信息照样即时通知(client, admin, db, enrolled_activity):

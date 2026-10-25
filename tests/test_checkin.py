@@ -116,6 +116,21 @@ def test_checkin_needs_login(client, live_group):
     assert client.post(f"/api/checkin/task/{token}").status_code == 401
 
 
+def test_封账的活动扫签到码被挡(client, db, admin, live_group):
+    """账封了再冒出一条签到记录，部长看的和被封的就不是同一份了。"""
+    act, _g, h, token = live_group
+    act = db.get(Activity, act.id)
+    act.hours_locked_at = now()
+    db.commit()
+
+    r = client.post(f"/api/checkin/task/{token}", headers=h)
+    assert r.status_code == 409 and "封账" in r.json()["detail"]
+
+    db.expire_all()
+    assert (db.query(CheckinRecord)
+            .filter(CheckinRecord.shift_id == _g.id).count() == 0)
+
+
 # ======================= 多场次：码属于哪一场要看得出来 =======================
 
 @pytest.fixture
@@ -198,6 +213,37 @@ def test_分岗位签到只认本场次的岗位(client, admin, two_shift_act):
     r = client.post(f"/api/staff/shifts/{train.id}/checkin-tasks", headers=admin,
                     json={"mode": "position", "position_id": pos_id})
     assert r.status_code == 400 and "本场次" in r.json()["detail"]
+
+
+def test_分岗位的签到码只认本岗位的人(client, admin, db, live_group, take_student):
+    """码是这个摊位专有的凭据：别的岗位的人扫了，记录就落到这个摊位名下。"""
+    act, g, h, _token = live_group
+    mine = db.query(Position).filter(Position.shift_id == g.id).first()
+    other = Position(id=uid("p"), shift_id=g.id, name="另一个岗位",
+                     location="东门", quota=3, sort=1)
+    db.add(other)
+    db.flush()          # 岗位先落库：下面的报名要引用它（两表之间没有 ORM 关系）
+    # 志愿者 b 报的是另一个岗位
+    sid = take_student()
+    hb = login(client, sid)
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                      user_id=student_row(db, sid).id, position_id=other.id,
+                      status="enrolled", joined_at=now() - timedelta(days=1)))
+    db.commit()
+
+    # 先关掉统一码，才能给这个岗位单独开一张
+    tid = task_id_of(client, admin, act)
+    client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                 json={"active": False})
+    pos_token = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks", headers=admin,
+                            json={"mode": "position", "position_id": mine.id}
+                            ).json()["token"]
+
+    # b 的岗位不是它，扫不了；本人扫得了
+    r = client.post(f"/api/checkin/task/{pos_token}", headers=hb)
+    assert r.status_code == 403 and "岗位不是它" in r.json()["detail"]
+    assert client.post(f"/api/checkin/task/{pos_token}",
+                       headers=h).json()["action"] == "checkin"
 
 
 # ======================= 动态签到码 =======================

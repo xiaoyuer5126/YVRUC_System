@@ -20,7 +20,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session as OrmSession
 
@@ -348,7 +348,9 @@ def list_claims(status: str = "", page: int = 1, size: int = 20,
 
 class DecideBody(BaseModel):
     approve: bool
-    hours: float | None = None      # 核定的时长，不给就按本人申报的算
+    # 核定的时长，不给就按本人申报的算。NaN/inf 挡在这一层：与 ResolveAppealBody
+    # 同一个道理，它会混进时长比较和格式化，落库后序列化不出 JSON。
+    hours: float | None = Field(default=None, allow_inf_nan=False)
     reply: str = ""
 
 

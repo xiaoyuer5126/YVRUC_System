@@ -545,6 +545,18 @@ def test_补招勾选的培训彩排一并报上(client, admin, db, act_with_pos
     assert "排练厅" in note.content
 
 
+def test_培训彩排场次不能单独补招(client, admin, db, act_with_positions, take_student):
+    """培训/彩排跟着服务场次的报名走，自己不招人。到它的头上补招，人就挂着一场
+    培训、却没有对应的服务场次报名，退选、时长、名额全对不上。"""
+    act, g, east, _check = act_with_positions
+    rehearsal = _add_attached(client, admin, act, g, positions=[east.id])
+    rs = db.get(Shift, rehearsal)
+    sid = take_student()
+    r = _walkin(client, admin, rs, sid)
+    assert r.status_code == 409 and "不单独招人" in r.json()["detail"], r.text
+    assert sid not in _roster(client, admin, rehearsal)
+
+
 def test_补招只能勾对这个岗位生效的彩排(client, admin, db, act_with_positions, take_student):
     act, g, east, check = act_with_positions
     east_only = _add_attached(client, admin, act, g, positions=[east.id])

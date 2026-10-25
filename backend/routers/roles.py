@@ -169,9 +169,22 @@ def _check_supervisor(db: OrmSession, target: User, body: "RoleBody",
     return boss.id
 
 
+def _release_members(db: OrmSession, target: User) -> int:
+    """把归到目标名下的成员放回「无归属」，返回清空的人数。
+
+    成员继承的是「一位在职骨干」的可见范围。骨干被撤下、升迁或换了部门，
+    这份继承当场失效（读权限时 perm._supervisor 也会判），库里指着他的那条
+    归属一并清掉——否则名单上只剩一个看不出已经失效的骨干。调用方负责在
+    目标不再是本部门骨干时才调它。
+    """
+    return (db.query(User)
+            .filter(User.supervisor_id == target.id)
+            .update({"supervisor_id": None}, synchronize_session=False))
+
+
 def _audit_role_change(db: OrmSession, actor: User, target: User,
                        before: tuple, after: tuple,
-                       *, prefix: str = "调整身份：") -> None:
+                       *, prefix: str = "调整身份：", note: str = "") -> None:
     """身份、层级、部门有变化就留一条审计；没变化不写。"""
     if before == after:
         return
@@ -183,10 +196,13 @@ def _audit_role_change(db: OrmSession, actor: User, target: User,
     if before[2] != after[2]:
         names = {d.id: d.name for d in db.query(Department).all()}
         parts.append(f"部门 {names.get(before[2], '无')} → {names.get(after[2], '无')}")
+    summary = prefix + "；".join(parts)
+    if note:
+        summary += "；" + note
     audit_log(db, actor=actor, action="update", target_type="user",
               target_id=target.id,
               target_label=f"{target.name}（{target.student_id}）",
-              summary=prefix + "；".join(parts))
+              summary=summary)
 
 
 def _row(u: User, me: User, depts: dict[str, str]) -> dict:
@@ -359,8 +375,15 @@ def set_roles(user_id: str, body: RoleBody,
         target.remind_dept_ids = []
         target.is_president = False
 
+    # 不再是本部门骨干（撤下、升迁、换部门）：归到他名下的成员当场松绑
+    released = 0
+    if target.qingxie_post != "core" or target.department_id != before[2]:
+        released = _release_members(db, target)
+
     after = (target.roles, target.qingxie_post, target.department_id)
-    _audit_role_change(db, user, target, before, after)
+    _audit_role_change(db, user, target, before, after,
+                       note=(f"{released} 名成员的归属骨干已清空"
+                             if released else ""))
     db.commit()
     return {"ok": True}
 
@@ -503,8 +526,14 @@ def batch_roles(body: BatchRoleBody, db: OrmSession = Depends(db_session),
             if not ("qingxie" in roles and post == "council"):
                 u.remind_dept_ids = []
                 u.is_president = False
+            # 同单条编辑：不再是本部门骨干就把归到他名下的成员松绑
+            released = 0
+            if post != "core" or dept_id != before[2]:
+                released = _release_members(db, u)
             _audit_role_change(db, user, u, before, after[:3],
-                               prefix="批量调整身份：")
+                               prefix="批量调整身份：",
+                               note=(f"{released} 名成员的归属骨干已清空"
+                                     if released else ""))
         updated.append({"student_id": sid, "name": u.name,
                         "change": _batch_text(body, after, names)})
     if not body.dry_run:

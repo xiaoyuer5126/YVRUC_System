@@ -27,7 +27,7 @@ from ..integrations import msgcenter
 from ..locks import shift_lock, user_lock
 from ..models import (Activity, Application, Attachment, Enrollment, FormQuestion, Position, Shift, User, now, uid)
 from ..perm import ensure_activity_manager, is_activity_manager
-from ..serializers import application_out
+from ..serializers import application_out, reg_started
 from .materials import EXT_TYPES, MATERIAL_DIR
 
 router = APIRouter(prefix="/api", tags=["screening"])
@@ -324,10 +324,26 @@ async def upload_answer_file(activity_id: str, file: UploadFile = File(...),
                              user: User = Depends(current_user)):
     """报名问卷里的文件题。先传文件拿 id，提交答案时把 id 填进去。"""
     act = _act(db, activity_id, screened=False)
+    # 传文件是为报名服务的，报名关着就不该还能往里丢东西：草稿、待审批的
+    # 活动连详情都看不着，报名截止或还没开始的活动收下文件也没人用得上。
+    # 与报名同一口径：只看活动状态和报名窗（不看资料是否齐全——那是报名
+    # 那一步的拦截，先把文件收下来再让他去补资料也是通的）
+    if act.status != "published":
+        raise HTTPException(409, f"活动当前为「{act.label_status()}」，不在报名期")
+    if user.user_type == "teacher":
+        raise HTTPException(403, "老师类型用户不参与志愿报名")
+    if not reg_started(act.reg_start, now()):
+        raise HTTPException(409, f"报名尚未开始（{act.reg_start:%m-%d %H:%M} 起）")
+    if (db.query(Application)
+            .filter(Application.activity_id == act.id,
+                    Application.user_id == user.id).first()):
+        raise HTTPException(409, "您已经申请过本活动")
     ext = Path(file.filename or "").suffix.lower().lstrip(".")
     if ext not in EXT_TYPES:
         raise HTTPException(400, f"不支持的文件类型（可上传 {'/'.join(sorted(EXT_TYPES))}）")
-    data = await file.read()
+    # 多读一字节：先判大小再落盘，别把整个动辄几百兆的文件读进内存。
+    # 超限的那 50M + 1 字节读完就丢，不会留在内存里
+    data = await file.read(config.MAX_MATERIAL_BYTES + 1)
     if len(data) > config.MAX_MATERIAL_BYTES:
         raise HTTPException(400, f"文件不能超过 {config.MAX_MATERIAL_BYTES // (1024 * 1024)}MB")
     _ensure_upload_quota(db, act, user, len(data))

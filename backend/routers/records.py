@@ -529,6 +529,13 @@ def edit_record(activity_id: str, record_id: str, body: RecordEditBody,
     # 这一段要改写导入段：活动行锁之后接着锁这一条记录，顺序是
     # 活动 → 时长记录（同 import_rows），不回头拿活动锁
     rec = _record_of(db, act, record_id, for_update=True)
+    # 这条记录挂着待处理的申诉时先别改：申诉那边批的是改之前的那个数，
+    # 这里一改，等申诉批下来再落到这条记录上，两次改判全乱了。先让他把
+    # 申诉处理掉，时长管理里本来就顺手
+    if (db.query(HoursAppeal)
+            .filter(HoursAppeal.record_id == rec.id,
+                    HoursAppeal.status == "pending").first()):
+        raise HTTPException(409, "这条记录有待处理的时长申诉，请先在时长管理里处理申诉")
     try:
         hours = parse_hours(body.hours)
     except ValueError as e:

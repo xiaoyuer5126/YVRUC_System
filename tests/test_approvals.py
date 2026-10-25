@@ -108,6 +108,19 @@ def test_提交后由部长通过即发布(client, admin, db):
     assert d["opens_in"] > 0
 
 
+def test_同一条审批拍板两次第二次被挡(client, admin, db, draft):
+    """两次点击同时到现场：张板是行锁读出来的，第二次必然看到状态已变。"""
+    head = login(client, QINGXIE_HEAD)
+    client.post(f"/api/staff/activities/{draft}/submit", headers=admin,
+                json={"department_id": _liaison(db).id})
+    r = client.post(f"/api/staff/activities/{draft}/decide", headers=head,
+                    json={"approve": True})
+    assert r.status_code == 200, r.text
+    r = client.post(f"/api/staff/activities/{draft}/decide", headers=head,
+                    json={"approve": False, "comment": "反悔"})
+    assert r.status_code == 409 and "无需审批" in r.json()["detail"], r.text
+
+
 def test_关掉通过即发布就停在待发布(client, admin, db, draft):
     """想踩着某个时刻自己放出去的，通过后活动还在发起方手里。"""
     head = login(client, QINGXIE_HEAD)
@@ -473,6 +486,41 @@ def test_名下还有人或活动的部门不能删(client, admin, db, draft,
                         json={"head_student_id": QINGXIE_HEAD}).status_code == 200
     r = client.delete(f"/api/staff/departments/{empty}", headers=admin)
     assert r.status_code == 409 and "归口着 1 场活动" in r.json()["detail"]
+
+
+def test_部门改名撞已有名字时报冲突不报500(client, admin, db):
+    """名字是部门的标识，重名之后下拉、归口、导出里都分不清是哪一个；
+    库里也有唯一约束，先拦在校验层，别让它冒成 500。"""
+    name = f"改名待测 {uid('t')}"
+    tmp = client.post("/api/staff/departments", headers=admin,
+                      json={"name": name}).json()["id"]
+    r = client.patch(f"/api/staff/departments/{tmp}", headers=admin,
+                     json={"name": "对外联络部"})
+    assert r.status_code == 409 and "已经有一个部门" in r.json()["detail"], r.text
+    # 改回自己原来的名字不算重名
+    assert client.patch(f"/api/staff/departments/{tmp}", headers=admin,
+                        json={"name": name}).status_code == 200
+    assert client.delete(f"/api/staff/departments/{tmp}", headers=admin).status_code == 200
+
+
+def test_指定部长不会把会长团成员静默降成部长(client, admin, db):
+    """会长团是全平台的层级，不该被一个部门的部长位顺手压下去。之前这里是
+    静默降级，点完「指定部长」才发现自己没了会长团权限。"""
+    tmp = client.post("/api/staff/departments", headers=admin,
+                      json={"name": f"部长待测 {uid('t')}"}).json()["id"]
+    zhang = db.query(User).filter(User.student_id == COUNCIL).one()
+    try:
+        r = client.patch(f"/api/staff/departments/{tmp}", headers=admin,
+                         json={"head_student_id": COUNCIL})
+        assert r.status_code == 400 and "会长团" in r.json()["detail"], r.text
+        db.expire_all()
+        assert db.get(User, zhang.id).is_council()
+    finally:
+        db.expire_all()
+        zhang = db.get(User, zhang.id)
+        zhang.qingxie_post, zhang.department_id = "council", None
+        db.commit()
+        client.delete(f"/api/staff/departments/{tmp}", headers=admin)
 
 
 def test_审批人打开活动管理页能直接去审批(client, initiator, liaison):

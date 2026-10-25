@@ -98,6 +98,30 @@ def test_删除材料会把文件一起删掉(client, admin, db, enrolled_activi
     assert not (MATERIAL_DIR / stored).exists()
 
 
+def test_删除只认学习材料别家的删不掉(client, admin, db, enrolled_activity):
+    """这条接口只该删挂在岗位上的学习材料。问卷附件是报名者自己传的，
+    反馈截图归提交人，立项书/结项书一格只能换不能空——从这条接口删要么
+    删掉别人的东西，要么对着不带活动的模板直接报错。"""
+    from backend.models import Attachment
+    from backend.models import uid as mk_id
+    act, _shift, _u = enrolled_activity
+    for owner_type, owner_id in (("application", "enr_1"),
+                                 ("feedback", "fb_1"),
+                                 ("claim_proof", "cl_1"),
+                                 ("template", ""),
+                                 ("proposal", "proposal")):
+        att = Attachment(id=mk_id("att"), owner_type=owner_type,
+                         owner_id=owner_id, activity_id=act.id, kind="file",
+                         title=f"{owner_type}", stored_name="missing.bin",
+                         size=1, uploaded_by="")
+        db.add(att)
+        db.commit()
+        r = client.delete(f"/api/staff/materials/{att.id}", headers=admin)
+        assert r.status_code == 404, (owner_type, r.status_code, r.text)
+        db.expire_all()
+        assert db.get(Attachment, att.id) is not None, owner_type
+
+
 def test_材料挂不到场次上(client, admin, enrolled_activity):
     _act, shift, _u = enrolled_activity
     r = client.post("/api/staff/materials", headers=admin,
