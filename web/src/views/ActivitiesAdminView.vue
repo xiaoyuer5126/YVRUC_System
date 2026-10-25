@@ -134,9 +134,8 @@
           </template>
         </el-table-column>
       </el-table>
-      <el-pagination v-if="total > f.size" class="pager" layout="prev, pager, next"
-                     background :current-page="f.page" :page-size="f.size"
-                     :total="total" @current-change="goPage" />
+      <Pager v-if="total > f.size" :page="f.page" :page-size="f.size"
+             :total="total" @change="goPage" />
     </el-card>
 
     <!-- 智能起草活动信息：草稿由管理者点了才填进下面的新建表单 -->
@@ -206,6 +205,7 @@ import { useAuthedImage } from '../composables/authedImage'
 import ActivityForm from '../components/ActivityForm.vue'
 import AiActivityAssist from '../components/AiActivityAssist.vue'
 import DataCards from '../components/DataCards.vue'
+import Pager from '../components/Pager.vue'
 
 const router = useRouter()
 const narrow = useNarrow()

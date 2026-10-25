@@ -4,7 +4,7 @@
     <el-card shadow="never">
       <div class="toolbar">
         <el-input v-model="q" placeholder="姓名 / 学号" clearable style="width:220px"
-                  @keyup.enter="reload" @clear="reload">
+                  @input="onSearch" @keyup.enter="reload" @clear="reload">
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
         <el-select v-model="college" clearable placeholder="学院筛选" style="width:180px" @change="reload">
@@ -51,9 +51,7 @@
           </template>
         </el-table-column>
       </el-table>
-      <el-pagination layout="total, prev, pager, next" :total="total" :page-size="SIZE"
-                     v-model:current-page="page" @current-change="load" size="small"
-                     style="margin-top:12px;justify-content:flex-end" />
+      <Pager :page="page" :page-size="SIZE" :total="total" @change="goPage" />
     </el-card>
 
     <ArchiveDrawer ref="drawer" />
@@ -66,6 +64,7 @@ import { Search } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
+import Pager from '../components/Pager.vue'
 import ArchiveDrawer from '../components/ArchiveDrawer.vue'
 
 const SIZE = 20
@@ -94,6 +93,18 @@ async function load() {
 function reload() {
   page.value = 1
   load()
+}
+
+function goPage(p) {
+  page.value = p
+  load()
+}
+
+// 边打字边搜：输入停 300ms 就查一次，回车立刻查
+let timer = null
+function onSearch() {
+  clearTimeout(timer)
+  timer = setTimeout(reload, 300)
 }
 onMounted(async () => {
   // 学院选项从档案里汇总，不用写死的清单（与活动页的招募范围同源）

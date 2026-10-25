@@ -60,9 +60,8 @@
       </el-table-column>
     </el-table>
 
-    <el-pagination v-if="total > size" class="pager" layout="prev, pager, next"
-                   background :current-page="page" :page-size="size"
-                   :total="total" @current-change="goPage" />
+    <Pager v-if="total > size" :page="page" :page-size="size" :total="total"
+           @change="goPage" />
 
     <el-drawer v-model="drawer" title="校外时长补登" :size="narrow ? '100%' : '520px'">
       <template v-if="cur">
@@ -144,6 +143,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
 import { auth } from '../store'
 import { useNarrow } from '../composables/useNarrow'
+import Pager from './Pager.vue'
 import FeedbackShots from './FeedbackShots.vue'
 
 const STATUS_TYPES = { pending: 'warning', approved: 'success',

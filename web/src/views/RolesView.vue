@@ -20,7 +20,7 @@
 
     <div class="toolbar">
       <el-input v-model="q" placeholder="按姓名或学号搜索"
-                style="width:280px" clearable @keyup.enter="reload" @clear="reload" />
+                style="width:280px" clearable @input="onSearch" @keyup.enter="reload" @clear="reload" />
       <el-button type="primary" @click="reload">查询</el-button>
       <!-- 批量：学号一行一个，添加/移除身份；骨干用不上（他们只认领成员） -->
       <el-button v-if="!coreOnly" @click="openBatch">批量调整</el-button>
@@ -95,9 +95,7 @@
         </template>
       </el-table-column>
     </el-table>
-    <el-pagination layout="total, prev, pager, next" :total="total" :page-size="SIZE"
-                   v-model:current-page="page" @current-change="load" size="small"
-                   style="margin-top:12px;justify-content:flex-end" />
+    <Pager :page="page" :page-size="SIZE" :total="total" @change="goPage" />
 
     <el-dialog v-model="dlg.visible" title="调整身份" width="480">
       <p>
@@ -261,6 +259,7 @@ import { api } from '../api'
 import { auth, ROLE_LABELS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
+import Pager from '../components/Pager.vue'
 import RefreshBar from '../components/RefreshBar.vue'
 
 const ROLE_ORDER = ['admin', 'qingxie', 'initiator', 'student']
@@ -319,6 +318,18 @@ async function load() {
 function reload() {
   page.value = 1
   load()
+}
+
+function goPage(p) {
+  page.value = p
+  load()
+}
+
+// 边打字边搜：输入停 300ms 就查一次，回车立刻查
+let timer = null
+function onSearch() {
+  clearTimeout(timer)
+  timer = setTimeout(reload, 300)
 }
 
 onMounted(async () => {
