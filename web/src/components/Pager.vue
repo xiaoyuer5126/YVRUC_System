@@ -2,7 +2,7 @@
      桌面显示总数与页码；窄屏下缩成小号、去掉页码，只留总数与上一页/下一页——
      手指点页码太密，容易点错相邻的数字。翻页只抛事件，当前页由调用方自己改。 -->
 <template>
-  <el-pagination class="pager" :small="narrow"
+  <el-pagination class="pager" :size="narrow ? 'small' : 'default'"
                  :layout="narrow ? 'total, prev, next' : 'total, prev, pager, next'"
                  :current-page="page" :page-size="pageSize" :total="total"
                  @current-change="p => emit('change', p)" />
