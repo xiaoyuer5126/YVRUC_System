@@ -88,21 +88,24 @@ def _redirect_uri() -> str:
     return config.SSO_REDIRECT_URI
 
 
-def login_url(next_url: str = "") -> str:
-    """真实 SSO 的授权跳转地址。
+def login_url(next_url: str = "") -> tuple[str, str]:
+    """真实 SSO 的授权跳转地址，返回 (url, nonce)。
 
     state 现取现用、一次一用，跳转前想去的页面存在它背后（见 locks.py）。
+    nonce 由调用方写进浏览器 cookie，回调时比对——只认 state 的话别人能拿
+    现成的回调地址替我们发起登录（登录 CSRF）。
     redirect_uri 指向平台根路径，CAS 在后面追加 ?code=..&state=..，
     前端在 router.js 的路由守卫里接住、转给 /sso-callback。
     """
+    state, nonce = issue_sso_state(next_url, config.SSO_STATE_SECONDS)
     q = urllib.parse.urlencode({
         "response_type": "code",
         "client_id": _client_id(),
         "redirect_uri": _redirect_uri(),
         "scope": "all",
-        "state": issue_sso_state(next_url, config.SSO_STATE_SECONDS),
+        "state": state,
     })
-    return f"{_endpoint('SSO_AUTHORIZE_URL')}?{q}"
+    return f"{_endpoint('SSO_AUTHORIZE_URL')}?{q}", nonce
 
 
 def _account(info: dict, sid: str) -> dict:
@@ -155,17 +158,18 @@ def _identity(info: dict) -> dict:
     }
 
 
-def handle_callback(code: str, state: str) -> dict:
+def handle_callback(code: str, state: str, nonce: str) -> dict:
     """用授权码换身份 → {"student_id", "name", "user_type", "grade",
     "stage", "college", "gender", "next"}。
 
     state 先核销再换令牌：核销不掉说明这条回调不是从我们这儿发起的
-    （伪造、已用过或过期），此时**不该**拿 code 去换令牌。
+    （伪造、已用过或过期），此时**不该**拿 code 去换令牌。nonce 对不上
+    说明发起登录的浏览器不是这台，同样不该换。
     """
-    next_url = redeem_sso_state(state)
-    if next_url is None:
-        # None 才代表无效；空串是合法的「没指定去向」，不能一起拒掉
-        raise PermissionError("登录已过期或来源不可信，请回到首页重新登录")
+    redeemed = redeem_sso_state(state, nonce)
+    if redeemed is None or not redeemed[1]:
+        raise PermissionError("登录请求已失效，请回到登录页重新登录")
+    next_url = redeemed[0]
 
     token = _fetch_token(code)
     info = _fetch_profile(token)

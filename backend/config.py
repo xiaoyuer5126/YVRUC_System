@@ -59,6 +59,11 @@ SESSION_RENEW_AFTER = timedelta(hours=1)
 # 重放窗口。
 SSO_STATE_SECONDS = 600
 
+# 取授权跳转地址按客户端 IP 限流：这个接口不需要登录，每次调用都会往 Redis
+# 写一个 state，不限流的话脚本能把它灌满。正常用户点一次登录才取一次，一分钟
+# 30 次远远够用。
+SSO_LOGIN_URL_PER_MINUTE = int(os.environ.get("YVRUC_SSO_LOGIN_URL_PER_MINUTE", "").strip() or "30")
+
 # 身份证号在库里是加密存的（见 crypto.py），密钥必须与数据库分开保管。
 ID_CARD_KEY = os.environ.get("YVRUC_ID_CARD_KEY", "").strip()
 
@@ -139,6 +144,9 @@ TIANDITU_TK_SERVER = os.environ.get("YVRUC_TIANDITU_TK_SERVER", "").strip()
 # 不如自己先停。
 TIANDITU_DAILY_LIMIT = int(os.environ.get("YVRUC_TIANDITU_DAILY_LIMIT", "").strip() or "10000")
 TIANDITU_WARN_AT = TIANDITU_DAILY_LIMIT * 9 // 10
+# 每人每天最多打多少次上游：地图瓦片对所有管理者共用一把 tk，全局额度是
+# TIANDITU_DAILY_LIMIT；限住单个人，一个管理者刷屏不会把别人的额度一起耗光。
+TILE_USER_DAILY = int(os.environ.get("YVRUC_TILE_USER_DAILY", "").strip() or "1500")
 TILE_CACHE_DIR = DATA_DIR / "tiles"
 TILE_CACHE_DAYS = 30
 

@@ -100,29 +100,36 @@ def _signing_key() -> bytes:
                     hashlib.sha256).digest()
 
 
-def _sign(exp: int) -> str:
-    return hmac.new(_signing_key(), str(exp).encode(), hashlib.sha256).hexdigest()[:32]
+def _sign(exp: int, user_id: str) -> str:
+    return hmac.new(_signing_key(), f"{exp}.{user_id}".encode(),
+                    hashlib.sha256).hexdigest()[:32]
 
 
-def issue_token(at: float | None = None) -> tuple[str, int]:
+def issue_token(user_id: str, at: float | None = None) -> tuple[str, int]:
     """签一张瓦片令牌，返回 (令牌, 过期的 Unix 时间戳)。
 
-    过期时间对齐到整点：同一个小时里领到的令牌一模一样，瓦片地址也就一样，
-    浏览器缓存能在几个管理者、几次打开之间共用。代价是有效期在
+    令牌里带着签发对象的 user_id，签名同时覆盖它和过期时间：同一个系统里
+    每个管理者拿到的地址不一样，一个人的令牌用的额度记在他自己头上，刷屏
+    不会把共用的那把 tk 额度一起耗光。
+
+    过期时间对齐到整点：同一个人、同一个小时里领到的令牌一模一样，瓦片地址
+    也就一样，浏览器缓存能在几次打开之间共用。代价是有效期在
     TILE_TOKEN_HOURS 到 TILE_TOKEN_HOURS+1 小时之间浮动，无所谓。
     """
     at = time.time() if at is None else at
     exp = (int(at) // 3600 + config.TILE_TOKEN_HOURS + 1) * 3600
-    return f"{exp}.{_sign(exp)}", exp
+    return f"{exp}.{user_id}.{_sign(exp, user_id)}", exp
 
 
-def verify_token(token: str) -> bool:
-    exp_s, _, sig = (token or "").partition(".")
-    if not exp_s.isdigit() or not sig:
-        return False
-    if not hmac.compare_digest(sig, _sign(int(exp_s))):
-        return False
-    return int(exp_s) > time.time()
+def verify_token(token: str) -> str | None:
+    """验签，通过则返回令牌里的 user_id，验不过（含过期）返回 None。"""
+    exp_s, _, rest = (token or "").partition(".")
+    user_id, _, sig = rest.partition(".")
+    if not exp_s.isdigit() or not user_id or not sig:
+        return None
+    if not hmac.compare_digest(sig, _sign(int(exp_s), user_id)):
+        return None
+    return user_id if int(exp_s) > time.time() else None
 
 
 @router.get("/tile-token")
@@ -130,7 +137,7 @@ def tile_token(user: User = Depends(require_manager)):
     """管理端打开地图时领瓦片令牌；快过期时前端再来领一次。"""
     if not tiles_configured():
         return {"configured": False}
-    token, exp = issue_token()
+    token, exp = issue_token(user.id)
     return {"configured": True, "tile_base": TILE_BASE, "token": token,
             "expires_at": datetime.fromtimestamp(exp, timezone.utc).isoformat(),
             # 相对秒数：前端按它排下一次领取，不受用户电脑时钟不准的影响
@@ -189,7 +196,8 @@ def _fail(stale: bytes | None, status: int, detail: str) -> Response:
 @router.get("/tiles/{layer}/{z}/{x}/{y}")
 def tile(layer: str, z: str, x: str, y: str, t: str = ""):
     """一张瓦片。令牌先验：没令牌的人连参数对不对都不必知道。"""
-    if not verify_token(t):
+    user_id = verify_token(t)
+    if user_id is None:
         raise HTTPException(401, "地图令牌无效或已过期，请刷新页面")
     if layer not in LAYERS:
         raise HTTPException(400, "不支持的图层")
@@ -214,6 +222,12 @@ def tile(layer: str, z: str, x: str, y: str, t: str = ""):
     day = now().date().isoformat()
     if locks.tile_fetches(day) >= config.TIANDITU_DAILY_LIMIT:
         return _fail(cached, 503, "今天的地图额度用完了，明天再看")
+    # 每人每天的上限：地图对所有管理者共用一把 tk，限住单个人，一个人刷屏
+    # 不会把别人的额度一起耗光。先占后判：先自增再比，并发请求不会双双漏过
+    user_key = f"tile-user:{user_id}:{day}"
+    locks.note_rate(user_key, 86400)
+    if locks.rate_count(user_key) > config.TILE_USER_DAILY:
+        return _fail(cached, 429, "今天看地图的次数太多了，明天再看")
     n = locks.count_tile_fetch(day)
     if n > config.TIANDITU_DAILY_LIMIT:
         # 几个请求同时越过了上面那道检查：多出来的这个不打上游

@@ -187,17 +187,27 @@ def test_部门成员不能导出也不能查档案(client, db, dept_activity):
     assert client.get("/api/staff/users", headers=member).status_code == 403
 
 
-def test_部门成员看不了审计日志里的违规(client, db, dept_activity):
-    """违规接口本身不给部门成员看，留痕中心里却挂着一条条「违规登记」——
-    露出得比违规接口还多。审计日志也得一起关掉。"""
+def test_部门成员看审计日志时不含违规登记(client, db, dept_activity):
+    """违规接口不给部门成员看，留痕里的违规登记也藏掉；别的留痕照常能看。"""
+    from backend.audit import log as audit_log
     aid, _g = dept_activity
     _add_core_manager(db, aid)
+    admin = db.query(User).filter(User.student_id == ADMIN).one()
+    audit_log(db, actor=admin, action="violation", target_type="user",
+              target_id=admin.id, target_label="某志愿者", activity_id=aid,
+              summary="登记违规：迟到早退")
+    audit_log(db, actor=admin, action="update", target_type="activity",
+              target_id=aid, target_label="部门活动", activity_id=aid,
+              summary="修改活动信息")
+    db.commit()
     member = login(client, MEMBER)
-    for url in (f"/api/staff/audit-logs?activity_id={aid}",
-                f"/api/staff/audit-logs?activity_id={aid}&target_type=user"):
-        r = client.get(url, headers=member)
-        assert r.status_code == 403, (url, r.text)
-        assert "学习权限" in r.json()["detail"]
+    r = client.get(f"/api/staff/audit-logs?activity_id={aid}", headers=member)
+    assert r.status_code == 200, r.text
+    actions = {x["action"] for x in r.json()["items"]}
+    assert "update" in actions and "violation" not in actions
+    r = client.get(f"/api/staff/audit-logs?activity_id={aid}",
+                   headers=login(client, ADMIN))
+    assert "violation" in {x["action"] for x in r.json()["items"]}
 
 
 def test_部门成员的导出一个都下不到(client, db, dept_activity):
