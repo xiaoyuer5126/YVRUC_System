@@ -29,7 +29,60 @@
       统一分配的场次先落在「待分配」，再分配岗位；不录取只发送通知，不留记录。
       场次开始时仍未处理的申请会自动落选并通知志愿者。
     </p>
-    <el-table ref="tableRef" :data="shown" size="small" row-key="id"
+    <!-- 手机上这张表明细挤不下，意向场次的勾选和岗位下拉也没处放：改成卡片，
+         多选走 DataCards 自己的勾选（只勾得动待处理的申请，与桌面同一条规则），
+         意向场次的勾选、岗位下拉和这一行的「录取/不录取」都放进卡片正文 -->
+    <!-- key 跟着筛选开关走：切开关时重挂一次，等于清掉卡片自己的勾选，
+         与桌面那版 clearSelection 一致，免得留下看不见的勾选 -->
+    <DataCards v-if="narrow" :key="pendingOnly ? 'pending' : 'all'" :rows="shown"
+               row-key="id" :selectable="selectable" @selection-change="onSelect"
+               :empty="pendingOnly ? '没有待处理的申请' : '还没有人申请'"
+               :fields="[{ key: 'seq', label: '序号' },
+                         { key: 'created_at', label: '提交时间', format: fmtDT },
+                         { key: 'user.college', label: '学院' },
+                         { key: 'leader_willing', label: '组长意愿' }]">
+      <template #title="{ row }">
+        <ScoreAlert :user="row.user" />
+        <el-link type="primary" underline="never" @click="$emit('archive', row.user)">
+          {{ row.user.name }}
+        </el-link>
+        <span class="dim">{{ row.user.student_id }}</span>
+      </template>
+      <template #extra="{ row }">
+        <el-tag size="small" :type="STATUS_TYPE[row.status]">{{ row.status_label }}</el-tag>
+      </template>
+      <template #field-leader_willing="{ row }">
+        <el-tag v-if="row.leader_willing" size="small" type="warning" effect="plain">愿意</el-tag>
+        <span v-else class="dim">—</span>
+      </template>
+      <template #body="{ row }">
+        <div v-for="w in row.wanted" :key="w.shift_id" class="al-pick">
+          <template v-if="row.status === 'applied' && w.status === 'applied' && choice[row.id]">
+            <el-checkbox v-model="choice[row.id][w.shift_id].on">{{ w.shift_name }}</el-checkbox>
+            <el-select v-if="isPick(w.shift_id)" v-model="choice[row.id][w.shift_id].position_id"
+                       size="small" style="width:160px" placeholder="岗位"
+                       :disabled="!choice[row.id][w.shift_id].on">
+              <el-option v-for="o in positionsOf(w.shift_id)" :key="o.id" :value="o.id"
+                         :label="`${o.name}（${o.quota} 人）`" />
+            </el-select>
+            <span v-else class="dim">{{ w.position_name || '待分配' }}</span>
+          </template>
+          <el-tag v-else size="small" effect="plain"
+                  :type="w.status === 'enrolled' ? 'success' : (w.status === 'applied' ? 'primary' : 'info')">
+            {{ w.shift_name }}{{ w.position_name ? ' · ' + w.position_name : '' }}
+          </el-tag>
+        </div>
+        <AnswerList :answers="row.answers" style="margin:8px 0 0" />
+        <div v-if="row.status === 'applied'" class="al-row-actions">
+          <el-button size="small" type="success" plain :disabled="busy"
+                     @click="decide(true, [row])">录取</el-button>
+          <el-button size="small" type="danger" plain :disabled="busy"
+                     @click="decide(false, [row])">不录取</el-button>
+        </div>
+      </template>
+    </DataCards>
+
+    <el-table v-else ref="tableRef" :data="shown" size="small" row-key="id"
               :empty-text="pendingOnly ? '没有待处理的申请' : '还没有人申请'"
               @selection-change="onSelect">
       <el-table-column type="selection" width="36" :selectable="selectable" />
@@ -56,7 +109,7 @@
           <div class="dim">{{ row.user.student_id }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="提交时间" width="110">
+      <el-table-column label="提交时间" width="180">
         <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
       </el-table-column>
       <el-table-column label="学院" prop="user.college" min-width="120" />
@@ -99,7 +152,6 @@
         </template>
       </el-table-column>
     </el-table>
-    <el-empty v-if="!apps.length && !loading" description="还没有人申请" />
 
     <!-- 逐人结果：成功的写录到哪儿，失败的写原因；时间冲突的可以确认后仍录取 -->
     <el-dialog v-model="result.visible" title="处理结果" width="600">
@@ -133,11 +185,14 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, conflictLine, downloadExport, fmtDT } from '../api'
+import { useNarrow } from '../composables/useNarrow'
 import ScoreAlert from './ScoreAlert.vue'
 import AnswerList from './AnswerList.vue'
+import DataCards from './DataCards.vue'
 
 const props = defineProps({ activityId: { type: String, required: true } })
 const emit = defineEmits(['archive', 'changed'])
+const narrow = useNarrow()
 
 const STATUS_TYPE = { applied: 'primary', accepted: 'success', rejected: 'info', withdrawn: 'info' }
 const apps = ref([])
@@ -285,4 +340,5 @@ async function confirmClashes() {
 .al-pick { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .al-result { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0;
              border-bottom: 1px solid var(--el-border-color-lighter); }
+.al-row-actions { display: flex; gap: 8px; margin-top: 8px; }
 </style>

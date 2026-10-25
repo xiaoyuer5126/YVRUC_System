@@ -288,7 +288,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
                          (st.location or activity.location) if st else "—"]
             rec = checked.get(u.id)
             line += ["已到岗 ✓" if rec else "未签到"]
-            line += [rec.checkout_at.strftime("%m-%d %H:%M")
+            line += [rec.checkout_at.strftime("%Y-%m-%d %H:%M")
                      if rec and rec.checkout_at else "—"]
             ws.append(line)
 

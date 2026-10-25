@@ -51,7 +51,7 @@
       <el-table v-else :data="d.recent_logs" size="small">
             <el-table-column label="操作人" width="90" prop="actor_name" />
             <el-table-column label="摘要" min-width="300" prop="summary" show-overflow-tooltip />
-            <el-table-column label="时间" width="110">
+            <el-table-column label="时间" width="180">
               <template #default="{row}">{{ fmtDT(row.created_at) }}</template>
             </el-table-column>
           </el-table>

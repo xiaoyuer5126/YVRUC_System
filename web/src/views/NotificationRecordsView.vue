@@ -15,9 +15,9 @@
         <span class="dim">至</span>
         <div class="when"><DateTimeField v-model="filter.end" placeholder="结束时间（默认现在）" /></div>
         <el-input v-model="filter.person" clearable placeholder="收件人学号或姓名" class="field"
-                  @keyup.enter="reload" @clear="reload" />
+                  @input="onSearch" @keyup.enter="reload" @clear="reload" />
         <el-input v-model="filter.activity" clearable placeholder="活动名称" class="field"
-                  @keyup.enter="reload" @clear="reload" />
+                  @input="onSearch" @keyup.enter="reload" @clear="reload" />
         <el-select v-model="filter.template" clearable placeholder="类型" class="kind" @change="reload">
           <el-option v-for="(label, k) in templates" :key="k" :value="k" :label="label" />
         </el-select>
@@ -46,7 +46,7 @@
       </DataCards>
 
       <el-table v-else :data="items" size="small" v-loading="loading">
-        <el-table-column label="时间" width="160">
+        <el-table-column label="时间" width="220">
           <template #default="{ row }">{{ fmtTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="收件人" width="180">
@@ -80,18 +80,17 @@
           <template #default="{ row }">{{ row.trig }}</template>
         </el-table-column>
       </el-table>
-      <el-pagination layout="total, prev, pager, next" :total="total" :page-size="SIZE"
-                     v-model:current-page="page" @current-change="load"
-                     style="margin-top:12px;justify-content:flex-end" />
+      <Pager :page="page" :page-size="SIZE" :total="total" @change="goPage" />
     </el-card>
   </div>
 </template>
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { api, download } from '../api'
+import { api, download, fmtDTs } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
+import Pager from '../components/Pager.vue'
 import DateTimeField from '../components/DateTimeField.vue'
 
 const SIZE = 20
@@ -116,7 +115,7 @@ function localText(v) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
        + `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
-const fmtTime = t => (t ? t.replace('T', ' ').slice(0, 19) : '—')
+const fmtTime = fmtDTs
 const yesNo = v => (v ? '是' : '否')
 
 function ackText(row) {
@@ -160,11 +159,23 @@ function reload() {
   load()
 }
 
+// 边打字边搜：输入停 300ms 就查一次，回车立刻查
+let timer = null
+function onSearch() {
+  clearTimeout(timer)
+  timer = setTimeout(reload, 300)
+}
+
 function exportXlsx() {
   download(`/api/staff/notifications.xlsx?${query()}`)
 }
 
 onMounted(load)
+
+function goPage(p) {
+  page.value = p
+  load()
+}
 </script>
 
 <style scoped>

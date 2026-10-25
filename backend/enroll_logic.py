@@ -825,7 +825,7 @@ def start_confirm(db: OrmSession, enr: Enrollment, shift: Shift) -> Enrollment:
     msgcenter.send_user(db, user, "waitlist_promoted",
                     data={"activity_id": activity.id},
                     activity=activity.title, shift=shift.name,
-                    deadline=f"{enr.confirm_deadline:%m-%d %H:%M}")
+                    deadline=f"{enr.confirm_deadline:%Y-%m-%d %H:%M}")
     return enr
 
 

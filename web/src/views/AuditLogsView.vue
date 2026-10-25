@@ -43,13 +43,11 @@
             <AuditChanges :changes="row.changes" />
           </template>
         </el-table-column>
-        <el-table-column label="时间" width="110">
+        <el-table-column label="时间" width="180">
           <template #default="{row}">{{ fmtDT(row.created_at) }}</template>
         </el-table-column>
       </el-table>
-      <el-pagination layout="prev, pager, next" :total="total" :page-size="20"
-                     v-model:current-page="page" @current-change="load"
-                     style="margin-top:12px;justify-content:flex-end" />
+      <Pager :page="page" :page-size="20" :total="total" @change="goPage" />
     </el-card>
   </div>
 </template>
@@ -60,6 +58,7 @@ import { api, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import AuditChanges from '../components/AuditChanges.vue'
 import DataCards from '../components/DataCards.vue'
+import Pager from '../components/Pager.vue'
 
 const narrow = useNarrow()
 const items = ref([])
@@ -80,6 +79,11 @@ async function load() {
   } finally { loading.value = false }
 }
 onMounted(load)
+
+function goPage(p) {
+  page.value = p
+  load()
+}
 </script>
 
 <style scoped>

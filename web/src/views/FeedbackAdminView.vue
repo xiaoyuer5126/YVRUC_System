@@ -38,9 +38,7 @@
           </div>
         </div>
       </div>
-      <el-pagination layout="prev, pager, next" :total="total" :page-size="SIZE"
-                     v-model:current-page="page" @current-change="load"
-                     style="margin-top:12px;justify-content:flex-end" />
+      <Pager :page="page" :page-size="SIZE" :total="total" @change="goPage" />
     </el-card>
 
     <el-dialog v-model="handling" title="处理反馈" :width="narrow ? '94%' : '520px'">
@@ -67,6 +65,7 @@ import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import FeedbackShots from '../components/FeedbackShots.vue'
+import Pager from '../components/Pager.vue'
 import { feedbackReplies } from '../replyTemplates'
 
 const SIZE = 20
@@ -115,6 +114,11 @@ async function save() {
 }
 
 onMounted(load)
+
+function goPage(p) {
+  page.value = p
+  load()
+}
 </script>
 
 <style scoped>

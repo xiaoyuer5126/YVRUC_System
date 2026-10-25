@@ -31,7 +31,7 @@
                  :fields="[{ key: 'created_at', label: '记录时间', format: fmtDT },
                            { key: 'appeal_deadline', label: '申诉截止',
                              format: fmtDT, hideEmpty: true }]"
-                 empty="还没有时长记录">
+                 empty="参加活动并完成服务后，将会显示时长">
         <template #extra="{ row }">
           <b style="font-size:16px;color:var(--el-color-primary)">{{ row.hours }}h</b>
         </template>
@@ -53,7 +53,8 @@
           </el-button>
         </template>
       </DataCards>
-      <el-table v-else :data="data.records">
+      <el-table v-else :data="data.records"
+                empty-text="参加活动并完成服务后，将会显示时长">
         <el-table-column type="expand" width="30">
           <template #default="{ row }"><HoursParts :parts="row.parts" style="margin-left:30px" /></template>
         </el-table-column>
@@ -76,7 +77,7 @@
             <AppealTag :row="row" />
           </template>
         </el-table-column>
-        <el-table-column label="记录时间" width="130">
+        <el-table-column label="记录时间" width="180">
           <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="200">
@@ -87,14 +88,13 @@
                 {{ row.confirmed_at ? '改报酬方式' : '确认无误' }}
               </el-button>
               <el-button v-if="row.can_appeal" size="small" plain @click="openAppeal(row)">
-                有异议
+                时长有异议
               </el-button>
               <span v-if="!canReconfirm(row) && !row.can_appeal" class="dim">—</span>
             </div>
           </template>
         </el-table-column>
       </el-table>
-      <el-empty v-if="!data.records.length" description="参加活动并完成服务后，将会显示时长" />
     </el-card>
 
     <!-- 校外自行报名的活动单独一条账：没有场次、报名和签到，见后端 hours_claims -->

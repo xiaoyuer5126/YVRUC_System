@@ -331,3 +331,22 @@ def test_时间灵活场次照常提示冲突(client, db, open_group, take_stude
     assert r.status_code == 409 and r.json()["detail"]["code"] == "time_conflict"
     assert enroll(client, headers, act2, g2, confirm_conflict=True).status_code == 200
 
+
+
+def test_我的报名回候补位次(client, open_group, take_student):
+    """「我的报名」里候补的人要知道排第几：接口给候补算出候补位次，
+    已报名的人没有名次（给 0）。"""
+    act, g = open_group(1)
+    holder = login(client, take_student())
+    assert enroll(client, holder, act, g).status_code == 200
+    assert enroll(client, login(client, take_student()), act, g).json()[
+        "status"] == "waitlisted"
+
+    h = login(client, take_student())
+    assert enroll(client, h, act, g).json()["status"] == "waitlisted"
+    row = next(r for r in client.get("/api/me/enrollments", headers=h).json()
+               if r["status"] == "waitlisted")
+    assert row["waitlist_position"] == 2
+
+    enrolled = client.get("/api/me/enrollments", headers=holder).json()
+    assert enrolled[0]["waitlist_position"] == 0

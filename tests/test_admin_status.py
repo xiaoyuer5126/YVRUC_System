@@ -70,7 +70,7 @@ def test_发布提示按报名开始时间说(client, db, admin, open_group):
     r = client.post(f"/api/staff/activities/{act.id}/publish", headers=admin)
     assert r.status_code == 200, r.text
     hint = r.json()["hint"]
-    assert hint == f"报名将于 {act.reg_start:%m-%d %H:%M} 开始"
+    assert hint == f"报名将于 {act.reg_start:%Y-%m-%d %H:%M} 开始"
     # 活动管理页的发布确认读同一个字段（列表里的 publish_hint）
     assert _one(client, admin, act)["publish_hint"] == hint
 

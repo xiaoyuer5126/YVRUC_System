@@ -786,6 +786,67 @@ def test_非本场次的人不该被查出姓名(client, admin, db, live_group, 
     assert u.name not in d["skipped"][0]
 
 
+def test_批量补签留痕写清姓名与学号(client, admin, db, live_group):
+    """只写「手动签到 1 人」，事后翻留痕认不出动的是谁。姓名与学号都要进去。"""
+    from backend.models import AuditLog
+
+    act, g, _h, _token = live_group
+    vol = _vol(db, g)
+    tid = task_id_of(client, admin, act)
+    d = client.post(f"/api/staff/checkin-tasks/{tid}/batch", headers=admin,
+                    json={"action": "checkin",
+                          "student_ids": [vol.student_id]}).json()
+    assert d["done"] == 1
+    row = (db.query(AuditLog).filter(AuditLog.target_id == tid)
+           .order_by(AuditLog.created_at.desc()).first())
+    assert vol.name in row.summary and vol.student_id in row.summary
+
+
+def test_批量补签人多时只列前几个(client, admin, db, live_group, take_student):
+    """几十个人的名单会把一条留痕撑爆。列前 5 个，后面报总数。"""
+    from backend.models import AuditLog
+
+    act, g, _h, _token = live_group
+    pos = db.query(Position).filter(Position.shift_id == g.id).first()
+    sids = [_vol(db, g).student_id]
+    for _ in range(6):
+        sid = take_student()
+        db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                          user_id=student_row(db, sid).id, position_id=pos.id,
+                          status="enrolled", joined_at=now() - timedelta(days=1)))
+        sids.append(sid)
+    db.commit()
+    tid = task_id_of(client, admin, act)
+    d = client.post(f"/api/staff/checkin-tasks/{tid}/batch", headers=admin,
+                    json={"action": "checkin", "student_ids": sids}).json()
+    assert d["done"] == 7
+    row = (db.query(AuditLog).filter(AuditLog.target_id == tid)
+           .order_by(AuditLog.created_at.desc()).first())
+    assert "等 7 人" in row.summary
+    # 前 5 个列全，第 6、7 个只计入总数
+    assert sids[4] in row.summary
+    assert sids[5] not in row.summary and sids[6] not in row.summary
+
+
+def test_开关签到码会留痕(client, admin, db, live_group):
+    """开着才有人能签，开/关是现场的分水岭，改的这一次同样要留痕。"""
+    from backend.models import AuditLog
+
+    _act, _g, _h, _token = live_group
+    tid = task_id_of(client, admin, _act)
+
+    def summaries():
+        return [r.summary for r in db.query(AuditLog)
+                .filter(AuditLog.target_id == tid).all()]
+
+    client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                 json={"active": False})
+    assert any("关闭签到码" in s for s in summaries())
+    client.patch(f"/api/staff/checkin-tasks/{tid}", headers=admin,
+                 json={"active": True})
+    assert any("开启签到码" in s for s in summaries())
+
+
 def test_多选岗位里重复的只开一张码(client, admin, two_shift_act):
     _act, am, _train = two_shift_act
     pos_id = client.get(f"/api/staff/shifts/{am.id}/roster",

@@ -26,7 +26,24 @@
       <span class="dim">导出的表是录志愿北京用的，一条一行，含身份证号，下载留痕</span>
     </div>
 
-    <el-table v-loading="loading" :data="items" empty-text="没有这一类的补登">
+    <DataCards v-if="narrow" :rows="items" title-key="title" empty="没有这一类的补登"
+               :fields="[{ key: 'user', label: '提交人',
+                          format: u => u ? `${u.name}（${u.student_id}）` : '—' },
+                         { key: 'service_date', label: '活动日期' },
+                         { key: 'hours', label: '申报时长', format: v => v + 'h' },
+                         { key: 'submitted_at', label: '提交时间', format: fmtDT }]">
+      <template #extra="{ row }">
+        <el-tag size="small" :type="STATUS_TYPES[row.status]">{{ row.status_label }}</el-tag>
+      </template>
+      <template #body="{ row }">
+        <div v-if="row.status === 'approved'" class="dim">计 {{ row.counted_hours }}h</div>
+      </template>
+      <template #actions="{ row }">
+        <el-button size="small" type="primary" link @click="openDrawer(row)">查看</el-button>
+      </template>
+    </DataCards>
+
+    <el-table v-else v-loading="loading" :data="items" empty-text="没有这一类的补登">
       <el-table-column label="提交人" width="150">
         <template #default="{ row }">
           {{ row.user?.name }}
@@ -40,7 +57,7 @@
       <el-table-column label="申报时长" width="100">
         <template #default="{ row }">{{ row.hours }}h</template>
       </el-table-column>
-      <el-table-column label="提交时间" width="120">
+      <el-table-column label="提交时间" width="180">
         <template #default="{ row }">{{ fmtDT(row.submitted_at) }}</template>
       </el-table-column>
       <el-table-column label="状态" width="150">
@@ -60,9 +77,8 @@
       </el-table-column>
     </el-table>
 
-    <el-pagination v-if="total > size" class="pager" layout="prev, pager, next"
-                   background :current-page="page" :page-size="size"
-                   :total="total" @current-change="goPage" />
+    <Pager v-if="total > size" :page="page" :page-size="size" :total="total"
+           @change="goPage" />
 
     <el-drawer v-model="drawer" title="校外时长补登" :size="narrow ? '100%' : '520px'">
       <template v-if="cur">
@@ -144,6 +160,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
 import { auth } from '../store'
 import { useNarrow } from '../composables/useNarrow'
+import Pager from './Pager.vue'
+import DataCards from './DataCards.vue'
 import FeedbackShots from './FeedbackShots.vue'
 
 const STATUS_TYPES = { pending: 'warning', approved: 'success',

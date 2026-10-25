@@ -58,9 +58,18 @@
                          @confirm="transition(row, 'publish')">
             <template #reference><el-button size="small" type="success" plain>发布</el-button></template>
           </el-popconfirm>
+          <el-popconfirm v-if="row.status === 'draft'"
+                         title="删除草稿不可恢复，确认删除？" @confirm="delActivity(row)">
+            <template #reference><el-button size="small" type="danger" plain>删除</el-button></template>
+          </el-popconfirm>
           <el-popconfirm v-if="row.status === 'published'" title="将截止报名，确认截止？"
                          @confirm="transition(row, 'close')">
             <template #reference><el-button size="small" type="warning" plain>截止</el-button></template>
+          </el-popconfirm>
+          <el-popconfirm v-if="row.status === 'closed'"
+                         title="结束活动后不能再修改活动信息，确认结束？"
+                         @confirm="transition(row, 'finish')">
+            <template #reference><el-button size="small" type="danger" plain>结束</el-button></template>
           </el-popconfirm>
         </template>
       </DataCards>
@@ -116,8 +125,8 @@
                              @confirm="transition(row, 'close')">
                 <template #reference><el-button size="small" type="warning" link>截止</el-button></template>
               </el-popconfirm>
-              <el-popconfirm v-if="['published','closed'].includes(row.status)"
-                             title="结束活动后可进行时长录入，确认结束？"
+              <el-popconfirm v-if="row.status === 'closed'"
+                             title="结束活动后不能再修改活动信息，确认结束？"
                              @confirm="transition(row, 'finish')">
                 <template #reference><el-button size="small" type="danger" link>结束</el-button></template>
               </el-popconfirm>
@@ -125,9 +134,8 @@
           </template>
         </el-table-column>
       </el-table>
-      <el-pagination v-if="total > f.size" class="pager" layout="prev, pager, next"
-                     background :current-page="f.page" :page-size="f.size"
-                     :total="total" @current-change="goPage" />
+      <Pager v-if="total > f.size" :page="f.page" :page-size="f.size"
+             :total="total" @change="goPage" />
     </el-card>
 
     <!-- 智能起草活动信息：草稿由管理者点了才填进下面的新建表单 -->
@@ -197,6 +205,7 @@ import { useAuthedImage } from '../composables/authedImage'
 import ActivityForm from '../components/ActivityForm.vue'
 import AiActivityAssist from '../components/AiActivityAssist.vue'
 import DataCards from '../components/DataCards.vue'
+import Pager from '../components/Pager.vue'
 
 const router = useRouter()
 const narrow = useNarrow()

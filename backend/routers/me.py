@@ -128,6 +128,10 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "position": ({"id": st.id, "name": st.name, "time_text": st.time_text(),
                      "location": st.location} if st else None),
         "status": enr.status, "cancel_type": enr.cancel_type,
+        # 候补第几位：队列按岗位排（见 logic.waitlist_position），报上名的人
+        # 没有名次，给 0
+        "waitlist_position": (logic.waitlist_position(db, enr)
+                              if enr.status == "waitlisted" else 0),
         "excused": enr.excused, "excuse_reason": enr.excuse_reason,
         # 名单已锁定（整场或他的岗位）：此时退出会记一次「锁定后退出」
         "list_locked": logic.position_locked(g, st),
@@ -403,7 +407,7 @@ def confirm_hours(record_id: str, body: ConfirmHoursBody,
     if act.hours_locked():
         raise HTTPException(409, "该活动的时长已锁定")
     if act.appeal_deadline and now() > act.appeal_deadline:
-        raise HTTPException(409, f"确认已于 {act.appeal_deadline:%m-%d %H:%M} 截止，"
+        raise HTTPException(409, f"确认已于 {act.appeal_deadline:%Y-%m-%d %H:%M} 截止，"
                                  f"已按志愿时长记")
     if (db.query(HoursAppeal)
             .filter(HoursAppeal.record_id == r.id,
@@ -464,7 +468,7 @@ def appeal_hours(record_id: str, body: AppealBody,
         raise HTTPException(409, "该活动的时长已锁定，不可再申诉；请联系负责人")
     if act.appeal_deadline and now() > act.appeal_deadline:
         raise HTTPException(
-            409, f"申诉已于 {act.appeal_deadline:%m-%d %H:%M} 截止；"
+            409, f"申诉已于 {act.appeal_deadline:%Y-%m-%d %H:%M} 截止；"
                  f"如确有问题请联系负责人")
     if r.confirmed_at is not None:
         # 前端已经不给入口了，这里再挡一道：确认过的时长不能再申诉，

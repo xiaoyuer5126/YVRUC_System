@@ -12,7 +12,7 @@
               <el-tag size="small" :type="stateType">{{ stateText }}</el-tag>
             </el-descriptions-item>
             <el-descriptions-item v-if="task.taken_at" label="领取时间">
-              {{ task.taken_at.replace('T', ' ') }}
+              {{ fmtDT(task.taken_at) }}
             </el-descriptions-item>
           </el-descriptions>
 
@@ -38,11 +38,13 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { api } from '../api'
+import { api, fmtDT } from '../api'
+import { auth } from '../store'
 
 const route = useRoute()
+const router = useRouter()
 const token = route.params.token
 const task = ref(null)
 const loading = ref(true)
@@ -78,7 +80,14 @@ async function load() {
     task.value = await api.get(`/api/attire/task/${token}`, { silent: true })
   } catch { task.value = null } finally { loading.value = false }
 }
-onMounted(load)
+onMounted(() => {
+  if (!auth.token) {
+    // 扫码的人多半还没登录：先带去登录，登完回到这张服装码
+    router.replace({ path: '/login', query: { next: `/attire/${token}` } })
+    return
+  }
+  load()
+})
 
 async function doScan() {
   submitting.value = true

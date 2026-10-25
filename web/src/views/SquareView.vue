@@ -100,7 +100,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api } from '../api'
+import { api, fmtDTShort } from '../api'
 import SlotPicker from '../components/SlotPicker.vue'
 import { MODE_COLORS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
@@ -131,12 +131,12 @@ const f = reactive({
 // 按可参与时段筛选选中的格子：不进地址栏，离开广场就不记了
 const slotOpen = ref(false)
 const slots = ref([])
-const mmdd = s => s.slice(5)
 const hasDates = computed(() => Boolean(f.start || f.end))   // vuecheck: script-only，模板经 slotActive 读它
 const slotActive = computed(() => hasDates.value || slots.value.length > 0)
 const slotButtonText = computed(() => {
   let text = '按时段筛选'
-  if (f.start && f.end) text += ` · ${mmdd(f.start)}～${mmdd(f.end)}`
+  // 按钮窄，日期省掉星期保住年份
+  if (f.start && f.end) text += ` · ${fmtDTShort(f.start)}～${fmtDTShort(f.end)}`
   if (slots.value.length) text += `（${slots.value.length} 格）`
   return text
 })

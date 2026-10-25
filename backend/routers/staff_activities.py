@@ -545,7 +545,7 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
             return iso(v)
         if k == "held_periods":
             return "、".join(
-                f"{_parse_dt(p['start_time']):%m-%d %H:%M}-"
+                f"{_parse_dt(p['start_time']):%Y-%m-%d %H:%M}-"
                 f"{_parse_dt(p['end_time']):%H:%M}" for p in v or [])
         return _point_text(v) if k == "location_point" else v
     changes = diff_changes({k: shown(k, v) for k, v in before.items()},
@@ -925,8 +925,8 @@ def ensure_reg_end_in_range(act: Activity) -> None:
     last = act.last_shift_start()
     if act.reg_end and last and act.reg_end > last:
         raise HTTPException(
-            400, f"报名截止时间（{act.reg_end:%m-%d %H:%M}）晚于最后一个场次的"
-                 f"开始时间（{last:%m-%d %H:%M}），请将报名截止时间提前，"
+            400, f"报名截止时间（{act.reg_end:%Y-%m-%d %H:%M}）晚于最后一个场次的"
+                 f"开始时间（{last:%Y-%m-%d %H:%M}），请将报名截止时间提前，"
                  f"或将场次时间后移")
 
 
@@ -941,11 +941,11 @@ def ensure_reg_times(act: Activity, future: bool = True) -> None:
         return
     if act.reg_start is not None and act.reg_end <= act.reg_start:
         raise HTTPException(
-            400, f"报名截止时间（{act.reg_end:%m-%d %H:%M}）须晚于报名开始时间"
-                 f"（{act.reg_start:%m-%d %H:%M}）")
+            400, f"报名截止时间（{act.reg_end:%Y-%m-%d %H:%M}）须晚于报名开始时间"
+                 f"（{act.reg_start:%Y-%m-%d %H:%M}）")
     if future and act.reg_end <= now():
         raise HTTPException(
-            400, f"报名截止时间（{act.reg_end:%m-%d %H:%M}）已经过去，"
+            400, f"报名截止时间（{act.reg_end:%Y-%m-%d %H:%M}）已经过去，"
                  f"请重新选择报名截止时间")
 
 
@@ -1053,15 +1053,15 @@ def reopen(activity_id: str, body: ReopenBody,
         raise HTTPException(400, "新的报名截止时间必须晚于当前时间")
     if last and new_end > last:
         raise HTTPException(400, f"报名截止时间不能晚于最后一个场次的开始时间"
-                                 f"（{last:%m-%d %H:%M}）")
+                                 f"（{last:%Y-%m-%d %H:%M}）")
     old_end = act.reg_end
     act.status = "published"
     act.reg_end = new_end
     audit_log(db, actor=user, action="publish", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"恢复报名，报名截止时间 "
-                      f"{old_end:%m-%d %H:%M} → {new_end:%m-%d %H:%M}"
-                      if old_end else f"恢复报名，报名截止 {new_end:%m-%d %H:%M}",
+                      f"{old_end:%Y-%m-%d %H:%M} → {new_end:%Y-%m-%d %H:%M}"
+                      if old_end else f"恢复报名，报名截止 {new_end:%Y-%m-%d %H:%M}",
               visible=True)
     db.commit()
     # 恢复报名前先把空着的名额按候补顺序补齐，别让新来的人抢在排队的人前面
@@ -1477,7 +1477,7 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
 
     def fmt(v):
         if isinstance(v, datetime):
-            return v.strftime("%m-%d %H:%M")
+            return v.strftime("%Y-%m-%d %H:%M")
         if isinstance(v, bool):
             return "是" if v else "否"
         return v
@@ -1761,7 +1761,7 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
 
     def fmt(k, v):
         if isinstance(v, datetime):
-            return v.strftime("%m-%d %H:%M")
+            return v.strftime("%Y-%m-%d %H:%M")
         if k == "attire":
             return Position.ATTIRE_LABELS.get(v, v)
         return v

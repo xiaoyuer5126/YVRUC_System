@@ -54,7 +54,23 @@
         </el-tag>
       </div>
       <div v-if="changed.length" class="scroll-x">
-        <el-table :data="changed" size="small" max-height="360"
+        <DataCards v-if="narrow" :rows="changed" title-key="name" style="margin-top:8px"
+                   :fields="[{ key: 'student_id', label: '学号' },
+                             { key: 'hours', label: '时长' }]">
+          <template #extra="{ row }">
+            <el-tag size="small" :type="row.old_hours == null ? 'success' : 'primary'">
+              {{ row.old_hours == null ? '新增' : '覆盖' }}
+            </el-tag>
+          </template>
+          <template #field-hours="{ row }">
+            <template v-if="row.old_hours == null"><b>{{ row.hours }}h</b></template>
+            <template v-else>
+              {{ row.old_hours }}h → <b>{{ row.hours }}h</b>
+              <span v-if="row.note_changed" class="dim">（备注也改了）</span>
+            </template>
+          </template>
+        </DataCards>
+        <el-table v-else :data="changed" size="small" max-height="360"
                   style="margin-top:8px;min-width:480px">
           <el-table-column label="" width="70">
             <template #default="{ row }">
@@ -86,7 +102,13 @@
           第 {{ x.line }} 行 {{ x.student_id }}
         </el-tag>
       </div>
-      <el-table v-if="result.skipped.length" :data="result.skipped" size="small"
+      <DataCards v-if="result.skipped.length && narrow" :rows="result.skipped"
+                 title-key="student_id" style="margin-top:8px"
+                 empty="没有跳过的行"
+                 :fields="[{ key: 'line', label: '行', format: v => `第 ${v} 行` },
+                           { key: 'name', label: '姓名' },
+                           { key: 'reason', label: '跳过原因' }]" />
+      <el-table v-else-if="result.skipped.length" :data="result.skipped" size="small"
                 style="margin-top:8px">
         <el-table-column prop="line" label="行" width="60" />
         <el-table-column prop="student_id" label="学号" width="130" />
@@ -104,46 +126,74 @@
     <div class="section-title" style="margin-top:16px">
       当前名单（{{ state.items.length }} 人，合计 {{ state.total_hours }} 小时）
     </div>
-    <el-empty v-if="!state.items.length" description="还没有导入名单" />
-    <div v-else class="scroll-x">
-      <el-table :data="state.items" size="small" style="min-width:600px">
-        <el-table-column label="姓名" width="110">
-          <template #default="{ row }">{{ row.user?.name }}</template>
-        </el-table-column>
-        <el-table-column label="学号" width="120">
-          <template #default="{ row }">{{ row.user?.student_id }}</template>
-        </el-table-column>
-        <el-table-column label="学院" width="130">
-          <template #default="{ row }">{{ row.user?.college }}</template>
-        </el-table-column>
-        <el-table-column label="时长(h)" width="90">
-          <template #default="{ row }"><b>{{ row.hours }}</b></template>
-        </el-table-column>
-        <el-table-column prop="note" label="备注" min-width="140" show-overflow-tooltip />
-        <el-table-column label="操作" width="140">
-          <template #default="{ row }">
-            <template v-if="state.editable">
-              <div class="btn-row">
-                <el-button size="small" link type="primary" @click="openEdit(row)">修改</el-button>
-                <el-tooltip :disabled="!row.appealed" content="有过时长申诉的记录不能删除，请改时长">
-                  <span>
-                    <el-popconfirm :title="`从名单删除 ${row.user?.name}？`"
-                                   :disabled="row.appealed" @confirm="remove(row)">
-                      <template #reference>
-                        <el-button size="small" link type="danger"
-                                   :disabled="row.appealed">删除</el-button>
-                      </template>
-                    </el-popconfirm>
-                  </span>
-                </el-tooltip>
-              </div>
+    <DataCards v-if="narrow" :rows="state.items" title-key="user.name"
+               empty="还没有导入名单"
+               :fields="[{ key: 'user.student_id', label: '学号' },
+                         { key: 'user.college', label: '学院' },
+                         { key: 'hours', label: '时长(h)' },
+                         { key: 'note', label: '备注' }]">
+      <template #field-hours="{ row }"><b>{{ row.hours }}</b></template>
+      <template #actions="{ row }">
+        <template v-if="state.editable">
+          <el-button size="small" link type="primary" @click="openEdit(row)">修改</el-button>
+          <el-tooltip :disabled="!row.appealed" content="有过时长申诉的记录不能删除，请改时长">
+            <span>
+              <el-popconfirm :title="`从名单删除 ${row.user?.name}？`"
+                             :disabled="row.appealed" @confirm="remove(row)">
+                <template #reference>
+                  <el-button size="small" link type="danger"
+                             :disabled="row.appealed">删除</el-button>
+                </template>
+              </el-popconfirm>
+            </span>
+          </el-tooltip>
+        </template>
+        <el-tag v-else-if="row.appeal_pending" size="small" type="warning">申诉中</el-tag>
+        <span v-else class="dim">—</span>
+      </template>
+    </DataCards>
+    <template v-else>
+      <el-empty v-if="!state.items.length" description="还没有导入名单" />
+      <div v-else class="scroll-x">
+        <el-table :data="state.items" size="small" style="min-width:600px">
+          <el-table-column label="姓名" width="110">
+            <template #default="{ row }">{{ row.user?.name }}</template>
+          </el-table-column>
+          <el-table-column label="学号" width="120">
+            <template #default="{ row }">{{ row.user?.student_id }}</template>
+          </el-table-column>
+          <el-table-column label="学院" width="130">
+            <template #default="{ row }">{{ row.user?.college }}</template>
+          </el-table-column>
+          <el-table-column label="时长(h)" width="90">
+            <template #default="{ row }"><b>{{ row.hours }}</b></template>
+          </el-table-column>
+          <el-table-column prop="note" label="备注" min-width="140" show-overflow-tooltip />
+          <el-table-column label="操作" width="140">
+            <template #default="{ row }">
+              <template v-if="state.editable">
+                <div class="btn-row">
+                  <el-button size="small" link type="primary" @click="openEdit(row)">修改</el-button>
+                  <el-tooltip :disabled="!row.appealed" content="有过时长申诉的记录不能删除，请改时长">
+                    <span>
+                      <el-popconfirm :title="`从名单删除 ${row.user?.name}？`"
+                                     :disabled="row.appealed" @confirm="remove(row)">
+                        <template #reference>
+                          <el-button size="small" link type="danger"
+                                     :disabled="row.appealed">删除</el-button>
+                        </template>
+                      </el-popconfirm>
+                    </span>
+                  </el-tooltip>
+                </div>
+              </template>
+              <el-tag v-else-if="row.appeal_pending" size="small" type="warning">申诉中</el-tag>
+              <span v-else class="dim">—</span>
             </template>
-            <el-tag v-else-if="row.appeal_pending" size="small" type="warning">申诉中</el-tag>
-            <span v-else class="dim">—</span>
-          </template>
-        </el-table-column>
-      </el-table>
-    </div>
+          </el-table-column>
+        </el-table>
+      </div>
+    </template>
 
     <el-dialog v-model="edit.visible" :title="`修改 ${edit.row?.user?.name || ''} 的时长`"
                width="420">
@@ -170,10 +220,13 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { useNarrow } from '../composables/useNarrow'
+import DataCards from './DataCards.vue'
 
 const props = defineProps({
   activityId: { type: String, required: true },
 })
+const narrow = useNarrow()
 const emit = defineEmits(['changed'])
 
 const state = ref({ items: [], total_hours: 0, editable: false, block_reason: '',

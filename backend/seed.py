@@ -27,7 +27,7 @@ from .audit import log as audit_log
 from . import migrate
 from .database import SessionLocal, engine
 from .qrcodes import qr_svg
-from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, ShiftPeriod, User, ViolationRecord, day_of, iso, uid)
+from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, ShiftPeriod, User, ViolationRecord, day_of, day_text, iso, uid)
 # 已确认的时长要连明细一起种：明细不是另写的一段文字，是这套算法从签到记录
 # 里推出来的，所以直接借过来用，免得演示数据和线上算出来的两套口径
 from .routers.records import _import_fields
@@ -470,10 +470,10 @@ def main() -> None:
         db.add(manual_rec)
         manual_rec.add_segment(kind="manual", date=day_of(c1.start_time),
                                hours=1.0, label="签到码扫不上，现场补录",
-                               time_text=f"{c1.start_time:%m-%d}")
+                               time_text=day_text(c1.start_time))
         manual_rec.add_segment(kind="manual", date=day_of(c1.start_time),
                                hours=-0.5, label="中途离场 30 分钟",
-                               time_text=f"{c1.start_time:%m-%d}")
+                               time_text=day_text(c1.start_time))
 
         # ---------- 活动5：敬老院（已完成·时长已锁定） ----------
         elder = Activity(id=uid("act"), title="社区敬老院陪伴服务（秋）", organizer="文学院青年志愿者协会",
@@ -705,7 +705,7 @@ def main() -> None:
 
         notify(pc_user, "waitlist_promoted", "候补转正待确认｜校运动会开幕式志愿服务",
                f"「校运动会开幕式志愿服务」· 上午场 有名额释放，您已按候补顺序转正！\n"
-               f"请在 {e_pc.confirm_deadline:%m-%d %H:%M} 前确认，超时名额顺延。",
+               f"请在 {e_pc.confirm_deadline:%Y-%m-%d %H:%M} 前确认，超时名额顺延。",
                dt(hours=-1), act_id=sport.id)
         notify(wl_user, "waitlist_queued", "已加入候补｜校运动会开幕式志愿服务",
                "「校运动会开幕式志愿服务」· 上午场 名额已满，您已加入候补队列，当前第 2 位。",

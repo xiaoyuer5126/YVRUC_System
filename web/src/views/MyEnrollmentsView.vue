@@ -47,7 +47,7 @@
           <template v-if="isActive(row) && !row.shift.attached">
             <el-tag size="small" effect="plain"
                     :type="row.allow_reassign ? 'success' : 'info'">
-              {{ row.allow_reassign ? '接受' : '不接受' }}
+              {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
             </el-tag>
             <el-button size="small" link type="primary"
                        @click="toggleReassign(row)">修改</el-button>
@@ -101,8 +101,18 @@
             <template v-if="row.shift.location"> · {{ row.shift.location }}</template>
             <el-tag v-if="row.excused" size="small" type="info" effect="plain">已请假</el-tag>
           </div>
+          <!-- 分段签到的场次：逐段列出签到状态，宽屏窄屏一样 -->
+          <div v-if="(row.shift.periods || []).length > 1 && row.status === 'enrolled'"
+               class="dim">
+            <el-tag v-for="p in row.shift.periods" :key="p.id" size="small" effect="plain"
+                    :type="p.checked_out ? 'success' : p.checked_in ? 'warning' : 'info'"
+                    style="margin:4px 4px 0 0">
+              {{ p.text }} · {{ p.checked_out ? '已签退' : p.checked_in ? '已签到' : '未签到' }}
+            </el-tag>
+          </div>
           <div v-if="row.position">
             <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
+            <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
             <!-- 时段跟场次那行重复：这里只留岗位地点（手机端也是这么显示的） -->
             <span v-if="row.position.location" class="dim"> {{ row.position.location }}</span>
           </div>
@@ -118,7 +128,7 @@
           <template v-if="isActive(row) && !row.shift.attached">
             <el-tag size="small" effect="plain"
                     :type="row.allow_reassign ? 'success' : 'info'">
-              {{ row.allow_reassign ? '接受' : '不接受' }}
+              {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
             </el-tag>
             <el-tooltip placement="top"
                         content="仅在名额不足时可能进行调剂，负责人可看到你的意愿">
@@ -148,11 +158,11 @@
                        :type="signAction(row) === '签退' ? 'warning' : 'primary'"
                        @click="openCheckin(row)">{{ signAction(row) }}</el-button>
             <el-button v-if="row.contact_group_qr" size="small" plain
-                       @click="showQr(row)">联络群</el-button>
+                       @click="showQr(row)">查看联络群</el-button>
             <el-button v-if="row.is_leader" size="small" type="warning" plain
-                       @click="openTeam(row)">组员</el-button>
+                       @click="openTeam(row)">组员名单</el-button>
             <el-button v-if="row.status === 'pending_confirm'" size="small" type="primary"
-                       @click="confirm(row)">确认</el-button>
+                       @click="confirm(row)">确认转正</el-button>
             <el-button v-else-if="row.status === 'applied'" size="small" type="danger" plain
                        @click="withdraw(row)">撤回申请</el-button>
             <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached"
@@ -368,7 +378,7 @@ async function cancel(row) {
   const locked = fresh.status === 'enrolled' && fresh.list_locked
   await ElMessageBox.confirm(
     locked ? '名单已锁定，此时退出会被记录一次。确定退出吗？' : '确定退选吗？',
-    '退选确认', { type: 'warning', confirmButtonText: '确定' })
+    '确认退选', { type: 'warning', confirmButtonText: '确定' })
   const d = await api.del(`/api/activities/enrollments/${row.id}`)
   ElMessage[d.effect === 'locked' ? 'warning' : 'success'](d.message)
   load()

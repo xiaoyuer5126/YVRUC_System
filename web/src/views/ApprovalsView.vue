@@ -40,8 +40,19 @@
           <template #reference><el-button plain>撤下值班</el-button></template>
         </el-popconfirm>
       </div>
-      <el-table v-if="d.showHistory" :data="d.history" size="small" style="margin-top:8px">
-        <el-table-column label="时间" width="120">
+      <DataCards v-if="d.showHistory && narrow" :rows="d.history" title-key="actor"
+                 row-key="created_at" style="margin-top:8px" empty="还没有交接记录"
+                 :fields="[{ key: 'created_at', label: '时间', format: fmtDT },
+                           { key: 'from', label: '交接' },
+                           { key: 'actor', label: '操作人' },
+                           { key: 'note', label: '备注' }]">
+        <template #field-from="{ row }">
+          {{ row.from || '无人' }} → {{ row.to || '无人值班' }}
+        </template>
+      </DataCards>
+      <el-table v-else-if="d.showHistory" :data="d.history" size="small"
+                style="margin-top:8px">
+        <el-table-column label="时间" width="180">
           <template #default="{ row }">{{ fmtDT(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="交接" min-width="160">
@@ -125,7 +136,8 @@
       <div class="section-title">时长审批</div>
       <el-card v-for="u in hoursReqs" :key="u.id" shadow="never" class="item">
         <div class="head">
-          <b class="title" @click="$router.push('/manage/' + u.activity_id + '?tab=hours')">
+          <b class="title" :class="{ 'title-static': !hoursHref(u) }"
+             @click="gotoActivity(hoursHref(u))">
             {{ u.activity_title }}
           </b>
           <el-tag size="small" :type="u.kind === 'lock' ? 'primary' : 'warning'"
@@ -167,7 +179,8 @@
       <div class="section-title">志愿北京待确认</div>
       <el-card v-for="v in vbConfirms" :key="v.id" shadow="never" class="item">
         <div class="head">
-          <b class="title" @click="$router.push('/manage/' + v.activity_id + '?tab=review')">
+          <b class="title" :class="{ 'title-static': !vbHref(v) }"
+             @click="gotoActivity(vbHref(v))">
             {{ v.activity_title }}
           </b>
           <el-tag v-if="v.kind === 'resubmit'" size="small" type="warning" effect="plain">
@@ -215,7 +228,40 @@
         启用值班的部门由骨干轮流值班收审批通知；需交立项书/结项书的部门，归口它的活动按对外活动走；
         志愿北京对接部门只有一个，负责志愿北京外联确认、校外时长补登和立项书结项书模板。
       </el-alert>
-      <el-table :data="depts" size="small">
+      <DataCards v-if="narrow" :rows="depts" title-key="name" empty="还没有部门"
+                 :fields="[{ key: 'note', label: '说明' },
+                           { key: 'head_name', label: '部长' },
+                           { key: 'duty_enabled', label: '启用值班' },
+                           { key: 'external', label: '立项/结项书' },
+                           { key: 'vb_liaison', label: '志愿北京对接' }]">
+        <template #field-head_name="{ row }">
+          <span v-if="row.head_name">{{ row.head_name }}</span>
+          <el-tag v-else size="small" type="warning" effect="plain">未指定</el-tag>
+        </template>
+        <template #field-duty_enabled="{ row }">
+          <el-switch size="small" :model-value="row.duty_enabled"
+                     :loading="savingDept === row.id"
+                     @change="v => toggleDuty(row, v)" />
+        </template>
+        <template #field-external="{ row }">
+          <el-switch size="small" :model-value="row.external"
+                     :loading="savingDept === row.id"
+                     @change="v => setExternal(row, v)" />
+        </template>
+        <template #field-vb_liaison="{ row }">
+          <el-tag v-if="row.vb_liaison" size="small" type="success" effect="plain">
+            对接部门
+          </el-tag>
+          <el-button v-else size="small" link type="primary"
+                     :loading="savingDept === row.id"
+                     @click="setLiaison(row)">设为对接</el-button>
+        </template>
+        <template #actions="{ row }">
+          <el-button size="small" link type="primary" @click="openDept(row)">编辑</el-button>
+          <el-button size="small" link type="danger" @click="removeDept(row)">删除</el-button>
+        </template>
+      </DataCards>
+      <el-table v-else :data="depts" size="small">
         <el-table-column prop="name" label="部门" min-width="140" />
         <el-table-column prop="note" label="说明" min-width="200" />
         <el-table-column label="部长" width="140">
@@ -347,18 +393,30 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
 import ApprovalCommentDialog from '../components/ApprovalCommentDialog.vue'
+import DataCards from '../components/DataCards.vue'
 import HoursClaimQueue from '../components/HoursClaimQueue.vue'
 import ProjectFileSlot from '../components/ProjectFileSlot.vue'
 import { closingApproved, closingRejected, projectApproved, projectRejected, vbConfirmed }
   from '../replyTemplates'
 import { useNarrow } from '../composables/useNarrow'
-import { auth } from '../store'
+import { auth, managesAllActivities } from '../store'
 
 const narrow = useNarrow()
+const router = useRouter()
+// 标题点开去哪：能管全部活动的人进管理页；审批人多半只在这一条审批线上，
+// 不是这场活动的管理者，进管理页会看到「活动不存在」，给他们志愿者端的详情页。
+// 补记录活动不公开、志愿者端没有详情页，这种标题就不给点
+const hoursHref = u => managesAllActivities()
+  ? `/manage/${u.activity_id}?tab=hours`
+  : (u.record_only ? '' : `/activity/${u.activity_id}`)
+const vbHref = v => managesAllActivities()
+  ? `/manage/${v.activity_id}?tab=review`
+  : (v.record_only ? '' : `/activity/${v.activity_id}`)
+const gotoActivity = href => { if (href) router.push(href) }
 const rows = ref([])
 const hoursReqs = ref([])
 const vbConfirms = ref([])
@@ -601,4 +659,6 @@ async function submitTransfer() {
 .head-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .head-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .title { font-size: 15px; color: var(--el-color-primary); cursor: pointer; }
+/* 点不开的标题：补记录活动不公开，志愿者端没有详情页，按普通文字显示 */
+.title-static { color: inherit; cursor: default; }
 </style>

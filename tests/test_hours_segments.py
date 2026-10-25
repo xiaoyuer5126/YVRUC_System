@@ -23,7 +23,8 @@ from sqlalchemy.exc import IntegrityError
 from backend.main import app
 from backend.models import (Activity, ActivityManager, CheckinRecord, CheckinTask,
                             Enrollment, HoursRecord, HoursSegment, Position, Shift,
-                            User, day_of, new_checkin_token, now, span_text, uid)
+                            User, day_of, day_text, new_checkin_token, now,
+                            span_text, uid)
 from conftest import mk_shift
 from conftest import ADMIN, POSITION_TEXT, import_roster, login, student_row
 
@@ -167,7 +168,8 @@ def test_三种段都能建_服务日期与时段对(client, admin, db, take_stu
     rec = _invariant(db, act, u)
     manual = rec.segments[1]
     assert manual.kind == "manual" and manual.seq == 2 and manual.hours == 1.5
-    assert manual.date == datetime(2026, 10, 5) and manual.time_text == "10-05"
+    assert (manual.date == datetime(2026, 10, 5)
+            and manual.time_text == day_text(datetime(2026, 10, 5)))
     assert manual.label == "场外搬运" and manual.position_name == ""
     assert manual.shift_id is None and manual.position_id is None
 
@@ -203,14 +205,16 @@ def test_接口里的明细键名与顺序(client, admin, db, take_student):
     assert [p["date"] for p in parts] == [f"{g1.start_time:%Y-%m-%d}"] * 2 \
         + [MANUAL_DATE] * 2
     assert parts[0]["time"] == g1.span_text() and parts[0]["position"] == "上午场岗"
-    assert parts[2]["time"] == "10-05" and parts[2]["position"] == ""
+    assert (parts[2]["time"] == day_text(datetime(2026, 10, 5))
+            and parts[2]["position"] == "")
     assert parts[2]["id"] and parts[2]["hours"] == 1.0
 
     # 导出备注还是「时段 岗位/备注；…」那一套，手动那几段也拼在里面
     rec = _invariant(db, act, u)
+    mday = day_text(datetime(2026, 10, 5))
     assert rec.parts_text() == (f"{g1.span_text()} 上午场岗；"
                                 f"{shifts[1][0].span_text()} 下午场岗；"
-                                f"10-05 场外搬运；10-05 中途离场")
+                                f"{mday} 场外搬运；{mday} 中途离场")
 
 
 # ======================= ② 合计 == 各段之和 =======================
@@ -538,7 +542,7 @@ def test_手动加时的服务日期必填且要能解析(client, admin, db, tak
     rec = (db.query(HoursRecord).filter(HoursRecord.activity_id == act.id)
            .one())
     assert rec.segments[0].date == datetime(2099, 1, 2)
-    assert rec.segments[0].time_text == "01-02"
+    assert rec.segments[0].time_text == day_text(datetime(2099, 1, 2))
     assert rec.hours == 1.0
 
 

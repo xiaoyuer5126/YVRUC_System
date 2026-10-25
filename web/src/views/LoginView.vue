@@ -115,7 +115,7 @@ async function doLogin() {
     radial-gradient(900px 500px at 110% 110%, rgba(31,90,168,.12), transparent),
     #f5f6f8;
 }
-.login-card { width: 430px; border-radius: 16px; padding: 8px 10px 4px; }
+.login-card { width: 430px; max-width: 100%; box-sizing: border-box; border-radius: 16px; padding: 8px 10px 4px; }
 .head { text-align: center; margin-bottom: 24px; }
 .head h2 { margin: 12px 0 4px; font-size: 19px; }
 .logo {

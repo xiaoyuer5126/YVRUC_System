@@ -1,5 +1,5 @@
 <template>
-  <div class="page page-wide" v-if="loading" v-loading="loading" style="min-height:300px"></div>
+  <div class="page page-wide" v-if="loading && !act" v-loading="loading" style="min-height:300px"></div>
   <div class="page page-wide" v-else-if="notFound">
     <el-result icon="warning" title="活动不存在"
                sub-title="可能已被删除，或演示数据重置后 ID 已变化">
@@ -26,9 +26,7 @@
       <template #content>
         <div class="hd-title">
           <b>{{ act.title }}</b>
-          <el-tag size="small" :type="{published:'success',closed:'info',draft:'info',pending:'warning',approved:'primary',finished:'info',vb_pending:'warning',completed:'success'}[act.status]">
-            {{ act.status_label }}
-          </el-tag>
+          <el-tag size="small" :type="headStatus.type">{{ headStatus.label }}</el-tag>
           <el-tag v-if="act.urgent" size="small" type="danger" effect="dark">急招</el-tag>
           <el-tag v-if="isRecord" size="small" type="info" effect="plain">不公开·补记录</el-tag>
         </div>
@@ -86,7 +84,7 @@
                 ? '补记录活动不公开发布：审批通过后在「名单导入」里导入学号与时长。'
                 : act.auto_publish
                   ? '审批期间可以继续调整安排，审批通过后活动立即公开发布，到点准时开始报名。'
-                  : '审批期间可以继续调整安排，审批通过后由你点「发布」。'" />
+                  : '审批期间可以继续调整安排，审批通过后由你点「保存并发布」。'" />
     <el-alert v-else-if="act.status === 'approved'" type="success" show-icon :closable="false" title="审批已通过，可以发布了"
               :description="approval?.comment ? ('审批意见：' + approval.comment) : ''" />
     <el-alert v-else-if="act.status === 'draft' && approval?.comment" type="error" show-icon
@@ -190,7 +188,7 @@
                 {{ g.unassigned_count }} 人待分配
               </el-tag>
             </el-tooltip>
-            <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">
+            <el-tag v-if="g.enroll_paused" size="small" type="warning" effect="plain">
               暂停报名
             </el-tag>
             <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
@@ -247,7 +245,7 @@
                 {{ row.enrolled }}/{{ row.quota }}
               </el-tag>
               <el-tag v-if="row.needs_leader" size="small" type="warning" effect="plain">组长</el-tag>
-              <el-tag v-if="row.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
+              <el-tag v-if="row.enroll_paused" size="small" type="warning" effect="plain">暂停报名</el-tag>
               <el-tag v-if="row.list_locked" size="small" type="info">名单已锁定</el-tag>
             </template>
             <template #actions="{ row }">
@@ -336,7 +334,7 @@
           </el-table>
           <p v-else class="dim" style="margin:8px 0 0">
             {{ g.mode === 'assign'
-               ? '截止后统一分配：学生报名只选时间；分工定下来后直接在本场次下建岗位，再到「报名与调配」一键分配或导入排班；排完后可点「开放选岗」，剩余名额让大家按岗位自选。'
+               ? '截止后统一分配：学生报名只选时间；分工定下来后直接在本场次下建岗位，再到「志愿者管理」一键分配或导入排班；排完后可点「开放选岗」，剩余名额让大家按岗位自选。'
                : '还没有岗位，请先设置岗位及名额。' }}
           </p>
 
@@ -366,7 +364,7 @@
               <el-tag v-if="x.g.mode === 'assign'" size="small" type="warning" effect="plain">
                 截止后分配
               </el-tag>
-              <el-tag v-if="x.g.enroll_paused || x.p.enroll_paused" size="small" type="danger"
+              <el-tag v-if="x.g.enroll_paused || x.p.enroll_paused" size="small" type="warning"
                       effect="plain">暂停报名</el-tag>
               <el-tag v-if="x.g.locked || x.p.list_locked" size="small" type="info">名单已锁定</el-tag>
               <span class="slot-acts">
@@ -403,7 +401,7 @@
               <el-tag v-if="g.unassigned_count" size="small" type="warning">
                 {{ g.unassigned_count }} 人待分配
               </el-tag>
-              <el-tag v-if="g.enroll_paused" size="small" type="danger" effect="plain">暂停报名</el-tag>
+              <el-tag v-if="g.enroll_paused" size="small" type="warning" effect="plain">暂停报名</el-tag>
               <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
               <span class="btn-row" style="margin-left:auto">
                 <el-button v-if="isPublic" size="small" :disabled="isOver"
@@ -466,7 +464,7 @@
         <RecordRosterPanel :activity-id="activityId" @changed="onRecordChanged" />
       </el-tab-pane>
 
-      <!-- ============ 报名与调配 ============ -->
+      <!-- ============ 志愿者管理 ============ -->
       <el-tab-pane v-if="isPublic && !isRecord" name="roster">
         <template #label>志愿者管理
           <el-badge v-if="promoShiftIds.size" value="!" type="danger" />
@@ -534,7 +532,7 @@
               <el-tag v-if="row.checked_in" size="small" type="success" effect="light">已到岗</el-tag>
               <el-tag size="small" effect="plain"
                       :type="row.allow_reassign ? 'success' : 'info'">
-                {{ row.allow_reassign ? '接受调剂' : '不接受' }}
+                {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
               </el-tag>
             </template>
             <template #actions="{ row }">
@@ -583,7 +581,7 @@
               <template #default="{row}">
                 <el-tag size="small" effect="plain"
                         :type="row.allow_reassign ? 'success' : 'info'">
-                  {{ row.allow_reassign ? '接受' : '不接受' }}
+                  {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -605,12 +603,12 @@
             <el-table-column label="组长" width="96">
               <template #default="{row}">
                 <el-button v-if="row.is_leader" size="small" link type="warning"
-                           :disabled="isOver" @click="setLeader(row, false)">取消</el-button>
+                           :disabled="isOver" @click="setLeader(row, false)">取消组长</el-button>
                 <el-tooltip v-else-if="canBeLeader(row)" placement="top"
                             content="设为本岗位组组长">
                   <el-button size="small" link :disabled="isOver"
                              @click="setLeader(row, true)">
-                    指定
+                    设为组长
                   </el-button>
                 </el-tooltip>
                 <span v-else class="dim">—</span>
@@ -619,7 +617,7 @@
             <el-table-column label="违规" width="70">
               <template #default="{row}">
                 <el-button size="small" link type="danger"
-                           @click="violationDlg.open(row.user)">登记</el-button>
+                           @click="violationDlg.open(row.user)">登记违规</el-button>
               </template>
             </el-table-column>
             <el-table-column v-if="roster.positions.length" label="调岗" width="210">
@@ -632,7 +630,7 @@
                 </el-select>
                 <el-button size="small" link type="primary"
                            :disabled="isOver || moveSel[row.enrollment_id] === undefined"
-                           @click="applyMove(row)">应用</el-button>
+                           @click="applyMove(row)">调岗</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -703,7 +701,7 @@
 
       <!-- ============ 签到管理 ============ -->
       <el-tab-pane v-if="isPublic && !isRecord" label="签到管理" name="checkin" lazy>
-        <!-- 场次由面板自己选：这一页在盯现场，跟「报名与调配」那边排人是两件事 -->
+        <!-- 场次由面板自己选：这一页在盯现场，跟「志愿者管理」那边排人是两件事 -->
         <CheckinPanel v-if="allShifts.length" :activity-id="act.id"
                       :all-shifts="allShifts" :over="isOver"
                       :hours-frozen="hoursFrozen" />
@@ -1732,7 +1730,9 @@
                     :status="act.status" />
       <template #footer>
         <el-button @click="editBase = false">取消</el-button>
-        <el-button type="primary" :loading="savingBase" @click="saveBase()">保存并通知变更</el-button>
+        <el-button type="primary" :loading="savingBase" @click="saveBase()">
+          {{ isPublic && !act.editing ? '保存并通知变更' : '保存' }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -1777,6 +1777,20 @@ const narrow = useNarrow()
 const tab = ref(String(route.query.tab || ''))
 // 未发布（草稿/待审批/待发布）只留 岗位设置 / 管理者 / 变更记录：那时一个报名的人
 // 都没有，名单、签到、服装、导出、签收全是空页
+// 页头状态与活动列表同一口径（后端 admin_status_of）：还没公开的三态和等外联
+// 确认的两态照 status 显示，发布之后按时间算，不然报名还没开始也写「报名中」
+const ADMIN_STATUSES = ['draft', 'pending', 'approved', 'vb_pending', 'completed']
+const STATUS_TYPES = {
+  draft: 'info', pending: 'warning', approved: 'primary', upcoming: 'warning',
+  published: 'success', ongoing: 'success', closed: 'info', finished: 'info',
+  vb_pending: 'warning', completed: 'success',
+}
+const headStatus = computed(() => {
+  const a = act.value
+  const own = ADMIN_STATUSES.includes(a.status) || !a.display_status
+  const code = own ? a.status : a.display_status
+  return { type: STATUS_TYPES[code], label: own ? a.status_label : a.display_label }
+})
 const isPublic = computed(() =>
   ['published', 'closed', 'finished', 'vb_pending', 'completed'].includes(act.value?.status))
 // 不公开招募（补记录）：没有场次、报名、签到，只有名单导入与时长结账
@@ -1986,19 +2000,19 @@ const treeAlerts = computed(() => shifts.value.flatMap(g => {
   if (g.mode === 'pick') {
     if (!real.length) return alert('还没有岗位，学生无法报名')
     return g.unassigned_count
-      ? alert(`还有 ${g.unassigned_count} 人没有岗位，到「报名与调配」调岗`)
+      ? alert(`还有 ${g.unassigned_count} 人没有岗位，到「志愿者管理」调岗`)
       : []
   }
   if (!regClosed.value) return []
   if (!real.length) {
-    return alert('报名已截止，还没建岗位。在本场次下建好岗位，再到「报名与调配」一键分配或导入排班。')
+    return alert('报名已截止，还没建岗位。在本场次下建好岗位，再到「志愿者管理」一键分配或导入排班。')
   }
   if (!g.unassigned_count) return []
   const room = real.reduce((n, p) => n + Math.max(0, p.quota - p.enrolled), 0)
   return alert(`还有 ${g.unassigned_count} 人在待分配`
     + (room < g.unassigned_count
        ? `，而各岗位空位合计只有 ${room} 个——先加岗位或名额再分配。`
-       : '，到「报名与调配」一键分配或导入排班。'))
+       : '，到「志愿者管理」一键分配或导入排班。'))
 }))
 
 // 手动补时长时要认得出人：同名同姓靠学号，排在哪儿靠场次与岗位。
@@ -2038,6 +2052,7 @@ let activityId = ''
 
 async function loadAll() {
   loading.value = true
+  loadError.value = ''
   try {
     // 活动不存在、或者这个人不共管它：两种情况给同一张「找不到」页，
     // 别让后面每个接口各弹一次 403
@@ -2049,6 +2064,14 @@ async function loadAll() {
       notFound.value = true
       return
     }
+    // 名单先挂到各场次上再赋给 act：页面在刷新时不卸掉，act 一换就按新数据渲染，
+    // 名单没到的话依赖名单的地方会读到 undefined
+    const rosters = await Promise.all(d.shifts.map(g => api.get(`/api/staff/shifts/${g.id}/roster`)))
+    const at = Date.now()
+    d.shifts.forEach((g, i) => {
+      g._roster = rosters[i]
+      g._rosterAt = at
+    })
     act.value = d
     // 手动加/扣时长的服务日期默认落在活动服务的那天：时长多是事后统一录进来，
     // 空着的话每录一条都要自己挑一次日历
@@ -2063,12 +2086,6 @@ async function loadAll() {
       tab.value = 'records'
     }
     if (tab.value === 'overview' && !isPublic.value) tab.value = fallback
-    const rosters = await Promise.all(d.shifts.map(g => api.get(`/api/staff/shifts/${g.id}/roster`)))
-    // 经 act.value 写回：直接改 d 上的对象不触发依赖名单的计算属性（页签叹号）
-    act.value.shifts.forEach((g, i) => {
-      g._roster = rosters[i]
-      g._rosterAt = Date.now()
-    })
     // 弹窗里的表要等打开才加载，题数得自己先问一句，按钮上要写
     formCount.value = (await api.get(
       `/api/staff/activities/${activityId}/form`)).questions.length
@@ -2273,9 +2290,17 @@ async function saveShift() {
 }
 async function delShift(g) {
   try {
-    await api.del(`/api/staff/shifts/${g.id}`)
+    await api.del(`/api/staff/shifts/${g.id}`, { silent: true })
   } catch (e) {
-    await ElMessageBox.confirm(e.message + '，是否强制删除？', '确认', { type: 'warning' })
+    if (e.status !== 409 || !String(e.message).includes('需强制执行')) {
+      ElMessage.error(e.message || '删除失败')
+      return
+    }
+    try {
+      await ElMessageBox.confirm(e.message + '，是否强制删除？', '确认', { type: 'warning' })
+    } catch {
+      return
+    }
     await api.del(`/api/staff/shifts/${g.id}?force=1`)
   }
   ElMessage.success('已删除')
@@ -2616,7 +2641,8 @@ watch(() => route.params.id, (id) => {
   if (!id || id === activityId) return
   activityId = id
   notFound.value = false
-  loadError.value = ''
+  // 清掉上一个活动，让整页 loading 出来：不然加载期间显示的还是上一个活动
+  act.value = null
   currentGroupId.value = ''
   loadAll()
 })
@@ -2640,7 +2666,8 @@ async function saveBase(keepOutsiders = false) {
                     { ...activityBody(baseForm.value, baseRange.value),
                       keep_outsiders: keepOutsiders },
                     { skipErrorToast: true })
-    ElMessage.success('已保存，变更将推送提醒志愿者')
+    ElMessage.success(isPublic.value && !act.value.editing
+      ? '已保存，变更将推送提醒志愿者' : '已保存')
     editBase.value = false
     loadAll()
   } catch (e) {

@@ -22,7 +22,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { api } from '../api'
+import { api, fmtDT } from '../api'
 import { aiForm } from '../ai'
 import AiAssist from './AiAssist.vue'
 
@@ -40,8 +40,8 @@ const LABELS = [
   ['volunteer_benefit', '志愿者保障'],
   ['recruit_campuses', '招募校区', v => v.join('、')],
   ['recruit_stages', '招募学段', v => v.join('、')],
-  ['reg_start', '报名开始', v => v.replace('T', ' ')],
-  ['reg_end', '报名截止', v => v.replace('T', ' ')],
+  ['reg_start', '报名开始', fmtDT],
+  ['reg_end', '报名截止', fmtDT],
 ]
 function rows(draft) {
   return LABELS.filter(([k]) => draft[k] !== undefined)

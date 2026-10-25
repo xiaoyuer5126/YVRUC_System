@@ -641,8 +641,11 @@ WEEKDAYS = "一二三四五六日"
 
 
 def day_text(t: datetime) -> str:
-    """「10-22（周四）」：志愿者排时间是按星期几想的，光看日期还得去翻日历。"""
-    return f"{t:%m-%d}（周{WEEKDAYS[t.weekday()]}）"
+    """「2026-10-22（周四）」：志愿者排时间是按星期几想的，光看日期还得去翻日历。
+
+    带上年份，跨年的场次拿出来不用猜是哪一年；只写到日，钟点由调用方拼。
+    """
+    return f"{t:%Y-%m-%d}（周{WEEKDAYS[t.weekday()]}）"
 
 
 def days_text(start: datetime, end: datetime) -> str:
@@ -661,7 +664,7 @@ def days_text(start: datetime, end: datetime) -> str:
 
 
 def span_text(start: datetime, end: datetime) -> str:
-    """一段时间的说法：「09-20（周六）09:00-12:00」，跨天就把两头的日期都写上。
+    """一段时间的说法：「2026-09-20（周六）09:00-12:00」，跨天就把两头的日期都写上。
 
     场次和「实际签到签退那一段」共用它。同一段服务在两处各写各的格式，
     对账时就得靠眼睛去认它们说的是同一件事。
@@ -705,7 +708,7 @@ def _period_run_key(p: ShiftPeriod):
 
 
 def periods_text(periods: list) -> str:
-    """一组时段怎么读：「10-25（周六）09:00-12:00、10-31（周六）09:00-12:00」。
+    """一组时段怎么读：「2026-10-25（周六）09:00-12:00、2026-10-31（周六）09:00-12:00」。
 
     连续几天、每天钟点相同的合成一段，八天的活动写成两个日期范围，不用把
     八段各念一遍。
@@ -1504,11 +1507,11 @@ class HoursRecord(Base):
         if seg is None:
             if delta:
                 self.add_segment(kind=kind, date=date, hours=delta, label=label,
-                                 time_text=f"{date:%m-%d}")
+                                 time_text=day_text(date))
             return
         if delta:
             seg.refill(hours=delta, date=date, label=label,
-                       time_text=f"{date:%m-%d}")
+                       time_text=day_text(date))
         else:
             self.drop_segment(seg)
 
@@ -1576,7 +1579,7 @@ class HoursRecord(Base):
 
     def parts_text(self, *, hours_only: bool = False,
                    pay_only: bool = False) -> str:
-        """明细拼成一行：「09-20 08:00-12:00 东门引导；09-21 …」，不换行。
+        """明细拼成一行：「2026-09-20（周日）08:00-12:00 东门引导；…」，不换行。
         hours_only：只拼计志愿时长的那几段（导出给志愿北京的备注用）。
         pay_only：只拼按劳务计的段（导出给发劳务的备注用），与 hours_only 对称。"""
         return "；".join(" ".join(x for x in (s.time_text,

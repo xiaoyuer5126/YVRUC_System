@@ -92,13 +92,13 @@ def auto_advance_activities(db: OrmSession) -> int:
             deadline = act.reg_end or (span[0] if span else None)
             if deadline and t > deadline:
                 _advance(db, act, "closed", "close",
-                         f"报名截止时间（{deadline:%m-%d %H:%M}）已到，系统自动截止报名")
+                         f"报名截止时间（{deadline:%Y-%m-%d %H:%M}）已到，系统自动截止报名")
                 notify_managers_to_assign(db, act)
                 changed += 1
         # 同一轮里接着判：截止后场次也已结束的，一次到位，不用等下一分钟
         if act.status == "closed" and span and t > span[1]:
             _advance(db, act, "finished", "finish",
-                     f"全部场次已于 {span[1]:%m-%d %H:%M} 结束，系统自动结束活动")
+                     f"全部场次已于 {span[1]:%Y-%m-%d %H:%M} 结束，系统自动结束活动")
             notify_finished(db, act)
             changed += 1
     if changed:
@@ -175,7 +175,7 @@ def submit_lock_when_due(db: OrmSession) -> int:
                     duty="hours", tab="review")
                 reminded += 1
             continue
-        reason = (f"确认/申诉截止（{act.appeal_deadline:%m-%d %H:%M}）无人申诉，"
+        reason = (f"确认/申诉截止（{act.appeal_deadline:%Y-%m-%d %H:%M}）无人申诉，"
                   f"系统自动提交；未确认的按志愿时长记")
         if submit_lock(db, act, None, reason) is None:
             continue
@@ -533,7 +533,7 @@ def send_duty_digests(db: OrmSession) -> int:
         for head in heads:
             msgcenter.send_user(
                 db, head, "custom", data={"route": "approvals"},
-                title=f"值班日报｜{dept.name} {t:%m-%d}",
+                title=f"值班日报｜{dept.name} {t:%Y-%m-%d}",
                 content=(f"今日值班：{duty.name if duty else '无人值班（通知发给了您）'}\n"
                          + "\n".join((block("今日新增", new), block("今日处理", done),
                                       block("尚未处理", waiting)))))
@@ -638,7 +638,7 @@ def _duty_digest_lines(db: OrmSession, dept: Department, since
             done.append(f"活动审批「{title}」{e.kind_label()}（{name(e.actor_id)}）")
     for a in acts.values():
         if a.status == "pending":
-            waiting.append(f"活动审批「{a.title}」（{a.submitted_at:%m-%d %H:%M} 提交）"
+            waiting.append(f"活动审批「{a.title}」（{a.submitted_at:%Y-%m-%d %H:%M} 提交）"
                            if a.submitted_at else f"活动审批「{a.title}」")
 
     # 时长锁定/解锁
@@ -654,7 +654,7 @@ def _duty_digest_lines(db: OrmSession, dept: Department, since
         if r.handled_at and r.handled_at >= since:
             done.append(f"{what}{r.status_label()}（{name(r.handled_by)}）")
         if r.status == "pending":
-            waiting.append(f"{what}（{r.created_at:%m-%d %H:%M} 提交）")
+            waiting.append(f"{what}（{r.created_at:%Y-%m-%d %H:%M} 提交）")
 
     # 志愿北京外联确认：只算在志愿北京对接部门头上
     if not dept.vb_liaison:
@@ -672,7 +672,7 @@ def _duty_digest_lines(db: OrmSession, dept: Department, since
                 and v.status in ("confirmed", "returned"):
             done.append(f"{what}{v.status_label()}（{name(v.handled_by)}）")
         if v.status == "pending":
-            waiting.append(f"{what}（{v.submitted_at:%m-%d %H:%M} 推送）")
+            waiting.append(f"{what}（{v.submitted_at:%Y-%m-%d %H:%M} 推送）")
 
     # 校外时长补登：值班人提交的自己那条，部长在这里也看得到谁批的
     for c in (db.query(HoursClaim)
@@ -686,7 +686,7 @@ def _duty_digest_lines(db: OrmSession, dept: Department, since
         if c.handled_at and c.handled_at >= since:
             done.append(f"{what}{c.status_label()}（{name(c.handled_by)}）")
         if c.status == "pending":
-            waiting.append(f"{what}（{c.submitted_at:%m-%d %H:%M} 提交）")
+            waiting.append(f"{what}（{c.submitted_at:%Y-%m-%d %H:%M} 提交）")
     return new, done, waiting
 
 

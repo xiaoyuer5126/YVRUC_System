@@ -362,13 +362,13 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
     t = now()
     # 与详情页的 enroll_open、倒计时毫秒数同一个判断（serializers.reg_started）
     if not reg_started(act.reg_start, t):
-        raise HTTPException(409, f"报名尚未开始（{act.reg_start:%m-%d %H:%M} 起）")
+        raise HTTPException(409, f"报名尚未开始（{act.reg_start:%Y-%m-%d %H:%M} 起）")
     # 截止按场次各算各的：活动的报名窗可能还没到期，但这一场已经开场了
     deadline = logic.enroll_deadline(act, g)
     if t > deadline:
         raise HTTPException(
             409, "报名已截止" if deadline == act.reg_end else
-            f"「{g.name}」已于 {g.start_time:%m-%d %H:%M} 开场，不再接受报名")
+            f"「{g.name}」已于 {g.start_time:%Y-%m-%d %H:%M} 开场，不再接受报名")
 
     # 老师类型不参与报名（无信用分/时长等个人数据）
     if user.user_type == "teacher":

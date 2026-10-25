@@ -79,7 +79,7 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="退选时间" width="130">
+        <el-table-column label="退选时间" width="180">
           <template #default="{ row }">{{ row.cancelled_at ? fmtDT(row.cancelled_at) : '—' }}</template>
         </el-table-column>
         <el-table-column label="报名后多久" width="110">
@@ -109,7 +109,7 @@
         <el-table-column label="活动" min-width="160">
           <template #default="{ row }">{{ row.activity_title }} · {{ row.shift_name }}</template>
         </el-table-column>
-        <el-table-column prop="time_text" label="时间" width="150" />
+        <el-table-column prop="time_text" label="时间" width="210" />
         <el-table-column label="结果" width="120">
           <template #default="{ row }">
             <el-tag size="small" :type="tagType(row)" effect="plain">{{ tagText(row) }}</el-tag>

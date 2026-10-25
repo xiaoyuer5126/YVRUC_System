@@ -71,8 +71,8 @@
         </el-table-column>
         <el-table-column prop="user.student_id" label="学号" width="110" />
         <el-table-column prop="user.college" label="学院" width="120" />
-        <el-table-column label="报名时间" width="110">
-          <template #default="{row}"><span class="dim">{{ (row.joined_at || '').slice(5,16).replace('T',' ') }}</span></template>
+        <el-table-column label="报名时间" width="150">
+          <template #default="{row}"><span class="dim">{{ fmtDTShort(row.joined_at) }}</span></template>
         </el-table-column>
         <el-table-column label="原岗位" width="100">
           <template #default="{row}">{{ stationName(row.current_position_id) || '未分配' }}</template>
@@ -84,7 +84,7 @@
                                                      : '本人不接受调剂，调整将计入留痕'">
               <el-tag size="small" effect="plain"
                       :type="row.allow_reassign ? 'success' : 'info'">
-                {{ row.allow_reassign ? '接受调剂' : '不接受' }}
+                {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
               </el-tag>
             </el-tooltip>
           </template>
@@ -185,7 +185,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api, uploadFile, withConflictConfirm } from '../api'
+import { api, fmtDTShort, uploadFile, withConflictConfirm } from '../api'
 
 const props = defineProps({
   shift: { type: Object, required: true },
