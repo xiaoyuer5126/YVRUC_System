@@ -3,15 +3,14 @@
 <template>
   <el-alert type="info" :closable="false" show-icon class="vb-tip">
     <template #title>
-      志愿时长最终要录入「志愿北京」，没在志愿北京注册的同学录不进去。还没注册的请尽快在
-      <a :href="VB_SITE" target="_blank" rel="noopener">志愿北京网站</a>
-      或「京通」小程序里注册。
+      志愿时长最终要录入「志愿北京」，没注册的同学录不进去。还没注册的请尽快注册：电脑端打开
+      <a :href="VB_SITE" target="_blank" rel="noopener">test1.bv2008.cn</a>，手机端在「京通」小程序里搜索「志愿北京」。
     </template>
   </el-alert>
 </template>
 
 <script setup>
-// 2026 年 5 月起志愿北京换了新系统，注册走这个网址（或京通小程序）
+// 2026 年 5 月起志愿北京换了新系统，电脑端走这个网址，手机端走京通小程序
 const VB_SITE = 'https://test1.bv2008.cn/'
 </script>
 
