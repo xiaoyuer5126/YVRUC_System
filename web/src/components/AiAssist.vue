@@ -12,7 +12,8 @@
         <img :src="aiIcon" alt="" draggable="false" />
       </button>
     </el-tooltip>
-    <el-drawer v-model="open" :title="title" :size="narrow ? '100%' : '560px'" append-to-body>
+    <el-drawer v-model="open" :title="title" :size="narrow ? '100%' : '560px'" append-to-body
+               :close-on-click-modal="false">
       <div class="dim">{{ hint }}</div>
       <el-input v-model="text" type="textarea" :autosize="{ minRows: 6, maxRows: 14 }"
                 :placeholder="placeholder" :maxlength="30000" show-word-limit

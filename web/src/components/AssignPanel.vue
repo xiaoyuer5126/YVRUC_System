@@ -142,7 +142,8 @@
     <el-empty v-else description="点击名单上方的「一键分配岗位」开始试算，或「导入排班」" />
 
     <!-- 补招：负责人直接把人加进场次 -->
-    <el-dialog v-model="walkinVisible" title="补招志愿者" width="430">
+    <el-dialog v-model="walkinVisible" title="补招志愿者" width="430"
+               :close-on-click-modal="false">
       <el-form label-width="90px">
         <el-form-item label="学号"><el-input v-model="walkin.sid" /></el-form-item>
         <el-form-item label="指定岗位">

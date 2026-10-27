@@ -273,7 +273,8 @@
     </template>
 
     <!-- 生成签到码 -->
-    <el-dialog v-model="creating" title="生成签到码" width="460">
+    <el-dialog v-model="creating" title="生成签到码" width="460"
+               :close-on-click-modal="false">
       <el-form label-width="110px">
         <!-- 一个码只属于一个场次，所以场次必须在这里选定，不能跟着别的页签走 -->
         <el-form-item label="签到场次" required>
@@ -394,7 +395,8 @@
     </el-dialog>
 
     <!-- 改可签时段：场次提前或拖堂时用，不必关掉重建（重建会让已扫过的码作废） -->
-    <el-dialog v-model="winDlg.visible" title="改可签时段" width="440">
+    <el-dialog v-model="winDlg.visible" title="改可签时段" width="440"
+               :close-on-click-modal="false">
       <p class="dim" style="margin:0 0 12px">
         {{ winDlg.task?.shift_name }}<template
           v-if="winDlg.task?.mode === 'position'"> · {{ winDlg.task?.position_name }}</template>
@@ -413,7 +415,8 @@
     </el-dialog>
 
     <!-- 定位签到：坐标由管理者站在岗位上量 -->
-    <el-dialog v-model="geoDlg" title="定位签到" width="440">
+    <el-dialog v-model="geoDlg" title="定位签到" width="440"
+               :close-on-click-modal="false">
       <template v-if="geoTask">
         <el-form label-width="90px">
           <el-form-item label="签到地点">
@@ -439,7 +442,8 @@
   </div>
 
     <!-- 补发签到提醒：先选范围再发，别在下拉里盲点 -->
-    <el-dialog v-model="reminderDlg" title="补发签到提醒" width="460">
+    <el-dialog v-model="reminderDlg" title="补发签到提醒" width="460"
+               :close-on-click-modal="false">
       <p class="dim">
         只发给<b>未签到</b>的正式志愿者。场次开始前 30 分钟系统已自动发送过一次。
       </p>

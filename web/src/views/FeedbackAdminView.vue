@@ -41,7 +41,8 @@
       <Pager :page="page" :page-size="SIZE" :total="total" @change="goPage" />
     </el-card>
 
-    <el-dialog v-model="handling" title="处理反馈" :width="narrow ? '94%' : '520px'">
+    <el-dialog v-model="handling" title="处理反馈" :width="narrow ? '94%' : '520px'"
+               :close-on-click-modal="false">
       <div class="text dim">{{ current?.content }}</div>
       <!-- 常用语：点一下整段替换进回复框（见 replyTemplates.js） -->
       <div class="tpl-row">

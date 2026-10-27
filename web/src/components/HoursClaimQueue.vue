@@ -80,7 +80,8 @@
     <Pager v-if="total > size" :page="page" :page-size="size" :total="total"
            @change="goPage" />
 
-    <el-drawer v-model="drawer" title="校外时长补登" :size="narrow ? '100%' : '520px'">
+    <el-drawer v-model="drawer" title="校外时长补登" :size="narrow ? '100%' : '520px'"
+               :close-on-click-modal="false">
       <template v-if="cur">
         <el-descriptions :column="1" border>
           <el-descriptions-item label="提交人">

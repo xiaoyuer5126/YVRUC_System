@@ -3,7 +3,8 @@
      管，引到他们的反馈平台去，平台上不收。 -->
 <template>
   <el-dialog v-model="visible" title="意见反馈" :width="narrow ? '94%' : '560px'"
-             append-to-body @closed="reset">
+             append-to-body @closed="reset"
+             :close-on-click-modal="false">
     <el-tabs v-model="tab" @tab-change="onTab">
       <el-tab-pane label="提交反馈" name="new">
         <div class="kinds">

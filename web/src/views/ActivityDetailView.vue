@@ -639,7 +639,8 @@
     </el-dialog>
 
     <!-- 报名确认：确认时段 + 表态是否接受岗位调剂 -->
-    <el-dialog v-model="enrollDlg.visible" title="确认报名" width="480px">
+    <el-dialog v-model="enrollDlg.visible" title="确认报名" width="480px"
+               :close-on-click-modal="false">
       <template v-if="enrollDlg.shift">
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="场次">

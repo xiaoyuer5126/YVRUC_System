@@ -74,7 +74,8 @@
     </el-table>
 
     <el-dialog v-model="rm.visible" :title="rm.action === 'take' ? '提醒领取服装' : '提醒归还服装'"
-               width="440">
+               width="440"
+               :close-on-click-modal="false">
       <p class="dim">
         {{ rm.action === 'take'
            ? '发给该范围内尚未领取服装的志愿者。'

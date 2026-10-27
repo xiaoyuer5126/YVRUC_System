@@ -11,7 +11,8 @@
      意见框、替换原有内容：常用语是成段的几行字，接在已有内容后面只会乱。 -->
 <template>
   <el-dialog :model-value="modelValue" :title="title || (approve ? approveLabel : rejectLabel)"
-             width="480" @update:model-value="v => emit('update:modelValue', v)">
+             width="480" @update:model-value="v =
+             :close-on-click-modal="false"> emit('update:modelValue', v)">
     <p v-if="subject" class="dim acd-subject">{{ subject }}</p>
     <slot />
     <div v-if="shownTemplates.length" class="acd-templates">

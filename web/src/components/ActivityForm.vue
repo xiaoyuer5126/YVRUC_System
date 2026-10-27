@@ -127,7 +127,8 @@
         </div>
       </div>
     </el-form-item>
-    <el-dialog v-model="pointDlg.visible" title="活动地点定位" width="440" append-to-body>
+    <el-dialog v-model="pointDlg.visible" title="活动地点定位" width="440" append-to-body
+               :close-on-click-modal="false">
       <GeoPicker v-model="pointDlg.value" @place="name => pointDlg.place = name" />
       <template #footer>
         <el-button @click="pointDlg.visible = false">取消</el-button>
