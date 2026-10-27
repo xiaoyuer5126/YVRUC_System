@@ -21,7 +21,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { api, fmtDT } from '../api'
 import { aiForm } from '../ai'
 import AiAssist from './AiAssist.vue'
@@ -51,6 +51,12 @@ function rows(draft) {
 function run(text, files) {
   return api.post('/api/staff/ai/activity-draft', aiForm(text, files))
 }
+
+// 活动列表「新建活动」下拉里的「智能起草」直接打开抽屉；没配 AI 时下拉不出这一项
+defineExpose({
+  show: () => assist.value?.show(),
+  enabled: computed(() => !!assist.value?.enabled),
+})
 
 function fill(draft, close) {
   emit('fill', draft)
