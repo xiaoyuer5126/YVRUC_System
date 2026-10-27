@@ -3,7 +3,7 @@
 <template>
   <el-alert type="info" :closable="false" show-icon class="vb-tip">
     <template #title>
-      志愿时长最终要录入「志愿北京」，没注册的同学录不进去。还没注册的请尽快注册：电脑端打开
+      为录入志愿时长，没在“志愿北京”新平台注册的同学请尽快注册：电脑端访问
       <a :href="VB_SITE" target="_blank" rel="noopener">test1.bv2008.cn</a>，手机端在「京通」小程序里搜索「志愿北京」。
     </template>
   </el-alert>
