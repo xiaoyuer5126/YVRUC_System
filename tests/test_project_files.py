@@ -6,12 +6,15 @@ from __future__ import annotations
 import time
 from datetime import timedelta
 
-from backend import scheduled
+from backend import liaison as liaison_files, scheduled
 from backend.models import (Activity, ActivityManager, Attachment, Department,
                             HoursRequest, Notification, now, uid)
 from backend.routers.materials import MATERIAL_DIR
 from conftest import (ADMIN, INITIATOR, LIAISON_CORE, LIAISON_HEAD, dl_url, inbox,
                       login, make_draft, student_row, upload_proposal, upload_stamped)
+
+STAMPED = liaison_files.SLOTS["stamped"]
+CLOSING = liaison_files.SLOTS["closing"]
 
 
 def _files(client, headers, aid):
@@ -185,7 +188,7 @@ def _external_due(db, liaison) -> Activity:
 
 def test_盖章材料只用于对外活动(client, admin, db, liaison):
     aid = make_draft(client, admin)          # 还没归口任何部门
-    for slot, label in (("stamped", "盖章立项书"), ("closing", "盖章结项书")):
+    for slot, label in (("stamped", STAMPED), ("closing", CLOSING)):
         r = _upload(client, admin, aid, slot)
         assert r.status_code == 409 and r.json()["detail"] == f"{label}只用于对外活动"
     d = _files(client, admin, aid)
@@ -214,16 +217,16 @@ def test_手动报批时长要盖章立项书和结项书(client, admin, db, lia
     url = f"/api/staff/activities/{act.id}/hours/lock-request"
     hours = f"/api/staff/activities/{act.id}/hours"
     assert client.get(hours, headers=admin).json()["stamped_missing"] == \
-        ["盖章立项书", "盖章结项书"]
+        [STAMPED, CLOSING]
     r = client.post(url, headers=admin, json={})
-    assert r.status_code == 400 and "盖章立项书和盖章结项书" in r.json()["detail"]
+    assert r.status_code == 400 and f"{STAMPED}和{CLOSING}" in r.json()["detail"]
     assert _upload(client, admin, act.id, "stamped", "盖章v1.pdf").status_code == 200
     assert _upload(client, admin, act.id, "stamped", "盖章v2.pdf").status_code == 200
     assert _files(client, admin, act.id)["stamped"]["title"] == "盖章v2.pdf"
     # 只差结项书也不行
-    assert client.get(hours, headers=admin).json()["stamped_missing"] == ["盖章结项书"]
+    assert client.get(hours, headers=admin).json()["stamped_missing"] == [CLOSING]
     r = client.post(url, headers=admin, json={})
-    assert r.status_code == 400 and "盖章结项书" in r.json()["detail"]
+    assert r.status_code == 400 and CLOSING in r.json()["detail"]
     assert _upload(client, admin, act.id, "closing", "结项.pdf").status_code == 200
     assert client.post(url, headers=admin, json={}).status_code == 200
     # 审批期间不能换
@@ -234,7 +237,7 @@ def test_手动报批时长要盖章立项书和结项书(client, admin, db, lia
     head = login(client, LIAISON_HEAD)
     card = next(x for x in client.get("/api/staff/hours-requests", headers=head).json()
                 if x["activity_id"] == act.id)
-    assert [f["label"] for f in card["files"]] == ["盖章立项书", "盖章结项书"]
+    assert [f["label"] for f in card["files"]] == [STAMPED, CLOSING]
     assert client.get(dl_url(client, head, f"/api/materials/{card['files'][1]['id']}")
                       ).status_code == 200
     # 锁定之后也不能换
@@ -275,7 +278,7 @@ def test_自动报批缺盖章材料_每轮提醒一次(client, admin, db, liais
     assert len(inbox(db, ADMIN, title)) == 2
 
     # 提醒里写明缺哪几份
-    assert "盖章立项书、盖章结项书" in inbox(db, ADMIN, title)[0].content
+    assert f"{STAMPED}、{CLOSING}" in inbox(db, ADMIN, title)[0].content
     # 补传之后下一轮照常自动提交，也不再多发提醒
     assert upload_stamped(client, admin, act.id).status_code == 200
     scheduled.submit_lock_when_due(db)

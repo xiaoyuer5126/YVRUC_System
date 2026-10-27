@@ -24,6 +24,13 @@
           <span class="dim time">{{ fmtDT(n.created_at) }}</span>
         </div>
         <p class="content" style="white-space:pre-wrap">{{ n.content }}</p>
+        <!-- 管理者发通知带的附件：推送里带不了文件，在这里下载 -->
+        <div v-if="n.data?.files?.length" class="files" @click.stop>
+          <el-button v-for="f in n.data.files" :key="f.id" link type="primary" size="small"
+                     @click="download(`/api/materials/${f.id}`)">
+            <el-icon><Paperclip /></el-icon>&nbsp;{{ f.title }}
+          </el-button>
+        </div>
         <div v-if="n.need_ack" class="ack-bar" @click.stop>
           <template v-if="n.acked_at">
             <span class="dim">已于 {{ fmtDT(n.acked_at) }} 签收</span>
@@ -46,7 +53,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { api, fmtDT } from '../api'
+import { Paperclip } from '@element-plus/icons-vue'
+import { api, download, fmtDT } from '../api'
 import { unreadState } from '../store'
 
 const router = useRouter()
@@ -168,5 +176,6 @@ async function ack(n) {
   .msg-title { order: 9; flex: 0 0 100%; margin-top: 4px; line-height: 1.5; }
 }
 .more { display: flex; justify-content: center; margin-top: 12px; }
+.files { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
 .content { margin: 8px 0 0; color: #606266; line-height: 1.6; font-size: 13.5px; }
 </style>

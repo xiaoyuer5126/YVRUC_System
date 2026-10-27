@@ -262,11 +262,9 @@
                   <el-button type="primary" size="small" :disabled="paused"
                              @click="confirmPromo(g)">确认转正</el-button>
                 </template>
-                <el-button v-if="g.my_enrollment.status !== 'pending_confirm'"
+                <el-button v-if="g.my_enrollment.status !== 'pending_confirm' && canCancel(g)"
                            size="small" type="danger" plain
-                           :disabled="paused
-                                      || (g.my_enrollment.status === 'enrolled'
-                                          && !canCancel(g))"
+                           :disabled="paused"
                            @click="cancelEnroll(g)">
                   {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
                 </el-button>
@@ -290,9 +288,8 @@
                     <el-countdown format="HH:mm:ss" :value="deadlineTs(g)" />
                     <el-button type="primary" size="small" @click="confirmPromo(g)">确认转正</el-button>
                   </template>
-                  <el-button v-if="g.my_enrollment.status !== 'pending_confirm'"
+                  <el-button v-if="g.my_enrollment.status !== 'pending_confirm' && canCancel(g)"
                              size="small" type="danger" plain
-                             :disabled="g.my_enrollment.status === 'enrolled' && !canCancel(g)"
                              @click="cancelEnroll(g)">
                     {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
                   </el-button>
@@ -446,11 +443,9 @@
                       <el-button type="primary" size="small" :disabled="paused"
                                  @click="confirmPromo(g)">确认转正</el-button>
                     </template>
-                    <el-button v-if="g.my_enrollment.status !== 'pending_confirm'"
+                    <el-button v-if="g.my_enrollment.status !== 'pending_confirm' && canCancel(g)"
                                size="small" type="danger" plain
-                               :disabled="paused
-                                          || (g.my_enrollment.status === 'enrolled'
-                                              && !canCancel(g))"
+                               :disabled="paused"
                                @click="cancelEnroll(g)">
                       {{ g.my_enrollment.status === 'waitlisted' ? '退出候补' : '退选' }}
                     </el-button>
@@ -644,7 +639,8 @@
     </el-dialog>
 
     <!-- 报名确认：确认时段 + 表态是否接受岗位调剂 -->
-    <el-dialog v-model="enrollDlg.visible" title="确认报名" width="480px">
+    <el-dialog v-model="enrollDlg.visible" title="确认报名" width="480px"
+               :close-on-click-modal="false">
       <template v-if="enrollDlg.shift">
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="场次">
@@ -903,6 +899,7 @@ function myStationName(g) {
   for (const s of g.positions) if (s.id === sid) return s.name
   return ''
 }
+/** 场次开场后后端不再收退选，退选和退出候补按钮都不摆出来 */
 function canCancel(g) {
   return new Date(g.start_time.replace(' ', 'T')) > new Date()
 }

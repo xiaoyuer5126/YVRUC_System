@@ -850,7 +850,7 @@ def _settle_position(db: OrmSession, enr: Enrollment, user: User,
         msgcenter.send_user(db, user, "assignment", activity=activity.title,
                         shift=shift.name, position=position.name,
                         position_time=position.time_text(),
-                        position_loc=position.location or "待定")
+                        position_loc=position.place())
     sync_attached(db, enr)
 
 

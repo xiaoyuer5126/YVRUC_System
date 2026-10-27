@@ -52,7 +52,7 @@
       </template>
       <template v-if="files?.external">
         <div class="dim">
-          对外活动提交时长审核必须附盖章立项书和盖章结项书；活动发布后、时长锁定前可随时更换。
+          对外活动提交时长审核必须附盖章立项书（即盖章项目申请书）和盖章结项书（即盖章时长认证明细）；活动发布后、时长锁定前可随时更换。
           每份只留一个文件，多页的请合成一个 PDF。
         </div>
         <ProjectFileSlot v-for="s in STAMPED" :key="s.kind" :activity-id="activityId"
@@ -216,8 +216,8 @@ const vbBusy = ref(false)
 const repushReason = ref('')
 const dc = ref({ visible: false, approve: true, row: null })
 // 时长审核要附的两份盖章材料；template 是对应空白模板的格子名（盖章立项书照立项书模板填）
-const STAMPED = [{ kind: 'stamped', label: '盖章立项书', template: 'proposal' },
-                 { kind: 'closing', label: '盖章结项书', template: 'closing' }]
+const STAMPED = [{ kind: 'stamped', label: '盖章立项书（即盖章项目申请书）', template: 'proposal' },
+                 { kind: 'closing', label: '盖章结项书（即盖章时长认证明细）', template: 'closing' }]
 const docTemplates = ref(null)   // vuecheck: script-only，模板只通过 templates 读它
 const templates = computed(() => Object.fromEntries(
   (docTemplates.value?.items || []).map(x => [x.slot, x.file])))

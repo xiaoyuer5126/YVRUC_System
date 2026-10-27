@@ -15,7 +15,18 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-button type="primary" @click="openCreate"><el-icon><Plus /></el-icon>&nbsp;新建活动</el-button>
+        <!-- 配了 AI 时新建分两条路：智能起草 / 手动创建，免得智能起草只靠角上的悬浮球被人忽略 -->
+        <el-dropdown v-if="aiDraft?.enabled" trigger="click"
+                     @command="c => (c === 'ai' ? aiDraft.show() : openCreate())">
+          <el-button type="primary"><el-icon><Plus /></el-icon>&nbsp;新建活动<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="ai">智能起草</el-dropdown-item>
+              <el-dropdown-item command="manual">手动创建</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-button v-else type="primary" @click="openCreate"><el-icon><Plus /></el-icon>&nbsp;新建活动</el-button>
       </div>
     </div>
 
@@ -139,10 +150,12 @@
     </el-card>
 
     <!-- 智能起草活动信息：草稿由管理者点了才填进下面的新建表单 -->
-    <AiActivityAssist @fill="fillFromAi" />
+    <AiActivityAssist ref="aiDraft" @fill="fillFromAi" />
 
     <!-- 新建活动 -->
-    <el-dialog v-model="creating" title="新建活动（草稿）" width="620">
+    <el-dialog v-model="creating" title="新建活动（草稿）" width="620"
+               :close-on-click-modal="false"
+               :before-close="guardCreate" @opened="guardCreate.snap">
       <ActivityForm v-model="form" v-model:range="createRange" :modes="modes" />
       <template #footer>
         <el-button @click="creating = false">取消</el-button>
@@ -151,7 +164,9 @@
     </el-dialog>
 
     <!-- 复制活动：只带结构，落草稿并直接进编辑页 -->
-    <el-dialog v-model="copyDlg.visible" title="复制活动" width="500">
+    <el-dialog v-model="copyDlg.visible" title="复制活动" width="500"
+               :close-on-click-modal="false"
+               :before-close="guardCopy" @opened="guardCopy.snap">
       <p class="dim">
         复制「{{ copyDlg.source?.title }}」的<b>结构</b>：活动信息、场次、岗位、学习材料、报名问卷。
       </p>
@@ -199,6 +214,7 @@ import { ElMessage } from 'element-plus'
 import { api, download } from '../api'
 import { MODE_COLORS, auth } from '../store'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import { activityBody, emptyActivity, validateActivity } from '../composables/activityForm'
 import { uploadImage } from '../composables/uploadImage'
 import { useAuthedImage } from '../composables/authedImage'
@@ -239,6 +255,9 @@ const copyDlg = ref({ visible: false, source: null, title: '', shiftDays: 7,
 // 二维码要鉴权，地址不能直接放进 <img>，得带凭据取回来（见 authedImage）
 const copyQrSrc = useAuthedImage(() => copyDlg.value.qr)
 const form = ref({})
+const aiDraft = ref(null)
+const guardCreate = useCloseGuard(() => [form.value, createRange.value])
+const guardCopy = useCloseGuard(() => [copyDlg.value.title, copyDlg.value.shiftDays, copyDlg.value.qr])
 const createRange = ref([])
 
 const modeColor = m => MODE_COLORS[m]?.color

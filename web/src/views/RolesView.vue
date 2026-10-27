@@ -97,7 +97,9 @@
     </el-table>
     <Pager :page="page" :page-size="SIZE" :total="total" @change="goPage" />
 
-    <el-dialog v-model="dlg.visible" title="调整身份" width="480">
+    <el-dialog v-model="dlg.visible" title="调整身份" width="480"
+               :close-on-click-modal="false"
+               :before-close="guardRoles" @opened="guardRoles.snap">
       <p>
         <b>{{ dlg.row?.name }}</b>
         <span class="dim">（{{ dlg.row?.student_id }}·{{ dlg.row?.college }}）</span>
@@ -168,7 +170,9 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="bd.visible" title="批量调整身份" width="560">
+    <el-dialog v-model="bd.visible" title="批量调整身份" width="560"
+               :close-on-click-modal="false"
+               :before-close="guardBatch" @opened="guardBatch.snap">
       <el-form label-width="88px">
         <el-form-item label="操作">
           <el-radio-group v-model="bd.action" @change="bd.preview = null">
@@ -256,6 +260,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
+import { useCloseGuard } from '../composables/closeGuard'
 import { auth, ROLE_LABELS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
@@ -388,6 +393,8 @@ async function save() {
 // 不连累同批其他人；执行时逐人写审计
 const bd = ref({ visible: false, action: 'add', role: 'qingxie', post: 'member',
                  deptId: '', supervisorId: '', text: '', busy: false, preview: null })
+const guardRoles = useCloseGuard(() => [dlg.value.roles, dlg.value.post, dlg.value.deptId, dlg.value.remindDeptIds])
+const guardBatch = useCloseGuard(() => [bd.value.action, bd.value.role, bd.value.post, bd.value.deptId, bd.value.supervisorId, bd.value.text])
 const batchIds = computed(() =>
   bd.value.text.split('\n').map(s => s.trim()).filter(Boolean))
 

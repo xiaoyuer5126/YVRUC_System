@@ -1130,7 +1130,9 @@
     </el-tabs>
 
     <!-- 场次对话框 -->
-    <el-dialog v-model="shiftDlg.visible" :title="shiftDlg.editing ? '编辑场次' : '新建场次'" width="520">
+    <el-dialog v-model="shiftDlg.visible" :title="shiftDlg.editing ? '编辑场次' : '新建场次'" width="520"
+               :close-on-click-modal="false"
+               :before-close="guardShift" @opened="guardShift.snap">
       <el-form label-width="100px">
         <el-form-item label="名称" required><el-input v-model="groupForm.name" placeholder="如：上午场" /></el-form-item>
         <el-form-item label="场次模式" required>
@@ -1213,7 +1215,9 @@
 
     <!-- 培训 / 彩排：挂在整个活动上 -->
     <el-dialog v-model="attDlg.visible"
-               :title="(attDlg.editing ? '编辑' : '添加') + '培训 / 彩排'" width="560">
+               :title="(attDlg.editing ? '编辑' : '添加') + '培训 / 彩排'" width="560"
+               :close-on-click-modal="false"
+               :before-close="guardAttached" @opened="guardAttached.snap">
       <p class="dim">
         报上被圈到的岗位就连带报上，被圈到的报名全退了才连带退；可以跨场次。
         自己不设名额，但有独立的签到码与时长。
@@ -1272,7 +1276,8 @@
     </el-dialog>
 
     <!-- 核准时长：定下账、通知本人，并给一段申诉时间 -->
-    <el-dialog v-model="approveDlg.visible" title="确认核准时长" width="480">
+    <el-dialog v-model="approveDlg.visible" title="确认核准时长" width="480"
+               :close-on-click-modal="false">
       <p class="dim">
         核准之后，志愿者将会收到确认通知，截止前确认无误或提出申诉。截止后若无申诉，系统自动提交校青协审核（须先在「审核」页签填好志愿北京活动名称）；通过即锁定时长，{{ vbDept }}确认志愿北京后活动标记为「已完成」。
       </p>
@@ -1291,7 +1296,8 @@
     </el-dialog>
 
     <!-- 提交时长审核：一并填志愿北京活动名称，锁定后推给志愿北京对接部门核对 -->
-    <el-dialog v-model="lockDlg.visible" title="提交时长审核" width="520">
+    <el-dialog v-model="lockDlg.visible" title="提交时长审核" width="520"
+               :close-on-click-modal="false">
       <p v-if="lockDlg.early" class="dim">
         申诉期还没结束（截止 {{ fmtDT(hoursState.appeal_deadline) }}）。现在提交，还没确认时长的志愿者就没机会提申诉了；
         到点没有申诉的话系统会自动提交，不必手动来这一下。
@@ -1331,14 +1337,16 @@
     </el-dialog>
 
     <!-- 报名问卷：题目不常改，收进弹窗，页签上只留一个按钮 -->
-    <el-dialog v-model="formDlg" title="报名问卷" width="760">
-      <FormBuilder :key="act.status" :activity-id="act.id" :editable="!isPublic"
+    <el-dialog v-model="formDlg" title="报名问卷" width="760"
+               :close-on-click-modal="false" :before-close="closeFormDlg">
+      <FormBuilder ref="formBuilder" :key="act.status" :activity-id="act.id" :editable="!isPublic"
                    :screened="act.recruit_mode === 'screened'"
                    @count="n => formCount = n" />
     </el-dialog>
 
     <!-- 提交审批 -->
-    <el-dialog v-model="submitDlg.visible" title="提交校青协审批" width="500">
+    <el-dialog v-model="submitDlg.visible" title="提交校青协审批" width="500"
+               :close-on-click-modal="false">
       <el-form label-width="88px">
         <el-form-item label="审批部门" required>
           <!-- label 只放短的那截：选中后它显示在输入框里，塞进备注就只剩省略号。
@@ -1404,7 +1412,8 @@
     </el-dialog>
 
     <!-- 恢复报名：必须重设截止时间，否则定时任务下一分钟又给截了 -->
-    <el-dialog v-model="reopenDlg.visible" title="恢复报名" width="460">
+    <el-dialog v-model="reopenDlg.visible" title="恢复报名" width="460"
+               :close-on-click-modal="false">
       <p class="dim">
         重新开放报名，并延后报名截止时间。<b>必须填新的截止时间</b>。
       </p>
@@ -1422,7 +1431,8 @@
 
     <!-- 处理时长申诉 -->
     <el-dialog v-model="resolveDlg.visible"
-               :title="resolveDlg.accept ? '采纳申诉' : '不采纳申诉'" width="480">
+               :title="resolveDlg.accept ? '采纳申诉' : '不采纳申诉'" width="480"
+               :close-on-click-modal="false">
       <p class="dim">
         {{ resolveDlg.row?.name }}：{{ resolveDlg.row?.old_hours }}h →
         申报 {{ resolveDlg.row?.claimed_hours }}h<br />
@@ -1475,7 +1485,9 @@
     </el-dialog>
 
     <!-- 岗位对话框 -->
-    <el-dialog v-model="positionDlg.visible" :title="positionDlg.editing ? '编辑岗位' : '新建岗位'" width="560">
+    <el-dialog v-model="positionDlg.visible" :title="positionDlg.editing ? '编辑岗位' : '新建岗位'" width="560"
+               :close-on-click-modal="false"
+               :before-close="guardPosition" @opened="guardPosition.snap">
       <el-form label-width="100px">
         <!-- maxlength 跟着库里这几列的长度：不在这儿拦，超长要到保存那一下
              才被后端打回来 -->
@@ -1572,7 +1584,9 @@
     </el-dialog>
 
     <!-- 按岗位看：给一个岗位加时段 = 在某个场次下复制出同名岗位 -->
-    <el-dialog v-model="slotDlg.visible" :title="`给「${slotDlg.role?.name || ''}」加时段`" width="480">
+    <el-dialog v-model="slotDlg.visible" :title="`给「${slotDlg.role?.name || ''}」加时段`" width="480"
+               :close-on-click-modal="false"
+               :before-close="guardSlot" @opened="guardSlot.snap">
       <el-radio-group v-model="slotDlg.mode">
         <el-radio-button value="existing" :disabled="!slotTargets.length">放进已有场次</el-radio-button>
         <el-radio-button value="new">新建一个场次</el-radio-button>
@@ -1602,7 +1616,8 @@
     </el-dialog>
 
     <!-- 岗位批量复制到其它场次 -->
-    <el-dialog v-model="copyPosDlg.visible" title="复制岗位到其它场次" width="520">
+    <el-dialog v-model="copyPosDlg.visible" title="复制岗位到其它场次" width="520"
+               :close-on-click-modal="false">
       <p class="dim">
         从「{{ copyPosDlg.source?.name }}」复制岗位，含名额、条件、组长与材料；同名的跳过。
       </p>
@@ -1655,7 +1670,9 @@
     </el-dialog>
 
     <!-- 发送通知 -->
-    <el-dialog v-model="notifyDlg.visible" title="发送通知" width="540">
+    <el-dialog v-model="notifyDlg.visible" title="发送通知" width="540"
+               :close-on-click-modal="false"
+               :before-close="guardNotify" @opened="guardNotify.snap">
       <el-form label-width="90px">
         <el-form-item label="发送范围" required>
           <el-radio-group v-model="notifyForm.scope">
@@ -1678,6 +1695,20 @@
           <el-input v-model="notifyForm.content" type="textarea" :rows="4"
                     placeholder="请输入通知正文" />
         </el-form-item>
+        <el-form-item label="附件">
+          <div style="width:100%">
+            <div v-for="(f, i) in notifyForm.files" :key="f.id" class="notify-file">
+              <span>{{ f.title }}</span>
+              <el-button link type="danger" size="small"
+                         @click="notifyForm.files.splice(i, 1)">移除</el-button>
+            </div>
+            <el-upload v-if="notifyForm.files.length < NOTIFY_FILE_LIMIT" :show-file-list="false"
+                       :http-request="uploadNotifyFile">
+              <el-button size="small" :loading="notifyDlg.uploading">上传附件</el-button>
+            </el-upload>
+            <div class="dim">最多 {{ NOTIFY_FILE_LIMIT }} 个，志愿者在平台「消息通知」里下载</div>
+          </div>
+        </el-form-item>
         <el-form-item label="">
           <el-checkbox v-model="notifyForm.need_ack">要求志愿者签收</el-checkbox>
           <div class="dim">
@@ -1693,7 +1724,8 @@
     </el-dialog>
 
     <!-- 问卷结果：按场次、岗位挑人导出，附件按「场次/岗位」分文件夹 -->
-    <el-dialog v-model="answersDlg.visible" title="导出问卷结果" width="480">
+    <el-dialog v-model="answersDlg.visible" title="导出问卷结果" width="480"
+               :close-on-click-modal="false">
       <el-form label-width="56px">
         <el-form-item label="场次">
           <el-select v-model="answersDlg.shifts" multiple clearable collapse-tags
@@ -1725,7 +1757,9 @@
                        :activity-id="activityId" @created="loadAll" />
 
     <!-- 基本信息编辑 -->
-    <el-dialog v-model="editBase" title="编辑活动基本信息" width="620">
+    <el-dialog v-model="editBase" title="编辑活动基本信息" width="620"
+               :close-on-click-modal="false"
+               :before-close="guardBase" @opened="guardBase.snap">
       <ActivityForm v-model="baseForm" v-model:range="baseRange" :modes="modes"
                     :status="act.status" />
       <template #footer>
@@ -1742,7 +1776,7 @@
 import { computed, h, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
-import { api, download as dl, downloadExport, fmtDT, pageUrl, qrBase } from '../api'
+import { api, download as dl, downloadExport, fmtDT, pageUrl, qrBase, uploadFile } from '../api'
 import AiStructureAssist from '../components/AiStructureAssist.vue'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
@@ -1768,6 +1802,7 @@ import ProjectFileSlot from '../components/ProjectFileSlot.vue'
 import PeriodEditor from '../components/PeriodEditor.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import { DAY_END, DAY_START, auth, canSee } from '../store'
 
 const route = useRoute()
@@ -1796,6 +1831,21 @@ const isPublic = computed(() =>
 // 不公开招募（补记录）：没有场次、报名、签到，只有名单导入与时长结账
 const isRecord = computed(() => act.value?.recruit_mode === 'record')
 const formDlg = ref(false)
+const formBuilder = ref(null)
+/** 关报名问卷弹窗：题目有改动没保存就先问，保存 / 不保存（丢掉改动）/ 继续编辑 */
+async function closeFormDlg(done) {
+  const fb = formBuilder.value
+  if (!fb?.dirty()) return done()
+  try {
+    await ElMessageBox.confirm('报名问卷有改动还没保存，要保存吗？', '还没保存', {
+      type: 'warning', distinguishCancelAndClose: true,
+      confirmButtonText: '保存', cancelButtonText: '不保存',
+    })
+    if (await fb.save()) done()
+  } catch (action) {
+    if (action === 'cancel') { fb.reload(); done() }   // 关掉提示框 = 继续编辑
+  }
+}
 const formCount = ref(0)
 const formLabel = computed(() => (isPublic.value ? '查看报名问卷'
   : formCount.value ? `报名问卷（${formCount.value} 题）` : '设置报名问卷'))
@@ -1824,9 +1874,9 @@ const mgrCandidates = ref([])
 const moveSel = ref({})
 
 // —— 发送通知 ——
-const notifyDlg = ref({ visible: false, saving: false })
+const notifyDlg = ref({ visible: false, saving: false, uploading: false })
 const notifyForm = ref({ scope: 'all', shift_id: '', title: '', content: '',
-                         need_ack: false })
+                         need_ack: false, files: [] })
 const ackBatches = ref([])
 // 各块数据上次拉成功的时刻，给刷新条显示（见 RefreshBar）
 const ackAt = ref(0)
@@ -1916,6 +1966,13 @@ const stationForm = ref({})
 const editBase = ref(false)
 const baseForm = ref({})
 const baseRange = ref([])
+// 表单弹窗有改动没保存时，点叉或按 Esc 先问一句（见 composables/closeGuard.js）
+const guardShift = useCloseGuard(() => groupForm.value)
+const guardAttached = useCloseGuard(() => attForm.value)
+const guardPosition = useCloseGuard(() => [stationForm.value, positionDlg.value.copyFrom, positionDlg.value.syncSame])
+const guardSlot = useCloseGuard(() => ({ ...slotDlg.value, visible: 0, busy: 0, role: 0 }))
+const guardNotify = useCloseGuard(() => notifyForm.value)
+const guardBase = useCloseGuard(() => [baseForm.value, baseRange.value])
 const gdVisible = ref(false)
 const gdData = ref(null)
 const sdVisible = ref(false)
@@ -2695,8 +2752,20 @@ async function askKeepOutsiders(outsiders) {
 // —— 发送通知 ——
 function openNotify() {
   notifyForm.value = { scope: 'all', shift_id: currentGroupId.value || '',
-                       title: '', content: '', need_ack: false }
+                       title: '', content: '', need_ack: false, files: [] }
   notifyDlg.value.visible = true
+}
+
+// 通知附件先传上去拿 id，发送时随通知带上；企业微信推送里只写一句去平台下载
+const NOTIFY_FILE_LIMIT = 5
+async function uploadNotifyFile({ file }) {
+  notifyDlg.value.uploading = true
+  try {
+    const d = await uploadFile(`/api/staff/activities/${activityId}/notify-files`, file)
+    notifyForm.value.files.push({ id: d.id, title: d.title })
+  } catch { /* uploadFile 已经提示过 */ } finally {
+    notifyDlg.value.uploading = false
+  }
 }
 
 async function sendNotify() {
@@ -2712,6 +2781,7 @@ async function sendNotify() {
       title: f.title.trim(),
       content: f.content.trim(),
       need_ack: f.need_ack,
+      file_ids: f.files.map(x => x.id),
     })
     ElMessage.success(`已发送给 ${d.count} 人`
       + (f.need_ack ? '，可在「签收情况」查看进度' : ''))
@@ -2984,8 +3054,8 @@ async function doApprove() {
 // 时长要由校青协审核过才算数：提交给归口部长，通过之后才锁定。
 // 志愿北京活动名称一并填（预先填上之前存过的），锁定后推给志愿北京对接部门核对
 // 时长审核要附的两份盖章材料；template 是对应空白模板的格子名
-const STAMPED_SLOTS = [{ kind: 'stamped', label: '盖章立项书', template: 'proposal' },
-                       { kind: 'closing', label: '盖章结项书', template: 'closing' }]
+const STAMPED_SLOTS = [{ kind: 'stamped', label: '盖章立项书（即盖章项目申请书）', template: 'proposal' },
+                       { kind: 'closing', label: '盖章结项书（即盖章时长认证明细）', template: 'closing' }]
 const lockFiles = ref(null)
 async function loadLockFiles() {
   lockFiles.value = await api.get(`/api/staff/activities/${activityId}/project-files`)
@@ -3188,6 +3258,7 @@ function toISO(v) {
 </script>
 
 <style scoped>
+.notify-file { display: flex; align-items: center; gap: 8px; line-height: 24px; }
 /* 手机版时长卡片里的一行：标签 + 控件 */
 .mh-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 /* 按岗位看：一个时段一行 */

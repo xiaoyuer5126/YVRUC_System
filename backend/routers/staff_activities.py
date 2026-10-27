@@ -115,7 +115,7 @@ def _notify_assignment_bg(items: list[dict]):
                             activity=db.get(Activity, g.activity_id).title,
                             shift=g.name, position=st.name,
                             position_time=st.time_text(),
-                            position_loc=st.location or "待定")
+                            position_loc=st.place())
         db.commit()
     finally:
         db.close()
@@ -2245,6 +2245,24 @@ class NotifyBody(BaseModel):
     title: str = Field(max_length=128)
     content: str
     need_ack: bool = False  # 要求志愿者点「我已知悉」
+    file_ids: list[str] = Field(default_factory=list, max_length=5)  # 先经 notify-files 上传
+
+
+def _notify_files(db: OrmSession, act: Activity, ids: list[str]) -> list[dict]:
+    """发通知带的附件：只认本活动经 notify-files 传上来的文件。
+
+    传上来时 owner_id 是活动 id，随通知发出后改成这次发送的编号；定时任务
+    按这个区分哪些传了没发（见 scheduled.purge_unsent_notify_files）。
+    """
+    send_id = uid("snd")
+    out = []
+    for i in dict.fromkeys(ids):
+        a = db.get(Attachment, i)
+        if a is None or a.owner_type != "notify" or a.activity_id != act.id:
+            raise HTTPException(400, "附件不存在，请重新上传")
+        a.owner_id = send_id
+        out.append({"id": a.id, "title": a.title, "size": a.size})
+    return out
 
 
 @router.post("/activities/{activity_id}/notify")
@@ -2286,16 +2304,22 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
         checked = {r[0] for r in db.query(CheckinRecord.user_id)
                    .filter(CheckinRecord.shift_id == shift_id).all()}
         users = [u for u in users if u.id not in checked]
+    files = _notify_files(db, act, body.file_ids)
+    if files:
+        # 企业微信推送带不了文件，正文里说一声去平台下载
+        content += (f"\n\n附件：{'、'.join(f['title'] for f in files)}"
+                    "（请在平台「消息通知」里下载）")
     batch_id = uid("bat") if body.need_ack else None
     for u in users:
         msgcenter.send_user(db, u, "custom", title=title, content=content,
-                        data={"activity_id": act.id},
+                        data={"activity_id": act.id, "files": files},
                         need_ack=body.need_ack, batch_id=batch_id)
     n = len(users)
     audit_log(db, actor=user, action="update", target_type="notify",
               target_id=act.id, target_label=act.title,
               activity_id=act.id,
               summary=f"向{n}位志愿者发送通知：{title}"
+                      + (f"，附件 {len(files)} 个" if files else "")
                       + ("（要求签收）" if body.need_ack else ""))
     db.commit()
     return {"ok": True, "count": n, "batch_id": batch_id}
@@ -2606,7 +2630,7 @@ def set_leader(enrollment_id: str, body: LeaderBody,
                         activity=db.get(Activity, enr.activity_id).title,
                         position=scope,
                         position_time=position.time_text(),
-                        position_loc=position.location or "待定",
+                        position_loc=position.place(),
                         leader_task=(logic.group_leader_task(siblings)
                                      or "请与负责人确认"))
     else:

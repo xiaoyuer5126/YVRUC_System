@@ -1,4 +1,4 @@
-<!-- 智能起草的入口：页面右下角一个悬浮的圆按钮，点开右侧抽屉。
+<!-- 智能起草的入口：页面右侧偏上一个悬浮的圆按钮，点开右侧抽屉；调用方也可以用 show() 直接打开。
      抽屉里贴原文 → 起草 → 看草稿（调用方的 #preview 插槽画）→ 调用方的 #footer
      按钮决定怎么用。平台只把草稿拿给人看：填进表单、建场次都要管理者自己点。
      后端没配 AI 的 key（/api/auth/constants 的 ai_enabled）时整个不出现。 -->
@@ -12,7 +12,8 @@
         <img :src="aiIcon" alt="" draggable="false" />
       </button>
     </el-tooltip>
-    <el-drawer v-model="open" :title="title" :size="narrow ? '100%' : '560px'" append-to-body>
+    <el-drawer v-model="open" :title="title" :size="narrow ? '100%' : '560px'" append-to-body
+               :close-on-click-modal="false">
       <div class="dim">{{ hint }}</div>
       <el-input v-model="text" type="textarea" :autosize="{ minRows: 6, maxRows: 14 }"
                 :placeholder="placeholder" :maxlength="30000" show-word-limit
@@ -84,9 +85,10 @@ const clamp = (p) => {
   return { x: Math.min(Math.max(p.x, m), window.innerWidth - SIZE - m),
            y: Math.min(Math.max(p.y, m), window.innerHeight - SIZE - m) }
 }
+// 默认停在右侧偏上：放在右下角大家注意不到，还会压住页面底部的按钮
 const corner = () => {
   const m = margin()
-  return { x: window.innerWidth - SIZE - m, y: window.innerHeight - SIZE - m }
+  return { x: window.innerWidth - SIZE - m, y: Math.round(window.innerHeight * 0.3) }
 }
 const stored = () => {
   try {
@@ -131,8 +133,10 @@ function onUp(e) {
 
 function onClick() {
   if (Date.now() - dragEndAt < 300) return   // 刚拖完的那一下不打开抽屉
-  open.value = true
+  show()
 }
+
+function show() { open.value = true }
 
 function onResize() { pos.value = clamp(pos.value || corner()) }
 
@@ -158,7 +162,7 @@ function reset() {
   text.value = ''
   files.value = []
 }
-defineExpose({ reset })
+defineExpose({ reset, show, enabled })
 </script>
 
 <style scoped>

@@ -196,7 +196,8 @@
     </template>
 
     <el-dialog v-model="edit.visible" :title="`修改 ${edit.row?.user?.name || ''} 的时长`"
-               width="420">
+               width="420"
+               :close-on-click-modal="false">
       <el-form label-width="70px">
         <el-form-item label="时长">
           <el-input-number v-model="edit.hours" :min="0.5" :step="0.5" :precision="1" />

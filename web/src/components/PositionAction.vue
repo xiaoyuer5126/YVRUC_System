@@ -16,8 +16,8 @@
         <el-tag :type="mine.status === 'waitlisted' ? 'warning' : 'success'" size="small">
           {{ mine.status === 'waitlisted' ? `候补第 ${mine.waitlist_position} 位` : '已报名' }}
         </el-tag>
-        <el-button size="small" type="danger" plain
-                   :disabled="ctx.paused.value || !ctx.canCancel(g)"
+        <el-button v-if="ctx.canCancel(g)" size="small" type="danger" plain
+                   :disabled="ctx.paused.value"
                    @click="ctx.cancelEnroll(g)">
           {{ mine.status === 'waitlisted' ? '退出候补' : '退选' }}
         </el-button>

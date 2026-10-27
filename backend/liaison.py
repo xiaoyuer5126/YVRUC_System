@@ -26,7 +26,8 @@ from .models import Activity, Attachment, Department, User, VbConfirm, now, uid
 # 能值班的：部门骨干与部长。部门成员是学习权限，拍不了板。
 ELIGIBLE_POSTS = ("core", "head")
 
-SLOTS = {"proposal": "立项书", "stamped": "盖章立项书", "closing": "盖章结项书"}
+SLOTS = {"proposal": "立项书", "stamped": "盖章立项书（即盖章项目申请书）",
+         "closing": "盖章结项书（即盖章时长认证明细）"}
 # 时长审核要附的盖章材料：对外活动两份都齐了才能提交
 STAMPED_SLOTS = ("stamped", "closing")
 # 各格能传的文件类型。立项书是提交审批时交的电子稿；盖章件是扫描件或照片，

@@ -307,7 +307,9 @@
       </el-table>
     </template>
 
-    <el-dialog v-model="dd.visible" :title="dd.row ? '编辑部门' : '新增部门'" width="420">
+    <el-dialog v-model="dd.visible" :title="dd.row ? '编辑部门' : '新增部门'" width="420"
+               :close-on-click-modal="false"
+               :before-close="guardDept" @opened="guardDept.snap">
       <el-form label-position="top">
         <el-form-item label="部门名称">
           <el-input v-model="dd.name" placeholder="如：社区服务部" />
@@ -344,7 +346,8 @@
                            :templates="cd.templates" :reject-templates="cd.rejectTemplates"
                            :submit="submitDecision" />
 
-    <el-dialog v-model="tr.visible" title="转交审批" width="480">
+    <el-dialog v-model="tr.visible" title="转交审批" width="480"
+               :close-on-click-modal="false">
       <p class="dim">{{ tr.row?.title }}</p>
       <el-form label-width="88px">
         <el-form-item label="转交给">
@@ -403,6 +406,7 @@ import ProjectFileSlot from '../components/ProjectFileSlot.vue'
 import { closingApproved, closingRejected, projectApproved, projectRejected, vbConfirmed }
   from '../replyTemplates'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import { auth, managesAllActivities } from '../store'
 
 const narrow = useNarrow()
@@ -430,6 +434,7 @@ const cd = ref({ visible: false, kind: '', row: null, approve: true, title: '', 
 // 部门的维护：管理员或会长团
 const dd = ref({ visible: false, row: null, name: '', note: '', studentId: '', busy: false,
                  removing: '' })
+const guardDept = useCloseGuard(() => [dd.value.name, dd.value.note, dd.value.studentId])
 const isAdmin = computed(() =>
   auth.activeIdentity === 'admin'
   || (auth.activeIdentity === 'qingxie' && auth.user?.qingxie_post === 'council'))

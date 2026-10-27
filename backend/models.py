@@ -962,6 +962,11 @@ class Position(Base):
             return ""
         return self.attire_label() + (f"，{self.attire_note}" if self.attire_note else "")
 
+    def place(self) -> str:
+        """给志愿者看的地点：岗位没填用场次的，场次也没填用活动的。"""
+        return (self.location or self.shift.location
+                or self.shift.activity.location or "待定")
+
     def pay_text(self) -> str:
         """报酬方式一句话；只记时长的岗位为空。"""
         if not self.pay_optional:

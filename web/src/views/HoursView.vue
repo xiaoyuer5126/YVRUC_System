@@ -1,6 +1,7 @@
 <template>
   <div class="page" v-if="data">
     <h2>我的志愿时长</h2>
+    <VbRegisterTip />
     <el-row :gutter="16" style="margin-bottom:16px">
       <el-col :span="8">
         <el-card shadow="never" class="stat">
@@ -100,7 +101,8 @@
     <!-- 校外自行报名的活动单独一条账：没有场次、报名和签到，见后端 hours_claims -->
     <HoursClaims @total="claimsTotal = $event" />
 
-    <el-dialog v-model="cf.visible" title="确认时长" width="480">
+    <el-dialog v-model="cf.visible" title="确认时长" width="480"
+               :close-on-click-modal="false">
       <p class="dim">
         「{{ cf.row?.activity_title }}」记 <b>{{ cf.row?.hours }}</b> 小时。确认后到截止前仍可改。
       </p>
@@ -130,7 +132,8 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="dlg.visible" title="时长有异议" width="480">
+    <el-dialog v-model="dlg.visible" title="时长有异议" width="480"
+               :close-on-click-modal="false">
       <p class="dim">
         「{{ dlg.row?.activity_title }}」当前记 <b>{{ dlg.row?.hours }}</b> 小时。
         写清楚实际的到离时间，负责人核对后决定是否改。
@@ -162,6 +165,7 @@ import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
 import HoursParts from '../components/HoursParts.vue'
 import HoursClaims from '../components/HoursClaims.vue'
+import VbRegisterTip from '../components/VbRegisterTip.vue'
 
 const narrow = useNarrow()
 const data = ref(null)
