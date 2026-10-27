@@ -16,5 +16,5 @@ const VB_SITE = 'https://test1.bv2008.cn/'
 </script>
 
 <style scoped>
-.vb-tip { margin-bottom: 12px; }
+.vb-tip { margin-bottom: 16px; }
 </style>
