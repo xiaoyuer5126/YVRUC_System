@@ -274,7 +274,8 @@
 
     <!-- 生成签到码 -->
     <el-dialog v-model="creating" title="生成签到码" width="460"
-               :close-on-click-modal="false">
+               :close-on-click-modal="false"
+               :before-close="guardCreate" @opened="guardCreate.snap">
       <el-form label-width="110px">
         <!-- 一个码只属于一个场次，所以场次必须在这里选定，不能跟着别的页签走 -->
         <el-form-item label="签到场次" required>
@@ -486,6 +487,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT, qrBase } from '../api'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import DataCards from './DataCards.vue'
 import DateTimeField from './DateTimeField.vue'
 import GeoPicker from './GeoPicker.vue'
@@ -512,6 +514,7 @@ const creating = ref(false)
 const genBusy = ref(false)
 const batchBusy = ref('')
 const form = ref({ shift_id: '', mode: 'shift', position_ids: [], range: [] })
+const guardCreate = useCloseGuard(() => form.value)
 
 const shiftOptions = computed(() => props.allShifts)
 const formShift = computed(

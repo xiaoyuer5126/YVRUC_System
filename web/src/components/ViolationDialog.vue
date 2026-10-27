@@ -1,7 +1,8 @@
 <!-- 在活动名单里给某位志愿者登记一条违规。只记录，不产生任何后果。 -->
 <template>
   <el-dialog v-model="visible" title="登记违规" width="480"
-             :close-on-click-modal="false">
+             :close-on-click-modal="false"
+             :before-close="guardViolation" @opened="guardViolation.snap">
     <p>
       对象：<b>{{ row?.name }}</b><span class="dim">（{{ row?.student_id }}）</span>
     </p>
@@ -38,6 +39,7 @@ import { h, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { revokeViolation } from '../composables/violations'
+import { useCloseGuard } from '../composables/closeGuard'
 
 const props = defineProps({ activityId: { type: String, required: true } })
 const emit = defineEmits(['saved'])
@@ -47,6 +49,7 @@ const busy = ref(false)
 const row = ref(null)
 const kinds = ref({})
 const form = ref({ kind: 'late', detail: '' })
+const guardViolation = useCloseGuard(() => form.value)
 // 这个人在本活动已有的违规记录；拿不到（如部门成员）就当没有，提交时后端还会再拦一道
 const existing = ref([])
 

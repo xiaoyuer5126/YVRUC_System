@@ -143,7 +143,8 @@
 
     <!-- 补招：负责人直接把人加进场次 -->
     <el-dialog v-model="walkinVisible" title="补招志愿者" width="430"
-               :close-on-click-modal="false">
+               :close-on-click-modal="false"
+               :before-close="guardWalkin" @opened="guardWalkin.snap">
       <el-form label-width="90px">
         <el-form-item label="学号"><el-input v-model="walkin.sid" /></el-form-item>
         <el-form-item label="指定岗位">
@@ -187,6 +188,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, fmtDTShort, uploadFile, withConflictConfirm } from '../api'
+import { useCloseGuard } from '../composables/closeGuard'
 
 const props = defineProps({
   shift: { type: Object, required: true },
@@ -207,6 +209,7 @@ defineExpose({ runPreview, openImport, openWalkin, solving })
 const walkinVisible = ref(false)
 const walkin = ref({ sid: '', position: '', force: false, allowReassign: true,
                      attached: [], party: false })
+const guardWalkin = useCloseGuard(() => walkin.value)
 // 本场次下对所选岗位生效的培训/彩排（没选岗位就全列），口径同后端 attached_shifts
 const walkinAttached = computed(() => (props.shift.attached || []).filter(a =>
   !walkin.value.position || !a.applies_to_positions?.length

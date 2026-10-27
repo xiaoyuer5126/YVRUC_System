@@ -69,7 +69,8 @@
 
     <el-dialog v-model="form.visible" title="登记校外活动"
                :width="narrow ? '94%' : '620px'" @closed="reset"
-               :close-on-click-modal="false">
+               :close-on-click-modal="false"
+               :before-close="guardForm" @opened="guardForm.snap">
       <p class="dim">
         只登记已经参加完的校外志愿活动。通过后计入志愿时长，并随「时长记录」
         报给志愿北京。
@@ -135,6 +136,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { useCloseGuard } from '../composables/closeGuard'
 import { auth } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from './DataCards.vue'
@@ -158,6 +160,7 @@ function empty() {
 }
 const openForm = () => { form.value = { ...empty(), visible: true } }
 const reset = () => { form.value = empty() }
+const guardForm = useCloseGuard(() => ({ ...form.value, visible: 0, busy: 0, proofs: form.value.proofs.length, photos: form.value.photos.length }))
 
 const load = async () => {
   const d = await api.get('/api/me/hours-claims')

@@ -4,7 +4,8 @@
 <template>
   <el-dialog v-model="visible" title="意见反馈" :width="narrow ? '94%' : '560px'"
              append-to-body @closed="reset"
-             :close-on-click-modal="false">
+             :close-on-click-modal="false"
+             :before-close="guardFeedback" @opened="guardFeedback.snap">
     <el-tabs v-model="tab" @tab-change="onTab">
       <el-tab-pane label="提交反馈" name="new">
         <div class="kinds">
@@ -74,6 +75,7 @@ import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { api, authHeaders, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import FeedbackShots from './FeedbackShots.vue'
 
 // 与后端 config.FEEDBACK_* 一致；以后端校验为准，这里只是提前拦一下
@@ -92,6 +94,7 @@ const tab = ref('new')
 const kind = ref('platform')
 const content = ref('')
 const files = ref([])
+const guardFeedback = useCloseGuard(() => [kind.value, content.value, files.value.length])
 const saving = ref(false)
 const mine = ref([])
 const loading = ref(false)
