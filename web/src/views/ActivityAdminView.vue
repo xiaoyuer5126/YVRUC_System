@@ -2984,8 +2984,8 @@ async function doApprove() {
 // 时长要由校青协审核过才算数：提交给归口部长，通过之后才锁定。
 // 志愿北京活动名称一并填（预先填上之前存过的），锁定后推给志愿北京对接部门核对
 // 时长审核要附的两份盖章材料；template 是对应空白模板的格子名
-const STAMPED_SLOTS = [{ kind: 'stamped', label: '盖章立项书', template: 'proposal' },
-                       { kind: 'closing', label: '盖章结项书', template: 'closing' }]
+const STAMPED_SLOTS = [{ kind: 'stamped', label: '盖章立项书（即盖章项目申请书）', template: 'proposal' },
+                       { kind: 'closing', label: '盖章结项书（即盖章时长认证明细）', template: 'closing' }]
 const lockFiles = ref(null)
 async function loadLockFiles() {
   lockFiles.value = await api.get(`/api/staff/activities/${activityId}/project-files`)
