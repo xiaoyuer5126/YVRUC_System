@@ -18,7 +18,7 @@ from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import current_user_download, require_manager
 from ..liaison import SLOTS as PROJECT_SLOTS
-from ..models import Activity, Attachment, Position, User, uid
+from ..models import Activity, Attachment, Notification, Position, User, uid
 from ..perm import ensure_activity_manager, is_activity_manager
 from .activities import is_public
 from ..stage import ensure_not_finished
@@ -28,7 +28,8 @@ router = APIRouter(prefix="/api", tags=["materials"])
 MATERIAL_DIR = config.MATERIAL_DIR
 # 这条接口管的材料只挂在岗位上（上传/加链接也只认 position）。其余 owner_type
 # 各有自己的写入方：问卷附件 application、反馈截图 feedback、领取凭证 claim_proof/
-# claim_photo、签到二维码、立项书/结项书（PROJECT_SLOTS）、模板 template。
+# claim_photo、签到二维码、立项书/结项书（PROJECT_SLOTS）、模板 template、
+# 通知附件 notify（upload_notify_file）。
 MATERIAL_OWNER_TYPES = frozenset({"position"})
 EXT_TYPES = {
     "pdf": "application/pdf",
@@ -54,6 +55,22 @@ def _owner(db: OrmSession, owner_type: str, owner_id: str) -> tuple[str, str]:
     raise HTTPException(400, "学习材料只能挂在岗位上")
 
 
+async def _store(file: UploadFile, hint: str = "") -> tuple[str, bytes]:
+    """校验类型和大小后存进 MATERIAL_DIR，返回 (存盘文件名, 内容)。"""
+    ext = Path(file.filename or "").suffix.lower().lstrip(".")
+    if ext not in EXT_TYPES:
+        raise HTTPException(400, f"不支持的文件类型（可上传 "
+                                 f"{'/'.join(sorted(EXT_TYPES))}）{hint}")
+    data = await file.read()
+    if len(data) > config.MAX_MATERIAL_BYTES:
+        limit = config.MAX_MATERIAL_BYTES // (1024 * 1024)
+        raise HTTPException(400, f"文件不能超过 {limit}MB{hint}")
+    MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
+    stored = f"{uuid4().hex}.{ext}"
+    (MATERIAL_DIR / stored).write_bytes(data)
+    return stored, data
+
+
 @router.post("/staff/materials")
 async def upload_material(owner_type: str = Form(...), owner_id: str = Form(...),
                           title: str = Form(""), file: UploadFile = File(...),
@@ -63,19 +80,7 @@ async def upload_material(owner_type: str = Form(...), owner_id: str = Form(...)
     ensure_activity_manager(db, user, activity_id)
     ensure_not_finished(db.get(Activity, activity_id))
 
-    ext = Path(file.filename or "").suffix.lower().lstrip(".")
-    if ext not in EXT_TYPES:
-        raise HTTPException(400, f"不支持的文件类型（可上传 "
-                                 f"{'/'.join(sorted(EXT_TYPES))}）；"
-                                 f"视频请改用「添加链接」")
-    data = await file.read()
-    if len(data) > config.MAX_MATERIAL_BYTES:
-        limit = config.MAX_MATERIAL_BYTES // (1024 * 1024)
-        raise HTTPException(400, f"文件不能超过 {limit}MB；"
-                                 f"视频等大文件请改用「添加链接」")
-    MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
-    stored = f"{uuid4().hex}.{ext}"
-    (MATERIAL_DIR / stored).write_bytes(data)
+    stored, data = await _store(file, "；视频请改用「添加链接」")
 
     row = Attachment(id=uid("att"), owner_type=owner_type, owner_id=owner_id,
                      activity_id=activity_id, kind="file",
@@ -146,6 +151,37 @@ def delete_material(material_id: str, db: OrmSession = Depends(db_session),
     return {"ok": True}
 
 
+@router.post("/staff/activities/{activity_id}/notify-files")
+async def upload_notify_file(activity_id: str, file: UploadFile = File(...),
+                             db: OrmSession = Depends(db_session),
+                             user: User = Depends(require_manager)):
+    """发通知的附件：先传上来拿到 id，发通知时随 file_ids 带上。
+
+    传了没发的文件不挂在任何通知上，谁也下载不到；留痕记在发通知那一下。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    if db.get(Activity, activity_id) is None:
+        raise HTTPException(404, "活动不存在")
+    stored, data = await _store(file)
+    row = Attachment(id=uid("att"), owner_type="notify", owner_id=activity_id,
+                     activity_id=activity_id, kind="file",
+                     title=(file.filename or stored)[:160],
+                     stored_name=stored, size=len(data), uploaded_by=user.id)
+    db.add(row)
+    db.commit()
+    return {"id": row.id, "title": row.title, "size": row.size}
+
+
+def _received(db: OrmSession, user: User, row: Attachment) -> bool:
+    """这份通知附件有没有随某条通知发到这个人手上。"""
+    notes = (db.query(Notification.data)
+             .filter(Notification.user_id == user.id,
+                     Notification.template_key == "custom",
+                     Notification.created_at >= row.created_at).all())
+    return any(row.id in {f.get("id") for f in (d or {}).get("files", [])}
+               for (d,) in notes)
+
+
 @router.get("/materials/{material_id}")
 def download_material(material_id: str, db: OrmSession = Depends(db_session),
                       user: User = Depends(current_user_download)):
@@ -171,6 +207,11 @@ def download_material(material_id: str, db: OrmSession = Depends(db_session),
         # （值班人审的正是还没公开的活动，下面那条公开判断会把他挡掉）
         from ..liaison import can_see_project_files
         if act is None or not can_see_project_files(db, user, act):
+            raise HTTPException(404, "材料不存在")
+    elif row.owner_type == "notify":
+        # 通知附件只给这场活动的管理者和收到这条通知的人
+        if not (is_activity_manager(db, user, row.activity_id)
+                or _received(db, user, row)):
             raise HTTPException(404, "材料不存在")
     elif act is None or (not is_public(act)
                          and not is_activity_manager(db, user, act.id)):
