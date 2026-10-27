@@ -1131,7 +1131,8 @@
 
     <!-- 场次对话框 -->
     <el-dialog v-model="shiftDlg.visible" :title="shiftDlg.editing ? '编辑场次' : '新建场次'" width="520"
-               :close-on-click-modal="false">
+               :close-on-click-modal="false"
+               :before-close="guardShift" @opened="guardShift.snap">
       <el-form label-width="100px">
         <el-form-item label="名称" required><el-input v-model="groupForm.name" placeholder="如：上午场" /></el-form-item>
         <el-form-item label="场次模式" required>
@@ -1215,7 +1216,8 @@
     <!-- 培训 / 彩排：挂在整个活动上 -->
     <el-dialog v-model="attDlg.visible"
                :title="(attDlg.editing ? '编辑' : '添加') + '培训 / 彩排'" width="560"
-               :close-on-click-modal="false">
+               :close-on-click-modal="false"
+               :before-close="guardAttached" @opened="guardAttached.snap">
       <p class="dim">
         报上被圈到的岗位就连带报上，被圈到的报名全退了才连带退；可以跨场次。
         自己不设名额，但有独立的签到码与时长。
@@ -1484,7 +1486,8 @@
 
     <!-- 岗位对话框 -->
     <el-dialog v-model="positionDlg.visible" :title="positionDlg.editing ? '编辑岗位' : '新建岗位'" width="560"
-               :close-on-click-modal="false">
+               :close-on-click-modal="false"
+               :before-close="guardPosition" @opened="guardPosition.snap">
       <el-form label-width="100px">
         <!-- maxlength 跟着库里这几列的长度：不在这儿拦，超长要到保存那一下
              才被后端打回来 -->
@@ -1582,7 +1585,8 @@
 
     <!-- 按岗位看：给一个岗位加时段 = 在某个场次下复制出同名岗位 -->
     <el-dialog v-model="slotDlg.visible" :title="`给「${slotDlg.role?.name || ''}」加时段`" width="480"
-               :close-on-click-modal="false">
+               :close-on-click-modal="false"
+               :before-close="guardSlot" @opened="guardSlot.snap">
       <el-radio-group v-model="slotDlg.mode">
         <el-radio-button value="existing" :disabled="!slotTargets.length">放进已有场次</el-radio-button>
         <el-radio-button value="new">新建一个场次</el-radio-button>
@@ -1667,7 +1671,8 @@
 
     <!-- 发送通知 -->
     <el-dialog v-model="notifyDlg.visible" title="发送通知" width="540"
-               :close-on-click-modal="false">
+               :close-on-click-modal="false"
+               :before-close="guardNotify" @opened="guardNotify.snap">
       <el-form label-width="90px">
         <el-form-item label="发送范围" required>
           <el-radio-group v-model="notifyForm.scope">
@@ -1739,7 +1744,8 @@
 
     <!-- 基本信息编辑 -->
     <el-dialog v-model="editBase" title="编辑活动基本信息" width="620"
-               :close-on-click-modal="false">
+               :close-on-click-modal="false"
+               :before-close="guardBase" @opened="guardBase.snap">
       <ActivityForm v-model="baseForm" v-model:range="baseRange" :modes="modes"
                     :status="act.status" />
       <template #footer>
@@ -1782,6 +1788,7 @@ import ProjectFileSlot from '../components/ProjectFileSlot.vue'
 import PeriodEditor from '../components/PeriodEditor.vue'
 import { activityBody, activityToForm, validateActivity } from '../composables/activityForm'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import { DAY_END, DAY_START, auth, canSee } from '../store'
 
 const route = useRoute()
@@ -1945,6 +1952,13 @@ const stationForm = ref({})
 const editBase = ref(false)
 const baseForm = ref({})
 const baseRange = ref([])
+// 表单弹窗有改动没保存时，点叉或按 Esc 先问一句（见 composables/closeGuard.js）
+const guardShift = useCloseGuard(() => groupForm.value)
+const guardAttached = useCloseGuard(() => attForm.value)
+const guardPosition = useCloseGuard(() => [stationForm.value, positionDlg.value.copyFrom, positionDlg.value.syncSame])
+const guardSlot = useCloseGuard(() => ({ ...slotDlg.value, visible: 0, busy: 0, role: 0 }))
+const guardNotify = useCloseGuard(() => notifyForm.value)
+const guardBase = useCloseGuard(() => [baseForm.value, baseRange.value])
 const gdVisible = ref(false)
 const gdData = ref(null)
 const sdVisible = ref(false)

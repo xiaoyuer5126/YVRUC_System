@@ -154,7 +154,8 @@
 
     <!-- 新建活动 -->
     <el-dialog v-model="creating" title="新建活动（草稿）" width="620"
-               :close-on-click-modal="false">
+               :close-on-click-modal="false"
+               :before-close="guardCreate" @opened="guardCreate.snap">
       <ActivityForm v-model="form" v-model:range="createRange" :modes="modes" />
       <template #footer>
         <el-button @click="creating = false">取消</el-button>
@@ -164,7 +165,8 @@
 
     <!-- 复制活动：只带结构，落草稿并直接进编辑页 -->
     <el-dialog v-model="copyDlg.visible" title="复制活动" width="500"
-               :close-on-click-modal="false">
+               :close-on-click-modal="false"
+               :before-close="guardCopy" @opened="guardCopy.snap">
       <p class="dim">
         复制「{{ copyDlg.source?.title }}」的<b>结构</b>：活动信息、场次、岗位、学习材料、报名问卷。
       </p>
@@ -212,6 +214,7 @@ import { ElMessage } from 'element-plus'
 import { api, download } from '../api'
 import { MODE_COLORS, auth } from '../store'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import { activityBody, emptyActivity, validateActivity } from '../composables/activityForm'
 import { uploadImage } from '../composables/uploadImage'
 import { useAuthedImage } from '../composables/authedImage'
@@ -253,6 +256,8 @@ const copyDlg = ref({ visible: false, source: null, title: '', shiftDays: 7,
 const copyQrSrc = useAuthedImage(() => copyDlg.value.qr)
 const form = ref({})
 const aiDraft = ref(null)
+const guardCreate = useCloseGuard(() => [form.value, createRange.value])
+const guardCopy = useCloseGuard(() => [copyDlg.value.title, copyDlg.value.shiftDays, copyDlg.value.qr])
 const createRange = ref([])
 
 const modeColor = m => MODE_COLORS[m]?.color
