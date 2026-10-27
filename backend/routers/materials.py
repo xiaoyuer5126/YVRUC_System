@@ -157,7 +157,8 @@ async def upload_notify_file(activity_id: str, file: UploadFile = File(...),
                              user: User = Depends(require_manager)):
     """发通知的附件：先传上来拿到 id，发通知时随 file_ids 带上。
 
-    传了没发的文件不挂在任何通知上，谁也下载不到；留痕记在发通知那一下。
+    传了没发的文件不挂在任何通知上，谁也下载不到，过一阵由定时任务删掉；
+    留痕记在发通知那一下。
     """
     ensure_activity_manager(db, user, activity_id)
     if db.get(Activity, activity_id) is None:

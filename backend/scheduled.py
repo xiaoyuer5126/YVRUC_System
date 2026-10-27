@@ -47,6 +47,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("unlocked", release_stale_edit_locks),
                       ("sessions", purge_expired_sessions),
                       ("orphan_files", purge_orphan_attachments),
+                      ("unsent_notify_files", purge_unsent_notify_files),
                       ("oplogs", purge_oplogs)):
         try:
             result[name] = job(db)
@@ -927,6 +928,29 @@ def purge_orphan_attachments(db: OrmSession) -> int:
         db.commit()
         logger.info("清理无人引用的附件 %d 个", n)
     return n
+
+
+def purge_unsent_notify_files(db: OrmSession) -> int:
+    """删掉传上来超过 config.NOTIFY_FILE_KEEP_HOURS 还没随通知发出去的附件。
+
+    管理者在发通知弹窗里选了文件就先传上来，之后移除或干脆没发，文件就没挂到
+    任何通知上。没发出去的 owner_id 还是活动 id（发出后改成发送编号）。
+    """
+    from .models import Attachment
+    from .routers.materials import MATERIAL_DIR
+
+    cutoff = now() - timedelta(hours=config.NOTIFY_FILE_KEEP_HOURS)
+    rows = (db.query(Attachment)
+            .filter(Attachment.owner_type == "notify",
+                    Attachment.owner_id == Attachment.activity_id,
+                    Attachment.created_at <= cutoff).all())
+    for att in rows:
+        (MATERIAL_DIR / att.stored_name).unlink(missing_ok=True)
+        db.delete(att)
+    if rows:
+        db.commit()
+        logger.info("清理没发出去的通知附件 %d 个", len(rows))
+    return len(rows)
 
 
 def purge_oplogs(db: OrmSession) -> int:

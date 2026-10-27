@@ -2249,12 +2249,18 @@ class NotifyBody(BaseModel):
 
 
 def _notify_files(db: OrmSession, act: Activity, ids: list[str]) -> list[dict]:
-    """发通知带的附件：只认本活动经 notify-files 传上来的文件。"""
+    """发通知带的附件：只认本活动经 notify-files 传上来的文件。
+
+    传上来时 owner_id 是活动 id，随通知发出后改成这次发送的编号；定时任务
+    按这个区分哪些传了没发（见 scheduled.purge_unsent_notify_files）。
+    """
+    send_id = uid("snd")
     out = []
     for i in dict.fromkeys(ids):
         a = db.get(Attachment, i)
         if a is None or a.owner_type != "notify" or a.activity_id != act.id:
             raise HTTPException(400, "附件不存在，请重新上传")
+        a.owner_id = send_id
         out.append({"id": a.id, "title": a.title, "size": a.size})
     return out
 

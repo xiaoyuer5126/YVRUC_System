@@ -56,3 +56,25 @@ def test_附件类型不对拒收(client, admin, enrolled_activity):
     act, _shift, _u = enrolled_activity
     r = _upload(client, admin, act.id, name="病毒.exe")
     assert r.status_code == 400 and "不支持的文件类型" in r.json()["detail"]
+
+
+def test_传了没发的附件一天后清掉(client, admin, db, enrolled_activity):
+    from datetime import timedelta
+    from backend import config
+    from backend.models import Attachment, now
+    from backend.scheduled import purge_unsent_notify_files
+
+    act, _shift, _u = enrolled_activity
+    sent = _upload(client, admin, act.id).json()["id"]
+    unsent = _upload(client, admin, act.id, name="没发的.pdf").json()["id"]
+    assert _send(client, admin, act.id, [sent]).status_code == 200
+
+    db.expire_all()
+    old = now() - timedelta(hours=config.NOTIFY_FILE_KEEP_HOURS + 1)
+    for att in db.query(Attachment).filter(Attachment.id.in_([sent, unsent])).all():
+        att.created_at = old
+    db.commit()
+    assert purge_unsent_notify_files(db) >= 1
+    db.expire_all()
+    assert db.get(Attachment, unsent) is None
+    assert db.get(Attachment, sent) is not None
