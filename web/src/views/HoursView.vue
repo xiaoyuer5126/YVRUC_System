@@ -1,6 +1,7 @@
 <template>
   <div class="page" v-if="data">
     <h2>我的志愿时长</h2>
+    <VbRegisterTip />
     <el-row :gutter="16" style="margin-bottom:16px">
       <el-col :span="8">
         <el-card shadow="never" class="stat">
@@ -164,6 +165,7 @@ import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
 import HoursParts from '../components/HoursParts.vue'
 import HoursClaims from '../components/HoursClaims.vue'
+import VbRegisterTip from '../components/VbRegisterTip.vue'
 
 const narrow = useNarrow()
 const data = ref(null)

@@ -48,6 +48,7 @@
         </el-checkbox>
       </el-form-item>
     </el-form>
+    <VbRegisterTip v-if="forced" />
     <p class="dim" style="margin:0">
       信息仅用于志愿服务组织联络，身份证号仅用于时长录入，不对外展示</p>
     <template #footer>
@@ -62,6 +63,7 @@ import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { auth } from '../store'
+import VbRegisterTip from './VbRegisterTip.vue'
 
 const emit = defineEmits(['saved'])
 
