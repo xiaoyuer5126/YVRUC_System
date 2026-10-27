@@ -71,7 +71,7 @@
                      @click="confirm(row)">确认转正</el-button>
           <el-button v-else-if="row.status === 'applied'" size="small" type="danger" plain
                      @click="withdraw(row)">撤回申请</el-button>
-          <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached"
+          <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached && !started(row)"
                      size="small" type="danger" plain @click="cancel(row)">
             {{ row.status === 'waitlisted' ? '退出候补' : '退选' }}
           </el-button>
@@ -165,7 +165,7 @@
                        @click="confirm(row)">确认转正</el-button>
             <el-button v-else-if="row.status === 'applied'" size="small" type="danger" plain
                        @click="withdraw(row)">撤回申请</el-button>
-            <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached"
+            <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached && !started(row)"
                        size="small" type="danger" plain @click="cancel(row)">
               {{ row.status === 'waitlisted' ? '退出候补' : '退选' }}
             </el-button>
@@ -338,6 +338,10 @@ async function openTeam(row) {
 
 function isActive(r) {
   return ['enrolled', 'waitlisted', 'pending_confirm'].includes(r.status)
+}
+// 场次开场后后端不再收退选，按钮也不摆出来
+function started(r) {
+  return !!r.shift.start_time && new Date(r.shift.start_time.replace(' ', 'T')) <= new Date()
 }
 
 
