@@ -1,7 +1,7 @@
 <template>
   <el-form label-width="110px">
     <el-form-item label="活动名称" required>
-      <el-input v-model="f.title" maxlength="128" placeholder="如：校运动会开幕式志愿服务" />
+      <el-input v-model="f.title" maxlength="128" :placeholder="titleExample" />
     </el-form-item>
     <el-form-item label="组织单位" required>
       <el-input v-model="f.organizer" maxlength="64"
@@ -156,6 +156,10 @@ import { RECORD_MODE } from '../composables/activityForm'
 import DateTimeField from './DateTimeField.vue'
 import PeriodEditor from './PeriodEditor.vue'
 import GeoPicker from './GeoPicker.vue'
+
+// 示例名称带上年月，提醒管理者把时间写进活动名称
+const today = new Date()
+const titleExample = `如：${today.getFullYear()}年${today.getMonth() + 1}月校运动会开幕式志愿服务`
 
 const props = defineProps({
   modelValue: { type: Object, required: true },   // 表单数据
