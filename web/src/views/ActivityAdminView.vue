@@ -1695,6 +1695,20 @@
           <el-input v-model="notifyForm.content" type="textarea" :rows="4"
                     placeholder="请输入通知正文" />
         </el-form-item>
+        <el-form-item label="附件">
+          <div style="width:100%">
+            <div v-for="(f, i) in notifyForm.files" :key="f.id" class="notify-file">
+              <span>{{ f.title }}</span>
+              <el-button link type="danger" size="small"
+                         @click="notifyForm.files.splice(i, 1)">移除</el-button>
+            </div>
+            <el-upload v-if="notifyForm.files.length < NOTIFY_FILE_LIMIT" :show-file-list="false"
+                       :http-request="uploadNotifyFile">
+              <el-button size="small" :loading="notifyDlg.uploading">上传附件</el-button>
+            </el-upload>
+            <div class="dim">最多 {{ NOTIFY_FILE_LIMIT }} 个，志愿者在平台「消息通知」里下载</div>
+          </div>
+        </el-form-item>
         <el-form-item label="">
           <el-checkbox v-model="notifyForm.need_ack">要求志愿者签收</el-checkbox>
           <div class="dim">
@@ -1762,7 +1776,7 @@
 import { computed, h, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
-import { api, download as dl, downloadExport, fmtDT, pageUrl, qrBase } from '../api'
+import { api, download as dl, downloadExport, fmtDT, pageUrl, qrBase, uploadFile } from '../api'
 import AiStructureAssist from '../components/AiStructureAssist.vue'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
@@ -1860,9 +1874,9 @@ const mgrCandidates = ref([])
 const moveSel = ref({})
 
 // —— 发送通知 ——
-const notifyDlg = ref({ visible: false, saving: false })
+const notifyDlg = ref({ visible: false, saving: false, uploading: false })
 const notifyForm = ref({ scope: 'all', shift_id: '', title: '', content: '',
-                         need_ack: false })
+                         need_ack: false, files: [] })
 const ackBatches = ref([])
 // 各块数据上次拉成功的时刻，给刷新条显示（见 RefreshBar）
 const ackAt = ref(0)
@@ -2738,8 +2752,20 @@ async function askKeepOutsiders(outsiders) {
 // —— 发送通知 ——
 function openNotify() {
   notifyForm.value = { scope: 'all', shift_id: currentGroupId.value || '',
-                       title: '', content: '', need_ack: false }
+                       title: '', content: '', need_ack: false, files: [] }
   notifyDlg.value.visible = true
+}
+
+// 通知附件先传上去拿 id，发送时随通知带上；企业微信推送里只写一句去平台下载
+const NOTIFY_FILE_LIMIT = 5
+async function uploadNotifyFile({ file }) {
+  notifyDlg.value.uploading = true
+  try {
+    const d = await uploadFile(`/api/staff/activities/${activityId}/notify-files`, file)
+    notifyForm.value.files.push({ id: d.id, title: d.title })
+  } catch { /* uploadFile 已经提示过 */ } finally {
+    notifyDlg.value.uploading = false
+  }
 }
 
 async function sendNotify() {
@@ -2755,6 +2781,7 @@ async function sendNotify() {
       title: f.title.trim(),
       content: f.content.trim(),
       need_ack: f.need_ack,
+      file_ids: f.files.map(x => x.id),
     })
     ElMessage.success(`已发送给 ${d.count} 人`
       + (f.need_ack ? '，可在「签收情况」查看进度' : ''))
@@ -3231,6 +3258,7 @@ function toISO(v) {
 </script>
 
 <style scoped>
+.notify-file { display: flex; align-items: center; gap: 8px; line-height: 24px; }
 /* 手机版时长卡片里的一行：标签 + 控件 */
 .mh-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 /* 按岗位看：一个时段一行 */
