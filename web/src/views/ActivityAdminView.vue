@@ -1331,8 +1331,9 @@
     </el-dialog>
 
     <!-- 报名问卷：题目不常改，收进弹窗，页签上只留一个按钮 -->
-    <el-dialog v-model="formDlg" title="报名问卷" width="760">
-      <FormBuilder :key="act.status" :activity-id="act.id" :editable="!isPublic"
+    <el-dialog v-model="formDlg" title="报名问卷" width="760"
+               :close-on-click-modal="false" :before-close="closeFormDlg">
+      <FormBuilder ref="formBuilder" :key="act.status" :activity-id="act.id" :editable="!isPublic"
                    :screened="act.recruit_mode === 'screened'"
                    @count="n => formCount = n" />
     </el-dialog>
@@ -1796,6 +1797,21 @@ const isPublic = computed(() =>
 // 不公开招募（补记录）：没有场次、报名、签到，只有名单导入与时长结账
 const isRecord = computed(() => act.value?.recruit_mode === 'record')
 const formDlg = ref(false)
+const formBuilder = ref(null)
+/** 关报名问卷弹窗：题目有改动没保存就先问，保存 / 不保存（丢掉改动）/ 继续编辑 */
+async function closeFormDlg(done) {
+  const fb = formBuilder.value
+  if (!fb?.dirty()) return done()
+  try {
+    await ElMessageBox.confirm('报名问卷有改动还没保存，要保存吗？', '还没保存', {
+      type: 'warning', distinguishCancelAndClose: true,
+      confirmButtonText: '保存', cancelButtonText: '不保存',
+    })
+    if (await fb.save()) done()
+  } catch (action) {
+    if (action === 'cancel') { fb.reload(); done() }   // 关掉提示框 = 继续编辑
+  }
+}
 const formCount = ref(0)
 const formLabel = computed(() => (isPublic.value ? '查看报名问卷'
   : formCount.value ? `报名问卷（${formCount.value} 题）` : '设置报名问卷'))

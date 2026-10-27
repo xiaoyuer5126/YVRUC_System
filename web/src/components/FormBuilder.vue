@@ -174,6 +174,7 @@ async function load() {
   try {
     const d = await api.get(`/api/staff/activities/${props.activityId}/form`)
     questions.value = d.questions.map(toRow)
+    remember()
     campuses.value = d.campuses
     stages.value = d.stages
     // 占位岗位（「待分配」）不是真岗位，随时会被删掉（开放选岗、切回「报名即选
@@ -302,10 +303,9 @@ function addDrafted() {
   ElMessage.success(`已加进 ${drafted.length} 道题，核对后点「保存报名问卷」`)
 }
 
-async function save() {
-  saving.value = true
-  try {
-    const body = questions.value.map(q => ({
+// 上次存下（或拉回）时的题目：关弹窗前比一下，有没存的改动就提醒
+let savedSnap = '[]'
+const payload = () => questions.value.map(q => ({
       id: q.id || '', ref: q.id ? '' : q.key, kind: q.kind, title: q.title, required: q.required,
       options: q.optionsText.split('\n').map(s => s.trim()).filter(Boolean),
       show_if: q.condQ ? { question_id: q.condQ, values: q.condValues } : {},
@@ -313,13 +313,25 @@ async function save() {
       applies_to_campuses: q.applies_to_campuses,
       applies_to_stages: q.applies_to_stages,
     }))
+const remember = () => { savedSnap = JSON.stringify(payload()) }
+const dirty = () => props.editable && JSON.stringify(payload()) !== savedSnap
+
+/** 保存成功返回 true；失败的提示 api 层已经给了 */
+async function save() {
+  saving.value = true
+  try {
     const d = await api.put(`/api/staff/activities/${props.activityId}/form`,
-                            { questions: body })
+                            { questions: payload() })
     questions.value = d.questions.map(toRow)
+    remember()
     emit('count', questions.value.length)
     ElMessage.success('报名问卷已保存')
+    return true
+  } catch {
+    return false
   } finally { saving.value = false }
 }
+defineExpose({ dirty, save, reload: load })
 </script>
 
 <style scoped>
