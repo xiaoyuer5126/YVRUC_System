@@ -15,7 +15,18 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-button type="primary" @click="openCreate"><el-icon><Plus /></el-icon>&nbsp;新建活动</el-button>
+        <!-- 配了 AI 时新建分两条路：智能起草 / 手动创建，免得智能起草只靠角上的悬浮球被人忽略 -->
+        <el-dropdown v-if="aiDraft?.enabled" trigger="click"
+                     @command="c => (c === 'ai' ? aiDraft.show() : openCreate())">
+          <el-button type="primary"><el-icon><Plus /></el-icon>&nbsp;新建活动<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="ai">智能起草</el-dropdown-item>
+              <el-dropdown-item command="manual">手动创建</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-button v-else type="primary" @click="openCreate"><el-icon><Plus /></el-icon>&nbsp;新建活动</el-button>
       </div>
     </div>
 
@@ -139,7 +150,7 @@
     </el-card>
 
     <!-- 智能起草活动信息：草稿由管理者点了才填进下面的新建表单 -->
-    <AiActivityAssist @fill="fillFromAi" />
+    <AiActivityAssist ref="aiDraft" @fill="fillFromAi" />
 
     <!-- 新建活动 -->
     <el-dialog v-model="creating" title="新建活动（草稿）" width="620">
@@ -239,6 +250,7 @@ const copyDlg = ref({ visible: false, source: null, title: '', shiftDays: 7,
 // 二维码要鉴权，地址不能直接放进 <img>，得带凭据取回来（见 authedImage）
 const copyQrSrc = useAuthedImage(() => copyDlg.value.qr)
 const form = ref({})
+const aiDraft = ref(null)
 const createRange = ref([])
 
 const modeColor = m => MODE_COLORS[m]?.color
