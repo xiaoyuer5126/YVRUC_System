@@ -115,7 +115,7 @@ def _notify_assignment_bg(items: list[dict]):
                             activity=db.get(Activity, g.activity_id).title,
                             shift=g.name, position=st.name,
                             position_time=st.time_text(),
-                            position_loc=st.location or "待定")
+                            position_loc=st.place())
         db.commit()
     finally:
         db.close()
@@ -2606,7 +2606,7 @@ def set_leader(enrollment_id: str, body: LeaderBody,
                         activity=db.get(Activity, enr.activity_id).title,
                         position=scope,
                         position_time=position.time_text(),
-                        position_loc=position.location or "待定",
+                        position_loc=position.place(),
                         leader_task=(logic.group_leader_task(siblings)
                                      or "请与负责人确认"))
     else:
