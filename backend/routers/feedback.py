@@ -213,7 +213,7 @@ def handle_feedback(feedback_id: str, body: HandleBody,
     audit_log(db, actor=user, action="feedback", target_type="feedback",
               target_id=fb.id, target_label=fb.content[:40],
               summary=("修改反馈回复" if again else "处理意见反馈")
-              + (f"：{reply[:200]}" if reply else ""))
+              + (f"（：{reply[:200]}）" if reply else ""))
     db.commit()
     shots = _shots(db, [fb.id])
     return _out(fb, shots[fb.id], submitter=submitter, handler=user)

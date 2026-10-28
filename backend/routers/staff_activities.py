@@ -2578,7 +2578,7 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
                   target_id=enr.id, target_label=target.name,
                   activity_id=enr.activity_id,
                   summary=f"手动为 {target.name} 开候补转正确认窗"
-                          f"（{position.name if position else g.name}）")
+                          f"（；{position.name if position else g.name}）")
         db.commit()
     return {"ok": True, "status": enr.status,
             "confirm_deadline": iso(enr.confirm_deadline),
