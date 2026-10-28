@@ -228,6 +228,6 @@ onMounted(load)
 </script>
 
 <style scoped>
-.kpi { text-align: center; border-radius: 12px; }
+.kpi { text-align: center; border-radius: 4px; }
 .kpi .v { font-size: 26px; font-weight: 700; line-height: 1.3; }
 </style>

@@ -171,7 +171,7 @@ function tagType(h) {
 .score-item b.minus { color: var(--el-color-danger); }
 .score-item b.val { color: inherit; min-width: 28px; text-align: right; }
 .stats { display: flex; gap: 12px; margin: 12px 0; }
-.stat { flex: 1; text-align: center; padding: 10px 6px; border-radius: 10px;
+.stat { flex: 1; text-align: center; padding: 10px 6px; border-radius: 4px;
         background: var(--el-fill-color-light); }
 /* 六个格子横排在手机上每个只剩五十来像素，数字和说明都挤成两行 */
 @media (max-width: 860px) {

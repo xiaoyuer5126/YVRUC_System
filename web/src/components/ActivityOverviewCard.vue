@@ -127,11 +127,11 @@ const kpis = computed(() => {
 </script>
 
 <style scoped>
-.ov-card { border-radius: 12px; }
+.ov-card { border-radius: 4px; }
 .ov-head { display: flex; align-items: center; justify-content: space-between;
            gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .ov-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
-.ov-kpi { background: #f7f8fa; border-radius: 8px; padding: 8px 12px; min-width: 0; }
+.ov-kpi { background: #f7f8fa; border-radius: 4px; padding: 8px 12px; min-width: 0; }
 .ov-kpi.warn .ov-v { color: var(--el-color-danger); }
 .ov-kpi.link { cursor: pointer; }
 .ov-kpi.link:hover { background: #eef1f6; }
@@ -140,7 +140,7 @@ const kpis = computed(() => {
 .ov-shifts { margin-top: 16px; }
 .ov-title { font-weight: 600; margin-bottom: 8px; }
 .ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; }
-.ov-shift { border: 1px solid #eceef1; border-radius: 8px; padding: 8px 12px; min-width: 0; }
+.ov-shift { border: 1px solid #eceef1; border-radius: 4px; padding: 8px 12px; min-width: 0; }
 .ov-row { display: flex; align-items: center; justify-content: space-between;
           gap: 8px; flex-wrap: wrap; }
 .ov-name { min-width: 0; }

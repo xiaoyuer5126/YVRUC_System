@@ -654,11 +654,11 @@ async function submitTransfer() {
 
 <style scoped>
 .submit-note {
-  margin-top: 8px; padding: 8px 12px; border-radius: 8px;
+  margin-top: 8px; padding: 8px 12px; border-radius: 4px;
   background: var(--el-fill-color-light); font-size: 13px; line-height: 1.6;
 }
 .submit-note b { margin-right: 8px; }
-.item { margin-bottom: 12px; border-radius: 12px; }
+.item { margin-bottom: 12px; border-radius: 4px; }
 .item.focused { border-color: var(--el-color-warning); box-shadow: 0 0 0 2px var(--el-color-warning-light-7); }
 .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .head-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }

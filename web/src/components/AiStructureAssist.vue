@@ -215,7 +215,7 @@ async function create(close) {
 </script>
 
 <style scoped>
-.ai-shift { border: 1px solid #eceef1; border-radius: 12px; padding: 12px;
+.ai-shift { border: 1px solid #eceef1; border-radius: 4px; padding: 12px;
             margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 .ai-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ai-head .el-button { margin-left: auto; }

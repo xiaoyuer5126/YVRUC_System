@@ -121,7 +121,7 @@ function visibleFields(row) {
 <style scoped>
 .cards { display: flex; flex-direction: column; gap: 12px; }
 .card {
-  background: #fff; border: 1px solid #eceef1; border-radius: 10px;
+  background: #fff; border: 1px solid #eceef1; border-radius: 4px;
   padding: 12px 14px;
 }
 .card.picked { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }

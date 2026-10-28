@@ -220,7 +220,7 @@ async function remind() {
 </script>
 
 <style scoped>
-.num { text-align: center; border-radius: 12px; }
+.num { text-align: center; border-radius: 4px; }
 .num b { font-size: 26px; color: var(--ruc-red); }
 .num.warn b { color: var(--el-color-warning); }
 </style>

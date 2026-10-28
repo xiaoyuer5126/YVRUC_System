@@ -103,7 +103,7 @@ async function doScan() {
 <style scoped>
 .scan-wrap { min-height: 100vh; display: flex; align-items: center;
              justify-content: center; padding: 20px; background: #f5f6f8; }
-.scan-card { width: 100%; max-width: 420px; border-radius: 14px; text-align: center; }
+.scan-card { width: 100%; max-width: 420px; border-radius: 4px; text-align: center; }
 .ok-icon { font-size: 44px; color: var(--el-color-success); line-height: 1; }
 .foot { margin-top: 16px; line-height: 1.6; }
 </style>

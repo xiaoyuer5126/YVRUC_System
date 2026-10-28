@@ -59,7 +59,7 @@ async function revoke(v) {
 
 <style scoped>
 .vio-list { display: flex; flex-direction: column; gap: 8px; }
-.vio-item { border: 1px solid #eceef1; border-radius: 8px; padding: 8px 12px; }
+.vio-item { border: 1px solid #eceef1; border-radius: 4px; padding: 8px 12px; }
 .vio-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pre { white-space: pre-wrap; }
 </style>

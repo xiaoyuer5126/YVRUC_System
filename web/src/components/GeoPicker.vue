@@ -148,7 +148,7 @@ function locateMe() {
             margin-bottom:8px; width:100%; }
 /* 搜索结果：一条一行，点一下就用它的坐标。地址必须显示——同名异地太多了 */
 .geo-results { margin-bottom:8px; max-height:180px; overflow-y:auto; width:100%;
-               border:1px solid #eceef1; border-radius:8px; }
+               border:1px solid #eceef1; border-radius:4px; }
 .geo-result { padding:4px 12px; cursor:pointer; line-height:1.6; font-size:13px; }
 .geo-result + .geo-result { border-top:1px solid #f2f3f5; }
 .geo-result:hover { background:#f7f8fa; }

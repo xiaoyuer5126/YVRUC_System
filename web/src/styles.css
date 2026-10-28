@@ -140,7 +140,7 @@ p { margin: 8px 0; }
 .el-divider--horizontal { margin: 12px 0; }
 
 .act-card {
-  border-radius: 12px; overflow: hidden; cursor: pointer; background: #fff;
+  border-radius: 4px; overflow: hidden; cursor: pointer; background: #fff;
   border: 1px solid #eceef1; transition: box-shadow .2s, transform .2s;
 }
 .act-card:hover { box-shadow: 0 8px 24px rgba(31,35,41,.10); transform: translateY(-2px); }
@@ -166,7 +166,7 @@ p { margin: 8px 0; }
 .hue-7 { --h1:#2f6e8c; --h2:#4f8dad; }
 
 .station-chip {
-  border: 1px solid #e4e7ed; border-radius: 8px; padding: 8px 10px;
+  border: 1px solid #e4e7ed; border-radius: 4px; padding: 8px 10px;
   display: flex; justify-content: space-between; gap: 8px; align-items: center;
 }
 .station-chip.selected { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }

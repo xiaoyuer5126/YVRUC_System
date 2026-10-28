@@ -157,7 +157,7 @@ async function ack(n) {
 @media (max-width: 860px) {
   .msg-list { grid-template-columns: minmax(0, 1fr); }
 }
-.msg { border-radius: 12px; }
+.msg { border-radius: 4px; }
 .msg.unread { border-left: 3px solid var(--el-color-primary); }
 .msg.ack { border-left: 3px solid var(--el-color-danger); }
 .ack-bar {
