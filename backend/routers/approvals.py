@@ -621,7 +621,7 @@ def transfer(activity_id: str, body: TransferBody,
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"审批转交：{before.name if before else '—'} → {target_name}"
                       f"（{to_text}）；理由：{reason}"
-                      + (f"；转为内部活动，立项书《{dropped.title}》已删除"
+                      + (f"（；转为内部活动，立项书《{dropped.title}》已删除）"
                          if dropped else ""))
     # 转给部门的（审批人落在部长身上）通知该部门的值班人或全体部长；点名转给某人的就是他；
     # 转回会长团的通知同提交：标了会长只发他，没标发全体

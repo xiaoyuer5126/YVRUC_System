@@ -109,11 +109,12 @@ def set_duty(dept_id: str, body: DutyBody, db: OrmSession = Depends(db_session),
                         from_user_id=cur.id if cur else None,
                         to_user_id=target.id if target else None,
                         actor_id=user.id, note=note))
-    what = (f"{cur.name if cur else '无人'} → {target.name if target else '无人值班'}"
-            + (f"；{note}" if note else ""))
+    what = (f"{cur.name if cur else '无人'} → "
+            f"{target.name if target else '无人值班'}"
+            + (f"（；{note}）" if note else ""))
     audit_log(db, actor=user, action="duty", target_type="department",
               target_id=dept.id, target_label=dept.name, activity_id=None,
-              summary=f"{'交班' if handing and not boss else '安排值班'}：{what}")
+              summary=f"值班：{what}")
     # 接班的人要知道手上已经压着几条
     if target is not None and target.id != user.id:
         pending = _dept_pending_count(db, dept)
@@ -302,8 +303,8 @@ def repush_vb(activity_id: str, body: VbRepushBody,
                        f"{liaison.vb_dept_name(db)}：{liaison.names_text(names)}"
                        + (f"（原为 {before}）" if before != liaison.names_text(names)
                           else "（名称未改）")
-                       + (f"；作废 {dropped} 条待确认" if dropped else "")
-                       + f"；原因：{reason}"))
+                       + (f"（；作废 {dropped} 条待确认）" if dropped else "")
+                       + f"（；原因：{reason}）"))
     db.commit()
     return _vbc_out(db, row)
 
@@ -466,7 +467,7 @@ async def upload_project_file(activity_id: str, slot: str,
     audit_log(db, actor=user, action="material", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=(f"{'更换' if old else '上传'}{label}《{row.title}》"
-                       f"（{len(data) // 1024}KB）"))
+                       f"（{len(data) // 1024} KB）"))
     # 缺盖章材料而停下的自动报批，补上之后下一轮清扫照常提交，不另行通知
     db.commit()
     return _file_out(row)
@@ -526,7 +527,7 @@ async def upload_doc_template(slot: str, file: UploadFile = File(...),
     db.add(row)
     audit_log(db, actor=user, action="material", target_type="template",
               target_id=slot, target_label=label,
-              summary=f"{'更换' if old else '上传'}{label}《{row.title}》"
-                      f"（{len(data) // 1024}KB）")
+              summary=f"{'更换' if old else '上传'}模板{label}《{row.title}》"
+                      f"（{len(data) // 1024} KB）")
     db.commit()
     return _file_out(row)

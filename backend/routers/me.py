@@ -222,7 +222,7 @@ def my_team(enrollment_id: str, db: OrmSession = Depends(db_session),
     audit_log(db, actor=user, action="view_team", target_type="enrollment",
               target_id=enr.id, target_label=user.name,
               activity_id=enr.activity_id,
-              summary=f"组长 {user.name} 查看了「{shift.name}·"
+              summary=f"组长{user.name} 查看了「{shift.name}·"
                       f"{logic.leader_scope_label(siblings, position)}」"
                       f"{len(members)} 位组员的联系方式")
     db.commit()

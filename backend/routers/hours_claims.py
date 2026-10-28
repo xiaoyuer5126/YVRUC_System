@@ -182,7 +182,7 @@ def _store_claim(db: OrmSession, user: User, claim: HoursClaim,
     audit_log(db, actor=user, action="hours_claim", target_type="hours_claim",
               target_id=claim.id, target_label=claim.title,
               summary=f"提交校外时长补登「{claim.title}」"
-                      f"（{claim.service_date.isoformat()}，{claim.hours:g}h，"
+                      f"（{claim.service_date.isoformat()}，{claim.hours:g} 小时，"
                       f"证明 {len(proofs_read)} 份、照片 {len(photos_read)} 张）")
     locks.note_rate(_rate_key(user), RATE_WINDOW_SECONDS)
     db.commit()
