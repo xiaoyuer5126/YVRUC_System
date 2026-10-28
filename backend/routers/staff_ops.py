@@ -157,7 +157,7 @@ def create_task(shift_id: str, body: TaskBody,
         audit_log(db, actor=user, action="checkin_task", target_type="checkin",
                   target_id=task.id, target_label=f"{act.title}·{label}",
                   activity_id=act.id,
-                  summary=f"生成签到码 {task.token}"
+                  summary=f"生成签到码：{task.token}"
                           f"（{'岗位' if st else '统一'}模式，"
                           f"有效 {task.valid_from:%H:%M}~{task.valid_to:%H:%M}）")
         made.append(task)
@@ -287,6 +287,15 @@ class GeoBody(BaseModel):
     source: str = "gps"        # gps 现场量的 / map 图上点的 / campus 校区预设点
 
 
+# 审计里怎么写这个坐标的来历：只有 gps 能说明「人到过现场」，其余三种要写明
+GEO_SOURCE_TEXT = {
+    "gps": "坐标来源：现场测量",
+    "map": "坐标来源：在地图上点选（不是站在现场量的）",
+    "campus": "坐标来源：校区预设点（多半不是具体岗位），落点未经现场核对",
+    "search": "坐标来源：地名搜索，落点未经现场核对",
+}
+
+
 @router.put("/checkin-tasks/{task_id}/geo")
 def set_geo(task_id: str, body: GeoBody,
             db: OrmSession = Depends(db_session),
@@ -331,14 +340,10 @@ def set_geo(task_id: str, body: GeoBody,
                            f"{st.name if st else g.name}",
               activity_id=task.activity_id,
               summary=f"把「{st.name if st else g.name}」改成定位签到："
-                      f"({geo.lat:.5f}, {geo.lng:.5f}) 半径 {geo.radius_m} 米"
+                      f"({geo.lat:.5f}, {geo.lng:.5f})，半径 {geo.radius_m} 米"
                       + (f"，量点时误差 ±{geo.accuracy_m:.0f} 米"
                          if geo.accuracy_m else "")
-                      + {"map": "；**坐标是在地图上点的，不是站在现场量的**",
-                         "campus": "；坐标取自校区预设点（多半不是具体岗位），"
-                                   "落点未经现场核对",
-                         "search": "；坐标来自地名搜索，落点未经现场核对",
-                         }.get(body.source, "；坐标在现场量的"))
+                      + "；" + GEO_SOURCE_TEXT.get(body.source, GEO_SOURCE_TEXT["gps"]))
     db.commit()
     return {"ok": True, "geo": {"lat": geo.lat, "lng": geo.lng,
                                "radius_m": geo.radius_m,
@@ -364,7 +369,7 @@ def clear_geo(task_id: str, db: OrmSession = Depends(db_session),
                                f"{st.name if st else g.name}",
                   activity_id=task.activity_id,
                   summary=f"取消定位签到，改回扫码："
-                          f"{st.name if st else g.name}")
+                          f"「{st.name if st else g.name}」")
         db.delete(geo)
         db.commit()
     return {"ok": True}
@@ -452,7 +457,7 @@ def toggle_task(task_id: str, body: dict,
                       target_id=task.id,
                       target_label=f"{_act(db, task.activity_id).title}·{loc}",
                       activity_id=task.activity_id,
-                      summary=f"{'开启' if want else '关闭'}签到码 {task.token}")
+                      summary=f"{'开启' if want else '关闭'}签到码：{task.token}")
         task.active = want
     db.commit()
     return {"ok": True, "active": task.active,
@@ -514,7 +519,7 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
     period.reminder_sent_at = now()
     audit_log(db, actor=user, action="update", target_type="notify",
               target_id=g.id, target_label=g.name, activity_id=g.activity_id,
-              summary=f"手动补发签到提醒：{scope} {n} 人（未签到）"
+              summary=f"补发签到提醒：{scope} {n} 人（未签到）"
                       + ("，要求签收" if body.need_ack else ""))
     db.commit()
     return {"ok": True, "count": n, "scope": scope, "batch_id": batch_id}
@@ -814,8 +819,9 @@ def batch_op(task_id: str, body: dict,
               target_id=task.id, target_label=g.name,
               activity_id=task.activity_id,
               summary=f"{ACTION_SUMMARY[action]} {len(done)} 人" + named
-                      + (f"；跳过：{'、'.join(skipped[:5])}"
-                         + ("…" if len(skipped) > 5 else "") if skipped else ""))
+                      + (f"（；跳过：{'、'.join(skipped[:5])}"
+                         + ("…" if len(skipped) > 5 else "") + "）"
+                         if skipped else ""))
     db.commit()
     return {"ok": True, "done": len(done), "names": done, "skipped": skipped}
 
@@ -1599,7 +1605,7 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"手动调整时长：{'、'.join(added)}"
-                      + ("；原时长核准已撤销" if revoked else ""),
+                      + ("（；原核准已撤销）" if revoked else ""),
               changes=changes)
     db.commit()
     return {"ok": True, "count": len(added), "reapproval_required": revoked}
@@ -1651,8 +1657,8 @@ def hours_manual_delete(activity_id: str, record_id: str, part_id: str,
     revoked = hours_flow.reopen_record(db, act, rec if rest else None)
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"删除手动时长：{u.name if u else '?'} {hours:g}h"
-                      f"（{seg.label}）" + ("；原时长核准已撤销" if revoked else ""),
+              summary=f"删除手动时长：{u.name if u else '?'} {hours:g} 小时"
+                      f"（{seg.label}）" + ("（；原核准已撤销）" if revoked else ""),
               changes=[hours_flow.hours_change(
                   u, before, rec.settled_hours() if rest else None,
                   f"删除手动段 {hours:g}h：{seg.label}")])
@@ -1789,11 +1795,11 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
             upsert(it["user"]["id"], None, reason="按签到签退记录确认")
         count = len(clear) - len(kept)
         summary = (f"确认 {count} 人志愿时长（依据签到签退记录）"
-                   + (f"；{len(review)} 人未正常签退、时长待核未确认"
+                   + (f"（；{len(review)} 人未正常签退，时长待核未确认）"
                       if review else "")
-                   + (f"；{'、'.join(kept)} 的时长由申诉改判过，保留不覆盖"
+                   + (f"（；{'、'.join(kept)} 的时长由申诉改判过，保留不覆盖）"
                       if kept else "")
-                   + (f"；{len(changes)} 人时长有变动" if changes else ""))
+                   + (f"（；{len(changes)} 人时长有变动）" if changes else ""))
     if revoked:
         summary += "；时长有变动，原核准已撤销，请重新核准"
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
@@ -2046,7 +2052,7 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
                      + (f"\n说明：{a.reply}" if a.reply else "")))
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=summary + (f"；说明：{a.reply}" if a.reply else ""),
+              summary=summary + (f"（；说明：{a.reply}）" if a.reply else ""),
               changes=changes)
     db.commit()
     return {"ok": True, "status": a.status, "hours": rec.settled_hours()}
@@ -2117,7 +2123,7 @@ def hours_approve(activity_id: str, body: ApproveHoursBody,
             deadline=f"{deadline:%Y-%m-%d %H:%M}", pay_line=pay_line)
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=(f"{'再次' if again else ''}核准志愿时长，通知 {notified} 人，"
+              summary=(f"核准志愿时长，通知 {notified} 人，"
                        f"确认/申诉截止 {deadline:%Y-%m-%d %H:%M}"))
     db.commit()
     return {"ok": True, "locked": False, "count": notified,
@@ -2287,7 +2293,7 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=prefix + (f"同意{req.kind_label()}时长（{req.reason}）"
-                                + (f"；意见：{reply}" if reply else "")
+                                + (f"（；意见：{reply}）" if reply else "")
                                 if body.approve
                                 else f"驳回时长{req.kind_label()}申请：{reply}"))
     requester = db.get(User, req.requested_by)
