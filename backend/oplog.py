@@ -135,6 +135,7 @@ LABELS = {
     'decide_vb_confirm': '审批志愿北京名称',
     'download_material': '下载学习材料',
     'upload_material': '上传学习材料',
+    'upload_notify_file': '上传通知附件',
     'add_link': '添加学习链接',
     'delete_material': '删除学习材料',
     'approvals:decide': '审批活动',

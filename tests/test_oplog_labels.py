@@ -6,13 +6,17 @@
 from __future__ import annotations
 
 from backend.deps import current_user_download
-from backend.main import app
 from backend.oplog import LABELS, SKIP_HANDLERS, WRITE_METHODS
+from backend.routers import all_routers
 
 
 def _routes():
-    """挂在 /api/ 下的全部接口。"""
-    return [r for r in app.routes
+    """项目自己挂的接口。
+
+    不读 app.routes：新版 FastAPI 把 include_router 的结果包成一层惰性对象，
+    app.routes 上拿到的是包装而不是真正的路由，扫出来是空的（检查就成了空转）。
+    """
+    return [r for router in all_routers for r in router.routes
             if getattr(r, "methods", None) and r.path.startswith("/api/")]
 
 

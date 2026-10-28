@@ -585,7 +585,7 @@ def test_坐标的来源会写进审计(client, admin, db, live_group):
                json={"lat": LAT, "lng": LNG, "radius_m": 200})
     row = (db.query(AuditLog).filter(AuditLog.target_id == tid)
            .order_by(AuditLog.created_at.desc()).first())
-    assert "现场量" in row.summary
+    assert "现场测量" in row.summary
 
 
 def test_校区预设点也留痕(client, admin, db, live_group):

@@ -538,7 +538,7 @@ def test_补招勾选的培训彩排一并报上(client, admin, db, act_with_pos
     db.expire_all()
     from backend.models import AuditLog, Notification
     assert (db.query(AuditLog).filter(AuditLog.activity_id == act.id,
-                                      AuditLog.summary.like("%并报上彩排%")).count() == 1)
+                                      AuditLog.summary.like("%连带报上彩排%")).count() == 1)
     u = student_row(db, sid)
     note = (db.query(Notification).filter(Notification.user_id == u.id,
                                           Notification.title.like("您已被补招%")).one())

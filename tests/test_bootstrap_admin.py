@@ -78,7 +78,7 @@ def test_列表里的学号首次登录就是管理员(sso_login, monkeypatch):
     assert set(user["roles"]) == {"student", "admin"}
     logs = _grant_logs(LISTED_SID)
     assert len(logs) == 1
-    assert "YVRUC_BOOTSTRAP_ADMINS" in logs[0].summary
+    assert "按配置授予管理员身份" in logs[0].summary
 
 
 def test_已有账号再次登录补上管理员且保留原身份(sso_login, monkeypatch):
