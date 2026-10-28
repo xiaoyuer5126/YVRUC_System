@@ -653,7 +653,7 @@ def main() -> None:
             row.created_at = when
 
         aud("create", "activity", sport.id, sport.title, sport.id,
-            "创建活动「校运动会开幕式志愿服务」", dt(days=-4))
+            "新建活动「校运动会开幕式志愿服务」", dt(days=-4))
         aud("publish", "activity", sport.id, sport.title, sport.id,
             "发布活动，开始报名", dt(days=-3), visible=True)
         aud("update", "group", m1.id, "运动会·上午场", sport.id,
@@ -669,7 +669,7 @@ def main() -> None:
              {"field": "training_note", "label": "培训内容",
               "old": "", "new": "赛前一周 19:00 线上培训会议"}], visible=True)
         aud("create", "activity", book.id, book.title, book.id,
-            "创建活动「图书馆图书整理周·周六专场」（截止后统一分配岗位）",
+            "新建活动「图书馆图书整理周·周六专场」（截止后统一分配岗位）",
             dt(days=-3))
         aud("publish", "activity", book.id, book.title, book.id,
             "发布活动，开始报名", dt(days=-2), visible=True)
@@ -680,7 +680,7 @@ def main() -> None:
             "生成统一签到码 GALA01", dt(days=-1),
             actor=users["2025003"])
         aud("create", "activity", elder.id, elder.title, elder.id,
-            "创建活动「社区敬老院陪伴服务（秋）」",
+            "新建活动「社区敬老院陪伴服务（秋）」",
             dt(days=-22))
         aud("hours_confirm", "hours", elder.id, elder.title, elder.id,
             "锁定志愿时长，活动标记为已完成（申诉截止无人申诉，系统自动锁定）",
