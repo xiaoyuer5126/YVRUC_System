@@ -242,7 +242,7 @@ function stateOf(row) {
 </script>
 
 <style scoped>
-.stat { text-align: center; border-radius: 14px; }
+.stat { text-align: center; border-radius: 4px; }
 .big { font-size: 34px; font-weight: 700; color: var(--ruc-red); }
 .seg { display: flex; flex-direction: column; gap: 4px; padding: 8px 0;
        border-top: 1px solid var(--el-border-color-lighter); }

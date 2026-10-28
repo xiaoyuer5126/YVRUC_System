@@ -43,7 +43,7 @@ function sizeText(bytes) {
 .material {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 5px 10px; margin: 0 8px 8px 0;
-  border: 1px solid var(--el-border-color); border-radius: 6px;
+  border: 1px solid var(--el-border-color); border-radius: 4px;
   font-size: 13px; color: var(--el-text-color-primary); text-decoration: none;
 }
 .material:hover { border-color: var(--el-color-primary); color: var(--el-color-primary); }

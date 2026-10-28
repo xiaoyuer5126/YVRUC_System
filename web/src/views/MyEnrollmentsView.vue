@@ -391,7 +391,7 @@ async function cancel(row) {
 
 <style scoped>
 .mob-list { display: flex; flex-direction: column; gap: 12px; }
-.mob-card { background:#fff; border:1px solid #eceef1; border-radius:10px; padding:12px 14px; }
+.mob-card { background:#fff; border:1px solid #eceef1; border-radius:4px; padding:12px 14px; }
 .mob-head { display:flex; justify-content:space-between; gap:8px; align-items:flex-start;
             margin-bottom:4px; }
 .mob-head b { font-size:14.5px; line-height:1.45; }

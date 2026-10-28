@@ -163,7 +163,7 @@ async function doCheckin() {
   background:
     radial-gradient(800px 400px at 80% -10%, rgba(174,11,42,.15), transparent), #f5f6f8;
 }
-.scan-card { width: 420px; max-width: 100%; border-radius: 16px;
+.scan-card { width: 420px; max-width: 100%; border-radius: 4px;
              text-align: center; padding: 8px; }
 
 /* 这一页基本只在手机上被扫开：铺满、按钮做大、别垂直居中留一堆空白 */

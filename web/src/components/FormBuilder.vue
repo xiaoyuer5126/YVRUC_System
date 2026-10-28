@@ -345,7 +345,7 @@ defineExpose({ dirty, save, reload: load })
 .fb-cond { width: 100%; margin-left: 30px; display: flex; align-items: center;
            gap: 8px; flex-wrap: wrap; }
 .fb-add { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.fb-ai { margin-top: 12px; padding: 12px; border: 1px solid #eceef1; border-radius: 12px;
+.fb-ai { margin-top: 12px; padding: 12px; border: 1px solid #eceef1; border-radius: 4px;
          display: flex; flex-direction: column; gap: 8px; }
 .fb-ai .el-alert { margin: 0; }
 </style>

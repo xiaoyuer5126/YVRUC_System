@@ -128,7 +128,7 @@ function goPage(p) {
 .item-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .act { margin-left: auto; }
 .text { white-space: pre-wrap; word-break: break-word; line-height: 1.6; margin-bottom: 8px; }
-.reply { background: #f5f7fa; border-radius: 6px; padding: 8px 12px; margin-top: 8px; }
+.reply { background: #f5f7fa; border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
 .tpl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
 .tpl { cursor: pointer; }
 </style>

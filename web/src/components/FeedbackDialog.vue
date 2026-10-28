@@ -165,7 +165,7 @@ defineExpose({ open })
 <style scoped>
 .kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
 .kind {
-  border: 1px solid #dcdfe6; border-radius: 8px; padding: 12px; cursor: pointer;
+  border: 1px solid #dcdfe6; border-radius: 4px; padding: 12px; cursor: pointer;
   line-height: 1.6;
 }
 .kind.on { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
@@ -177,7 +177,7 @@ defineExpose({ open })
 .item { border-bottom: 1px dashed #eceef1; padding: 12px 0; }
 .item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .text { white-space: pre-wrap; word-break: break-word; line-height: 1.6; margin-bottom: 8px; }
-.reply { background: #f5f7fa; border-radius: 6px; padding: 8px 12px; margin-top: 8px; }
+.reply { background: #f5f7fa; border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
 @media (max-width: 860px) {
   .kinds { grid-template-columns: 1fr; }
 }

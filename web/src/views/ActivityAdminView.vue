@@ -3292,11 +3292,11 @@ function toISO(v) {
 .hd-meta { margin-top: 4px; }
 
 .needs-positions { border-color: var(--el-color-danger) !important; }
-.group-card { border:1px solid #eceef1; border-radius:12px; padding:12px 14px; margin-bottom:12px; background:#fff; }
+.group-card { border:1px solid #eceef1; border-radius:4px; padding:12px 14px; margin-bottom:12px; background:#fff; }
 .g-head { display:flex; gap:12px; align-items:center; margin-bottom:8px; font-size:13.5px; flex-wrap:wrap;}
 .side-stack { display: flex; flex-direction: column; gap: 12px; }
 .side-stack .section-title { margin-top: 0; }
-.wl-card { border-radius:12px; }
+.wl-card { border-radius:4px; }
 .wl-row { display:flex; gap:8px; align-items:center; padding:3px 0; font-size:13px; }
 button.dashed { border-style:dashed; }
 .contacts-box { width: 100%; }

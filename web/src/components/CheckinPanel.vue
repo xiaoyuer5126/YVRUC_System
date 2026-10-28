@@ -968,7 +968,7 @@ function setWindowEnd(v) { form.value.range = [form.value.range[0] || '', v || '
 /* 起止两个选择器并排；窄屏自动叠成两行 */
 .two-col { display: flex; gap: 8px; width: 100%; flex-wrap: wrap; }
 .two-col > * { flex: 1 1 180px; min-width: 0; }
-.big-card { text-align:center; border-radius:12px; }
+.big-card { text-align:center; border-radius:4px; }
 .ratio b { font-size:30px; color: var(--ruc-red); }
 .st-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap:12px; }
 .manual-bar { display:flex; gap:8px; margin-bottom:8px; align-items:center; flex-wrap:wrap; }
@@ -979,6 +979,6 @@ function setWindowEnd(v) { form.value.range = [form.value.range[0] || '', v || '
 /* 动态码还没取到的这一两秒：占住 280×280，否则弹窗会跳一下 */
 .qr-blank { width:280px; height:280px; margin:0 auto; display:flex;
             align-items:center; justify-content:center; color:#c0c4cc;
-            background:#fafafa; border:1px dashed #e4e7ed; border-radius:8px; }
+            background:#fafafa; border:1px dashed #e4e7ed; border-radius:4px; }
 :deep(tr.row-wait td.el-table__cell) { color:#9c9c9c; }
 </style>

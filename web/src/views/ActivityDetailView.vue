@@ -1175,7 +1175,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .reg-countdown {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin: 12px 0 0; padding: 8px 12px; font-size: 13px;
-  border-radius: 8px; background: var(--el-color-primary-light-9);
+  border-radius: 4px; background: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
 }
 .reg-countdown :deep(.el-statistic__content) {
@@ -1189,7 +1189,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .m-shift-name, .m-shift-name :deep(.el-link__inner) { font-size: 15px; font-weight: 600; }
 .m-quota { margin: 8px 0 4px; font-size: 13px; }
 .m-pos {
-  border: 1px solid #e4e7ed; border-radius: 8px; padding: 10px 12px; margin-top: 8px;
+  border: 1px solid #e4e7ed; border-radius: 4px; padding: 10px 12px; margin-top: 8px;
 }
 .m-pos.mine { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
 .m-pos.blocked { opacity: .7; }
@@ -1207,15 +1207,15 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .mine-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .mine-note { margin: 4px 0; font-size: 13px; line-height: 1.6; color: #606266;
              white-space: pre-wrap; }
-.group-card { margin-bottom: 12px; border-radius: 12px; }
+.group-card { margin-bottom: 12px; border-radius: 4px; }
 .g-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
-.reassign-box { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: #f7f8fa; }
+.reassign-box { margin-top: 12px; padding: 10px 12px; border-radius: 4px; background: #f7f8fa; }
 .reassign-box .dim { margin: 8px 0 0; font-size: 13px; line-height: 1.5; }
 
 /* 活动级的要求与保障 */
 .side-note {
   border-left: 3px solid var(--el-color-warning); background: #fdf6ec;
-  padding: 8px 12px; border-radius: 0 8px 8px 0; margin-bottom: 8px;
+  padding: 8px 12px; border-radius: 0 4px 4px 0; margin-bottom: 8px;
 }
 .side-note.benefit { border-left-color: var(--el-color-success); background: #f0f9eb; }
 .side-note b { font-size: 13px; }
@@ -1226,7 +1226,7 @@ const openProfileDialog = () => profileDialog.value.open(true)
 .att-list { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
 .att-item {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  font-size: 13px; padding: 6px 10px; border-radius: 8px; background: #f7f8fa;
+  font-size: 13px; padding: 6px 10px; border-radius: 4px; background: #f7f8fa;
 }
 .att-item.mine { background: var(--el-color-primary-light-9); }
 /* 岗位子表里培训独占一整行，整行只有它，不用再留列表上方那条间距 */
