@@ -66,7 +66,7 @@
     </el-header>
 
     <el-container class="app-body">
-      <el-aside v-if="!narrow" width="200px" class="side">
+      <el-aside v-if="!narrow" width="175px" class="side">
         <SideMenu :active="$route.path" />
       </el-aside>
       <el-main class="app-main">
