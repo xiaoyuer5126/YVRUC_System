@@ -9,9 +9,11 @@ from backend.deps import current_user_download
 from backend.main import app
 from backend.oplog import LABELS, SKIP_HANDLERS, WRITE_METHODS
 
-# 文档串第一句就是操作名、不需要单独登记的那几个（登录三条走 docstring 之外的
-# 路子，也一并登记在 LABELS 里了）
-NO_ENTRY_NEEDED: set[str] = set()
+
+def _routes():
+    """挂在 /api/ 下的全部接口。"""
+    return [r for r in app.routes
+            if getattr(r, "methods", None) and r.path.startswith("/api/")]
 
 
 def _key(route) -> str:
@@ -40,28 +42,20 @@ def _watch(route) -> bool:
 
 
 def test_每个被记录的接口都登记了中文名():
-    routes = [r for r in app.routes
-              if getattr(r, "methods", None) and r.path.startswith("/api/")]
+    routes = _routes()
     assert routes, "路由没取到，这份用例就成了空转"
-    missing = []
-    for r in routes:
-        if not _watch(r):
-            continue
-        name = r.endpoint.__name__
-        if name in NO_ENTRY_NEEDED:
-            continue
-        if _key(r) in LABELS or name in LABELS:
-            continue
-        missing.append(f"{sorted(r.methods)[0]} {r.path} -> {name}")
+    missing = [f"{sorted(r.methods)[0]} {r.path} -> {r.endpoint.__name__}"
+               for r in routes
+               if _watch(r)
+               and _key(r) not in LABELS and r.endpoint.__name__ not in LABELS]
     assert missing == [], "操作日志里没有中文名：" + "；".join(sorted(missing))
 
 
 def test_名称字典里没有失效的条目():
     """处理函数改了名、接口删了，字典里的旧条目要跟着清掉，不然越积越多。"""
     live = set()
-    for r in app.routes:
-        if getattr(r, "methods", None) and r.path.startswith("/api/"):
-            live.add(_key(r))
-            live.add(r.endpoint.__name__)
+    for r in _routes():
+        live.add(_key(r))
+        live.add(r.endpoint.__name__)
     dead = [k for k in LABELS if k not in live]
     assert dead == [], "名称字典里这些已经对不上任何接口：" + "、".join(sorted(dead))
