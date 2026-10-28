@@ -165,4 +165,9 @@ def test_每个审计动作都有中文名():
             used.update(re.findall(r'action="([a-z_]+)"', call.group(1)))
     assert "expire" in used
     assert sorted(used - set(ACTION_LABELS)) == []
-    assert ACTION_LABELS["expire"] == "候补转正超时"
+    # 变更记录和审计日志上，志愿者的报名、退选这些统一标「人员变动」；
+    # 具体是哪一种写在说明里。志愿者管理页的人员变动流水另有各自动作名。
+    assert ACTION_LABELS["expire"] == "人员变动"
+    assert ROSTER_ACTIONS["expire"] == "候补转正超时未确认"
+    # 审批驳回曾经没有中文名，页面上直接显示英文 reject
+    assert ACTION_LABELS["reject"] == "审批驳回"

@@ -428,7 +428,7 @@ def apply(activity_id: str, body: ApplyBody,
     db.flush()
     audit_log(db, actor=user, action="enroll", target_type="enrollment",
               target_id=app.id, target_label=user.name, activity_id=act.id,
-              summary=f"{user.name}（{user.student_id}）提交报名申请，意向 "
+              summary=f"{user.name}（{user.student_id}）提交报名申请，意向："
                       + "、".join(f"{g.name}·{'/'.join(p.name for p in plist)}"
                                   for g, plist in picked.items()))
     db.commit()
@@ -512,7 +512,7 @@ def withdraw(activity_id: str, db: OrmSession = Depends(db_session),
      .delete(synchronize_session=False))
     audit_log(db, actor=user, action="cancel", target_type="enrollment",
               target_id=app.id, target_label=user.name, activity_id=act.id,
-              summary=f"{user.name}（{user.student_id}）撤回了报名申请")
+              summary=f"{user.name}（{user.student_id}）撤回报名申请")
     drop_unused_attachments(db, act.id, user.id, set())
     db.delete(app)
     db.commit()
@@ -902,7 +902,8 @@ def expire_undecided(db: OrmSession) -> int:
             summary = (f"场次「{g.name}」已开始，未处理的意向自动作废："
                        + "、".join(voided))
             if dropped:
-                summary += "；意向场次均已开始，申请自动落选并通知：" + "、".join(dropped)
+                summary += ("（；申请自动落选并通知："
+                            + "、".join(dropped) + "）")
             audit_log(db, actor=None, action="assign", target_type="activity",
                       target_id=act.id, target_label=act.title, activity_id=act.id,
                       summary=summary)

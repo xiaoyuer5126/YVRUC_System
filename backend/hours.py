@@ -242,7 +242,7 @@ def lock_hours(db: OrmSession, act: Activity, actor: User | None,
         detail = "活动已完成"
     audit_log(db, actor=actor, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"锁定志愿时长，{detail}（{reason}）")
+              summary=f"锁定志愿时长，通知 {len(rows)} 人（{detail}）：{reason}")
     for r in rows:
         u = db.get(User, r.user_id)
         if u is not None:

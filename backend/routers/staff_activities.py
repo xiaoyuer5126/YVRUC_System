@@ -468,7 +468,7 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                            user_id=user.id, added_by=user.id))
     audit_log(db, actor=user, action="create", target_type="activity",
               target_id=act.id, target_label=act.title,
-              activity_id=act.id, summary=f"创建活动「{act.title}」")
+              activity_id=act.id, summary=f"新建活动「{act.title}」")
     db.commit()
     return {"id": act.id}
 
@@ -853,7 +853,7 @@ def copy_positions_route(shift_id: str, body: CopyPositionsBody,
               activity_id=src.activity_id,
               summary=f"从「{src.name}」复制 {len(sources)} 个岗位到 "
                       f"{len(targets)} 个场次，新建 {result['copied']} 个"
-                      + (f"；同名跳过 {len(result['skipped'])} 个"
+                      + (f"（；同名跳过 {len(result['skipped'])} 个）"
                          if result["skipped"] else ""))
     db.commit()
     return result
@@ -1059,7 +1059,7 @@ def reopen(activity_id: str, body: ReopenBody,
     act.reg_end = new_end
     audit_log(db, actor=user, action="publish", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=f"恢复报名，报名截止时间 "
+              summary=f"恢复报名，报名截止 "
                       f"{old_end:%Y-%m-%d %H:%M} → {new_end:%Y-%m-%d %H:%M}"
                       if old_end else f"恢复报名，报名截止 {new_end:%Y-%m-%d %H:%M}",
               visible=True)
@@ -1107,7 +1107,7 @@ def delete_activity(activity_id: str, db: OrmSession = Depends(db_session),
     db.delete(act)
     audit_log(db, actor=user, action="delete", target_type="activity",
               target_id=activity_id, target_label=label, activity_id=None,
-              summary=f"删除草稿活动「{label}」")
+              summary=f"删除活动草稿「{label}」")
     db.commit()
     return {"ok": True}
 
@@ -1394,7 +1394,7 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                    f"{applies_text(act, g)}参加，{g.hours_label()}）")
     else:
         summary = (f"新建场次「{g.name}」（{g.span_text()}，"
-                   f"{g.mode_label()}，上限{body.capacity}人）")
+                   f"{g.mode_label()}，上限 {body.capacity} 人）")
     audit_log(db, actor=user, action="create", target_type="group",
               target_id=g.id, target_label=f"{act.title}·{g.name}",
               activity_id=act.id, summary=summary, visible=True)
@@ -1541,7 +1541,7 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
     audit_log(db, actor=user, action="delete", target_type="group",
               target_id=g.id, target_label=label, activity_id=act.id,
               summary=f"删除场次「{g.name}」" +
-                      (f"（强制，含{n_active}条报名记录）" if n_active else ""),
+                      (f"（；含 {n_active} 条报名记录）" if n_active else ""),
               visible=True, affected=affected)
     db.commit()
     return {"ok": True}
@@ -1708,9 +1708,11 @@ def create_position(shift_id: str, body: PositionBody,
               target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
               activity_id=act.id,
               summary=f"新建岗位「{s.name}」（{s.time_text()}，"
-                      f"{s.location or act.location or '地点待定'}，{s.quota}人）"
-                      + (f"，复制自「{source.name}」"
-                         + (f"（含 {copied} 份学习材料）" if copied else "")
+                      f"{s.location or act.location or '地点待定'}，"
+                      f"{s.quota} 人）"
+                      + (f"（；复制自「{source.name}」"
+                         + (f"，含 {copied} 份学习材料" if copied else "")
+                         + "）"
                          if source else ""),
               visible=True)
     db.commit()
@@ -1773,7 +1775,7 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
               activity_id=act.id,
               summary=f"修改岗位「{s.name}」："
                       f"{'、'.join(c['label'] for c in changes) or '无实质变化'}"
-                      + (f"（组长任务已同步到同组另 {synced} 个岗位）"
+                      + (f"（；组长任务已同步到同组另 {synced} 个岗位）"
                          if synced else ""),
               changes=changes,
               # 组长任务改的是「这一组」的事，留痕却挂在被编辑的那个岗位上
@@ -2318,9 +2320,9 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
     audit_log(db, actor=user, action="update", target_type="notify",
               target_id=act.id, target_label=act.title,
               activity_id=act.id,
-              summary=f"向{n}位志愿者发送通知：{title}"
-                      + (f"，附件 {len(files)} 个" if files else "")
-                      + ("（要求签收）" if body.need_ack else ""))
+              summary=f"向 {n} 位志愿者发送通知：{title}"
+                      + (f"（，附件 {len(files)} 个）" if files else "")
+                      + ("（，要求签收）" if body.need_ack else ""))
     db.commit()
     return {"ok": True, "count": n, "batch_id": batch_id}
 
@@ -2576,7 +2578,7 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
                   target_id=enr.id, target_label=target.name,
                   activity_id=enr.activity_id,
                   summary=f"手动为 {target.name} 开候补转正确认窗"
-                          f"（{position.name if position else g.name}）")
+                          f"（；{position.name if position else g.name}）")
         db.commit()
     return {"ok": True, "status": enr.status,
             "confirm_deadline": iso(enr.confirm_deadline),
@@ -2625,7 +2627,7 @@ def set_leader(enrollment_id: str, body: LeaderBody,
         was = "、".join(db.get(User, r.user_id).name for r in previous)
         scope = logic.leader_scope_label(siblings, position)
         summary = (f"指定 {target.name} 为「{scope}」组长"
-                   + (f"（原组长 {was} 已卸任）" if was else ""))
+                   + (f"（；原组长 {was} 卸任）" if was else ""))
         msgcenter.send_user(db, target, "leader_appointed",
                         activity=db.get(Activity, enr.activity_id).title,
                         position=scope,
@@ -2848,8 +2850,8 @@ def add_walkin(shift_id: str, body: dict,
                   target_label=f"{u.name}", activity_id=g.activity_id,
                   summary=f"补招 {u.name}（{sid}）至场次「{g.name}」"
                           + ("（党校同学）" if source == hours_flow.PARTY_SCHOOL else "")
-                          + (f"，并报上{also}" if extra else "")
-                          + (f"（强制：{'；'.join(reasons)}）" if reasons else ""))
+                          + (f"（；连带报上{also}）" if extra else "")
+                          + (f"（；强制：{'；'.join(reasons)}）" if reasons else ""))
         # 补招是管理者单方面加进来的：不通知的话，本人那边一点动静都没有——
         # 不知道自己报了名，更不知道哪天要去哪儿。跟候补转正一样得告诉他。
         # 场次已经结束的是事后补登记，只告诉他补记上了，不叫他来

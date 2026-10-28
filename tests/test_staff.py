@@ -134,7 +134,7 @@ def test_moving_unwilling_volunteer_is_allowed_but_recorded(
     assert r.status_code == 200
     body = r.json()
     assert body["unwilling_moved"] == 1
-    assert u.name in body["summary"] and "未接受调剂" in body["summary"]
+    assert u.name in body["summary"] and "未同意调剂" in body["summary"]
     assert body["rows"][0]["allow_reassign"] is False
 
     roster = client.get(f"/api/staff/shifts/{g.id}/roster", headers=admin).json()
