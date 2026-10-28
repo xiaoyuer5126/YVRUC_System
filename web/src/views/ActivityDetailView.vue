@@ -101,14 +101,17 @@
               <el-link type="primary" underline="never" @click="logDialog = true">查看全部</el-link>
             </div>
           </el-card>
-          <el-card v-if="act.my_time_conflicts?.length" shadow="never" class="conflict-card">
-            <template #header>
-              <b class="conflict-title">您有时间冲突的活动（{{ act.my_time_conflicts.length }} 个）</b>
-            </template>
-            <div v-for="c in act.my_time_conflicts" :key="c.enrollment_id" class="conflict-item">
-              {{ conflictLine(c, act.id) }}
-            </div>
-          </el-card>
+          <!-- 时间冲突沿用原来的红色提示条，只是挪到变更记录下面；
+               块高了在提示条里滚，不再把右栏撑长 -->
+          <div v-if="act.my_time_conflicts?.length" class="conflict-wrap">
+            <el-alert type="error" :closable="false">
+              <p style="margin:0 0 4px"><b>您有时间冲突的活动：</b></p>
+              <p v-for="c in act.my_time_conflicts" :key="c.enrollment_id"
+                 style="margin:4px 0;font-size:13px">
+                {{ conflictLine(c, act.id) }}
+              </p>
+            </el-alert>
+          </div>
         </div>
       </el-col>
     </el-row>
@@ -1229,23 +1232,15 @@ const openProfileDialog = () => profileDialog.value.open(true)
 /* 岗位子表里培训独占一整行，整行只有它，不用再留列表上方那条间距 */
 .att-in-row { margin-top: 0; }
 
-/* 右栏：变更记录只留标题行；时间冲突占剩下的高度，在卡片里滚。
+/* 右栏：变更记录只留标题行；时间冲突占剩下的高度，在这块里滚。
    两块合计的高度由脚本按左栏活动信息卡片算出来。 */
 .side-col { display: flex; flex-direction: column; gap: 12px; }
 .logs-card :deep(.el-card__body) { padding: 12px 16px; }
 .logs-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.conflict-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.conflict-card :deep(.el-card__body) { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; }
-.conflict-title { color: var(--el-color-danger); font-size: 14px; }
-.conflict-item {
-  padding: 8px; margin-bottom: 8px; border-radius: 6px; font-size: 13px; line-height: 1.5;
-  color: var(--el-color-danger-dark-2); background: var(--el-color-danger-light-9);
-  border: 1px solid var(--el-color-danger-light-8);
-}
-.conflict-item:last-child { margin-bottom: 0; }
+.conflict-wrap { flex: 1; min-height: 0; overflow: auto; }
 @media (max-width: 860px) {
   .side-col { height: auto !important; }
-  .conflict-card :deep(.el-card__body) { overflow: visible; }
+  .conflict-wrap { flex: none; overflow: visible; }
 }
 
 /* 仅场次：没有可展开的岗位，隐藏展开箭头 */
