@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Index,
                         Integer, String, Text, UniqueConstraint, event, func,
                         inspect as sa_inspect, select, text)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
 # 会话类在这里叫 OrmSession：本模块还有一个自己的 Session（登录会话那张表），
 # 直接用 Session 这个名字会被它盖掉
@@ -110,6 +111,10 @@ class User(Base):
         Index("ix_users_user_type", "user_type"),
         Index("ix_users_college", "college"),
         Index("ix_users_qingxie_post", "qingxie_post"),
+        # 按身份找人（管理员、青协、会长团）走 roles @> '["admin"]'。
+        # roles 是 JSONB，GIN 索引才认这个包含运算符；用户表只增不减，
+        # 没有索引时每次都要把整张表读出来在内存里筛。
+        Index("ix_users_roles_gin", "roles", postgresql_using="gin"),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -133,7 +138,8 @@ class User(Base):
     # —— 类型与身份 ——
     # 类型二选一（老师/学生）；身份可多个（管理员/青协/活动发起方/学生），可切换视角。
     user_type: Mapped[str] = mapped_column(String(12), default="student")  # teacher / student
-    roles: Mapped[list] = mapped_column(JSON, default=list)                # ["student", ...]
+    # JSONB 而不是 JSON：按身份找人要用 @> 包含运算符，只有 JSONB 有它
+    roles: Mapped[list] = mapped_column(JSONB, default=list)               # ["student", ...]
 
     # —— 青协内部层级（只对 qingxie 身份有意义）——
     #   council 会长团：除平台公告、操作日志、意见反馈外与管理员同权

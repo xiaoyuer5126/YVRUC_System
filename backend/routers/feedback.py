@@ -14,7 +14,6 @@ import logging
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from sqlalchemy import Text, cast
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import config, downloads, locks, uploads
@@ -112,10 +111,9 @@ def _notify_admins(db: OrmSession, fb: Feedback, submitter: User) -> None:
     brief = fb.content if len(fb.content) <= 60 else fb.content[:60] + "…"
     who = f"{submitter.name}（{submitter.student_id}）"
     try:
-        # roles 是 JSON 不是 JSONB，没有包含运算符；按序列化文本匹配带引号的
-        # "admin"，粗筛之后再用 has_role 精确判一遍
+        # roles 是 JSONB，@> 走 GIN 索引找出持管理员身份的人
         rows = (db.query(User)
-                .filter(cast(User.roles, Text).like('%"admin"%'),
+                .filter(User.roles.contains(["admin"]),
                         User.id != submitter.id).all())
         for u in rows:
             if u.has_role("admin", real=True):

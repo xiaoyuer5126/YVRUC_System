@@ -458,8 +458,6 @@ def _disk_has_room() -> bool:
 
 def _alert_disk_low(free: int) -> None:
     """站内通知全体管理员。几个进程都会走到这里，用 Redis 占位保证每天只发一次。"""
-    from sqlalchemy import Text, cast
-
     from . import locks
     from .database import SessionLocal
     from .models import User
@@ -471,7 +469,7 @@ def _alert_disk_low(free: int) -> None:
     db = SessionLocal()
     try:
         admins = (db.query(User)
-                  .filter(cast(User.roles, Text).like('%"admin"%')).all())
+                  .filter(User.roles.contains(["admin"])).all())
         gb = free / 1024 ** 3
         for u in admins:
             if u.has_role("admin", real=True):
