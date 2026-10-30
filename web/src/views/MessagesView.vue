@@ -5,7 +5,7 @@
       <el-button @click="readAll" :disabled="!unread">{{ t('全部已读') }}</el-button>
     </div>
     <el-alert v-if="pendingAck" type="warning" :closable="false" show-icon class="ack-alert"
-              :title="`有 ${pendingAck} 条通知需要您签收`" />
+              :title="t('有 {0} 条通知需要您签收', [pendingAck])" />
     <!-- 电脑端两栏，新消息在前（从左到右、从上到下）；同一行的两张卡片等高，
          上下间距才处处一样 -->
     <div v-if="items.length" class="msg-list">
@@ -18,7 +18,7 @@
           <el-tag v-if="n.need_ack" size="small"
                   :type="n.acked_at ? 'success' : 'danger'"
                   :effect="n.acked_at ? 'plain' : 'dark'">
-            {{ n.acked_at ? '已签收' : '需签收' }}
+            {{ t(n.acked_at ? '已签收' : '需签收') }}
           </el-tag>
           <b class="msg-title">{{ n.title }}</b>
           <span class="dim time">{{ fmtDT(n.created_at) }}</span>
@@ -33,7 +33,7 @@
         </div>
         <div v-if="n.need_ack" class="ack-bar" @click.stop>
           <template v-if="n.acked_at">
-            <span class="dim">已于 {{ fmtDT(n.acked_at) }} 签收</span>
+            <span class="dim">{{ t('已于 {0} 签收', [fmtDT(n.acked_at)]) }}</span>
           </template>
           <template v-else>
             <el-button type="primary" size="small" :loading="acking === n.id"
@@ -103,7 +103,7 @@ const TAGS = {
   custom: ['info', '通知'],
 }
 const tagType = k => TAGS[k]?.[0] || 'info'
-const tagLabel = k => TAGS[k]?.[1] || '通知'
+const tagLabel = k => t(TAGS[k]?.[1] || '通知')
 
 function apply(d) {
   unreadState.count = d.unread
