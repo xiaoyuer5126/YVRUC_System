@@ -1,10 +1,3 @@
-/** 英文译文。键是中文原文（见 i18n/index.js）。
- *
- *  专有名词：志愿北京写作 Volunteer Beijing，青协写作 the Youth Volunteers
- *  Association。管理者填的内容（活动名、岗位名、招募文案）不在这张表里，也不翻。
- *
- *  {0} {1} 是占位，由 t() 按位置填。
- */
 export default {
   // —— 顶栏、侧栏、通用 ——
   '消息通知': 'Notifications',
@@ -592,7 +585,6 @@ export default {
   '上传失败': 'Upload failed',
   '未登录': 'Not signed in',
   '用户不存在': 'This user no longer exists',
-    'This download link has expired. Go back to the page and click again.',
   '活动不存在': 'Activity not found',
   '场次不存在': 'Session not found',
   '岗位不存在': 'Position not found',
