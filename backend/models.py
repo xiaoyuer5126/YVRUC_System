@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Index,
                         Integer, String, Text, UniqueConstraint, event, func,
-                        inspect as sa_inspect, select, text)
+                        inspect as sa_inspect, select, text, update)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
 # 会话类在这里叫 OrmSession：本模块还有一个自己的 Session（登录会话那张表），
@@ -426,6 +426,17 @@ class Activity(Base):
 
     reg_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reg_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # —— 服务场次的跨度（只算 kind="service"，同 time_span）——
+    # 广场要按「展示状态」筛和排，而展示状态是按场次时间现算的。把这三个
+    # 时间落到活动上，展示状态就能写进 SQL 的 WHERE / ORDER BY，分页交给
+    # 数据库；不落的话每个请求都要把全部公开活动取回来算完再切一页。
+    # 场次增删改时由 Shift 的会话事件同步（见 _sync_activity_span）。
+    shift_first_start: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True)
+    shift_last_end: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True)
+    shift_last_start: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True)
     # 补记录活动（recruit_mode="record"）自己的活动时间：它没有场次，线下
     # 哪几段办的直接填。每段 {"start_time", "end_time"}，只作记录，没有报名
     # 语义；广场不展示它，用在管理端、审批页、时长明细与提示分（导入即视为
@@ -1948,6 +1959,7 @@ class Announcement(Base):
 
 # ======================= 意见反馈 =======================
 
+
 class Feedback(Base):
     """用户对**平台本身**的意见反馈（bug、用不顺手的地方）。
 
@@ -1970,3 +1982,49 @@ class Feedback(Base):
 
     def status_label(self) -> str:
         return self.STATUS_LABELS.get(self.status, self.status)
+
+
+# ======================= 活动上的服务场次跨度 =======================
+
+def _activity_span_values(connection, activity_id: str) -> dict:
+    """这个活动服务场次的（最早开始、最晚结束、最晚开始）。"""
+    first, last_end, last_start = connection.execute(
+        select(func.min(ShiftPeriod.start_time), func.max(ShiftPeriod.end_time),
+               func.max(ShiftPeriod.start_time))
+        .join(Shift, Shift.id == ShiftPeriod.shift_id)
+        .where(Shift.activity_id == activity_id, Shift.kind == "service")
+    ).one()
+    return {"shift_first_start": first, "shift_last_end": last_end,
+            "shift_last_start": last_start}
+
+
+def _recompute_activity_span(connection, activity_id: str | None) -> None:
+    """把活动上存的服务场次跨度重算一遍。
+
+    用连接直接发一条 UPDATE，不碰会话里的对象：在事件里改 ORM 实例会再触发
+    一次本事件，改库则下一次读取自然拿到新值。挂在事件上而不是各条写路径里：
+    建场次、改时段、删场次、一键复制、导入、种子数据都要各自记得同步一次，
+    漏一处广场上的展示状态就错了。
+    """
+    if not activity_id:
+        return
+    connection.execute(update(Activity).where(Activity.id == activity_id)
+                       .values(**_activity_span_values(connection, activity_id)))
+
+
+@event.listens_for(Shift, "after_insert")
+@event.listens_for(Shift, "after_update")
+@event.listens_for(Shift, "after_delete")
+def _span_after_shift(_mapper, connection, target) -> None:
+    _recompute_activity_span(connection, target.activity_id)
+
+
+@event.listens_for(ShiftPeriod, "after_insert")
+@event.listens_for(ShiftPeriod, "after_update")
+@event.listens_for(ShiftPeriod, "after_delete")
+def _span_after_period(_mapper, connection, target) -> None:
+    """改时段是就地改 ShiftPeriod，不会碰场次那一行，所以这里也要接上。"""
+    row = connection.execute(
+        select(Shift.activity_id).where(Shift.id == target.shift_id)).first()
+    if row is not None:
+        _recompute_activity_span(connection, row[0])
