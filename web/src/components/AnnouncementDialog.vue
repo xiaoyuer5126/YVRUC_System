@@ -10,7 +10,7 @@
       </template>
     </div>
     <template #footer>
-      <el-button type="primary" @click="emit('update:modelValue', false)">知道了</el-button>
+      <el-button type="primary" @click="emit('update:modelValue', false)">{{ t('知道了') }}</el-button>
     </template>
   </el-dialog>
 </template>
@@ -18,6 +18,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useNarrow } from '../composables/useNarrow'
+import { t } from '../i18n'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },

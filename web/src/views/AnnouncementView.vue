@@ -1,29 +1,25 @@
 <template>
   <div class="page page-wide">
-    <h2>平台公告</h2>
-    <p class="dim" style="margin-top:-8px">
-      启用后，每个用户登录平台时弹出一次。修改公告不会再弹给已经登录的人，他们下次登录时看到。
-    </p>
+    <h2>{{ t('平台公告') }}</h2>
+    <p class="dim" style="margin-top:-8px">{{ t('启用后，每个用户登录平台时弹出一次。修改公告不会再弹给已经登录的人，他们下次登录时看到。') }}</p>
     <el-card shadow="never" v-loading="loading">
       <el-form label-position="top">
-        <el-form-item label="标题">
-          <el-input v-model="form.title" maxlength="60" show-word-limit placeholder="如：试运行期间欢迎反馈" />
+        <el-form-item :label="t('标题')">
+          <el-input v-model="form.title" maxlength="60" show-word-limit :placeholder="t('如：试运行期间欢迎反馈')" />
         </el-form-item>
-        <el-form-item label="正文">
+        <el-form-item :label="t('正文')">
           <el-input v-model="form.body" type="textarea" :rows="8" maxlength="2000" show-word-limit
-                    placeholder="支持换行；以 http:// 或 https:// 开头的网址会显示成链接" />
+                    :placeholder="t('支持换行；以 http:// 或 https:// 开头的网址会显示成链接')" />
         </el-form-item>
-        <el-form-item label="启用">
+        <el-form-item :label="t('启用')">
           <el-switch v-model="form.enabled" active-text="登录时弹出" />
         </el-form-item>
       </el-form>
       <div class="foot">
-        <span class="dim" v-if="meta.updated_at">
-          {{ meta.updated_by_name || '管理员' }} 最后修改于 {{ fmtDT(meta.updated_at) }}
-        </span>
+        <span class="dim" v-if="meta.updated_at">{{ t('{0} 最后修改于 {1}', [meta.updated_by_name || '管理员', fmtDT(meta.updated_at)]) }}</span>
         <div class="btn-row">
-          <el-button :disabled="!form.title.trim() || !form.body.trim()" @click="preview = true">预览</el-button>
-          <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+          <el-button :disabled="!form.title.trim() || !form.body.trim()" @click="preview = true">{{ t('预览') }}</el-button>
+          <el-button type="primary" :loading="saving" @click="save">{{ t('保存') }}</el-button>
         </div>
       </div>
     </el-card>
@@ -37,6 +33,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
 import AnnouncementDialog from '../components/AnnouncementDialog.vue'
+import { t } from '../i18n'
 
 const loading = ref(false)
 const saving = ref(false)

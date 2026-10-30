@@ -2,14 +2,14 @@
   <el-container class="app-root">
     <el-header class="topbar" height="56px">
       <div class="left">
-        <el-button v-if="narrow" text class="hamburger" :aria-label="t('layout.menu')"
+        <el-button v-if="narrow" text class="hamburger" :aria-label="t('打开菜单')"
                    @click="drawer = true">
           <el-icon :size="22"><Fold /></el-icon>
         </el-button>
         <div class="brand" @click="$router.push('/')">
           <div class="logo">{{ locale === 'en' ? 'V' : '志' }}</div>
           <div class="brand-text">
-            <div class="name">{{ narrow ? t('layout.brandShort') : t('layout.brandFull') }}</div>
+            <div class="name">{{ narrow ? t('志愿服务平台') : t('志愿服务管理平台') }}</div>
             <div v-if="!narrow" class="sub">
               {{ locale === 'en' ? 'Renmin University of China' : 'Volunteer Service Management' }}
             </div>
@@ -21,14 +21,14 @@
         <template v-if="auth.user">
           <!-- 反馈入口放在最前面：它是「找人说话」的入口，和消息一样属于常驻的
                两件事。姓名不写在按钮上——头像就是姓名首字，名字去菜单里看 -->
-          <el-button text :title="t('layout.feedback')" @click="openFeedback">
+          <el-button text :title="t('意见反馈')" @click="openFeedback">
             <el-icon><ChatDotRound /></el-icon>
-            <span v-if="!narrow">&nbsp;{{ t('layout.feedbackShort') }}</span>
+            <span v-if="!narrow">&nbsp;{{ t('反馈') }}</span>
           </el-button>
           <el-badge :value="unread" :hidden="!unread" class="msg-badge">
             <el-button text @click="$router.push('/messages')">
               <el-icon><Bell /></el-icon>
-              <span v-if="!narrow">&nbsp;{{ t('layout.messages') }}</span>
+              <span v-if="!narrow">&nbsp;{{ t('消息') }}</span>
             </el-button>
           </el-badge>
           <!-- 语言切换只在志愿者视角摆出来：管理端不翻，那里切了也没变化 -->
@@ -41,25 +41,25 @@
               <template v-if="!narrow">
                 <el-tag size="small" effect="light"
                         style="color:#fff;background:rgba(255,255,255,.2);border:none">
-                  {{ identityLabel }}{{ t('layout.identitySuffix') }}
+                  {{ identityLabel }}{{ isEn ? '' : '视角' }}
                 </el-tag>
               </template>
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <div class="switch-cap">{{ t('layout.switchIdentity') }}</div>
+                <div class="switch-cap">{{ t('切换身份') }}</div>
                 <el-dropdown-item v-for="r in auth.user.roles" :key="r" :command="'identity:' + r">
                   <el-icon v-if="auth.activeIdentity === r" style="color:var(--el-color-primary)"><Check /></el-icon>
                   {{ ROLE_LABELS[r] || r }}
                 </el-dropdown-item>
                 <el-dropdown-item divided command="my"
-                                  v-if="auth.user.user_type === 'student'">{{ t('layout.myEnrollments') }}</el-dropdown-item>
+                                  v-if="auth.user.user_type === 'student'">{{ t('我的报名') }}</el-dropdown-item>
                 <el-dropdown-item command="hours"
-                                  v-if="auth.user.user_type === 'student'">{{ t('layout.myHours') }}</el-dropdown-item>
+                                  v-if="auth.user.user_type === 'student'">{{ t('我的志愿时长') }}</el-dropdown-item>
                 <el-dropdown-item divided command="profile"
-                                  v-if="auth.user.user_type === 'student'">{{ t('layout.profile') }}</el-dropdown-item>
-                <el-dropdown-item command="logout">{{ t('layout.logout') }}</el-dropdown-item>
+                                  v-if="auth.user.user_type === 'student'">{{ t('完善个人信息') }}</el-dropdown-item>
+                <el-dropdown-item command="logout">{{ t('退出登录') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -75,7 +75,7 @@
         <!-- 部门成员：按钮都在、都能点，只是最后一步不会保存。提示条常驻，
              否则他点了保存没生效，会以为系统坏了 -->
         <el-alert v-if="isTrainee()" type="warning" :closable="false" show-icon
-                  class="trainee-bar" :title="t('layout.traineeNotice')" />
+                  class="trainee-bar" :title="t('你当前是部门成员（学习权限）：可以走完每一个流程，但提交时不会真正保存')" />
         <router-view />
       </el-main>
     </el-container>
@@ -86,7 +86,7 @@
       <div class="drawer-head">
         <div class="logo">{{ locale === 'en' ? 'V' : '志' }}</div>
         <div>
-          <div class="name">{{ t('layout.brandShort') }}</div>
+          <div class="name">{{ t('志愿服务平台') }}</div>
           <div class="drawer-sub">
             {{ auth.user?.name }} · {{ identityLabel }}
           </div>
@@ -113,7 +113,7 @@ import { api } from '../api'
 import { auth, clearAuth, isTrainee, ROLE_LABELS, takeAnnouncementTurn, unreadState } from '../store'
 import { switchIdentity } from '../router'
 import { useNarrow } from '../composables/useNarrow'
-import { locale, t } from '../i18n'
+import { isEn, locale, t } from '../i18n'
 import AnnouncementDialog from '../components/AnnouncementDialog.vue'
 import FeedbackDialog from '../components/FeedbackDialog.vue'
 import LocaleSwitch from '../components/LocaleSwitch.vue'
@@ -148,7 +148,7 @@ const identityLabel = computed(() => {
     if (locale.value === 'en') return EN_ROLE[auth.activeIdentity] || ROLE_LABELS[auth.activeIdentity]
     return ROLE_LABELS[auth.activeIdentity]
   }
-  return auth.user?.user_type === 'teacher' ? t('layout.roleTeacher') : t('layout.roleVolunteer')
+  return auth.user?.user_type === 'teacher' ? t('教职工') : t('志愿者')
 })
 
 // 抽屉里点的若是当前页，el-menu 不触发 select，这里兜住

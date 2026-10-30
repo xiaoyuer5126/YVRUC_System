@@ -3,36 +3,36 @@
     <el-card class="login-card">
       <div class="head">
         <div class="logo">志</div>
-        <h2>{{ t('login.title') }}</h2>
+        <h2>{{ t('志愿服务管理平台') }}</h2>
       </div>
 
       <!-- 真实 SSO：一个跳转按钮，账号口令都在学校那边 -->
       <template v-if="mode !== 'demo'">
         <el-button type="primary" size="large" style="width:100%"
                    :loading="ssoLoading" :disabled="mode !== 'oauth2'" @click="gotoSso">
-          {{ mode === 'oauth2' ? t('login.sso') : t('login.ssoUnconfigured') }}
+          {{ mode === 'oauth2' ? t('前往统一身份认证登录') : t('登录方式未配置，请联系管理员') }}
         </el-button>
       </template>
 
       <!-- 内测登录：学号 + 组内共享口令 -->
       <el-form v-else @submit.prevent>
-        <el-input v-model="sid" size="large" :placeholder="t('login.sid')"
+        <el-input v-model="sid" size="large" :placeholder="t('学号 / 工号')"
                   clearable @keyup.enter="focusPassword">
           <template #prefix><el-icon><User /></el-icon></template>
         </el-input>
         <el-input ref="passwordInput" v-model="password" size="large" type="password"
-                  :placeholder="t('login.password')" show-password clearable
+                  :placeholder="t('内测口令')" show-password clearable
                   style="margin-top:12px" @keyup.enter="doLogin">
           <template #prefix><el-icon><Lock /></el-icon></template>
         </el-input>
         <el-button type="primary" size="large" style="width:100%;margin-top:12px"
                    :loading="loading" @click="doLogin">
-          {{ t('login.submit') }}
+          {{ t('登录') }}
         </el-button>
       </el-form>
 
       <template v-if="mode === 'demo' && accounts.length">
-        <el-divider>{{ t('login.demoAccounts') }}</el-divider>
+        <el-divider>{{ t('体验账号（仍需口令）') }}</el-divider>
         <div class="quick">
           <el-button v-for="a in accounts" :key="a.student_id" size="small"
                      plain @click="pick(a.student_id)">
@@ -93,14 +93,14 @@ function pick(studentId) {
 function focusPassword() { passwordInput.value?.focus() }
 
 async function doLogin() {
-  if (!sid.value.trim()) return ElMessage.warning(t('login.needSid'))
-  if (!password.value) return ElMessage.warning(t('login.needPassword'))
+  if (!sid.value.trim()) return ElMessage.warning(t('请输入学号/工号'))
+  if (!password.value) return ElMessage.warning(t('请输入内测口令'))
   loading.value = true
   try {
     const d = await api.post('/api/auth/demo-login',
                              { student_id: sid.value.trim(), password: password.value })
     setAuth(d.token, d.user)
-    ElMessage.success(t('login.welcome', { name: d.user.name }))
+    ElMessage.success(t('欢迎，{name}', { name: d.user.name }))
     router.push(route.query.next || '/')
   } finally {
     loading.value = false

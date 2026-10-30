@@ -1,8 +1,8 @@
 <template>
   <div class="page">
     <div class="page-head">
-      <h2>消息通知</h2>
-      <el-button @click="readAll" :disabled="!unread">全部已读</el-button>
+      <h2>{{ t('消息通知') }}</h2>
+      <el-button @click="readAll" :disabled="!unread">{{ t('全部已读') }}</el-button>
     </div>
     <el-alert v-if="pendingAck" type="warning" :closable="false" show-icon class="ack-alert"
               :title="`有 ${pendingAck} 条通知需要您签收`" />
@@ -37,15 +37,15 @@
           </template>
           <template v-else>
             <el-button type="primary" size="small" :loading="acking === n.id"
-                       @click="ack(n)">我已知悉</el-button>
+                       @click="ack(n)">{{ t('我已知悉') }}</el-button>
           </template>
         </div>
       </el-card>
     </div>
     <div v-if="hasMore" class="more">
-      <el-button :loading="loadingMore" @click="loadMore">加载更多</el-button>
+      <el-button :loading="loadingMore" @click="loadMore">{{ t('加载更多') }}</el-button>
     </div>
-    <el-empty v-if="!items.length" description="暂无消息" />
+    <el-empty v-if="!items.length" :description="t('暂无消息')" />
   </div>
 </template>
 
@@ -56,6 +56,7 @@ import { ElMessage } from 'element-plus'
 import { Paperclip } from '@element-plus/icons-vue'
 import { api, download, fmtDT } from '../api'
 import { unreadState } from '../store'
+import { t } from '../i18n'
 
 const router = useRouter()
 
@@ -142,7 +143,7 @@ async function ack(n) {
   acking.value = n.id
   try {
     const d = await api.post(`/api/me/notifications/${n.id}/ack`)
-    ElMessage.success('签收成功')
+    ElMessage.success(t('签收成功'))
     if (!n.read) unreadState.count = Math.max(0, unreadState.count - 1)
     n.read = true
     n.acked_at = d.acked_at

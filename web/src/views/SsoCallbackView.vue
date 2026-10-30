@@ -3,18 +3,18 @@
     <el-card class="cb-card">
       <div class="head">
         <div class="logo">志</div>
-        <h2>志愿服务管理平台</h2>
+        <h2>{{ t('志愿服务管理平台') }}</h2>
       </div>
 
-      <el-result v-if="error" icon="error" title="登录未完成" :sub-title="error">
+      <el-result v-if="error" icon="error" :title="t('登录未完成')" :sub-title="error">
         <template #extra>
-          <el-button type="primary" @click="backToLogin">重新登录</el-button>
+          <el-button type="primary" @click="backToLogin">{{ t('重新登录') }}</el-button>
         </template>
       </el-result>
 
       <div v-else class="waiting">
         <el-icon class="is-loading" :size="26"><Loading /></el-icon>
-        <p>正在完成统一身份认证…</p>
+        <p>{{ t('正在完成统一身份认证…') }}</p>
       </div>
     </el-card>
   </div>
@@ -27,6 +27,7 @@ import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { setAuth } from '../store'
+import { t } from '../i18n'
 
 const route = useRoute()
 const router = useRouter()
@@ -41,7 +42,7 @@ onMounted(async () => {
   router.replace({ path: '/sso-callback' })
 
   if (!code || !state) {
-    error.value = '回调地址里缺少 code 或 state，请从平台首页重新登录。'
+    error.value = t('回调地址里缺少 code 或 state，请从平台首页重新登录。')
     return
   }
 
@@ -49,12 +50,12 @@ onMounted(async () => {
     const d = await api.post('/api/auth/sso-callback', { code, state },
                              { skipErrorToast: true })
     setAuth(d.token, d.user)
-    ElMessage.success(`欢迎，${d.user.name}`)
+    ElMessage.success(t('欢迎，{name}', { name: d.user.name }))
     // replace 而不是 push：带授权码的那一页不该留在前进/后退里。
     // next 是跳转前想去的页面（比如从签到二维码落地页被弹去登录的志愿者）。
     router.replace(d.next || '/')
   } catch (e) {
-    error.value = e.message || '统一身份认证未通过，请重试。'
+    error.value = e.message || t('统一身份认证未通过，请重试。')
   }
 })
 

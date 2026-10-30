@@ -13,7 +13,7 @@
     <div v-else class="file-row">
       <el-upload :show-file-list="false" :http-request="uploader(q)">
         <el-button size="small" plain :loading="uploading === q.id">
-          {{ files[q.id] ? '重新上传' : '上传文件' }}
+          {{ t(files[q.id] ? '重新上传' : '上传文件') }}
         </el-button>
       </el-upload>
       <span v-if="files[q.id]" class="dim">{{ files[q.id] }}</span>
@@ -25,6 +25,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { uploadTo } from '../composables/uploadImage'
+import { t } from '../i18n'
 
 const props = defineProps({
   questions: { type: Array, default: () => [] },

@@ -1,8 +1,7 @@
 <template>
   <span class="refresh-bar">
     <el-button :size="size" type="primary" :loading="busy" @click="fire">
-      <el-icon><Refresh /></el-icon>&nbsp;刷新
-    </el-button>
+      <el-icon><Refresh /></el-icon>{{ t('&nbsp;刷新') }}</el-button>
     <span class="dim">{{ busy ? '正在刷新…' : (at ? `更新于 ${timeOf(at)}` : '尚未加载') }}</span>
   </span>
 </template>
@@ -24,6 +23,7 @@
  */
 import { ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
+import { t } from '../i18n'
 
 const props = defineProps({
   // 返回 Promise 的加载函数；组件只负责转圈

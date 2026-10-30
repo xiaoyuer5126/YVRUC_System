@@ -1,6 +1,6 @@
 <template>
   <div class="page">
-    <h2>我的报名</h2>
+    <h2>{{ t('我的报名') }}</h2>
 
     <!-- 窄屏：一条报名一张卡；表格在手机上要么横滑要么挤成一条线 -->
     <div v-if="narrow" v-loading="loading" class="mob-list">
@@ -10,7 +10,7 @@
             {{ row.activity.title }}
           </b>
           <EnrollStatusTag :row="row" />
-          <el-tag v-if="row.status === 'enrolled' && row.list_locked" size="small" type="info">名单已锁定</el-tag>
+          <el-tag v-if="row.status === 'enrolled' && row.list_locked" size="small" type="info">{{ t('名单已锁定') }}</el-tag>
         </div>
         <div class="dim">{{ row.activity.location }}</div>
         <div class="mob-line">
@@ -25,36 +25,32 @@
           <el-tag v-for="p in row.shift.periods" :key="p.id" size="small" effect="plain"
                   :type="p.checked_out ? 'success' : p.checked_in ? 'warning' : 'info'"
                   style="margin:0 4px 4px 0">
-            {{ p.text }} · {{ p.checked_out ? '已签退' : p.checked_in ? '已签到' : '未签到' }}
+            {{ p.text }} · {{ t(p.checked_out ? '已签退' : p.checked_in ? '已签到' : '未签到') }}
           </el-tag>
         </div>
-        <div v-if="row.shift.attached" class="dim">
-          随服务场次的报名产生；不能参加请到活动页请假
-          <template v-if="row.shift.location"> · {{ row.shift.location }}</template>
-          <el-tag v-if="row.excused" size="small" type="info" effect="plain">已请假</el-tag>
+        <div v-if="row.shift.attached" class="dim">{{ t('随服务场次的报名产生；不能参加请到活动页请假') }}<template v-if="row.shift.location"> · {{ row.shift.location }}</template>
+          <el-tag v-if="row.excused" size="small" type="info" effect="plain">{{ t('已请假') }}</el-tag>
         </div>
         <div v-if="row.position" class="mob-line">
           <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
-          <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+          <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">{{ t('组长') }}</el-tag>
           <span class="dim"> {{ row.position.location }}</span>
         </div>
-        <div v-else-if="row.status === 'enrolled'" class="dim">岗位待分配</div>
-        <div v-if="row.is_leader && row.leader_task" class="dim">
-          组长任务：{{ row.leader_task }}
-        </div>
+        <div v-else-if="row.status === 'enrolled'" class="dim">{{ t('岗位待分配') }}</div>
+        <div v-if="row.is_leader && row.leader_task" class="dim">{{ t('组长任务： {0}', [row.leader_task]) }}</div>
         <div class="mob-line">
-          <span class="dim">岗位调剂：</span>
+          <span class="dim">{{ t('岗位调剂：') }}</span>
           <template v-if="isActive(row) && !row.shift.attached">
             <el-tag size="small" effect="plain"
                     :type="row.allow_reassign ? 'success' : 'info'">
-              {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
+              {{ t(row.allow_reassign ? '接受调剂' : '不接受调剂') }}
             </el-tag>
             <el-button size="small" link type="primary"
-                       @click="toggleReassign(row)">修改</el-button>
+                       @click="toggleReassign(row)">{{ t('修改') }}</el-button>
           </template>
           <span v-else class="dim">—</span>
           <template v-if="row.status === 'enrolled'">
-            <span class="dim" style="margin-left:12px">签到：</span>
+            <span class="dim" style="margin-left:12px">{{ t('签到：') }}</span>
             <CheckinStatusTag :row="row" />
           </template>
         </div>
@@ -64,24 +60,24 @@
                      :type="signAction(row) === '签退' ? 'warning' : 'primary'"
                      @click="openCheckin(row)">{{ signAction(row) }}</el-button>
           <el-button v-if="row.contact_group_qr" size="small" plain
-                     @click="showQr(row)">查看联络群</el-button>
+                     @click="showQr(row)">{{ t('查看联络群') }}</el-button>
           <el-button v-if="row.is_leader" size="small" type="warning" plain
-                     @click="openTeam(row)">组员名单</el-button>
+                     @click="openTeam(row)">{{ t('组员名单') }}</el-button>
           <el-button v-if="row.status === 'pending_confirm'" size="small" type="primary"
-                     @click="confirm(row)">确认转正</el-button>
+                     @click="confirm(row)">{{ t('确认转正') }}</el-button>
           <el-button v-else-if="row.status === 'applied'" size="small" type="danger" plain
-                     @click="withdraw(row)">撤回申请</el-button>
+                     @click="withdraw(row)">{{ t('撤回申请') }}</el-button>
           <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached && !started(row)"
                      size="small" type="danger" plain @click="cancel(row)">
-            {{ row.status === 'waitlisted' ? '退出候补' : '退选' }}
+            {{ t(row.status === 'waitlisted' ? '退出候补' : '退选') }}
           </el-button>
         </div>
       </div>
-      <el-empty v-if="!rows.length && !loading" description="还没有报名记录" />
+      <el-empty v-if="!rows.length && !loading" :description="t('还没有报名记录')" />
     </div>
 
     <el-table v-else :data="rows" style="width:100%" v-loading="loading">
-      <el-table-column label="活动" min-width="260">
+      <el-table-column :label="t('活动')" min-width="260">
         <template #default="{ row }">
           <b class="title" @click="$router.push('/activity/' + row.activity.id)">
             {{ row.activity.title }}
@@ -89,17 +85,15 @@
           <div class="dim">{{ row.activity.location }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="场次 / 岗位" min-width="240">
+      <el-table-column :label="t('场次 / 岗位')" min-width="240">
         <template #default="{ row }">
           <el-tag v-if="row.shift.attached" size="small" effect="dark"
                   :type="row.shift.kind === 'training' ? 'success' : 'warning'">
             {{ row.shift.kind_label }}
           </el-tag>
           {{ row.shift.name }}（{{ row.shift.time_text }}）
-          <div v-if="row.shift.attached" class="dim">
-            随服务场次的报名产生
-            <template v-if="row.shift.location"> · {{ row.shift.location }}</template>
-            <el-tag v-if="row.excused" size="small" type="info" effect="plain">已请假</el-tag>
+          <div v-if="row.shift.attached" class="dim">{{ t('随服务场次的报名产生') }}<template v-if="row.shift.location"> · {{ row.shift.location }}</template>
+            <el-tag v-if="row.excused" size="small" type="info" effect="plain">{{ t('已请假') }}</el-tag>
           </div>
           <!-- 分段签到的场次：逐段列出签到状态，宽屏窄屏一样 -->
           <div v-if="(row.shift.periods || []).length > 1 && row.status === 'enrolled'"
@@ -107,67 +101,65 @@
             <el-tag v-for="p in row.shift.periods" :key="p.id" size="small" effect="plain"
                     :type="p.checked_out ? 'success' : p.checked_in ? 'warning' : 'info'"
                     style="margin:4px 4px 0 0">
-              {{ p.text }} · {{ p.checked_out ? '已签退' : p.checked_in ? '已签到' : '未签到' }}
+              {{ p.text }} · {{ t(p.checked_out ? '已签退' : p.checked_in ? '已签到' : '未签到') }}
             </el-tag>
           </div>
           <div v-if="row.position">
             <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
-            <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+            <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">{{ t('组长') }}</el-tag>
             <!-- 时段跟场次那行重复：这里只留岗位地点（手机端也是这么显示的） -->
             <span v-if="row.position.location" class="dim"> {{ row.position.location }}</span>
           </div>
-          <div v-else-if="row.status === 'enrolled'" class="dim">岗位待分配</div>
-          <div v-if="row.is_leader && row.leader_task" class="dim">
-            组长任务：{{ row.leader_task }}
-          </div>
+          <div v-else-if="row.status === 'enrolled'" class="dim">{{ t('岗位待分配') }}</div>
+          <div v-if="row.is_leader && row.leader_task" class="dim">{{ t('组长任务： {0}', [row.leader_task]) }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="岗位调剂" width="120">
+      <el-table-column :label="t('岗位调剂')" width="120">
         <template #default="{ row }">
           <!-- 状态归状态、操作归操作：点标签切换太隐蔽，也容易误触 -->
           <template v-if="isActive(row) && !row.shift.attached">
             <el-tag size="small" effect="plain"
                     :type="row.allow_reassign ? 'success' : 'info'">
-              {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
+              {{ t(row.allow_reassign ? '接受调剂' : '不接受调剂') }}
             </el-tag>
             <el-tooltip placement="top"
-                        content="仅在名额不足时可能进行调剂，负责人可看到你的意愿">
+                        :content="t('仅在名额不足时可能进行调剂，负责人可看到你的意愿')">
               <el-button size="small" link type="primary"
-                         @click="toggleReassign(row)">修改</el-button>
+                         @click="toggleReassign(row)">{{ t('修改') }}</el-button>
             </el-tooltip>
           </template>
           <span v-else class="dim">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="150">
+      <el-table-column :label="t('状态')" width="150">
         <template #default="{ row }">
           <EnrollStatusTag :row="row" />
-          <el-tag v-if="row.status === 'enrolled' && row.list_locked" size="small" type="info">名单已锁定</el-tag>
+          <el-tag v-if="row.status === 'enrolled' && row.list_locked" size="small" type="info">{{ t('名单已锁定') }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="签到" width="120">
+      <el-table-column :label="t('签到')" width="120">
         <template #default="{ row }">
           <CheckinStatusTag v-if="row.status === 'enrolled'" :row="row" />
           <span v-else class="dim">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="225" fixed="right">
+      <el-table-column :label="t('操作')" width="225" fixed="right">
         <template #default="{ row }">
           <div class="btn-row">
             <el-button v-if="signAction(row)" size="small"
                        :type="signAction(row) === '签退' ? 'warning' : 'primary'"
                        @click="openCheckin(row)">{{ signAction(row) }}</el-button>
             <el-button v-if="row.contact_group_qr" size="small" plain
-                       @click="showQr(row)">查看联络群</el-button>
+                       @click="showQr(row)">{{ t('查看联络群') }}</el-button>
             <el-button v-if="row.is_leader" size="small" type="warning" plain
-                       @click="openTeam(row)">组员名单</el-button>
+                       @click="openTeam(row)">{{ t('组员名单') }}</el-button>
             <el-button v-if="row.status === 'pending_confirm'" size="small" type="primary"
-                       @click="confirm(row)">确认转正</el-button>
+                       @click="confirm(row)">{{ t('确认转正') }}</el-button>
             <el-button v-else-if="row.status === 'applied'" size="small" type="danger" plain
-                       @click="withdraw(row)">撤回申请</el-button>
+                       @click="withdraw(row)">{{ t('撤回申请') }}</el-button>
             <el-button v-else-if="row.active !== false && isActive(row) && !row.shift.attached && !started(row)"
                        size="small" type="danger" plain @click="cancel(row)">
-              {{ row.status === 'waitlisted' ? '退出候补' : '退选' }}
+              {{ t(row.status === 'waitlisted' ? '退出候补' : '退选') }}
             </el-button>
           </div>
         </template>
@@ -175,10 +167,7 @@
     </el-table>
 
     <el-alert type="info" :closable="false">
-      <p style="margin:0;font-size:12.5px;line-height:1.6">
-        退选规则：每个场次开场前一段时间会锁定名单（活动页上写着几小时），负责人也可能提前锁定；
-        名单锁定后退出会被记录一次。
-      </p>
+      <p style="margin:0;font-size:12.5px;line-height:1.6">{{ t('退选规则：每个场次开场前一段时间会锁定名单（活动页上写着几小时），负责人也可能提前锁定； 名单锁定后退出会被记录一次。') }}</p>
     </el-alert>
 
     <GroupQrDialog ref="groupQr" />
@@ -187,31 +176,29 @@
 
     <el-dialog v-model="teamDlg.visible" :title="'组员名单 · ' + (teamDlg.data?.scope || '')"
                width="560">
-      <p class="dim">
-        {{ teamDlg.data?.activity_title }} · {{ teamDlg.data?.shift_name }}。
-        联系方式仅用于本次活动的联络，请勿他用；<b>每次查看都会记入审计</b>。
+      <p class="dim">{{ t('{0} · {1} 。 联系方式仅用于本次活动的联络，请勿他用；', [teamDlg.data?.activity_title, teamDlg.data?.shift_name]) }}<b>{{ t('每次查看都会记入审计') }}</b>。
       </p>
       <DataCards v-if="narrow" :rows="teamDlg.data?.members || []" title-key="name"
                  :fields="[{ key: 'position', label: '岗位' },
                            { key: 'college', label: '学院' },
                            { key: 'phone', label: '手机' },
                            { key: 'wechat', label: '微信' }]"
-                 empty="本组暂无组员">
+                 :empty="t('本组暂无组员')">
         <template #extra="{ row }">
-          <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+          <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">{{ t('组长') }}</el-tag>
         </template>
       </DataCards>
       <el-table v-else :data="teamDlg.data?.members || []" size="small">
-        <el-table-column label="姓名" width="110">
+        <el-table-column :label="t('姓名')" width="110">
           <template #default="{ row }">
             {{ row.name }}
-            <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+            <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">{{ t('组长') }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="position" label="岗位" min-width="110" />
-        <el-table-column prop="college" label="学院" min-width="120" />
-        <el-table-column prop="phone" label="手机" width="130" />
-        <el-table-column prop="wechat" label="微信" min-width="110" />
+        <el-table-column prop="position" :label="t('岗位')" min-width="110" />
+        <el-table-column prop="college" :label="t('学院')" min-width="120" />
+        <el-table-column prop="phone" :label="t('手机')" width="130" />
+        <el-table-column prop="wechat" :label="t('微信')" min-width="110" />
       </el-table>
     </el-dialog>
   </div>
@@ -227,6 +214,7 @@ import CheckinStatusTag from '../components/CheckinStatusTag.vue'
 import GroupQrDialog from '../components/GroupQrDialog.vue'
 import ScanCheckinDialog from '../components/ScanCheckinDialog.vue'
 import DataCards from '../components/DataCards.vue'
+import { t } from '../i18n'
 
 const narrow = useNarrow()
 const rows = ref([])
@@ -282,11 +270,11 @@ function openCheckin(row) {
 async function geoCheckin(row) {
   if (geoBusy.value) return
   if (!navigator.geolocation) {
-    ElMessage.error('这个浏览器不能定位，请联系负责人手动补签')
+    ElMessage.error(t('这个浏览器不能定位，请联系负责人手动补签'))
     return
   }
   geoBusy.value = true
-  const tip = ElMessage({ message: '正在定位…', duration: 0 })
+  const tip = ElMessage({ message: t('正在定位…'), duration: 0 })
   try {
     const pos = await new Promise((resolve, reject) => {
       navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -354,7 +342,7 @@ onMounted(load)
 async function withdraw(row) {
   await ElMessageBox.confirm('撤回后可以重新申请。确定撤回吗？', '撤回申请', { type: 'warning' })
   await api.del(`/api/activities/${row.activity.id}/apply`)
-  ElMessage.success('已撤回申请')
+  ElMessage.success(t('已撤回申请'))
   load()
 }
 
@@ -381,8 +369,8 @@ async function cancel(row) {
   } catch { /* 取不到就按页面上这份算，服务端仍会按锁后的规矩处理 */ }
   const locked = fresh.status === 'enrolled' && fresh.list_locked
   await ElMessageBox.confirm(
-    locked ? '名单已锁定，此时退出会被记录一次。确定退出吗？' : '确定退选吗？',
-    '确认退选', { type: 'warning', confirmButtonText: '确定' })
+    locked ? '名单已锁定，此时退出会被记录一次。确定退出吗？' : t('确定退选吗？'),
+    '确认退选', { type: 'warning', confirmButtonText: t('确定') })
   const d = await api.del(`/api/activities/enrollments/${row.id}`)
   ElMessage[d.effect === 'locked' ? 'warning' : 'success'](d.message)
   load()

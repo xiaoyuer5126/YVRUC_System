@@ -8,9 +8,9 @@
       <template v-if="mine.status === 'pending_confirm'">
         <el-countdown format="HH:mm:ss" :value="ctx.deadlineTs(g)" />
         <el-button type="primary" size="small" :disabled="ctx.paused.value"
-                   @click="ctx.confirmPromo(g)">确认</el-button>
+                   @click="ctx.confirmPromo(g)">{{ t('确认') }}</el-button>
         <el-button size="small" plain :disabled="ctx.paused.value"
-                   @click="ctx.cancelEnroll(g)">放弃</el-button>
+                   @click="ctx.cancelEnroll(g)">{{ t('放弃') }}</el-button>
       </template>
       <template v-else>
         <el-tag :type="mine.status === 'waitlisted' ? 'warning' : 'success'" size="small">
@@ -19,24 +19,24 @@
         <el-button v-if="ctx.canCancel(g)" size="small" type="danger" plain
                    :disabled="ctx.paused.value"
                    @click="ctx.cancelEnroll(g)">
-          {{ mine.status === 'waitlisted' ? '退出候补' : '退选' }}
+          {{ t(mine.status === 'waitlisted' ? '退出候补' : '退选') }}
         </el-button>
       </template>
     </template>
     <!-- 截止后统一分配的场次：报名只从「待分配」进，真实岗位由负责人分 -->
-    <span v-else-if="g.needs_assign && !s.is_placeholder" class="dim">由负责人分配</span>
+    <span v-else-if="g.needs_assign && !s.is_placeholder" class="dim">{{ t('由负责人分配') }}</span>
     <span v-else-if="g.my_enrollment" class="dim">{{ takenText }}</span>
     <el-button v-else-if="ctx.queuedShift(g)" size="small" disabled
                :loading="ctx.queuedHere(g, s)">
       {{ ctx.queuedHere(g, s) ? '排队中…' : (s.remaining > 0 ? '选中' : '候补') }}
     </el-button>
-    <el-button v-else-if="s.eligible === false" size="small" disabled>不符合条件</el-button>
-    <el-button v-else-if="g.locked || s.list_locked" size="small" disabled>名单已锁定</el-button>
+    <el-button v-else-if="s.eligible === false" size="small" disabled>{{ t('不符合条件') }}</el-button>
+    <el-button v-else-if="g.locked || s.list_locked" size="small" disabled>{{ t('名单已锁定') }}</el-button>
     <el-button v-else-if="ctx.paused.value || g.enroll_paused || s.enroll_paused"
-               size="small" disabled>报名暂停</el-button>
+               size="small" disabled>{{ t('报名暂停') }}</el-button>
     <el-button v-else-if="ctx.openFor(g)" size="small" type="primary" plain
                @click="ctx.doEnroll(g, s)">
-      {{ s.is_placeholder ? ctx.enrollText(g) : s.remaining > 0 ? '选中' : '候补' }}
+      {{ t(s.is_placeholder ? ctx.enrollText(g) : s.remaining > 0 ? '选中' : '候补') }}
     </el-button>
     <el-button v-else size="small" disabled>{{ ctx.closedText(g) }}</el-button>
   </div>
@@ -48,6 +48,7 @@
 
 <script setup>
 import { computed, inject } from 'vue'
+import { t } from '../i18n'
 
 const props = defineProps({
   g: { type: Object, required: true },        // 场次

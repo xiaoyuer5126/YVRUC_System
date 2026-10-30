@@ -5,15 +5,15 @@
      日期跨度超过 7 天时按周翻页。 -->
 <template>
   <div class="slot-box">
-    <div class="slot-sec">日期范围</div>
+    <div class="slot-sec">{{ t('日期范围') }}</div>
     <!-- 起止各用一个单月面板：双月的范围面板比浮窗和手机屏都宽。
          teleported 关掉：日期面板留在浮窗里，点面板不会被当成点了浮窗外 -->
     <div class="slot-range">
       <el-date-picker :model-value="start || null" type="date" value-format="YYYY-MM-DD"
-                      placeholder="开始日期" :teleported="false" @update:model-value="setStart" />
-      <span class="dim">至</span>
+                      :placeholder="t('开始日期')" :teleported="false" @update:model-value="setStart" />
+      <span class="dim">{{ t('至') }}</span>
       <el-date-picker :model-value="end || null" type="date" value-format="YYYY-MM-DD"
-                      placeholder="结束日期" :teleported="false"
+                      :placeholder="t('结束日期')" :teleported="false"
                       :disabled-date="d => !!start && ymd(d) < start" @update:model-value="setEnd" />
     </div>
     <div class="slot-chips">
@@ -24,12 +24,12 @@
     </div>
 
     <div class="slot-divider" />
-    <div class="slot-sec">可参与时段（不选格子就只按日期筛）</div>
+    <div class="slot-sec">{{ t('可参与时段（不选格子就只按日期筛）') }}</div>
 
     <div v-if="pages > 1" class="slot-nav">
-      <el-button size="small" :disabled="page === 0" @click="page--">‹ 上一周</el-button>
+      <el-button size="small" :disabled="page === 0" @click="page--">{{ t('‹ 上一周') }}</el-button>
       <b>{{ pageRangeText }}</b>
-      <el-button size="small" :disabled="page >= pages - 1" @click="page++">下一周 ›</el-button>
+      <el-button size="small" :disabled="page >= pages - 1" @click="page++">{{ t('下一周 ›') }}</el-button>
     </div>
 
     <div class="slot-grid" :style="gridStyle">
@@ -37,7 +37,7 @@
       <button v-for="d in shownDays" :key="d.key" type="button" class="slot-day"
               :class="{ full: dayFull(d) }" :aria-label="`${d.md} 周${d.wd}，全选或清空这一天`"
               @click="toggleDay(d)">
-        <span>周{{ d.wd }}</span>
+        <span>{{ t('周 {0}', [d.wd]) }}</span>
         <span class="dim">{{ d.md }}</span>
       </button>
       <template v-for="h in HOURS" :key="h">
@@ -52,12 +52,12 @@
     </div>
 
     <div class="slot-foot">
-      <span>已选 {{ slots.length }} 格<template v-if="slots.length">
-        · <el-link type="primary" underline="never" @click="clearSlots">清空</el-link>
+      <span>{{ t('已选 {0} 格', [slots.length]) }}<template v-if="slots.length">
+        · <el-link type="primary" underline="never" @click="clearSlots">{{ t('清空') }}</el-link>
       </template></span>
-      <span class="dim">{{ slots.length
+      <span class="dim">{{ t(slots.length
         ? '只看报名中的活动；场次有一段落在所选时段里就列出来'
-        : '只按日期范围筛，状态可以照常选' }}</span>
+        : '只按日期范围筛，状态可以照常选') }}</span>
     </div>
   </div>
 </template>
@@ -65,6 +65,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { t } from '../i18n'
 
 const props = defineProps({
   start: { type: String, default: '' },

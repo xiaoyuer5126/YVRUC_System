@@ -4,14 +4,14 @@
       <template v-if="task">
         <div class="ok-icon" v-if="done">✓</div>
         <h2 style="margin:8px 0 4px">{{ task.activity_title }}</h2>
-        <p class="dim" style="margin:0 0 12px">志愿服装 · {{ task.action_label }}码</p>
+        <p class="dim" style="margin:0 0 12px">{{ t('志愿服装 · {0} 码', [task.action_label]) }}</p>
 
         <template v-if="!done">
           <el-descriptions :column="1" border size="small">
-            <el-descriptions-item label="当前状态">
+            <el-descriptions-item :label="t('当前状态')">
               <el-tag size="small" :type="stateType">{{ stateText }}</el-tag>
             </el-descriptions-item>
-            <el-descriptions-item v-if="task.taken_at" label="领取时间">
+            <el-descriptions-item v-if="task.taken_at" :label="t('领取时间')">
               {{ fmtDT(task.taken_at) }}
             </el-descriptions-item>
           </el-descriptions>
@@ -25,12 +25,12 @@
         <el-result v-else icon="success" :title="`${task.action_label}成功`"
                    :sub-title="doneMsg">
           <template #extra>
-            <el-button @click="$router.push('/my')">查看我的报名</el-button>
+            <el-button @click="$router.push('/my')">{{ t('查看我的报名') }}</el-button>
           </template>
         </el-result>
 
       </template>
-      <el-result v-else-if="!loading" icon="warning" title="此码无效"
+      <el-result v-else-if="!loading" icon="warning" :title="t('此码无效')"
                  sub-title="请确认扫的是本次活动的服装码" />
     </el-card>
   </div>
