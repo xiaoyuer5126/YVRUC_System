@@ -9,6 +9,9 @@
 3. 工具栏（class 含 toolbar）里的小号按钮。按钮尺寸按位置定：工具栏、页头、
    对话框底部是页面级的动作，一律默认尺寸；表格行、卡片项、区块标题旁的
    行内动作才用 small。工具栏里混进小号的，同一排就高矮不齐。
+4. 模板里调 t() 而脚本里并没有从 i18n 引入它。这种文件里常有一个名为 t 的
+   局部变量（`const t = Date.now()` 之类），声明被算作「已定义」，于是模板里
+   的 t('…') 编译成对那个数字/日期的调用，运行时才炸出「t is not a function」。
 """
 import pathlib, re, sys
 
@@ -135,8 +138,10 @@ for f in files:
     scr_undef = sorted({n for n in re.findall(r'(?<![.\w$])([A-Za-z_$][\w$]*)\.value\b', scr)
                         if n not in names})
     sinks = html_sinks(src)
+    shadowed_t = (bool(re.search(r"(?<![\w.$])t\('", tpl))
+                  and not re.search(r"import\s*\{[^}]*\bt\b[^}]*\}\s*from\s*'[^']*i18n'", scr))
     small_in_bar = toolbar_small_buttons(src)
-    if missing or scr_undef or orphans or sinks or small_in_bar:
+    if missing or scr_undef or orphans or sinks or small_in_bar or shadowed_t:
         bad += 1
         print(f'✗ {f}')
         if sinks:
@@ -147,6 +152,8 @@ for f in files:
             print(f'    脚本用到但未定义: {scr_undef}')
         if orphans:
             print(f'    定义了却没人用（对话框漏写模板？）: {orphans}')
+        if shadowed_t:
+            print('    模板里调 t() 但脚本没从 i18n 引入 t（多半被同名局部变量挡住了）')
         if small_in_bar:
             print(f'    工具栏里的小号按钮（工具栏一律默认尺寸）: 第 {"、".join(small_in_bar)} 行')
 print('全部通过' if not bad else f'{bad} 个文件有问题')
