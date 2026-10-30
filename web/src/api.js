@@ -2,6 +2,7 @@
 import { h } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { auth, clearAuth } from './store'
+import { isEn, t } from './i18n'
 import { router } from './router'
 
 /** 令牌失效了：清掉本地登录态，把人送回登录页，登完再回到刚才那一页。
@@ -15,7 +16,7 @@ import { router } from './router'
 function sessionExpired() {
   if (!auth.token) return              // 已经处理过了
   clearAuth()
-  ElMessage.warning('登录已过期，请重新登录')
+  ElMessage.warning(t('登录已过期，请重新登录'))
   const here = router.currentRoute.value.fullPath
   if (!here.startsWith('/login')) {
     router.replace({ path: '/login', query: here === '/' ? {} : { next: here } })
@@ -49,8 +50,8 @@ async function request(method, url, body, opts = {}) {
     if (!resp.ok) {
       // nginx 自己回的错误页（413 太大、502 后端没起来）不是 JSON，也要提示：
       // 不然表单点了提交毫无反应
-      const msg = resp.status === 413 ? '上传的文件太大了，请压缩或少传几份再试'
-        : `请求失败(${resp.status})`
+      const msg = resp.status === 413 ? t('上传的文件太大了，请压缩或少传几份再试')
+        : t('请求失败({0})', [resp.status])
       if (!opts.silent && !opts.skipErrorToast) ElMessage.error(msg)
       const err = new Error(msg)
       err.status = resp.status
@@ -63,14 +64,17 @@ async function request(method, url, body, opts = {}) {
   // 交给下面按普通错误处理，把后端那句提示原样弹出来。
   if (resp.status === 401 && !url.startsWith('/api/auth/demo-login')) {
     sessionExpired()
-    const e = new Error('登录已过期')
+    const e = new Error(t('登录已过期'))
     e.status = 401
     throw e
   }
   if (!resp.ok) {
+    // 后端给的是中文原句；英文界面下按原句查译文，没收录的照原样显示中文。
+    // 带活动名、时间的句子由后端拼好，不在这张表里，英文界面下也还是中文。
     const detail = typeof data.detail === 'string'
-      ? data.detail
-      : (data.detail?.message || JSON.stringify(data.detail) || `请求失败(${resp.status})`)
+      ? t(data.detail)
+      : (data.detail?.message ? t(data.detail.message)
+         : (JSON.stringify(data.detail) || t('请求失败({0})', [resp.status])))
     // 时段冲突由调用方弹确认框（见 withConflictConfirm），这里不再报一遍错
     if (!opts.silent && !opts.skipErrorToast && data.detail?.code !== TIME_CONFLICT) {
       // 部门成员走完整个流程、在最后一步被拦下，这是设计好的学习权限，不是出错
@@ -131,7 +135,7 @@ export async function withConflictConfirm(send, { title = '时间冲突', ask = 
   }
 }
 
-const WEEKDAYS = '日一二三四五六'
+const WEEKDAYS = { zh: '日一二三四五六', en: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] }
 
 /** 后台给的本地时间串拆成 [年, 月, 日, 时, 分, 秒]，取不到的位是 null。
  *
@@ -144,14 +148,16 @@ function splitDT(iso) {
   return [m[1], m[2], m[3], m[4] ?? null, m[5] ?? null, m[6] ?? null]
 }
 
-/** 「周五」。按年月日算，用 Date.UTC 取星期，不受本地时区影响。 */
+/** 星期几。按年月日算，用 Date.UTC 取星期，不受本地时区影响。 */
 function weekdayOf(y, mo, d) {
-  return WEEKDAYS[new Date(Date.UTC(+y, +mo - 1, +d)).getUTCDay()]
+  const i = new Date(Date.UTC(+y, +mo - 1, +d)).getUTCDay()
+  return isEn.value ? WEEKDAYS.en[i] : `周${WEEKDAYS.zh[i]}`
 }
 
-/** 「2026-10-16（周五）」的日期部分。 */
+/** 「2026-10-16（周五）」的日期部分；英文界面下写成「2026-10-16 (Fri)」。 */
 function dayText(y, mo, d) {
-  return `${y}-${mo}-${d}（周${weekdayOf(y, mo, d)}）`
+  const sep = isEn.value ? [' (', ')'] : ['（', '）']
+  return `${y}-${mo}-${d}${sep[0]}${weekdayOf(y, mo, d)}${sep[1]}`
 }
 
 /** 带时间的日期：「2026-10-16（周五）14:00」；只给日期就是「2026-10-16（周五）」。 */
@@ -266,7 +272,7 @@ export async function uploadFile(url, file) {
   const data = await resp.json().catch(() => ({}))
   if (resp.status === 401) sessionExpired()
   if (!resp.ok) {
-    const detail = typeof data.detail === 'string' ? data.detail : `上传失败(${resp.status})`
+    const detail = typeof data.detail === 'string' ? t(data.detail) : t('上传失败({0})', [resp.status])
     if (data.detail?.code === 'TRAINEE_READONLY') ElMessage.warning(data.detail.message)
     else ElMessage.error(detail)
     throw new Error(detail)

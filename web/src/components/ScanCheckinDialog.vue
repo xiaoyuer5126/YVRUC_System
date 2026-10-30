@@ -7,7 +7,7 @@
      扫到的码不显示、也不留痕——它是别人现场出示的凭据，落地页那边同样只出
      二维码不出码文。 -->
 <template>
-  <el-dialog :model-value="modelValue" :title="'扫码' + action"
+  <el-dialog :model-value="modelValue" :title="t('扫码{0}', [action])"
              :width="narrow ? '92vw' : '340px'"
              :close-on-click-modal="false" @close="close">
     <div class="scan-box">
@@ -15,9 +15,7 @@
       <video ref="videoEl" muted playsinline></video>
       <div v-if="hint" class="scan-hint" :class="{ bad: bad }">{{ hint }}</div>
     </div>
-    <p class="dim" style="text-align:center;margin:8px 0 0">
-      把现场二维码放进框里，扫到自动完成
-    </p>
+    <p class="dim" style="text-align:center;margin:8px 0 0">{{ t('把现场二维码放进框里，扫到自动完成') }}</p>
   </el-dialog>
 </template>
 
@@ -27,6 +25,7 @@ import { BrowserQRCodeReader } from '@zxing/browser'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useNarrow } from '../composables/useNarrow'
+import { t } from '../i18n'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -63,15 +62,15 @@ function onResult(result) {
   if (!result || busy) return
   const code = codeOf(result.getText())
   if (!code) return                                  // 扫到别的二维码：当没看见
-  const t = Date.now()
-  if (code === last.code && t - last.at < 5000) return
-  last = { code, at: t }
+  const now = Date.now()
+  if (code === last.code && now - last.at < 5000) return
+  last = { code, at: now }
   submit(code)
 }
 
 async function submit(code) {
   busy = true
-  hint.value = `正在${props.action}…`
+  hint.value = t('正在{0}…', [props.action])
   bad.value = false
   try {
     // skipErrorToast：失败的话得留在框里（见下），再弹一个同样内容的飘字是重复
@@ -85,14 +84,14 @@ async function submit(code) {
     // 提示留在框里而不是弹个飘字：飘字三秒就没了，人举着手机对着同一张码
     // 反复扫，却不知道为什么一直不成功。现场那张码正在换，所以不停扫描，
     // 让人直接扫下一张。
-    fail(e.message || `${props.action}失败`)
+    fail(e.message || t('{0}失败', [props.action]))
     busy = false
   }
 }
 
 async function start() {
   bad.value = false
-  hint.value = '正在打开摄像头…'
+  hint.value = t('正在打开摄像头…')
   // 上一次是签完到关掉的（那时 busy 是 true，锁着不再收扫到的码）。不在这里
   // 解开，签退就永远扫不动：摄像头开着、画面在动、扫多少次都没反应。
   busy = false
@@ -105,8 +104,8 @@ async function start() {
   } catch (e) {
     // 打不开的原因就那么几种：没授权、没有摄像头、或者不是 https
     fail(!window.isSecureContext
-      ? '摄像头只能在 https 下使用，请用平台正式网址打开'
-      : `打不开摄像头：${e?.message || e}`)
+      ? t('摄像头只能在 https 下使用，请用平台正式网址打开')
+      : t('打不开摄像头：{0}', [e?.message || e]))
   }
 }
 

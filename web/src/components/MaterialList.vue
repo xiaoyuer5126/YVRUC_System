@@ -9,7 +9,7 @@
       <el-icon><Link v-if="m.kind === 'link'" /><Document v-else /></el-icon>
       <span class="name">{{ m.title }}</span>
       <span v-if="m.kind === 'file'" class="size">{{ sizeText(m.size) }}</span>
-      <span v-else class="size">外部链接</span>
+      <span v-else class="size">{{ t('外部链接') }}</span>
     </a>
   </div>
 </template>
@@ -17,6 +17,7 @@
 <script setup>
 import { Document, Link } from '@element-plus/icons-vue'
 import { download } from '../api'
+import { t } from '../i18n'
 
 defineProps({
   items: { type: Array, default: () => [] },

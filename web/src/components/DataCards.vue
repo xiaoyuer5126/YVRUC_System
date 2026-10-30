@@ -11,8 +11,8 @@
   <div v-if="rows.length" class="cards">
     <div v-if="pickableRows.length" class="pick-bar">
       <el-checkbox :model-value="allPicked" :indeterminate="somePicked"
-                   @change="toggleAll">全选</el-checkbox>
-      <span class="dim">已选 {{ picked.length }} / {{ pickableRows.length }}</span>
+                   @change="toggleAll">{{ t('全选') }}</el-checkbox>
+      <span class="dim">{{ t('已选 {0} / {1}', [picked.length, pickableRows.length]) }}</span>
     </div>
     <div v-for="(row, i) in rows" :key="keyOf(row) ?? i" class="card"
          :class="{ picked: isPicked(row) }">
@@ -40,11 +40,12 @@
       <div v-if="$slots.actions" class="card-actions"><slot name="actions" :row="row" /></div>
     </div>
   </div>
-  <el-empty v-else :description="empty" />
+  <el-empty v-else :description="empty || t('暂无数据')" />
 </template>
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { t } from '../i18n'
 
 const props = defineProps({
   rows: { type: Array, default: () => [] },
@@ -53,7 +54,7 @@ const props = defineProps({
   titleKey: { type: String, default: 'name' },
   /** 行标识，多选靠它认人；与 fields 一样支持 'user.id' 这种路径 */
   rowKey: { type: String, default: 'id' },
-  empty: { type: String, default: '暂无数据' },
+  empty: { type: String, default: '' },
   /** 布尔：整表可选；函数：按行判 (row) => 布尔，与 el-table 同义 */
   selectable: { type: [Boolean, Function], default: false },
 })

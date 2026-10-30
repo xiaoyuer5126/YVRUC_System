@@ -1,17 +1,18 @@
 <template>
   <div class="scan-wrap">
+    <LocaleSwitch float />
     <el-card class="scan-card" v-loading="loading">
       <template v-if="task">
         <div class="ok-icon" v-if="done">✓</div>
         <h2 style="margin:8px 0 4px">{{ task.activity_title }}</h2>
-        <p class="dim" style="margin:0 0 12px">志愿服装 · {{ task.action_label }}码</p>
+        <p class="dim" style="margin:0 0 12px">{{ t('志愿服装 · {0} 码', [task.action_label]) }}</p>
 
         <template v-if="!done">
           <el-descriptions :column="1" border size="small">
-            <el-descriptions-item label="当前状态">
+            <el-descriptions-item :label="t('当前状态')">
               <el-tag size="small" :type="stateType">{{ stateText }}</el-tag>
             </el-descriptions-item>
-            <el-descriptions-item v-if="task.taken_at" label="领取时间">
+            <el-descriptions-item v-if="task.taken_at" :label="t('领取时间')">
               {{ fmtDT(task.taken_at) }}
             </el-descriptions-item>
           </el-descriptions>
@@ -22,16 +23,16 @@
             {{ actionText }}
           </el-button>
         </template>
-        <el-result v-else icon="success" :title="`${task.action_label}成功`"
+        <el-result v-else icon="success" :title="t('{0}成功', [task.action_label])"
                    :sub-title="doneMsg">
           <template #extra>
-            <el-button @click="$router.push('/my')">查看我的报名</el-button>
+            <el-button @click="$router.push('/my')">{{ t('查看我的报名') }}</el-button>
           </template>
         </el-result>
 
       </template>
-      <el-result v-else-if="!loading" icon="warning" title="此码无效"
-                 sub-title="请确认扫的是本次活动的服装码" />
+      <el-result v-else-if="!loading" icon="warning" :title="t('此码无效')"
+                 :sub-title="t('请确认扫的是本次活动的服装码')" />
     </el-card>
   </div>
 </template>
@@ -42,6 +43,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { auth } from '../store'
+import { t } from '../i18n'
+import LocaleSwitch from '../components/LocaleSwitch.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -67,11 +70,11 @@ const TEXT = {
   not_required: '您在本活动的服装不由平台统一发放',
   no_record: '没有您的领取记录',
 }
-const stateText = computed(() => TEXT[state.value] || '')
+const stateText = computed(() => t(TEXT[state.value] || ''))
 const stateType = computed(() => (
   { ready: 'success', taken: 'warning', returned: 'info' }[state.value] || 'danger'))
 const canAct = computed(() => state.value === 'ready')
-const actionText = computed(() => (
+const actionText = computed(() => t(
   task.value?.action === 'take' ? '领取服装' : '归还服装'))
 
 async function load() {

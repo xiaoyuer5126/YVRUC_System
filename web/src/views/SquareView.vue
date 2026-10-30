@@ -1,12 +1,12 @@
 <template>
   <div class="page">
     <div class="hero">
-      <h2>活动广场</h2>
-      <p>即选即得——报名即生效；报名后筛选——由负责人筛选录取</p>
+      <h2>{{ t('活动广场') }}</h2>
+      <p>{{ t('即选即得——报名即生效；报名后筛选——由负责人筛选录取') }}</p>
     </div>
 
     <div class="filters">
-      <el-input v-model="f.q" placeholder="搜索活动名称" clearable
+      <el-input v-model="f.q" :placeholder="t('搜索活动名称')" clearable
                 style="width:220px" @input="onSearch" @clear="reload" />
       <!-- 筛选都用「全部」那一项（空串）回到不筛，不带清除按钮：清除会把值置成
            undefined，拼进查询串就成了 mode=undefined。empty-values 让空串照常
@@ -14,18 +14,18 @@
       <!-- 按时段筛选时只看报名中的，状态下拉暂时用不上 -->
       <el-select v-model="f.status" :empty-values="[null, undefined]" :disabled="slots.length > 0"
                  style="width:140px" @change="reload">
-        <el-option v-for="s in STATUS_OPTIONS" :key="s.value"
+        <el-option v-for="s in statusOptions" :key="s.value"
                    :value="s.value" :label="s.label" />
       </el-select>
       <el-select v-model="f.mode" :empty-values="[null, undefined]"
                  style="width:150px" @change="reload">
-        <el-option value="" label="全部类型" />
-        <el-option value="instant" label="即选即得" />
-        <el-option value="screened" label="报名后筛选" />
+        <el-option value="" :label="t('全部类型')" />
+        <el-option value="instant" :label="t('即选即得')" />
+        <el-option value="screened" :label="t('报名后筛选')" />
       </el-select>
       <el-select v-model="f.organizer" :empty-values="[null, undefined]" filterable
                  style="width:220px" @change="reload">
-        <el-option value="" label="全部组织单位" />
+        <el-option value="" :label="t('全部组织单位')" />
         <el-option v-for="o in organizers" :key="o" :value="o" :label="o" />
       </el-select>
       <!-- 日期范围与可参与时段都收进浮窗：电脑点按钮弹出，手机从底部抽屉展开 -->
@@ -41,7 +41,7 @@
       <el-button v-else class="slot-trigger" :type="slotActive ? 'primary' : ''" plain
                  @click="slotOpen = true">{{ slotButtonText }}</el-button>
       <el-drawer v-if="narrow" v-model="slotOpen" direction="btt" size="85%"
-                 title="按时段筛选" append-to-body>
+                 :title="t('按时段筛选')" append-to-body>
         <SlotPicker v-model:start="f.start" v-model:end="f.end" v-model:slots="slots" />
         <div class="slot-apply">
           <el-button type="primary" class="slot-apply-btn" @click="slotOpen = false">
@@ -61,35 +61,28 @@
           <el-tag size="small" :type="statusType(a.display_status)">{{ a.display_label }}</el-tag>
         </div>
         <div class="card-title">
-          <el-tag v-if="a.urgent" size="small" type="danger" effect="dark" class="urgent">急招</el-tag>
+          <el-tag v-if="a.urgent" size="small" type="danger" effect="dark" class="urgent">{{ t('急招') }}</el-tag>
           {{ a.title }}
         </div>
         <div v-if="a.organizer_text" class="meta-row"><el-icon><OfficeBuilding /></el-icon>{{ a.organizer_text }}</div>
         <div class="meta-row"><el-icon><Clock /></el-icon>{{ a.time_text }}</div>
-        <div class="meta-row"><el-icon><Location /></el-icon>{{ a.location || '待定' }}</div>
+        <div class="meta-row"><el-icon><Location /></el-icon>{{ a.location || t('待定') }}</div>
         <!-- 按时段筛出来的：要来好几段、或者钟点只是个大概的，卡片上先说一声 -->
         <div v-if="a.slot_note && (a.slot_note.periods > 1 || a.slot_note.flexible)" class="meta-row">
-          <el-tag v-if="a.slot_note.periods > 1" size="small" type="warning" effect="plain">
-            场次共 {{ a.slot_note.periods }} 段，需每段到场
-          </el-tag>
-          <el-tag v-if="a.slot_note.flexible" size="small" type="success" effect="plain">时间灵活</el-tag>
+          <el-tag v-if="a.slot_note.periods > 1" size="small" type="warning" effect="plain">{{ t('场次共 {0} 段，需每段到场', [a.slot_note.periods]) }}</el-tag>
+          <el-tag v-if="a.slot_note.flexible" size="small" type="success" effect="plain">{{ t('时间灵活') }}</el-tag>
         </div>
         <div class="meta-row">
           <!-- 还没开始报名：这张卡上最要紧的信息是「还有多久」，不是剩几个名额 -->
-          <span v-if="a.opensAt" class="countdown-row">
-            距报名开始
-            <el-countdown :value="a.opensAt" :format="fmt(a)" @finish="unlock(a)" />
+          <span v-if="a.opensAt" class="countdown-row">{{ t('距报名开始') }}<el-countdown :value="a.opensAt" :format="fmt(a)" @finish="unlock(a)" />
           </span>
-          <span v-else-if="a.status === 'published'">
-            剩余 <b style="color:var(--el-color-primary)">{{ a.remaining }}</b> / {{ a.total_capacity }}
+          <span v-else-if="a.status === 'published'">{{ t('剩余') }}<b style="color:var(--el-color-primary)">{{ a.remaining }}</b> / {{ a.total_capacity }}
           </span>
-          <span v-else class="dim">已报名 {{ a.total_enrolled }} 人</span>
+          <span v-else class="dim">{{ t('已报名 {0} 人', [a.total_enrolled]) }}</span>
         </div>
       </div>
     </div>
-    <el-empty v-else
-              :description="slots.length ? '所选时段里没有报名中的活动，换几格试试'
-                : f.start || f.end ? '这个时间范围内没有活动，换个范围试试' : '暂无活动'" />
+    <el-empty v-else :description="emptyText" />
 
     <el-pagination v-if="total > f.size" class="pager" layout="prev, pager, next"
                    background :current-page="f.page" :page-size="f.size"
@@ -104,6 +97,7 @@ import { api, fmtDTShort } from '../api'
 import SlotPicker from '../components/SlotPicker.vue'
 import { MODE_COLORS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
+import { t } from '../i18n'
 
 const route = useRoute()
 const router = useRouter()
@@ -116,6 +110,21 @@ const STATUS_OPTIONS = [
   { value: 'ongoing', label: '进行中' },
   { value: 'finished', label: '已结束' },
 ]
+// 选项文字跟着语言走：切语言时下拉里的字也得跟着换
+const statusOptions = computed(() => STATUS_OPTIONS.map(o => ({ ...o, label: t(o.label) })))
+const emptyText = computed(() => (slots.value.length
+  ? t('所选时段里没有报名中的活动，换几格试试')
+  : (f.start || f.end ? t('这个时间范围内没有活动，换个范围试试') : t('暂无活动'))))
+const slotButtonText = computed(() => {
+  let text = t('按时段筛选')
+  if (f.start && f.end) text += ` · ${fmtDTShort(f.start)}～${fmtDTShort(f.end)}`
+  if (slots.value.length) text += t('（{0} 格）', [slots.value.length])
+  return text
+})
+const slotApplyText = computed(() => {
+  if (slots.value.length) return t('看所选时段的活动')
+  return f.start || f.end ? t('看这几天的活动') : t('查看全部活动')
+})
 // 筛选条件同步到地址栏：点进活动再返回，筛到第几页还在
 const f = reactive({
   q: route.query.q || '',
@@ -131,19 +140,7 @@ const f = reactive({
 // 按可参与时段筛选选中的格子：不进地址栏，离开广场就不记了
 const slotOpen = ref(false)
 const slots = ref([])
-const hasDates = computed(() => Boolean(f.start || f.end))   // vuecheck: script-only，模板经 slotActive 读它
-const slotActive = computed(() => hasDates.value || slots.value.length > 0)
-const slotButtonText = computed(() => {
-  let text = '按时段筛选'
-  // 按钮窄，日期省掉星期保住年份
-  if (f.start && f.end) text += ` · ${fmtDTShort(f.start)}～${fmtDTShort(f.end)}`
-  if (slots.value.length) text += `（${slots.value.length} 格）`
-  return text
-})
-const slotApplyText = computed(() => (
-  slots.value.length ? '看所选时段的活动'
-    : hasDates.value ? '看这几天的活动' : '看全部活动'
-))
+const slotActive = computed(() => Boolean(f.start || f.end) || slots.value.length > 0)
 let slotTimer = null
 watch([slots, () => f.start, () => f.end], () => {
   clearTimeout(slotTimer)
@@ -171,7 +168,7 @@ const statusType = code => STATUS_TYPES[code] || 'info'
  * 不直接 parse reg_start——客户端时钟偏一点，倒计时就跟服务端对不上。
  * 也不能写在模板里现算：每重绘一次目标就往后挪一截。
  */
-const fmt = a => (a.opens_in > 86400 ? 'DD 天 HH:mm:ss' : 'HH:mm:ss')
+const fmt = a => (a.opens_in > 86400 ? t('DD 天 HH:mm:ss') : 'HH:mm:ss')
 
 /** 倒计时归零：卡片就地翻成「报名中」，不等重拉（道理同活动详情页的 unlock）。
  * 列表随后错开 0–3 秒再拉，几百人别在同一毫秒一起刷。 */
@@ -182,7 +179,7 @@ function unlock(a) {
   a.opensAt = 0
   if (a.display_status === 'upcoming') {
     a.display_status = 'published'
-    a.display_label = '报名中'
+    a.display_label = t('报名中')
   }
   clearTimeout(refreshTimer)
   refreshTimer = setTimeout(load, Math.random() * 3000)

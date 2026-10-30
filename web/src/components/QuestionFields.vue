@@ -13,7 +13,7 @@
     <div v-else class="file-row">
       <el-upload :show-file-list="false" :http-request="uploader(q)">
         <el-button size="small" plain :loading="uploading === q.id">
-          {{ files[q.id] ? '重新上传' : '上传文件' }}
+          {{ t(files[q.id] ? '重新上传' : '上传文件') }}
         </el-button>
       </el-upload>
       <span v-if="files[q.id]" class="dim">{{ files[q.id] }}</span>
@@ -25,6 +25,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { uploadTo } from '../composables/uploadImage'
+import { t } from '../i18n'
 
 const props = defineProps({
   questions: { type: Array, default: () => [] },
@@ -66,7 +67,7 @@ async function uploadFile(q, file) {
     answers.value[q.id] = d.id
     files[q.id] = d.title
   } catch (e) {
-    ElMessage.error(e.message || '上传失败')
+    ElMessage.error(e.message || t('上传失败'))
   } finally { uploading.value = '' }
 }
 
@@ -77,7 +78,7 @@ function collect() {
   const out = {}
   for (const q of shown.value) {
     const v = answers.value[q.id]
-    if (q.required && isEmpty(v)) return { error: `「${q.title}」为必填` }
+    if (q.required && isEmpty(v)) return { error: t('「{0}」为必填', [q.title]) }
     if (!isEmpty(v)) out[q.id] = v
   }
   return { answers: out }

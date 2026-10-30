@@ -1,11 +1,11 @@
 <template>
   <div class="page">
     <div class="page-head">
-      <h2>消息通知</h2>
-      <el-button @click="readAll" :disabled="!unread">全部已读</el-button>
+      <h2>{{ t('消息通知') }}</h2>
+      <el-button @click="readAll" :disabled="!unread">{{ t('全部已读') }}</el-button>
     </div>
     <el-alert v-if="pendingAck" type="warning" :closable="false" show-icon class="ack-alert"
-              :title="`有 ${pendingAck} 条通知需要您签收`" />
+              :title="t('有 {0} 条通知需要您签收', [pendingAck])" />
     <!-- 电脑端两栏，新消息在前（从左到右、从上到下）；同一行的两张卡片等高，
          上下间距才处处一样 -->
     <div v-if="items.length" class="msg-list">
@@ -18,7 +18,7 @@
           <el-tag v-if="n.need_ack" size="small"
                   :type="n.acked_at ? 'success' : 'danger'"
                   :effect="n.acked_at ? 'plain' : 'dark'">
-            {{ n.acked_at ? '已签收' : '需签收' }}
+            {{ t(n.acked_at ? '已签收' : '需签收') }}
           </el-tag>
           <b class="msg-title">{{ n.title }}</b>
           <span class="dim time">{{ fmtDT(n.created_at) }}</span>
@@ -33,19 +33,19 @@
         </div>
         <div v-if="n.need_ack" class="ack-bar" @click.stop>
           <template v-if="n.acked_at">
-            <span class="dim">已于 {{ fmtDT(n.acked_at) }} 签收</span>
+            <span class="dim">{{ t('已于 {0} 签收', [fmtDT(n.acked_at)]) }}</span>
           </template>
           <template v-else>
             <el-button type="primary" size="small" :loading="acking === n.id"
-                       @click="ack(n)">我已知悉</el-button>
+                       @click="ack(n)">{{ t('我已知悉') }}</el-button>
           </template>
         </div>
       </el-card>
     </div>
     <div v-if="hasMore" class="more">
-      <el-button :loading="loadingMore" @click="loadMore">加载更多</el-button>
+      <el-button :loading="loadingMore" @click="loadMore">{{ t('加载更多') }}</el-button>
     </div>
-    <el-empty v-if="!items.length" description="暂无消息" />
+    <el-empty v-if="!items.length" :description="t('暂无消息')" />
   </div>
 </template>
 
@@ -56,6 +56,7 @@ import { ElMessage } from 'element-plus'
 import { Paperclip } from '@element-plus/icons-vue'
 import { api, download, fmtDT } from '../api'
 import { unreadState } from '../store'
+import { t } from '../i18n'
 
 const router = useRouter()
 
@@ -102,7 +103,7 @@ const TAGS = {
   custom: ['info', '通知'],
 }
 const tagType = k => TAGS[k]?.[0] || 'info'
-const tagLabel = k => TAGS[k]?.[1] || '通知'
+const tagLabel = k => t(TAGS[k]?.[1] || '通知')
 
 function apply(d) {
   unreadState.count = d.unread
@@ -142,7 +143,7 @@ async function ack(n) {
   acking.value = n.id
   try {
     const d = await api.post(`/api/me/notifications/${n.id}/ack`)
-    ElMessage.success('签收成功')
+    ElMessage.success(t('签收成功'))
     if (!n.read) unreadState.count = Math.max(0, unreadState.count - 1)
     n.read = true
     n.acked_at = d.acked_at
