@@ -2,7 +2,7 @@
 import { h } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { auth, clearAuth } from './store'
-import { t } from './i18n'
+import { locale, t } from './i18n'
 import { router } from './router'
 
 /** 令牌失效了：清掉本地登录态，把人送回登录页，登完再回到刚才那一页。
@@ -135,7 +135,7 @@ export async function withConflictConfirm(send, { title = '时间冲突', ask = 
   }
 }
 
-const WEEKDAYS = '日一二三四五六'
+const WEEKDAYS = { zh: '日一二三四五六', en: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] }
 
 /** 后台给的本地时间串拆成 [年, 月, 日, 时, 分, 秒]，取不到的位是 null。
  *
@@ -148,14 +148,16 @@ function splitDT(iso) {
   return [m[1], m[2], m[3], m[4] ?? null, m[5] ?? null, m[6] ?? null]
 }
 
-/** 「周五」。按年月日算，用 Date.UTC 取星期，不受本地时区影响。 */
+/** 星期几。按年月日算，用 Date.UTC 取星期，不受本地时区影响。 */
 function weekdayOf(y, mo, d) {
-  return WEEKDAYS[new Date(Date.UTC(+y, +mo - 1, +d)).getUTCDay()]
+  const i = new Date(Date.UTC(+y, +mo - 1, +d)).getUTCDay()
+  return locale.value === 'en' ? WEEKDAYS.en[i] : `周${WEEKDAYS.zh[i]}`
 }
 
-/** 「2026-10-16（周五）」的日期部分。 */
+/** 「2026-10-16（周五）」的日期部分；英文界面下写成「2026-10-16 (Fri)」。 */
 function dayText(y, mo, d) {
-  return `${y}-${mo}-${d}（周${weekdayOf(y, mo, d)}）`
+  const sep = locale.value === 'en' ? [' (', ')'] : ['（', '）']
+  return `${y}-${mo}-${d}${sep[0]}${weekdayOf(y, mo, d)}${sep[1]}`
 }
 
 /** 带时间的日期：「2026-10-16（周五）14:00」；只给日期就是「2026-10-16（周五）」。 */

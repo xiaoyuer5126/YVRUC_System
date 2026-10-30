@@ -31,12 +31,12 @@
       <el-menu-item index="/audit"><el-icon><Document /></el-icon>审计日志</el-menu-item>
     </template>
     <template v-else>
-      <div class="menu-cap">志愿服务</div>
-      <el-menu-item index="/square"><el-icon><Compass /></el-icon>活动广场</el-menu-item>
-      <el-menu-item index="/my"><el-icon><Tickets /></el-icon>我的报名</el-menu-item>
-      <el-menu-item index="/hours"><el-icon><Clock /></el-icon>志愿时长</el-menu-item>
+      <div class="menu-cap">{{ t('志愿服务') }}</div>
+      <el-menu-item index="/square"><el-icon><Compass /></el-icon>{{ t('活动广场') }}</el-menu-item>
+      <el-menu-item index="/my"><el-icon><Tickets /></el-icon>{{ t('我的报名') }}</el-menu-item>
+      <el-menu-item index="/hours"><el-icon><Clock /></el-icon>{{ t('志愿时长') }}</el-menu-item>
     </template>
-    <el-menu-item index="/messages"><el-icon><Bell /></el-icon>消息通知</el-menu-item>
+    <el-menu-item index="/messages"><el-icon><Bell /></el-icon>{{ t('消息通知') }}</el-menu-item>
   </el-menu>
 </template>
 
@@ -46,6 +46,7 @@ import {
   Promotion, Stamp, Tickets, UserFilled,
 } from '@element-plus/icons-vue'
 import { auth, canSee, ROLE_LABELS } from '../store'
+import { t } from '../i18n'
 
 defineProps({ active: { type: String, default: '' } })
 defineEmits(['navigate'])
