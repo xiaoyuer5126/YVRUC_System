@@ -88,8 +88,8 @@ def test_删场次后按剩下的重算(client, db, open_group):
     db.delete(other)
     db.commit()
     act = _reload(db, act.id)
-    assert act.shift_last_start == g.end_time - timedelta(hours=3)
-    assert act.shift_last_end == g.end_time
+    assert act.shift_last_start == g.periods[0].start_time
+    assert act.shift_last_end == g.periods[0].end_time
 
 
 def test_培训彩排不算进跨度(client, db, open_group):
