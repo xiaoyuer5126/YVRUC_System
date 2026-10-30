@@ -57,12 +57,14 @@ def _editing_paused() -> HTTPException:
 def _in_scope(column, mine: str):
     """招募范围的某一项：空列表 = 不限，否则本人这一项要在列表里。
 
-    三个范围列是 JSON，没有包含运算符可用；按序列化文本匹配带引号的完整值，
-    和角色那边原来的做法一致，不会误命中别的值。
+    三个范围列是 JSON 不是 JSONB，没有包含运算符；转成 JSONB 再比。
+    不能按序列化文本 LIKE：JSON 里中文是 \\u 转义的，匹配不上。
     """
-    from sqlalchemy import Text, cast
-    return or_(func.json_array_length(column) == 0,
-               cast(column, Text).like(f'%"{mine}"%'))
+    from sqlalchemy import cast
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    col = cast(column, JSONB)
+    return or_(col == [], col.contains([mine]))
 
 
 def _involved_activity_ids(db: OrmSession, user: User) -> set[str]:
