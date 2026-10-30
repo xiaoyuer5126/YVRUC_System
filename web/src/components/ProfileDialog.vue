@@ -1,7 +1,7 @@
 <!-- 完善/修改个人信息。顶栏菜单和报名被拦截时都用它，校验只有这一份。 -->
 <template>
   <el-dialog v-model="visible"
-             :title="forced ? '完善个人信息' : '修改个人信息'"
+             :title="t(forced ? '完善个人信息' : '修改个人信息')"
              width="460px"
              :close-on-click-modal="false"
              :close-on-press-escape="!forced"
@@ -34,7 +34,7 @@
         </div>
         <div v-else style="width:100%">
           <el-input v-model="form.id_card" maxlength="18"
-                    :placeholder="hasIdOnFile ? '输入新的 18 位身份证号' : '18 位身份证号'" />
+                    :placeholder="t(hasIdOnFile ? '输入新的 18 位身份证号' : '18 位身份证号')" />
           <el-button v-if="hasIdOnFile" link size="small"
                      @click="editingId = false; form.id_card = ''">{{ t('取消修改') }}</el-button>
         </div>
@@ -121,8 +121,8 @@ async function save() {
     localStorage.setItem('yvruc_user', JSON.stringify(d.user))
     const wasForced = forced.value
     visible.value = false
-    ElMessage.success(wasForced ? '个人资料已完善，现在可以报名志愿活动了'
-                                : '个人信息已更新')
+    ElMessage.success(t(wasForced ? '个人资料已完善，现在可以报名志愿活动了'
+                                  : '个人信息已更新'))
     emit('saved', d.user)
   } finally {
     saving.value = false

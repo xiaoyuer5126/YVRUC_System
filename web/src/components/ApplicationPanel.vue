@@ -38,7 +38,7 @@
           <div v-for="g in openShifts" :key="g.id" class="shift-block">
             <div class="shift-name">
               {{ g.name }} · {{ g.time_text }}
-              <span class="dim">（{{ g.location || act.location || '地点待定' }}）</span>
+              <span class="dim">{{ t('（{0}）', [g.location || act.location || t('地点待定')]) }}</span>
               <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain" style="margin-left:4px">{{ t('时间灵活·可多次签到') }}</el-tag>
             </div>
             <!-- 截止后统一分配的场次只能勾「待分配」：真实岗位由负责人分 -->
@@ -51,7 +51,7 @@
               </el-checkbox>
               <span v-if="g.locked || p.list_locked" class="dim">{{ t('名单已锁定') }}</span>
               <span v-else-if="g.enroll_paused || p.enroll_paused" class="dim">{{ t('暂停报名') }}</span>
-              <span v-else-if="p.eligible === false" class="dim">{{ t('不符合条件： {0}', [p.ineligible_reason]) }}</span>
+              <span v-else-if="p.eligible === false" class="dim">{{ t('不符合条件：{0}', [p.ineligible_reason]) }}</span>
             </div>
           </div>
         </el-checkbox-group>
@@ -91,7 +91,7 @@
           {{ q.title }}
           <el-tag size="small" effect="plain" style="margin:0 8px">{{ q.kind_label }}</el-tag>
           <el-tag v-if="q.required" size="small" type="warning" effect="plain">{{ t('必填') }}</el-tag>
-          <div v-if="q.options?.length" class="dim">{{ t('选项： {0}', [q.options.join(' / ')]) }}</div>
+          <div v-if="q.options?.length" class="dim">{{ t('选项：{0}', [q.options.join(' / ')]) }}</div>
         </li>
       </ol>
       <el-empty v-else :description="t('还没有设置题目')" />
@@ -116,9 +116,9 @@ const open = computed(() => props.act.status === 'published' && !props.act.opens
                             && !props.act.editing
                             && props.act.shifts.some(g => g.enroll_open))
 const closedText = computed(() => {
-  if (props.act.editing) return '负责人正在调整安排，报名暂停中'
-  if (props.act.status !== 'published') return '不在报名期'
-  return props.act.opens_in ? '未开始报名' : '报名已截止'
+  if (props.act.editing) return t('负责人正在调整安排，报名暂停中')
+  if (props.act.status !== 'published') return t('不在报名期')
+  return props.act.opens_in ? t('未开始报名') : t('报名已截止')
 })
 
 const form = reactive({ position_ids: [], answers: {}, leader_willing: false,
@@ -144,7 +144,7 @@ function answerText(q) {
   const v = mine.value.answers[q.id]
   if (v === undefined || v === '' || (Array.isArray(v) && !v.length)) return '—'
   if (Array.isArray(v)) return v.join('、')
-  return q.kind === 'file' ? '已上传' : v
+  return q.kind === 'file' ? t('已上传') : v
 }
 
 /** 第一步交完岗位，问后端这几个岗位该答哪些题。 */
@@ -170,7 +170,7 @@ async function submit() {
       { position_ids: form.position_ids, answers,
         leader_willing: form.leader_willing,
         allow_reassign: form.allow_reassign, confirm_conflict: confirm }),
-    { ask: '仍要提交申请？' })
+    { ask: t('仍要提交申请？') })
     if (!d) return
     ElMessage.success(d.message)
     emit('changed')

@@ -37,7 +37,7 @@
           <span class="dim"> {{ row.position.location }}</span>
         </div>
         <div v-else-if="row.status === 'enrolled'" class="dim">{{ t('岗位待分配') }}</div>
-        <div v-if="row.is_leader && row.leader_task" class="dim">{{ t('组长任务： {0}', [row.leader_task]) }}</div>
+        <div v-if="row.is_leader && row.leader_task" class="dim">{{ t('组长任务：{0}', [row.leader_task]) }}</div>
         <div class="mob-line">
           <span class="dim">{{ t('岗位调剂：') }}</span>
           <template v-if="isActive(row) && !row.shift.attached">
@@ -57,7 +57,7 @@
         <div class="mob-actions">
           <!-- 手机上签到是这一页最主要的动作，所以排在第一个 -->
           <el-button v-if="signAction(row)" size="small"
-                     :type="signAction(row) === '签退' ? 'warning' : 'primary'"
+                     :type="isCheckout(row) ? 'warning' : 'primary'"
                      @click="openCheckin(row)">{{ signAction(row) }}</el-button>
           <el-button v-if="row.contact_group_qr" size="small" plain
                      @click="showQr(row)">{{ t('查看联络群') }}</el-button>
@@ -111,7 +111,7 @@
             <span v-if="row.position.location" class="dim"> {{ row.position.location }}</span>
           </div>
           <div v-else-if="row.status === 'enrolled'" class="dim">{{ t('岗位待分配') }}</div>
-          <div v-if="row.is_leader && row.leader_task" class="dim">{{ t('组长任务： {0}', [row.leader_task]) }}</div>
+          <div v-if="row.is_leader && row.leader_task" class="dim">{{ t('组长任务：{0}', [row.leader_task]) }}</div>
         </template>
       </el-table-column>
       <el-table-column :label="t('岗位调剂')" width="120">
@@ -147,7 +147,7 @@
         <template #default="{ row }">
           <div class="btn-row">
             <el-button v-if="signAction(row)" size="small"
-                       :type="signAction(row) === '签退' ? 'warning' : 'primary'"
+                       :type="isCheckout(row) ? 'warning' : 'primary'"
                        @click="openCheckin(row)">{{ signAction(row) }}</el-button>
             <el-button v-if="row.contact_group_qr" size="small" plain
                        @click="showQr(row)">{{ t('查看联络群') }}</el-button>
@@ -174,9 +174,10 @@
 
     <ScanCheckinDialog v-model="scanVisible" :action="scanLabel" @done="onChecked" />
 
-    <el-dialog v-model="teamDlg.visible" :title="'组员名单 · ' + (teamDlg.data?.scope || '')"
+    <el-dialog v-model="teamDlg.visible" :title="t('组员名单 · {0}', [teamDlg.data?.scope || ''])"
                width="560">
-      <p class="dim">{{ t('{0} · {1} 。 联系方式仅用于本次活动的联络，请勿他用；', [teamDlg.data?.activity_title, teamDlg.data?.shift_name]) }}<b>{{ t('每次查看都会记入审计') }}</b>。
+      <p class="dim">
+        {{ t('{0} · {1}。联系方式仅用于本次活动的联络，请勿他用；', [teamDlg.data?.activity_title, teamDlg.data?.shift_name]) }}<b>{{ t('每次查看都会记入审计') }}</b>。
       </p>
       <DataCards v-if="narrow" :rows="teamDlg.data?.members || []" title-key="name"
                  :fields="[{ key: 'position', label: '岗位' },
@@ -222,7 +223,7 @@ const loading = ref(false)
 const teamDlg = ref({ visible: false, data: null })
 const groupQr = ref(null)
 const scanVisible = ref(false)
-const scanLabel = ref('签到')   // 这轮扫的是签到还是签退，弹窗照着它说话
+const scanLabel = ref(t('签到'))   // 这轮扫的是签到还是签退，弹窗照着它说话
 // 取坐标要几秒，连点两下就是两次签到请求。界面上的「正在定位…」由 geoCheckin 自己弹
 const geoBusy = ref(false)   // vuecheck: script-only
 
@@ -234,8 +235,14 @@ const geoBusy = ref(false)   // vuecheck: script-only
 function signAction(row) {
   const c = row.checkin
   if (!c?.open || row.status !== 'enrolled') return ''
-  if (!row.checked_in) return '签到'
-  return row.checkout_at ? '' : '签退'
+  if (!row.checked_in) return t('签到')
+  return row.checkout_at ? '' : t('签退')
+}
+
+// 这一下点的是签退：按钮换成警告色，弹窗标题也跟着说签退
+function isCheckout(row) {
+  const c = row.checkin
+  return Boolean(c?.open && row.checked_in && !row.checkout_at && row.status === 'enrolled')
 }
 
 /** 还要等几分钟才能签退；不在保护窗里就返回 0。
@@ -255,10 +262,10 @@ function checkoutWait(row) {
 // 现场有码可扫，有的岗位（散在校门口、看台这种）就只能靠定位。
 function openCheckin(row) {
   const wait = checkoutWait(row)
-  if (wait) return ElMessage.warning(`刚签到不久，${wait} 分钟后才能签退`)
+  if (wait) return ElMessage.warning(t('刚签到不久，{0} 分钟后才能签退', [wait]))
   if (row.checkin?.method === 'geo') return geoCheckin(row)
   // 这一轮是签到还是签退：弹窗的标题和「正在…」都得跟着走
-  scanLabel.value = signAction(row) || '签到'
+  scanLabel.value = signAction(row) || t('签到')
   scanVisible.value = true
 }
 
@@ -301,12 +308,12 @@ async function geoCheckin(row) {
  *  其余的是服务端返回的 (api 层已经把 detail 放进 message)。 */
 function geoFailText(e) {
   if (typeof e?.code === 'number') {
-    if (!window.isSecureContext) return '定位只能在 https 下使用，请用平台正式网址打开'
-    if (e.code === 1) return '您没有允许定位，无法签到；请在浏览器设置里允许后重试'
-    if (e.code === 2) return '取不到定位，请到空旷处或窗边重试'
-    if (e.code === 3) return '定位超时，请重试'
+    if (!window.isSecureContext) return t('定位只能在 https 下使用，请用平台正式网址打开')
+    if (e.code === 1) return t('您没有允许定位，无法签到；请在浏览器设置里允许后重试')
+    if (e.code === 2) return t('取不到定位，请到空旷处或窗边重试')
+    if (e.code === 3) return t('定位超时，请重试')
   }
-  return e?.message || '签到失败'
+  return e?.message || t('签到失败')
 }
 
 // 成功提示由扫码弹窗自己发（带服务端的原话），这里只管把状态刷成已到岗
@@ -340,7 +347,7 @@ async function load() {
 onMounted(load)
 
 async function withdraw(row) {
-  await ElMessageBox.confirm('撤回后可以重新申请。确定撤回吗？', '撤回申请', { type: 'warning' })
+  await ElMessageBox.confirm(t('撤回后可以重新申请。确定撤回吗？'), t('撤回申请'), { type: 'warning' })
   await api.del(`/api/activities/${row.activity.id}/apply`)
   ElMessage.success(t('已撤回申请'))
   load()
@@ -356,7 +363,7 @@ async function toggleReassign(row) {
   const d = await api.patch(`/api/activities/enrollments/${row.id}/reassign-pref`,
                             { allow_reassign: !row.allow_reassign })
   row.allow_reassign = d.allow_reassign
-  ElMessage.success(d.allow_reassign ? '已设为接受岗位调剂' : '已设为不接受岗位调剂')
+  ElMessage.success(t(d.allow_reassign ? '已设为接受岗位调剂' : '已设为不接受岗位调剂'))
 }
 
 async function cancel(row) {

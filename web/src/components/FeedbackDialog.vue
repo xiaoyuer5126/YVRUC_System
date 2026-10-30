@@ -57,8 +57,8 @@
             <div class="text">{{ f.content }}</div>
             <FeedbackShots :images="f.images" />
             <div v-if="f.status === 'handled'" class="reply">
-              <div class="dim">{{ t('管理员回复（ {0} ）', [fmtDT(f.handled_at)]) }}</div>
-              <div class="text">{{ f.reply || '已处理' }}</div>
+              <div class="dim">{{ t('管理员回复（{0}）', [fmtDT(f.handled_at)]) }}</div>
+              <div class="text">{{ f.reply || t('已处理') }}</div>
             </div>
           </div>
         </div>
@@ -125,13 +125,13 @@ function onPick(file) {
   const okType = ['image/png', 'image/jpeg', 'image/webp'].includes(file.raw?.type)
   const okSize = file.size <= MAX_MB * 1024 * 1024
   if (!okType || !okSize) {
-    ElMessage.warning(okType ? `单张截图不能超过 ${MAX_MB}MB` : '截图只支持 png/jpg/webp 格式')
+    ElMessage.warning(okType ? t('单张截图不能超过 {0} MB', [MAX_MB]) : t('截图只支持 png/jpg/webp 格式'))
     files.value = files.value.filter(f => f.uid !== file.uid)
   }
 }
 
 function onExceed() {
-  ElMessage.warning(`截图最多 ${MAX_IMAGES} 张`)
+  ElMessage.warning(t('截图最多 {0} 张', [MAX_IMAGES]))
 }
 
 async function submit() {
@@ -148,7 +148,7 @@ async function submit() {
     })
     const data = await resp.json().catch(() => ({}))
     if (!resp.ok) {
-      ElMessage.error(typeof data.detail === 'string' ? data.detail : `提交失败(${resp.status})`)
+      ElMessage.error(typeof data.detail === 'string' ? data.detail : t('提交失败({0})', [resp.status]))
       return
     }
     ElMessage.success(t('已提交，感谢反馈！处理后会通过站内消息通知你'))

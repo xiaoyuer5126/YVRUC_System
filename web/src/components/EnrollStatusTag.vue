@@ -3,7 +3,7 @@
   <el-tag v-if="row.status === 'applied'" type="primary">{{ t('待筛选') }}</el-tag>
   <el-tag v-else-if="row.status === 'enrolled'" type="success">{{ t('已报名') }}</el-tag>
   <el-tag v-else-if="row.status === 'waitlisted'" type="warning">
-    {{ row.waitlist_position ? `候补第 ${row.waitlist_position} 位` : '候补中' }}
+    {{ row.waitlist_position ? t('候补第 {0} 位', [row.waitlist_position]) : t('候补中') }}
   </el-tag>
   <el-countdown v-else-if="row.status === 'pending_confirm'" format="HH:mm:ss"
                 :value="deadlineTs">
@@ -24,7 +24,7 @@ const CANCEL_LABELS = {
   rejected: '未录取',
 }
 
-const cancelLabel = computed(() => CANCEL_LABELS[props.row.cancel_type] || '已取消')
+const cancelLabel = computed(() => t(CANCEL_LABELS[props.row.cancel_type] || '已取消'))
 
 const deadlineTs = computed(() => {
   const d = props.row.confirm_deadline

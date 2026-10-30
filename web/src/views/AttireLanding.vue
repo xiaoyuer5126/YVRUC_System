@@ -22,7 +22,7 @@
             {{ actionText }}
           </el-button>
         </template>
-        <el-result v-else icon="success" :title="`${task.action_label}成功`"
+        <el-result v-else icon="success" :title="t('{0}成功', [task.action_label])"
                    :sub-title="doneMsg">
           <template #extra>
             <el-button @click="$router.push('/my')">{{ t('查看我的报名') }}</el-button>
@@ -31,7 +31,7 @@
 
       </template>
       <el-result v-else-if="!loading" icon="warning" :title="t('此码无效')"
-                 sub-title="请确认扫的是本次活动的服装码" />
+                 :sub-title="t('请确认扫的是本次活动的服装码')" />
     </el-card>
   </div>
 </template>
@@ -42,6 +42,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { auth } from '../store'
+import { t } from '../i18n'
 
 const route = useRoute()
 const router = useRouter()
@@ -67,11 +68,11 @@ const TEXT = {
   not_required: '您在本活动的服装不由平台统一发放',
   no_record: '没有您的领取记录',
 }
-const stateText = computed(() => TEXT[state.value] || '')
+const stateText = computed(() => t(TEXT[state.value] || ''))
 const stateType = computed(() => (
   { ready: 'success', taken: 'warning', returned: 'info' }[state.value] || 'danger'))
 const canAct = computed(() => state.value === 'ready')
-const actionText = computed(() => (
+const actionText = computed(() => t(
   task.value?.action === 'take' ? '领取服装' : '归还服装'))
 
 async function load() {

@@ -2,7 +2,7 @@
   <!-- 首次加载还没有内容可显示，放个占位；数据在时刷新走原来的刷新条，不闪 -->
   <div v-if="loading && !act" class="page" v-loading="loading" style="min-height:300px"></div>
   <div v-else-if="loadError" class="page">
-    <el-result icon="error" :title="'加载失败：' + loadError">
+    <el-result icon="error" :title="t('加载失败：{0}', [loadError])">
       <template #extra>
         <el-button type="primary" @click="load">{{ t('重试') }}</el-button>
         <el-button @click="$router.push('/square')">{{ t('回活动广场') }}</el-button>
@@ -10,7 +10,7 @@
     </el-result>
   </div>
   <div class="page" v-else-if="act">
-    <el-page-header @back="goBack" :title="'返回'">
+    <el-page-header @back="goBack" :title="t('返回')">
       <!-- 窄屏下标题与标签分行：三样东西挤一行会被折成三行 -->
       <template #content>
         <span class="hd-title">{{ act.title }}</span>
@@ -34,7 +34,7 @@
               {{ actTime.text }}<span v-if="actTime.more" class="dim">{{ t('（具体时段见下方场次）') }}</span>
             </el-descriptions-item>
             <el-descriptions-item :label="t('活动地点')">
-              {{ act.location || '待定' }}
+              {{ act.location || t('待定') }}
               <!-- 高德的网页版标点：手机上装了高德会问要不要打开 App，没装就在
                    网页里看路线。coordinate=wgs84 让高德自己换算——我们存的是
                    天地图/GPS 那一套坐标，直接当高德坐标用会偏几百米 -->
@@ -79,7 +79,7 @@
 
         <!-- 审批人看的是同一个页面，只是活动还没公开；不另做一套只读页 -->
         <el-alert v-if="act.review_preview" type="info" show-icon :closable="false"
-                  :title="`审批预览 · 当前状态「${act.status_label}」`"
+                  :title="t('审批预览 · 当前状态「{0}」', [t(act.status_label)])"
                   :description="t('当前作为审批人查看活动的完整安排。通过或驳回请回「活动审批」页操作。')" />
 
         <el-alert v-if="act.editing" type="warning" show-icon :closable="false"
@@ -120,7 +120,7 @@
          按钮在这之前是灰的（enroll_open 由后端算，含 reg_start）。 -->
     <div v-if="opensAt && !isTeacher" class="reg-countdown">
       <el-icon><Clock /></el-icon>
-      <span>{{ t('报名于') }}<b>{{ fmtDT(act.reg_start) }}</b>{{ t('开始，还有') }}</span>
+      <span>{{ t('报名于') }} <b>{{ fmtDT(act.reg_start) }}</b> {{ t('开始，还有') }}</span>
       <el-countdown :value="opensAt" :format="openFormat" @finish="unlock" />
       <span class="dim">{{ t('时间到自动开放，不用刷新页面') }}</span>
     </div>
@@ -167,7 +167,7 @@
             <span class="dim">{{ x.p.enrolled }}/{{ x.p.quota }}</span>
           </div>
           <div class="m-pos-meta dim">
-            {{ x.p.location || x.g.location || act.location || '地点待定' }}
+            {{ x.p.location || x.g.location || act.location || t('地点待定') }}
             <template v-if="x.p.requirement_desc !== '不限'"> · {{ x.p.requirement_desc }}</template>
           </div>
           <div v-if="!isTeacher" class="m-pos-act-wrap">
@@ -250,10 +250,10 @@
               <span class="dim">{{ s.enrolled }}/{{ s.quota }}</span>
             </div>
             <div v-if="s.is_placeholder" class="m-pos-meta dim">
-              {{ g.note || '报名只锁定时段；岗位在报名截止后统一分配。' }}
+              {{ g.note || t('报名只锁定时段；岗位在报名截止后统一分配。') }}
             </div>
             <div v-else class="m-pos-meta dim">
-              {{ s.location || act.location || '地点待定' }}
+              {{ s.location || act.location || t('地点待定') }}
               <template v-if="s.requirement_desc !== '不限'"> · {{ s.requirement_desc }}</template>
               <template v-if="s.needs_leader">{{ t('· 设组长') }}</template>
               <template v-if="s.attire !== 'none'">{{ t('· 服装 {0}', [s.attire_label]) }}</template>
@@ -321,11 +321,11 @@
         <!-- 已报名：把自己岗位的培训内容与材料摊开 -->
         <el-card v-if="myPosition(g)" shadow="never" class="mine-card">
           <div class="mine-title">{{ t('您的岗位：') }}<b>{{ myPosition(g).name }}</b>
-            <span class="dim">{{ myPosition(g).location || act.location || '地点待定' }}</span>
+            <span class="dim">{{ myPosition(g).location || act.location || t('地点待定') }}</span>
           </div>
           <p v-if="myPosition(g).leader_name" class="mine-note">
             <b>{{ t('组长：') }}</b>{{ myPosition(g).leader_name }}
-            <template v-if="myPosition(g).leader_contact">{{ t('（手机 {0} · 微信 {1} ）', [myPosition(g).leader_contact.phone || '—', myPosition(g).leader_contact.wechat || '—']) }}</template>
+            <template v-if="myPosition(g).leader_contact">{{ t('（手机 {0} · 微信 {1}）', [myPosition(g).leader_contact.phone || '—', myPosition(g).leader_contact.wechat || '—']) }}</template>
           </p>
           <p v-if="myPosition(g).training_note" class="mine-note">
             <b>{{ t('培训内容：') }}</b>{{ myPosition(g).training_note }}
@@ -341,7 +341,7 @@
             <b>{{ t('志愿服装：') }}</b>{{ myPosition(g).attire_text }}
           </p>
           <p v-if="myPosition(g).pay_text" class="mine-note">
-            <b>{{ t('报酬方式：') }}</b>{{ t('{0} （核准时长时再选）', [myPosition(g).pay_text]) }}</p>
+            <b>{{ t('报酬方式：') }}</b>{{ t('{0}（核准时长时再选）', [myPosition(g).pay_text]) }}</p>
           <MaterialList v-if="myPosition(g).attachments?.length"
                         :items="myPosition(g).attachments" :label="t('本岗位学习材料')" />
         </el-card>
@@ -465,13 +465,13 @@
               <!-- 已报名：把自己岗位的培训内容与材料直接摊开 -->
               <el-card v-if="myPosition(g)" shadow="never" class="mine-card">
                 <div class="mine-title">{{ t('您的岗位：') }}<b>{{ myPosition(g).name }}</b>
-                  <span class="dim">{{ myPosition(g).location || act.location || '地点待定' }}</span>
+                  <span class="dim">{{ myPosition(g).location || act.location || t('地点待定') }}</span>
                   <el-tag v-if="g.my_enrollment?.status === 'waitlisted'"
                           size="small" type="warning" effect="plain">{{ t('候补第 {0} 位', [g.my_enrollment.waitlist_position]) }}</el-tag>
                 </div>
                 <p v-if="myPosition(g).leader_name" class="mine-note">
                   <b>{{ t('组长：') }}</b>{{ myPosition(g).leader_name }}
-                  <template v-if="myPosition(g).leader_contact">{{ t('（手机 {0} · 微信 {1} ）', [myPosition(g).leader_contact.phone || '—', myPosition(g).leader_contact.wechat || '—']) }}</template>
+                  <template v-if="myPosition(g).leader_contact">{{ t('（手机 {0} · 微信 {1}）', [myPosition(g).leader_contact.phone || '—', myPosition(g).leader_contact.wechat || '—']) }}</template>
                 </p>
                 <p v-if="myPosition(g).training_note" class="mine-note">
                   <b>{{ t('培训内容：') }}</b>{{ myPosition(g).training_note }}
@@ -486,7 +486,7 @@
                   <b>{{ t('志愿服装：') }}</b>{{ myPosition(g).attire_text }}
                 </p>
                 <p v-if="myPosition(g).pay_text" class="mine-note">
-                  <b>{{ t('报酬方式：') }}</b>{{ t('{0} （核准时长时再选）', [myPosition(g).pay_text]) }}</p>
+                  <b>{{ t('报酬方式：') }}</b>{{ t('{0}（核准时长时再选）', [myPosition(g).pay_text]) }}</p>
                 <MaterialList v-if="myPosition(g).attachments?.length"
                               :items="myPosition(g).attachments"
                               :label="t('本岗位学习材料（请提前学习）')" />
@@ -545,7 +545,7 @@
           <b style="font-size:13px">{{ l.actor_name }}</b>
           <span class="dim"> {{ l.summary }}</span>
           <div v-for="(ch, i) in l.changes" :key="i" class="dim" style="margin-top:4px">
-            {{ ch.label }}：{{ ch.old || '空' }} → <b style="color:var(--el-color-primary)">{{ ch.new || '空' }}</b>
+            {{ t('{0}：{1} → {2}', [ch.label, ch.old || t('空'), '']) }}<b style="color:var(--el-color-primary)">{{ ch.new || t('空') }}</b>
           </div>
         </el-timeline-item>
       </el-timeline>
@@ -553,7 +553,7 @@
     </el-dialog>
 
     <!-- 场次详情 -->
-    <el-dialog v-model="groupDetail.visible" :title="(groupDetail.data?.name || '') + ' · 场次详情'" width="480">
+    <el-dialog v-model="groupDetail.visible" :title="t('{0} · 场次详情', [groupDetail.data?.name || ''])" width="480">
       <el-descriptions v-if="groupDetail.data" :column="1" border>
         <el-descriptions-item :label="t('岗位模式')">{{ groupDetail.data.mode_label }}</el-descriptions-item>
         <el-descriptions-item :label="t('时间')">{{ groupDetail.data.time_text }}</el-descriptions-item>
@@ -566,18 +566,18 @@
     </el-dialog>
 
     <!-- 岗位详情 -->
-    <el-dialog v-model="stationDetail.visible" :title="(stationDetail.data?.name || '') + ' · 岗位详情'" width="480">
+    <el-dialog v-model="stationDetail.visible" :title="t('{0} · 岗位详情', [stationDetail.data?.name || ''])" width="480">
       <el-descriptions v-if="stationDetail.data" :column="1" border>
         <el-descriptions-item :label="t('所属场次')">{{ stationDetail.groupName }}（{{ stationDetail.groupTime }}）</el-descriptions-item>
-        <el-descriptions-item :label="t('服务地点')">{{ stationDetail.data.location || act.location || '待定' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('服务地点')">{{ stationDetail.data.location || act.location || t('待定') }}</el-descriptions-item>
         <el-descriptions-item :label="t('名额')">
           {{ stationDetail.data.enrolled }}/{{ stationDetail.data.quota }}
         </el-descriptions-item>
         <el-descriptions-item :label="t('条件要求')">{{ stationDetail.data.requirement_desc }}</el-descriptions-item>
         <el-descriptions-item :label="t('服务任务')"><span class="pre">{{ stationDetail.data.service_task || '—' }}</span></el-descriptions-item>
         <el-descriptions-item :label="t('岗位要求')"><span class="pre">{{ stationDetail.data.position_requirement || '—' }}</span></el-descriptions-item>
-        <el-descriptions-item :label="t('志愿服装')">{{ stationDetail.data.attire_text || '不需要' }}</el-descriptions-item>
-        <el-descriptions-item :label="t('报酬方式')">{{ stationDetail.data.pay_text || '志愿时长' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('志愿服装')">{{ stationDetail.data.attire_text || t('不需要') }}</el-descriptions-item>
+        <el-descriptions-item :label="t('报酬方式')">{{ stationDetail.data.pay_text || t('志愿时长') }}</el-descriptions-item>
         <el-descriptions-item :label="t('培训内容')">
           <template v-if="stationDetail.data.training_visible">
             <span class="pre">{{ stationDetail.data.training_note || '—' }}</span>
@@ -595,7 +595,7 @@
             <span class="dim">{{ t('本岗位设组长，报名后可见组长信息') }}</span>
           </template>
           <template v-else>
-            {{ stationDetail.data.leader_name || '尚未任命' }}
+            {{ stationDetail.data.leader_name || t('尚未任命') }}
             <div v-if="stationDetail.data.leader_contact" class="dim">{{ t('手机 {0} · 微信 {1}', [stationDetail.data.leader_contact.phone || '—', stationDetail.data.leader_contact.wechat || '—']) }}</div>
             <div v-else-if="stationDetail.data.leader_name" class="dim">{{ t('报名本岗位所在的组后可见联系方式') }}</div>
           </template>
@@ -616,13 +616,13 @@
           </el-descriptions-item>
           <el-descriptions-item :label="t('岗位')">
             {{ enrollDlg.position ? enrollDlg.position.name
-               : (enrollDlg.shift.mode === 'assign' ? '将由负责人统一筛选分配' : '无需选择') }}
+               : t(enrollDlg.shift.mode === 'assign' ? '将由负责人统一筛选分配' : '无需选择') }}
           </el-descriptions-item>
           <el-descriptions-item v-if="enrollExtra.length" :label="t('还需参加')">
             <div v-for="s in enrollExtra" :key="s.id" style="line-height:1.6">
               {{ s.kind_label }}：{{ s.time_text }}
-              <span class="dim">{{ s.location || act.location || '地点待定' }}</span>
-              <div v-if="s.note" class="dim">{{ t('备注： {0}', [s.note]) }}</div>
+              <span class="dim">{{ s.location || act.location || t('地点待定') }}</span>
+              <div v-if="s.note" class="dim">{{ t('备注：{0}', [s.note]) }}</div>
             </div>
           </el-descriptions-item>
           <el-descriptions-item :label="t('结果')">
@@ -706,7 +706,7 @@ const enrollDlg = ref({ visible: false, shift: null, position: null,
  * 拒掉，但那是白排一轮队。
  */
 const queued = ref({})       // vuecheck: script-only（模板经 queuedShift / queuedHere 读它）
-const QUEUE_NOTE = '排队中，请勿刷新'
+const QUEUE_NOTE = computed(() => t('排队中，请勿刷新'))
 const queuedShift = g => g.id in queued.value
 const queuedHere = (g, s) => queued.value[g.id] === (s ? s.id : '')
 // 挂了适用岗位的题只问报这个岗位的人；适用校区、学段按个人信息里填的算，
@@ -754,7 +754,7 @@ const navUrl = computed(() => {
 // 老师不参与志愿报名：安排照看，报名、申请入口都不给
 const isTeacher = computed(() => auth.user?.user_type === 'teacher')
 // 选岗规则：各场次通用，全部场次（或岗位）列完之后说一次
-const PICK_RULE = '同场次只能选一个岗位，候补将在名额释放后转正，转正后需在确认窗口内确认（2 小时，夜间 23:00–8:00 不计时）。'
+const PICK_RULE = computed(() => t('同场次只能选一个岗位，候补将在名额释放后转正，转正后需在确认窗口内确认（2 小时，夜间 23:00–8:00 不计时）。'))
 const showPickRule = computed(() =>
   !isTeacher.value && act.value?.shifts.some(g => g.positions.length))
 
@@ -776,10 +776,10 @@ async function toggleExcuse(s) {
   let reason = ''
   try {
     const r = await ElMessageBox.prompt(
-      `「${s.name}」${s.time_text}。请说明无法参加的原因，负责人会看到。`,
-      `${s.kind_label}请假`,
-      { inputPlaceholder: '如：与专业课时间冲突', inputPattern: /.{2,}/,
-        inputErrorMessage: '请简单写一下原因',
+      t('「{0}」{1}。请说明无法参加的原因，负责人会看到。', [s.name, s.time_text]),
+      t('{0}请假', [s.kind_label]),
+      { inputPlaceholder: t('如：与专业课时间冲突'), inputPattern: /.{2,}/,
+        inputErrorMessage: t('请简单写一下原因'),
         confirmButtonText: t('提交请假'), cancelButtonText: t('再想想') })
     reason = r.value
   } catch { return }
@@ -814,7 +814,7 @@ const actTime = computed(() => {
     for (const p of g.periods || []) spans.set(`${p.start_time}|${p.end_time}`, p.text)
   }
   if (spans.size === 1) return { text: [...spans.values()][0], more: false }
-  return { text: act.value?.time_text || '待定', more: spans.size > 1 }
+  return { text: act.value?.time_text || t('待定'), more: spans.size > 1 }
 })
 
 // —— 按岗位看 ——
@@ -863,7 +863,7 @@ function canCancel(g) {
 /** 「开场前 N 小时锁定名单」：还没锁、会自动锁的场次给志愿者提个醒 */
 function lockText(g) {
   if (g.locked || !g.lock_hours || g.kind !== 'service') return ''
-  return `开场前 ${g.lock_hours} 小时锁定名单`
+  return t('开场前 {0} 小时锁定名单', [g.lock_hours])
 }
 /** 我报的这一场（或我的岗位）名单是否已锁定：此时退出会被记录 */
 function myListLocked(g) {
@@ -886,21 +886,21 @@ function openFor(g) {
          && act.value.recruit_mode !== 'screened'
 }
 function closedText(g) {
-  if (act.value?.recruit_mode === 'screened') return '录取后由负责人安排'
-  if (act.value?.status !== 'published') return '不在报名期'
-  if (act.value.opens_in) return '未开始报名'
-  return g.started ? '本场已开场' : '本场报名已截止'
+  if (act.value?.recruit_mode === 'screened') return t('录取后由负责人安排')
+  if (act.value?.status !== 'published') return t('不在报名期')
+  if (act.value.opens_in) return t('未开始报名')
+  return g.started ? t('本场已开场') : t('本场报名已截止')
 }
 function enrollText(g) {
   if (g.mode === 'pick') {
-    return g.remaining > 0 ? '选中' : '加入候补'
+    return t(g.remaining > 0 ? '选中' : '加入候补')
   }
-  return g.remaining > 0 ? '立即报名' : '加入候补'
+  return t(g.remaining > 0 ? '立即报名' : '加入候补')
 }
 // 岗位的报名按钮（PositionAction）在几种视角里共用，动作和状态从这里给
 provide('enrollCtx', { deadlineTs, confirmPromo, cancelEnroll, canCancel, queuedShift,
                        queuedHere, openFor, doEnroll, enrollText, closedText, paused,
-                       QUEUE_NOTE })
+                       queueNote: QUEUE_NOTE })
 
 function showGroupDetail(g) {
   groupDetail.value = { visible: true, data: g }
@@ -919,7 +919,7 @@ function showStationDetail(g, s) {
  */
 const opensAt = ref(0)
 const openFormat = computed(
-  () => (act.value?.opens_in > 86400 ? 'DD 天 HH:mm:ss' : 'HH:mm:ss'))
+  () => (act.value?.opens_in > 86400 ? t('DD 天 HH:mm:ss') : 'HH:mm:ss'))
 
 // 这份详情上次拉成功的时刻：报名、退选之后也走 load 重拉，刷新条上的时刻跟着走
 const loadedAt = ref(0)
@@ -955,7 +955,7 @@ async function load() {
   } catch (e) {
     if (e.status === 403) { blocked.value = e.message; return }
     // 已经有内容时刷新失败只弹一句，别把整页换成错误；还没有内容才占住整页
-    if (!act.value) loadError.value = e.message || '请稍后重试'
+    if (!act.value) loadError.value = e.message || t('请稍后重试')
     else ElMessage.error(e.message)
     return
   } finally {
@@ -998,7 +998,7 @@ function unlock() {
   a.opens_in_ms = 0
   if (a.display_status === 'upcoming') {
     a.display_status = 'published'
-    a.display_label = '报名中'
+    a.display_label = t('报名中')
   }
   for (const g of a.shifts || []) g.enroll_open = at <= g.closesAt
   clearTimeout(refreshTimer)
@@ -1039,7 +1039,7 @@ async function submitEnroll() {
         allow_reassign: allowReassign, leader_willing: leaderWilling, answers,
         confirm_conflict: confirm },
       { skipErrorToast: true }),
-    { title: `「${g.name}」时间冲突`, ask: '仍要报名？', activityId: act.value.id })
+    { title: t('「{0}」时间冲突', [g.name]), ask: t('仍要报名？'), activityId: act.value.id })
     if (!d) return
     ElMessage.success(`「${g.name}」${d.message}`)
     groupQr.value.open({ qr: d.contact_group_qr, title: act.value.title })
@@ -1048,8 +1048,8 @@ async function submitEnroll() {
     if (e?.message?.includes('完善个人信息')) {
       try {
         await ElMessageBox.alert(
-          '报名前需先完善个人信息，便于后期联络与志愿时长录入。',
-          '需先完善个人信息',
+          t('报名前需先完善个人信息，便于后期联络与志愿时长录入。'),
+          t('需先完善个人信息'),
           { type: 'warning', confirmButtonText: t('去完善') })
       } catch { /* 关闭提示也照样打开表单 */ }
       openProfileDialog()
@@ -1072,7 +1072,7 @@ async function toggleReassign(g) {
     `/api/activities/enrollments/${enr.enrollment_id}/reassign-pref`,
     { allow_reassign: !enr.allow_reassign })
   enr.allow_reassign = d.allow_reassign
-  ElMessage.success(d.allow_reassign ? '已设为接受岗位调剂' : '已设为不接受岗位调剂')
+  ElMessage.success(t(d.allow_reassign ? '已设为接受岗位调剂' : '已设为不接受岗位调剂'))
 }
 
 async function cancelEnroll(g) {

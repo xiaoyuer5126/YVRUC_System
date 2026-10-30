@@ -10,13 +10,13 @@
     </el-tag>
     <b v-if="full">{{ s.name }}</b>
     <span>{{ s.time_text }}</span>
-    <span class="dim">{{ s.location || location || '地点待定' }}</span>
+    <span class="dim">{{ s.location || location || t('地点待定') }}</span>
     <span v-if="full" class="dim">{{ t(s.hours_mode === 'none' ? '不计时长' : '计入志愿时长') }}</span>
     <span v-if="s.hours_mode === 'fixed'" class="dim">{{ t('到场请扫码签到') }}</span>
-    <span v-if="s.note" class="dim">{{ t('备注： {0}', [s.note]) }}</span>
+    <span v-if="s.note" class="dim">{{ t('备注：{0}', [s.note]) }}</span>
     <template v-if="s.mine">
       <el-tag size="small" :type="s.excused ? 'info' : 'primary'" effect="plain">
-        {{ s.excused ? '已请假' : (full ? '您需要参加' : '要参加') }}
+        {{ t(s.excused ? '已请假' : (full ? '您需要参加' : '要参加')) }}
       </el-tag>
       <el-button size="small" link :type="s.excused ? 'primary' : 'warning'"
                  @click="emit('excuse', s)">

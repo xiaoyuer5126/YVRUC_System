@@ -14,7 +14,7 @@
       </template>
       <template v-else>
         <el-tag :type="mine.status === 'waitlisted' ? 'warning' : 'success'" size="small">
-          {{ mine.status === 'waitlisted' ? `候补第 ${mine.waitlist_position} 位` : '已报名' }}
+          {{ mine.status === 'waitlisted' ? t('候补第 {0} 位', [mine.waitlist_position]) : t('已报名') }}
         </el-tag>
         <el-button v-if="ctx.canCancel(g)" size="small" type="danger" plain
                    :disabled="ctx.paused.value"
@@ -28,7 +28,7 @@
     <span v-else-if="g.my_enrollment" class="dim">{{ takenText }}</span>
     <el-button v-else-if="ctx.queuedShift(g)" size="small" disabled
                :loading="ctx.queuedHere(g, s)">
-      {{ ctx.queuedHere(g, s) ? '排队中…' : (s.remaining > 0 ? '选中' : '候补') }}
+      {{ ctx.queuedHere(g, s) ? t('排队中…') : t(s.remaining > 0 ? '选中' : '候补') }}
     </el-button>
     <el-button v-else-if="s.eligible === false" size="small" disabled>{{ t('不符合条件') }}</el-button>
     <el-button v-else-if="g.locked || s.list_locked" size="small" disabled>{{ t('名单已锁定') }}</el-button>
@@ -43,7 +43,7 @@
   <div v-if="showWhy && s.eligible === false && !g.my_enrollment" class="pa-why">
     {{ s.ineligible_reason }}
   </div>
-  <div v-if="ctx.queuedHere(g, s)" class="pa-queue">{{ ctx.QUEUE_NOTE }}</div>
+  <div v-if="ctx.queuedHere(g, s)" class="pa-queue">{{ ctx.queueNote.value }}</div>
 </template>
 
 <script setup>
@@ -63,9 +63,9 @@ const ctx = inject('enrollCtx')
 const mine = computed(() => (props.g.my_enrollment
   && props.g.my_enrollment.position_id === props.s.id ? props.g.my_enrollment : null))
 const takenText = computed(() => {
-  if (!props.byRole) return '同场次只能选一个岗位'
+  if (!props.byRole) return t('同场次只能选一个岗位')
   const p = props.g.positions.find(x => x.id === props.g.my_enrollment.position_id)
-  return `这个时段已报了「${p ? p.display_name : '待分配'}」`
+  return t('这个时段已报了「{0}」', [p ? p.display_name : t('待分配')])
 })
 </script>
 

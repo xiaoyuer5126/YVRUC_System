@@ -67,7 +67,7 @@ async function uploadFile(q, file) {
     answers.value[q.id] = d.id
     files[q.id] = d.title
   } catch (e) {
-    ElMessage.error(e.message || '上传失败')
+    ElMessage.error(e.message || t('上传失败'))
   } finally { uploading.value = '' }
 }
 
@@ -78,7 +78,7 @@ function collect() {
   const out = {}
   for (const q of shown.value) {
     const v = answers.value[q.id]
-    if (q.required && isEmpty(v)) return { error: `「${q.title}」为必填` }
+    if (q.required && isEmpty(v)) return { error: t('「{0}」为必填', [q.title]) }
     if (!isEmpty(v)) out[q.id] = v
   }
   return { answers: out }

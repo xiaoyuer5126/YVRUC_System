@@ -27,8 +27,8 @@
     <el-card shadow="never">
       <template #header><b>{{ t('时长明细') }}</b><span class="dim" style="margin-left:8px">{{ t('由负责人核准，展开一行可看这次时长由哪几段组成。') }}</span></template>
       <DataCards v-if="narrow" :rows="data.records" title-key="activity_title"
-                 :fields="[{ key: 'created_at', label: '记录时间', format: fmtDT },
-                           { key: 'appeal_deadline', label: '申诉截止',
+                 :fields="[{ key: 'created_at', label: t('记录时间'), format: fmtDT },
+                           { key: 'appeal_deadline', label: t('申诉截止'),
                              format: fmtDT, hideEmpty: true }]"
                  :empty="t('参加活动并完成服务后，将会显示时长')">
         <template #extra="{ row }">
@@ -51,7 +51,7 @@
         </template>
       </DataCards>
       <el-table v-else :data="data.records"
-                empty-text="参加活动并完成服务后，将会显示时长">
+                :empty-text="t('参加活动并完成服务后，将会显示时长')">
         <el-table-column type="expand" width="30">
           <template #default="{ row }"><HoursParts :parts="row.parts" style="margin-left:30px" /></template>
         </el-table-column>
@@ -95,13 +95,13 @@
 
     <el-dialog v-model="cf.visible" :title="t('确认时长')" width="480"
                :close-on-click-modal="false">
-      <p class="dim">{{ t('「 {0} 」记', [cf.row?.activity_title]) }}<b>{{ cf.row?.hours }}</b>{{ t('小时。确认后到截止前仍可改。') }}</p>
+      <p class="dim">{{ t('「{0}」记 {1} 小时。确认后到截止前仍可改。', [cf.row?.activity_title, cf.row?.hours]) }}</p>
       <!-- 报酬方式按段选：只有岗位开了劳务的段能改，其余段只记志愿时长 -->
       <template v-if="cf.row?.pay_allowed">
         <div class="dim" style="margin-bottom:8px">{{ t('报酬方式（选劳务的段不记志愿时长）') }}</div>
         <div v-for="(p, i) in cf.parts" :key="i" class="seg">
           <div class="seg-head">
-            <span>{{ p.label || '手动补录' }}</span>
+            <span>{{ p.label || t('手动补录') }}</span>
             <span v-if="p.time" class="dim">{{ p.time }}</span>
             <span v-if="p.position" class="dim">{{ p.position }}</span>
             <b>{{ p.hours }}h</b>
@@ -124,7 +124,7 @@
 
     <el-dialog v-model="dlg.visible" :title="t('时长有异议')" width="480"
                :close-on-click-modal="false">
-      <p class="dim">{{ t('「 {0} 」当前记', [dlg.row?.activity_title]) }}<b>{{ dlg.row?.hours }}</b>{{ t('小时。 写清楚实际的到离时间，负责人核对后决定是否改。') }}</p>
+      <p class="dim">{{ t('「{0}」当前记 {1} 小时。写清楚实际的到离时间，负责人核对后决定是否改。', [dlg.row?.activity_title, dlg.row?.hours]) }}</p>
       <el-form label-width="88px">
         <el-form-item :label="t('申报时长')" required>
           <el-input-number v-model="dlg.hours" :min="0.5" :max="24" :step="0.5" />
@@ -173,7 +173,7 @@ const AppealTag = (props) => {
   if (!a) return null
   const tag = h(ElTag, { size: 'small', effect: 'plain', type: TYPES[a.status],
                          style: 'margin-left:6px' },
-                () => `申诉${a.label}`)
+                () => t('申诉{0}', [t(a.label)]))
   return a.reply
     ? h(ElTooltip, { content: a.reply, placement: 'top', popperClass: 'pre-tip' }, () => tag)
     : tag
@@ -194,7 +194,7 @@ async function submitConfirm() {
     const parts = c.parts.filter(p => p.pay_ok)
       .map(p => ({ shift_id: p.shift_id, position_id: p.position_id, reward: p.reward }))
     const d = await api.post(`/api/me/hours/${c.row.id}/confirm`, { parts })
-    ElMessage.success(`已确认：${d.reward_label}`)
+    ElMessage.success(t('已确认：{0}', [d.reward_label]))
     c.visible = false
     load()
   } finally { c.busy = false }
@@ -222,10 +222,10 @@ async function submitAppeal() {
 // 还没核准（本人只当参考）→ 已核准待表态 / 已确认 → 已锁定，账结了
 function stateOf(row) {
   const how = row.reward_label
-  if (row.locked) return { type: 'success', text: `已锁定 · ${how}` }
-  if (row.approved && row.confirmed_at) return { type: 'success', text: `已确认 · ${how}` }
-  if (row.approved) return { type: 'warning', text: '已核准请确认，如有异议请申诉' }
-  return { type: 'info', text: '待核准' }
+  if (row.locked) return { type: 'success', text: t('已锁定 · {0}', [how]) }
+  if (row.approved && row.confirmed_at) return { type: 'success', text: t('已确认 · {0}', [how]) }
+  if (row.approved) return { type: 'warning', text: t('已核准请确认，如有异议请申诉') }
+  return { type: 'info', text: t('待核准') }
 }
 </script>
 

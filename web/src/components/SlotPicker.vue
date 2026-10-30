@@ -17,9 +17,9 @@
                       :disabled-date="d => !!start && ymd(d) < start" @update:model-value="setEnd" />
     </div>
     <div class="slot-chips">
-      <el-check-tag v-for="(s, i) in SHORTCUTS" :key="s.text"
+      <el-check-tag v-for="(s, i) in SHORTCUTS" :key="s.key"
                     :checked="activeShortcut === i" @change="applyShortcut(i)">
-        {{ s.text }}
+        {{ t(s.key) }}
       </el-check-tag>
     </div>
 
@@ -35,18 +35,18 @@
     <div class="slot-grid" :style="gridStyle">
       <div />
       <button v-for="d in shownDays" :key="d.key" type="button" class="slot-day"
-              :class="{ full: dayFull(d) }" :aria-label="`${d.md} 周${d.wd}，全选或清空这一天`"
+              :class="{ full: dayFull(d) }" :aria-label="t('{0} 周{1}，全选或清空这一天', [d.md, d.wd])"
               @click="toggleDay(d)">
-        <span>{{ t('周 {0}', [d.wd]) }}</span>
+        <span>{{ t('周{0}', [d.wd]) }}</span>
         <span class="dim">{{ d.md }}</span>
       </button>
       <template v-for="h in HOURS" :key="h">
         <button type="button" class="slot-hour"
-                :aria-label="`${h} 点到 ${h + 2} 点，全选或清空这一行`"
+                :aria-label="t('{0} 点到 {1} 点，全选或清空这一行', [h, h + 2])"
                 @click="toggleRow(h)">{{ h }}–{{ h + 2 }}</button>
         <button v-for="d in shownDays" :key="d.key + h" type="button" class="slot-cell"
                 :class="{ on: picked.has(cellKey(d, h)) }" :disabled="past(d, h)"
-                :aria-label="`周${d.wd} ${h} 点到 ${h + 2} 点`"
+                :aria-label="t('周{0} {1} 点到 {2} 点', [d.wd, h, h + 2])"
                 @click="toggleCell(cellKey(d, h))" />
       </template>
     </div>
@@ -65,7 +65,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { t } from '../i18n'
+import { locale, t } from '../i18n'
 
 const props = defineProps({
   start: { type: String, default: '' },
@@ -75,7 +75,9 @@ const props = defineProps({
 const emit = defineEmits(['update:start', 'update:end', 'update:slots'])
 
 const HOURS = [8, 10, 12, 14, 16, 18, 20]
-const WD = ['日', '一', '二', '三', '四', '五', '六']
+// 星期几的缩写：中文用「一」「二」…，英文自己一列
+const WD = { zh: ['日', '一', '二', '三', '四', '五', '六'],
+             en: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] }
 // 一次最多能选的格子数，与后端 backend/routers/activities.py 的 SLOT_MAX 一致
 const SLOT_MAX = 245
 const PAGE = 7
@@ -92,11 +94,12 @@ function thisWeekend() {
   sun.setDate(sat.getDate() + 1)
   return [sat, sun]
 }
+// key 是中文原文，显示时经 t() 翻
 const SHORTCUTS = [
-  { text: '今天', value: () => [today(), today()] },
-  { text: '本周末', value: thisWeekend },
-  { text: '未来 7 天', value: () => [today(), plusDays(6)] },
-  { text: '未来 30 天', value: () => [today(), plusDays(29)] },
+  { key: '今天', value: () => [today(), today()] },
+  { key: '本周末', value: thisWeekend },
+  { key: '未来 7 天', value: () => [today(), plusDays(6)] },
+  { key: '未来 30 天', value: () => [today(), plusDays(29)] },
 ]
 
 // 起止要么都有、要么都空：只填一头时另一头先取同一天，清掉任一头就是不限
@@ -131,7 +134,8 @@ const days = computed(() => {   // vuecheck: script-only，模板经 shownDays �
   } else {
     for (let i = 0; i < PAGE; i++) out.push(plusDays(i))
   }
-  return out.map(d => ({ date: d, key: ymd(d), wd: WD[d.getDay()], md: mdOf(d) }))
+  const names = WD[locale.value] || WD.zh
+  return out.map(d => ({ date: d, key: ymd(d), wd: names[d.getDay()], md: mdOf(d) }))
 })
 const pages = computed(() => Math.max(1, Math.ceil(days.value.length / PAGE)))
 const page = ref(0)
@@ -177,7 +181,7 @@ function toggleKeys(keys) {
   const room = SLOT_MAX - s.size
   if (add.length > room) {
     add.slice(0, Math.max(room, 0)).forEach(k => s.add(k))
-    ElMessage.warning(`一次最多选 ${SLOT_MAX} 格`)
+    ElMessage.warning(t('一次最多选 {0} 格', [SLOT_MAX]))
   } else {
     add.forEach(k => s.add(k))
   }
