@@ -32,29 +32,45 @@ from ..perm import ensure_activity_manager, managed_activity_ids
 router = APIRouter(prefix="/api/staff", tags=["staff-admin"])
 
 
+def _audit_window(start: str, end: str) -> tuple[datetime, datetime]:
+    """审计日志的时间段：YYYY-MM-DD，end 含当天整天。
+
+    不填就是最近 7 天，最长 OPLOG_QUERY_MAX_DAYS 天——和操作日志页同一套规矩。
+    留痕只增不减，不限时间的话每翻一页都要数、排整张表。
+    """
+    try:
+        hi = parse_local_dt(end) + timedelta(days=1) if end.strip() else now()
+        lo = parse_local_dt(start) if start.strip() else hi - timedelta(days=7)
+    except ValueError as exc:
+        raise HTTPException(400, "时间格式不正确") from exc
+    if lo > hi:
+        raise HTTPException(400, "开始时间不能晚于结束时间")
+    if hi - lo > timedelta(days=config.OPLOG_QUERY_MAX_DAYS):
+        raise HTTPException(
+            400, f"一次最多查 {config.OPLOG_QUERY_MAX_DAYS} 天，请缩短时间段")
+    return lo, hi
+
+
 @router.get("/overview")
 def overview(start: str = "", end: str = "",
              db: OrmSession = Depends(db_session),
              user: User = Depends(require_council)):
-    """数据总览。start / end 是 YYYY-MM-DD、end 含当天整天，只改四张
+    """数据总览。start / end 是 YYYY-MM-DD、end 含当天整天，改四张
     「这段时间的量」的卡：活动总数、有效报名、累计时长、报名学院分布。
     此刻的状态卡（注册学生、报名中活动、候补中、24 小时签到、近 14 天报名趋势、
     最近操作留痕）与该区间无关，参数怎么改都不动。
     活动总数与累计时长都按活动结束时间（见 exporter.activities_ending_in）：
     一场活动整场算在它结束的那一侧，办完再补录的时长跟着活动走。
+
+    都不填就是不限：这是页面清空日期时的意思「看全站」。页面默认带最近
+    30 天，打开就走区间那条路，不去聚合建站以来的全部活动与时长。
     """
     t = now()
-    lo = hi = None
-    if start:
-        try:
-            lo = parse_local_dt(start)
-        except ValueError:
-            raise HTTPException(400, "开始时间格式不对") from None
-    if end:
-        try:
-            hi = parse_local_dt(end) + timedelta(days=1)
-        except ValueError:
-            raise HTTPException(400, "截止时间格式不对") from None
+    try:
+        lo = parse_local_dt(start) if start else None
+        hi = parse_local_dt(end) + timedelta(days=1) if end else None
+    except ValueError:
+        raise HTTPException(400, "时间格式不对") from None
     ranged = lo is not None or hi is not None
 
     total_students = (db.query(func.count(User.id))
@@ -183,11 +199,19 @@ def export_activities_summary(start: str = "", end: str = "",
 # ======================= 审计日志中心 =======================
 
 @router.get("/audit-logs")
-def audit_logs(activity_id: str = "", target_type: str = "",
+def audit_logs(start: str = "", end: str = "",
+               activity_id: str = "", target_type: str = "",
                visible: str = "", page: int = 1, size: int = 20,
                db: OrmSession = Depends(db_session),
                user: User = Depends(require_manager)):
-    q = db.query(AuditLog)
+    """审计日志，按时间倒序分页。
+
+    start / end 是 YYYY-MM-DD、end 含当天整天；不填就是最近 7 天，一次最多
+    查 31 天。留痕只增不减，不限时间的话每翻一页都要把整张表数一遍、排一遍。
+    """
+    lo, hi = _audit_window(start, end)
+    q = db.query(AuditLog).filter(AuditLog.created_at >= lo,
+                                  AuditLog.created_at < hi)
     # 部门成员是学习权限，违规接口不给他们看；留痕里的违规登记（含撤销）
     # 同样藏掉，其余留痕照常能看
     if user.is_trainee():
@@ -206,7 +230,9 @@ def audit_logs(activity_id: str = "", target_type: str = "",
     total = q.count()
     rows = (q.order_by(AuditLog.created_at.desc())
             .offset((page - 1) * size).limit(size).all())
-    return {"total": total, "page": page, "items": [l.out() for l in rows]}
+    return {"total": total, "page": page, "items": [l.out() for l in rows],
+            "start": f"{lo:%Y-%m-%d}", "end": f"{hi - timedelta(days=1):%Y-%m-%d}",
+            "max_days": config.OPLOG_QUERY_MAX_DAYS}
 
 
 # ======================= 用户与信用（管理员/青协） =======================

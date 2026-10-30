@@ -9,7 +9,7 @@ import math
 from collections import defaultdict
 from datetime import datetime
 
-from sqlalchemy import func
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -86,6 +86,45 @@ def display_status_of(status: str, reg_start, reg_end,
 
 # 管理端列表照原样显示的几种状态：各有各的按钮与下一步，分得开才点得对
 ADMIN_STATUSES = ("draft", "pending", "approved", "vb_pending", "completed")
+
+
+def display_status_expr(t=None):
+    """display_status_of 的 SQL 版，逐条对应。
+
+    广场要有几万场活动时把候选行全取回内存算状态、再在 Python 里切页，一个
+    请求就要扫全表。展示状态改成 SQL 表达式之后，筛选、排序、分页都能交给
+    数据库。两处口径必须一致，改了这里要同步改 display_status_of。
+    """
+    t = t or now()
+    started = or_(Activity.reg_start.is_(None), Activity.reg_start <= t)
+    recruiting = (
+        (Activity.status == "published") & started
+        & Activity.reg_end.isnot(None) & (t <= Activity.reg_end)
+        & Activity.shift_last_start.isnot(None)
+        & (t <= Activity.shift_last_start)
+    )
+    ongoing = (
+        Activity.shift_first_start.isnot(None)
+        & (Activity.shift_first_start <= t)
+        & (t <= Activity.shift_last_end)
+    )
+    closed = (
+        (Activity.status == "published") & Activity.reg_end.isnot(None)
+        & (t > Activity.reg_end)
+    )
+    return case(
+        (Activity.status.in_(("draft", "pending", "approved")), "draft"),
+        (Activity.status.in_(("finished", "vb_pending", "completed")),
+         "finished"),
+        (Activity.shift_last_end.isnot(None) & (t > Activity.shift_last_end),
+         "finished"),
+        (recruiting, "published"),
+        (ongoing, "ongoing"),
+        ((Activity.status == "published") & ~started, "upcoming"),
+        (closed, "closed"),
+        ((Activity.status == "published"), "published"),
+        else_="closed",
+    )
 
 
 def admin_status_of(status: str, reg_start, reg_end, span, last_start=None,

@@ -2138,8 +2138,10 @@ def manager_candidates(activity_id: str, db: OrmSession = Depends(db_session),
                 "post_label": u.post_label() if u.post(real=True) else "",
             } for u in sorted(picked, key=lambda x: x.student_id)]})
 
-    # 候选人按真实身份；「我是部长还是骨干」（下面的 user.post()）跟当前身份
-    qingxie = [u for u in db.query(User).all() if u.has_role("qingxie", real=True)]
+    # 候选人按真实身份；「我是部长还是骨干」（下面的 user.post()）跟当前身份。
+    # 只查持青协身份的人：用户表只增不减，整表读出来再筛会随办学年份越来越慢
+    qingxie = (db.query(User)
+               .filter(User.roles.contains(["qingxie"])).all())
     add("会长团", [u for u in qingxie if u.qingxie_post == "council"])
     add("各部门部长", [u for u in qingxie if u.qingxie_post == "head"])
     # 活动归口部门的骨干：谁来管这个活动都看得到。归口没定（草稿还没提交
