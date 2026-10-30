@@ -1,5 +1,6 @@
 <template>
   <div class="cb-wrap">
+    <LocaleSwitch float />
     <el-card class="cb-card">
       <div class="head">
         <div class="logo">志</div>
@@ -28,6 +29,7 @@ import { Loading } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { setAuth } from '../store'
 import { t } from '../i18n'
+import LocaleSwitch from '../components/LocaleSwitch.vue'
 
 const route = useRoute()
 const router = useRouter()

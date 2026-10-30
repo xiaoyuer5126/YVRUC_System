@@ -1,5 +1,6 @@
 <template>
   <div class="scan-wrap">
+    <LocaleSwitch float />
     <el-card class="scan-card" v-loading="loading">
       <template v-if="task">
         <div class="ok-icon" v-if="done">✓</div>
@@ -43,6 +44,7 @@ import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { auth } from '../store'
 import { t } from '../i18n'
+import LocaleSwitch from '../components/LocaleSwitch.vue'
 
 const route = useRoute()
 const router = useRouter()

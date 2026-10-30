@@ -15,6 +15,7 @@ export default {
   '反馈': 'Feedback',
   '消息': 'Messages',
   '切换身份': 'Switch identity',
+  '切换语言': 'Switch language',
   '我的报名': 'My registrations',
   '完善个人信息': 'Complete my profile',
   '退出登录': 'Sign out',

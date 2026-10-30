@@ -1,5 +1,6 @@
 <template>
   <div class="login-wrap">
+    <LocaleSwitch float />
     <el-card class="login-card">
       <div class="head">
         <div class="logo">志</div>
@@ -51,6 +52,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { setAuth } from '../store'
 import { t } from '../i18n'
+import LocaleSwitch from '../components/LocaleSwitch.vue'
 
 const router = useRouter()
 const route = useRoute()
