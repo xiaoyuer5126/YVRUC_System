@@ -20,7 +20,8 @@ from types import SimpleNamespace
 
 from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Index,
                         Integer, String, Text, UniqueConstraint, event, func,
-                        inspect as sa_inspect, select, text)
+                        inspect as sa_inspect, select, text, update)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
 # 会话类在这里叫 OrmSession：本模块还有一个自己的 Session（登录会话那张表），
 # 直接用 Session 这个名字会被它盖掉
@@ -104,6 +105,17 @@ AFFECTED_FIELD = "_affected"
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        # 志愿者名册按类型筛、活动表单按学院去重取选项、审批人与会长团按职务查，
+        # 三列都在列表类请求的过滤条件里
+        Index("ix_users_user_type", "user_type"),
+        Index("ix_users_college", "college"),
+        Index("ix_users_qingxie_post", "qingxie_post"),
+        # 按身份找人（管理员、青协、会长团）走 roles @> '["admin"]'。
+        # roles 是 JSONB，GIN 索引才认这个包含运算符；用户表只增不减，
+        # 没有索引时每次都要把整张表读出来在内存里筛。
+        Index("ix_users_roles_gin", "roles", postgresql_using="gin"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     student_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
@@ -126,7 +138,8 @@ class User(Base):
     # —— 类型与身份 ——
     # 类型二选一（老师/学生）；身份可多个（管理员/青协/活动发起方/学生），可切换视角。
     user_type: Mapped[str] = mapped_column(String(12), default="student")  # teacher / student
-    roles: Mapped[list] = mapped_column(JSON, default=list)                # ["student", ...]
+    # JSONB 而不是 JSON：按身份找人要用 @> 包含运算符，只有 JSONB 有它
+    roles: Mapped[list] = mapped_column(JSONB, default=list)               # ["student", ...]
 
     # —— 青协内部层级（只对 qingxie 身份有意义）——
     #   council 会长团：除平台公告、操作日志、意见反馈外与管理员同权
@@ -339,6 +352,12 @@ class Session(Base):
 
 class Activity(Base):
     __tablename__ = "activities"
+    __table_args__ = (
+        # 管理端列表、待审批、广场都按状态筛、按创建时间倒序翻页。
+        # 单列 status 撑不住排序，带上一列才是一次索引扫描。
+        Index("ix_activities_status_created", "status", "created_at"),
+        Index("ix_activities_organizer", "organizer"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     title: Mapped[str] = mapped_column(String(128))
@@ -407,6 +426,17 @@ class Activity(Base):
 
     reg_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reg_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # —— 服务场次的跨度（只算 kind="service"，同 time_span）——
+    # 广场要按「展示状态」筛和排，而展示状态是按场次时间现算的。把这三个
+    # 时间落到活动上，展示状态就能写进 SQL 的 WHERE / ORDER BY，分页交给
+    # 数据库；不落的话每个请求都要把全部公开活动取回来算完再切一页。
+    # 场次增删改时由 Shift 的会话事件同步（见 _sync_activity_span）。
+    shift_first_start: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True)
+    shift_last_end: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True)
+    shift_last_start: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True)
     # 补记录活动（recruit_mode="record"）自己的活动时间：它没有场次，线下
     # 哪几段办的直接填。每段 {"start_time", "end_time"}，只作记录，没有报名
     # 语义；广场不展示它，用在管理端、审批页、时长明细与提示分（导入即视为
@@ -685,8 +715,10 @@ class ShiftPeriod(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     shift_id: Mapped[str] = mapped_column(ForeignKey("shifts.id"), index=True)
-    start_time: Mapped[datetime] = mapped_column(DateTime)
-    end_time: Mapped[datetime] = mapped_column(DateTime)
+    # 场次的起止时间是这一列的最小/最大值（见 Shift.start_time），日期筛选与
+    # 时段筛选都按这两列比较；只建在 shift_id 上的索引撑不住时间范围
+    start_time: Mapped[datetime] = mapped_column(DateTime, index=True)
+    end_time: Mapped[datetime] = mapped_column(DateTime, index=True)
     sort: Mapped[int] = mapped_column(Integer, default=0)
     # 自动签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
     reminder_sent_at: Mapped[datetime | None] = mapped_column(
@@ -1278,7 +1310,9 @@ class CheckinRecord(Base):
     user_id: Mapped[str] = mapped_column(String(32), index=True)
     method: Mapped[str] = mapped_column(String(12), default="scan")  # scan / manual
     by_user: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 手动补签操作人
-    checkin_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    # 「最近 24 小时签到人数」这类按时间跨全部活动数的统计要它；没有索引时
+    # 每次都要扫完整张签到表
+    checkin_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
 
     # —— 签退 ——
     checkout_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -1838,7 +1872,9 @@ class AuditLog(Base):
     summary: Mapped[str] = mapped_column(String(512), default="")
     changes: Mapped[list] = mapped_column(JSON, default=list)
     visible: Mapped[bool] = mapped_column(Boolean, default=True)  # 是否对志愿者可见
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    # 审计日志页按时间倒序翻页、总览取最近几条，都靠它；没有索引时每翻一页
+    # 都要把整张留痕表排一遍
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
 
     def out(self) -> dict:
         # 动作的中文名跟着记录一起发：前端各写一份映射，早晚漏掉某个动作，
@@ -1862,6 +1898,11 @@ class Notification(Base):
     """消息通知。真实模式下代表「企业微信模板消息」的送达记录，
     演示模式（Mock）下就是前端「消息中心」的收件箱本身。"""
     __tablename__ = "notifications"
+    __table_args__ = (
+        # 消息列表按「这个人 + 时间倒序」翻页、数未读；单列 user_id 的索引
+        # 还要把这个人全部通知取回来再排
+        Index("ix_notifications_user_created", "user_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
@@ -1918,6 +1959,7 @@ class Announcement(Base):
 
 # ======================= 意见反馈 =======================
 
+
 class Feedback(Base):
     """用户对**平台本身**的意见反馈（bug、用不顺手的地方）。
 
@@ -1940,3 +1982,70 @@ class Feedback(Base):
 
     def status_label(self) -> str:
         return self.STATUS_LABELS.get(self.status, self.status)
+
+
+# ======================= 活动上的服务场次跨度 =======================
+
+def _activity_span_values(connection, activity_id: str) -> dict:
+    """这个活动服务场次的（最早开始、最晚结束、最晚开始）。
+
+    先在每个场次内部取它自己最早时段的开始与最晚时段的结束，再跨场次取
+    最小/最大：报名是按场次截止的（见 enroll_logic.enroll_deadline），所以
+    「最晚开始」必须是最后一次开场那一刻，不能是最后一段服务的开始——
+    多时段场次里两者差着好几天，差出来的那几天广场会一直显示报名中。
+    """
+    per_shift = (select(ShiftPeriod.shift_id.label("shift_id"),
+                        func.min(ShiftPeriod.start_time).label("start"),
+                        func.max(ShiftPeriod.end_time).label("end"))
+                 .group_by(ShiftPeriod.shift_id).subquery())
+    first, last_end, last_start = connection.execute(
+        select(func.min(per_shift.c.start), func.max(per_shift.c.end),
+               func.max(per_shift.c.start))
+        .join(Shift, Shift.id == per_shift.c.shift_id)
+        .where(Shift.activity_id == activity_id, Shift.kind == "service")
+    ).one()
+    return {"shift_first_start": first, "shift_last_end": last_end,
+            "shift_last_start": last_start}
+
+
+def _recompute_activity_span(connection, activity_id: str | None) -> None:
+    """把活动上存的服务场次跨度重算一遍。
+
+    用连接直接发一条 UPDATE，不碰会话里的对象：在事件里改 ORM 实例会再触发
+    一次本事件，改库则下一次读取自然拿到新值。挂在事件上而不是各条写路径里：
+    建场次、改时段、删场次、一键复制、导入、种子数据都要各自记得同步一次，
+    漏一处广场上的展示状态就错了。
+    """
+    if not activity_id:
+        return
+    connection.execute(update(Activity).where(Activity.id == activity_id)
+                       .values(**_activity_span_values(connection, activity_id)))
+
+
+def _changed(target, *columns) -> bool:
+    """这次 UPDATE 里，给定的列有没有真的变。
+
+    定时任务每分钟把时段的 reminder_sent_at 置一次标记，那不是时间变动；
+    只有开始、结束、所属场次改了才值得重算一遍跨度。
+    """
+    state = sa_inspect(target)
+    return any(state.attrs[c].history.has_changes() for c in columns)
+
+
+@event.listens_for(Shift, "after_insert")
+@event.listens_for(Shift, "after_update")
+@event.listens_for(Shift, "after_delete")
+def _span_after_shift(_mapper, connection, target) -> None:
+    _recompute_activity_span(connection, target.activity_id)
+
+
+@event.listens_for(ShiftPeriod, "after_insert")
+@event.listens_for(ShiftPeriod, "after_update")
+@event.listens_for(ShiftPeriod, "after_delete")
+def _span_after_period(_mapper, connection, target) -> None:
+    """改时段是就地改 ShiftPeriod，不会碰场次那一行，所以这里也要接上。"""
+    if _changed(target, "start_time", "end_time", "shift_id"):
+        row = connection.execute(
+            select(Shift.activity_id).where(Shift.id == target.shift_id)).first()
+        if row is not None:
+            _recompute_activity_span(connection, row[0])

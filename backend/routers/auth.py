@@ -14,6 +14,7 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 
@@ -25,7 +26,8 @@ from ..integrations import sso
 from ..liaison import session_user
 from ..locks import (clear_failures, failure_count, issue_ticket,
                      note_failure, note_rate, rate_count)
-from ..models import ROLE_LABELS, Session, User, ViolationRecord, uid
+from ..models import (MANAGER_ROLES, ROLE_LABELS, Session, User,
+                      ViolationRecord, uid)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -122,11 +124,13 @@ def demo_accounts(db: OrmSession = Depends(db_session)):
     """演示登录页的快捷账号列表。不含口令，拿到也登不进去。"""
     if not demo_login_enabled():
         return []
-    all_users = db.query(User).order_by(User.student_id).all()
-    staff = [u for u in all_users if u.is_manager_identity(real=True)][:4]
-    students = [u for u in all_users
-                if u.user_type == "student"
-                and not u.is_manager_identity(real=True)][:8]
+    # 各取前几位就够：用户表只增不减，整表读出来再切片会随办学年份越来越慢
+    manager = or_(*[User.roles.contains([r]) for r in MANAGER_ROLES])
+    staff = (db.query(User).filter(manager)
+             .order_by(User.student_id).limit(4).all())
+    students = (db.query(User)
+                .filter(User.user_type == "student", ~manager)
+                .order_by(User.student_id).limit(8).all())
 
     def label(u: User) -> str:
         kind = "老师" if u.user_type == "teacher" else "学生"

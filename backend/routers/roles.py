@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import Text, case, cast, or_
+from sqlalchemy import case, or_
 from sqlalchemy.orm import Session as OrmSession
 
 from ..audit import log as audit_log
@@ -43,10 +43,10 @@ DEPT_RANKS = (3, 4)
 def _holds(role: str):
     """这个人持不持有某个身份。
 
-    roles 是 JSON 而不是 JSONB，没有包含运算符可用；按序列化后的文本匹配
-    "admin" 这种带引号的完整词，不会误命中别的值。
+    roles 是 JSONB，用包含运算符 @> 判断，走 users 上的 GIN 索引；
+    按序列化文本 LIKE 匹配的话每次都要扫完整张用户表。
     """
-    return cast(User.roles, Text).like(f'%"{role}"%')
+    return User.roles.contains([role])
 
 
 def _role_order() -> list:

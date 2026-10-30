@@ -23,7 +23,7 @@ from ..models import (Activity, Application, Enrollment, Shift, ShiftPeriod, Pos
 from ..perm import is_activity_manager, managed_activity_ids
 from ..qrcodes import page_qr
 from .. import pubcache
-from ..serializers import (activity_detail, brief_parts, display_status_of,
+from ..serializers import (activity_detail, brief_parts, display_status_expr,
                            recruit_scope_text, reg_started, with_times)
 from .approvals import can_review
 
@@ -52,6 +52,19 @@ def _ensure_not_editing(act: Activity) -> None:
 
 def _editing_paused() -> HTTPException:
     return HTTPException(409, "负责人正在调整本活动的安排，报名暂停中，请稍后再试")
+
+
+def _in_scope(column, mine: str):
+    """招募范围的某一项：空列表 = 不限，否则本人这一项要在列表里。
+
+    三个范围列是 JSON 不是 JSONB，没有包含运算符；转成 JSONB 再比。
+    不能按序列化文本 LIKE：JSON 里中文是 \\u 转义的，匹配不上。
+    """
+    from sqlalchemy import cast
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    return or_(func.json_array_length(column) == 0,
+               cast(column, JSONB).contains([mine]))
 
 
 def _involved_activity_ids(db: OrmSession, user: User) -> set[str]:
@@ -189,19 +202,20 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
                     user: User = Depends(current_user)):
     """广场列表：按标题/类型/组织单位/展示状态/时间范围筛，分页返回。
 
-    重活（数场次、数报名）只对当页的十几条做。筛选与排序尽量交给 SQL：候选集是
-    「全部公开活动」，活动攒到几千条时每个请求都要把它拉一遍，所以时间范围和
-    「报名中 / 未开始 / 已截止 / 进行中」先用一条宽松的条件把候选行砍下来。
-    SQL 只做预筛，最终展示状态仍按 display_status_of 按时间算，口径不变。
+    筛选、排序、分页全在数据库里做：展示状态是 SQL 表达式（见
+    serializers.display_status_expr），几个比较用的是活动上存的服务场次跨度
+    （见 Activity.shift_first_start）。全部公开活动随办学年份只增不减，取回
+    内存再切页的话每个请求都要扫一遍。重活（数场次、数报名）只对当页的
+    十几条做，那一部分本来就不随总量涨。
 
     slots 是按可参与时段筛选选中的格子（见 _slots），只看报名中的活动。
     """
-    rows = db.query(Activity.id, Activity.status, Activity.reg_start,
-                    Activity.reg_end, Activity.recruit_campuses,
-                    Activity.recruit_stages, Activity.recruit_colleges,
-                    Activity.pinned_at)
-    rows = rows.filter(Activity.status.in_(PUBLIC_STATUSES),
-                       Activity.recruit_mode != config.RECORD_MODE)
+    # 展示状态写成 SQL 表达式（见 serializers.display_status_expr）：筛选、
+    # 排序、分页都在数据库里做，不把全部公开活动取回内存再切页
+    code = display_status_expr()
+    rows = (db.query(Activity.id)
+            .filter(Activity.status.in_(PUBLIC_STATUSES),
+                    Activity.recruit_mode != config.RECORD_MODE))
     if q.strip():
         rows = rows.filter(Activity.title.ilike(like_pattern(q.strip()),
                                                 escape="\\"))
@@ -209,7 +223,9 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
         rows = rows.filter(Activity.recruit_mode == mode)
     if organizer:
         rows = rows.filter(Activity.organizer == organizer)
-    # 时间范围：与服务场次的跨度有交集的活动才可能入选（培训/彩排跟着服务场次走）
+    # 时间范围：与某一场服务有交集的活动才入选（培训/彩排跟着服务场次走）。
+    # 用逐场比较而不是活动的整体包络：三月、十一月各有一场的活动，查六月时
+    # 包络会把它带出来，而它六月根本没有服务。
     lo, hi = _date_range(start, end)
     if lo is not None or hi is not None:
         hit = db.query(Shift.activity_id).filter(Shift.kind == "service")
@@ -224,51 +240,33 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
         status = "published"
         rows = rows.filter(Activity.id.in_(
             _slot_hits(db, picked_slots).with_entities(Shift.activity_id)))
-    # 状态预筛：这几种展示状态只可能从这几个业务状态里出来，先把历史活动砍掉
-    if status in ("published", "upcoming"):
-        rows = rows.filter(Activity.status == "published")
-    elif status in ("ongoing", "closed"):
-        rows = rows.filter(Activity.status.in_(("published", "closed")))
-    # 急招的排最前（后置顶的更靠前），其余按创建时间；展示状态的先后在下面
-    # 算完状态后再排
-    urgent = case((Activity.pinned_at.isnot(None)
-                   & (Activity.status == "published"), 0), else_=1)
-    rows = rows.order_by(urgent,
-                         func.coalesce(Activity.pinned_at,
-                                       Activity.created_at).desc()).all()
-
-    # {活动: ((最早开始, 最晚结束), 最晚开始)}，只算服务场次（同 Activity.time_span）。
-    # 只查筛出来的这些活动：候选集小了，这条分组查询也跟着小
-    cand = [r[0] for r in rows]
-    spans = {aid: ((first, last), last_start) for aid, first, last, last_start in
-             db.query(Shift.activity_id, func.min(Shift.start_time),
-                      func.max(Shift.end_time), func.max(Shift.start_time))
-             .filter(Shift.kind == "service", Shift.activity_id.in_(cand))
-             .group_by(Shift.activity_id).all()} if cand else {}
+    if status:
+        rows = rows.filter(code == status)
     # 招募范围外的活动不上广场：看得见报不了，只会多一次被拦的失望。
     # 报过名的人不受此限（范围是后来缩的），自己管的活动同样照常显示——
     # 管理者要从这里进详情核对志愿者看到的样子。
     managed = managed_activity_ids(db, user)
     involved = _involved_activity_ids(db, user)
-
-    shown = []
-    for aid, st, reg_start, reg_end, campuses, stages, colleges, pinned in rows:
-        span, last_start = spans.get(aid, (None, None))
-        code, _label = display_status_of(st, reg_start, reg_end, span, last_start)
-        if status and code != status:
-            continue
-        if (managed is None or aid in managed or aid in involved
-                or not logic.unmet_for_tags(
-                    user, logic.recruit_scope_tags(campuses, stages, colleges))):
-            shown.append((pinned is not None and st == "published",
-                          SQUARE_ORDER.get(code, len(SQUARE_ORDER)), aid))
-    # 「全部状态」下还能报的排在前面：急招，再报名中、未开始，再已截止、进行中、
-    # 已结束。sorted 是稳定的，同一档里保持上面 SQL 的先后
-    ids = [aid for _u, _r, aid in sorted(shown, key=lambda x: (not x[0], x[1]))]
-
+    if managed is not None:
+        in_scope = and_(_in_scope(Activity.recruit_campuses, user.campus),
+                        _in_scope(Activity.recruit_stages, user.stage),
+                        _in_scope(Activity.recruit_colleges, user.college))
+        # 全权身份（managed 为 None）不筛；否则范围外的一律不上，除非他管过
+        # 或报过这一场
+        rows = rows.filter(in_scope | Activity.id.in_(set(managed) | involved))
+    # 排序：急招在前（后置顶的更靠前），再按展示状态的先后（SQUARE_ORDER），
+    # 再按创建时间。全在 SQL 里排，分页才拿得到「下一批谁」
+    urgent = case((Activity.pinned_at.isnot(None)
+                   & (Activity.status == "published"), 0), else_=1)
+    order = case(SQUARE_ORDER, value=code, else_=len(SQUARE_ORDER))
+    rows = rows.order_by(urgent, order,
+                         func.coalesce(Activity.pinned_at,
+                                       Activity.created_at).desc(),
+                         Activity.id.desc())
+    total = rows.order_by(None).count()
     size = max(1, min(size, 50))
     page = max(1, page)
-    picked = ids[(page - 1) * size: page * size]
+    picked = [r[0] for r in rows.offset((page - 1) * size).limit(size).all()]
     # 卡片内容与看的人无关，走 3 秒缓存（见 pubcache）；自己管的活动例外，
     # 管理者改完回广场核对，得看到刚改的样子。时间字段每次现算（with_times）
     fresh = [i for i in picked if managed is None or i in managed]
@@ -288,7 +286,7 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
             x["slot_note"] = notes.get(x["id"])
     return {
         "items": items,
-        "total": len(ids), "page": page, "size": size,
+        "total": total, "page": page, "size": size,
         "organizers": [o for (o,) in
                        db.query(Activity.organizer)
                        .filter(Activity.status.in_(PUBLIC_STATUSES),

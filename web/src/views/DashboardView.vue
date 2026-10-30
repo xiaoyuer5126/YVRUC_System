@@ -70,7 +70,18 @@ import DataCards from '../components/DataCards.vue'
 
 const narrow = useNarrow()
 const d = ref(null)
-const range = ref([])          // 页面与导出共用的时间跨度，空 = 不限
+/** 默认最近 30 天：不限区间时这次请求要聚合全部历史的活动、报名与时长，
+ *  办学年份一长就慢到打不开。管理员随时可以改，也可以清空看全部。
+ *  日期选择器的 value-format 是 YYYY-MM-DD，v-model 收的就是这个格式的串。 */
+function lastNDays(n) {
+  const fmt = x => [x.getFullYear(),
+                    String(x.getMonth() + 1).padStart(2, '0'),
+                    String(x.getDate()).padStart(2, '0')].join('-')
+  const t = new Date()
+  const from = new Date(t.getFullYear(), t.getMonth(), t.getDate() - (n - 1))
+  return [fmt(from), fmt(t)]
+}
+const range = ref(lastNDays(30))   // 页面与导出共用的时间跨度，空 = 不限
 const loading = ref(false)
 const failed = ref(false)      // 最近一次取数失败：卡片显示「—」，图表和留痕不显示
 const trendEl = ref()
@@ -110,6 +121,7 @@ const shortcuts = [
       const t = new Date()
       return [new Date(t.getFullYear(), t.getMonth() - 2, 1), t]
     } },
+  { text: '近 30 天', value: () => lastNDays(30) },
 ]
 
 /** 当前区间拼成的 query：只带选了的那一端，都没选就是空串（不限）。

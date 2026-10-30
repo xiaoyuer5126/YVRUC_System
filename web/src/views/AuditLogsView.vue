@@ -3,9 +3,14 @@
     <h2>审计日志中心</h2>
     <p class="dim" style="margin-top:-8px">
       发起方与青协的所有增删改均留痕，对志愿者可见的记录同步展示在活动详情页。
+      默认显示最近 7 天，一次最多查 {{ maxDays }} 天。
     </p>
     <el-card shadow="never">
       <div class="toolbar">
+        <el-date-picker v-model="range" type="daterange" value-format="YYYY-MM-DD"
+                        start-placeholder="开始日期" end-placeholder="结束日期"
+                        :style="{ width: narrow ? '100%' : '240px' }"
+                        @change="reload" />
         <el-select v-model="filter.target_type" clearable placeholder="对象类型" style="width:150px" @change="load">
           <el-option value="activity" label="活动" />
           <el-option value="group" label="场次" />
@@ -67,18 +72,40 @@ const page = ref(1)
 const loading = ref(false)
 const filter = ref({ target_type: '' })
 const onlyVisible = ref(false)
+const maxDays = ref(31)
+
+/** 默认最近 7 天：留痕只增不减，不限时间时每翻一页都要数、排整张表。 */
+function lastNDays(n) {
+  const fmt = x => [x.getFullYear(),
+                    String(x.getMonth() + 1).padStart(2, '0'),
+                    String(x.getDate()).padStart(2, '0')].join('-')
+  const t = new Date()
+  const from = new Date(t.getFullYear(), t.getMonth(), t.getDate() - (n - 1))
+  return [fmt(from), fmt(t)]
+}
+const range = ref(lastNDays(7))
 
 async function load() {
   loading.value = true
   try {
-    const d = await api.get(`/api/staff/audit-logs?page=${page.value}&size=20`
-      + (filter.value.target_type ? `&target_type=${filter.value.target_type}` : '')
-      + (onlyVisible.value ? '&visible=1' : ''))
+    const q = new URLSearchParams({ page: page.value, size: 20 })
+    const [start, end] = range.value || []
+    if (start) q.set('start', start)
+    if (end) q.set('end', end)
+    if (filter.value.target_type) q.set('target_type', filter.value.target_type)
+    if (onlyVisible.value) q.set('visible', 1)
+    const d = await api.get(`/api/staff/audit-logs?${q}`)
     items.value = d.items
     total.value = d.total
+    maxDays.value = d.max_days
   } finally { loading.value = false }
 }
 onMounted(load)
+
+function reload() {
+  page.value = 1
+  load()
+}
 
 function goPage(p) {
   page.value = p

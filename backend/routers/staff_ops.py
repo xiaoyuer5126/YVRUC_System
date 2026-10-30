@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session as OrmSession, selectinload
 
 from ..audit import log as audit_log
@@ -1104,8 +1104,12 @@ def _hours_approvers(db: OrmSession, act: Activity) -> list[User]:
         duty = liaison.on_duty(db, db.get(Department, act.approval_dept_id))
         if duty is not None:
             out.append(duty)
-    # 全库查人：当前用户本人也在里面、带着身份视角，按真实身份算
-    out += [u for u in db.query(User).all() if u.has_full_access(real=True)]
+    # 管理员与会长团：按真实身份查，只取这两类人。用户表只增不减，
+    # 整表读出来再在内存里筛会随办学年份越来越慢
+    out += (db.query(User)
+            .filter(or_(User.roles.contains(["admin"]),
+                        and_(User.roles.contains(["qingxie"]),
+                             User.qingxie_post == "council"))).all())
     seen, uniq = set(), []
     for u in out:
         if u.id not in seen:
