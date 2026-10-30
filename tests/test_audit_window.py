@@ -22,27 +22,40 @@ def _get(client, headers, **params):
     return client.get("/api/staff/audit-logs", headers=headers, params=params)
 
 
+def _all_ids(client, headers, **params) -> set[str]:
+    """一页页翻到底，把符合条件的全部 id 收齐：别的用例留下的留痕，
+    待查的那条未必落在第一页。"""
+    ids, page = set(), 1
+    while True:
+        r = _get(client, headers, page=page, size=100, **params)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        ids |= {x["id"] for x in body["items"]}
+        if page * 100 >= body["total"]:
+            return ids
+        page += 1
+
+
 def test_不填时间只看最近七天(client, admin, db):
     old = _log(db, created_at=now() - timedelta(days=30))
     fresh = _log(db, created_at=now() - timedelta(days=1))
 
     r = _get(client, admin)
     assert r.status_code == 200, r.text
-    ids = {x["id"] for x in r.json()["items"]}
-    assert fresh.id in ids and old.id not in ids
-    # 默认窗口要让页面显示得出来，否则管理员不知道自己在看哪一段
     body = r.json()
+    # 默认窗口要让页面显示得出来，否则管理员不知道自己在看哪一段
     assert body["start"] and body["end"]
     assert body["max_days"] == 31
+    # 三十天前那条不在默认窗口里，一天前的在
+    ids = _all_ids(client, admin)
+    assert fresh.id in ids and old.id not in ids
 
 
 def test_选更早的区间能看到旧记录(client, admin, db):
     old = _log(db, created_at=now() - timedelta(days=30))
     start = (now() - timedelta(days=40)).strftime("%Y-%m-%d")
     end = (now() - timedelta(days=20)).strftime("%Y-%m-%d")
-    r = _get(client, admin, start=start, end=end)
-    assert r.status_code == 200, r.text
-    assert old.id in {x["id"] for x in r.json()["items"]}
+    assert old.id in _all_ids(client, admin, start=start, end=end)
 
 
 def test_一次最多三十一天(client, admin):

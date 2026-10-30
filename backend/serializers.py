@@ -9,7 +9,7 @@ import math
 from collections import defaultdict
 from datetime import datetime
 
-from sqlalchemy import func
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -95,8 +95,6 @@ def display_status_expr(t=None):
     请求就要扫全表。展示状态改成 SQL 表达式之后，筛选、排序、分页都能交给
     数据库。两处口径必须一致，改了这里要同步改 display_status_of。
     """
-    from sqlalchemy import case
-
     t = t or now()
     started = or_(Activity.reg_start.is_(None), Activity.reg_start <= t)
     recruiting = (
