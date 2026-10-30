@@ -38,11 +38,15 @@ def upgrade() -> None:
           shift_last_start  = s.last_start
         FROM (
           SELECT sh.activity_id,
-                 min(sp.start_time) AS first_start,
-                 max(sp.end_time)   AS last_end,
-                 max(sp.start_time) AS last_start
+                 min(p.shift_start) AS first_start,
+                 max(p.shift_end)   AS last_end,
+                 max(p.shift_start) AS last_start
           FROM shifts sh
-          JOIN shift_periods sp ON sp.shift_id = sh.id
+          JOIN (
+            SELECT shift_id, min(start_time) AS shift_start,
+                   max(end_time) AS shift_end
+            FROM shift_periods GROUP BY shift_id
+          ) p ON p.shift_id = sh.id
           WHERE sh.kind = 'service'
           GROUP BY sh.activity_id
         ) s

@@ -1987,11 +1987,21 @@ class Feedback(Base):
 # ======================= 活动上的服务场次跨度 =======================
 
 def _activity_span_values(connection, activity_id: str) -> dict:
-    """这个活动服务场次的（最早开始、最晚结束、最晚开始）。"""
+    """这个活动服务场次的（最早开始、最晚结束、最晚开始）。
+
+    先在每个场次内部取它自己最早时段的开始与最晚时段的结束，再跨场次取
+    最小/最大：报名是按场次截止的（见 enroll_logic.enroll_deadline），所以
+    「最晚开始」必须是最后一次开场那一刻，不能是最后一段服务的开始——
+    多时段场次里两者差着好几天，差出来的那几天广场会一直显示报名中。
+    """
+    per_shift = (select(ShiftPeriod.shift_id.label("shift_id"),
+                        func.min(ShiftPeriod.start_time).label("start"),
+                        func.max(ShiftPeriod.end_time).label("end"))
+                 .group_by(ShiftPeriod.shift_id).subquery())
     first, last_end, last_start = connection.execute(
-        select(func.min(ShiftPeriod.start_time), func.max(ShiftPeriod.end_time),
-               func.max(ShiftPeriod.start_time))
-        .join(Shift, Shift.id == ShiftPeriod.shift_id)
+        select(func.min(per_shift.c.start), func.max(per_shift.c.end),
+               func.max(per_shift.c.start))
+        .join(Shift, Shift.id == per_shift.c.shift_id)
         .where(Shift.activity_id == activity_id, Shift.kind == "service")
     ).one()
     return {"shift_first_start": first, "shift_last_end": last_end,
@@ -2012,6 +2022,16 @@ def _recompute_activity_span(connection, activity_id: str | None) -> None:
                        .values(**_activity_span_values(connection, activity_id)))
 
 
+def _changed(target, *columns) -> bool:
+    """这次 UPDATE 里，给定的列有没有真的变。
+
+    定时任务每分钟把时段的 reminder_sent_at 置一次标记，那不是时间变动；
+    只有开始、结束、所属场次改了才值得重算一遍跨度。
+    """
+    state = sa_inspect(target)
+    return any(state.attrs[c].history.has_changes() for c in columns)
+
+
 @event.listens_for(Shift, "after_insert")
 @event.listens_for(Shift, "after_update")
 @event.listens_for(Shift, "after_delete")
@@ -2024,7 +2044,8 @@ def _span_after_shift(_mapper, connection, target) -> None:
 @event.listens_for(ShiftPeriod, "after_delete")
 def _span_after_period(_mapper, connection, target) -> None:
     """改时段是就地改 ShiftPeriod，不会碰场次那一行，所以这里也要接上。"""
-    row = connection.execute(
-        select(Shift.activity_id).where(Shift.id == target.shift_id)).first()
-    if row is not None:
-        _recompute_activity_span(connection, row[0])
+    if _changed(target, "start_time", "end_time", "shift_id"):
+        row = connection.execute(
+            select(Shift.activity_id).where(Shift.id == target.shift_id)).first()
+        if row is not None:
+            _recompute_activity_span(connection, row[0])

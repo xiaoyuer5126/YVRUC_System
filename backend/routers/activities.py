@@ -63,8 +63,8 @@ def _in_scope(column, mine: str):
     from sqlalchemy import cast
     from sqlalchemy.dialects.postgresql import JSONB
 
-    col = cast(column, JSONB)
-    return or_(col == [], col.contains([mine]))
+    return or_(func.json_array_length(column) == 0,
+               cast(column, JSONB).contains([mine]))
 
 
 def _involved_activity_ids(db: OrmSession, user: User) -> set[str]:
@@ -223,12 +223,17 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
         rows = rows.filter(Activity.recruit_mode == mode)
     if organizer:
         rows = rows.filter(Activity.organizer == organizer)
-    # 时间范围：与服务场次的跨度有交集的活动才可能入选（培训/彩排跟着服务场次走）
+    # 时间范围：与某一场服务有交集的活动才入选（培训/彩排跟着服务场次走）。
+    # 用逐场比较而不是活动的整体包络：三月、十一月各有一场的活动，查六月时
+    # 包络会把它带出来，而它六月根本没有服务。
     lo, hi = _date_range(start, end)
-    if lo is not None:
-        rows = rows.filter(Activity.shift_last_end >= lo)
-    if hi is not None:
-        rows = rows.filter(Activity.shift_first_start < hi)
+    if lo is not None or hi is not None:
+        hit = db.query(Shift.activity_id).filter(Shift.kind == "service")
+        if lo is not None:
+            hit = hit.filter(Shift.end_time >= lo)
+        if hi is not None:
+            hit = hit.filter(Shift.start_time < hi)
+        rows = rows.filter(Activity.id.in_(hit))
     # 可参与时段：找的是现在还能报的，只看报名中
     picked_slots = _slots(slots)
     if picked_slots:
