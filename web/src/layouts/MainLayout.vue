@@ -7,11 +7,11 @@
           <el-icon :size="22"><Fold /></el-icon>
         </el-button>
         <div class="brand" @click="$router.push('/')">
-          <div class="logo">{{ locale === 'en' ? 'V' : '志' }}</div>
+          <div class="logo">{{ isEn ? 'V' : '志' }}</div>
           <div class="brand-text">
             <div class="name">{{ narrow ? t('志愿服务平台') : t('志愿服务管理平台') }}</div>
             <div v-if="!narrow" class="sub">
-              {{ locale === 'en' ? 'Renmin University of China' : 'Volunteer Service Management' }}
+              {{ isEn ? 'Renmin University of China' : 'Volunteer Service Management' }}
             </div>
           </div>
         </div>
@@ -84,7 +84,7 @@
     <el-drawer v-model="drawer" direction="ltr" size="264px" :with-header="false"
                class="menu-drawer">
       <div class="drawer-head">
-        <div class="logo">{{ locale === 'en' ? 'V' : '志' }}</div>
+        <div class="logo">{{ isEn ? 'V' : '志' }}</div>
         <div>
           <div class="name">{{ t('志愿服务平台') }}</div>
           <div class="drawer-sub">
@@ -113,7 +113,7 @@ import { api } from '../api'
 import { auth, clearAuth, isTrainee, ROLE_LABELS, takeAnnouncementTurn, unreadState } from '../store'
 import { switchIdentity } from '../router'
 import { useNarrow } from '../composables/useNarrow'
-import { isEn, locale, t } from '../i18n'
+import { isEn, t } from '../i18n'
 import AnnouncementDialog from '../components/AnnouncementDialog.vue'
 import FeedbackDialog from '../components/FeedbackDialog.vue'
 import LocaleSwitch from '../components/LocaleSwitch.vue'
@@ -126,9 +126,6 @@ const narrow = useNarrow()
 const drawer = ref(false)
 const unread = computed(() => unreadState.count)
 let timer = null
-
-// 模板里写 t('键')：t 读 locale.value，切换语言时就地重绘
-const $t = t
 
 // 志愿者视角：切语言按钮只在这儿出现（管理端不翻）
 const volunteerView = computed(() => !['admin', 'initiator', 'qingxie']
@@ -145,7 +142,7 @@ const EN_ROLE = {
 const identityLabel = computed(() => {
   const roles = auth.user?.roles || []
   if (roles.includes(auth.activeIdentity)) {
-    if (locale.value === 'en') return EN_ROLE[auth.activeIdentity] || ROLE_LABELS[auth.activeIdentity]
+    if (isEn.value) return EN_ROLE[auth.activeIdentity] || ROLE_LABELS[auth.activeIdentity]
     return ROLE_LABELS[auth.activeIdentity]
   }
   return auth.user?.user_type === 'teacher' ? t('教职工') : t('志愿者')

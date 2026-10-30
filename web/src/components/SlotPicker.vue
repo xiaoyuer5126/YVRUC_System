@@ -65,7 +65,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { locale, t } from '../i18n'
+import { isEn, t } from '../i18n'
 
 const props = defineProps({
   start: { type: String, default: '' },
@@ -134,7 +134,7 @@ const days = computed(() => {   // vuecheck: script-only，模板经 shownDays �
   } else {
     for (let i = 0; i < PAGE; i++) out.push(plusDays(i))
   }
-  const names = WD[locale.value] || WD.zh
+  const names = isEn.value ? WD.en : WD.zh
   return out.map(d => ({ date: d, key: ymd(d), wd: names[d.getDay()], md: mdOf(d) }))
 })
 const pages = computed(() => Math.max(1, Math.ceil(days.value.length / PAGE)))
