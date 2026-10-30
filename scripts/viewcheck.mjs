@@ -55,7 +55,8 @@ const REC = readFileSync(`${S}/record_act.txt`, 'utf8')
 const ATT = readFileSync(`${S}/attire_act.txt`, 'utf8')
 const ATT_TOKEN = readFileSync(`${S}/attire_token.txt`, 'utf8')
 const CHK_TOKEN = readFileSync(`${S}/checkin_token.txt`, 'utf8')
-// [身份, 路由, 名称, 这一页至少该渲染出多少字, 采样前要点开的元素（可省）, 点开后该出现的元素]
+// [身份, 路由, 名称, 这一页至少该渲染出多少字, 采样前要点开的元素（可省）, 点开后该出现的元素,
+//  语言（可省，默认中文）]
 // 最少字数不是凑数：活动管理页的「找不到活动」也是一屏内容，只看「有没有
 // 东西」分不出正常与出错——接口换了返回结构，所有页签都成了这张页，检查
 // 照样全绿。按「这一页该有的量」比，空壳就露馅了。
@@ -69,6 +70,15 @@ const PAGES = [
   ['student', '/messages', '消息通知', 10],
   ['student', `/checkin/${CHK_TOKEN}`, '签到落地', 20],
   ['student', `/attire/${ATT_TOKEN}`, '服装落地', 20],
+  // 英文界面：按钮和表头比中文长，撑破和挤成两行只有切过去才看得见。
+  // 只测志愿者端——管理端不翻，切了也是中文
+  ['student', '/square', '活动广场·EN', 80, null, null, 'en'],
+  ['student', '/square', '时段浮窗·EN', 80, '.slot-trigger', '.slot-grid', 'en'],
+  ['student', `/activity/${ACT}`, '活动详情·EN', 160, null, null, 'en'],
+  ['student', '/my', '我的报名·EN', 80, null, null, 'en'],
+  ['student', '/hours', '志愿时长·EN', 40, null, null, 'en'],
+  ['student', '/messages', '消息通知·EN', 8, null, null, 'en'],
+  ['student', `/checkin/${CHK_TOKEN}`, '签到落地·EN', 16, null, null, 'en'],
   ['admin', '/manage', '活动管理', 200],
   ['admin', `/manage/${ACT}?tab=overview`, '概览', 200],
   ['admin', `/manage/${ACT}?tab=tree`, '场次岗位', 200],
@@ -333,13 +343,14 @@ async function settle(cap = 9000) {
   }
 }
 
-for (const [who, route, name, min, open, expect] of PAGES) {
+for (const [who, route, name, min, open, expect, lang] of PAGES) {
   await send('Page.navigate', { url: 'http://127.0.0.1:8080/' })
   await sleep(700)
   await send('Runtime.evaluate', { expression: `
     localStorage.setItem('yvruc_token', ${JSON.stringify(TOK[who])});
     localStorage.setItem('yvruc_user', ${JSON.stringify(USR[who])});
     sessionStorage.setItem('yvruc_active_identity', ${JSON.stringify(who)});
+    localStorage.setItem('yvruc_locale', ${JSON.stringify(lang || 'zh')});
     window.__vcStale = 1;
     location.assign(${JSON.stringify(route)});` })
   await settle()
