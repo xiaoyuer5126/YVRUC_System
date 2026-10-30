@@ -737,6 +737,9 @@ export default {
   '已选 {0} / {1}': '{0} / {1} selected',
   '暂无数据': 'No data',
   '菜单': 'Menu',
+  '名单导入': 'Imported roster',
+  '删除': 'Delete',
+  '没有明细': 'No breakdown',
 
   // —— 时间格式 ——
   '周一': 'Mon', '周二': 'Tue', '周三': 'Wed', '周四': 'Thu', '周五': 'Fri', '周六': 'Sat', '周日': 'Sun',
