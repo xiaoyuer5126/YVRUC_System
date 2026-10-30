@@ -104,6 +104,13 @@ AFFECTED_FIELD = "_affected"
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        # 志愿者名册按类型筛、活动表单按学院去重取选项、审批人与会长团按职务查，
+        # 三列都在列表类请求的过滤条件里
+        Index("ix_users_user_type", "user_type"),
+        Index("ix_users_college", "college"),
+        Index("ix_users_qingxie_post", "qingxie_post"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     student_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
@@ -339,6 +346,12 @@ class Session(Base):
 
 class Activity(Base):
     __tablename__ = "activities"
+    __table_args__ = (
+        # 管理端列表、待审批、广场都按状态筛、按创建时间倒序翻页。
+        # 单列 status 撑不住排序，带上一列才是一次索引扫描。
+        Index("ix_activities_status_created", "status", "created_at"),
+        Index("ix_activities_organizer", "organizer"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     title: Mapped[str] = mapped_column(String(128))
@@ -685,8 +698,10 @@ class ShiftPeriod(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     shift_id: Mapped[str] = mapped_column(ForeignKey("shifts.id"), index=True)
-    start_time: Mapped[datetime] = mapped_column(DateTime)
-    end_time: Mapped[datetime] = mapped_column(DateTime)
+    # 场次的起止时间是这一列的最小/最大值（见 Shift.start_time），日期筛选与
+    # 时段筛选都按这两列比较；只建在 shift_id 上的索引撑不住时间范围
+    start_time: Mapped[datetime] = mapped_column(DateTime, index=True)
+    end_time: Mapped[datetime] = mapped_column(DateTime, index=True)
     sort: Mapped[int] = mapped_column(Integer, default=0)
     # 自动签到提醒只发一次，发过就记时间（定时任务与手动按钮共用这个标记）
     reminder_sent_at: Mapped[datetime | None] = mapped_column(
@@ -1278,7 +1293,9 @@ class CheckinRecord(Base):
     user_id: Mapped[str] = mapped_column(String(32), index=True)
     method: Mapped[str] = mapped_column(String(12), default="scan")  # scan / manual
     by_user: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 手动补签操作人
-    checkin_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    # 「最近 24 小时签到人数」这类按时间跨全部活动数的统计要它；没有索引时
+    # 每次都要扫完整张签到表
+    checkin_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
 
     # —— 签退 ——
     checkout_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -1838,7 +1855,9 @@ class AuditLog(Base):
     summary: Mapped[str] = mapped_column(String(512), default="")
     changes: Mapped[list] = mapped_column(JSON, default=list)
     visible: Mapped[bool] = mapped_column(Boolean, default=True)  # 是否对志愿者可见
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    # 审计日志页按时间倒序翻页、总览取最近几条，都靠它；没有索引时每翻一页
+    # 都要把整张留痕表排一遍
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
 
     def out(self) -> dict:
         # 动作的中文名跟着记录一起发：前端各写一份映射，早晚漏掉某个动作，
@@ -1862,6 +1881,11 @@ class Notification(Base):
     """消息通知。真实模式下代表「企业微信模板消息」的送达记录，
     演示模式（Mock）下就是前端「消息中心」的收件箱本身。"""
     __tablename__ = "notifications"
+    __table_args__ = (
+        # 消息列表按「这个人 + 时间倒序」翻页、数未读；单列 user_id 的索引
+        # 还要把这个人全部通知取回来再排
+        Index("ix_notifications_user_created", "user_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(32), index=True)
