@@ -25,6 +25,7 @@ import { BrowserQRCodeReader } from '@zxing/browser'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useNarrow } from '../composables/useNarrow'
+import { t } from '../i18n'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -61,9 +62,9 @@ function onResult(result) {
   if (!result || busy) return
   const code = codeOf(result.getText())
   if (!code) return                                  // 扫到别的二维码：当没看见
-  const t = Date.now()
-  if (code === last.code && t - last.at < 5000) return
-  last = { code, at: t }
+  const now = Date.now()
+  if (code === last.code && now - last.at < 5000) return
+  last = { code, at: now }
   submit(code)
 }
 

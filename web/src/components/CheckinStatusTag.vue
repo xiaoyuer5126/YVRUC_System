@@ -17,12 +17,13 @@
 
 <script setup>
 import { computed } from 'vue'
+import { t } from '../i18n'
 
 const props = defineProps({ row: { type: Object, required: true } })
 
 const ended = computed(() => {
   // 多时段看此刻那一段的结束时间；没有就退回整场的结束时间
-  const t = props.row.shift?.period_end || props.row.shift?.end_time
-  return !!t && new Date(t) < new Date()
+  const end = props.row.shift?.period_end || props.row.shift?.end_time
+  return !!end && new Date(end) < new Date()
 })
 </script>
