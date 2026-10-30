@@ -3,7 +3,7 @@
     <LocaleSwitch float />
     <el-card class="login-card">
       <div class="head">
-        <div class="logo">志</div>
+        <div class="logo">{{ isEn ? 'V' : '志' }}</div>
         <h2>{{ t('志愿服务管理平台') }}</h2>
       </div>
 
@@ -51,7 +51,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { setAuth } from '../store'
-import { t } from '../i18n'
+import { isEn, t } from '../i18n'
 import LocaleSwitch from '../components/LocaleSwitch.vue'
 
 const router = useRouter()
