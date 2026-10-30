@@ -160,7 +160,11 @@ async function doCheckin() {
   .scan-card { padding: 2px; }
   .scan-card :deep(.el-card__body) { padding: 16px 14px; }
   .scan-card :deep(.el-button--large) { height: 52px; font-size: 17px; }
-  .scan-card :deep(.el-descriptions__label) { width: 78px; }
+  /* 标签列定宽是为了几个中文标签对齐；英文标签更长，定宽会把字挤出去，
+     改成最小宽度、允许折行 */
+  .scan-card :deep(.el-descriptions__label) {
+    min-width: 78px; width: auto; white-space: normal;
+  }
   h2 { font-size: 19px; line-height: 1.4; }
 }
 .ok-icon {
