@@ -92,6 +92,27 @@ def test_删场次后按剩下的重算(client, db, open_group):
     assert act.shift_last_end == g.periods[0].end_time
 
 
+def test_减少段数后按剩下的段重算(client, db, open_group):
+    """增减段数时是先清空再重建（见 staff_activities._set_periods）：同一次
+    flush 里新段先插、旧段后删，删完要再算一次，否则跨度里还带着旧段。"""
+    act, g = open_group(5)
+    first = g.periods[0]
+    later = first.start_time + timedelta(days=3)
+    g.periods.append(ShiftPeriod(id=uid("sp"), shift_id=g.id, sort=1,
+                                 start_time=later,
+                                 end_time=later + timedelta(hours=2)))
+    db.commit()
+    assert _reload(db, act.id).shift_last_end == later + timedelta(hours=2)
+
+    g = db.get(type(g), g.id)
+    keep_start, keep_end = g.periods[0].start_time, g.periods[0].end_time
+    g.periods.clear()
+    g.periods.append(ShiftPeriod(id=uid("sp"), shift_id=g.id, sort=0,
+                                 start_time=keep_start, end_time=keep_end))
+    db.commit()
+    assert _span(_reload(db, act.id)) == (keep_start, keep_end, keep_start)
+
+
 def test_培训彩排不算进跨度(client, db, open_group):
     act, g = open_group(5)
     before = g.start_time - timedelta(days=5)

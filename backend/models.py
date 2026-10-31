@@ -2039,13 +2039,24 @@ def _span_after_shift(_mapper, connection, target) -> None:
     _recompute_activity_span(connection, target.activity_id)
 
 
+def _recompute_for_period(connection, target) -> None:
+    row = connection.execute(
+        select(Shift.activity_id).where(Shift.id == target.shift_id)).first()
+    if row is not None:
+        _recompute_activity_span(connection, row[0])
+
+
 @event.listens_for(ShiftPeriod, "after_insert")
 @event.listens_for(ShiftPeriod, "after_update")
-@event.listens_for(ShiftPeriod, "after_delete")
 def _span_after_period(_mapper, connection, target) -> None:
     """改时段是就地改 ShiftPeriod，不会碰场次那一行，所以这里也要接上。"""
     if _changed(target, "start_time", "end_time", "shift_id"):
-        row = connection.execute(
-            select(Shift.activity_id).where(Shift.id == target.shift_id)).first()
-        if row is not None:
-            _recompute_activity_span(connection, row[0])
+        _recompute_for_period(connection, target)
+
+
+@event.listens_for(ShiftPeriod, "after_delete")
+def _span_after_period_delete(_mapper, connection, target) -> None:
+    """删段总要重算：被删的对象没有改动历史，_changed 判不出来。增减段数是
+    先清空再重建，同一次 flush 里新段先插、旧段后删，插入时算的跨度还带着
+    旧段，只有删完这一次才是对的。"""
+    _recompute_for_period(connection, target)
