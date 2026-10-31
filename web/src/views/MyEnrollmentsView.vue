@@ -16,7 +16,7 @@
         <div class="mob-line">
           <el-tag v-if="row.shift.attached" size="small" effect="dark"
                   :type="row.shift.kind === 'training' ? 'success' : 'warning'">
-            {{ row.shift.kind_label }}
+            {{ t(row.shift.kind_label) }}
           </el-tag>
           {{ row.shift.name }} · {{ row.shift.time_text }}
         </div>
@@ -89,7 +89,7 @@
         <template #default="{ row }">
           <el-tag v-if="row.shift.attached" size="small" effect="dark"
                   :type="row.shift.kind === 'training' ? 'success' : 'warning'">
-            {{ row.shift.kind_label }}
+            {{ t(row.shift.kind_label) }}
           </el-tag>
           {{ row.shift.name }}（{{ row.shift.time_text }}）
           <div v-if="row.shift.attached" class="dim">{{ t('随服务场次的报名产生') }}<template v-if="row.shift.location"> · {{ row.shift.location }}</template>
@@ -172,7 +172,7 @@
 
     <GroupQrDialog ref="groupQr" />
 
-    <ScanCheckinDialog v-model="scanVisible" :action="scanLabel" @done="onChecked" />
+    <ScanCheckinDialog v-model="scanVisible" :action="t(scanLabel)" @done="onChecked" />
 
     <el-dialog v-model="teamDlg.visible" :title="t('组员名单 · {0}', [teamDlg.data?.scope || ''])"
                width="560">
@@ -180,10 +180,10 @@
         {{ t('{0} · {1}。联系方式仅用于本次活动的联络，请勿他用；', [teamDlg.data?.activity_title, teamDlg.data?.shift_name]) }}<b>{{ t('每次查看都会记入审计') }}</b>。
       </p>
       <DataCards v-if="narrow" :rows="teamDlg.data?.members || []" title-key="name"
-                 :fields="[{ key: 'position', label: '岗位' },
-                           { key: 'college', label: '学院' },
-                           { key: 'phone', label: '手机' },
-                           { key: 'wechat', label: '微信' }]"
+                 :fields="[{ key: 'position', label: t('岗位') },
+                           { key: 'college', label: t('学院') },
+                           { key: 'phone', label: t('手机') },
+                           { key: 'wechat', label: t('微信') }]"
                  :empty="t('本组暂无组员')">
         <template #extra="{ row }">
           <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">{{ t('组长') }}</el-tag>
@@ -223,7 +223,7 @@ const loading = ref(false)
 const teamDlg = ref({ visible: false, data: null })
 const groupQr = ref(null)
 const scanVisible = ref(false)
-const scanLabel = ref(t('签到'))   // 这轮扫的是签到还是签退，弹窗照着它说话
+const scanLabel = ref('签到')   // 这轮扫的是签到还是签退，弹窗照着它说话；存中文原句，模板里再 t()
 // 取坐标要几秒，连点两下就是两次签到请求。界面上的「正在定位…」由 geoCheckin 自己弹
 const geoBusy = ref(false)   // vuecheck: script-only
 
@@ -265,7 +265,7 @@ function openCheckin(row) {
   if (wait) return ElMessage.warning(t('刚签到不久，{0} 分钟后才能签退', [wait]))
   if (row.checkin?.method === 'geo') return geoCheckin(row)
   // 这一轮是签到还是签退：弹窗的标题和「正在…」都得跟着走
-  scanLabel.value = signAction(row) || t('签到')
+  scanLabel.value = isCheckout(row) ? '签退' : '签到'
   scanVisible.value = true
 }
 
@@ -376,8 +376,8 @@ async function cancel(row) {
   } catch { /* 取不到就按页面上这份算，服务端仍会按锁后的规矩处理 */ }
   const locked = fresh.status === 'enrolled' && fresh.list_locked
   await ElMessageBox.confirm(
-    locked ? '名单已锁定，此时退出会被记录一次。确定退出吗？' : t('确定退选吗？'),
-    '确认退选', { type: 'warning', confirmButtonText: t('确定') })
+    t(locked ? '名单已锁定，此时退出会被记录一次。确定退出吗？' : '确定退选吗？'),
+    t('确认退选'), { type: 'warning' })
   const d = await api.del(`/api/activities/enrollments/${row.id}`)
   ElMessage[d.effect === 'locked' ? 'warning' : 'success'](d.message)
   load()

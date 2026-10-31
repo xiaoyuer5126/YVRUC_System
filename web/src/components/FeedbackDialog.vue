@@ -10,8 +10,8 @@
         <div class="kinds">
           <div v-for="k in KINDS" :key="k.value" class="kind"
                :class="{ on: kind === k.value }" @click="kind = k.value">
-            <div class="kind-title">{{ k.title }}</div>
-            <div class="dim">{{ k.hint }}</div>
+            <div class="kind-title">{{ t(k.title) }}</div>
+            <div class="dim">{{ t(k.hint) }}</div>
           </div>
         </div>
 
@@ -49,7 +49,7 @@
           <div v-for="f in mine" :key="f.id" class="item">
             <div class="item-head">
               <el-tag size="small" :type="f.status === 'handled' ? 'success' : 'warning'">
-                {{ f.status_label }}
+                {{ t(f.status_label) }}
               </el-tag>
               <span class="dim">{{ fmtDT(f.created_at) }}</span>
             </div>
@@ -81,9 +81,10 @@ const MAX_CHARS = 2000
 const MAX_IMAGES = 3
 const MAX_MB = 5
 const VOLUNTEER_URL = 'http://ruczyzfeedback.mikecrm.com/RYUXyfs'
+// 存中文原句，模板里再 t()：要是在这里就翻好，切换语言后这两项不会跟着换
 const KINDS = [
-  { value: 'platform', title: t('反馈平台问题'), hint: '页面报错、功能用不了、操作不顺手' },
-  { value: 'volunteer', title: t('反馈志愿问题'), hint: '活动安排、时长认定、组织协调' },
+  { value: 'platform', title: '反馈平台问题', hint: '页面报错、功能用不了、操作不顺手' },
+  { value: 'volunteer', title: '反馈志愿问题', hint: '活动安排、时长认定、组织协调' },
 ]
 
 const narrow = useNarrow()
