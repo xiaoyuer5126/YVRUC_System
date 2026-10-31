@@ -22,7 +22,7 @@
         <!-- 学校接口里没有校区，只能本人选。它是招募范围的筛选项：不选的人
              会在「限校区」的活动上被静默挡掉，所以这里必填 -->
         <el-select v-model="form.campus" :placeholder="t('请选择所在校区')" style="width:100%">
-          <el-option v-for="c in campuses" :key="c" :value="c" :label="c" />
+          <el-option v-for="c in campuses" :key="c" :value="c" :label="t(c)" />
         </el-select>
       </el-form-item>
 

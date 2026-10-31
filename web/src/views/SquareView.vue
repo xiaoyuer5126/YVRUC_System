@@ -56,7 +56,7 @@
            @click="$router.push('/activity/' + a.id)">
         <div class="card-top">
           <el-tag size="small" effect="dark" :color="modeColor(a.recruit_mode)" style="border:none">
-            {{ a.recruit_label }}
+            {{ t(a.recruit_label) }}
           </el-tag>
           <el-tag size="small" :type="statusType(a.display_status)">{{ t(a.display_label) }}</el-tag>
         </div>
@@ -65,7 +65,7 @@
           {{ a.title }}
         </div>
         <div v-if="a.organizer_text" class="meta-row"><el-icon><OfficeBuilding /></el-icon>{{ a.organizer_text }}</div>
-        <div class="meta-row"><el-icon><Clock /></el-icon>{{ a.time_text }}</div>
+        <div class="meta-row"><el-icon><Clock /></el-icon>{{ tTime(a.time_text) }}</div>
         <div class="meta-row"><el-icon><Location /></el-icon>{{ a.location || t('待定') }}</div>
         <!-- 按时段筛出来的：要来好几段、或者钟点只是个大概的，卡片上先说一声 -->
         <div v-if="a.slot_note && (a.slot_note.periods > 1 || a.slot_note.flexible)" class="meta-row">
@@ -97,7 +97,7 @@ import { api, fmtDTShort } from '../api'
 import SlotPicker from '../components/SlotPicker.vue'
 import { MODE_COLORS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
-import { t } from '../i18n'
+import { t, tTime } from '../i18n'
 
 const route = useRoute()
 const router = useRouter()

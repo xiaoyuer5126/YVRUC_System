@@ -2,7 +2,7 @@
 import { h } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { auth, clearAuth } from './store'
-import { isEn, t } from './i18n'
+import { isEn, t, tTime } from './i18n'
 import { router } from './router'
 
 /** 令牌失效了：清掉本地登录态，把人送回登录页，登完再回到刚才那一页。
@@ -102,8 +102,8 @@ const TIME_CONFLICT = 'time_conflict'
 /** 冲突列表的一行：本活动的写「本活动 xx」，别的活动写活动名。纯文本。 */
 export function conflictLine(c, activityId = '') {
   const where = activityId && c.activity_id === activityId
-    ? '本活动 ' : `「${c.activity_title}」`
-  return `${where}${c.shift_name}（${c.time}）${c.waiting ? '（候补中）' : ''}`
+    ? t('本活动 ') : t('「{0}」', [c.activity_title])
+  return `${where}${c.shift_name}${t('（{0}）', [tTime(c.time)])}${c.waiting ? t('（候补中）') : ''}`
 }
 
 /** 后端回「时段冲突」（409，code=time_conflict）时先问一句，确认后带上
@@ -112,8 +112,8 @@ export function conflictLine(c, activityId = '') {
  *
  *  head 是列表上方那句话，传 null 就用后端的 message（里面已写明哪几场撞了）。
  *  列表用 h() 拼成节点、文字走文本插值：活动名是别人填的，不能当 HTML 渲染。 */
-export async function withConflictConfirm(send, { title = '时间冲突', ask = '仍要继续？',
-                                                  head = '与以下场次时间冲突：',
+export async function withConflictConfirm(send, { title = t('时间冲突'), ask = t('仍要继续？'),
+                                                  head = t('与以下场次时间冲突：'),
                                                   activityId = '' } = {}) {
   try {
     return await send(false)
@@ -123,11 +123,11 @@ export async function withConflictConfirm(send, { title = '时间冲突', ask = 
     try {
       await ElMessageBox.confirm(
         h('div', [
-          h('p', { style: 'margin:0 0 8px' }, head ?? e.data.message),
+          h('p', { style: 'margin:0 0 8px' }, head ?? t(e.data.message)),
           ...lines.map(l => h('div', { style: 'margin:4px 0' }, l)),
           h('p', { style: 'margin:8px 0 0' }, ask),
         ]),
-        title, { type: 'warning', confirmButtonText: '仍要继续', cancelButtonText: '取消' })
+        title, { type: 'warning', confirmButtonText: t('仍要继续'), cancelButtonText: t('取消') })
     } catch {
       return null
     }

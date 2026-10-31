@@ -5,12 +5,12 @@
       <template v-if="task">
         <div class="ok-icon" v-if="done">✓</div>
         <h2 style="margin:8px 0 4px">{{ task.activity_title }}</h2>
-        <p class="dim" style="margin:0 0 12px">{{ task.shift_name }} · {{ task.period_text || task.group_time }}</p>
+        <p class="dim" style="margin:0 0 12px">{{ task.shift_name }} · {{ tTime(task.period_text || task.group_time) }}</p>
 
         <template v-if="!done">
           <el-descriptions :column="1" border size="small">
             <el-descriptions-item v-if="task.position" :label="t('您的岗位')">
-              {{ task.position.name }}（{{ task.position.location }}）
+              {{ task.position.name }}{{ t('（{0}）', [task.position.location]) }}
             </el-descriptions-item>
             <el-descriptions-item :label="t('签到方式')">
               {{ t(task.method === 'geo' ? '定位签到'
@@ -53,7 +53,7 @@
           </p>
         </template>
         <template v-else>
-          <el-result icon="success" :title="t('{0}成功', [t(doneAction)])"
+          <el-result icon="success" :title="t(doneAction === '签退' ? '签退成功' : '签到成功')"
                      :sub-title="doneAt">
             <template #extra>
               <el-button @click="$router.push('/my')">{{ t('查看我的报名') }}</el-button>
@@ -77,7 +77,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, fmtDT } from '../api'
 import { auth } from '../store'
-import { t } from '../i18n'
+import { t, tTime } from '../i18n'
 import LocaleSwitch from '../components/LocaleSwitch.vue'
 
 const route = useRoute()

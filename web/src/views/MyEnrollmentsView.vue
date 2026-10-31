@@ -18,21 +18,21 @@
                   :type="row.shift.kind === 'training' ? 'success' : 'warning'">
             {{ t(row.shift.kind_label) }}
           </el-tag>
-          {{ row.shift.name }} · {{ row.shift.time_text }}
+          {{ row.shift.name }} · {{ tTime(row.shift.time_text) }}
         </div>
         <div v-if="(row.shift.periods || []).length > 1 && row.status === 'enrolled'"
              class="dim">
           <el-tag v-for="p in row.shift.periods" :key="p.id" size="small" effect="plain"
                   :type="p.checked_out ? 'success' : p.checked_in ? 'warning' : 'info'"
                   style="margin:0 4px 4px 0">
-            {{ p.text }} · {{ t(p.checked_out ? '已签退' : p.checked_in ? '已签到' : '未签到') }}
+            {{ tTime(p.text) }} · {{ t(p.checked_out ? '已签退' : p.checked_in ? '已签到' : '未签到') }}
           </el-tag>
         </div>
         <div v-if="row.shift.attached" class="dim">{{ t('随服务场次的报名产生；不能参加请到活动页请假') }}<template v-if="row.shift.location"> · {{ row.shift.location }}</template>
           <el-tag v-if="row.excused" size="small" type="info" effect="plain">{{ t('已请假') }}</el-tag>
         </div>
         <div v-if="row.position" class="mob-line">
-          <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
+          <el-tag size="small" effect="plain">{{ row.position.name === '待分配' ? t('待分配') : row.position.name }}</el-tag>
           <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">{{ t('组长') }}</el-tag>
           <span class="dim"> {{ row.position.location }}</span>
         </div>
@@ -91,7 +91,7 @@
                   :type="row.shift.kind === 'training' ? 'success' : 'warning'">
             {{ t(row.shift.kind_label) }}
           </el-tag>
-          {{ row.shift.name }}（{{ row.shift.time_text }}）
+          {{ row.shift.name }}{{ t('（{0}）', [tTime(row.shift.time_text)]) }}
           <div v-if="row.shift.attached" class="dim">{{ t('随服务场次的报名产生') }}<template v-if="row.shift.location"> · {{ row.shift.location }}</template>
             <el-tag v-if="row.excused" size="small" type="info" effect="plain">{{ t('已请假') }}</el-tag>
           </div>
@@ -101,11 +101,11 @@
             <el-tag v-for="p in row.shift.periods" :key="p.id" size="small" effect="plain"
                     :type="p.checked_out ? 'success' : p.checked_in ? 'warning' : 'info'"
                     style="margin:4px 4px 0 0">
-              {{ p.text }} · {{ t(p.checked_out ? '已签退' : p.checked_in ? '已签到' : '未签到') }}
+              {{ tTime(p.text) }} · {{ t(p.checked_out ? '已签退' : p.checked_in ? '已签到' : '未签到') }}
             </el-tag>
           </div>
           <div v-if="row.position">
-            <el-tag size="small" effect="plain">{{ row.position.name }}</el-tag>
+            <el-tag size="small" effect="plain">{{ row.position.name === '待分配' ? t('待分配') : row.position.name }}</el-tag>
             <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">{{ t('组长') }}</el-tag>
             <!-- 时段跟场次那行重复：这里只留岗位地点（手机端也是这么显示的） -->
             <span v-if="row.position.location" class="dim"> {{ row.position.location }}</span>
@@ -172,12 +172,12 @@
 
     <GroupQrDialog ref="groupQr" />
 
-    <ScanCheckinDialog v-model="scanVisible" :action="t(scanLabel)" @done="onChecked" />
+    <ScanCheckinDialog v-model="scanVisible" :action="scanLabel" @done="onChecked" />
 
     <el-dialog v-model="teamDlg.visible" :title="t('组员名单 · {0}', [teamDlg.data?.scope || ''])"
                width="560">
       <p class="dim">
-        {{ t('{0} · {1}。联系方式仅用于本次活动的联络，请勿他用；', [teamDlg.data?.activity_title, teamDlg.data?.shift_name]) }}<b>{{ t('每次查看都会记入审计') }}</b>。
+        {{ t('{0} · {1}。联系方式仅用于本次活动的联络，请勿他用；', [teamDlg.data?.activity_title, teamDlg.data?.shift_name]) }}<b>{{ t('每次查看都会记入审计') }}</b>{{ t('。') }}
       </p>
       <DataCards v-if="narrow" :rows="teamDlg.data?.members || []" title-key="name"
                  :fields="[{ key: 'position', label: t('岗位') },
@@ -215,7 +215,7 @@ import CheckinStatusTag from '../components/CheckinStatusTag.vue'
 import GroupQrDialog from '../components/GroupQrDialog.vue'
 import ScanCheckinDialog from '../components/ScanCheckinDialog.vue'
 import DataCards from '../components/DataCards.vue'
-import { t } from '../i18n'
+import { t, tCheckin, tTime } from '../i18n'
 
 const narrow = useNarrow()
 const rows = ref([])
@@ -223,7 +223,7 @@ const loading = ref(false)
 const teamDlg = ref({ visible: false, data: null })
 const groupQr = ref(null)
 const scanVisible = ref(false)
-const scanLabel = ref('签到')   // 这轮扫的是签到还是签退，弹窗照着它说话；存中文原句，模板里再 t()
+const scanLabel = ref('签到')   // 这轮扫的是签到还是签退，弹窗照着它说话；传中文原句，弹窗里再翻
 // 取坐标要几秒，连点两下就是两次签到请求。界面上的「正在定位…」由 geoCheckin 自己弹
 const geoBusy = ref(false)   // vuecheck: script-only
 
@@ -293,7 +293,7 @@ async function geoCheckin(row) {
       lng: pos.coords.longitude,
       accuracy: pos.coords.accuracy || 0,
     }, { skipErrorToast: true })
-    ElMessage.success(d.message)
+    ElMessage.success(tCheckin(d.message))
     await load()
   } catch (e) {
     // 取不到坐标和服务端判定不在范围内是两回事，说法不能混
@@ -355,7 +355,7 @@ async function withdraw(row) {
 
 async function confirm(row) {
   const d = await api.post(`/api/activities/enrollments/${row.id}/confirm-promotion`)
-  ElMessage.success(d.message)
+  ElMessage.success(t(d.message))
   load()
 }
 
@@ -379,7 +379,7 @@ async function cancel(row) {
     t(locked ? '名单已锁定，此时退出会被记录一次。确定退出吗？' : '确定退选吗？'),
     t('确认退选'), { type: 'warning' })
   const d = await api.del(`/api/activities/enrollments/${row.id}`)
-  ElMessage[d.effect === 'locked' ? 'warning' : 'success'](d.message)
+  ElMessage[d.effect === 'locked' ? 'warning' : 'success'](t(d.message))
   load()
 }
 </script>

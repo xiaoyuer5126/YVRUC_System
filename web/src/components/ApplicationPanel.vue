@@ -10,7 +10,7 @@
       <div v-if="mine.leader_willing" class="dim" style="margin-top:4px">{{ t('愿意担任组长') }}</div>
       <div class="dim" style="margin:8px 0 12px">{{ t('意向场次：') }}<el-tag v-for="w in mine.wanted" :key="w.shift_id" size="small" effect="plain"
                 style="margin-right:8px">
-          {{ w.shift_name }}{{ w.position_name ? ' · ' + w.position_name : '' }}
+          {{ w.shift_name }}{{ w.position_name ? ' · ' + wantedNames(w) : '' }}
         </el-tag>
       </div>
       <el-descriptions v-if="answeredQuestions.length" :column="1" size="small" border>
@@ -37,7 +37,7 @@
         <el-checkbox-group v-model="form.position_ids">
           <div v-for="g in openShifts" :key="g.id" class="shift-block">
             <div class="shift-name">
-              {{ g.name }} · {{ g.time_text }}
+              {{ g.name }} · {{ tTime(g.time_text) }}
               <span class="dim">{{ t('（{0}）', [g.location || act.location || t('地点待定')]) }}</span>
               <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain" style="margin-left:4px">{{ t('时间灵活·可多次签到') }}</el-tag>
             </div>
@@ -46,12 +46,12 @@
               <el-checkbox :value="p.id"
                            :disabled="p.eligible === false || g.enroll_paused || p.enroll_paused
                                       || g.locked || p.list_locked">
-                {{ p.display_name }}
-                <span class="dim">{{ p.is_placeholder ? '' : `（${p.enrolled}/${p.quota}）` }}</span>
+                {{ posName(p) }}
+                <span class="dim">{{ p.is_placeholder ? '' : t('（{0}）', [`${p.enrolled}/${p.quota}`]) }}</span>
               </el-checkbox>
               <span v-if="g.locked || p.list_locked" class="dim">{{ t('名单已锁定') }}</span>
               <span v-else-if="g.enroll_paused || p.enroll_paused" class="dim">{{ t('暂停报名') }}</span>
-              <span v-else-if="p.eligible === false" class="dim">{{ t('不符合条件：{0}', [p.ineligible_reason]) }}</span>
+              <span v-else-if="p.eligible === false" class="dim">{{ t('不符合条件：{0}', [tTags(p.ineligible_reason)]) }}</span>
             </div>
           </div>
         </el-checkbox-group>
@@ -61,7 +61,7 @@
 
       <template v-else>
         <div class="dim" style="margin-bottom:12px">{{ t('意向岗位：') }}<el-tag v-for="p in chosen" :key="p.id" size="small" effect="plain"
-                  style="margin-right:8px">{{ p.shift_name }} · {{ p.display_name }}</el-tag>
+                  style="margin-right:8px">{{ p.shift_name }} · {{ posName(p) }}</el-tag>
         </div>
         <el-form label-position="top">
           <QuestionFields ref="fields" v-model="form.answers" :questions="stepQuestions"
@@ -104,7 +104,7 @@ import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT, withConflictConfirm } from '../api'
 import QuestionFields from './QuestionFields.vue'
-import { t } from '../i18n'
+import { posName, t, tTags, tTime } from '../i18n'
 
 const props = defineProps({ act: { type: Object, required: true } })
 const emit = defineEmits(['changed'])
@@ -140,10 +140,14 @@ const answeredQuestions = computed(
   () => questions.value.filter(q => q.id in (mine.value?.answers || {})))
 const submitting = ref(false)
 
+/** 意向岗位名（后端用「、」连起来）：占位岗位「待分配」要翻，其余是负责人填的。 */
+const wantedNames = w => w.position_name.split('、')
+  .map(n => (n === '待分配' ? t(n) : n)).join(t('、'))
+
 function answerText(q) {
   const v = mine.value.answers[q.id]
   if (v === undefined || v === '' || (Array.isArray(v) && !v.length)) return '—'
-  if (Array.isArray(v)) return v.join('、')
+  if (Array.isArray(v)) return v.join(t('、'))
   return q.kind === 'file' ? t('已上传') : v
 }
 
@@ -172,7 +176,7 @@ async function submit() {
         allow_reassign: form.allow_reassign, confirm_conflict: confirm }),
     { ask: t('仍要提交申请？') })
     if (!d) return
-    ElMessage.success(d.message)
+    ElMessage.success(t(d.message))
     emit('changed')
   } finally { submitting.value = false }
 }
