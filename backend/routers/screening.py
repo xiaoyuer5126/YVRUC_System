@@ -902,7 +902,7 @@ def expire_undecided(db: OrmSession) -> int:
             summary = (f"场次「{g.name}」已开始，未处理的意向自动作废："
                        + "、".join(voided))
             if dropped:
-                summary += ("（；申请自动落选并通知："
+                summary += ("（申请自动落选并通知："
                             + "、".join(dropped) + "）")
             audit_log(db, actor=None, action="assign", target_type="activity",
                       target_id=act.id, target_label=act.title, activity_id=act.id,

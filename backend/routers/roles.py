@@ -191,11 +191,11 @@ def _audit_role_change(db: OrmSession, actor: User, target: User,
     label = lambda rs: "、".join(ROLE_LABELS.get(r, r) for r in rs) or "无"
     parts = [f"身份 {label(before[0])} → {label(after[0])}"]
     if before[1] != after[1]:
-        parts.append(f"（；青协层级 {User.POST_LABELS.get(before[1], before[1])}"
+        parts.append(f"（青协层级 {User.POST_LABELS.get(before[1], before[1])}"
                      f" → {User.POST_LABELS.get(after[1], after[1])}）")
     if before[2] != after[2]:
         names = {d.id: d.name for d in db.query(Department).all()}
-        parts.append(f"（；部门 {names.get(before[2], '无')}"
+        parts.append(f"（部门 {names.get(before[2], '无')}"
                      f" → {names.get(after[2], '无')}）")
     summary = prefix + "".join(parts)
     if note:

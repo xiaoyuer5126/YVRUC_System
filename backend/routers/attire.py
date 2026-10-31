@@ -263,7 +263,7 @@ def attire_batch(activity_id: str, body: AttireOpBody,
               target_id=activity_id, target_label=act.title if act else "",
               activity_id=activity_id,
               summary=f"服装{LABELS[body.action]} {len(done)} 人"
-                      + (f"（；跳过：{'、'.join(skipped[:5])}）" if skipped else ""))
+                      + (f"（跳过：{'、'.join(skipped[:5])}）" if skipped else ""))
     db.commit()
     return {"ok": True, "done": len(done), "skipped": skipped}
 

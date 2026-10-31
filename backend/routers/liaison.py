@@ -111,7 +111,7 @@ def set_duty(dept_id: str, body: DutyBody, db: OrmSession = Depends(db_session),
                         actor_id=user.id, note=note))
     what = (f"{cur.name if cur else '无人'} → "
             f"{target.name if target else '无人值班'}"
-            + (f"（；{note}）" if note else ""))
+            + (f"（{note}）" if note else ""))
     audit_log(db, actor=user, action="duty", target_type="department",
               target_id=dept.id, target_label=dept.name, activity_id=None,
               summary=f"值班：{what}")
@@ -303,8 +303,8 @@ def repush_vb(activity_id: str, body: VbRepushBody,
                        f"{liaison.vb_dept_name(db)}：{liaison.names_text(names)}"
                        + (f"（原为 {before}）" if before != liaison.names_text(names)
                           else "（名称未改）")
-                       + (f"（；作废 {dropped} 条待确认）" if dropped else "")
-                       + f"（；原因：{reason}）"))
+                       + (f"（作废 {dropped} 条待确认）" if dropped else "")
+                       + f"（原因：{reason}）"))
     db.commit()
     return _vbc_out(db, row)
 

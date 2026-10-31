@@ -381,7 +381,7 @@ def apply_plan(db: OrmSession, shift: Shift, actor: User, plan: list[dict], *,
         if forced:
             summary += f"（含强制 {len(forced)} 人）"
         if against_will:
-            summary += f"（；未同意调剂仍被调换：{'、'.join(against_will)}）"
+            summary += f"（未同意调剂仍被调换：{'、'.join(against_will)}）"
 
     changes = [{"field": "enrollment", "label": db.get(User, e.user_id).name,
                 "old": old.name if old else "未分配",

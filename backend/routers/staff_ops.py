@@ -819,7 +819,7 @@ def batch_op(task_id: str, body: dict,
               target_id=task.id, target_label=g.name,
               activity_id=task.activity_id,
               summary=f"{ACTION_SUMMARY[action]} {len(done)} 人" + named
-                      + (f"（；跳过：{'、'.join(skipped[:5])}"
+                      + (f"（跳过：{'、'.join(skipped[:5])}"
                          + ("…" if len(skipped) > 5 else "") + "）"
                          if skipped else ""))
     db.commit()
@@ -1609,7 +1609,7 @@ def hours_manual(activity_id: str, body: ManualHoursBody,
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"手动调整时长：{'、'.join(added)}"
-                      + ("（；原核准已撤销）" if revoked else ""),
+                      + ("（原核准已撤销）" if revoked else ""),
               changes=changes)
     db.commit()
     return {"ok": True, "count": len(added), "reapproval_required": revoked}
@@ -1662,7 +1662,7 @@ def hours_manual_delete(activity_id: str, record_id: str, part_id: str,
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"删除手动时长：{u.name if u else '?'} {hours:g} 小时"
-                      f"（{seg.label}）" + ("（；原核准已撤销）" if revoked else ""),
+                      f"（{seg.label}）" + ("（原核准已撤销）" if revoked else ""),
               changes=[hours_flow.hours_change(
                   u, before, rec.settled_hours() if rest else None,
                   f"删除手动段 {hours:g}h：{seg.label}")])
@@ -1799,11 +1799,11 @@ def hours_confirm(activity_id: str, body: HoursConfirmBody | None = None,
             upsert(it["user"]["id"], None, reason="按签到签退记录确认")
         count = len(clear) - len(kept)
         summary = (f"确认 {count} 人志愿时长（依据签到签退记录）"
-                   + (f"（；{len(review)} 人未正常签退，时长待核未确认）"
+                   + (f"（{len(review)} 人未正常签退，时长待核未确认）"
                       if review else "")
-                   + (f"（；{'、'.join(kept)} 的时长由申诉改判过，保留不覆盖）"
+                   + (f"（{'、'.join(kept)} 的时长由申诉改判过，保留不覆盖）"
                       if kept else "")
-                   + (f"（；{len(changes)} 人时长有变动）" if changes else ""))
+                   + (f"（{len(changes)} 人时长有变动）" if changes else ""))
     if revoked:
         summary += "；时长有变动，原核准已撤销，请重新核准"
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
@@ -2056,7 +2056,7 @@ def resolve_appeal(appeal_id: str, body: ResolveAppealBody,
                      + (f"\n说明：{a.reply}" if a.reply else "")))
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
-              summary=summary + (f"（；说明：{a.reply}）" if a.reply else ""),
+              summary=summary + (f"（说明：{a.reply}）" if a.reply else ""),
               changes=changes)
     db.commit()
     return {"ok": True, "status": a.status, "hours": rec.settled_hours()}
@@ -2297,7 +2297,7 @@ def decide_hours_request(request_id: str, body: HoursDecideBody,
     audit_log(db, actor=user, action="hours_confirm", target_type="hours",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=prefix + (f"同意{req.kind_label()}时长（{req.reason}）"
-                                + (f"（；意见：{reply}）" if reply else "")
+                                + (f"（意见：{reply}）" if reply else "")
                                 if body.approve
                                 else f"驳回时长{req.kind_label()}申请：{reply}"))
     requester = db.get(User, req.requested_by)
