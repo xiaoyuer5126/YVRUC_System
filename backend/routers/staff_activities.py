@@ -2264,6 +2264,9 @@ def _notify_files(db: OrmSession, act: Activity, ids: list[str]) -> list[dict]:
         a = db.get(Attachment, i)
         if a is None or a.owner_type != "notify" or a.activity_id != act.id:
             raise HTTPException(400, "附件不存在，请重新上传")
+        # 已随别的通知发出的附件不再认：owner_id 一改，定时任务就不清它了
+        if a.owner_id != act.id:
+            raise HTTPException(400, "附件已随之前的通知发出，请重新上传")
         a.owner_id = send_id
         out.append({"id": a.id, "title": a.title, "size": a.size})
     return out
@@ -2308,6 +2311,9 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
         checked = {r[0] for r in db.query(CheckinRecord.user_id)
                    .filter(CheckinRecord.shift_id == shift_id).all()}
         users = [u for u in users if u.id not in checked]
+    # 没人可发时不动附件：标成已发送的附件定时任务不再清，会一直留在磁盘上
+    if not users:
+        raise HTTPException(400, "所选范围内没有可通知的志愿者")
     files = _notify_files(db, act, body.file_ids)
     if files:
         # 企业微信推送带不了文件，正文里说一声去平台下载
@@ -2323,8 +2329,8 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
               target_id=act.id, target_label=act.title,
               activity_id=act.id,
               summary=f"向 {n} 位志愿者发送通知：{title}"
-                      + (f"（，附件 {len(files)} 个）" if files else "")
-                      + ("（，要求签收）" if body.need_ack else ""))
+                      + (f"（附件 {len(files)} 个）" if files else "")
+                      + ("（要求签收）" if body.need_ack else ""))
     db.commit()
     return {"ok": True, "count": n, "batch_id": batch_id}
 
