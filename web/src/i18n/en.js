@@ -18,7 +18,7 @@
  *   核准 approve                申诉 appeal                劳务 paid work
  *   组长 team leader            培训 / 彩排 training / rehearsal
  *   请假 report an absence（已请假 Absence reported，销假 Cancel absence）
- *   补招 added on site          补记 recorded afterwards   志愿服装 uniform
+ *   补招 added by organizer    补记 recorded afterwards   志愿服装 uniform
  *   志愿北京 Volunteer Beijing  青协 / 校青协 Youth Volunteers Association
  *   党校 Party School
  */
@@ -861,7 +861,7 @@ export default {
   '活动变更': 'Activity updated',
   '活动结束': 'Activity ended',
   '签到提醒': 'Check-in reminder',
-  '已补招': 'Added on site',
+  '已补招': 'Added by organizer',
   '已补记': 'Recorded afterwards',
   '时长核准': 'Hours approved',
   '时长锁定': 'Hours locked',
