@@ -58,6 +58,57 @@ export function t(text, params) {
   })
 }
 
+const WEEKDAY_EN = { 一: 'Mon', 二: 'Tue', 三: 'Wed', 四: 'Thu', 五: 'Fri', 六: 'Sat', 日: 'Sun' }
+
+/** 后端拼好的时间串（models.span_text / periods_text / days_text 那几种）：
+ *  「2026-09-20（周六）09:00-12:00」，几段之间用「、」隔开，整体起止写成
+ *  「2026-10-16（周五）~ 2026-10-17（周六）」，没有时间是「待定」。
+ *  英文界面下星期换成英文缩写、段与段之间换成分号，其余原样。 */
+export function tTime(text) {
+  if (!text || !isEn.value) return text || ''
+  if (text === '待定') return t('待定')
+  return text.replace(/（周([一二三四五六日])）/g, (m, d) => ` (${WEEKDAY_EN[d]}) `)
+    .replace(/\s*、\s*/g, '; ').replace(/ {2,}/g, ' ').trim()
+}
+
+/** 后端拼好的条件说明：「校区：中关村校区；学段：本科生/硕士研究生」，以及
+ *  不符合条件的原因「学段需为 本科生（您是 硕士研究生）」。标签名与校区、学段、
+ *  性别这些固定取值按 en.js 翻，学院名这类查不到的照原样显示。 */
+export function tTags(text) {
+  if (!text || !isEn.value) return text || ''
+  const vals = s => s.split('/').map(v => t(v.trim())).join(' / ')
+  return text.split('；').map(part => {
+    const unmet = part.match(/^(.+?)需为 (.+)（您是 (.*)）$/)
+    if (unmet) return t('{0}需为 {1}（您是 {2}）', [t(unmet[1]), vals(unmet[2]), t(unmet[3])])
+    const i = part.indexOf('：')
+    return i < 0 ? t(part) : `${t(part.slice(0, i))}: ${vals(part.slice(i + 1))}`
+  }).join('; ')
+}
+
+/** 报酬方式（HoursRecord.reward_label）：「志愿时长」「劳务」或
+ *  「志愿时长 3h + 劳务 2h」。 */
+export function tReward(text) {
+  if (!text || !isEn.value) return text || ''
+  return text.replace(/志愿时长|劳务/g, m => t(m))
+}
+
+/** 签到、签退成功时后端回的那句话（routers/checkin.py）：
+ *  「签到成功，张三 已到岗（本场第 2 次签到）。（距签到点约 30 米）」，
+ *  括号里的两段可有可无。英文界面下按这几段重新拼；对不上格式的整句去查表。 */
+export function tCheckin(text) {
+  if (!text || !isEn.value) return text || ''
+  const m = text.match(/^(签到|签退)成功，(.+?) (?:已到岗|本次服务时长将按签到签退计算)(?:（本场第 (\d+) 次签到）)?。(?:（距签到点约 (\d+) 米）)?$/)
+  if (!m) return t(text)
+  let out = t(m[1] === '签到' ? '签到成功，{0} 已到岗。' : '签退成功，{0} 本次服务时长将按签到签退计算。', [m[2]])
+  if (m[3]) out += ' ' + t('本场第 {0} 次签到', [m[3]])
+  if (m[4]) out += ' ' + t('距签到点约 {0} 米', [m[4]])
+  return out
+}
+
+/** 岗位在列表里显示的名字：占位岗位的名字是后端写的固定说明，要翻；
+ *  真实岗位名是负责人填的，原样显示。 */
+export const posName = p => (p?.is_placeholder ? t(p.display_name) : (p?.display_name || ''))
+
 /** 按当前语言挑后端给的一对值，如 { zh, en }。没有英文就用中文。 */
 export const pick = pair => (!pair ? '' : (isEn.value && pair.en ? pair.en : pair.zh))
 

@@ -9,7 +9,7 @@
       {{ t(s.kind_label) }}
     </el-tag>
     <b v-if="full">{{ s.name }}</b>
-    <span>{{ s.time_text }}</span>
+    <span>{{ tTime(s.time_text) }}</span>
     <span class="dim">{{ s.location || location || t('地点待定') }}</span>
     <span v-if="full" class="dim">{{ t(s.hours_mode === 'none' ? '不计时长' : '计入志愿时长') }}</span>
     <span v-if="s.hours_mode === 'fixed'" class="dim">{{ t('到场请扫码签到') }}</span>
@@ -27,7 +27,7 @@
 </template>
 
 <script setup>
-import { t } from '../i18n'
+import { t, tTime } from '../i18n'
 
 defineProps({
   s: { type: Object, required: true },

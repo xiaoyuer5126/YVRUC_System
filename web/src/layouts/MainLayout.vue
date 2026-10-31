@@ -51,7 +51,7 @@
                 <div class="switch-cap">{{ t('切换身份') }}</div>
                 <el-dropdown-item v-for="r in auth.user.roles" :key="r" :command="'identity:' + r">
                   <el-icon v-if="auth.activeIdentity === r" style="color:var(--el-color-primary)"><Check /></el-icon>
-                  {{ ROLE_LABELS[r] || r }}
+                  {{ (isEn ? EN_ROLE[r] : ROLE_LABELS[r]) || r }}
                 </el-dropdown-item>
                 <el-dropdown-item divided command="my"
                                   v-if="auth.user.user_type === 'student'">{{ t('我的报名') }}</el-dropdown-item>

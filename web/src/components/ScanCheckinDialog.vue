@@ -7,7 +7,7 @@
      扫到的码不显示、也不留痕——它是别人现场出示的凭据，落地页那边同样只出
      二维码不出码文。 -->
 <template>
-  <el-dialog :model-value="modelValue" :title="t('扫码{0}', [action])"
+  <el-dialog :model-value="modelValue" :title="t(checkout ? '扫码签退' : '扫码签到')"
              :width="narrow ? '92vw' : '340px'"
              @close="close">
     <div class="scan-box">
@@ -20,12 +20,12 @@
 </template>
 
 <script setup>
-import { nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { BrowserQRCodeReader } from '@zxing/browser'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useNarrow } from '../composables/useNarrow'
-import { t } from '../i18n'
+import { t, tCheckin } from '../i18n'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -33,6 +33,8 @@ const props = defineProps({
   // 屏幕上一律写着「签到」，人还以为自己点错了
   action: { type: String, default: '签到' },
 })
+// 文案按签到、签退各写一句：英文里动词的位置跟中文不一样，拼不出来
+const checkout = computed(() => props.action === '签退')
 const emit = defineEmits(['update:modelValue', 'done'])
 
 const narrow = useNarrow()
@@ -70,13 +72,13 @@ function onResult(result) {
 
 async function submit(code) {
   busy = true
-  hint.value = t('正在{0}…', [props.action])
+  hint.value = t(checkout.value ? '正在签退…' : '正在签到…')
   bad.value = false
   try {
     // skipErrorToast：失败的话得留在框里（见下），再弹一个同样内容的飘字是重复
     const d = await api.post(`/api/checkin/task/${code}`, undefined,
                              { skipErrorToast: true })
-    ElMessage.success(d.message)
+    ElMessage.success(tCheckin(d.message))
     emit('done', d)
     emit('update:modelValue', false)
   } catch (e) {
@@ -84,7 +86,7 @@ async function submit(code) {
     // 提示留在框里而不是弹个飘字：飘字三秒就没了，人举着手机对着同一张码
     // 反复扫，却不知道为什么一直不成功。现场那张码正在换，所以不停扫描，
     // 让人直接扫下一张。
-    fail(e.message || t('{0}失败', [props.action]))
+    fail(e.message || t(checkout.value ? '签退失败' : '签到失败'))
     busy = false
   }
 }

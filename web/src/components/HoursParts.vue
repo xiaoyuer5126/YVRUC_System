@@ -3,8 +3,8 @@
 <template>
   <div v-if="parts?.length" class="parts">
     <div v-for="(p, i) in parts" :key="i" class="part">
-      <span>{{ p.label || (p.kind === 'import' ? t('名单导入') : '') }}</span>
-      <span v-if="p.time" class="dim">{{ p.time }}</span>
+      <span>{{ p.label ? t(p.label) : (p.kind === 'import' ? t('名单导入') : '') }}</span>
+      <span v-if="p.time" class="dim">{{ tTime(p.time) }}</span>
       <span v-if="p.position" class="dim">{{ p.position }}</span>
       <b>{{ p.hours }}h</b>
       <el-tag v-if="p.reward === 'pay'" size="small" effect="plain" type="warning">{{ t('劳务') }}</el-tag>
@@ -18,7 +18,7 @@
 </template>
 
 <script setup>
-import { t } from '../i18n'
+import { t, tTime } from '../i18n'
 
 defineProps({
   parts: { type: Array, default: () => [] },

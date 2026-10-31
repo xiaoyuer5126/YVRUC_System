@@ -148,7 +148,7 @@ async function submit() {
     })
     const data = await resp.json().catch(() => ({}))
     if (!resp.ok) {
-      ElMessage.error(typeof data.detail === 'string' ? data.detail : t('提交失败({0})', [resp.status]))
+      ElMessage.error(typeof data.detail === 'string' ? t(data.detail) : t('提交失败({0})', [resp.status]))
       return
     }
     ElMessage.success(t('已提交，感谢反馈！处理后会通过站内消息通知你'))

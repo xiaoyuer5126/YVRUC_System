@@ -41,14 +41,14 @@
     <el-button v-else size="small" disabled>{{ ctx.closedText(g) }}</el-button>
   </div>
   <div v-if="showWhy && s.eligible === false && !g.my_enrollment" class="pa-why">
-    {{ s.ineligible_reason }}
+    {{ tTags(s.ineligible_reason) }}
   </div>
   <div v-if="ctx.queuedHere(g, s)" class="pa-queue">{{ ctx.queueNote.value }}</div>
 </template>
 
 <script setup>
 import { computed, inject } from 'vue'
-import { t } from '../i18n'
+import { posName, t, tTags } from '../i18n'
 
 const props = defineProps({
   g: { type: Object, required: true },        // 场次
@@ -65,7 +65,7 @@ const mine = computed(() => (props.g.my_enrollment
 const takenText = computed(() => {
   if (!props.byRole) return t('同场次只能选一个岗位')
   const p = props.g.positions.find(x => x.id === props.g.my_enrollment.position_id)
-  return t('这个时段已报了「{0}」', [p ? p.display_name : t('待分配')])
+  return t('这个时段已报了「{0}」', [p ? posName(p) : t('待分配')])
 })
 </script>
 

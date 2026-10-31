@@ -101,8 +101,8 @@
         <div class="dim" style="margin-bottom:8px">{{ t('报酬方式（选劳务的段不记志愿时长）') }}</div>
         <div v-for="(p, i) in cf.parts" :key="i" class="seg">
           <div class="seg-head">
-            <span>{{ p.label || t('手动补录') }}</span>
-            <span v-if="p.time" class="dim">{{ p.time }}</span>
+            <span>{{ p.label ? t(p.label) : t('手动补录') }}</span>
+            <span v-if="p.time" class="dim">{{ tTime(p.time) }}</span>
             <span v-if="p.position" class="dim">{{ p.position }}</span>
             <b>{{ p.hours }}h</b>
           </div>
@@ -154,7 +154,7 @@ import DataCards from '../components/DataCards.vue'
 import HoursParts from '../components/HoursParts.vue'
 import HoursClaims from '../components/HoursClaims.vue'
 import VbRegisterTip from '../components/VbRegisterTip.vue'
-import { t } from '../i18n'
+import { t, tReward, tTime } from '../i18n'
 
 const narrow = useNarrow()
 const data = ref(null)
@@ -196,7 +196,7 @@ async function submitConfirm() {
     const parts = c.parts.filter(p => p.pay_ok)
       .map(p => ({ shift_id: p.shift_id, position_id: p.position_id, reward: p.reward }))
     const d = await api.post(`/api/me/hours/${c.row.id}/confirm`, { parts })
-    ElMessage.success(t('已确认：{0}', [d.reward_label]))
+    ElMessage.success(t('已确认：{0}', [tReward(d.reward_label)]))
     c.visible = false
     load()
   } finally { c.busy = false }
@@ -224,7 +224,7 @@ async function submitAppeal() {
 
 // 还没核准（本人只当参考）→ 已核准待表态 / 已确认 → 已锁定，账结了
 function stateOf(row) {
-  const how = row.reward_label
+  const how = tReward(row.reward_label)
   if (row.locked) return { type: 'success', text: t('已锁定 · {0}', [how]) }
   if (row.approved && row.confirmed_at) return { type: 'success', text: t('已确认 · {0}', [how]) }
   if (row.approved) return { type: 'warning', text: t('已核准请确认，如有异议请申诉') }

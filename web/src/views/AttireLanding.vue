@@ -5,7 +5,7 @@
       <template v-if="task">
         <div class="ok-icon" v-if="done">✓</div>
         <h2 style="margin:8px 0 4px">{{ task.activity_title }}</h2>
-        <p class="dim" style="margin:0 0 12px">{{ t('志愿服装 · {0}码', [t(task.action_label)]) }}</p>
+        <p class="dim" style="margin:0 0 12px">{{ t(task.action === 'take' ? '服装领取码' : '服装归还码') }}</p>
 
         <template v-if="!done">
           <el-descriptions :column="1" border size="small">
@@ -23,8 +23,8 @@
             {{ actionText }}
           </el-button>
         </template>
-        <el-result v-else icon="success" :title="t('{0}成功', [t(task.action_label)])"
-                   :sub-title="doneMsg">
+        <el-result v-else icon="success" :title="t(task.action === 'take' ? '领取成功' : '归还成功')"
+                   :sub-title="t(doneMsg)">
           <template #extra>
             <el-button @click="$router.push('/my')">{{ t('查看我的报名') }}</el-button>
           </template>
@@ -98,7 +98,7 @@ async function doScan() {
     const d = await api.post(`/api/attire/scan/${token}`)
     doneMsg.value = d.message
     done.value = true
-    ElMessage.success(d.message)
+    ElMessage.success(t(d.message))
   } finally { submitting.value = false }
 }
 </script>
