@@ -68,3 +68,13 @@ def test_一次最多三十一天(client, admin):
 def test_时间格式不对给四百(client, admin):
     assert _get(client, admin, start="昨天").status_code == 400
     assert _get(client, admin, start="2026-13-01").status_code == 400
+
+
+def test_指定活动不填时间看这场活动的全部留痕(client, admin, db, open_group):
+    """活动管理页的「变更记录」只带 activity_id：立项一个多月前的改动也要看得到。"""
+    act, _g = open_group(5)
+    old = _log(db, activity_id=act.id, created_at=now() - timedelta(days=60))
+    other = _log(db, created_at=now() - timedelta(days=1))
+
+    ids = _all_ids(client, admin, activity_id=act.id)
+    assert old.id in ids and other.id not in ids
