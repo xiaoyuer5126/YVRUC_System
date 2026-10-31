@@ -1131,7 +1131,6 @@
 
     <!-- 场次对话框 -->
     <el-dialog v-model="shiftDlg.visible" :title="shiftDlg.editing ? '编辑场次' : '新建场次'" width="520"
-               :close-on-click-modal="false"
                :before-close="guardShift" @opened="guardShift.snap">
       <el-form label-width="100px">
         <el-form-item label="名称" required><el-input v-model="groupForm.name" placeholder="如：上午场" /></el-form-item>
@@ -1216,7 +1215,6 @@
     <!-- 培训 / 彩排：挂在整个活动上 -->
     <el-dialog v-model="attDlg.visible"
                :title="(attDlg.editing ? '编辑' : '添加') + '培训 / 彩排'" width="560"
-               :close-on-click-modal="false"
                :before-close="guardAttached" @opened="guardAttached.snap">
       <p class="dim">
         报上被圈到的岗位就连带报上，被圈到的报名全退了才连带退；可以跨场次。
@@ -1277,7 +1275,7 @@
 
     <!-- 核准时长：定下账、通知本人，并给一段申诉时间 -->
     <el-dialog v-model="approveDlg.visible" title="确认核准时长" width="480"
-               :close-on-click-modal="false">
+               :before-close="guardApprove" @opened="guardApprove.snap">
       <p class="dim">
         核准之后，志愿者将会收到确认通知，截止前确认无误或提出申诉。截止后若无申诉，系统自动提交校青协审核（须先在「审核」页签填好志愿北京活动名称）；通过即锁定时长，{{ vbDept }}确认志愿北京后活动标记为「已完成」。
       </p>
@@ -1297,7 +1295,7 @@
 
     <!-- 提交时长审核：一并填志愿北京活动名称，锁定后推给志愿北京对接部门核对 -->
     <el-dialog v-model="lockDlg.visible" title="提交时长审核" width="520"
-               :close-on-click-modal="false">
+               :before-close="guardLock" @opened="guardLock.snap">
       <p v-if="lockDlg.early" class="dim">
         申诉期还没结束（截止 {{ fmtDT(hoursState.appeal_deadline) }}）。现在提交，还没确认时长的志愿者就没机会提申诉了；
         到点没有申诉的话系统会自动提交，不必手动来这一下。
@@ -1338,7 +1336,7 @@
 
     <!-- 报名问卷：题目不常改，收进弹窗，页签上只留一个按钮 -->
     <el-dialog v-model="formDlg" title="报名问卷" width="760"
-               :close-on-click-modal="false" :before-close="closeFormDlg">
+               :before-close="closeFormDlg">
       <FormBuilder ref="formBuilder" :key="act.status" :activity-id="act.id" :editable="!isPublic"
                    :screened="act.recruit_mode === 'screened'"
                    @count="n => formCount = n" />
@@ -1346,7 +1344,7 @@
 
     <!-- 提交审批 -->
     <el-dialog v-model="submitDlg.visible" title="提交校青协审批" width="500"
-               :close-on-click-modal="false">
+               :before-close="guardSubmit" @opened="guardSubmit.snap">
       <el-form label-width="88px">
         <el-form-item label="审批部门" required>
           <!-- label 只放短的那截：选中后它显示在输入框里，塞进备注就只剩省略号。
@@ -1413,7 +1411,7 @@
 
     <!-- 恢复报名：必须重设截止时间，否则定时任务下一分钟又给截了 -->
     <el-dialog v-model="reopenDlg.visible" title="恢复报名" width="460"
-               :close-on-click-modal="false">
+               :before-close="guardReopen" @opened="guardReopen.snap">
       <p class="dim">
         重新开放报名，并延后报名截止时间。<b>必须填新的截止时间</b>。
       </p>
@@ -1432,7 +1430,7 @@
     <!-- 处理时长申诉 -->
     <el-dialog v-model="resolveDlg.visible"
                :title="resolveDlg.accept ? '采纳申诉' : '不采纳申诉'" width="480"
-               :close-on-click-modal="false">
+               :before-close="guardResolve" @opened="guardResolve.snap">
       <p class="dim">
         {{ resolveDlg.row?.name }}：{{ resolveDlg.row?.old_hours }}h →
         申报 {{ resolveDlg.row?.claimed_hours }}h<br />
@@ -1486,7 +1484,6 @@
 
     <!-- 岗位对话框 -->
     <el-dialog v-model="positionDlg.visible" :title="positionDlg.editing ? '编辑岗位' : '新建岗位'" width="560"
-               :close-on-click-modal="false"
                :before-close="guardPosition" @opened="guardPosition.snap">
       <el-form label-width="100px">
         <!-- maxlength 跟着库里这几列的长度：不在这儿拦，超长要到保存那一下
@@ -1585,7 +1582,6 @@
 
     <!-- 按岗位看：给一个岗位加时段 = 在某个场次下复制出同名岗位 -->
     <el-dialog v-model="slotDlg.visible" :title="`给「${slotDlg.role?.name || ''}」加时段`" width="480"
-               :close-on-click-modal="false"
                :before-close="guardSlot" @opened="guardSlot.snap">
       <el-radio-group v-model="slotDlg.mode">
         <el-radio-button value="existing" :disabled="!slotTargets.length">放进已有场次</el-radio-button>
@@ -1617,7 +1613,7 @@
 
     <!-- 岗位批量复制到其它场次 -->
     <el-dialog v-model="copyPosDlg.visible" title="复制岗位到其它场次" width="520"
-               :close-on-click-modal="false">
+               :before-close="guardCopyPos" @opened="guardCopyPos.snap">
       <p class="dim">
         从「{{ copyPosDlg.source?.name }}」复制岗位，含名额、条件、组长与材料；同名的跳过。
       </p>
@@ -1671,7 +1667,6 @@
 
     <!-- 发送通知 -->
     <el-dialog v-model="notifyDlg.visible" title="发送通知" width="540"
-               :close-on-click-modal="false"
                :before-close="guardNotify" @opened="guardNotify.snap">
       <el-form label-width="90px">
         <el-form-item label="发送范围" required>
@@ -1724,8 +1719,7 @@
     </el-dialog>
 
     <!-- 问卷结果：按场次、岗位挑人导出，附件按「场次/岗位」分文件夹 -->
-    <el-dialog v-model="answersDlg.visible" title="导出问卷结果" width="480"
-               :close-on-click-modal="false">
+    <el-dialog v-model="answersDlg.visible" title="导出问卷结果" width="480">
       <el-form label-width="56px">
         <el-form-item label="场次">
           <el-select v-model="answersDlg.shifts" multiple clearable collapse-tags
@@ -1758,7 +1752,6 @@
 
     <!-- 基本信息编辑 -->
     <el-dialog v-model="editBase" title="编辑活动基本信息" width="620"
-               :close-on-click-modal="false"
                :before-close="guardBase" @opened="guardBase.snap">
       <ActivityForm v-model="baseForm" v-model:range="baseRange" :modes="modes"
                     :status="act.status" />
@@ -1973,6 +1966,12 @@ const guardPosition = useCloseGuard(() => [stationForm.value, positionDlg.value.
 const guardSlot = useCloseGuard(() => ({ ...slotDlg.value, visible: 0, busy: 0, role: 0 }))
 const guardNotify = useCloseGuard(() => notifyForm.value)
 const guardBase = useCloseGuard(() => [baseForm.value, baseRange.value])
+const guardApprove = useCloseGuard(() => approveDlg.value.deadline)
+const guardLock = useCloseGuard(() => [lockDlg.value.names, lockDlg.value.note])
+const guardSubmit = useCloseGuard(() => [submitDlg.value.deptId, submitDlg.value.note, submitDlg.value.autoPublish])
+const guardReopen = useCloseGuard(() => reopenDlg.value.regEnd)
+const guardResolve = useCloseGuard(() => [resolveDlg.value.hours, resolveDlg.value.reply])
+const guardCopyPos = useCloseGuard(() => [copyPosDlg.value.positionIds, copyPosDlg.value.targetIds])
 const gdVisible = ref(false)
 const gdData = ref(null)
 const sdVisible = ref(false)
@@ -2103,6 +2102,7 @@ async function loadLogs() {
 // 口径同 models.Enrollment 的 cancel_type；空串是负责人那边取消的
 const cancelType = x => ({ normal: '退选', locked: '锁定后退出', expired: '确认超时',
                            abandoned: '放弃候补', rejected: '未录取',
+                           unfilled: '未能递补',
                            not_chosen: '未选中' }[x.cancel_type] || '取消')
 
 let activityId = ''

@@ -202,9 +202,12 @@ def notify_checkin(db: OrmSession, g: Shift, *, period=None,
         if u is None:
             continue
         position = db.get(Position, enr.position_id) if enr.position_id else None
-        # 培训/彩排在自己的地点，不在岗位上；地点按「场次 → 岗位 → 活动」取
-        loc = (g.location or (position.location if position else "")
-               or act.location or "活动集合点")
+        # 培训/彩排在自己的地点，不在岗位上；服务场次口径同 Position.place
+        # （岗位 → 场次 → 活动），和分配、变更通知里写的地点一致
+        if g.is_attached() or position is None:
+            loc = g.location or act.location or "活动集合点"
+        else:
+            loc = position.place()
         if g.is_attached():
             label = g.kind_label()          # 「培训」「彩排」，不是「待分配」
         else:

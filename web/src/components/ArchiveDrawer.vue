@@ -134,7 +134,7 @@ const d = ref(null)
 const served = computed(() => d.value ? d.value.history.filter(h => h.checked_in).length : 0)
 
 const CANCEL_LABELS = { normal: '退选', locked: '锁定后退出', expired: '确认超时',
-                        abandoned: '放弃候补' }
+                        abandoned: '放弃候补', unfilled: '未能递补' }
 // 报名到退选的间隔：几小时的看小时，长了看天，太长了没必要精确
 function gapText(h) {
   if (h === null || h === undefined) return '—'
@@ -154,7 +154,7 @@ function tagText(h) {
   if (h.status === 'enrolled') return h.checked_in ? '已到岗' : '已报名'
   if (h.status === 'waitlisted' || h.status === 'pending_confirm') return '候补中'
   return { locked: '锁定后退出', normal: '已退选', expired: '确认超时',
-           abandoned: '放弃候补' }[h.cancel_type] || '已退选'
+           abandoned: '放弃候补', unfilled: '未能递补' }[h.cancel_type] || '已退选'
 }
 function tagType(h) {
   if (h.status === 'enrolled') return h.checked_in ? 'success' : 'primary'

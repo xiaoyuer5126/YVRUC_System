@@ -274,7 +274,6 @@
 
     <!-- 生成签到码 -->
     <el-dialog v-model="creating" title="生成签到码" width="460"
-               :close-on-click-modal="false"
                :before-close="guardCreate" @opened="guardCreate.snap">
       <el-form label-width="110px">
         <!-- 一个码只属于一个场次，所以场次必须在这里选定，不能跟着别的页签走 -->
@@ -397,7 +396,7 @@
 
     <!-- 改可签时段：场次提前或拖堂时用，不必关掉重建（重建会让已扫过的码作废） -->
     <el-dialog v-model="winDlg.visible" title="改可签时段" width="440"
-               :close-on-click-modal="false">
+               :before-close="guardWin" @opened="guardWin.snap">
       <p class="dim" style="margin:0 0 12px">
         {{ winDlg.task?.shift_name }}<template
           v-if="winDlg.task?.mode === 'position'"> · {{ winDlg.task?.position_name }}</template>
@@ -417,7 +416,7 @@
 
     <!-- 定位签到：坐标由管理者站在岗位上量 -->
     <el-dialog v-model="geoDlg" title="定位签到" width="440"
-               :close-on-click-modal="false">
+               :before-close="guardGeo" @opened="guardGeo.snap">
       <template v-if="geoTask">
         <el-form label-width="90px">
           <el-form-item label="签到地点">
@@ -444,7 +443,7 @@
 
     <!-- 补发签到提醒：先选范围再发，别在下拉里盲点 -->
     <el-dialog v-model="reminderDlg" title="补发签到提醒" width="460"
-               :close-on-click-modal="false">
+               :before-close="guardReminder" @opened="guardReminder.snap">
       <p class="dim">
         只发给<b>未签到</b>的正式志愿者。场次开始前 30 分钟系统已自动发送过一次。
       </p>
@@ -515,6 +514,9 @@ const genBusy = ref(false)
 const batchBusy = ref('')
 const form = ref({ shift_id: '', mode: 'shift', position_ids: [], range: [] })
 const guardCreate = useCloseGuard(() => form.value)
+const guardWin = useCloseGuard(() => winDlg.value.range)
+const guardGeo = useCloseGuard(() => geoForm.value)
+const guardReminder = useCloseGuard(() => [reminderScope.value, reminderGroup.value, reminderPositions.value, reminderAck.value])
 
 const shiftOptions = computed(() => props.allShifts)
 const formShift = computed(

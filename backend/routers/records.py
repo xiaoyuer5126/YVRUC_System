@@ -336,11 +336,11 @@ def import_rows(db: OrmSession, act: Activity, user: User,
         if unchanged:
             summary += f"，{unchanged} 人未改动"
         if reapproval_required:
-            summary += "（；原时长核准已撤销）"
+            summary += "（原时长核准已撤销）"
         if skipped:
-            summary += f"（；跳过 {len(skipped)} 行）"
+            summary += f"（跳过 {len(skipped)} 行）"
         if not_found:
-            summary += f"（；{len(not_found)} 个学号平台里找不到）"
+            summary += f"（{len(not_found)} 个学号平台里找不到）"
         # 跳过的行、找不到的学号也全记下：事后对原名单时，没进账的那几行
         # 为什么没进账同样要说得清。old 为 None：这一条只是说明，没有「从几到几」
         for x in skipped:
@@ -599,7 +599,7 @@ def delete_record(activity_id: str, record_id: str,
               summary=f"从补记录名单删除：{u.name if u else '?'}"
                       f"（{u.student_id if u else ''}）"
                       f"{rec.settled_hours():g} 小时"
-                      + ("（；原核准已撤销）" if reapproval_required else ""),
+                      + ("（原核准已撤销）" if reapproval_required else ""),
               changes=[hours_flow.hours_change(u, rec.settled_hours(), None,
                                                "从名单删除")])
     # 段跟着记录一起删（relationship 的 delete-orphan）：留下孤儿段，

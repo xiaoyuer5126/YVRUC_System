@@ -128,7 +128,7 @@
       </div>
     </el-form-item>
     <el-dialog v-model="pointDlg.visible" title="活动地点定位" width="440" append-to-body
-               :close-on-click-modal="false">
+               :before-close="guardPoint" @opened="guardPoint.snap">
       <GeoPicker v-model="pointDlg.value" @place="name => pointDlg.place = name" />
       <template #footer>
         <el-button @click="pointDlg.visible = false">取消</el-button>
@@ -154,6 +154,7 @@ import { DAY_END, DAY_START } from '../store'
 import { uploadImage } from '../composables/uploadImage'
 import { useAuthedImage } from '../composables/authedImage'
 import { RECORD_MODE } from '../composables/activityForm'
+import { useCloseGuard } from '../composables/closeGuard'
 import DateTimeField from './DateTimeField.vue'
 import PeriodEditor from './PeriodEditor.vue'
 import GeoPicker from './GeoPicker.vue'
@@ -231,6 +232,7 @@ function coOrganizerSuggest(q, cb) {
 
 // —— 地点定位 ——
 const pointDlg = ref({ visible: false, value: {}, place: '' })
+const guardPoint = useCloseGuard(() => pointDlg.value.value)
 function openPoint() {
   const p = f.value.location_point
   pointDlg.value = { visible: true, place: '',

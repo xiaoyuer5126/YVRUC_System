@@ -88,6 +88,7 @@ const TAGS = {
   signup_success: ['success', '报名成功'],
   waitlist_queued: ['warning', '进入候补'],
   waitlist_promoted: ['danger', '候补转正'],
+  waitlist_closed: ['info', '未能递补'],
   application_accepted: ['success', '录取通知'],
   application_rejected: ['info', '报名结果'],
   assignment: ['primary', '岗位分配'],

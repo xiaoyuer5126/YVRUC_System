@@ -853,7 +853,7 @@ def copy_positions_route(shift_id: str, body: CopyPositionsBody,
               activity_id=src.activity_id,
               summary=f"从「{src.name}」复制 {len(sources)} 个岗位到 "
                       f"{len(targets)} 个场次，新建 {result['copied']} 个"
-                      + (f"（；同名跳过 {len(result['skipped'])} 个）"
+                      + (f"（同名跳过 {len(result['skipped'])} 个）"
                          if result["skipped"] else ""))
     db.commit()
     return result
@@ -1541,7 +1541,7 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
     audit_log(db, actor=user, action="delete", target_type="group",
               target_id=g.id, target_label=label, activity_id=act.id,
               summary=f"删除场次「{g.name}」" +
-                      (f"（；含 {n_active} 条报名记录）" if n_active else ""),
+                      (f"（含 {n_active} 条报名记录）" if n_active else ""),
               visible=True, affected=affected)
     db.commit()
     return {"ok": True}
@@ -1710,7 +1710,7 @@ def create_position(shift_id: str, body: PositionBody,
               summary=f"新建岗位「{s.name}」（{s.time_text()}，"
                       f"{s.location or act.location or '地点待定'}，"
                       f"{s.quota} 人）"
-                      + (f"（；复制自「{source.name}」"
+                      + (f"（复制自「{source.name}」"
                          + (f"，含 {copied} 份学习材料" if copied else "")
                          + "）"
                          if source else ""),
@@ -1775,7 +1775,7 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
               activity_id=act.id,
               summary=f"修改岗位「{s.name}」："
                       f"{'、'.join(c['label'] for c in changes) or '无实质变化'}"
-                      + (f"（；组长任务已同步到同组另 {synced} 个岗位）"
+                      + (f"（组长任务已同步到同组另 {synced} 个岗位）"
                          if synced else ""),
               changes=changes,
               # 组长任务改的是「这一组」的事，留痕却挂在被编辑的那个岗位上
@@ -2264,6 +2264,9 @@ def _notify_files(db: OrmSession, act: Activity, ids: list[str]) -> list[dict]:
         a = db.get(Attachment, i)
         if a is None or a.owner_type != "notify" or a.activity_id != act.id:
             raise HTTPException(400, "附件不存在，请重新上传")
+        # 已随别的通知发出的附件不再认：owner_id 一改，定时任务就不清它了
+        if a.owner_id != act.id:
+            raise HTTPException(400, "附件已随之前的通知发出，请重新上传")
         a.owner_id = send_id
         out.append({"id": a.id, "title": a.title, "size": a.size})
     return out
@@ -2308,6 +2311,9 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
         checked = {r[0] for r in db.query(CheckinRecord.user_id)
                    .filter(CheckinRecord.shift_id == shift_id).all()}
         users = [u for u in users if u.id not in checked]
+    # 没人可发时不动附件：标成已发送的附件定时任务不再清，会一直留在磁盘上
+    if not users:
+        raise HTTPException(400, "所选范围内没有可通知的志愿者")
     files = _notify_files(db, act, body.file_ids)
     if files:
         # 企业微信推送带不了文件，正文里说一声去平台下载
@@ -2323,8 +2329,8 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
               target_id=act.id, target_label=act.title,
               activity_id=act.id,
               summary=f"向 {n} 位志愿者发送通知：{title}"
-                      + (f"（，附件 {len(files)} 个）" if files else "")
-                      + ("（，要求签收）" if body.need_ack else ""))
+                      + (f"（附件 {len(files)} 个）" if files else "")
+                      + ("（要求签收）" if body.need_ack else ""))
     db.commit()
     return {"ok": True, "count": n, "batch_id": batch_id}
 
@@ -2524,7 +2530,7 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
 def _promote_stop_reason(g: Shift) -> str:
     """名单页上告诉管理者：这一场的候补此刻为什么不会自动顶上。空串 = 照常递补。"""
     if now() >= g.start_time:
-        return "场次已开始，候补不再自动顶上，需要补人请手动转正"
+        return "场次已开始，候补已自动结束，需要补人请用补招"
     if logic.shift_locked(g):
         return "因名单已锁定，停止候补自动转正，如需补人请在志愿者管理页面手动转正"
     if g.enroll_paused:
@@ -2553,6 +2559,7 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
     名单锁定、暂停报名时候补不会自动顶上（见 enroll_logic.promotion_blocked），
     要不要补人由负责人判断，但来不来仍由本人定：和自动递补一样开确认窗
     （2 小时、夜间不计时，不晚于场次开始，见 enroll_logic.promote_confirm_deadline）。
+    只在开场前可用。
     """
     enr = db.get(Enrollment, enrollment_id)
     if enr is None:
@@ -2562,6 +2569,9 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
     if enr.status != "waitlisted":
         raise HTTPException(409, "该记录不在候补队列中")
     g = _shift(db, enr.shift_id)
+    # 开场后不再转正候补：开场后才接到通知的人多半赶不上，要补人用补招
+    if now() >= g.start_time:
+        raise HTTPException(409, "场次已开始，不能再转正候补；需要补人请用补招")
     position = db.get(Position, enr.position_id) if enr.position_id else None
     db.commit()          # 还连接再排锁，理由同 enroll
     with shift_lock(db, g.id):
@@ -2580,7 +2590,7 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
                   target_id=enr.id, target_label=target.name,
                   activity_id=enr.activity_id,
                   summary=f"手动为 {target.name} 开候补转正确认窗"
-                          f"（；{position.name if position else g.name}）")
+                          f"（{position.name if position else g.name}）")
         db.commit()
     return {"ok": True, "status": enr.status,
             "confirm_deadline": iso(enr.confirm_deadline),
@@ -2629,7 +2639,7 @@ def set_leader(enrollment_id: str, body: LeaderBody,
         was = "、".join(db.get(User, r.user_id).name for r in previous)
         scope = logic.leader_scope_label(siblings, position)
         summary = (f"指定 {target.name} 为「{scope}」组长"
-                   + (f"（；原组长 {was} 卸任）" if was else ""))
+                   + (f"（原组长 {was} 卸任）" if was else ""))
         msgcenter.send_user(db, target, "leader_appointed",
                         activity=db.get(Activity, enr.activity_id).title,
                         position=scope,
@@ -2852,8 +2862,8 @@ def add_walkin(shift_id: str, body: dict,
                   target_label=f"{u.name}", activity_id=g.activity_id,
                   summary=f"补招 {u.name}（{sid}）至场次「{g.name}」"
                           + ("（党校同学）" if source == hours_flow.PARTY_SCHOOL else "")
-                          + (f"（；连带报上{also}）" if extra else "")
-                          + (f"（；强制：{'；'.join(reasons)}）" if reasons else ""))
+                          + (f"（连带报上{also}）" if extra else "")
+                          + (f"（强制：{'；'.join(reasons)}）" if reasons else ""))
         # 补招是管理者单方面加进来的：不通知的话，本人那边一点动静都没有——
         # 不知道自己报了名，更不知道哪天要去哪儿。跟候补转正一样得告诉他。
         # 场次已经结束的是事后补登记，只告诉他补记上了，不叫他来

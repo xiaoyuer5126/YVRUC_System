@@ -98,7 +98,6 @@
     <Pager :page="page" :page-size="SIZE" :total="total" @change="goPage" />
 
     <el-dialog v-model="dlg.visible" title="调整身份" width="480"
-               :close-on-click-modal="false"
                :before-close="guardRoles" @opened="guardRoles.snap">
       <p>
         <b>{{ dlg.row?.name }}</b>
@@ -171,7 +170,6 @@
     </el-dialog>
 
     <el-dialog v-model="bd.visible" title="批量调整身份" width="560"
-               :close-on-click-modal="false"
                :before-close="guardBatch" @opened="guardBatch.snap">
       <el-form label-width="88px">
         <el-form-item label="操作">

@@ -308,7 +308,6 @@
     </template>
 
     <el-dialog v-model="dd.visible" :title="dd.row ? '编辑部门' : '新增部门'" width="420"
-               :close-on-click-modal="false"
                :before-close="guardDept" @opened="guardDept.snap">
       <el-form label-position="top">
         <el-form-item label="部门名称">
@@ -347,7 +346,7 @@
                            :submit="submitDecision" />
 
     <el-dialog v-model="tr.visible" title="转交审批" width="480"
-               :close-on-click-modal="false">
+               :before-close="guardTransfer" @opened="guardTransfer.snap">
       <p class="dim">{{ tr.row?.title }}</p>
       <el-form label-width="88px">
         <el-form-item label="转交给">
@@ -536,6 +535,7 @@ async function setLiaison(row) {
   await patchDept(row, { vb_liaison: true }, `「${row.name}」已设为志愿北京对接部门`)
 }
 const tr = ref({ visible: false, row: null, deptId: '', studentId: '', reason: '', busy: false })
+const guardTransfer = useCloseGuard(() => [tr.value.deptId, tr.value.studentId, tr.value.reason])
 
 async function load() {
   loading.value = true

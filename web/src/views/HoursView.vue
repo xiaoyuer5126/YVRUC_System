@@ -94,7 +94,7 @@
     <HoursClaims @total="claimsTotal = $event" />
 
     <el-dialog v-model="cf.visible" :title="t('确认时长')" width="480"
-               :close-on-click-modal="false">
+               :before-close="guardConfirm" @opened="guardConfirm.snap">
       <p class="dim">{{ t('「{0}」记 {1} 小时。确认后到截止前仍可改。', [cf.row?.activity_title, cf.row?.hours]) }}</p>
       <!-- 报酬方式按段选：只有岗位开了劳务的段能改，其余段只记志愿时长 -->
       <template v-if="cf.row?.pay_allowed">
@@ -123,7 +123,7 @@
     </el-dialog>
 
     <el-dialog v-model="dlg.visible" :title="t('时长有异议')" width="480"
-               :close-on-click-modal="false">
+               :before-close="guardAppeal" @opened="guardAppeal.snap">
       <p class="dim">{{ t('「{0}」当前记 {1} 小时。写清楚实际的到离时间，负责人核对后决定是否改。', [dlg.row?.activity_title, dlg.row?.hours]) }}</p>
       <el-form label-width="88px">
         <el-form-item :label="t('申报时长')" required>
@@ -149,6 +149,7 @@ import { computed, h, onMounted, ref } from 'vue'
 import { ElMessage, ElTag, ElTooltip } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import DataCards from '../components/DataCards.vue'
 import HoursParts from '../components/HoursParts.vue'
 import HoursClaims from '../components/HoursClaims.vue'
@@ -184,6 +185,7 @@ const AppealTag = (props) => {
 const canReconfirm = row => row.can_confirm && (!row.confirmed_at || row.pay_allowed)
 
 const cf = ref({ visible: false, row: null, parts: [], busy: false })
+const guardConfirm = useCloseGuard(() => cf.value.parts.map(p => p.reward))
 function openConfirm(row) {
   cf.value = { visible: true, row, parts: row.parts.map(p => ({ ...p })), busy: false }
 }
@@ -201,6 +203,7 @@ async function submitConfirm() {
 }
 
 const dlg = ref({ visible: false, row: null, hours: 1, reason: '', busy: false })
+const guardAppeal = useCloseGuard(() => [dlg.value.hours, dlg.value.reason])
 
 function openAppeal(row) {
   dlg.value = { visible: true, row, hours: row.hours, reason: '', busy: false }

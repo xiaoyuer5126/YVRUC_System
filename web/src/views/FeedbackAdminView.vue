@@ -42,7 +42,7 @@
     </el-card>
 
     <el-dialog v-model="handling" title="处理反馈" :width="narrow ? '94%' : '520px'"
-               :close-on-click-modal="false">
+               :before-close="guardReply" @opened="guardReply.snap">
       <div class="text dim">{{ current?.content }}</div>
       <!-- 常用语：点一下整段替换进回复框（见 replyTemplates.js） -->
       <div class="tpl-row">
@@ -65,6 +65,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import FeedbackShots from '../components/FeedbackShots.vue'
 import Pager from '../components/Pager.vue'
 import { feedbackReplies } from '../replyTemplates'
@@ -80,6 +81,7 @@ const loading = ref(false)
 const handling = ref(false)
 const current = ref(null)
 const reply = ref('')
+const guardReply = useCloseGuard(() => reply.value)
 const saving = ref(false)
 
 async function load() {

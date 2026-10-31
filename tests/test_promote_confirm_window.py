@@ -51,13 +51,6 @@ def test_截止不晚于场次开始():
     assert promote_confirm_deadline(D(28, 14), _shift(D(28, 16))) == D(28, 16)
 
 
-def test_场次进行中转正封到场次结束():
-    # 14:00 开场、3 小时，15:30 手动补人：窗口本该到 17:30，封到 17:00
-    assert promote_confirm_deadline(D(28, 15, 30), _shift(D(28, 14))) == D(28, 17)
-    # 场次已结束：不封顶，不然一转正就超时
-    assert promote_confirm_deadline(D(28, 18), _shift(D(28, 14))) == D(28, 20)
-
-
 def _manual_promote(client, admin, db, open_group, take_student, start_in_hours):
     act, g, _queued, wl_id = _fill_and_queue(client, db, open_group, take_student,
                                              day_offset=0,

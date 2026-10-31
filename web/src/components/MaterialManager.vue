@@ -23,8 +23,7 @@
       <span class="dim">文档 ≤{{ limitMB }}MB，大文件请添加网盘或共享文档链接</span>
     </div>
 
-    <el-dialog v-model="linkDlg" title="添加材料链接" width="440" append-to-body
-               :close-on-click-modal="false">
+    <el-dialog v-model="linkDlg" title="添加材料链接" width="440" append-to-body>
       <el-form label-width="72px">
         <el-form-item label="名称" required>
           <el-input v-model="link.title" placeholder="如：岗前培训视频" />

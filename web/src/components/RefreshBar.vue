@@ -1,7 +1,7 @@
 <template>
   <span class="refresh-bar">
     <el-button :size="size" type="primary" :loading="busy" @click="fire">
-      <el-icon><Refresh /></el-icon>{{ t('&nbsp;刷新') }}</el-button>
+      <el-icon><Refresh /></el-icon>&nbsp;{{ t('刷新') }}</el-button>
     <span class="dim">{{ busy ? t('正在刷新…') : (at ? t('更新于 {0}', [timeOf(at)]) : t('尚未加载')) }}</span>
   </span>
 </template>

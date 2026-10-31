@@ -6,7 +6,7 @@
 <template>
   <div class="att-item" :class="{ mine: s.mine }">
     <el-tag size="small" effect="dark" :type="s.kind === 'training' ? 'success' : 'warning'">
-      {{ s.kind_label }}
+      {{ t(s.kind_label) }}
     </el-tag>
     <b v-if="full">{{ s.name }}</b>
     <span>{{ s.time_text }}</span>

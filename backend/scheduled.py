@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from . import config
 from .audit import log as audit_log
-from .enroll_logic import expire_stale_promotions
+from .enroll_logic import close_waitlists_at_start, expire_stale_promotions
 from .integrations import msgcenter
 from .models import (Activity, ApprovalEvent, AuditLog, Department, DutyHandover,
                      Enrollment, HoursClaim, HoursRequest, Shift, ShiftPeriod,
@@ -31,6 +31,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
     """跑一轮。每件事单独兜异常，返回各自处理的条数。"""
     result = {}
     for name, job in (("promotions", expire_stale_promotions),
+                      ("waitlists", close_waitlists_at_start),
                       # 排在状态流转之前：停机再起来时，先给没处理的申请收口
                       ("undecided", expire_undecided_applications),
                       ("advanced", auto_advance_activities),

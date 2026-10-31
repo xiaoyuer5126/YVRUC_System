@@ -75,7 +75,7 @@
 
     <el-dialog v-model="rm.visible" :title="rm.action === 'take' ? '提醒领取服装' : '提醒归还服装'"
                width="440"
-               :close-on-click-modal="false">
+               :before-close="guardRemind" @opened="guardRemind.snap">
       <p class="dim">
         {{ rm.action === 'take'
            ? '发给该范围内尚未领取服装的志愿者。'
@@ -133,6 +133,7 @@ import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { api, fmtDT, qrBase } from '../api'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import AttireOps from './AttireOps.vue'
 import DataCards from './DataCards.vue'
 import RefreshBar from './RefreshBar.vue'
@@ -200,6 +201,7 @@ async function one(action, row) {
 
 const rm = ref({ visible: false, action: 'return', shiftIds: [], campuses: [],
                  needAck: false, note: '', busy: false })
+const guardRemind = useCloseGuard(() => [rm.value.shiftIds, rm.value.campuses, rm.value.note, rm.value.needAck])
 const openRemind = action => {
   rm.value = { visible: true, action, shiftIds: [], campuses: [],
                needAck: false, note: '', busy: false }

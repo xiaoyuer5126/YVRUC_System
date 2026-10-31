@@ -53,7 +53,7 @@
           </p>
         </template>
         <template v-else>
-          <el-result icon="success" :title="t('{0}成功', [doneAction])"
+          <el-result icon="success" :title="t('{0}成功', [t(doneAction)])"
                      :sub-title="doneAt">
             <template #extra>
               <el-button @click="$router.push('/my')">{{ t('查看我的报名') }}</el-button>
@@ -63,7 +63,7 @@
 
       </template>
       <el-result v-else-if="!loading" icon="warning" :title="t('签到码无效')"
-                 :sub-title="errorText">
+                 :sub-title="t(errorText)">
         <template #extra>
           <el-button type="primary" @click="$router.push('/')">{{ t('返回首页') }}</el-button>
         </template>
@@ -86,8 +86,11 @@ const task = ref(null)
 const loading = ref(true)
 const errorText = ref('')
 const done = ref(false)
-const doneAt = ref('')
-const doneAction = ref(t('签到'))
+// 存中文原句、模板里再 t()：切换语言时这几句跟着换
+const doneTime = ref('')   // vuecheck: script-only，doneAt 用它拼出副标题
+const doneAction = ref('签到')
+const doneAt = computed(() => `${fmtDT(doneTime.value)} · ${doneAction.value === '签退'
+  ? t('本次服务时长将按签到签退计算') : t('已到岗')}`)
 const submitting = ref(false)
 // 扫的是动态码、又绕去登录了一趟：回来时那张码多半已经换掉了
 const afterLogin = ref(false)   // vuecheck: script-only，只用来挑报错的说法
@@ -106,8 +109,8 @@ async function load() {
     // 动态码只活一分钟，登录这几步走完就过期了。只说「签到码无效」会让人
     // 对着屏幕反复刷新——直接告诉他回现场再扫一次。
     errorText.value = afterLogin.value
-      ? t('这个签到码已经失效了（现场码每分钟更换），请重新扫一次现场的二维码')
-      : (e.message || t('签到码无效或已过期'))
+      ? '这个签到码已经失效了（现场码每分钟更换），请重新扫一次现场的二维码'
+      : ((typeof e.data === 'string' ? e.data : e.data?.message) || e.message || '签到码无效或已过期')
   } finally {
     loading.value = false
   }
@@ -133,11 +136,10 @@ async function doCheckin() {
   try {
     const d = await api.post(`/api/checkin/task/${route.params.token}`)
     done.value = true
-    doneAction.value = d.action === 'checkout' ? t('签退') : t('签到')
+    doneAction.value = d.action === 'checkout' ? '签退' : '签到'
     // 不从 message 里截后半句：那句话是写给「别人」的（「张三 已到岗。」），
     // 放在自己的成功页上既啰嗦又像在念别人的名字。按动作自己说一句。
-    doneAt.value = `${fmtDT(d.time)} · ${d.action === 'checkout'
-      ? t('本次服务时长将按签到签退计算') : t('已到岗')}`
+    doneTime.value = d.time
   } finally {
     submitting.value = false
   }

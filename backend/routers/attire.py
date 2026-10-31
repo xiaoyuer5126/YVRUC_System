@@ -263,7 +263,7 @@ def attire_batch(activity_id: str, body: AttireOpBody,
               target_id=activity_id, target_label=act.title if act else "",
               activity_id=activity_id,
               summary=f"服装{LABELS[body.action]} {len(done)} 人"
-                      + (f"（；跳过：{'、'.join(skipped[:5])}）" if skipped else ""))
+                      + (f"（跳过：{'、'.join(skipped[:5])}）" if skipped else ""))
     db.commit()
     return {"ok": True, "done": len(done), "skipped": skipped}
 
@@ -354,7 +354,7 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
               target_id=activity_id, target_label=act.title,
               activity_id=activity_id,
               summary=f"提醒 {len(targets)} 位志愿者{label}服装（{scope}）"
-                      + ("（，要求签收）" if body.need_ack else ""))
+                      + ("（要求签收）" if body.need_ack else ""))
     db.commit()
     return {"ok": True, "count": len(targets), "batch_id": batch_id,
             "scope": scope}

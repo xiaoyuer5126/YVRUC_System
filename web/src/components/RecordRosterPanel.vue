@@ -197,7 +197,7 @@
 
     <el-dialog v-model="edit.visible" :title="`修改 ${edit.row?.user?.name || ''} 的时长`"
                width="420"
-               :close-on-click-modal="false">
+               :before-close="guardEdit" @opened="guardEdit.snap">
       <el-form label-width="70px">
         <el-form-item label="时长">
           <el-input-number v-model="edit.hours" :min="0.5" :step="0.5" :precision="1" />
@@ -222,6 +222,7 @@ import { ElMessage } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import DataCards from './DataCards.vue'
 
 const props = defineProps({
@@ -246,6 +247,7 @@ const changed = computed(() => [
   ...(result.value?.overwritten || []),
 ])
 const edit = ref({ visible: false, row: null, hours: 1, note: '', busy: false })
+const guardEdit = useCloseGuard(() => [edit.value.hours, edit.value.note])
 const base = () => `/api/staff/activities/${props.activityId}/record-roster`
 
 async function load() {

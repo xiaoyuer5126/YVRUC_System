@@ -208,10 +208,14 @@ def audit_logs(start: str = "", end: str = "",
 
     start / end 是 YYYY-MM-DD、end 含当天整天；不填就是最近 7 天，一次最多
     查 31 天。留痕只增不减，不限时间的话每翻一页都要把整张表数一遍、排一遍。
+    指定了活动又没填时间时不限时间：活动管理页的「变更记录」要看这场活动
+    从立项起的全部留痕，一场活动的留痕量有限，按 activity_id 索引取。
     """
-    lo, hi = _audit_window(start, end)
-    q = db.query(AuditLog).filter(AuditLog.created_at >= lo,
-                                  AuditLog.created_at < hi)
+    q = db.query(AuditLog)
+    whole_activity = bool(activity_id) and not start.strip() and not end.strip()
+    if not whole_activity:
+        lo, hi = _audit_window(start, end)
+        q = q.filter(AuditLog.created_at >= lo, AuditLog.created_at < hi)
     # 部门成员是学习权限，违规接口不给他们看；留痕里的违规登记（含撤销）
     # 同样藏掉，其余留痕照常能看
     if user.is_trainee():
@@ -231,7 +235,8 @@ def audit_logs(start: str = "", end: str = "",
     rows = (q.order_by(AuditLog.created_at.desc())
             .offset((page - 1) * size).limit(size).all())
     return {"total": total, "page": page, "items": [l.out() for l in rows],
-            "start": f"{lo:%Y-%m-%d}", "end": f"{hi - timedelta(days=1):%Y-%m-%d}",
+            "start": "" if whole_activity else f"{lo:%Y-%m-%d}",
+            "end": "" if whole_activity else f"{hi - timedelta(days=1):%Y-%m-%d}",
             "max_days": config.OPLOG_QUERY_MAX_DAYS}
 
 

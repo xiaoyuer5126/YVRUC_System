@@ -3,9 +3,10 @@
   <el-dialog v-model="visible"
              :title="t(forced ? '完善个人信息' : '修改个人信息')"
              width="460px"
-             :close-on-click-modal="false"
+             :close-on-click-modal="!forced"
              :close-on-press-escape="!forced"
-             :show-close="!forced">
+             :show-close="!forced"
+             :before-close="guardProfile" @opened="guardProfile.snap">
     <el-alert v-if="forced" type="warning" :closable="false"
               :title="t('以下信息学校不提供，请先补全后才能报名')" />
     <el-form label-width="82px">
@@ -56,6 +57,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useCloseGuard } from '../composables/closeGuard'
 import { api } from '../api'
 import { auth } from '../store'
 import VbRegisterTip from './VbRegisterTip.vue'
@@ -68,6 +70,7 @@ const forced = ref(false)
 const saving = ref(false)
 const editingId = ref(false)
 const form = ref({ phone: '', wechat: '', campus: '', id_card: '', no_mainland_id: false })
+const guardProfile = useCloseGuard(() => form.value)
 const campuses = ref([])
 
 const maskedId = computed(() => auth.user?.id_card_masked || '')

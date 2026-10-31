@@ -78,3 +78,22 @@ def test_传了没发的附件一天后清掉(client, admin, db, enrolled_activi
     db.expire_all()
     assert db.get(Attachment, unsent) is None
     assert db.get(Attachment, sent) is not None
+
+
+def test_发过的附件不能再随别的通知发(client, admin, enrolled_activity):
+    act, _shift, _u = enrolled_activity
+    fid = _upload(client, admin, act.id).json()["id"]
+    assert _send(client, admin, act.id, [fid]).status_code == 200
+    r = _send(client, admin, act.id, [fid])
+    assert r.status_code == 400 and "重新上传" in r.json()["detail"]
+
+
+def test_没有收件人时不发也不动附件(client, admin, db, open_group):
+    """一个人都没报的活动：报错，附件仍算「传了没发」，定时任务照常清。"""
+    from backend.models import Attachment
+    act, _g = open_group(3)
+    fid = _upload(client, admin, act.id).json()["id"]
+    r = _send(client, admin, act.id, [fid])
+    assert r.status_code == 400 and "没有可通知" in r.json()["detail"]
+    db.expire_all()
+    assert db.get(Attachment, fid).owner_id == act.id

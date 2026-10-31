@@ -221,7 +221,7 @@ def _grant_bootstrap_admin(db: OrmSession, user: User) -> None:
               target_id=user.id,
               target_label=f"{user.name}（{user.student_id}）",
               summary="启动时按配置授予管理员身份"
-                      + ("（；原有身份："
+                      + ("（原有身份："
                          + ("、".join(ROLE_LABELS.get(r, r) for r in before) or "无")
                          + "）"))
     db.commit()

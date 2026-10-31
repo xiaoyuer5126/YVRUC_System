@@ -143,7 +143,6 @@
 
     <!-- 补招：负责人直接把人加进场次 -->
     <el-dialog v-model="walkinVisible" title="补招志愿者" width="430"
-               :close-on-click-modal="false"
                :before-close="guardWalkin" @opened="guardWalkin.snap">
       <el-form label-width="90px">
         <el-form-item label="学号"><el-input v-model="walkin.sid" /></el-form-item>
