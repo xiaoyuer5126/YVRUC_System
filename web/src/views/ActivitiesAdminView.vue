@@ -154,7 +154,6 @@
 
     <!-- 新建活动 -->
     <el-dialog v-model="creating" title="新建活动（草稿）" width="620"
-               :close-on-click-modal="false"
                :before-close="guardCreate" @opened="guardCreate.snap">
       <ActivityForm v-model="form" v-model:range="createRange" :modes="modes" />
       <template #footer>
@@ -165,7 +164,6 @@
 
     <!-- 复制活动：只带结构，落草稿并直接进编辑页 -->
     <el-dialog v-model="copyDlg.visible" title="复制活动" width="500"
-               :close-on-click-modal="false"
                :before-close="guardCopy" @opened="guardCopy.snap">
       <p class="dim">
         复制「{{ copyDlg.source?.title }}」的<b>结构</b>：活动信息、场次、岗位、学习材料、报名问卷。
@@ -360,6 +358,8 @@ function fillFromAi(draft) {
   const { reg_start: start, reg_end: end, ...rest } = draft
   form.value = { ...emptyActivity(), ...rest }
   createRange.value = start || end ? [start || '', end || ''] : []
+  // 草稿还没存：不标的话 opened 拍下的就是草稿本身，一字不改关掉不会提示
+  if (!creating.value) guardCreate.markDirty()
   creating.value = true
 }
 

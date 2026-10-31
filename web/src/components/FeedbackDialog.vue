@@ -4,7 +4,6 @@
 <template>
   <el-dialog v-model="visible" :title="t('意见反馈')" :width="narrow ? '94%' : '560px'"
              append-to-body @closed="reset"
-             :close-on-click-modal="false"
              :before-close="guardFeedback" @opened="guardFeedback.snap">
     <el-tabs v-model="tab" @tab-change="onTab">
       <el-tab-pane :label="t('提交反馈')" name="new">

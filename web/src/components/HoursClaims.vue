@@ -69,7 +69,6 @@
 
     <el-dialog v-model="form.visible" title="登记校外活动"
                :width="narrow ? '94%' : '620px'" @closed="reset"
-               :close-on-click-modal="false"
                :before-close="guardForm" @opened="guardForm.snap">
       <p class="dim">
         只登记已经参加完的校外志愿活动。通过后计入志愿时长，并随「时长记录」

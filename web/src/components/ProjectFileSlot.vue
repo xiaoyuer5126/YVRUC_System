@@ -36,7 +36,8 @@
     <div v-else-if="block" class="dim">{{ block }}</div>
 
     <el-dialog v-model="merge.visible" :title="`多张图片合成${label}`"
-               :width="narrow ? '94%' : '520'" append-to-body>
+               :width="narrow ? '94%' : '520'" append-to-body
+               :before-close="guardMerge" @opened="guardMerge.snap">
       <div class="dim">按页码顺序排好，一张图一页，合成一个 PDF 后上传。</div>
       <div v-for="(it, i) in merge.items" :key="it.key" class="pf-page">
         <img :src="it.url" alt="" class="pf-thumb" />
@@ -65,6 +66,7 @@ import { Document } from '@element-plus/icons-vue'
 import { download, fmtDT, uploadFile } from '../api'
 import { imagesToPdf } from '../composables/imagesToPdf'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 
 const props = defineProps({
   activityId: { type: String, default: '' },
@@ -94,6 +96,7 @@ const canMerge = computed(() => props.exts.includes('pdf')
   && (props.exts.includes('jpg') || props.exts.includes('png')))
 const picker = ref(null)
 const merge = ref({ visible: false, items: [] })
+const guardMerge = useCloseGuard(() => merge.value.items.map(it => it.key))
 let seq = 0
 const MAX_PAGES = 30
 
@@ -104,7 +107,11 @@ function pickImages() {
 function onPicked(e) {
   const files = [...e.target.files].filter(f => /^image\/(png|jpeg)$/.test(f.type))
   if (!files.length) return ElMessage.warning('请选择 png 或 jpg 图片')
-  if (!merge.value.visible) merge.value.items = []
+  if (!merge.value.visible) {
+    merge.value.items = []
+    // 选好的图一打开就是没上传的东西，关掉就没了
+    guardMerge.markDirty()
+  }
   // 相册里挑出来的顺序不一定是拍摄顺序，按文件名排一遍，拍照默认的文件名就是时间顺序
   files.sort((a, b) => a.name.localeCompare(b.name, 'zh', { numeric: true }))
   for (const f of files) {

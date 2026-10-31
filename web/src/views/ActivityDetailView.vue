@@ -608,7 +608,7 @@
 
     <!-- 报名确认：确认时段 + 表态是否接受岗位调剂 -->
     <el-dialog v-model="enrollDlg.visible" :title="t('确认报名')" width="480px"
-               :close-on-click-modal="false">
+               :before-close="guardEnroll" @opened="guardEnroll.snap">
       <template v-if="enrollDlg.shift">
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item :label="t('场次')">
@@ -685,6 +685,7 @@ import RefreshBar from '../components/RefreshBar.vue'
 import PositionAction from '../components/PositionAction.vue'
 import TrainingItem from '../components/TrainingItem.vue'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import { Clock, Warning } from '@element-plus/icons-vue'
 import { t } from '../i18n'
 
@@ -698,6 +699,7 @@ const loadError = ref('')
 const groupDetail = ref({ visible: false, data: null })
 const enrollDlg = ref({ visible: false, shift: null, position: null,
                         leaderWilling: false, allowReassign: true })
+const guardEnroll = useCloseGuard(() => [enrollDlg.value.answers, enrollDlg.value.allowReassign, enrollDlg.value.leaderWilling])
 /** 已提交、结果还没回来的报名：场次 id → 岗位 id（没有岗位记 ''）。
  *
  * 抢报时一个请求要按先后排十几秒。弹窗要是一直开着等结果，这段时间别的场次

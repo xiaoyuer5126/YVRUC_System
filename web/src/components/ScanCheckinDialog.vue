@@ -9,7 +9,7 @@
 <template>
   <el-dialog :model-value="modelValue" :title="t('扫码{0}', [action])"
              :width="narrow ? '92vw' : '340px'"
-             :close-on-click-modal="false" @close="close">
+             @close="close">
     <div class="scan-box">
       <!-- muted + playsinline：iOS 上不这样写，video 根本不出画面 -->
       <video ref="videoEl" muted playsinline></video>

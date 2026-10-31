@@ -12,7 +12,7 @@
 <template>
   <el-dialog :model-value="modelValue" :title="title || (approve ? approveLabel : rejectLabel)"
              width="480" @update:model-value="v => emit('update:modelValue', v)"
-             :close-on-click-modal="false">
+             :before-close="guardComment" @opened="guardComment.snap">
     <p v-if="subject" class="dim acd-subject">{{ subject }}</p>
     <slot />
     <div v-if="shownTemplates.length" class="acd-templates">
@@ -36,6 +36,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useCloseGuard } from '../composables/closeGuard'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -52,6 +53,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 const comment = ref('')
 const busy = ref(false)
+const guardComment = useCloseGuard(() => comment.value)
 const MIN_REASON = 2
 
 // 每次打开都是一张白纸：上一条的意见不能带到下一条上

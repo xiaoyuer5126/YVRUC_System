@@ -81,7 +81,7 @@
            @change="goPage" />
 
     <el-drawer v-model="drawer" title="校外时长补登" :size="narrow ? '100%' : '520px'"
-               :close-on-click-modal="false">
+               :before-close="guardDecide" @opened="guardDecide.snap">
       <template v-if="cur">
         <el-descriptions :column="1" border>
           <el-descriptions-item label="提交人">
@@ -161,6 +161,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
 import { auth } from '../store'
 import { useNarrow } from '../composables/useNarrow'
+import { useCloseGuard } from '../composables/closeGuard'
 import Pager from './Pager.vue'
 import DataCards from './DataCards.vue'
 import FeedbackShots from './FeedbackShots.vue'
@@ -181,6 +182,7 @@ const canDecide = ref(false)
 const drawer = ref(false)
 const cur = ref(null)
 const decide = ref({ hours: 1, reply: '', busy: false })
+const guardDecide = useCloseGuard(() => [decide.value.hours, decide.value.reply])
 
 const proofImages = computed(
   () => (cur.value?.files.proofs || []).filter(f => !isPdf(f)))
