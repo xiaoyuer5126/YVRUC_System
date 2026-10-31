@@ -4,7 +4,7 @@
     <template v-if="mine">
       <div class="apply-head">
         <b>{{ t('我的申请') }}</b>
-        <el-tag :type="STATUS_TYPE[mine.status]" size="small">{{ mine.status_label }}</el-tag>
+        <el-tag :type="STATUS_TYPE[mine.status]" size="small">{{ t(mine.status_label) }}</el-tag>
         <span class="dim">{{ t('提交于 {0}', [fmtDT(mine.created_at)]) }}</span>
       </div>
       <div v-if="mine.leader_willing" class="dim" style="margin-top:4px">{{ t('愿意担任组长') }}</div>
@@ -89,7 +89,7 @@
       <ol v-if="questions.length" class="preview">
         <li v-for="q in questions" :key="q.id">
           {{ q.title }}
-          <el-tag size="small" effect="plain" style="margin:0 8px">{{ q.kind_label }}</el-tag>
+          <el-tag size="small" effect="plain" style="margin:0 8px">{{ t(q.kind_label) }}</el-tag>
           <el-tag v-if="q.required" size="small" type="warning" effect="plain">{{ t('必填') }}</el-tag>
           <div v-if="q.options?.length" class="dim">{{ t('选项：{0}', [q.options.join(' / ')]) }}</div>
         </li>

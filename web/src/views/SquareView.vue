@@ -58,7 +58,7 @@
           <el-tag size="small" effect="dark" :color="modeColor(a.recruit_mode)" style="border:none">
             {{ a.recruit_label }}
           </el-tag>
-          <el-tag size="small" :type="statusType(a.display_status)">{{ a.display_label }}</el-tag>
+          <el-tag size="small" :type="statusType(a.display_status)">{{ t(a.display_label) }}</el-tag>
         </div>
         <div class="card-title">
           <el-tag v-if="a.urgent" size="small" type="danger" effect="dark" class="urgent">{{ t('急招') }}</el-tag>
@@ -123,7 +123,7 @@ const slotButtonText = computed(() => {
 })
 const slotApplyText = computed(() => {
   if (slots.value.length) return t('看所选时段的活动')
-  return f.start || f.end ? t('看这几天的活动') : t('查看全部活动')
+  return f.start || f.end ? t('看这几天的活动') : t('看全部活动')
 })
 // 筛选条件同步到地址栏：点进活动再返回，筛到第几页还在
 const f = reactive({
@@ -179,7 +179,7 @@ function unlock(a) {
   a.opensAt = 0
   if (a.display_status === 'upcoming') {
     a.display_status = 'published'
-    a.display_label = t('报名中')
+    a.display_label = '报名中'
   }
   clearTimeout(refreshTimer)
   refreshTimer = setTimeout(load, Math.random() * 3000)

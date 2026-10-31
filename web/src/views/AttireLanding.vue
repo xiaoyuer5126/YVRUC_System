@@ -5,7 +5,7 @@
       <template v-if="task">
         <div class="ok-icon" v-if="done">✓</div>
         <h2 style="margin:8px 0 4px">{{ task.activity_title }}</h2>
-        <p class="dim" style="margin:0 0 12px">{{ t('志愿服装 · {0} 码', [task.action_label]) }}</p>
+        <p class="dim" style="margin:0 0 12px">{{ t('志愿服装 · {0}码', [t(task.action_label)]) }}</p>
 
         <template v-if="!done">
           <el-descriptions :column="1" border size="small">
@@ -23,7 +23,7 @@
             {{ actionText }}
           </el-button>
         </template>
-        <el-result v-else icon="success" :title="t('{0}成功', [task.action_label])"
+        <el-result v-else icon="success" :title="t('{0}成功', [t(task.action_label)])"
                    :sub-title="doneMsg">
           <template #extra>
             <el-button @click="$router.push('/my')">{{ t('查看我的报名') }}</el-button>
