@@ -285,7 +285,7 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
                 line += [(st.group_name if st and st.group_name else "—"),
                          st.name if st else Position.PLACEHOLDER_NAME,
                          "组长 ★" if enr.is_leader else "",
-                         (st.location or activity.location) if st else "—"]
+                         st.place() if st else "—"]
             rec = checked.get(u.id)
             line += ["已到岗 ✓" if rec else "未签到"]
             line += [rec.checkout_at.strftime("%Y-%m-%d %H:%M")
