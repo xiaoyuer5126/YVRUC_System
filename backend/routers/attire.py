@@ -354,7 +354,7 @@ def attire_remind(activity_id: str, body: AttireRemindBody | None = None,
               target_id=activity_id, target_label=act.title,
               activity_id=activity_id,
               summary=f"提醒 {len(targets)} 位志愿者{label}服装（{scope}）"
-                      + ("（，要求签收）" if body.need_ack else ""))
+                      + ("（要求签收）" if body.need_ack else ""))
     db.commit()
     return {"ok": True, "count": len(targets), "batch_id": batch_id,
             "scope": scope}
