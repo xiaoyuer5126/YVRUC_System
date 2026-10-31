@@ -1045,7 +1045,7 @@ async function submitEnroll() {
     groupQr.value.open({ qr: d.contact_group_qr, title: act.value.title })
   } catch (e) {
     // 资料未完善被拦截：提示后弹出资料表单，补全后即可报名
-    if (e?.message?.includes('完善个人信息')) {
+    if (e?.data?.code === 'PROFILE_INCOMPLETE') {
       try {
         await ElMessageBox.alert(
           t('报名前需先完善个人信息，便于后期联络与志愿时长录入。'),
