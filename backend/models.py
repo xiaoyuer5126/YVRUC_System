@@ -1174,7 +1174,7 @@ class Enrollment(Base):
       pending_confirm  候补转正，等待用户在 confirm_deadline 前确认
       cancelled        已退选（cancel_type: normal 正常 / locked 名单锁定后退出 /
                                      expired 放弃候补超时 / abandoned 主动放弃候补 /
-                                     rejected 未录取 /
+                                     rejected 未录取 / unfilled 开场时候补未能递补 /
                                      not_chosen 录取时没选中的意向场次）
     """
     __tablename__ = "enrollments"

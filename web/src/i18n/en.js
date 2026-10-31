@@ -511,6 +511,7 @@ export default {
   // —— 报名状态 ——
   '已退选': 'Withdrawn',
   '已放弃候补': 'Gave up the waitlist',
+  '未能递补': 'Not moved off the waitlist',
   '确认超时': 'Confirmation timed out',
   '未录取': 'Not accepted',
   '已取消': 'Cancelled',

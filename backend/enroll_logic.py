@@ -790,23 +790,17 @@ def confirm_deadline_from(start: datetime) -> datetime:
 
 
 def promote_confirm_deadline(start: datetime, shift: Shift) -> datetime:
-    """转正确认窗的截止时间：夜间不计时（confirm_deadline_from），再按
-    **下一个还没结束的时段**封顶。
+    """转正确认窗的截止时间：夜间不计时（confirm_deadline_from），且不晚于
+    场次开始。
 
-    封顶规则：
-      · 下一段还没开始 → 截止不晚于这一段开始。手动转正可能贴着开场（比如
-        开场前 1 小时、或前一晚 23 点后转正），过了开场还在等确认没有意义——
-        人要么来了，要么位子该让负责人另想办法。窗口因此可能短于 2 小时，
-        这是负责人选择贴近开场转正的代价，通知里写的是封顶后的时间。
-      · 正处在一段里（活动进行中手动补人）→ 不晚于这一段结束；
-      · 各段都已结束 → 不封顶，照常给满窗口（封到过去就等于一转正就超时，
-        白白记本人一次放弃）。
+    转正只发生在开场前（开场后候补自动结束，见 close_waitlists_at_start）。
+    手动转正可能贴着开场（比如开场前 1 小时、或前一晚 23 点后转正），过了
+    开场还在等确认没有意义。窗口因此可能短于 2 小时，这是负责人选择贴近
+    开场转正的代价，通知里写的是封顶后的时间。
     """
     deadline = confirm_deadline_from(start)
-    nxt = shift.next_period(start)
-    if nxt is None:
-        return deadline
-    return min(deadline, nxt.start_time if nxt.start_time > start else nxt.end_time)
+    first = shift.start_time
+    return deadline if first is None else min(deadline, first)
 
 
 def start_confirm(db: OrmSession, enr: Enrollment, shift: Shift) -> Enrollment:
@@ -926,6 +920,52 @@ def expire_stale_promotions(db: OrmSession, user_id: str | None = None) -> int:
                 promote_all(db, shift)
             db.commit()
             n += len(left)
+    return n
+
+
+def close_waitlists_at_start(db: OrmSession) -> int:
+    """场次开始时还在候补的人，候补自动结束并通知「未能递补」。
+
+    开场后不再转正候补（自动、手动都不转），要补人由管理者补招：开场后才
+    接到通知的人多半赶不上。结束的候补记 cancel_type=unfilled，不算本人
+    退出，不进退选画像、不扣分。每个场次在自己的场次锁里重读再改，只认
+    waitlisted，重跑不会重复通知。
+    """
+    from .audit import log as audit_log
+    from .locks import shift_lock
+
+    t = now()
+    shift_ids = [sid for (sid,) in (
+        db.query(Enrollment.shift_id)
+        .join(Shift, Enrollment.shift_id == Shift.id)
+        .filter(Enrollment.status == "waitlisted", Shift.start_time <= t)
+        .distinct())]
+    db.commit()          # 还连接再排锁，理由同报名
+    n = 0
+    for sid in shift_ids:
+        with shift_lock(db, sid):
+            g = db.get(Shift, sid)
+            enrs = (db.query(Enrollment)
+                    .filter(Enrollment.shift_id == sid,
+                            Enrollment.status == "waitlisted").all())
+            if not enrs:
+                db.rollback()
+                continue
+            act = db.get(Activity, g.activity_id)
+            names = []
+            for e in enrs:
+                e.status, e.cancel_type, e.cancelled_at = "cancelled", "unfilled", t
+                u = db.get(User, e.user_id)
+                names.append(u.name)
+                msgcenter.send_user(db, u, "waitlist_closed",
+                                    data={"activity_id": act.id},
+                                    activity=act.title, shift=g.name)
+            audit_log(db, actor=None, action="update", target_type="enrollment",
+                      target_id=g.id, target_label=g.name, activity_id=act.id,
+                      summary=f"场次「{g.name}」已开始，候补自动结束（未能递补）："
+                              + "、".join(names))
+            db.commit()
+            n += len(enrs)
     return n
 
 

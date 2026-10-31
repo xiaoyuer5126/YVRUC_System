@@ -2530,7 +2530,7 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
 def _promote_stop_reason(g: Shift) -> str:
     """名单页上告诉管理者：这一场的候补此刻为什么不会自动顶上。空串 = 照常递补。"""
     if now() >= g.start_time:
-        return "场次已开始，候补不再自动顶上，需要补人请手动转正"
+        return "场次已开始，候补已自动结束，需要补人请用补招"
     if logic.shift_locked(g):
         return "因名单已锁定，停止候补自动转正，如需补人请在志愿者管理页面手动转正"
     if g.enroll_paused:
@@ -2559,6 +2559,7 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
     名单锁定、暂停报名时候补不会自动顶上（见 enroll_logic.promotion_blocked），
     要不要补人由负责人判断，但来不来仍由本人定：和自动递补一样开确认窗
     （2 小时、夜间不计时，不晚于场次开始，见 enroll_logic.promote_confirm_deadline）。
+    只在开场前可用。
     """
     enr = db.get(Enrollment, enrollment_id)
     if enr is None:
@@ -2568,6 +2569,9 @@ def promote_manually(enrollment_id: str, db: OrmSession = Depends(db_session),
     if enr.status != "waitlisted":
         raise HTTPException(409, "该记录不在候补队列中")
     g = _shift(db, enr.shift_id)
+    # 开场后不再转正候补：开场后才接到通知的人多半赶不上，要补人用补招
+    if now() >= g.start_time:
+        raise HTTPException(409, "场次已开始，不能再转正候补；需要补人请用补招")
     position = db.get(Position, enr.position_id) if enr.position_id else None
     db.commit()          # 还连接再排锁，理由同 enroll
     with shift_lock(db, g.id):

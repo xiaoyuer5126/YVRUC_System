@@ -40,6 +40,11 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "已加入候补｜{activity}",
         "「{activity}」· {shift} 名额已满，您已报名候补，当前队列第 {pos} 位。"
         "\n有名额时将通知您确认，需于转正通知2小时内确认。"),
+    # 措辞同未录取：只是没排上，不留任何记录
+    "waitlist_closed": (
+        "候补未能递补｜{activity}",
+        "「{activity}」· {shift} 已开始，本次候补未能递补，感谢您的关注。"
+        "\n期待与同学一起参与更多丰富多彩的志愿活动。"),
     "hours_approved": (
         "请确认志愿时长｜{activity}",
         "「{activity}」的志愿时长已核准：您本次记 {hours} 小时。"
@@ -110,6 +115,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
 TEMPLATE_LABELS: dict[str, str] = {
     "signup_success": "报名成功",
     "waitlist_queued": "已加入候补",
+    "waitlist_closed": "候补未能递补",
     "hours_approved": "请确认志愿时长",
     "hours_locked": "志愿时长已锁定",
     "application_accepted": "录取通知",
@@ -133,6 +139,7 @@ TEMPLATE_LABELS: dict[str, str] = {
 TEMPLATE_PAGE: dict[str, str] = {
     "signup_success": "/my",
     "waitlist_queued": "/my",
+    "waitlist_closed": "/my",
     "waitlist_promoted": "/my",
     "application_accepted": "/my",
     "application_rejected": "/my",

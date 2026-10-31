@@ -2103,6 +2103,7 @@ async function loadLogs() {
 // 口径同 models.Enrollment 的 cancel_type；空串是负责人那边取消的
 const cancelType = x => ({ normal: '退选', locked: '锁定后退出', expired: '确认超时',
                            abandoned: '放弃候补', rejected: '未录取',
+                           unfilled: '未能递补',
                            not_chosen: '未选中' }[x.cancel_type] || '取消')
 
 let activityId = ''
