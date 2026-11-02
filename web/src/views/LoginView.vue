@@ -3,7 +3,7 @@
     <LocaleSwitch float />
     <el-card class="login-card">
       <div class="head">
-        <div class="logo">{{ isEn ? 'V' : '志' }}</div>
+        <img class="logo" src="/icon-192.png" alt="" />
         <h2>{{ t('志愿服务管理平台') }}</h2>
       </div>
 
@@ -51,7 +51,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { setAuth } from '../store'
-import { isEn, t } from '../i18n'
+import { t } from '../i18n'
 import LocaleSwitch from '../components/LocaleSwitch.vue'
 
 const router = useRouter()
@@ -122,9 +122,8 @@ async function doLogin() {
 .head { text-align: center; margin-bottom: 24px; }
 .head h2 { margin: 12px 0 4px; font-size: 19px; }
 .logo {
-  width: 54px; height: 54px; margin: 0 auto; border-radius: 14px;
-  background: var(--ruc-red); color: #fff; font-size: 30px; font-family: serif;
-  display: flex; align-items: center; justify-content: center;
+  /* 白卡片上用带红底的方图，圆角跟卡片一致 */
+  width: 54px; height: 54px; margin: 0 auto; border-radius: 14px; display: block;
 }
 .quick { display: flex; flex-wrap: wrap; gap: 8px; }
 .foot { text-align: center; line-height: 1.6; margin-top: 16px; }
