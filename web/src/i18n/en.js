@@ -632,6 +632,7 @@ export default {
   '{0} 点到 {1} 点，全选或清空这一行': '{0}:00–{1}:00: select or clear the row',
   '已选 {0} 格': '{0} slots selected',
   '清空': 'Clear',
+  '清除筛选': 'Clear filters',
   '只看报名中的活动；场次有一段落在所选时段里就列出来':
     'Open activities only. An activity is listed if any session overlaps the selected slots.',
   '只按日期范围筛，状态可以照常选':
