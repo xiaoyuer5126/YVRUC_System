@@ -42,7 +42,7 @@
       </el-form-item>
 
       <el-form-item label="">
-        <el-checkbox v-model="form.no_mainland_id">{{ t('我没有内地居民身份证号（港澳台学生／留学生）') }}</el-checkbox>
+        <el-checkbox v-model="form.no_mainland_id" class="wrap-check">{{ t('我没有内地居民身份证号（港澳台学生／留学生）') }}</el-checkbox>
       </el-form-item>
     </el-form>
     <VbRegisterTip v-if="forced" />
@@ -137,4 +137,8 @@ async function save() {
 .id-row { display: flex; align-items: center; gap: 12px; }
 .mono { font-family: ui-monospace, monospace; letter-spacing: .5px; }
 .filled { display: flex; align-items: center; gap: 12px; }
+/* 选项文字比输入框宽：el-checkbox 默认不换行、定高 32px，放开让它折行 */
+.wrap-check { height: auto; white-space: normal; align-items: flex-start; }
+.wrap-check :deep(.el-checkbox__input) { margin-top: 4px; }
+.wrap-check :deep(.el-checkbox__label) { line-height: 1.6; }
 </style>
