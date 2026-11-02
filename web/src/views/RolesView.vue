@@ -24,6 +24,8 @@
       <el-button type="primary" @click="reload">查询</el-button>
       <!-- 批量：学号一行一个，添加/移除身份；骨干用不上（他们只认领成员） -->
       <el-button v-if="!coreOnly" @click="openBatch">批量调整</el-button>
+      <!-- 导出的是当前搜索条件下的全部人，不只这一页 -->
+      <el-button @click="exportRoles">导出名单</el-button>
       <RefreshBar :load="load" :at="loadedAt" />
       <span class="dim">{{ coreOnly ? '只列本部门的成员' : headOnly ? '不搜索时只列本部门的人，添加新成员请搜索学号' : '不搜索时只列已有管理类身份的人' }}</span>
     </div>
@@ -257,7 +259,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api } from '../api'
+import { api, download } from '../api'
 import { useCloseGuard } from '../composables/closeGuard'
 import { auth, ROLE_LABELS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
@@ -323,6 +325,9 @@ function reload() {
   load()
 }
 
+function exportRoles() {
+  download(`/api/staff/roles.xlsx?q=${encodeURIComponent(q.value.trim())}`)
+}
 function goPage(p) {
   page.value = p
   load()
