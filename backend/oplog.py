@@ -245,6 +245,7 @@ LABELS = {
     'delete_record': '补录活动删除导入时长',
     'batch_roles': '批量修改角色',
     'set_roles': '修改角色',
+    'export_role_users': '导出角色名单',
 }
 
 

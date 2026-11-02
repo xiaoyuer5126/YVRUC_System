@@ -135,6 +135,8 @@ TRAINEE_DENIED_READS = {
     "export_oplogs", "export_notifications",
     # 活动汇总：数据总览那一页的导出，只给管理员/会长团，同样点名
     "export_activities_summary",
+    # 角色名单：部门成员本来进不了角色管理页，同样点名
+    "export_role_users",
 }
 TRAINEE_READONLY = "TRAINEE_READONLY"
 

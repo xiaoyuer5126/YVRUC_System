@@ -49,6 +49,7 @@
           </el-button>
         </div>
       </el-drawer>
+      <el-button v-if="filtered" text type="primary" @click="clearFilters">{{ t('清除筛选') }}</el-button>
     </div>
 
     <div v-if="list.length" class="card-grid">
@@ -91,7 +92,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, fmtDTShort } from '../api'
 import SlotPicker from '../components/SlotPicker.vue'
@@ -146,6 +147,16 @@ watch([slots, () => f.start, () => f.end], () => {
   clearTimeout(slotTimer)
   slotTimer = setTimeout(reload, 400)     // 连点几格、拖日期只拉一次
 })
+
+// 搜索词、三个下拉、日期和时段格子任一有值，就摆出「清除筛选」
+const filtered = computed(() => Boolean(f.q || f.status || f.mode || f.organizer) || slotActive.value)
+function clearFilters() {
+  Object.assign(f, { q: '', status: '', mode: '', organizer: '', start: '', end: '' })
+  slots.value = []
+  reload()
+  // 上面改日期和格子会触发防抖重拉，这里已经拉过了
+  nextTick(() => clearTimeout(slotTimer))
+}
 
 const list = ref([])
 const organizers = ref([])

@@ -438,3 +438,25 @@ def test_催办范围里已删的部门不算数(client, admin, db, take_student
         assert mine["remind_dept_ids"] == []
     finally:
         client.put(f"/api/staff/roles/{u.id}", headers=admin, json={"roles": ["student"]})
+
+
+def test_导出角色名单_范围与列表一致(client, admin, initiator, db, take_student):
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    sid = take_student()
+    # 默认导出与默认列表同一范围：有管理类身份的人，不含普通学生
+    r = client.get("/api/staff/roles.xlsx", headers=admin)
+    assert r.status_code == 200, r.text
+    rows = list(load_workbook(BytesIO(r.content)).active.values)
+    assert rows[0][:5] == ("姓名", "学号", "单位", "类型", "身份")
+    listed = client.get("/api/staff/roles?size=100", headers=admin).json()
+    assert len(rows) - 1 == listed["total"]
+    assert sid not in {row[1] for row in rows[1:]}
+    # 带搜索词时只导出搜到的人
+    r = client.get(f"/api/staff/roles.xlsx?q={sid}", headers=admin)
+    rows = list(load_workbook(BytesIO(r.content)).active.values)
+    assert [row[1] for row in rows[1:]] == [sid]
+    # 进不了角色管理页的人导不出
+    assert client.get("/api/staff/roles.xlsx", headers=initiator).status_code == 403
