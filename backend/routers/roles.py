@@ -16,16 +16,21 @@
 """
 from __future__ import annotations
 
+from io import BytesIO
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from openpyxl import Workbook
 from sqlalchemy import case, or_
 from sqlalchemy.orm import Session as OrmSession
 
+from .. import downloads
 from ..audit import log as audit_log
 from ..database import db_session
-from ..deps import current_user
+from ..deps import current_user, current_user_download
+from ..exporter import disarm_formulas
 from ..models import (Activity, ActivityManager, Department, ROLES,
-                      ROLE_LABELS, User, like_pattern)
+                      ROLE_LABELS, User, like_pattern, now)
 from ..perm import writing_manager_ids
 
 router = APIRouter(prefix="/api/staff", tags=["roles"])
@@ -245,19 +250,14 @@ def list_cores(department_id: str = "", db: OrmSession = Depends(db_session),
             for u in rows if u.has_role("qingxie", real=True)]
 
 
-@router.get("/roles")
-def list_role_users(q: str = "", role: str = "",
-                    page: int = Query(1, ge=1),
-                    size: int = Query(20, ge=1, le=100),
-                    db: OrmSession = Depends(db_session),
-                    user: User = Depends(require_role_manager)):
-    """可授予/已持有管理类身份的人，加上按学号或姓名的搜索。
+def _role_query(db: OrmSession, user: User, q: str, role: str):
+    """角色列表与导出共用的查询：可授予/已持有管理类身份的人，加上按学号或姓名的搜索。
 
     默认只列**已经有非学生身份的人**：全校几万人平铺出来没法用，要给某个
     学生加身份就搜他的学号。部长默认只看本部门的人，搜索不受限——他要从
     全校学生里挑人进部门。骨干只看本部门的成员，搜也只在这里面搜。
 
-    分页；先按身份档排，见 _role_order。
+    带上部门表这一跳，按 _role_order 排好。
     """
     query = db.query(User)
     # 先看是不是管理员/会长团，再看部门层级：管理员兼骨干（以并集判权时）
@@ -276,18 +276,76 @@ def list_role_users(q: str = "", role: str = "",
     else:
         wanted = [role] if role in ROLES else ["admin", "qingxie", "initiator"]
         query = query.filter(or_(*[_holds(r) for r in wanted]))
-    total = query.count()
     # 档内要按部门聚拢，部门名与部门的固定次序都在部门表里，带上这一跳
-    rows = (query.outerjoin(Department, User.department_id == Department.id)
-            .order_by(*_role_order())
-            .offset((page - 1) * size).limit(size).all())
+    return (query.outerjoin(Department, User.department_id == Department.id)
+            .order_by(*_role_order()))
+
+
+def _names(db: OrmSession, rows: list[User]) -> dict[str, str]:
+    """部门 id 与归属骨干 id → 名字。成员行上要写「归属：林骁」。"""
     names = {d.id: d.name for d in db.query(Department).all()}
-    # 归属骨干的名字也从同一张表查：成员行上要写「归属：林骁」
     boss_ids = {u.supervisor_id for u in rows if u.supervisor_id}
     if boss_ids:
         names.update({b.id: b.name for b in db.query(User)
                       .filter(User.id.in_(boss_ids)).all()})
+    return names
+
+
+@router.get("/roles")
+def list_role_users(q: str = "", role: str = "",
+                    page: int = Query(1, ge=1),
+                    size: int = Query(20, ge=1, le=100),
+                    db: OrmSession = Depends(db_session),
+                    user: User = Depends(require_role_manager)):
+    """角色管理页的名单，分页；范围与排序见 _role_query。"""
+    query = _role_query(db, user, q, role)
+    total = query.count()
+    rows = query.offset((page - 1) * size).limit(size).all()
+    names = _names(db, rows)
     return {"total": total, "items": [_row(u, user, names) for u in rows]}
+
+
+# 一次导出的上限：默认名单只有几百人，搜索词太宽（如只填年级）才会撞到
+ROLES_EXPORT_MAX_ROWS = 5000
+
+
+@router.get("/roles.xlsx")
+def export_role_users(q: str = "", role: str = "",
+                      db: OrmSession = Depends(db_session),
+                      user: User = Depends(current_user_download)):
+    """导出角色管理页当前搜索条件下的全部人，不分页；范围与列表相同。"""
+    require_role_manager(user)
+    query = _role_query(db, user, q.strip(), role)
+    total = query.count()
+    if total > ROLES_EXPORT_MAX_ROWS:
+        raise HTTPException(400, f"符合条件的有 {total} 人，超过 {ROLES_EXPORT_MAX_ROWS} 人，"
+                                 "请缩小搜索范围再导")
+    rows = query.all()
+    names = _names(db, rows)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "角色名单"
+    ws.append(["姓名", "学号", "单位", "类型", "身份", "青协层级", "部门", "归属骨干", "会长"])
+    for u in rows:
+        r = _row(u, user, names)
+        ws.append([r["name"], r["student_id"], r["college"] or "",
+                   "老师" if r["user_type"] == "teacher" else "学生",
+                   "、".join(ROLE_LABELS.get(x, x) for x in r["roles"]),
+                   r["post_label"], r["department"], r["supervisor"],
+                   "是" if r["is_president"] else ""])
+    for col, w in zip("ABCDEFGHI", (10, 14, 24, 6, 24, 10, 16, 10, 6)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"
+    disarm_formulas(wb)
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"角色名单_{now().strftime('%Y%m%d%H%M')}.xlsx"
+    audit_log(db, actor=user, action="export", target_type="export",
+              target_id="", target_label="角色名单",
+              summary=f"导出角色名单《{filename}》，{len(rows)} 人")
+    db.commit()
+    return downloads.stream_response(buf, filename, downloads.XLSX)
 
 
 class RoleBody(BaseModel):
