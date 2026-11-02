@@ -255,7 +255,7 @@ async function onCommand(cmd) {
 }
 .left { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .hamburger { color: #fff; padding: 6px; }
-.brand { display: flex; gap: 10px; align-items: center; cursor: pointer; min-width: 0; }
+.brand { display: flex; gap: 8px; align-items: center; cursor: pointer; min-width: 0; }
 .logo {
   width: 32px; height: 32px; border-radius: 8px; background: rgba(255,255,255,.16);
   display: flex; align-items: center; justify-content: center;
