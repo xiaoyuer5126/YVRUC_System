@@ -2,7 +2,7 @@
      日期走 v-model:start / v-model:end（'YYYY-MM-DD'，空串 = 不限），
      格子走 v-model:slots，值是「YYYY-MM-DDTHH」的列表，原样交给广场列表接口的 slots。
      一格两小时（8–22 点）：点日期表头切换一整天，点左侧时段切换这一页的一行；
-     日期跨度超过 7 天时按周翻页。 -->
+     不选日期时从本周一排起，日期跨度超过 7 天时按周翻页。 -->
 <template>
   <div class="slot-box">
     <div class="slot-sec">{{ t('日期范围') }}</div>
@@ -121,7 +121,10 @@ function applyShortcut(i) {
   setRange(ymd(a), ymd(b))
 }
 
-// 要显示的日子：日期范围内每一天；没选范围时从今天起 7 天
+// 本周一（周日算这一周的最后一天）
+const monday = () => plusDays(-((new Date().getDay() + 6) % 7))
+
+// 要显示的日子：日期范围内每一天；没选范围时从本周一起两周，一页一周
 const days = computed(() => {   // vuecheck: script-only，模板经 shownDays 读它
   const out = []
   if (props.start && props.end) {
@@ -132,7 +135,11 @@ const days = computed(() => {   // vuecheck: script-only，模板经 shownDays �
       d.setDate(d.getDate() + 1)
     }
   } else {
-    for (let i = 0; i < PAGE; i++) out.push(plusDays(i))
+    const d = monday()
+    for (let i = 0; i < PAGE * 2; i++) {
+      out.push(new Date(d))
+      d.setDate(d.getDate() + 1)
+    }
   }
   const names = isEn.value ? WD.en : WD.zh
   return out.map(d => ({ date: d, key: ymd(d), wd: names[d.getDay()], md: mdOf(d) }))
