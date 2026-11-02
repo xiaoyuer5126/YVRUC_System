@@ -1,6 +1,6 @@
 <template>
   <el-container class="app-root">
-    <el-header class="topbar" height="56px">
+    <el-header class="topbar" height="48px">
       <div class="left">
         <el-button v-if="narrow" text class="hamburger" :aria-label="t('打开菜单')"
                    @click="drawer = true">
@@ -8,12 +8,7 @@
         </el-button>
         <div class="brand" @click="$router.push('/')">
           <div class="logo">{{ isEn ? 'V' : '志' }}</div>
-          <div class="brand-text">
-            <div class="name">{{ narrow ? t('志愿服务平台') : t('志愿服务管理平台') }}</div>
-            <div v-if="!narrow" class="sub">
-              {{ isEn ? 'Renmin University of China' : 'Volunteer Service Management' }}
-            </div>
-          </div>
+          <div class="name">{{ narrow ? t('志愿服务平台') : t('志愿服务管理平台') }}</div>
         </div>
       </div>
 
@@ -250,7 +245,7 @@ async function onCommand(cmd) {
 .trainee-bar { margin-bottom: 12px; }
 /* 固定视口高度：侧边栏恒定满高，右侧内容独立滚动 */
 .app-root { height: 100vh; }
-.app-body { height: calc(100vh - 56px); }
+.app-body { height: calc(100vh - 48px); }
 .app-main { height: 100%; overflow-y: auto; padding: 0; scrollbar-gutter: stable; }
 .topbar {
   background: var(--ruc-red);
@@ -260,17 +255,15 @@ async function onCommand(cmd) {
 }
 .left { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .hamburger { color: #fff; padding: 6px; }
-.brand { display: flex; gap: 12px; align-items: center; cursor: pointer; min-width: 0; }
-.brand-text { min-width: 0; }
+.brand { display: flex; gap: 10px; align-items: center; cursor: pointer; min-width: 0; }
 .logo {
-  width: 38px; height: 38px; border-radius: 9px; background: rgba(255,255,255,.16);
+  width: 32px; height: 32px; border-radius: 8px; background: rgba(255,255,255,.16);
   display: flex; align-items: center; justify-content: center;
-  font-size: 20px; font-weight: 700; font-family: serif;
+  font-size: 17px; font-weight: 700; font-family: serif;
   border: 1px solid rgba(255,255,255,.35); flex-shrink: 0;
 }
 .name { font-size: 16px; font-weight: 600; letter-spacing: .5px;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sub { font-size: 11px; opacity: .75; }
 .right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 /* 深红顶栏上的图标按钮：el-button 自己带一套文字色（默认深色），
    在这儿压成白的，反馈和消息两个图标才是同一种颜色 */
@@ -298,6 +291,6 @@ async function onCommand(cmd) {
   .topbar { padding: 0 10px; }
   .right { gap: 4px; }
   .name { font-size: 15px; }
-  .logo { width: 32px; height: 32px; font-size: 17px; }
+  .logo { width: 28px; height: 28px; font-size: 15px; }
 }
 </style>
