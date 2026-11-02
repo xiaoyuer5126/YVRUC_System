@@ -3,7 +3,7 @@
     <LocaleSwitch float />
     <el-card class="cb-card">
       <div class="head">
-        <div class="logo">{{ isEn ? 'V' : '志' }}</div>
+        <img class="logo" src="/icon-192.png" alt="" />
         <h2>{{ t('志愿服务管理平台') }}</h2>
       </div>
 
@@ -28,7 +28,7 @@ import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { setAuth } from '../store'
-import { isEn, t } from '../i18n'
+import { t } from '../i18n'
 import LocaleSwitch from '../components/LocaleSwitch.vue'
 
 const route = useRoute()
@@ -76,9 +76,7 @@ function backToLogin() { router.replace('/login') }
 .head { text-align: center; margin-bottom: 24px; }
 .head h2 { margin: 12px 0 4px; font-size: 19px; }
 .logo {
-  width: 54px; height: 54px; margin: 0 auto; border-radius: 14px;
-  background: var(--ruc-red); color: #fff; font-size: 30px; font-family: serif;
-  display: flex; align-items: center; justify-content: center;
+  width: 54px; height: 54px; margin: 0 auto; border-radius: 14px; display: block;
 }
 .waiting { text-align: center; padding: 24px 0 32px; color: #6b7280; }
 .waiting p { margin: 12px 0 0; }
