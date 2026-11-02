@@ -7,7 +7,7 @@
           <el-icon :size="22"><Fold /></el-icon>
         </el-button>
         <div class="brand" @click="$router.push('/')">
-          <div class="logo">{{ isEn ? 'V' : '志' }}</div>
+          <img class="logo" src="/logo-mark.png" alt="" />
           <div class="name">{{ narrow ? t('志愿服务平台') : t('志愿服务管理平台') }}</div>
         </div>
       </div>
@@ -79,7 +79,7 @@
     <el-drawer v-model="drawer" direction="ltr" size="264px" :with-header="false"
                class="menu-drawer">
       <div class="drawer-head">
-        <div class="logo">{{ isEn ? 'V' : '志' }}</div>
+        <img class="logo" src="/logo-mark.png" alt="" />
         <div>
           <div class="name">{{ t('志愿服务平台') }}</div>
           <div class="drawer-sub">
@@ -257,10 +257,8 @@ async function onCommand(cmd) {
 .hamburger { color: #fff; padding: 6px; }
 .brand { display: flex; gap: 8px; align-items: center; cursor: pointer; min-width: 0; }
 .logo {
-  width: 32px; height: 32px; border-radius: 8px; background: rgba(255,255,255,.16);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 17px; font-weight: 700; font-family: serif;
-  border: 1px solid rgba(255,255,255,.35); flex-shrink: 0;
+  /* 白色图形、透明底，压在同色的深红顶栏上 */
+  width: 32px; height: 32px; display: block; flex-shrink: 0;
 }
 .name { font-size: 16px; font-weight: 600; letter-spacing: .5px;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -291,6 +289,6 @@ async function onCommand(cmd) {
   .topbar { padding: 0 10px; }
   .right { gap: 4px; }
   .name { font-size: 15px; }
-  .logo { width: 28px; height: 28px; font-size: 15px; }
+  .logo { width: 28px; height: 28px; }
 }
 </style>
