@@ -138,6 +138,38 @@ def note_rate(key: str, window_seconds: int) -> None:
         pass
 
 
+# —— 错误频次（见 monitoring.py）——
+#
+# 按时间窗分桶，桶名里带窗口序号：整桶自己过期，不用逐个清理，也不会因为错误
+# 一直来而让窗口永远过不去。计数发生在上报的那一刻（每个进程各记各的，记在同一
+# 个桶上），通知由定时任务读这个桶来发。
+# Redis 不可用时不计数：频次告警是锦上添花，不能反过来把上报搅坏。
+
+def _error_bucket(window_seconds: int) -> str:
+    return f"yvruc:errors:{int(time.time()) // window_seconds}"
+
+
+def note_error(key: str, window_seconds: int) -> None:
+    bucket = _error_bucket(window_seconds)
+    try:
+        pipe = _client.pipeline()
+        pipe.hincrby(bucket, key, 1)
+        # 留到下一个窗口结束：定时任务晚一轮来读，这一桶还在
+        pipe.expire(bucket, window_seconds * 2)
+        pipe.execute()
+    except redis.RedisError:
+        pass
+
+
+def error_counts(window_seconds: int) -> dict[str, int]:
+    """当前窗口里每个错误各出现了多少次。"""
+    try:
+        raw = _client.hgetall(_error_bucket(window_seconds))
+    except redis.RedisError:
+        return {}
+    return {k: int(v) for k, v in raw.items()}
+
+
 def claim_once(key: str, ttl: int) -> bool:
     """几个进程里只让第一个做某件事（每天一次的告警之类）：占到了回 True。
 

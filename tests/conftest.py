@@ -27,6 +27,10 @@ SCHOOL_ENV = ("YVRUC_SSO_ENABLED", "YVRUC_MSGCENTER_ENABLED",
 for _name in SCHOOL_ENV:
     os.environ[_name] = ""
 
+# 错误上报也一律关掉：用例里故意造的异常不该报到监控服务上，那边会堆满
+# 「测试」制造的错误，真实的错误反而看不见
+os.environ["YVRUC_SENTRY_DSN"] = ""
+
 
 def _no_school_network(*args, **kwargs):
     """学校接口（消息中心、SSO）都经 urllib 发请求。就算哪个用例把开关打开、
