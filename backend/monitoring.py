@@ -5,7 +5,8 @@
 
 上报什么：异常类型与消息、堆栈、出错的接口、环境名、主机名，以及 ERROR 及以上
 的日志（SDK 的日志集成把 `logger.error` / `logger.exception` 也变成事件，所以日志
-写在哪里，监控上就看得到哪里）。
+写在哪里，监控上就看得到哪里）。**503 不报**——它在本平台是有意的拒绝，不是故障，
+理由见 `options()`。
 
 **上报前一律脱敏**（`scrub_event`）。库里有身份证号和手机号，请求正文里是报名问卷
 的答案，请求头里是会话令牌，查询串里是下载票据——这些东西出了这台服务器就收不
@@ -124,7 +125,18 @@ def options() -> dict:
     这几项，而它们是 SDK 的关键字参数——改了名字、打错一个字，后端在启动时才炸，
     或者更糟，静默地把局部变量一起报出去。
     """
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.starlette import StarletteIntegration
+
+    # 哪些状态码的 HTTPException 算错误。默认是 500～599 全算，而本平台的 503 是
+    # **有意的拒绝**：抢报时闸门把超出名额的请求挡回去（locks._busy 的「当前操作
+    # 人数较多」）、瓦片额度到顶、签到码连着撞码。一场抢报就能凑出几十条同类事件，
+    # 10 分钟 20 次正好触发「后端报错频繁」——管理员每次抢报都收到一条假警报，
+    # 下次就不看通知了。所以 503 跳过，其余 5xx 照报。
+    failed = {*range(500, 503), *range(504, 600)}
     return {
+        "integrations": [StarletteIntegration(failed_request_status_codes=failed),
+                         FastApiIntegration(failed_request_status_codes=failed)],
         "dsn": config.SENTRY_DSN,
         "environment": config.SENTRY_ENVIRONMENT,
         "sample_rate": config.SENTRY_SAMPLE_RATE,

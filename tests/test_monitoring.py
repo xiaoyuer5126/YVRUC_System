@@ -189,6 +189,44 @@ def test_SDK_认我们这几项设置并且真的调了脱敏():
     assert "ValueError" in 报出去的
 
 
+def test_有意的503不上报而别的5xx照报():
+    """抢报时的 503 是闸门按设计挡回去的，不是故障。
+
+    SDK 默认把 5xx 的 HTTPException 全记成事件，一场抢报就能凑出几十条同类事件、
+    触发一次「后端报错频繁」——管理员每次抢报都收到一条假警报，下次就不看通知了。
+    """
+    sentry_sdk = pytest.importorskip("sentry_sdk")
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+
+    收到 = []
+    sentry_sdk.init(**{**monitoring.options(),
+                       "dsn": "http://testkey@127.0.0.1:1/1",
+                       "transport": 收到.append})
+    try:
+        # 路由要在 init 之后建：SDK 的 FastAPI 集成是在建路由那一刻把处理函数包起来的
+        app = FastAPI()
+
+        @app.get("/busy")
+        def busy():
+            raise HTTPException(status_code=503, detail="当前操作人数较多，请稍后重试")
+
+        @app.get("/broken")
+        def broken():
+            raise HTTPException(status_code=500, detail="这一条要报")
+
+        c = TestClient(app, raise_server_exceptions=False)
+        assert c.get("/busy").status_code == 503
+        assert c.get("/broken").status_code == 500
+        sentry_sdk.flush()
+    finally:
+        sentry_sdk.init(dsn="")
+
+    报出去的 = json.dumps(收到, ensure_ascii=False, default=str)
+    assert "这一条要报" in 报出去的
+    assert "当前操作人数较多" not in 报出去的
+
+
 def test_阈值以下不打扰(db):
     kind = f"Quiet{uuid.uuid4().hex[:8]}"
     window = config.SENTRY_ALERT_WINDOW_MINUTES * 60
