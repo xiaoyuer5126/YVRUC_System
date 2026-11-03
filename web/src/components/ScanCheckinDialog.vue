@@ -21,7 +21,6 @@
 
 <script setup>
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { BrowserQRCodeReader } from '@zxing/browser'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useNarrow } from '../composables/useNarrow'
@@ -42,7 +41,9 @@ const videoEl = ref(null)
 const hint = ref('')
 const bad = ref(false)          // 报错态：换个颜色，别和「正在打开摄像头」混在一起
 
-const reader = new BrowserQRCodeReader()
+// 解码库四百多 KB，而「我的报名」上大多数人一次也不扫码。放在这里 import 的话
+// 它跟着页面一起下载，所以等真要开摄像头时再去取（见 start）
+let reader = null
 let controls = null
 let busy = false                // 成功之后就锁住，别在关弹窗那一两秒里再扫一次
 let last = { code: '', at: 0 }  // 同一张码别连着打接口（摄像头一秒能读十几帧）
@@ -99,9 +100,22 @@ async function start() {
   busy = false
   last = { code: '', at: 0 }
   await nextTick()
+  if (!reader) {
+    try {
+      const { BrowserQRCodeReader } = await import('@zxing/browser')
+      reader = new BrowserQRCodeReader()
+    } catch {
+      fail(t('扫码功能没加载出来，请检查网络后重新打开'))
+      return
+    }
+  }
+  // 取库这一会儿人可能已经把框关了。不回头看一眼，摄像头会在关着的框后面
+  // 一直亮着
+  if (!props.modelValue) return
   try {
     controls = await reader.decodeFromConstraints(
       { video: { facingMode: { ideal: 'environment' } } }, videoEl.value, onResult)
+    if (!props.modelValue) return stop()
     hint.value = ''
   } catch (e) {
     // 打不开的原因就那么几种：没授权、没有摄像头、或者不是 https
