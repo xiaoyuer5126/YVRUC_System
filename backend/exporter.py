@@ -27,7 +27,8 @@ from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import selectinload
 
 from . import config, hours as hours_flow, scoring
-from .serializers import admin_status_of, recruit_scope_text
+from .serializers import (admin_status_of, answer_attachments,
+                          recruit_scope_text)
 from .models import (Activity, Attachment, CheckinRecord, Department, Enrollment,
                      FormQuestion, HoursClaim, HoursRecord, HoursSegment,
                      Position, Shift, User, ViolationRecord, days_text, now)
@@ -61,18 +62,21 @@ class Export:
     也不用平台的下载链接——那要登录，发给别人打不开。
     """
 
-    def __init__(self, db: OrmSession) -> None:
+    def __init__(self, db: OrmSession, activity_id: str) -> None:
         self.db = db
         self.wb = Workbook()
         self.files: list[tuple[str, Path]] = []      # (包内文件名, 磁盘路径)
         self._used: set[str] = set()
+        # 这个活动的问卷附件一次取齐：导出几百人、每人几道文件题，
+        # 逐个按 id 去查就是几百条 SQL
+        self._atts = answer_attachments(db, activity_id)
 
     def attach(self, u: User, q: FormQuestion, attachment_id, folder: str = "") -> str:
         """把一份文件答案登记进附件包，返回单元格该写的文件名；文件不在了给空。
 
         folder 是包内的目录（如「上午场/引导岗/」），单元格里写的也带着它。
         """
-        att = self.db.get(Attachment, str(attachment_id))
+        att = self._atts.get(str(attachment_id))
         if att is None:
             return ""
         path = MATERIAL_DIR / att.stored_name
@@ -340,7 +344,7 @@ def build_answers_workbook(db: OrmSession, activity: Activity,
     apps = {a.user_id: a for a in db.query(Application)
             .filter(Application.activity_id == activity.id).all()} if screened else {}
 
-    ex = Export(db)
+    ex = Export(db, activity.id)
     ws = ex.wb.active
     ws.title = "问卷结果"
     header = ["姓名", "学号", "学院", "手机号", "场次", "岗位"]
@@ -474,8 +478,20 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
             .order_by(Application.created_at).all())
     shifts = {g.id: g for g in activity.main_shifts()}
     positions = {p.id: p for g in shifts.values() for p in g.positions}
+    # 人、意向、提示分都按整份名单一次取齐：一人一条的话，三百份申请就是
+    # 一千多条 SQL，导出要等上好几秒
+    user_ids = [a.user_id for a in apps]
+    users = {u.id: u for u in db.query(User)
+             .filter(User.id.in_(set(user_ids))).all()} if user_ids else {}
+    wanted_rows: dict[str, list[Enrollment]] = {uid_: [] for uid_ in user_ids}
+    if user_ids:
+        for e in (db.query(Enrollment)
+                  .filter(Enrollment.activity_id == activity.id,
+                          Enrollment.user_id.in_(set(user_ids))).all()):
+            wanted_rows.setdefault(e.user_id, []).append(e)
+    scores = scoring.briefs(db, user_ids)
 
-    ex = Export(db)
+    ex = Export(db, activity.id)
     ws = ex.wb.active
     ws.title = "报名问卷结果"
     header = ["序号", "姓名", "学号", "学院", "校区", "学段", "手机号", "提交时间",
@@ -485,10 +501,8 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
     _style_header(ws, len(header))
 
     for seq, app in enumerate(apps, 1):
-        u = db.get(User, app.user_id)
-        rows = (db.query(Enrollment)
-                .filter(Enrollment.activity_id == activity.id,
-                        Enrollment.user_id == app.user_id).all())
+        u = users[app.user_id]
+        rows = wanted_rows.get(app.user_id, [])
         wanted = []
         for e in rows:
             g = shifts.get(e.shift_id)
@@ -500,7 +514,7 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
         line = [seq, u.name, u.student_id, u.college, u.campus, u.stage, u.phone,
                 f"{app.created_at:%Y-%m-%d %H:%M}", "、".join(wanted),
                 app.status_label(), "愿意" if app.leader_willing else "",
-                scoring.score_of(db, u.id)]
+                scores[u.id]["score"]]
         ex.write_answers(ws, u, questions, app.answers, line)
 
     ws.column_dimensions["A"].width = 6

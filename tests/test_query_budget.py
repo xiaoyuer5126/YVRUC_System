@@ -21,8 +21,10 @@ from sqlalchemy import event
 
 from backend import pubcache
 from backend.database import engine
-from backend.models import (Activity, ActivityManager, Attachment, AuditLog,
-                            Enrollment, Position, Shift, now, uid)
+from backend.exporter import build_application_workbook
+from backend.models import (Activity, ActivityManager, Application, Attachment,
+                            AuditLog, Enrollment, FormQuestion, Position, Shift,
+                            now, uid)
 from backend.notify import (notify_checkin, notify_edit_changes,
                             notify_enrolled)
 from conftest import mk_shift
@@ -211,6 +213,74 @@ def test_群发通知的条数不随人数涨(db, take_student):
     a, b = measure(few), measure(many)
     assert a == b, (a, b)
     assert max(b.values()) <= 10, b
+
+
+def screened_crowd(db, take_student, people: int) -> Activity:
+    """一个「报名后筛选」的活动、一个场次、两道题（填空 + 文件），
+    people 份申请，每份一条意向报名、一个上传的附件。
+
+    附件只写记录不落盘：导出里查附件那一步照样走到，文件在不在只影响单元格
+    写不写得出文件名。
+    """
+    admin = student_row(db, ADMIN)
+    day = next(_days)
+    start = now() + timedelta(days=day, hours=2)
+    act = Activity(id=uid("act"), title=f"筛选 {uid('t')}",
+                   intro="x", location="东门", contact_group_qr="x",
+                   contacts=[{"name": "王", "phone": "13900000000"}],
+                   recruit_mode="screened", status="published",
+                   reg_start=now() - timedelta(days=1),
+                   reg_end=now() + timedelta(days=day), created_by=admin.id)
+    db.add(act)
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                           user_id=admin.id, added_by=admin.id))
+    g = mk_shift(id=uid("g"), activity_id=act.id, name="第一场",
+                 start_time=start, end_time=start + timedelta(hours=3),
+                 mode="assign", sort=0)
+    db.add(g)
+    db.flush()
+    p = Position(id=uid("p"), shift_id=g.id, name=Position.PLACEHOLDER_NAME,
+                 is_placeholder=True, quota=people, sort=-1, **POSITION_TEXT)
+    db.add(p)
+    text_q = FormQuestion(id=uid("q"), activity_id=act.id, kind="text",
+                          title="介绍自己", required=False, sort=0)
+    file_q = FormQuestion(id=uid("q"), activity_id=act.id, kind="file",
+                          title="证明材料", required=False, sort=1)
+    db.add_all([text_q, file_q])
+    db.flush()
+    for _ in range(people):
+        u = student_row(db, take_student())
+        att = Attachment(id=uid("att"), owner_type="application",
+                         owner_id=u.id, activity_id=act.id, kind="file",
+                         title="证明.pdf", stored_name=f"{uid('f')}.pdf",
+                         uploaded_by=u.id)
+        db.add(att)
+        db.add(Application(id=uid("app"), activity_id=act.id, user_id=u.id,
+                           answers={text_q.id: "我很热心", file_q.id: att.id},
+                           status="applied"))
+        db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                          user_id=u.id, position_id=p.id, status="applied",
+                          joined_at=now()))
+    db.commit()
+    return act, people
+
+
+def test_报名问卷导出的条数不随人数涨(db, take_student):
+    few = screened_crowd(db, take_student, 5)
+    many = screened_crowd(db, take_student, 50)
+
+    def measure(case):
+        act, people = case
+        db.expire_all()
+        with counting() as n:
+            ex = build_application_workbook(db, act)
+        # 行数对得上：表写空了，条数自然也不涨
+        assert ex.wb.active.max_row == people + 1
+        return n["select"]
+
+    a, b = measure(few), measure(many)
+    assert a == b, (a, b)
+    assert b <= 15, b
 
 
 def test_广场列表的条数不随活动数涨(client, admin, db, take_student, no_cache):
