@@ -41,7 +41,9 @@ x-glitchtip-env: &glitchtip_env
   # 浏览器访问它的地址。隧道转到本机 8001，所以默认是 127.0.0.1:8001；
   # 填错了登录会被 Django 的 CSRF 挡住，症状是「表单提交被拒」
   GLITCHTIP_DOMAIN: ${GLITCHTIP_DOMAIN:-http://127.0.0.1:8001}
-  CSRF_TRUSTED_ORIGINS: ${GLITCHTIP_DOMAIN:-http://127.0.0.1:8001}
+  # CSRF 只比来源（协议 + 域名 + 端口），不认路径：生产填 https://<平台域名> 即可，
+  # 不要带 /monitor；隧道那条来源一起列上，两条访问方式就都能登录
+  CSRF_TRUSTED_ORIGINS: ${GLITCHTIP_CSRF_ORIGINS:-${GLITCHTIP_DOMAIN:-http://127.0.0.1:8001}}
   # 挂在子路径下时填前缀，生产是 /monitor（见 ops/monitoring.md）。它转成
   # Django 的 FORCE_SCRIPT_NAME：页面里的链接、静态资源、登录表单都带这个前缀，
   # 静态资源也按带前缀的路径登记。反代那一层因此要把路径原样转过来，不能先剥。
