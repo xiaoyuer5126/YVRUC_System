@@ -118,7 +118,36 @@ def toolbar_small_buttons(src: str) -> list:
     return out
 
 
+#: Vue 自带的、以及 vue-router 注册的标签，哪儿都用得
+FRAMEWORK_TAGS = {'Transition', 'TransitionGroup', 'KeepAlive', 'Teleport',
+                  'Suspense', 'Component', 'Slot', 'RouterView', 'RouterLink'}
+
+
+def registered_icons() -> set:
+    """web/src/icons.js 里全局注册的图标名。"""
+    f = pathlib.Path(__file__).resolve().parent.parent / 'web' / 'src' / 'icons.js'
+    m = re.search(r'export\s*\{(.*?)\}\s*from', f.read_text(encoding='utf-8'), re.S)
+    return set(re.findall(r'([A-Za-z_$][\w$]*)', m.group(1))) if m else set()
+
+
+ICONS = registered_icons()
+
+
+def unregistered_components(tpl: str, names: set) -> list:
+    """模板里写了、却既没在本文件定义、也没全局注册的组件。
+
+    图标是重灾区：<el-icon><Delete /></el-icon> 里的 Delete 要是没注册，Vue
+    只打一行 warn，页面上就少一个图标，构建和测试一声不吭。Element Plus 自己
+    的组件一律写成 el-xxx（小写带横线），不在这里查。
+    """
+    tpl = re.sub(r'<!--.*?-->', '', tpl, flags=re.S)
+    return sorted({n for n in re.findall(r'<([A-Z][\w]*)', tpl)
+                   if n not in names and n not in ICONS and n not in FRAMEWORK_TAGS})
+
+
 bad = 0
+if not ICONS:
+    sys.exit('web/src/icons.js 里读不出注册的图标名 —— 文件动过了？')
 files = sorted(pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else '.').rglob('*.vue'))
 if not files:
     sys.exit('没有找到任何 .vue —— 路径给错了？（这正是上次误报「全部通过」的原因）')
@@ -141,13 +170,19 @@ for f in files:
     shadowed_t = (bool(re.search(r"(?<![\w.$])t\('", tpl))
                   and not re.search(r"import\s*\{[^}]*\bt\b[^}]*\}\s*from\s*'[^']*i18n'", scr))
     small_in_bar = toolbar_small_buttons(src)
-    if missing or scr_undef or orphans or sinks or small_in_bar or shadowed_t:
+    # 本地定义的组件两种写法都算：import 进来的，和 const X = (props) => … 这种
+    # 就地写的函数式组件，都在脚本里有声明
+    unregistered = unregistered_components(tpl, declared(src))
+    if (missing or scr_undef or orphans or sinks or small_in_bar or shadowed_t
+            or unregistered):
         bad += 1
         print(f'✗ {f}')
         if sinks:
             print(f'    把数据当 HTML 渲染: {sinks}')
         if missing:
             print(f'    模板用到但未定义: {missing}')
+        if unregistered:
+            print(f'    用了没注册的组件（图标要加进 web/src/icons.js）: {unregistered}')
         if scr_undef:
             print(f'    脚本用到但未定义: {scr_undef}')
         if orphans:
