@@ -155,6 +155,40 @@ def test_同一个错误刷屏时通知管理员(db):
                 if kind in n.content]) == 1
 
 
+def test_SDK_认我们这几项设置并且真的调了脱敏():
+    """拿同一份设置真初始化一次 SDK，用假的发送通道收事件。
+
+    只测 scrub_event 这个函数不够：上报的行为一半在 SDK 的那几个关键字参数上，
+    打错一个字、或者哪个版本把它改了名，表现是后端启动即炸，或者更糟——悄悄把
+    堆栈里的局部变量一起报出去，而单测照旧全绿。
+    """
+    sentry_sdk = pytest.importorskip("sentry_sdk")
+    收到 = []
+    设置 = {**monitoring.options(),
+          # 发送通道换成一个函数，事件落到 收到 里，不往网上发
+          "dsn": "http://testkey@127.0.0.1:1/1",
+          "transport": 收到.append}
+
+    sentry_sdk.init(**设置)
+    try:
+        口供 = {"id_card": 身份证, "phone": 手机号}   # 故意放在局部变量里
+        try:
+            raise ValueError(f"身份证 {身份证} 对不上")
+        except ValueError:
+            sentry_sdk.capture_exception()
+        assert 口供            # 用一下，免得被当成没用的变量
+        sentry_sdk.flush()
+    finally:
+        # 收摊：之后的用例不该还有一个活着的客户端
+        sentry_sdk.init(dsn="")
+
+    assert len(收到) == 1
+    报出去的 = json.dumps(收到[0], ensure_ascii=False, default=str)
+    assert 身份证 not in 报出去的
+    assert 手机号 not in 报出去的
+    assert "ValueError" in 报出去的
+
+
 def test_阈值以下不打扰(db):
     kind = f"Quiet{uuid.uuid4().hex[:8]}"
     window = config.SENTRY_ALERT_WINDOW_MINUTES * 60

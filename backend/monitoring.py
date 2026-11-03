@@ -112,23 +112,33 @@ def init() -> bool:
             "配了 YVRUC_SENTRY_DSN，但这个环境里没装 sentry-sdk："
             "它在 backend/requirements.txt 里，重新构建后端镜像即可") from exc
 
-    sentry_sdk.init(
-        dsn=config.SENTRY_DSN,
-        environment=config.SENTRY_ENVIRONMENT,
-        sample_rate=config.SENTRY_SAMPLE_RATE,
-        traces_sample_rate=config.SENTRY_TRACES_SAMPLE_RATE,
-        before_send=scrub_event,
-        before_send_transaction=scrub_event,
-        # 下面四项和 scrub_event 一起构成脱敏，改它们等于把个人信息放出去
-        send_default_pii=False,          # 不自动带 IP、Cookie 与请求头里的身份信息
-        include_local_variables=False,   # 堆栈帧里的局部变量不上报
-        max_request_body_size="never",   # 请求正文不上报
-        # 面包屑是出错前的几步（SQL、HTTP、日志），留最近 20 条足够定位；留多了
-        # 只是把更多文字送出去
-        max_breadcrumbs=20,
-    )
+    sentry_sdk.init(**options())
     _enabled = True
     return True
+
+
+def options() -> dict:
+    """传给 SDK 的全部设置。
+
+    单独一个函数，测试才能拿着同一份设置真的初始化一次 SDK：上报的行为取决于
+    这几项，而它们是 SDK 的关键字参数——改了名字、打错一个字，后端在启动时才炸，
+    或者更糟，静默地把局部变量一起报出去。
+    """
+    return {
+        "dsn": config.SENTRY_DSN,
+        "environment": config.SENTRY_ENVIRONMENT,
+        "sample_rate": config.SENTRY_SAMPLE_RATE,
+        "traces_sample_rate": config.SENTRY_TRACES_SAMPLE_RATE,
+        "before_send": scrub_event,
+        "before_send_transaction": scrub_event,
+        # 下面三项和 scrub_event 一起构成脱敏，改它们等于把个人信息放出去
+        "send_default_pii": False,         # 不自动带 IP、Cookie 与请求头里的身份信息
+        "include_local_variables": False,  # 堆栈帧里的局部变量不上报
+        "max_request_body_size": "never",  # 请求正文不上报
+        # 面包屑是出错前的几步（SQL、HTTP、日志），留最近 20 条足够定位；留多了
+        # 只是把更多文字送出去
+        "max_breadcrumbs": 20,
+    }
 
 
 def scrub_event(event: dict, hint: dict | None = None) -> dict | None:
