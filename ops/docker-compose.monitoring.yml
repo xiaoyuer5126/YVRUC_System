@@ -1,0 +1,116 @@
+# 错误监控服务（GlitchTip）：收后端报上来的异常，按「同一个错误」归并，页面上能看
+# 堆栈、第一次与最近一次、出现多少回。平台这一侧怎么上报见 backend/monitoring.py，
+# 怎么对接见 README「错误监控」。
+#
+# 下面的命令都在仓库根目录跑，`m` 是这份文件加它的环境变量文件：
+#
+#   cp ops/monitoring.env.example ops/monitoring.env   # 首次，填口令与密钥
+#   alias m='docker compose --env-file ops/monitoring.env -f ops/docker-compose.monitoring.yml'
+#   m up -d                  # 起（迁移自己会跑）
+#   m logs -f glitchtip      # 看日志；不配 SMTP 时邮件也打在这里
+#   m pull && m up -d        # 升级
+#
+# --env-file 必须带上：不带的话 compose 读的是仓库根的 .env（平台那一份），
+# 下面几个必填变量取不到值，它会直接报错而不是悄悄用空口令起来。
+#
+# 单独一份编排、不并进平台那套：重启平台不会连监控一起停，监控挂了也不影响平台
+# 报名。两件事因此要注意——
+#   · 它自带一个 PostgreSQL 容器。生产形态的平台连的是学校统一数据库（见
+#     docker-compose.school-db.yml），那个账户连导出权限都没有，建表还要另外对齐；
+#     监控的事件表又是纯运维流水，不该进学校的库。
+#   · 后端要能连到它，所以这里把 glitchtip 挂进**平台的 compose 网络**（下面的
+#     platform 网络）。先起平台、再起监控；网络的真实名字用 `docker network ls` 看，
+#     和默认值不一样时在 monitoring.env 里改 YVRUC_PLATFORM_NETWORK。
+#
+# 内存：按官方文档的低内存配置跑（一体化模式、不要 Valkey、关掉日志接收与拨测），
+# GlitchTip 约 512MB，加上它的库总共 0.6GB 上下。
+#
+# 页面只绑在本机 127.0.0.1 上：生产服务器入向只放行 443，监控页面不该暴露在公网。
+# 从自己电脑上看就开一条 SSH 隧道（README 里有命令）。
+# 固定项目名：这样不管在哪个目录下跑，容器与卷的名字都一样（否则 compose 按
+# 当前目录起名，换个目录就成了另一套，旧的事件数据像凭空消失）
+name: yvruc-monitoring
+
+x-glitchtip-env: &glitchtip_env
+  DATABASE_URL: postgres://glitchtip:${GLITCHTIP_DB_PASSWORD:?请在 ops/monitoring.env 设置 GLITCHTIP_DB_PASSWORD}@glitchtip-postgres:5432/glitchtip
+  SECRET_KEY: ${GLITCHTIP_SECRET_KEY:?请在 ops/monitoring.env 设置 GLITCHTIP_SECRET_KEY（openssl rand -hex 32）}
+  # 用 Postgres 当任务队列与缓存，省一个 Valkey 容器和它那份内存
+  VALKEY_URL: ""
+  # 后台任务跑在 web 进程里，不另起 worker 容器
+  SERVER_ROLE: all_in_one
+  # 浏览器访问它的地址。隧道转到本机 8001，所以默认是 127.0.0.1:8001；
+  # 填错了登录会被 Django 的 CSRF 挡住，症状是「表单提交被拒」
+  GLITCHTIP_DOMAIN: ${GLITCHTIP_DOMAIN:-http://127.0.0.1:8001}
+  CSRF_TRUSTED_ORIGINS: ${GLITCHTIP_DOMAIN:-http://127.0.0.1:8001}
+  # 自己注册的第一个人就是管理员，之后自助注册自动关闭（它的 ENABLE_USER_REGISTRATION
+  # 就是这个语义）。所以装好之后**马上去注册**，别留着给别人注册
+  ENABLE_USER_REGISTRATION: "False"
+  # 不配 SMTP：邮件打到容器日志里。报错提醒走平台自己的站内通知
+  # （backend/monitoring.alert_frequent），不依赖这里的邮件
+  EMAIL_URL: consolemail://
+  DEFAULT_FROM_EMAIL: ${GLITCHTIP_FROM_EMAIL:-glitchtip@localhost}
+  # 这几样我们不用，关掉省内存：日志接收、拨测、冷存储、MCP、Django Admin、
+  # OpenAPI 文档
+  GLITCHTIP_ENABLE_LOGS: "False"
+  GLITCHTIP_ENABLE_UPTIME: "False"
+  GLITCHTIP_ENABLE_DUCKDB: "False"
+  GLITCHTIP_ENABLE_MCP: "False"
+  ENABLE_ADMIN: "False"
+  ENABLE_OPENAPI: "False"
+  # 事件留多少天。留得久不如留得准：排查看的是最近几天，而分区越多它的库越吃锁
+  GLITCHTIP_RETENTION_DAYS: ${GLITCHTIP_RETENTION_DAYS:-90}
+  TZ: Asia/Shanghai
+
+services:
+  glitchtip-postgres:
+    image: postgres:16-alpine
+    container_name: yvruc-glitchtip-postgres
+    # GlitchTip 的表是分区表，一条查询要的锁远超 Postgres 默认的额度；不调这一项，
+    # 并发一上来就报 out of shared memory，连事件接收一起停（官方文档的调优那节）
+    command: -c max_locks_per_transaction=512
+    environment:
+      POSTGRES_USER: glitchtip
+      POSTGRES_PASSWORD: ${GLITCHTIP_DB_PASSWORD:?请在 ops/monitoring.env 设置 GLITCHTIP_DB_PASSWORD}
+      POSTGRES_DB: glitchtip
+      TZ: Asia/Shanghai
+    volumes:
+      - glitchtip_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U glitchtip -d glitchtip"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  glitchtip:
+    # 大版本标签：小版本自动跟着走，大版本一年一次、可能有破坏性变更，升级前先看
+    # https://glitchtip.com/blog
+    image: glitchtip/glitchtip:6
+    container_name: yvruc-glitchtip
+    environment: *glitchtip_env
+    ports:
+      # 只绑本机：公网与校园网都碰不到，看页面走 SSH 隧道
+      - "127.0.0.1:${GLITCHTIP_HOST_PORT:-8001}:8000"
+    volumes:
+      # 上传件（sourcemap 之类），不大，但重建容器不该丢
+      - glitchtip_uploads:/code/uploads
+    depends_on:
+      glitchtip-postgres:
+        condition: service_healthy
+    # 两个网络：default 是它和自己的库，platform 是平台那套 compose 的网络——
+    # 后端就是从那边按服务名 glitchtip 把事件报进来的
+    networks:
+      - default
+      - platform
+    restart: unless-stopped
+
+networks:
+  platform:
+    external: true
+    # 平台那套 compose 的默认网络，名字是「项目名_default」，项目名默认取仓库
+    # 目录名。对不上时 `docker network ls` 查实际名字，填到 monitoring.env 里
+    name: ${YVRUC_PLATFORM_NETWORK:-yvruc_system_default}
+
+volumes:
+  glitchtip_pgdata:
+  glitchtip_uploads:
