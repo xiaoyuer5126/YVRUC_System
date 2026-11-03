@@ -42,6 +42,11 @@ x-glitchtip-env: &glitchtip_env
   # 填错了登录会被 Django 的 CSRF 挡住，症状是「表单提交被拒」
   GLITCHTIP_DOMAIN: ${GLITCHTIP_DOMAIN:-http://127.0.0.1:8001}
   CSRF_TRUSTED_ORIGINS: ${GLITCHTIP_DOMAIN:-http://127.0.0.1:8001}
+  # 挂在子路径下时填前缀，生产是 /monitor（见 ops/monitoring.md）。它转成
+  # Django 的 FORCE_SCRIPT_NAME：页面里的链接、静态资源、登录表单都带这个前缀，
+  # 静态资源也按带前缀的路径登记。反代那一层因此要把路径原样转过来，不能先剥。
+  # 隧道那条路（本机 8001，根路径）也还能用：前缀只影响链接怎么拼。
+  BASE_PATH: ${GLITCHTIP_BASE_PATH:-}
   # 自己注册的第一个人就是管理员，之后自助注册自动关闭（它的 ENABLE_USER_REGISTRATION
   # 就是这个语义）。所以装好之后**马上去注册**，别留着给别人注册
   ENABLE_USER_REGISTRATION: "False"
