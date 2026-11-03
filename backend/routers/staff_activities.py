@@ -24,7 +24,8 @@ from ..audit import diff_changes, log as audit_log, value_text
 from ..database import db_session
 from ..deps import current_user_download, require_council, require_manager
 from ..locks import invalidate_gates, shift_lock, urgent_lock
-from ..notify import notify_edit_changes, notify_enrolled, notify_finished
+from ..notify import (notify_edit_changes, notify_enrolled, notify_finished,
+                      rows_by_id)
 from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, is_activity_manager,
                      managed_activity_ids, remove_manager)
@@ -35,8 +36,8 @@ from ..models import (Activity, ActivityManager, Application,
                       Enrollment, FormQuestion, Notification, Position, Shift,
                       ShiftPeriod, User, VbConfirm, iso, like_pattern, now,
                       parse_local_dt, uid)
-from ..serializers import (activity_brief, admin_status_of, applies_text,
-                           load_trees, published_hint)
+from ..serializers import (activity_brief, admin_status_of, answer_attachments,
+                           applies_text, load_trees, published_hint)
 from .screening import answers_out
 
 router = APIRouter(prefix="/api/staff", tags=["staff"])
@@ -2409,8 +2410,9 @@ def remind_batch(batch_id: str, db: OrmSession = Depends(db_session),
     elif not user.is_admin():
         raise HTTPException(403, "无法确认该批通知所属活动，请由管理员操作")
     round_id = uid("rnd")
+    users = rows_by_id(db, User, (n.user_id for n in pending))
     for n in pending:
-        u = db.get(User, n.user_id)
+        u = users.get(n.user_id)
         if u is None:
             continue
         msgcenter.send_user(db, u, "ack_reminder", title=n.title,
@@ -2460,13 +2462,15 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
         User.id.in_({e.user_id for e in everyone})).all()}
     pos_by_id = {p.id: p for p in positions}
     scores = scoring.briefs(db, [e.user_id for e in everyone])
+    attachments = answer_attachments(db, act.id) if questions else {}
 
     def user_row(e: Enrollment) -> dict:
         u = users[e.user_id]
         st = pos_by_id.get(e.position_id) if e.position_id else None
         return {
             "enrollment_id": e.id,
-            "answers": answers_out(db, questions, e.answers) if questions else [],
+            "answers": (answers_out(questions, e.answers, attachments)
+                        if questions else []),
             "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
                      "college": u.college, "gender": u.gender, "phone": u.phone,
                      "wechat": u.wechat, "grade": u.grade, **scores.get(u.id, {})},
