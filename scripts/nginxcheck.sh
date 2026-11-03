@@ -24,12 +24,14 @@ openssl req -x509 -nodes -days 1 -subj /CN=localhost \
 
 check() {
     template=$1
-    shift
     printf '\n== %s\n' "$template"
-    # --entrypoint 换成 nginx 自己：镜像的入口脚本照旧先展开模板，再执行 nginx -t
+    # 不给 --entrypoint：镜像的入口脚本先展开模板、再执行 nginx -t，与线上同一条路。
+    # 共用片段里 /api/ 的 proxy_pass 直接写了主机名 backend，nginx -t 也要能解析它，
+    # 所以给两个服务名各挂一条主机记录指向本机——这里只查语法，不转发请求。
     docker run --rm \
         -e YVRUC_TRUSTED_PROXY_CIDR=172.30.0.0/16 \
-        "$@" \
+        --add-host backend:127.0.0.1 \
+        --add-host glitchtip:127.0.0.1 \
         -v "$repo/$template:/etc/nginx/templates/default.conf.template:ro" \
         -v "$repo/web/nginx-shared.conf:/etc/nginx/snippets/yvruc-shared.conf:ro" \
         -v "$tmp:/etc/nginx/certs:ro" \
