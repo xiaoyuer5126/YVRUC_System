@@ -18,6 +18,24 @@ export default defineConfig({
                       source: JSON.stringify({ build: BUILD_ID }) })
     },
   }],
+  build: {
+    rollupOptions: {
+      output: {
+        // 几个大依赖各自成一个文件，不跟页面代码编在一起。
+        //
+        // 不这样分：echarts 并进「数据总览」、zxing 并进「我的报名」、
+        // element-plus 并进入口文件，页面代码改一行哈希就全变，浏览器得把
+        // 一两兆重新下一遍。各自成包之后，这几个文件只在升级依赖时才变。
+        manualChunks: {
+          vue: ['vue', 'vue-router'],
+          'element-plus': ['element-plus', '@element-plus/icons-vue'],
+          echarts: ['echarts'],
+          leaflet: ['leaflet'],
+          zxing: ['@zxing/browser'],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {
