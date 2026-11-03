@@ -204,6 +204,10 @@ def test_群发通知的条数不随人数涨(db, take_student):
                     db, act, now() - timedelta(days=1))),
                 ("签到提醒", lambda: notify_checkin(db, g)),
         ):
+            # 每次都从「什么都没加载」量起。commit 不清缓存
+            # （SessionLocal 的 expire_on_commit=False）、rollback 清，
+            # 两份数据落在不一样的缓存状态上，条数就会差出那一条取活动的 SQL
+            db.expire_all()
             with counting() as n:
                 sent = call()
             # 发到了人：条数相等但谁也没发出去的话，这个用例什么都没守住
@@ -321,6 +325,7 @@ def test_校外时长导出的条数不随条数涨(db, take_student):
     few, many = claims(5), claims(50)
 
     def measure(ids):
+        db.expire_all()
         with counting() as n:
             # 接口就是「先查出这一批，再交给导出」（见 hours_claims.export_claims）
             rows = db.query(HoursClaim).filter(HoursClaim.id.in_(ids)).all()
