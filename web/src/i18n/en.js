@@ -482,6 +482,8 @@ export default {
   '正在签到…': 'Checking in…',
   '正在签退…': 'Checking out…',
   '正在打开摄像头…': 'Opening camera…',
+  '扫码功能没加载出来，请检查网络后重新打开':
+    'The scanner could not be loaded. Check your network and open it again.',
   '摄像头只能在 https 下使用，请用平台正式网址打开':
     'The camera only works over HTTPS. Open the platform at its official address.',
   '打不开摄像头：{0}': 'Cannot open the camera: {0}',
