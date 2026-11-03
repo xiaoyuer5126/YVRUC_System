@@ -1,9 +1,13 @@
-"""SQL 条数不随岗位数、活动数涨（N+1 回归）。
+"""SQL 条数不随岗位数、活动数、人数涨（N+1 回归）。
 
 抢报那一刻几百人同时打开同一个活动页、同时刷广场。详情页要是每个岗位各查
 一遍（组长、同组、材料……），条数就跟着岗位数涨；广场每张卡片各数一遍人数
 也一样。这里造「少」和「多」两份同样形状的数据，比两边的条数：
 相等才算过——只比「不超过多少条」的话，每个岗位多一条也能混过去。
+
+名单、导出、群发同理，涨的那一维是人数：单场几百人的活动，每人多查一条就是
+几百个来回。这几处量的是读的条数（见 counting），写进去的通知和名单本来就
+一人一条。
 
 缓存关掉量：量的是现算那条路径，缓存命中时条数只会更少。
 """
@@ -17,18 +21,27 @@ from sqlalchemy import event
 
 from backend import pubcache
 from backend.database import engine
-from backend.models import (Activity, ActivityManager, Attachment, Enrollment,
-                            Position, Shift, now, uid)
+from backend.models import (Activity, ActivityManager, Attachment, AuditLog,
+                            Enrollment, Position, Shift, now, uid)
+from backend.notify import (notify_checkin, notify_edit_changes,
+                            notify_enrolled)
 from conftest import mk_shift
 from conftest import ADMIN, POSITION_TEXT, login, student_row
 
 
 @contextmanager
 def counting():
-    n = {"sql": 0}
+    """这一段里执行了多少条 SQL。
 
-    def _count(*_a):
+    `select` 只数读的那些：发通知、写名单会按人落库，写的条数本来就跟人数
+    成正比，混在一起数就看不出读路径有没有逐人查库。
+    """
+    n = {"sql": 0, "select": 0}
+
+    def _count(_conn, _cur, statement, *_a):
         n["sql"] += 1
+        if statement.lstrip()[:6].upper() == "SELECT":
+            n["select"] += 1
     event.listen(engine, "before_cursor_execute", _count)
     try:
         yield n
@@ -130,6 +143,74 @@ def test_详情缓存命中时条数更少(client, db, take_student):
     cold = sql_of(client, t, path)
     warm = sql_of(client, t, path)
     assert warm < cold, (cold, warm)
+
+
+def crowd(db, take_student, people: int) -> tuple:
+    """一个报名中的活动、一个服务场次、一个岗位、people 名已确认志愿者。
+
+    结构固定、只有人数不同：两份一比，读的条数要是涨了，涨的只能是逐人查库。
+    """
+    admin = student_row(db, ADMIN)
+    day = next(_days)
+    start = now() + timedelta(days=day, hours=2)
+    act = Activity(id=uid("act"), title=f"群发 {uid('t')}",
+                   intro="x", location="世纪馆", contact_group_qr="x",
+                   contacts=[{"name": "王", "phone": "13900000000"}],
+                   status="published", reg_start=now() - timedelta(days=1),
+                   reg_end=now() + timedelta(days=day), created_by=admin.id)
+    db.add(act)
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                           user_id=admin.id, added_by=admin.id))
+    g = mk_shift(id=uid("g"), activity_id=act.id, name="上午场",
+                 start_time=start, end_time=start + timedelta(hours=3),
+                 mode="pick", sort=0)
+    db.add(g)
+    db.flush()
+    p = Position(id=uid("p"), shift_id=g.id, name="引导", quota=people,
+                 group_name="A组", sort=0, **POSITION_TEXT)
+    db.add(p)
+    db.flush()
+    for _ in range(people):
+        u = student_row(db, take_student())
+        db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                          user_id=u.id, position_id=p.id, status="enrolled",
+                          joined_at=now()))
+    db.add(AuditLog(id=uid("log"), actor_id=admin.id, actor_name=admin.name,
+                    action="update", target_type="activity", target_id=act.id,
+                    target_label=act.title, activity_id=act.id,
+                    summary="改了集合地点", visible=True,
+                    changes=[{"field": "location", "label": "活动地点",
+                              "old": "世纪馆", "new": "北门"}]))
+    db.commit()
+    return act, g
+
+
+def test_群发通知的条数不随人数涨(db, take_student):
+    few = crowd(db, take_student, 5)
+    many = crowd(db, take_student, 50)
+
+    def measure(case):
+        act, g = case
+        out = {}
+        for name, call in (
+                ("报名者群发", lambda: notify_enrolled(
+                    db, act, "activity_changed", activity=act.title,
+                    change_summary="集合地点改到北门")),
+                ("变更通知", lambda: notify_edit_changes(
+                    db, act, now() - timedelta(days=1))),
+                ("签到提醒", lambda: notify_checkin(db, g)),
+        ):
+            with counting() as n:
+                sent = call()
+            # 发到了人：条数相等但谁也没发出去的话，这个用例什么都没守住
+            assert sent > 0, name
+            out[name] = n["select"]
+            db.rollback()        # 落库的通知不留给下一次测量
+        return out
+
+    a, b = measure(few), measure(many)
+    assert a == b, (a, b)
+    assert max(b.values()) <= 10, b
 
 
 def test_广场列表的条数不随活动数涨(client, admin, db, take_student, no_cache):

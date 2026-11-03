@@ -24,7 +24,8 @@ from ..audit import diff_changes, log as audit_log, value_text
 from ..database import db_session
 from ..deps import current_user_download, require_council, require_manager
 from ..locks import invalidate_gates, shift_lock, urgent_lock
-from ..notify import notify_edit_changes, notify_enrolled, notify_finished
+from ..notify import (notify_edit_changes, notify_enrolled, notify_finished,
+                      rows_by_id)
 from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, is_activity_manager,
                      managed_activity_ids, remove_manager)
@@ -2409,8 +2410,9 @@ def remind_batch(batch_id: str, db: OrmSession = Depends(db_session),
     elif not user.is_admin():
         raise HTTPException(403, "无法确认该批通知所属活动，请由管理员操作")
     round_id = uid("rnd")
+    users = rows_by_id(db, User, (n.user_id for n in pending))
     for n in pending:
-        u = db.get(User, n.user_id)
+        u = users.get(n.user_id)
         if u is None:
             continue
         msgcenter.send_user(db, u, "ack_reminder", title=n.title,
