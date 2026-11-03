@@ -188,6 +188,8 @@ def crowd(db, take_student, people: int) -> tuple:
 
 
 def test_群发通知的条数不随人数涨(db, take_student):
+    """直接调发通知的函数，不走接口：变更通知与结束通知都是后台任务里跑的
+    （见 staff_activities._notify_activity_bg），接口早就返回了，量不到它。"""
     few = crowd(db, take_student, 5)
     many = crowd(db, take_student, 50)
 
