@@ -14,17 +14,17 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import timedelta
+from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import event
 
 from backend import pubcache
 from backend.database import engine
-from backend.exporter import build_application_workbook
+from backend.exporter import build_application_workbook, build_claims_workbook
 from backend.models import (Activity, ActivityManager, Application, Attachment,
-                            AuditLog, Enrollment, FormQuestion, Position, Shift,
-                            now, uid)
+                            AuditLog, Enrollment, FormQuestion, HoursClaim,
+                            Position, Shift, now, uid)
 from backend.notify import (notify_checkin, notify_edit_changes,
                             notify_enrolled)
 from conftest import mk_shift
@@ -281,6 +281,36 @@ def test_报名问卷导出的条数不随人数涨(db, take_student):
     a, b = measure(few), measure(many)
     assert a == b, (a, b)
     assert b <= 15, b
+
+
+def test_校外时长导出的条数不随条数涨(db, take_student):
+    """一人一条通过的校外补登，导出时读的条数要跟条数无关。"""
+    def claims(people: int) -> list[str]:
+        ids = []
+        for _ in range(people):
+            u = student_row(db, take_student())
+            row = HoursClaim(id=uid("clm"), user_id=u.id, title="社区助老",
+                             service_date=date(2026, 3, 1), hours=4.0,
+                             approved_hours=4.0, service_desc="陪同就医",
+                             status="approved")
+            db.add(row)
+            ids.append(row.id)
+        db.commit()
+        return ids
+
+    few, many = claims(5), claims(50)
+
+    def measure(ids):
+        with counting() as n:
+            # 接口就是「先查出这一批，再交给导出」（见 hours_claims.export_claims）
+            rows = db.query(HoursClaim).filter(HoursClaim.id.in_(ids)).all()
+            build_claims_workbook(db, rows)
+        assert len(rows) == len(ids)
+        return n["select"]
+
+    a, b = measure(few), measure(many)
+    assert a == b, (a, b)
+    assert b <= 5, b
 
 
 def test_广场列表的条数不随活动数涨(client, admin, db, take_student, no_cache):

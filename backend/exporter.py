@@ -445,8 +445,12 @@ def build_claims_workbook(db: OrmSession, claims: list[HoursClaim]) -> BytesIO:
               "时长", "服务描述", "备注"]
     ws.append(header)
     _style_header(ws, len(header))
+    # 提交人一次取齐：一条一查的话，一学期几百条补登就是几百条 SQL
+    users = {u.id: u for u in db.query(User)
+             .filter(User.id.in_({c.user_id for c in claims})).all()} \
+        if claims else {}
     for c in claims:
-        u = db.get(User, c.user_id)
+        u = users.get(c.user_id)
         if u is None:
             continue
         ws.append([u.name, u.student_id, u.college or "", u.id_card or "",
