@@ -241,9 +241,11 @@ def test_有意的503不上报而别的5xx照报():
     finally:
         sentry_sdk.init(dsn="")
 
-    报出去的 = json.dumps(收到, ensure_ascii=False, default=str)
-    assert "这一条要报" in 报出去的
-    assert "当前操作人数较多" not in 报出去的
+    # 按事件判断，不按整串文本：事件的堆栈里带着测试文件的源码上下文，前后几行
+    # 恰好就有 /busy 那行，按文本断言会误中。
+    assert len(收到) == 1
+    assert "/broken" in (收到[0].get("transaction") or "")
+    assert "这一条要报" in json.dumps(收到[0], ensure_ascii=False, default=str)
 
 
 def test_阈值以下不打扰(db):
