@@ -196,6 +196,7 @@ def test_数据库报错里的实参不上报():
     """
     消息 = ("(psycopg.errors.UniqueViolation) duplicate key value violates "
           "unique constraint \"uq_enrollment\"\n"
+          "DETAIL:  Key (student_no)=(2025001) already exists.\n"
           "[SQL: INSERT INTO enrollments (id, user_id, name) VALUES (%s, %s, %s)]\n"
           "[parameters: ('enr_1', 'usr_1', '王砚秋', '2025001')]\n"
           "(Background on this error at: https://sqlalche.me/e/20/gkpj)")

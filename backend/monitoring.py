@@ -18,8 +18,9 @@
   · 用户身份不报：要查是谁触发的，拿时间和路径去操作日志里对（oplog.py 记了学号、
     姓名和当时的身份视角，那份日志不出服务器）；
   · 剩下的文字（异常消息、日志、面包屑、网址）按 `_PATTERNS` 盖掉身份证号、手机号、
-    Bearer 令牌和 `token=` / `ticket=` 这类参数值；键名撞上 `SENSITIVE_KEYS` 的，
-    不管藏在事件哪一层，值一律换成 `MASK`。
+    Bearer 令牌和 `token=` / `ticket=` 这类参数值，数据库报错里的 `DETAIL:` 行和
+    `[parameters: …]` 实参整段盖掉（约束名和 SQL 语句留着）；键名撞上
+    `SENSITIVE_KEYS` 的，不管藏在事件哪一层，值一律换成 `MASK`。
 
 脱敏自己出错时整条事件丢掉，不上报半成品：少看到一个错误，比漏出一个身份证号
 轻得多。
@@ -77,6 +78,10 @@ _PATTERNS = (
     (re.compile(r"(?i)\b(token|ticket|tk|code|state|secret|key|password|passwd"
                 r"|sign|signature)=[^&\s\"']+"),
      rf"\1={MASK}"),
+    # Postgres 违反唯一约束时，消息里单独一行 DETAIL 把键值写出来，像
+    # 「DETAIL:  Key (student_no)=(2025001) already exists.」。它在 [parameters: 前面，
+    # 上面那条切不到；整行盖掉，约束名和 SQL 语句都留着。
+    (re.compile(r"(?im)^[ \t]*DETAIL:.*$"), f"DETAIL: {MASK}"),
     # SQLAlchemy 的异常消息自带「[SQL: …] [parameters: (…)]」，实参里坐着姓名、
     # 学号这些填进表的值。从 [parameters: 起整段切掉（后面只剩一个文档链接）：
     # SQL 语句本身留着，够看出是哪张表、哪条约束。
