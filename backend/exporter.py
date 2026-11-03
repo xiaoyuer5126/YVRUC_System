@@ -29,7 +29,7 @@ from sqlalchemy.orm import selectinload
 from . import config, hours as hours_flow, scoring
 from .serializers import (admin_status_of, answer_attachments,
                           recruit_scope_text)
-from .models import (Activity, Attachment, CheckinRecord, Department, Enrollment,
+from .models import (Activity, CheckinRecord, Department, Enrollment,
                      FormQuestion, HoursClaim, HoursRecord, HoursSegment,
                      Position, Shift, User, ViolationRecord, days_text, now)
 
