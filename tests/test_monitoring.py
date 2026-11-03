@@ -189,6 +189,24 @@ def test_SDK_认我们这几项设置并且真的调了脱敏():
     assert "ValueError" in 报出去的
 
 
+def test_数据库报错里的实参不上报():
+    """SQLAlchemy 的异常消息自带 [parameters: (…)]，姓名和学号就在里面。
+
+    SQL 语句留着：够看出是哪张表、哪条约束。
+    """
+    消息 = ("(psycopg.errors.UniqueViolation) duplicate key value violates "
+          "unique constraint \"uq_enrollment\"\n"
+          "[SQL: INSERT INTO enrollments (id, user_id, name) VALUES (%s, %s, %s)]\n"
+          "[parameters: ('enr_1', 'usr_1', '王砚秋', '2025001')]\n"
+          "(Background on this error at: https://sqlalche.me/e/20/gkpj)")
+    out, text = 脱敏后({"exception": {"values": [{"type": "IntegrityError",
+                                               "value": 消息}]}})
+    assert "王砚秋" not in text
+    assert "2025001" not in text
+    assert "uq_enrollment" in text
+    assert "INSERT INTO enrollments" in text
+
+
 def test_有意的503不上报而别的5xx照报():
     """抢报时的 503 是闸门按设计挡回去的，不是故障。
 

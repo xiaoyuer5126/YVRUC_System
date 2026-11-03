@@ -77,6 +77,12 @@ _PATTERNS = (
     (re.compile(r"(?i)\b(token|ticket|tk|code|state|secret|key|password|passwd"
                 r"|sign|signature)=[^&\s\"']+"),
      rf"\1={MASK}"),
+    # SQLAlchemy 的异常消息自带「[SQL: …] [parameters: (…)]」，实参里坐着姓名、
+    # 学号这些填进表的值。从 [parameters: 起整段切掉（后面只剩一个文档链接）：
+    # SQL 语句本身留着，够看出是哪张表、哪条约束。
+    # 不改成给引擎加 hide_parameters：那样服务器上的容器日志也看不到实参了，而
+    # 那份日志不出服务器，正是排查时最该看的东西。
+    (re.compile(r"(?s)\[parameters:.*"), f"[parameters: {MASK}]"),
 )
 
 _enabled = False
