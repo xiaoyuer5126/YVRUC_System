@@ -456,11 +456,12 @@ def test_打包时文件刚被删掉也跳过不报错(db):
     MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
     here = MATERIAL_DIR / f"{uid('t')}.pdf"
     here.write_bytes(b"ok")
-    ex = Export(db)
+    # 只验打包，跟哪个活动的问卷附件无关
+    ex = Export(db, "")
     ex.files = [("在.pdf", here), ("不在.pdf", MATERIAL_DIR / f"{uid('t')}.pdf")]
     try:
         z = zipfile.ZipFile(ex.attachments_zip())
         assert z.namelist() == ["在.pdf"] and z.read("在.pdf") == b"ok"
     finally:
         here.unlink()
-    assert Export(db).attachments_zip() is None
+    assert Export(db, "").attachments_zip() is None

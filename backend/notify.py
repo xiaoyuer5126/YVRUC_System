@@ -17,18 +17,27 @@ from .models import (AFFECTED_FIELD, Activity, Attachment, AuditLog,
 ENROLLED = ("enrolled", "waitlisted", "pending_confirm")
 
 
+def rows_by_id(db: OrmSession, model, ids) -> dict:
+    """一次取一批行，{id: 实体}。
+
+    群发的每一步都是「一批人」：逐个取就是一人一条 SQL，一场几百人的活动
+    发一次变更通知要打几百个来回。
+    """
+    keys = {i for i in ids if i}
+    if not keys:
+        return {}
+    return {row.id: row for row in
+            db.query(model).filter(model.id.in_(keys)).all()}
+
+
 def _users_of(db: OrmSession, user_ids) -> list[User]:
     """两步查询：先 DISTINCT user_id 再取实体。
 
     整行去重会把 JSON 列（User.roles）带进相等比较，PostgreSQL 的 json
     类型没有等号运算符，会直接报错。
     """
-    out = []
-    for (uid_,) in user_ids:
-        u = db.get(User, uid_)
-        if u is not None:
-            out.append(u)
-    return out
+    found = rows_by_id(db, User, (uid_ for (uid_,) in user_ids))
+    return [found[uid_] for (uid_,) in user_ids if uid_ in found]
 
 
 def notify_enrolled(db: OrmSession, act: Activity, template: str, **kw) -> int:
@@ -147,9 +156,10 @@ def notify_edit_changes(db: OrmSession, act: Activity, since: datetime) -> int:
             mine = lines.setdefault(uid_, [])
             if line not in mine:
                 mine.append(line)
+    users = rows_by_id(db, User, lines)
     n = 0
     for uid_, mine in lines.items():
-        u = db.get(User, uid_)
+        u = users.get(uid_)
         if u is None:
             continue
         # 留**最新**的几条：志愿者要知道的是「现在是什么安排」，
@@ -194,14 +204,15 @@ def notify_checkin(db: OrmSession, g: Shift, *, period=None,
         if period is not None:
             qc = qc.filter(CheckinRecord.period_id == period.id)
         checked = {r[0] for r in qc.all()}
+    todo = [e for e in rows if e.user_id not in checked]
+    users = rows_by_id(db, User, (e.user_id for e in todo))
+    positions = rows_by_id(db, Position, (e.position_id for e in todo))
     n = 0
-    for enr in rows:
-        if enr.user_id in checked:
-            continue
-        u = db.get(User, enr.user_id)
+    for enr in todo:
+        u = users.get(enr.user_id)
         if u is None:
             continue
-        position = db.get(Position, enr.position_id) if enr.position_id else None
+        position = positions.get(enr.position_id) if enr.position_id else None
         # 培训/彩排在自己的地点，不在岗位上；服务场次口径同 Position.place
         # （岗位 → 场次 → 活动），和分配、变更通知里写的地点一致
         if g.is_attached() or position is None:
@@ -245,11 +256,12 @@ def notify_managers(db: OrmSession, activity_id: str, title: str,
 
     rows = (db.query(ActivityManager)
             .filter(ActivityManager.activity_id == activity_id).all())
+    users = rows_by_id(db, User, (row.user_id for row in rows))
     n = 0
     for row in rows:
         if duty and row.duties and duty not in row.duties:
             continue
-        u = db.get(User, row.user_id)
+        u = users.get(row.user_id)
         if u is not None:
             # 点开进活动管理页：这些消息说的都是管理者要在那儿办的事
             data = {"activity_id": activity_id, "route": "manage"}

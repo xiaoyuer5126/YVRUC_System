@@ -502,6 +502,19 @@ def attachments_by_owner(db: OrmSession, owner_type: str,
     return out
 
 
+def answer_attachments(db: OrmSession, activity_id: str) -> dict[str, Attachment]:
+    """这个活动里志愿者在报名问卷上传的全部文件，{附件 id: 附件}。
+
+    一份答案就是一个附件 id。名单和导出要把几百份答案摊开，按 id 一个个去查
+    就是几百条 SQL；一个活动的问卷附件总量跟人数同阶，一次取回只有一条。
+    """
+    if not activity_id:
+        return {}
+    return {a.id: a for a in db.query(Attachment)
+            .filter(Attachment.activity_id == activity_id,
+                    Attachment.owner_type == "application").all()}
+
+
 def _material_counts(db: OrmSession, position_ids: list[str]) -> dict[str, int]:
     """各岗位有几份材料，一条分组查询（公共部分只要数量，不要列表）。"""
     if not position_ids:
