@@ -76,7 +76,7 @@ x-backend-env: &backend_env
   YVRUC_AI_API_KEY: ${YVRUC_AI_API_KEY:-}
   YVRUC_AI_TIMEOUT: ${YVRUC_AI_TIMEOUT:-}
   YVRUC_AI_THINKING: ${YVRUC_AI_THINKING:-}
-  # 错误监控（见 backend/monitoring.py 与 README「错误监控」）：DSN 留空 = 不上报，
+  # 错误监控（见 backend/monitoring.py 与 ops/monitoring.md）：DSN 留空 = 不上报，
   # 连 SDK 都不初始化。监控服务自己的编排在 ops/docker-compose.monitoring.yml
   YVRUC_SENTRY_DSN: ${YVRUC_SENTRY_DSN:-}
   YVRUC_SENTRY_ENVIRONMENT: ${YVRUC_SENTRY_ENVIRONMENT:-}

@@ -260,41 +260,11 @@ docker compose up -d                                  # migrate 先把恢复出�
 
 ### 错误监控（自建 GlitchTip，`backend/monitoring.py`）
 
-后端没接住的异常报到自建的监控服务：按「同一个错误」归并，页面上能看堆栈、第一次与
-最近一次、出现了多少回。`ERROR` 及以上的日志也成为事件（`logger.exception` 写在哪里，
-监控上就看得到哪里）。**不配 `YVRUC_SENTRY_DSN` 就完全不启用**，本机调试、CI 和测试里
-天然是关着的。
+后端没接住的异常报到自建的监控服务，按「同一个错误」归并，页面上能看堆栈、第一次
+与最近一次、出现了多少回。`ERROR` 及以上的日志也成为事件。**不配 `YVRUC_SENTRY_DSN`
+就完全不启用**，本机调试、CI 和测试里天然是关着的。
 
-服务端用 GlitchTip（Sentry 协议的轻量实现，约 512MB 内存；Sentry 官方自托管要 4 核
-16GB 起步）。它的编排是单独一份 `ops/docker-compose.monitoring.yml`，不并进平台那套：
-重启平台不会把监控一起停，监控挂了也不影响报名。它自带一个 PostgreSQL 容器——生产形态
-的平台连的是学校统一数据库，那个账户没有导出权限、建表还要另外对齐，而监控的事件表是
-纯运维流水，不该进学校的库。
-
-**起服务**（在仓库根目录；平台那套要先起着，监控容器要挂进它的网络）：
-
-```bash
-cp ops/monitoring.env.example ops/monitoring.env   # 填两个随机串：库口令与 SECRET_KEY
-docker network ls | grep default                   # 确认平台网络名（默认 yvruc_system_default）
-alias m='docker compose --env-file ops/monitoring.env -f ops/docker-compose.monitoring.yml'
-m up -d
-m logs -f glitchtip                                # 迁移自己会跑，起来约半分钟
-```
-
-**看页面、拿 DSN**：页面只绑在服务器本机的 8001 端口（生产入向只放行 443，监控不该
-暴露在公网），从自己电脑上开一条隧道看：
-
-```bash
-ssh -L 8001:127.0.0.1:8001 <用户>@<服务器>   # 然后浏览器开 http://127.0.0.1:8001
-```
-
-1. 第一次打开先注册——**自助注册在第一个人注册后自动关闭**，所以装好就去注册，别留着。
-2. 建一个组织和一个项目（项目平台类型选 Python / FastAPI 都可以，它只影响页面上的提示）。
-3. 在项目设置里复制 DSN，把主机名换成容器里的地址：
-   `http://<公钥>@glitchtip:8000/<项目号>`（后端走 compose 网络找它，用的是服务名，
-   不是 127.0.0.1——那样后端只会连到自己）。
-4. 填进 `.env` 的 `YVRUC_SENTRY_DSN`，`docker compose up -d` 重启后端。
-   启动日志里会有一行「错误监控已启用」；DSN 填得不成样子时后端直接拒绝启动。
+服务端的起停、打开页面、DSN 怎么填、升级和排障，都在 [`ops/monitoring.md`](ops/monitoring.md)。
 
 **上报了什么、没报什么**。排查时要知道自己看不到什么：
 
@@ -307,18 +277,13 @@ ssh -L 8001:127.0.0.1:8001 <用户>@<服务器>   # 然后浏览器开 http://12
 | | 用户身份（谁触发的去「操作日志」页按时间和路径对） |
 
 剩下的文字（异常消息、日志、面包屑、网址）还会按正则盖掉身份证号、手机号、`Bearer`
-令牌和 `token=` / `ticket=` 这类参数值。脱敏自己出错时整条事件丢掉——少看到一个错误，
-比漏出一个身份证号轻得多。
+令牌和 `token=` / `ticket=` 这类参数值，数据库报错里的实参和 `DETAIL:` 行整段盖掉。
+脱敏自己出错时整条事件丢掉——少看到一个错误，比漏出一个身份证号轻得多。
 
 **同一个错误刷屏时**（10 分钟内到 `YVRUC_SENTRY_ALERT_THRESHOLD` 次，默认 20），给全体
 管理员推一条站内通知，每个错误每天至多一条。通知由后台定时任务发，上报的那一刻只在
 Redis 上记一次数：错误风暴多半就是数据库出了问题，那时候逐条去查管理员名单只会雪上
 加霜。
-
-**升级与留存**：`m pull && m up -d`，数据库迁移自己跑；镜像钉的是大版本标签，大版本
-一年一次、可能有破坏性变更，升级前看一眼 <https://glitchtip.com/blog>。事件默认留
-90 天（`GLITCHTIP_RETENTION_DAYS`）。监控的数据不进平台的备份，丢了就丢了——它是排查
-线索，不是业务数据。
 
 ## 二、权限体系
 
@@ -697,8 +662,9 @@ YVRUC_System/
 ├── Caddyfile / caddy.env.example  内测入口的 TLS 与 Cloudflare DNS-01 令牌
 ├── .certs/                     生产证书目录（已在 .gitignore 里，不入库）
 ├── backup/                     备份容器：定时与手动备份、保留策略、恢复（job.py）
-├── ops/                        运维：错误监控服务的编排（docker-compose.monitoring.yml
-│                               + monitoring.env.example，见「错误监控」）、证书与密钥自检脚本
+├── ops/                        运维：错误监控服务的编排与运维说明（docker-compose.monitoring.yml
+│                               + monitoring.env.example + monitoring.md，见 monitoring.md）、
+│                               证书与密钥自检脚本
 ├── .env.example                环境变量模板（数据库口令、加密密钥、演示登录、隧道令牌）
 ├── pytest.ini / requirements-dev.txt
 ├── tests/                      回归测试：登录会话、报名闸门与并发、审批、分配、签到闭环、
