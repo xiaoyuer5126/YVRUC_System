@@ -36,8 +36,8 @@ from ..models import (Activity, ActivityManager, Application,
                       Enrollment, FormQuestion, Notification, Position, Shift,
                       ShiftPeriod, User, VbConfirm, iso, like_pattern, now,
                       parse_local_dt, uid)
-from ..serializers import (activity_brief, admin_status_of, applies_text,
-                           load_trees, published_hint)
+from ..serializers import (activity_brief, admin_status_of, answer_attachments,
+                           applies_text, load_trees, published_hint)
 from .screening import answers_out
 
 router = APIRouter(prefix="/api/staff", tags=["staff"])
@@ -2462,13 +2462,15 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
         User.id.in_({e.user_id for e in everyone})).all()}
     pos_by_id = {p.id: p for p in positions}
     scores = scoring.briefs(db, [e.user_id for e in everyone])
+    attachments = answer_attachments(db, act.id) if questions else {}
 
     def user_row(e: Enrollment) -> dict:
         u = users[e.user_id]
         st = pos_by_id.get(e.position_id) if e.position_id else None
         return {
             "enrollment_id": e.id,
-            "answers": answers_out(db, questions, e.answers) if questions else [],
+            "answers": (answers_out(questions, e.answers, attachments)
+                        if questions else []),
             "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
                      "college": u.college, "gender": u.gender, "phone": u.phone,
                      "wechat": u.wechat, "grade": u.grade, **scores.get(u.id, {})},

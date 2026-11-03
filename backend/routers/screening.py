@@ -27,7 +27,7 @@ from ..integrations import msgcenter
 from ..locks import shift_lock, user_lock
 from ..models import (Activity, Application, Attachment, Enrollment, FormQuestion, Position, Shift, User, now, uid)
 from ..perm import ensure_activity_manager, is_activity_manager
-from ..serializers import application_out, reg_started
+from ..serializers import answer_attachments, application_out, reg_started
 from .materials import EXT_TYPES, MATERIAL_DIR
 
 router = APIRouter(prefix="/api", tags=["screening"])
@@ -521,23 +521,22 @@ def withdraw(activity_id: str, db: OrmSession = Depends(db_session),
 
 # ======================= 管理者：筛选 =======================
 
-def answers_out(db: OrmSession, questions: list[FormQuestion],
-                answers: dict | None) -> list[dict]:
-    """一份答案按题目顺序展开给管理端看；文件题带上附件 id 与文件名。"""
+def answers_out(questions: list[FormQuestion], answers: dict | None,
+                attachments: dict[str, Attachment]) -> list[dict]:
+    """一份答案按题目顺序展开给管理端看；文件题带上附件 id 与文件名。
+
+    attachments 是整份名单的问卷附件（见 serializers.answer_attachments）：
+    一份答案按 id 去查一次的话，一页名单就是几百条 SQL。
+    """
     out = []
     for q in questions:
         v = (answers or {}).get(q.id)
         if q.kind == "file" and v:
-            att = db.get(Attachment, str(v))
+            att = attachments.get(str(v))
             v = {"attachment_id": att.id, "title": att.title} if att else None
         out.append({"question_id": q.id, "title": q.title,
                     "kind": q.kind, "value": v})
     return out
-
-def _position_name(db: OrmSession, enr: Enrollment) -> str:
-    """这条意向/报名落在哪个岗位。占位岗位对志愿者就是「待分配」，照样显示。"""
-    p = db.get(Position, enr.position_id) if enr.position_id else None
-    return p.name if p else ""
 
 
 def _accept_position(db: OrmSession, g: Shift, target: Enrollment,
@@ -566,26 +565,40 @@ def list_applications(activity_id: str, db: OrmSession = Depends(db_session),
             .filter(Application.activity_id == activity_id)
             .order_by(Application.created_at).all())
     shifts = {g.id: g for g in act.main_shifts()}
+    # 人、意向、意向岗位、问卷附件、提示分都按整份名单一次取齐：一人一查的话，
+    # 三百份申请就是两千条 SQL，这一页是筛选时最重的请求
+    user_ids = [a.user_id for a in apps]
+    users = {u.id: u for u in db.query(User)
+             .filter(User.id.in_(set(user_ids))).all()} if user_ids else {}
+    wanted_rows: dict[str, list[Enrollment]] = {uid_: [] for uid_ in user_ids}
+    if user_ids:
+        for e in (db.query(Enrollment)
+                  .filter(Enrollment.activity_id == activity_id,
+                          Enrollment.user_id.in_(set(user_ids)),
+                          Enrollment.shift_id.in_(list(shifts) or [""])).all()):
+            wanted_rows.setdefault(e.user_id, []).append(e)
+    # 占位岗位对志愿者就是「待分配」，照样显示
+    positions = {p.id: p for g in shifts.values() for p in g.positions}
+    attachments = answer_attachments(db, activity_id)
+    scores = scoring.briefs(db, user_ids)
     out = []
     for seq, app in enumerate(apps, 1):
-        u = db.get(User, app.user_id)
-        rows = (db.query(Enrollment)
-                .filter(Enrollment.activity_id == activity_id,
-                        Enrollment.user_id == app.user_id,
-                        Enrollment.shift_id.in_(list(shifts))).all())
+        u = users[app.user_id]
+        rows = wanted_rows.get(app.user_id, [])
         wanted = [{"shift_id": e.shift_id, "shift_name": shifts[e.shift_id].name,
                    "position_id": e.position_id,
-                   "position_name": _position_name(db, e),
+                   "position_name": (positions[e.position_id].name
+                                     if e.position_id in positions else ""),
                    "status": e.status, "cancel_type": e.cancel_type}
                   for e in rows if e.shift_id in shifts]
-        answers = answers_out(db, questions, app.answers)
+        answers = answers_out(questions, app.answers, attachments)
         out.append({
             # 第几个交申请的：提交时间只精确到分钟，同一分钟交的靠它分先后
             "id": app.id, "seq": seq, "status": app.status, "status_label": app.status_label(),
             "created_at": app.created_at.isoformat(timespec="minutes"),
             "user": {"id": u.id, "name": u.name, "student_id": u.student_id,
                      "college": u.college, "campus": u.campus, "stage": u.stage,
-                     "phone": u.phone, **scoring.brief(db, u.id)},
+                     "phone": u.phone, **scores[u.id]},
             "wanted": wanted, "answers": answers,
             "leader_willing": app.leader_willing,
         })

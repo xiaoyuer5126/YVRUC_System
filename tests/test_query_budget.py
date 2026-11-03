@@ -283,6 +283,24 @@ def test_报名问卷导出的条数不随人数涨(db, take_student):
     assert b <= 15, b
 
 
+def test_筛选名单的条数不随人数涨(client, admin, db, take_student):
+    few = screened_crowd(db, take_student, 5)
+    many = screened_crowd(db, take_student, 50)
+
+    def measure(case):
+        act, people = case
+        path = f"/api/staff/activities/{act.id}/applications"
+        with counting() as n:
+            r = client.get(path, headers=admin)
+        assert r.status_code == 200, r.text
+        assert len(r.json()["applications"]) == people
+        return n["select"]
+
+    a, b = measure(few), measure(many)
+    assert a == b, (a, b)
+    assert b <= 25, b
+
+
 def test_校外时长导出的条数不随条数涨(db, take_student):
     """一人一条通过的校外补登，导出时读的条数要跟条数无关。"""
     def claims(people: int) -> list[str]:
