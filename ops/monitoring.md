@@ -49,8 +49,9 @@ m logs -f glitchtip                                # 迁移自己会跑，起来
   资源也按带前缀的路径登记。
 - nginx 那一层把路径**原样**转过去，不剥前缀。先剥掉的话它认不出这些请求，页面
   样式和脚本全丢。
-- `GLITCHTIP_DOMAIN` 填 `https://<平台域名>/monitor`，`CSRF_TRUSTED_ORIGINS` 里
-  同时留着隧道那条来源。填错了的症状是登录时「表单提交被拒」（CSRF 校验）。
+- `GLITCHTIP_DOMAIN` 填 `https://<平台域名>/monitor`；`GLITCHTIP_CSRF_ORIGINS` 填
+  `https://<平台域名>,http://127.0.0.1:8001`。CSRF 只比协议、域名和端口，不认路径，
+  所以生产那条不带 `/monitor`。填错了的症状是登录时「表单提交被拒」。
 
 内测环境不设 `GLITCHTIP_BASE_PATH`，按根路径走。
 
