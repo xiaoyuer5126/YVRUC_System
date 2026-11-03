@@ -111,8 +111,8 @@ jobs:
       YVRUC_SSO_REDIRECT_URI: ""
       YVRUC_MSGCENTER_CHANNELS: ""
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -133,15 +133,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: vuecheck（模板里用了没定义的标识符、把数据当 HTML 渲染）
         run: python scripts/vuecheck.py
       - name: spacecheck（上下间距只走 0/4/8/12/16/24 这一套尺度）
         run: python scripts/spacecheck.py
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -163,7 +163,7 @@ jobs:
       PIP_INDEX: https://pypi.org/simple
       NPM_REGISTRY: https://registry.npmjs.org
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: 写 .env（口令和密钥临时生成，用完即弃）
         run: |
           {
@@ -176,7 +176,7 @@ jobs:
         run: docker compose up -d --build --wait postgres redis backend web
       - name: 导入演示数据
         run: docker compose --profile seed run --rm seed
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: viewcheck 手机 390×844 与桌面 1440×900
@@ -195,7 +195,7 @@ jobs:
         run: |
           mkdir -p /tmp/viewcheck
           docker compose logs --no-color backend web > /tmp/viewcheck/compose.log 2>&1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: viewcheck
