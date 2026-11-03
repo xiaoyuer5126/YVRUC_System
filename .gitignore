@@ -23,6 +23,9 @@ data/
 # caddy 的域名与 Cloudflare 令牌：本机那份永不入库，模板是 caddy.env.example
 caddy.env
 !caddy.env.example
+# 错误监控服务的库口令与密钥：同理，模板是 ops/monitoring.env.example
+ops/monitoring.env
+!ops/monitoring.env.example
 
 # ===== 证书与私钥（学校发的 *.ruc.edu.cn 证书放这里；与 .env 同级机密）=====
 .certs/

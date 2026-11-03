@@ -209,6 +209,47 @@ AI_ZIP_RATIO_MIN_BYTES = 10 * 1024 * 1024
 # 只是白白让 pypdf 逐页解析、拖住线程
 AI_PDF_MAX_PAGES = 200
 
+# —— 错误监控（见 monitoring.py）——
+# 后端出了未捕获的异常，就把异常类型、堆栈、请求的方法与路径报到自建的监控服务
+# （Sentry 自托管、GlitchTip 都是这套协议，DSN 由它们生成）。DSN 里带着上报用的
+# 公钥，和数据库口令一样放 .env，只在后端用、不进前端。
+# 留空 = 完全不启用：不初始化 SDK、不起上报线程，一个字节都不出站。
+SENTRY_DSN = os.environ.get("YVRUC_SENTRY_DSN", "").strip()
+# 环境名：监控服务上按它把生产与内测的事件分开，两处部署填不同的值
+SENTRY_ENVIRONMENT = (os.environ.get("YVRUC_SENTRY_ENVIRONMENT", "").strip()
+                      or "production")
+
+
+def _rate(name: str, default: str) -> float:
+    """采样率，必须落在 0～1。
+
+    填 10、100 这种「百分比」写法时 SDK 自己不报错，只当成 1 全量上报，而看配置
+    的人以为已经限住了；所以在这里就拒绝启动。
+    """
+    raw = os.environ.get(name, "").strip() or default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} 要填 0～1 之间的数字，现在是 {raw!r}") from exc
+    if not 0 <= value <= 1:
+        raise RuntimeError(f"{name} 要填 0～1 之间的数字，现在是 {raw!r}")
+    return value
+
+
+# 错误事件的采样率：1 = 每个错误都报。监控服务存不下时往下调；调低了就看不到
+# 全部发生次数，所以先调 0.5 这种量级，别一路调到 0.01
+SENTRY_SAMPLE_RATE = _rate("YVRUC_SENTRY_SAMPLE_RATE", "1")
+# 性能追踪的采样率，默认 0 = 不报。追踪是每个请求一条，量比错误大几个数量级，
+# 自建的轻量监控服务存不住
+SENTRY_TRACES_SAMPLE_RATE = _rate("YVRUC_SENTRY_TRACES_SAMPLE_RATE", "0")
+# 同一个错误在 SENTRY_ALERT_WINDOW_MINUTES 分钟里出现到这么多次，就给全体管理员
+# 推一条站内通知（每个错误每天至多一条，见 monitoring.alert_frequent）。
+# 0 = 不推。抢报那一阵偶发几条 503 是正常的，所以别设得太低；把采样率调低之后，
+# 这里也要跟着调小，不然计到的次数本来就不足阈值
+SENTRY_ALERT_THRESHOLD = int(os.environ.get("YVRUC_SENTRY_ALERT_THRESHOLD",
+                                            "").strip() or "20")
+SENTRY_ALERT_WINDOW_MINUTES = 10
+
 # 校区的大致中心点：管理端「快捷选点」按它把地图挪过去、给个起点。
 # 数值由用户提供（比网上查的可靠——不同来源能差四百米，比我们默认的 200 米
 # 半径还大）。**它仍然不是签到点**：真正要定的是「东门」「某栋楼前」这种岗位

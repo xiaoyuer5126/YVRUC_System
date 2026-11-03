@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, crypto, integrations, locks, oplog, scheduled
+from . import config, crypto, integrations, locks, monitoring, oplog, scheduled
 from .database import SessionLocal, check_schema
 from .routers import all_routers
 
@@ -83,6 +83,9 @@ async def lifespan(_app: FastAPI):
     crypto.check()        # 身份证号的密钥：不对就别起来，别等到有人填资料
     integrations.check()  # 学校对接：开关开了参数却没填齐、或配了短信，不让起来
     logger.info("数据库：%s", config.DATABASE_URL.split("@")[-1])
+    if monitoring.enabled():
+        logger.info("错误监控已启用：环境 %s，采样率 %s",
+                    config.SENTRY_ENVIRONMENT, config.SENTRY_SAMPLE_RATE)
     if config.DEMO_LOGIN_PASSWORD:
         logger.warning("演示登录已启用（口令登录）。接入统一身份认证后请清空 "
                        "YVRUC_DEMO_PASSWORD")
@@ -102,6 +105,8 @@ async def lifespan(_app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    # 错误上报要在建路由之前初始化，晚了只有一部分接口报得出来（见 monitoring.init）
+    monitoring.init()
     docs = "/docs" if config.EXPOSE_API_DOCS else None
     app = FastAPI(title="志愿服务管理平台", version="1.0.0",
                   lifespan=lifespan, docs_url=docs, redoc_url=None,

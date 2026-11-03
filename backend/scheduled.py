@@ -49,7 +49,8 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("sessions", purge_expired_sessions),
                       ("orphan_files", purge_orphan_attachments),
                       ("unsent_notify_files", purge_unsent_notify_files),
-                      ("oplogs", purge_oplogs)):
+                      ("oplogs", purge_oplogs),
+                      ("error_alerts", alert_frequent_errors)):
         try:
             result[name] = job(db)
         except Exception:  # noqa: BLE001
@@ -966,3 +967,14 @@ def purge_oplogs(db: OrmSession) -> int:
     if n:
         logger.info("清理过期操作日志 %d 个文件", n)
     return n
+
+
+def alert_frequent_errors(db: OrmSession) -> int:
+    """同一个错误短时间内刷屏时，给管理员推一条站内通知（见 monitoring.alert_frequent）。
+
+    放在定时任务里而不是上报的那一刻：错误风暴多半是数据库或 Redis 出了问题，
+    那时候每条错误都去查一遍管理员名单只会把事情弄得更糟。
+    """
+    from . import monitoring
+
+    return monitoring.alert_frequent(db)

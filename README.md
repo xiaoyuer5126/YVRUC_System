@@ -186,6 +186,11 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 | `YVRUC_AI_BASE_URL` / `YVRUC_AI_MODEL` | OpenAI 兼容接口的地址与模型，默认 `https://api.deepseek.com` / `deepseek-flash`（附件里的图片要模型能识图） |
 | `YVRUC_AI_TIMEOUT` | 一次起草最多等几秒，默认 90 |
 | `YVRUC_AI_THINKING` | 思考模式 `enabled` / `disabled`，默认 `disabled`；服务商不认这个参数时填 `none` |
+| `YVRUC_SENTRY_DSN` | 错误监控的 DSN（见「错误监控」），形如 `http://<公钥>@glitchtip:8000/1`。**留空 = 完全不上报**，SDK 都不初始化；填得不成样子则后端拒绝启动 |
+| `YVRUC_SENTRY_ENVIRONMENT` | 环境名，监控服务上按它分开生产与内测的事件，默认 `production` |
+| `YVRUC_SENTRY_SAMPLE_RATE` | 错误事件的采样率 `0`～`1`，默认 `1`。填成 `10`、`100` 这种百分比写法后端拒绝启动 |
+| `YVRUC_SENTRY_TRACES_SAMPLE_RATE` | 性能追踪的采样率 `0`～`1`，默认 `0` 不报（追踪是每个请求一条，自建的轻量服务存不住） |
+| `YVRUC_SENTRY_ALERT_THRESHOLD` | 同一个错误 10 分钟内到多少次就给全体管理员推一条站内通知（每个错误每天至多一条），默认 `20`，`0` = 不推 |
 | `CLOUDFLARE_TOKEN` | 隧道令牌，勿提交/外传。留空 = 隧道容器起不来，内网 https 入口不受影响 |
 | `YVRUC_BACKUP_DIR` | 备份写到宿主机的哪个文件夹，默认仓库下 `./backups`。Windows 写 `D:/yvruc-backups` 这样的正斜杠路径 |
 | `YVRUC_BACKUP_AT` | 每天几点备份，默认 `03:00` |
@@ -252,6 +257,68 @@ docker compose up -d                                  # migrate 先把恢复出�
   `.env` 里的 `POSTGRES_PASSWORD` 与 `YVRUC_ID_CARD_KEY` 要和原来的一样。
 - 备份比现在的代码旧时，恢复出来的库停在旧的迁移版本，`up -d` 时由 `migrate` 升上来。
 - 文件卷恢复时先清空再解包，备份之后新增的上传件会被删掉。
+
+### 错误监控（自建 GlitchTip，`backend/monitoring.py`）
+
+后端没接住的异常报到自建的监控服务：按「同一个错误」归并，页面上能看堆栈、第一次与
+最近一次、出现了多少回。`ERROR` 及以上的日志也成为事件（`logger.exception` 写在哪里，
+监控上就看得到哪里）。**不配 `YVRUC_SENTRY_DSN` 就完全不启用**，本机调试、CI 和测试里
+天然是关着的。
+
+服务端用 GlitchTip（Sentry 协议的轻量实现，约 512MB 内存；Sentry 官方自托管要 4 核
+16GB 起步）。它的编排是单独一份 `ops/docker-compose.monitoring.yml`，不并进平台那套：
+重启平台不会把监控一起停，监控挂了也不影响报名。它自带一个 PostgreSQL 容器——生产形态
+的平台连的是学校统一数据库，那个账户没有导出权限、建表还要另外对齐，而监控的事件表是
+纯运维流水，不该进学校的库。
+
+**起服务**（在仓库根目录；平台那套要先起着，监控容器要挂进它的网络）：
+
+```bash
+cp ops/monitoring.env.example ops/monitoring.env   # 填两个随机串：库口令与 SECRET_KEY
+docker network ls | grep default                   # 确认平台网络名（默认 yvruc_system_default）
+alias m='docker compose --env-file ops/monitoring.env -f ops/docker-compose.monitoring.yml'
+m up -d
+m logs -f glitchtip                                # 迁移自己会跑，起来约半分钟
+```
+
+**看页面、拿 DSN**：页面只绑在服务器本机的 8001 端口（生产入向只放行 443，监控不该
+暴露在公网），从自己电脑上开一条隧道看：
+
+```bash
+ssh -L 8001:127.0.0.1:8001 <用户>@<服务器>   # 然后浏览器开 http://127.0.0.1:8001
+```
+
+1. 第一次打开先注册——**自助注册在第一个人注册后自动关闭**，所以装好就去注册，别留着。
+2. 建一个组织和一个项目（项目平台类型选 Python / FastAPI 都可以，它只影响页面上的提示）。
+3. 在项目设置里复制 DSN，把主机名换成容器里的地址：
+   `http://<公钥>@glitchtip:8000/<项目号>`（后端走 compose 网络找它，用的是服务名，
+   不是 127.0.0.1——那样后端只会连到自己）。
+4. 填进 `.env` 的 `YVRUC_SENTRY_DSN`，`docker compose up -d` 重启后端。
+   启动日志里会有一行「错误监控已启用」；DSN 填得不成样子时后端直接拒绝启动。
+
+**上报了什么、没报什么**。排查时要知道自己看不到什么：
+
+| 报 | 不报 |
+|---|---|
+| 异常类型与消息、堆栈、出错的接口、环境名、主机名 | 请求正文（报名问卷答案、个人资料） |
+| 请求的方法与路径（查询串已截掉） | Cookie、`Authorization`、下载票据与瓦片令牌 |
+| `User-Agent`、`Content-Type`、语言、来源页 | 其余请求头 |
+| | 堆栈帧里的局部变量 |
+| | 用户身份（谁触发的去「操作日志」页按时间和路径对） |
+
+剩下的文字（异常消息、日志、面包屑、网址）还会按正则盖掉身份证号、手机号、`Bearer`
+令牌和 `token=` / `ticket=` 这类参数值。脱敏自己出错时整条事件丢掉——少看到一个错误，
+比漏出一个身份证号轻得多。
+
+**同一个错误刷屏时**（10 分钟内到 `YVRUC_SENTRY_ALERT_THRESHOLD` 次，默认 20），给全体
+管理员推一条站内通知，每个错误每天至多一条。通知由后台定时任务发，上报的那一刻只在
+Redis 上记一次数：错误风暴多半就是数据库出了问题，那时候逐条去查管理员名单只会雪上
+加霜。
+
+**升级与留存**：`m pull && m up -d`，数据库迁移自己跑；镜像钉的是大版本标签，大版本
+一年一次、可能有破坏性变更，升级前看一眼 <https://glitchtip.com/blog>。事件默认留
+90 天（`GLITCHTIP_RETENTION_DAYS`）。监控的数据不进平台的备份，丢了就丢了——它是排查
+线索，不是业务数据。
 
 ## 二、权限体系
 
@@ -630,6 +697,8 @@ YVRUC_System/
 ├── Caddyfile / caddy.env.example  内测入口的 TLS 与 Cloudflare DNS-01 令牌
 ├── .certs/                     生产证书目录（已在 .gitignore 里，不入库）
 ├── backup/                     备份容器：定时与手动备份、保留策略、恢复（job.py）
+├── ops/                        运维：错误监控服务的编排（docker-compose.monitoring.yml
+│                               + monitoring.env.example，见「错误监控」）、证书与密钥自检脚本
 ├── .env.example                环境变量模板（数据库口令、加密密钥、演示登录、隧道令牌）
 ├── pytest.ini / requirements-dev.txt
 ├── tests/                      回归测试：登录会话、报名闸门与并发、审批、分配、签到闭环、
@@ -657,6 +726,7 @@ YVRUC_System/
 │   ├── liaison.py              对外联络部：值班、审批通知路由、立项书、志愿北京外联确认
 │   ├── copying.py              复制活动 / 批量复制岗位
 │   ├── scheduled.py / notify.py  定时任务（状态流转、签到提醒、日报、值班日报、催办、志愿北京外联催办与重提提醒）与人群通知
+│   ├── monitoring.py           错误上报与脱敏（见「错误监控」），没配 DSN 则不启用
 │   ├── exporter.py / qrcodes.py / audit.py
 │   ├── seed.py                 演示数据种子（python -m backend.seed）
 │   ├── routers/                auth / activities / me / checkin / attire / materials /
