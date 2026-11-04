@@ -29,6 +29,9 @@ map $uri $cache_control {
     default          "no-cache";
     "~^/api/"        "";
     "~^/assets/"     "public, max-age=31536000, immutable";
+    # 监控页面的响应不在这里加缓存头：它自己按文件算（静态文件带内容哈希的
+    # 永久缓存、其余一小时），这里再加一个只会变成两个互相打架的头
+    "~^/monitor/"    "";
     "/version.json"  "no-store";
 }
 
@@ -56,6 +59,33 @@ server {
     ssl_session_cache shared:SSL:4m;
     ssl_session_timeout 1h;
     ssl_session_tickets off;
+
+    # 错误监控页面：GlitchTip 挂在 /monitor/ 下（见 ops/monitoring.md）。
+    # 服务器上不开新端口，用这个已有的 443 域名进。
+    #
+    # 路径原样转过去、nginx 不剥前缀：GlitchTip 自己设了 BASE_PATH，由它剥
+    # （Django 的脚本前缀），它的静态资源也按带前缀的路径登记。先剥掉的话，
+    # 它认不出这些请求，页面样式和脚本全丢。
+    #
+    # 用变量而不是直接写 http://glitchtip:8000：直接写时 nginx 在启动那一刻就要
+    # 解析这个名字，解析不到就拒绝启动。监控服务是单独一份编排，停掉它、或者
+    # 先起平台后起监控时，整个平台会跟着起不来。写成变量后只在请求进来时解析，
+    # 监控不在只是这一个路径返回 502。
+    location = /monitor { return 301 /monitor/; }
+
+    location ~ ^/monitor(/|$) {
+        # Docker 自带的内网 DNS。换了别的容器网络时要跟着改。
+        resolver 127.0.0.11 valid=30s ipv6=off;
+        set $monitoring http://glitchtip:8000;
+        proxy_pass $monitoring;
+
+        proxy_set_header Host $http_host;
+        # 和 /api/ 一样用 $remote_addr 覆盖，不追加客户端自带的 X-Forwarded-For
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        # 这一跳是 https 终点，监控服务按它认 https（登录表单的 CSRF 校验要用）
+        proxy_set_header X-Forwarded-Proto https;
+    }
 
     include /etc/nginx/snippets/yvruc-shared.conf;
 }

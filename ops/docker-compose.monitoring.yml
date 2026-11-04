@@ -1,6 +1,6 @@
 # 错误监控服务（GlitchTip）：收后端报上来的异常，按「同一个错误」归并，页面上能看
 # 堆栈、第一次与最近一次、出现多少回。平台这一侧怎么上报见 backend/monitoring.py，
-# 怎么对接见 README「错误监控」。
+# 怎么对接、怎么起停与排障见 ops/monitoring.md。
 #
 # 下面的命令都在仓库根目录跑，`m` 是这份文件加它的环境变量文件：
 #
@@ -26,7 +26,7 @@
 # GlitchTip 约 512MB，加上它的库总共 0.6GB 上下。
 #
 # 页面只绑在本机 127.0.0.1 上：生产服务器入向只放行 443，监控页面不该暴露在公网。
-# 从自己电脑上看就开一条 SSH 隧道（README 里有命令）。
+# 从自己电脑上看就开一条 SSH 隧道（命令见 ops/monitoring.md）。
 # 固定项目名：这样不管在哪个目录下跑，容器与卷的名字都一样（否则 compose 按
 # 当前目录起名，换个目录就成了另一套，旧的事件数据像凭空消失）
 name: yvruc-monitoring
@@ -41,7 +41,14 @@ x-glitchtip-env: &glitchtip_env
   # 浏览器访问它的地址。隧道转到本机 8001，所以默认是 127.0.0.1:8001；
   # 填错了登录会被 Django 的 CSRF 挡住，症状是「表单提交被拒」
   GLITCHTIP_DOMAIN: ${GLITCHTIP_DOMAIN:-http://127.0.0.1:8001}
-  CSRF_TRUSTED_ORIGINS: ${GLITCHTIP_DOMAIN:-http://127.0.0.1:8001}
+  # CSRF 只比来源（协议 + 域名 + 端口），不认路径：生产填 https://<平台域名> 即可，
+  # 不要带 /monitor；隧道那条来源一起列上，两条访问方式就都能登录
+  CSRF_TRUSTED_ORIGINS: ${GLITCHTIP_CSRF_ORIGINS:-${GLITCHTIP_DOMAIN:-http://127.0.0.1:8001}}
+  # 挂在子路径下时填前缀，生产是 /monitor（见 ops/monitoring.md）。它转成
+  # Django 的 FORCE_SCRIPT_NAME：页面里的链接、静态资源、登录表单都带这个前缀，
+  # 静态资源也按带前缀的路径登记。反代那一层因此要把路径原样转过来，不能先剥。
+  # 隧道那条路（本机 8001，根路径）也还能用：前缀只影响链接怎么拼。
+  BASE_PATH: ${GLITCHTIP_BASE_PATH:-}
   # 自己注册的第一个人就是管理员，之后自助注册自动关闭（它的 ENABLE_USER_REGISTRATION
   # 就是这个语义）。所以装好之后**马上去注册**，别留着给别人注册
   ENABLE_USER_REGISTRATION: "False"

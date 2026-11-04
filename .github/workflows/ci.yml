@@ -149,6 +149,10 @@ jobs:
       - name: 构建
         working-directory: web
         run: npm ci --no-audit --no-fund && npm run build
+      # 三份 nginx 站点配置都让 nginx 自己读一遍。生产那份平时跑不到——页面自检
+      # 用的是 http 那份，生产的配置只有真部署时才加载，写错要等重启才发现。
+      - name: nginx 配置检查
+        run: sh scripts/nginxcheck.sh
 
   # 起全栈、导入演示数据，用 runner 自带的 Chrome 在手机和桌面两个视口各跑一遍
   # viewcheck。任一页出 ✗ 这个 job 就红；出 ✗ 的页面截图、两遍的输出和后端日志
