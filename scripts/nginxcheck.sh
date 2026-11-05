@@ -14,7 +14,7 @@
 # 生产那份要证书才能过语法检查，这里临时生成一份自签名的，只活在这条命令里。
 set -eu
 
-image=nginx:1.27-alpine
+image=nginx:1.31-alpine
 repo=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

@@ -12,7 +12,10 @@ COPY web/ ./
 RUN npm run build
 
 
-FROM nginx:1.27-alpine
+# 主线版 nginx：安全修复随版本发布，扫描器按 Server 头里的版本号匹配 CVE，
+# 版本停在旧的一批会被整批记成漏洞；HTTP/2 头部压缩炸弹的 max_headers 也是
+# 1.29.8 起才有的。
+FROM nginx:1.31-alpine
 
 # 站点主体：三份形态配置都 include /etc/nginx/snippets/yvruc-shared.conf
 COPY web/nginx-shared.conf /etc/nginx/snippets/yvruc-shared.conf
