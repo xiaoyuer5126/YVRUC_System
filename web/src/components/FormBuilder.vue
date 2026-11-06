@@ -106,7 +106,7 @@
         <template #tip><div class="dim">{{ AI_FILE_TIP }}</div></template>
       </el-upload>
       <el-alert type="warning" :closable="false" show-icon
-                title="活动信息、这里写的话和附件会发给 AI 服务，别传身份证号、志愿者名单这类个人信息。题目可能有错，用之前请逐条核对。" />
+                title="活动信息、这里写的话和附件会发给 AI，不要上传身份证号、志愿者名单等个人信息。AI 可能出错，请逐项核对。" />
       <div class="fb-add">
         <el-button type="primary" size="small" :loading="aiBusy" @click="draftQuestions">
           {{ aiResult ? '重新出题' : '出题' }}

@@ -1,9 +1,8 @@
 <template>
   <div class="page page-wide">
     <h2>意见反馈</h2>
-    <p class="dim" style="margin-top:-8px">
-      用户从右上角「意见反馈」提交的平台问题。处理并回复后，提交人会收到站内消息。
-      志愿工作相关的问题不在这里收，已引导到校青协志愿工作反馈平台。
+    <p class="dim page-note">
+      用户提交的平台问题，处理并回复后，反馈者会收到通知。志愿工作相关的问题已引导到校青协志愿工作反馈平台。
     </p>
     <el-card shadow="never">
       <div class="toolbar">

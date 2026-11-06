@@ -340,7 +340,7 @@ def upload_proposal(client, headers, activity_id, name="立项书.pdf"):
 
 
 def upload_stamped(client, headers, activity_id):
-    """传齐时长审核要的盖章材料：对外活动提交时长审核，盖章立项书和盖章结项书
+    """传齐时长审核要的盖章材料：二级团体活动提交时长审核，盖章立项书和盖章结项书
     缺一份都不行。返回最后一次上传的响应。"""
     for slot in ("stamped", "closing"):
         r = client.post(f"/api/staff/activities/{activity_id}/project-files/{slot}",
@@ -484,7 +484,7 @@ def make_draft(client, headers, *, proposal: bool = True) -> str:
     from datetime import timedelta
     from backend.models import now, uid
     r = client.post("/api/staff/activities", headers=headers,
-                    json={"contact_group_qr": "x", "title": f"对外活动 {uid('t')}",
+                    json={"contact_group_qr": "x", "title": f"二级团体活动 {uid('t')}",
                           "organizer": "文学院青协", "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),

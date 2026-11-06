@@ -169,14 +169,6 @@ export function fmtDT(iso) {
   return p[3] == null ? day : `${day}${p[3]}:${p[4]}`
 }
 
-/** 只要日期：「2026-10-16（周五）」。 */
-export function fmtDate(iso) {
-  if (!iso) return '—'
-  const p = splitDT(iso)
-  if (!p) return '—'
-  return dayText(p[0], p[1], p[2])
-}
-
 /** 带秒的日期时间：「2026-10-16（周五）14:00:05」。操作日志、审计日志用。 */
 export function fmtDTs(iso) {
   if (!iso) return '—'

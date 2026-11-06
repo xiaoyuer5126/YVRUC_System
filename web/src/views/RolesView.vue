@@ -12,8 +12,8 @@
         仅能调整青协身份，管理员、活动发起方、志愿者身份请联系会长团。
       </template>
       <template v-else>
-        本页调整的是<b>权限</b>：谁能进入工作台、谁能审批、谁是部长。
-        用户类型（老师/学生）由统一身份认证下发，平台不作修改；<b>不能移除自己的管理员身份</b>，
+        本页调整的是<b>成员角色</b>：校青协内部身份和活动发起方。
+        用户类型（老师/学生）由统一身份认证下发。<b>不能移除自己的管理员身份</b>，
         如需交接请由另一位管理员操作。
       </template>
     </el-alert>
@@ -27,7 +27,7 @@
       <!-- 导出的是当前搜索条件下的全部人，不只这一页 -->
       <el-button @click="exportRoles">导出名单</el-button>
       <RefreshBar :load="load" :at="loadedAt" />
-      <span class="dim">{{ coreOnly ? '只列本部门的成员' : headOnly ? '不搜索时只列本部门的人，添加新成员请搜索学号' : '不搜索时只列已有管理类身份的人' }}</span>
+      <span class="dim">{{ coreOnly ? '只列本部门的成员' : headOnly ? '不搜索时只列本部门的人，添加新成员请搜索学号' : '下方默认不列出仅志愿者身份的同学' }}</span>
     </div>
 
     <DataCards v-if="narrow" :rows="rows" title-key="name" v-loading="loading"

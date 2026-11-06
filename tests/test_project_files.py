@@ -1,5 +1,5 @@
 """立项书与盖章材料：提交对外联络部审批要立项书，通过后锁死、驳回即作废；
-对外活动的时长报批要盖章立项书和盖章结项书，自动报批缺了就停下来提醒一次。
+二级团体活动的时长报批要盖章立项书和盖章结项书，自动报批缺了就停下来提醒一次。
 另有立项书、结项书模板：外联部长上传，发起方下载。"""
 from __future__ import annotations
 
@@ -186,11 +186,11 @@ def _external_due(db, liaison) -> Activity:
     return act
 
 
-def test_盖章材料只用于对外活动(client, admin, db, liaison):
+def test_盖章材料只用于二级团体活动(client, admin, db, liaison):
     aid = make_draft(client, admin)          # 还没归口任何部门
     for slot, label in (("stamped", STAMPED), ("closing", CLOSING)):
         r = _upload(client, admin, aid, slot)
-        assert r.status_code == 409 and r.json()["detail"] == f"{label}只用于对外活动"
+        assert r.status_code == 409 and r.json()["detail"] == f"{label}只用于二级团体活动"
     d = _files(client, admin, aid)
     assert d["external"] is False
     assert d["can_upload_stamped"] is False and d["can_upload_closing"] is False
@@ -287,7 +287,7 @@ def test_自动报批缺盖章材料_每轮提醒一次(client, admin, db, liais
     assert inbox(db, LIAISON_HEAD, f"时长锁定审批｜{act.title}")
 
 
-def test_非对外活动自动报批不受影响(client, admin, db, liaison):
+def test_非二级团体活动自动报批不受影响(client, admin, db, liaison):
     act = _external_due(db, liaison)
     act.approval_dept_id = db.query(Department).filter(
         Department.name == "办公室").one().id

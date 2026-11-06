@@ -11,7 +11,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
-from backend.models import Activity, ShiftPeriod, now, uid
+from backend.models import Activity, ShiftPeriod, now, span_text, uid
 from backend.serializers import display_status_expr, display_status_of
 from conftest import ADMIN, login, mk_shift
 
@@ -170,3 +170,27 @@ def test_广场按状态筛只出该状态的(client, db, open_group):
 
     r = client.get("/api/activities?status=finished&size=50", headers=headers)
     assert act.id in {x["id"] for x in r.json()["items"]}
+
+
+def test_广场卡片的活动时间只有一个时段时带钟点(client, db, open_group):
+    """首页卡片、详情表格、招募文案写同一句（见 Activity.headline_time）。"""
+    act, g = open_group(5)
+    headers = login(client, ADMIN)
+
+    def square_item():
+        items = client.get("/api/activities?size=50", headers=headers).json()["items"]
+        return next(x for x in items if x["id"] == act.id)
+
+    item = square_item()
+    assert item["headline_text"] == span_text(g.start_time, g.end_time)
+    # 整体起止仍是只到日：审批列表、导出用那一份
+    assert item["time_text"] == _reload(db, act.id).time_text()
+    assert ":" not in _reload(db, act.id).time_text()
+
+    # 再加一段另一天的服务：一句话退回整体起止，钟点留给各场次
+    later = g.start_time + timedelta(days=2)
+    db.add(ShiftPeriod(id=uid("sp"), shift_id=g.id, sort=1,
+                       start_time=later, end_time=later + timedelta(hours=2)))
+    db.commit()
+    item = square_item()
+    assert item["headline_text"] == item["time_text"] == _reload(db, act.id).time_text()

@@ -28,7 +28,7 @@
         </el-timeline-item>
       </el-timeline>
       <div v-else class="dim" style="margin-bottom:8px">还没有提交过审批（在页头点「提交审批」）。</div>
-      <!-- 立项书只在对外活动里出现：审批中可换，通过后留着下载打印。
+      <!-- 立项书只在二级团体活动里出现：审批中可换，通过后留着下载打印。
            上传入口在「提交审批」弹窗里；草稿阶段就摆出来，内部活动的发起方
            会以为自己也得传一份 -->
       <template v-if="files?.external && act && act.status !== 'draft'">
@@ -52,7 +52,7 @@
       </template>
       <template v-if="files?.external">
         <div class="dim">
-          对外活动提交时长审核必须附盖章立项书（即盖章项目申请书）和盖章结项书（即盖章时长认证明细）；活动发布后、时长锁定前可随时更换。
+          二级团体活动提交时长审核必须附盖章立项书（即盖章项目申请书）和盖章结项书（即盖章时长认证明细）；活动发布后、时长锁定前可随时更换。
           每份只留一个文件，多页的请合成一个 PDF。
         </div>
         <ProjectFileSlot v-for="s in STAMPED" :key="s.kind" :activity-id="activityId"

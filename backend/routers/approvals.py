@@ -398,7 +398,7 @@ def submit(activity_id: str, body: SubmitBody,
         raise HTTPException(400, f"「{dept.name}」还没有指定部长，请联系管理员")
     head = heads[0]
     head_names = "、".join(h.name for h in heads)
-    # 对外活动要带立项书：审批人看的就是这份东西，没有它批不了
+    # 二级团体活动要带立项书：审批人看的就是这份东西，没有它批不了
     if dept.external \
             and liaison.project_file(db, act.id, "proposal") is None:
         raise HTTPException(400, f"提交「{dept.name}」审批须先上传立项书")
@@ -459,7 +459,7 @@ def decide(activity_id: str, body: DecideBody,
     # 转交进要求立项书的部门的活动可能还没传：批之前得有
     if body.approve and liaison.is_external(db, act) \
             and liaison.project_file(db, act.id, "proposal") is None:
-        raise HTTPException(400, "这场对外活动还没有上传立项书，请驳回让发起方补传")
+        raise HTTPException(400, "这场二级团体活动还没有上传立项书，请驳回让发起方补传")
     # 通过即发布的活动截止已过：发出去就是「已截止」，没人报得上
     if body.approve and act.auto_publish and not act.is_record() \
             and act.reg_end is not None and act.reg_end <= now():
@@ -703,7 +703,7 @@ def my_approvals(db: OrmSession = Depends(db_session),
             "on_duty": duty.name if duty else "",
             "creator": creator.name if creator else "",
             "submit_note": submit.comment if submit else "",
-            # 对外活动的立项书：审批人就在这一屏拍板，有没有、点开看都在这儿
+            # 二级团体活动的立项书：审批人就在这一屏拍板，有没有、点开看都在这儿
             "external": bool(dept and dept.external),
             "proposal": ({"id": proposal.id, "title": proposal.title}
                          if proposal else None),

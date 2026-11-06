@@ -23,4 +23,4 @@ export function aiForm(text, files = []) {
 // 附件：格式与数量和后端（config.AI_FILE_*）一致
 export const AI_FILE_ACCEPT = '.docx,.xlsx,.pdf,.png,.jpg,.jpeg,.webp,.gif'
 export const AI_FILE_LIMIT = 5
-export const AI_FILE_TIP = '可选：docx、xlsx、pdf 或图片，最多 5 个、单个不超过 10 MB；扫描版 PDF 请截图后当图片传'
+export const AI_FILE_TIP = '可选，docx、xlsx、pdf 或图片，最多 5 个、单个不超过 10 MB'

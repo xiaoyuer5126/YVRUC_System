@@ -371,6 +371,8 @@ def _brief_public(act: Activity, counts: dict) -> dict:
         "total_capacity": total_cap, "total_enrolled": total_conf,
         "remaining": max(0, total_cap - total_used),
         "time_text": act.time_text(),
+        # 卡片上显示的活动时间：只有一个时段时带钟点（见 Activity.headline_time）
+        "headline_text": act.headline_time(),
         # 活动整体起止（见 Activity.time_span），没有场次时为空
         "time_start": iso_of(span[0]) if span else None,
         "time_end": iso_of(span[1]) if span else None,
@@ -652,6 +654,7 @@ def _detail_public(db: OrmSession, act: Activity) -> dict:
                               for g in act.shifts})
     out["_t"] = _time_basis(act, shifts=True)
     out.update({
+        "headline_more": act.headline_more(),
         "intro": act.intro,
         "location_point": act.location_point,
         "volunteer_requirement": act.volunteer_requirement,

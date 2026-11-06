@@ -1,4 +1,4 @@
-"""部门能力开关（启用值班、对外活动、志愿北京对接）与值班：谁能值班、指定与交班、
+"""部门能力开关（启用值班、二级团体活动、志愿北京对接）与值班：谁能值班、指定与交班、
 审批通知发给值班人、值班人能拍板、部长的每晚日报。志愿北京外联确认见 test_vb_confirm.py。"""
 from __future__ import annotations
 
@@ -370,7 +370,7 @@ def test_迁移后对外联络部三项开关都开着(client, admin, db):
 
 
 def test_部门改名不影响三项开关(client, admin, db, liaison):
-    """三项能力挂在部门 id 上，改名后值班、对外活动、志愿北京对接照样认它。"""
+    """三项能力挂在部门 id 上，改名后值班、二级团体活动、志愿北京对接照样认它。"""
     new_name = f"测试改名部门 {uid('t')}"
     try:
         r = client.patch(f"/api/staff/departments/{liaison.id}", headers=admin,
@@ -463,7 +463,7 @@ def test_普通活动管理者不能开关部门能力(client, initiator, liaiso
         assert r.status_code == 403
 
 
-def test_归口对外活动的部门没立项书就不收提交(client, admin, db, take_student):
+def test_归口二级团体活动的部门没立项书就不收提交(client, admin, db, take_student):
     name = f"测试对外部门 {uid('t')}"
     dept_id = client.post("/api/staff/departments", headers=admin,
                           json={"name": name}).json()["id"]

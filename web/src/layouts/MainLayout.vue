@@ -20,7 +20,7 @@
             <el-icon><ChatDotRound /></el-icon>
             <span v-if="!narrow">&nbsp;{{ t('反馈') }}</span>
           </el-button>
-          <el-badge :value="unread" :hidden="!unread" class="msg-badge">
+          <el-badge :value="unread" :hidden="!unread" :offset="[-4, 6]" class="msg-badge">
             <el-button text @click="$router.push('/messages')">
               <el-icon><Bell /></el-icon>
               <span v-if="!narrow">&nbsp;{{ t('消息') }}</span>

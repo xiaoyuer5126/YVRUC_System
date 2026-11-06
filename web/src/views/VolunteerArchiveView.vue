@@ -11,7 +11,7 @@
           <el-option v-for="c in colleges" :key="c" :value="c" :label="c" />
         </el-select>
         <el-button type="primary" @click="reload">查询</el-button>
-        <span class="dim">档案记录参与过的活动、违规记录与锁定后退出次数，不作为报名限制</span>
+        <span class="dim">记录参与过的活动、违规记录与锁定后退出次数等，按规则换算为平台提示分，仅供参考，不作为报名限制</span>
       </div>
 
       <DataCards v-if="narrow" :rows="users" title-key="name" v-loading="loading"
@@ -27,14 +27,14 @@
       </DataCards>
 
       <el-table v-else :data="users" size="small" v-loading="loading" max-height="620">
-        <el-table-column label="姓名" width="110">
+        <el-table-column label="姓名" width="130">
           <template #default="{row}">
             <el-link type="primary" underline="never" @click="openArchive(row)">{{ row.name }}</el-link>
           </template>
         </el-table-column>
         <el-table-column prop="student_id" label="学号" width="100" />
         <el-table-column prop="gender" label="性别" width="50" />
-        <el-table-column prop="college" label="学院" min-width="120" />
+        <el-table-column prop="college" label="学院" min-width="135" />
         <el-table-column label="校区 / 学段" min-width="160">
           <template #default="{row}">{{ row.campus || '—' }} / {{ row.stage || '—' }}</template>
         </el-table-column>

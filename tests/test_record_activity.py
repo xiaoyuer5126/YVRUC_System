@@ -371,7 +371,7 @@ def test_核准_申诉_提交审核_外联确认_完成(client, admin, db, appro
     hours = client.get(f"/api/staff/activities/{approved}/hours", headers=admin).json()
     assert next(x for x in hours["items"] if x["user"]["student_id"] == a)["hours"] == 3
 
-    # 提交时长审核：对外活动要盖章立项书，还要志愿北京名称
+    # 提交时长审核：二级团体活动要盖章立项书，还要志愿北京名称
     act = db.get(Activity, approved)
     url = f"/api/staff/activities/{approved}/hours/lock-request"
     names = {"vb_names": ["补记录志愿服务"]}

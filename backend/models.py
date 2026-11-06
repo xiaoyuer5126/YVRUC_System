@@ -286,7 +286,7 @@ class Department(Base):
     """校青协的部门。活动审批按部门归口，部长是默认审批人。
 
     做成表而不是常量：部长每年换届，部门也可能增减；部门还可以挂一句给
-    二级团体看的说明。启用值班、归口活动算对外活动、是否对接志愿北京，
+    二级团体看的说明。启用值班、归口活动算二级团体活动、是否对接志愿北京，
     都是部门上的开关，在部门维护里由会长团/管理员打开或关闭。
     """
     __tablename__ = "departments"
@@ -305,7 +305,7 @@ class Department(Base):
     # 启用值班：二级团体的审批量大，部长一个人盯不过来，由部门骨干轮流值班，
     # 这个部门的审批通知只发给值班的人。
     duty_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    # 归口这个部门的活动算「对外活动」：提交审批要交立项书，时长报批要交
+    # 归口这个部门的活动算「二级团体活动」：提交审批要交立项书，时长报批要交
     # 盖章立项书和盖章结项书。
     external: Mapped[bool] = mapped_column(Boolean, default=False)
     # 志愿北京对接部门：负责志愿北京名称外联确认、校外时长补登审批与导出、
@@ -454,7 +454,7 @@ class Activity(Base):
         DateTime, nullable=True)
     hours_locked_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
-    # 归口开了「对外活动」的部门，时长报批前要交盖章立项书和盖章结项书。申诉期满时
+    # 归口开了「二级团体活动」的部门，时长报批前要交盖章立项书和盖章结项书。申诉期满时
     # 还没交齐，自动报批就停下来提醒管理者一次；记下时间，别每分钟提醒一遍。
     stamped_reminded_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
@@ -572,11 +572,33 @@ class Activity(Base):
                 max(s.end_time for s in rows))
 
     def time_text(self) -> str:
-        """活动时间的说法：「2026-10-16（周五）~ 2026-10-17（周六）」，见 days_text。
-        广场、活动详情、管理端、审批列表、招募文案、导出都用它，几处写法一致，
-        学生对得上。"""
+        """活动整体起止的说法：「2026-10-16（周五）~ 2026-10-17（周六）」，见 days_text。
+        审批列表、导出用它；卡片与招募文案用 headline_time（只有一个时段时带钟点）。
+        只写日期不写钟点，理由见 days_text。"""
         span = self.time_span()
         return days_text(*span) if span else "待定"
+
+    def headline_spans(self) -> set[tuple[datetime, datetime]]:
+        """服务场次里各时段的起止，去重后拿来判断活动时间要不要带钟点。"""
+        return {(p.start_time, p.end_time)
+                for s in self.main_shifts() for p in s.periods}
+
+    def headline_time(self) -> str:
+        """卡片、详情表格、招募文案上的活动时间：只有一个时段时带上钟点。
+
+        同一个活动在广场、详情、招募文案里写成两样，学生对时间就得多对一遍；
+        这三处都用这一句。多个时段仍只写整体起止：起止是最早一场开始、最晚
+        一场结束拼出来的，带上钟点读着像一整段连续服务，具体几点看各场次。
+        """
+        spans = self.headline_spans()
+        if len(spans) == 1:
+            start, end = next(iter(spans))
+            return span_text(start, end)
+        return self.time_text()
+
+    def headline_more(self) -> bool:
+        """headline_time 写的是整体起止、具体时段要看下方场次时为 True。"""
+        return len(self.headline_spans()) > 1
 
     def last_shift_start(self) -> datetime | None:
         """报名截止最晚只能填到这里：最后一个服务场次的开始时间。

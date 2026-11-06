@@ -1,15 +1,15 @@
 <template>
   <div class="page page-wide">
     <h2>审计日志中心</h2>
-    <p class="dim" style="margin-top:-8px">
+    <p class="dim page-note">
       发起方与青协的所有增删改均留痕，对志愿者可见的记录同步展示在活动详情页。
       默认显示最近 7 天，一次最多查 {{ maxDays }} 天。
     </p>
     <el-card shadow="never">
       <div class="toolbar">
-        <el-date-picker v-model="range" type="daterange" value-format="YYYY-MM-DD"
+        <el-date-picker v-model="range" type="daterange" value-format="YYYY-MM-DD" size="small"
                         start-placeholder="开始日期" end-placeholder="结束日期"
-                        :style="{ width: narrow ? '100%' : '240px' }"
+                        style="width:240px;flex:none"
                         @change="reload" />
         <el-select v-model="filter.target_type" clearable placeholder="对象类型" style="width:150px" @change="load">
           <el-option value="activity" label="活动" />

@@ -113,7 +113,7 @@ export const MODE_COLORS = {
   record: { color: '#909399' },      // 不公开招募（补记录）
 }
 
-// 只点了日期没点时刻时补的默认时刻：开始给上班点，截止给当天最后一分钟，
-// 省得每次都手动把截止时间从 00:00 拖到 23:59
+// 只点了日期没点时刻时补的默认时刻：开始给上班点，截止给当天收工点，
+// 省得每次都手动把截止时间从 00:00 拖上去
 export const DAY_START = new Date(2000, 0, 1, 8, 0, 0)
-export const DAY_END = new Date(2000, 0, 1, 23, 59, 59)
+export const DAY_END = new Date(2000, 0, 1, 18, 0, 0)

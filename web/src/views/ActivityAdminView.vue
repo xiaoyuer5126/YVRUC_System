@@ -113,7 +113,7 @@
         </el-alert>
         <el-alert v-else type="info" :closable="false">
           先按照时间设置场次，再分配每场的具体岗位。
-          <b>报名即选岗位</b>：发布前分配好各岗位名额。
+          <b>报名即选岗位</b>：分配好各岗位，志愿者直接报名。
           <b>截止后统一分配</b>：适用于未确定岗位的场次，志愿者先选择时间，后续分配岗位。
         </el-alert>
         <div class="toolbar">
@@ -131,7 +131,7 @@
         <el-alert v-if="isOver" type="info" show-icon :closable="false"
                   :title="`活动${act.status_label}，安排与信息均为只读`">
           <div style="line-height:1.6">
-            时长已由活动管理者核准，不再接受修改，如确需更正请联系会长团。
+            时长已由活动管理者核准，不再接受修改，如确需更正请联系校青协会长团。
           </div>
         </el-alert>
         <el-alert v-else-if="structureLocked" type="info" show-icon :closable="false">
@@ -798,10 +798,10 @@
           </el-tooltip>
           <el-button v-if="hoursState.approved_at && !hoursFrozen"
                      type="warning" plain @click="submitLockNow">提交时长审核</el-button>
-          <!-- 对外活动凭盖章材料报批：缺了先说，别等点了才被拦 -->
+          <!-- 二级团体活动凭盖章材料报批：缺了先说，别等点了才被拦 -->
           <el-alert v-if="hoursState.stamped_missing?.length && !hoursState.locked_at"
                     type="warning" :closable="false" show-icon style="flex:1 1 100%"
-                    :title="`对外活动须先上传${hoursState.stamped_missing.join('和')}，才能提交时长审核（到点也不会自动提交）。点「提交时长审核」或到「审核」页签上传`" />
+                    :title="`二级团体活动须先上传${hoursState.stamped_missing.join('和')}，才能提交时长审核（到点也不会自动提交）。点「提交时长审核」或到「审核」页签上传`" />
           <el-button v-if="hoursState.locked_at" type="warning" plain
                      @click="openUnlock">申请解锁</el-button>
         </div>
@@ -1306,7 +1306,7 @@
         外联确认后活动标记为「已完成」；驳回则退回你修改。
       </p>
       <el-form label-position="top">
-        <!-- 对外活动的盖章材料就地上传，不用再去「审核」页签找 -->
+        <!-- 二级团体活动的盖章材料就地上传，不用再去「审核」页签找 -->
         <el-form-item v-if="lockFiles?.external" label="盖章材料（PDF 或图片，多页的请合成一个 PDF）"
                       required>
           <div style="width:100%">
@@ -1374,7 +1374,7 @@
             </el-option>
           </el-select>
         </el-form-item>
-        <!-- 归口对外活动的部门要带立项书，在这里就能传 -->
+        <!-- 归口二级团体活动的部门要带立项书，在这里就能传 -->
         <el-form-item v-if="submitExternal" label="立项书" required>
           <ProjectFileSlot v-if="submitFiles" :activity-id="activityId" kind="proposal"
                            label="立项书" :file="submitFiles.proposal"
@@ -2850,7 +2850,7 @@ async function openSubmit() {
                       note: '', autoPublish: true, busy: false }
 }
 
-// 对外活动要立项书：选中归口开了「需交立项书/结项书」的部门时，在对话框里就地上传
+// 二级团体活动要立项书：选中归口开了「需交立项书/结项书」的部门时，在对话框里就地上传
 const submitFiles = ref(null)
 const submitExternal = computed(() =>
   !!depts.value.find(x => x.id === submitDlg.value.deptId)?.external)

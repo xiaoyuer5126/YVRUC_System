@@ -1,8 +1,8 @@
 <template>
   <div class="page page-wide">
     <h2>平台公告</h2>
-    <p class="dim" style="margin-top:-8px">
-      启用后，每个用户登录平台时弹出一次。修改公告不会再弹给已经登录的人，他们下次登录时看到。
+    <p class="dim page-note">
+      启用后，在用户登录平台时弹出。修改公告不会立即提醒用户，只有下次登录时弹出。
     </p>
     <el-card shadow="never" v-loading="loading">
       <el-form label-position="top">

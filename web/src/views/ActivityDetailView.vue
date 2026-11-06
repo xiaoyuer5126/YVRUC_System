@@ -810,16 +810,12 @@ const posSpan = ({ row, columnIndex }) => {
   return columnIndex === 0 ? [1, isTeacher.value ? 4 : 5] : [0, 0]
 }
 
-/** 活动时间：所有场次只有同一段时间时写到钟点；有好几段时只写日期范围，
- * 再提一句去看场次，不然志愿者看着起止日期以为要连着来这么多天 */
-const actTime = computed(() => {
-  const spans = new Map()
-  for (const g of act.value?.shifts || []) {
-    for (const p of g.periods || []) spans.set(`${p.start_time}|${p.end_time}`, tTime(p.text))
-  }
-  if (spans.size === 1) return { text: [...spans.values()][0], more: false }
-  return { text: tTime(act.value?.time_text) || t('待定'), more: spans.size > 1 }
-})
+/** 活动时间：说法统一由后端拼（Activity.headline_time，只有一个时段时带钟点）；
+ * 整体起止时再提一句去看场次，不然志愿者看着起止日期以为要连着来这么多天 */
+const actTime = computed(() => ({
+  text: tTime(act.value?.headline_text) || t('待定'),
+  more: !!act.value?.headline_more,
+}))
 
 // —— 按岗位看 ——
 const VIEW_KEY = 'yvruc_detail_view'

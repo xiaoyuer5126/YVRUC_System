@@ -23,7 +23,7 @@
         <el-radio-button value="revoked">已撤销</el-radio-button>
       </el-radio-group>
       <el-button type="primary" plain @click="exportAll">导出补登表</el-button>
-      <span class="dim">导出的表是录志愿北京用的，一条一行，含身份证号，下载留痕</span>
+      <span class="dim">导出录入志愿北京的时长表，一条一行，含身份证号，下载留痕</span>
     </div>
 
     <DataCards v-if="narrow" :rows="items" title-key="title" empty="没有这一类的补登"

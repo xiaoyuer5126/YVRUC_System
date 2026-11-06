@@ -243,6 +243,37 @@ def test_活动时间只写年月日带星期():
     assert act_with().time_text() == "待定"
 
 
+def test_只有一个时段时活动时间带钟点():
+    """卡片、详情表格、招募文案用的那一句；多个时段仍只写整体起止。"""
+    from datetime import datetime
+
+    def act_with(*spans):
+        act = Activity(id=uid("act"), title="x", recruit_mode="pick")
+        act.shifts = [mk_shift(id=uid("s"), name=f"第{i}场", kind="service",
+                            start_time=a, end_time=b)
+                      for i, (a, b) in enumerate(spans)]
+        return act
+
+    one = act_with((datetime(2026, 10, 16, 9), datetime(2026, 10, 16, 12)))
+    assert one.headline_time() == "2026-10-16（周五）09:00-12:00"
+    assert not one.headline_more()
+
+    # 培训/彩排不参与：只有一个服务时段时照样带钟点
+    trained = act_with((datetime(2026, 10, 16, 9), datetime(2026, 10, 16, 12)))
+    trained.shifts.append(mk_shift(
+        id=uid("s"), name="培训", kind="training",
+        start_time=datetime(2026, 10, 15, 9), end_time=datetime(2026, 10, 15, 11)))
+    assert trained.headline_time() == "2026-10-16（周五）09:00-12:00"
+
+    many = act_with((datetime(2026, 10, 16, 9), datetime(2026, 10, 16, 12)),
+                    (datetime(2026, 10, 17, 14), datetime(2026, 10, 17, 17)))
+    assert many.headline_time() == "2026-10-16（周五）~ 2026-10-17（周六）"
+    assert many.headline_more()
+
+    empty = act_with()
+    assert empty.headline_time() == "待定" and not empty.headline_more()
+
+
 def test_附属场次不占活动的名额与时间跨度(client, admin, db, act_with_positions):
     """彩排常排在正式服务前一周，算进去广场上的时间会从彩排那天开始。"""
     act, g, _e, _c = act_with_positions
@@ -378,11 +409,14 @@ def test_招募文案按校青协定的格式拼(client, admin, db, act_with_pos
     assert lines[:6] == [f"志愿招募|{act.title}", "各位同学大家好！", "【活动内容简介】",
                          f"演出当天需要引导与检录，现面向全校{config.STAGES[0]}招募志愿者[玫瑰]",
                          "【活动主办单位】", "校团委"]
-    # 活动时间一整段起止，和网页上的「活动时间」同一个写法
+    # 活动时间与网页上的「活动时间」同一句：时间都落在同一段里就带上钟点
     assert lines[6] == "【活动时间】"
-    assert lines[7] == act.time_text()
-    assert re.fullmatch(r"\d{4}-\d\d-\d\d（周.）(~ \d{4}-\d\d-\d\d（周.）)?", lines[7])
-    assert client.get(f"/api/activities/{act.id}", headers=admin).json()["time_text"] == lines[7]
+    assert lines[7] == act.headline_time()
+    assert re.match(r"\d{4}-\d\d-\d\d（周.）\d\d:\d\d", lines[7])
+    detail = client.get(f"/api/activities/{act.id}", headers=admin).json()
+    assert detail["headline_text"] == lines[7]
+    # 整体起止仍是只到日：审批列表、导出用那一份
+    assert detail["time_text"] == act.time_text()
     # 选填的段有内容才出现，夹在「服务内容」和「志愿者保障」之间
     assert [s for s in lines if s.startswith("【")] == [
         "【活动内容简介】", "【活动主办单位】", "【活动时间】", "【活动地点】",
@@ -415,8 +449,8 @@ def test_招募文案多场次时场次一行带菱形_岗位缩进带圆点(cli
     g2, _check2 = _second_shift(db, act, g)
     text = client.get(f"/api/staff/activities/{act.id}/poster", headers=admin).json()["text"]
     lines = text.split("\n")
-    # 两个场次也只写一整段活动时间
-    assert lines[lines.index("【活动时间】") + 1] == act.time_text()
+    # 两个场次的时段不同：一句话只写整体起止，各场钟点写在下面的 ◆ 行
+    assert lines[lines.index("【活动时间】") + 1] == act.headline_time() == act.time_text()
     body = lines[lines.index("【服务内容及招募人数】") + 1:]
     heads = [s for s in body if s.startswith("◆ ")]
     assert [h.split("　")[0] for h in heads] == [f"◆ {g.name}", f"◆ {g2.name}"]
@@ -424,17 +458,10 @@ def test_招募文案多场次时场次一行带菱形_岗位缩进带圆点(cli
     assert any(s.startswith("  · 检录台 3人") for s in body)
 
 
-def test_招募文案的时间与招募范围写法():
-    from datetime import datetime
+def test_招募文案的招募范围写法():
     from types import SimpleNamespace
 
-    from backend.routers.staff_ops import _cn_span
     from backend.serializers import recruit_scope_phrase
-
-    assert _cn_span(datetime(2026, 10, 18, 7, 30), datetime(2026, 10, 18, 12)) == \
-        "10月18日（周日）07:30—12:00"
-    assert _cn_span(datetime(2026, 10, 1, 22), datetime(2026, 10, 2, 2)) == \
-        "10月1日（周四）22:00—10月2日（周五）02:00"
 
     def scope(campuses=(), colleges=(), stages=()):
         return recruit_scope_phrase(SimpleNamespace(

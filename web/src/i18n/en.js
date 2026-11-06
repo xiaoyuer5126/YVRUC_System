@@ -667,8 +667,6 @@ export default {
 
   // —— 公告、杂项 ——
   '平台公告': 'Announcement',
-  '启用后，每个用户登录平台时弹出一次。修改公告不会再弹给已经登录的人，他们下次登录时看到。':
-    'When enabled, everyone sees this once after signing in. Edits are not shown again to people already signed in; they see the new version next time.',
   '标题': 'Title',
   '正文': 'Body',
   '启用': 'Enabled',

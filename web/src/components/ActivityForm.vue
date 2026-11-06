@@ -5,7 +5,7 @@
     </el-form-item>
     <el-form-item label="组织单位" required>
       <el-input v-model="f.organizer" maxlength="64"
-                placeholder="如：中国人民大学青年志愿者协会 / 图书馆" />
+                placeholder="如：中国人民大学青年志愿者协会校园服务部" />
     </el-form-item>
     <!-- 联合举办：组织单位仍是必填的那一个，这里填另一个主办方。
          对外显示成「组织单位 × 联合主办方」，由后端拼，前端不自己拼 -->
@@ -13,7 +13,7 @@
       <el-autocomplete v-model="f.co_organizer" :fetch-suggestions="coOrganizerSuggest"
                        :trigger-on-focus="false" maxlength="64" style="width:100%"
                        placeholder="选填，与别的单位合办时填另一个主办方" />
-      <div class="dim">填了在活动页显示成「组织单位 × 联合主办方」；单独主办就留空</div>
+      <div class="dim">将在活动页显示为「组织单位 × 联合主办方」</div>
     </el-form-item>
     <el-form-item label="活动类型" required>
       <el-radio-group v-model="f.recruit_mode">
@@ -23,12 +23,8 @@
       </el-radio-group>
       <div class="dim">
         {{ modes[f.recruit_mode]?.desc }}
-        <template v-if="f.recruit_mode === 'screened'">
-          ；报名问卷在「岗位设置」中设计，由管理者统一分配
-        </template>
-        <template v-else-if="isRecord">
-          。不在广场展示、不接受报名；照常提交校青协审批，通过后在「名单导入」里导入学号与时长
-        </template>
+        <template v-if="f.recruit_mode === 'screened'">，报名问卷在「岗位设置」中设计</template>
+        <template v-else-if="isRecord">。不在广场展示、不接受报名。</template>
       </div>
     </el-form-item>
     <el-form-item label="活动地点" required>
@@ -91,7 +87,7 @@
         <DateTimeField v-model="regEnd" placeholder="报名截止时间"
                        :default-time="DAY_END" />
       </div>
-      <div class="dim">活动时间不用填：在「岗位设置」里填好各场次的时间，活动时间按场次自动汇总显示。</div>
+      <div class="dim">此处填写<b>报名时间</b>。活动时间不用填，设置好场次后，活动时间自动按场次汇总。</div>
     </el-form-item>
     <el-form-item label="活动简介" required>
       <el-input v-model="f.intro" type="textarea" :rows="3"
@@ -119,7 +115,7 @@
           </el-button>
         </el-upload>
         <div class="dim">
-          志愿者联络群，png/jpg/webp 不超过 2MB。志愿者报名成功后加入联络群
+          png/jpg/webp，不超过 2MB。志愿者报名成功后加入联络群
         </div>
         <div v-if="f.contact_group_qr" class="qr-preview">
           <img v-if="qrSrc" :src="qrSrc" alt="志愿者联络群二维码" />
@@ -159,9 +155,9 @@ import DateTimeField from './DateTimeField.vue'
 import PeriodEditor from './PeriodEditor.vue'
 import GeoPicker from './GeoPicker.vue'
 
-// 示例名称带上年月，提醒管理者把时间写进活动名称
+// 示例名称带上年份与学期周次，提醒管理者把时间写进活动名称
 const today = new Date()
-const titleExample = `如：${today.getFullYear()}年${today.getMonth() + 1}月校运动会开幕式志愿服务`
+const titleExample = `如：${today.getFullYear()}年秋季学期第9周“书香情浓”图书管理活动`
 
 const props = defineProps({
   modelValue: { type: Object, required: true },   // 表单数据

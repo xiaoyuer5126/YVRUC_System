@@ -1,9 +1,8 @@
 <template>
   <div class="page page-wide">
     <h2>通知记录</h2>
-    <p class="dim" style="margin:0 0 12px">
-      每条通知发给了谁、是谁触发的，都记在这里。推送状态分成功、失败和仅站内
-      （演示模式不往外推）。一次最多查 {{ maxDays }} 天。
+    <p class="dim page-note">
+      每条通知发给了谁、由谁触发，都记在这里。一次最多查 {{ maxDays }} 天。
     </p>
     <p class="today">
       今日发出 <b>{{ today.total }}</b> 条 · 推送失败

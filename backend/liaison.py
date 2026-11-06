@@ -6,7 +6,7 @@
 没人值班就回落给部长——审批不能因为排班空档没人收。哪些部门启用值班是部门
 维护里的开关，由会长团/管理员打开或关闭。
 
-「对外活动」= 归口开了 external 的部门的活动：提交审批要带立项书，时长报批要带
+「二级团体活动」= 归口开了 external 的部门的活动：提交审批要带立项书，时长报批要带
 盖章立项书和盖章结项书。这几份文件都挂在 Attachment 上（owner_type = proposal /
 stamped / closing，owner_id = 活动 id），存储与一次性票据下载沿用学习材料那一套。
 立项书、结项书的空白模板由志愿北京对接部门的部长上传，发起方下载了照着填
@@ -28,7 +28,7 @@ ELIGIBLE_POSTS = ("core", "head")
 
 SLOTS = {"proposal": "立项书", "stamped": "盖章立项书（即盖章项目申请书）",
          "closing": "盖章结项书（即盖章时长认证明细）"}
-# 时长审核要附的盖章材料：对外活动两份都齐了才能提交
+# 时长审核要附的盖章材料：二级团体活动两份都齐了才能提交
 STAMPED_SLOTS = ("stamped", "closing")
 # 各格能传的文件类型。立项书是提交审批时交的电子稿；盖章件是扫描件或照片，
 # 一格只留一份，多页的要合成一个 PDF
@@ -170,7 +170,7 @@ def session_user(db: OrmSession, user: User) -> dict:
             "vb_dept_name": vb_dept_name(db)}
 
 
-# ======================= 对外活动与立项书 =======================
+# ======================= 二级团体活动与立项书 =======================
 
 # 活动正式发布之后的状态。先立项再结项：盖章立项书是活动发布之后才交的
 # 材料，草稿和审批中的活动交不了
@@ -182,7 +182,7 @@ def is_published(act: Activity) -> bool:
 
 
 def is_external(db: OrmSession, act: Activity) -> bool:
-    """对外活动：归口部门开了「归口活动算对外活动」。"""
+    """二级团体活动：归口部门开了「归口活动算二级团体活动」。"""
     if not act.approval_dept_id:
         return False
     dept = db.get(Department, act.approval_dept_id)
@@ -212,7 +212,7 @@ def drop_project_file(db: OrmSession, activity_id: str, slot: str) -> Attachment
 
 
 def missing_stamped(db: OrmSession, act: Activity) -> list[str]:
-    """对外活动提交时长审核还缺哪几份盖章材料（名称）；不是对外活动就是空的。"""
+    """二级团体活动提交时长审核还缺哪几份盖章材料（名称）；不是二级团体活动就是空的。"""
     if not is_external(db, act):
         return []
     return [SLOTS[s] for s in STAMPED_SLOTS if project_file(db, act.id, s) is None]

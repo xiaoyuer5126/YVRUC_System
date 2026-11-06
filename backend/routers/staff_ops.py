@@ -973,24 +973,6 @@ def export_application_attachments(activity_id: str,
     return _attachments_download(db, user, act, ex, name, "报名问卷")
 
 
-_WEEKDAYS = "一二三四五六日"
-
-
-def _cn_day(d: datetime) -> str:
-    return f"{d.month}月{d.day}日（周{_WEEKDAYS[d.weekday()]}）"
-
-
-def _cn_span(start: datetime, end: datetime) -> str:
-    """招募文案里的时间：10月18日（周六）07:30—12:00，跨天的两头都写日期。
-
-    「10月18日」这一套是校青协定的对外格式，和站内的 models.span_text
-    （「2026-10-18（周六）07:30-12:00」）不一样，所以这里单独写。
-    """
-    if start.date() == end.date():
-        return f"{_cn_day(start)}{start:%H:%M}—{end:%H:%M}"
-    return f"{_cn_day(start)}{start:%H:%M}—{_cn_day(end)}{end:%H:%M}"
-
-
 def _one_line(text: str) -> str:
     """多行文字并成一行（分号隔开），接在「岗位名 N人：」后面。"""
     return "；".join(s.strip() for s in (text or "").splitlines() if s.strip())
@@ -1004,11 +986,11 @@ def poster(activity_id: str, request: Request, base: str = "",
 
     只写对外能公开的：时间地点、岗位与名额、要求与保障。不含任何志愿者名单——
     名单要用「导出排班表」，那条路有下载留痕。选填的段（培训与彩排、志愿者
-    要求）有内容才出现，放在「服务内容」与「志愿者保障」之间。活动时间写一整段
-    起止，和网页上的「活动时间」一致；服务内容里场次一行「◆ 」、岗位一行
-    「  · 」，岗位的补充信息再缩进一层。[玫瑰] 原样写：
-    发到微信里显示成玫瑰表情。报名链接的域名同活动二维码：base 由前端传当前
-    站点地址，只认本平台的域名。
+    要求）有内容才出现，放在「服务内容」与「志愿者保障」之间。活动时间与网页上的
+    「活动时间」是同一句（只有一个时段时带钟点，见 Activity.headline_time）；
+    服务内容里场次一行「◆ 」、岗位一行「  · 」，岗位的补充信息再缩进一层。
+    [玫瑰] 原样写：发到微信里显示成玫瑰表情。报名链接的域名同活动二维码：base
+    由前端传当前站点地址，只认本平台的域名。
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
@@ -1021,7 +1003,7 @@ def poster(activity_id: str, request: Request, base: str = "",
         "【活动内容简介】",
         f"{intro}{'，' if intro else ''}现面向{recruit_scope_phrase(act)}招募志愿者[玫瑰]",
         "【活动主办单位】", act.organizer_text() or "—",
-        "【活动时间】", act.time_text(),
+        "【活动时间】", act.headline_time(),
         "【活动地点】", act.location or "待定",
         "【服务内容及招募人数】"]
     for g in mains:
@@ -1468,7 +1450,7 @@ def hours_preview(activity_id: str, db: OrmSession = Depends(db_session),
             "default_deadline": iso(hours_flow.default_appeal_deadline()),
             # 锁定审批挂着的时候整页冻结：部长看的和最终封的得是同一份账
             "lock_pending": hours_flow.pending_lock(db, act.id) is not None,
-            # 对外活动还缺哪几份盖章材料：报批按钮前先提示，别点了才被拦
+            # 二级团体活动还缺哪几份盖章材料：报批按钮前先提示，别点了才被拦
             "stamped_missing": liaison.missing_stamped(db, act),
             # 志愿北京活动名称：提交时长审核时一并填，提交框里预先填上已存的
             "vb_names": list(act.vb_names or []),
@@ -2178,10 +2160,10 @@ def hours_lock_request(activity_id: str, body: LockHoursBody | None = None,
         raise HTTPException(409, "活动结束后才能提交时长审核")
     if act.hours_approved_at is None:
         raise HTTPException(409, "请先核准时长")
-    # 对外活动的时长要凭盖章立项书和盖章结项书报批，缺一份都不往上送
+    # 二级团体活动的时长要凭盖章立项书和盖章结项书报批，缺一份都不往上送
     missing = liaison.missing_stamped(db, act)
     if missing:
-        raise HTTPException(400, f"对外活动须先上传{'和'.join(missing)}，才能提交时长审核")
+        raise HTTPException(400, f"二级团体活动须先上传{'和'.join(missing)}，才能提交时长审核")
     # 志愿北京活动名称随时长一起报：审的人看得到，锁定后推给志愿北京对接部门
     save_vb_names(db, act, user,
                    body.vb_names if body and body.vb_names is not None

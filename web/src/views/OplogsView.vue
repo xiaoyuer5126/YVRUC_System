@@ -1,7 +1,7 @@
 <template>
   <div class="page page-wide">
     <h2>操作日志</h2>
-    <p class="dim" style="margin-top:-8px">
+    <p class="dim page-note">
       所有改数据的操作，以及登录、导出和附件下载，都按请求记在这里，保留 {{ RETAIN_DAYS }} 天。
       提交的内容不记。一次最多查 {{ maxDays }} 天。
     </p>

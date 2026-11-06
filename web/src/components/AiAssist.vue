@@ -25,7 +25,7 @@
         <template #tip><div class="dim">{{ AI_FILE_TIP }}</div></template>
       </el-upload>
       <el-alert type="warning" :closable="false" show-icon
-                title="原文和附件会发给 AI 服务，别传身份证号、志愿者名单这类个人信息。草稿可能有错，用之前请逐项核对。" />
+                title="原文和附件会发给 AI，不要上传身份证号、志愿者名单等个人信息。AI 可能出错，请逐项核对。" />
       <div class="toolbar">
         <el-button type="primary" :loading="busy" @click="go">
           {{ result ? '重新起草' : '起草' }}
@@ -183,4 +183,7 @@ defineExpose({ reset, show, enabled })
               pointer-events: none; -webkit-user-drag: none;
               filter: brightness(0) invert(1); }
 .ai-fab:hover { background: linear-gradient(135deg, #dc6b80 0%, #c00e35 78%); }
+
+/* 上传控件默认是 inline-block，紧贴上面的输入框且只多一条行内基线缝；改成块级并留出间距 */
+.ai-files { display: block; margin-top: 8px; }
 </style>

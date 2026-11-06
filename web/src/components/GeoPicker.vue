@@ -45,7 +45,7 @@
     <template v-if="modelValue.lat">
       <GeoMap :lat="modelValue.lat" :lng="modelValue.lng" :radius="radius" pickable
               style="margin-top:8px" @pick="(lat, lng) => set(lat, lng, 'map')" />
-      <div class="dim">图上可以直接点一下、或者拖着图钉挪位置。</div>
+      <div class="dim">可以直接在地图上点击，也可以拖动图钉位置。</div>
     </template>
   </div>
 </template>

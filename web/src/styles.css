@@ -83,6 +83,10 @@ body {
 .el-message-box__btns { gap: 8px; }
 .el-result__extra { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; }
 
+/* Element 给抽屉标题留了 32px 下外边距，正文再各 20px 内边距，标题和正文之间就空出
+   一大截。平台的抽屉内容多是表单和草稿，贴紧些更好读 */
+.el-drawer__header { margin-bottom: 12px; }
+
 /* 白色（默认类型）按钮的边框用 #c0c4cc：Element 默认的 #dcdfe6 在白底上发虚，
    和同样高的实色按钮并排，看着小一圈。只改默认类型，带颜色的按钮各有自己的边框色 */
 .el-button:not(.el-button--primary, .el-button--success, .el-button--warning,
@@ -104,6 +108,9 @@ body {
 h2 { margin: 12px 0 8px; }
 h3 { margin: 12px 0 8px; }
 p { margin: 8px 0; }
+
+/* 标题下面那句说明：与标题留 8px，与下面的内容留 12px */
+.page-note { margin: 8px 0 12px; }
 
 /* 页签栏与内容之间：Element 默认 15px */
 .el-tabs__header { margin-bottom: 12px; }

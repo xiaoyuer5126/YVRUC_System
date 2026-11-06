@@ -33,12 +33,11 @@
         </el-select>
         <el-input v-model="d.note" placeholder="备注（选填）" style="width:200px" />
         <el-button type="primary" :loading="d.busy" @click="setDuty(d)">
-          {{ d.can_assign ? '指定值班' : '交班' }}
+          {{ d.on_duty ? '交接值班' : '指定值班' }}
         </el-button>
-        <el-popconfirm v-if="d.can_assign && d.on_duty" title="撤下值班后，审批通知改发部长。确定？"
-                       @confirm="setDuty(d, true)">
-          <template #reference><el-button plain>撤下值班</el-button></template>
-        </el-popconfirm>
+        <el-button v-if="d.can_assign && d.on_duty" plain @click="clearDuty(d)">
+          撤下值班
+        </el-button>
       </div>
       <DataCards v-if="d.showHistory && narrow" :rows="d.history" title-key="actor"
                  row-key="created_at" style="margin-top:8px" empty="还没有交接记录"
@@ -67,7 +66,7 @@
     <el-card v-if="docTemplates?.can_manage" shadow="never" class="item">
       <div class="head"><b>立项书、结项书模板</b></div>
       <div class="dim" style="margin-top:8px">
-        发起方在「活动管理」页右上角的「材料模板」下载，提交立项书、盖章材料时旁边也有下载链接。
+        活动发起方可在创建活动前和提交材料时下载。
       </div>
       <ProjectFileSlot v-for="t in docTemplates.items" :key="t.slot" :kind="t.slot"
                        :label="t.label" :file="t.file" :can-upload="true"
@@ -116,7 +115,7 @@
         <b>提交说明</b>
         <span class="pre" :class="{ dim: !a.submit_note }">{{ a.submit_note || '提交时未填写' }}</span>
       </div>
-      <!-- 对外活动的立项书：批的就是它 -->
+      <!-- 二级团体活动的立项书：批的就是它 -->
       <div v-if="a.external" class="submit-note">
         <b>立项书</b>
         <el-link v-if="a.proposal" type="primary" underline="never"
@@ -225,8 +224,8 @@
       <el-alert type="info" :closable="false">
         活动由归口部门的部长审批，<b>没有部长的部门无法被选为归口部门</b>，
         换届后请及时调整。会长团可以接管任何一条审批。<br />
-        启用值班的部门由骨干轮流值班收审批通知；需交立项书/结项书的部门，归口它的活动按对外活动走；
-        志愿北京对接部门只有一个，负责志愿北京外联确认、校外时长补登和立项书结项书模板。
+        启用值班的部门由骨干轮流值班收审批通知；需交立项书/结项书的部门，归口它的活动按二级团体活动走；
+        志愿北京对接部门只有一个。
       </el-alert>
       <DataCards v-if="narrow" :rows="depts" title-key="name" empty="还没有部门"
                  :fields="[{ key: 'note', label: '说明' },
@@ -330,7 +329,7 @@
         </el-form-item>
       </el-form>
       <p v-if="!dd.row" class="dim" style="margin:0">
-        新部门要先指定部长才能作为归口部门，建好后在这一行「编辑」里填。
+        新部门建好后记得指定部长，才能作为活动归口部门。
       </p>
       <template #footer>
         <el-button @click="dd.visible = false">取消</el-button>
@@ -521,7 +520,7 @@ async function toggleDuty(row, v) {
 
 async function setExternal(row, v) {
   await patchDept(row, { external: v },
-                  v ? `「${row.name}」归口的活动按对外活动走` : `「${row.name}」不再按对外活动走`)
+                  v ? `「${row.name}」归口的活动按二级团体活动走` : `「${row.name}」不再按二级团体活动走`)
 }
 
 async function setLiaison(row) {
@@ -569,7 +568,8 @@ async function loadTemplates() {
 
 const withForm = d => ({ ...d, pick: '', note: '', busy: false, showHistory: false })
 
-/** 指定 / 交班 / 撤下值班（clear=true）。 */
+/** 指定 / 交接值班：安排与交接是同一个接口，clear=true 时是撤下（user_id 传空，
+ *  这个部门回到无人值班，通知回落到部长）。 */
 async function setDuty(d, clear = false) {
   if (!clear && !d.pick) return ElMessage.warning(d.can_assign ? '请选择值班人' : '请选择交班给谁')
   d.busy = true
@@ -582,6 +582,18 @@ async function setDuty(d, clear = false) {
   } finally { d.busy = false }
 }
 
+/** 撤下值班：清空这个部门的值班人，审批通知回落到部长。
+ *  误点一下值班就撤空了，所以先过一道确认再发。 */
+async function clearDuty(d) {
+  try {
+    await ElMessageBox.confirm(
+      `确定撤下「${d.dept_name}」的值班人 ${d.on_duty.name}？`
+      + '撤下后将默认由部长值班。',
+      '撤下值班', { type: 'warning' })
+  } catch { return }
+  await setDuty(d, true)
+}
+
 /** 外联确认志愿北京：确认即活动完成；退回通知管理者改名称重提（时长保持锁定）。 */
 function openVb(row, approve) {
   cd.value = { visible: true, kind: 'vb', row, approve, subject: row.activity_title,
@@ -592,7 +604,7 @@ function openVb(row, approve) {
 
 /** 锁定：同意即封账，志愿北京名称推给志愿北京对接部门确认；驳回退回管理者改。
  *  解锁：同意即允许改已经封了的账，外联确认作废，改完他要重新核准。
- *  结项常用语说的是结项材料，只有对外活动有。 */
+ *  结项常用语说的是结项材料，只有二级团体活动有。 */
 function decideHours(row, approve) {
   const what = row.kind === 'lock' ? '时长审核' : '解锁申请'
   const closing = row.kind === 'lock' && row.external

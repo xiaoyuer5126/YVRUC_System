@@ -66,7 +66,7 @@
           {{ a.title }}
         </div>
         <div v-if="a.organizer_text" class="meta-row"><el-icon><OfficeBuilding /></el-icon>{{ a.organizer_text }}</div>
-        <div class="meta-row"><el-icon><Clock /></el-icon>{{ tTime(a.time_text) }}</div>
+        <div class="meta-row"><el-icon><Clock /></el-icon>{{ tTime(a.headline_text) }}</div>
         <div class="meta-row"><el-icon><Location /></el-icon>{{ a.location || t('待定') }}</div>
         <!-- 按时段筛出来的：要来好几段、或者钟点只是个大概的，卡片上先说一声 -->
         <div v-if="a.slot_note && (a.slot_note.periods > 1 || a.slot_note.flexible)" class="meta-row">
