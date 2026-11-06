@@ -10,16 +10,20 @@
            :value="nativeValue" @change="onNative" />
     <span v-if="!nativeValue" class="dt-hint">{{ placeholder }}</span>
   </label>
+  <!-- popper-class 是给滚轮找面板用的：这个类名只挂当前这个选择器的弹层 -->
   <el-date-picker v-else type="datetime" style="width:100%"
                   :model-value="modelValue || ''" :placeholder="placeholder"
                   format="YYYY-MM-DD HH:mm" time-format="HH:mm"
                   :default-time="defaultTime || undefined"
+                  :popper-class="popperClass"
                   @update:model-value="pick" />
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onUnmounted } from 'vue'
 import { useNarrow } from '../composables/useNarrow'
+import { mountTimeWheel } from '../composables/useTimeWheel'
+import { createTimeWheel } from './timeWheel'
 
 const props = defineProps({
   modelValue: { type: [Date, String], default: '' },
@@ -30,6 +34,11 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue', 'change'])
 const narrow = useNarrow()
+
+// 宽屏那个选择器的弹层要加一个专属类名，滚轮靠它认出自己该盖哪个面板
+const wheel = mountTimeWheel(createTimeWheel)
+onUnmounted(() => wheel.unmount())
+const popperClass = wheel.popperClass
 
 const pad = n => String(n).padStart(2, '0')
 const asDate = v => (v instanceof Date
