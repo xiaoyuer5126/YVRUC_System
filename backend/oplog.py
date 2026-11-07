@@ -156,6 +156,8 @@ LABELS = {
     'set_excuse': '培训/彩排请假',
     'set_reassign_pref': '修改调剂意愿',
     'enroll': '提交报名/候补',
+    'subscribe': '订阅报名开始提醒',
+    'unsubscribe': '取消订阅报名开始提醒',
     'submit_feedback': '提交问题反馈',
     'feedback_file': '查看反馈截图',
     'handle_feedback': '处理问题反馈',

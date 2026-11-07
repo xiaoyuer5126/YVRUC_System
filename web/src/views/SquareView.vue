@@ -80,6 +80,14 @@
           <span v-else-if="a.status === 'published'">{{ t('剩余') }}<b style="color:var(--el-color-primary)">{{ a.remaining }}</b> / {{ a.total_capacity }}
           </span>
           <span v-else class="dim">{{ t('已报名 {0} 人', [a.total_enrolled]) }}</span>
+          <!-- 订阅报名开始提醒：「+ 订阅」，订阅后灰底「已订阅」，再点取消。点它不进详情页 -->
+          <el-button v-if="a.subOpen && !isTeacher" class="sub-pill"
+                     :class="{ 'sub-on': a.subscribed }"
+                     :type="a.subscribed ? '' : 'primary'" plain size="small"
+                     :loading="a.subBusy"
+                     :title="a.subscribed ? t('已订阅开始提醒，点击取消') : t('报名开始前 {0} 分钟提醒我', [leadMinutes])"
+                     @mouseenter="a.subHover = true" @mouseleave="a.subHover = false"
+                     @click.stop="toggleSub(a)">{{ subText(a) }}</el-button>
         </div>
       </div>
     </div>
@@ -94,9 +102,10 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { api, fmtDTShort } from '../api'
 import SlotPicker from '../components/SlotPicker.vue'
-import { MODE_COLORS } from '../store'
+import { auth, MODE_COLORS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import { t, tTime } from '../i18n'
 
@@ -188,6 +197,7 @@ function unlock(a) {
   a.opens_in = 0
   a.opens_in_ms = 0
   a.opensAt = 0
+  a.subOpen = false
   if (a.display_status === 'upcoming') {
     a.display_status = 'published'
     a.display_label = '报名中'
@@ -197,6 +207,31 @@ function unlock(a) {
 }
 onBeforeUnmount(() => { clearTimeout(refreshTimer); clearTimeout(slotTimer) })
 
+const isTeacher = computed(() => auth.user?.user_type === 'teacher')
+const leadMinutes = ref(3)
+// 已订阅的鼠标移上去显示「取消订阅」；手机上没有悬停，就一直是「已订阅」，点了照样取消
+const subText = a => (!a.subscribed ? t('+ 订阅')
+  : (a.subHover && !narrow.value ? t('取消订阅') : t('已订阅')))
+
+/** 卡片上的订阅铃铛：订阅 / 取消报名开始提醒，和详情页的按钮是同一件事 */
+async function toggleSub(a) {
+  const url = `/api/activities/${a.id}/subscription`
+  a.subBusy = true
+  try {
+    if (a.subscribed) {
+      await api.del(url)
+      a.subscribed = false
+      ElMessage.success(t('已取消订阅'))
+    } else {
+      const r = await api.post(url)
+      a.subscribed = true
+      ElMessage.success(t('已订阅，将在报名开始前 {0} 分钟提醒你', [r.lead_minutes]))
+    }
+  } finally {
+    a.subBusy = false
+  }
+}
+
 async function load() {
   const query = new URLSearchParams({
     q: f.q, status: f.status, mode: f.mode, organizer: f.organizer,
@@ -205,9 +240,16 @@ async function load() {
   if (slots.value.length) query.set('slots', slots.value.join(','))
   const d = await api.get(`/api/activities?${query}`)
   const at = Date.now()
+  leadMinutes.value = d.reg_reminder_minutes ?? 3
+  const lead = leadMinutes.value * 60000
   for (const a of d.items) {
     const ms = a.opens_in_ms ?? a.opens_in * 1000
     a.opensAt = ms ? at + ms : 0
+    // 离开始不到几分钟就不给订了（提醒赶不上发）；卡片停在页上跨过这条线时，
+    // 点了由后端说明原因
+    a.subOpen = ms > lead
+    a.subBusy = false
+    a.subHover = false
   }
   list.value = d.items
   total.value = d.total
@@ -255,6 +297,14 @@ onMounted(load)
 }
 .urgent { margin-right:8px; vertical-align:2px; font-weight:600; }
 .countdown-row { display:inline-flex; align-items:center; gap:8px; }
+.sub-pill { margin-left:auto; min-width:64px; border-radius:4px; font-weight:600; }
+.sub-pill.sub-on {
+  font-weight:400;
+  --el-button-bg-color:#f0f2f5; --el-button-border-color:#f0f2f5;
+  --el-button-text-color:#909399;
+  --el-button-hover-bg-color:#e9ecf1; --el-button-hover-border-color:#e9ecf1;
+  --el-button-hover-text-color:#606266;
+}
 .countdown-row :deep(.el-statistic__content) {
   font-size:14px; font-weight:600; color:var(--el-color-primary);
 }

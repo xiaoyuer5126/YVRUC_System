@@ -95,6 +95,11 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "已补记为志愿者｜{activity}",
         "负责人已将您补记为「{activity}」· {shift} 的志愿者。\n"
         "时间：{time}\n时长以负责人登记为准，录入后可在「我的志愿时长」查看。"),
+    "reg_open_reminder": (
+        "志愿活动报名提醒｜{activity}",
+        "您订阅的「{activity}」志愿活动即将开始报名，报名先后顺序是重要依据，"
+        "可提前打开活动页面准备。\n"
+        "活动时间：{time}\n地点：{loc}"),
     "checkin_reminder": (
         "志愿活动签到提醒｜{activity}",
         "您报名的「{activity}」· {shift} 即将开始。\n"
@@ -127,6 +132,7 @@ TEMPLATE_LABELS: dict[str, str] = {
     "leader_appointed": "组长任命",
     "walkin_added": "补招",
     "walkin_recorded": "补记志愿者",
+    "reg_open_reminder": "报名提醒",
     "checkin_reminder": "签到提醒",
     "ack_reminder": "签收催办",
     "custom": "其他",

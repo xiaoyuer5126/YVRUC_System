@@ -18,8 +18,9 @@ from .. import locks
 from ..locks import (GATE_FULL, GATE_OK, invalidate_gates, may_recheck_gate,
                      new_gate_ticket, settle_gate, shift_lock,
                      sync_and_take_gate, take_gate)
-from ..models import (Activity, Application, Enrollment, Shift, ShiftPeriod, Position,
-                      User, like_pattern, now, parse_local_dt, uid)
+from ..models import (Activity, ActivitySubscription, Application, Enrollment,
+                      Shift, ShiftPeriod, Position, User, like_pattern, now,
+                      parse_local_dt, uid)
 from ..perm import is_activity_manager, managed_activity_ids
 from ..qrcodes import page_qr
 from .. import pubcache
@@ -274,6 +275,12 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
                               lambda want: brief_parts(db, want))
     found.update(brief_parts(db, fresh))
     items = [with_times(found[i]) for i in picked if i in found]
+    # 我订阅了哪几个：因人而异，不进缓存
+    subscribed = {a for (a,) in db.query(ActivitySubscription.activity_id)
+                  .filter(ActivitySubscription.user_id == user.id,
+                          ActivitySubscription.activity_id.in_(picked))}
+    for x in items:
+        x["subscribed"] = x["id"] in subscribed
     if picked_slots and items:
         # 卡片上提醒一句：沾边的场次里有要来好几段的、或者钟点只是个大概的
         notes: dict[str, dict] = {}
@@ -287,6 +294,8 @@ def list_activities(q: str = "", mode: str = "", organizer: str = "",
     return {
         "items": items,
         "total": total, "page": page, "size": size,
+        # 离报名开始不到这么久就不显示订阅铃铛（订了也赶不上发）
+        "reg_reminder_minutes": config.REG_REMINDER_MINUTES,
         "organizers": [o for (o,) in
                        db.query(Activity.organizer)
                        .filter(Activity.status.in_(PUBLIC_STATUSES),
@@ -322,6 +331,56 @@ def get_activity(activity_id: str,
     out["manager"] = manager
     out["review_preview"] = review
     return out
+
+
+def _check_subscribable(user: User, act: Activity) -> None:
+    """能不能订阅报名开始提醒：已发布、还没开始报名、离开始还够发一条提醒。"""
+    if user.user_type == "teacher":
+        raise HTTPException(403, "老师类型用户不参与志愿报名")
+    if not is_public(act) or act.status != "published":
+        raise HTTPException(409, f"活动当前为「{act.label_status()}」，不能订阅")
+    t = now()
+    if reg_started(act.reg_start, t):
+        raise HTTPException(409, "报名已经开始，直接报名即可")
+    if act.reg_start - t <= timedelta(minutes=config.REG_REMINDER_MINUTES):
+        raise HTTPException(409, "报名马上开始，留在本页等倒计时结束即可")
+    scope = logic.unmet_recruit_scope(user, act)
+    if scope:
+        raise HTTPException(403, f"本活动的招募范围不含您：{'；'.join(scope)}")
+
+
+@router.post("/{activity_id}/subscription")
+def subscribe(activity_id: str,
+              db: OrmSession = Depends(db_session),
+              user: User = Depends(current_user)):
+    """订阅报名开始提醒：报名开始前几分钟推一条通知。重复订阅不报错。"""
+    act = _get_activity(db, activity_id, user)
+    _check_subscribable(user, act)
+    exists = (db.query(ActivitySubscription.id)
+              .filter(ActivitySubscription.activity_id == act.id,
+                      ActivitySubscription.user_id == user.id).first())
+    if exists is None:
+        db.add(ActivitySubscription(id=uid("sub"), activity_id=act.id,
+                                    user_id=user.id))
+        try:
+            db.commit()
+        except IntegrityError:      # 同一个人连点两下，唯一索引兜住
+            db.rollback()
+    return {"subscribed": True,
+            "lead_minutes": config.REG_REMINDER_MINUTES}
+
+
+@router.delete("/{activity_id}/subscription")
+def unsubscribe(activity_id: str,
+                db: OrmSession = Depends(db_session),
+                user: User = Depends(current_user)):
+    """取消订阅报名开始提醒。任何时候都能取消，没订过也不报错。"""
+    (db.query(ActivitySubscription)
+     .filter(ActivitySubscription.activity_id == activity_id,
+             ActivitySubscription.user_id == user.id)
+     .delete(synchronize_session=False))
+    db.commit()
+    return {"subscribed": False}
 
 
 @router.get("/{activity_id}/qr.svg", response_class=Response)

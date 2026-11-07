@@ -689,6 +689,27 @@ class ActivityManager(Base):
               "hours": "志愿时长"}
 
 
+class ActivitySubscription(Base):
+    """志愿者订阅「报名开始提醒」：报名开始前 REG_REMINDER_MINUTES 分钟推一条。
+
+    reminded_for 记的是按哪个报名开始时间提醒过，而不是「提醒过没有」：
+    管理者把开始时间往后改了，已经发过的那条说的是旧时间，要按新时间再提醒
+    一次；只记一个布尔值的话，改期之后这个人就再也收不到提醒。
+    """
+    __tablename__ = "activity_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    activity_id: Mapped[str] = mapped_column(ForeignKey("activities.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    reminded_for: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ux_subscription_activity_user", "activity_id", "user_id",
+              unique=True),
+    )
+
+
 WEEKDAYS = "一二三四五六日"
 
 

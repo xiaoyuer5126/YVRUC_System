@@ -112,7 +112,11 @@ const kpis = computed(() => {
                 open: x.violations ? () => vioDlg.value?.open() : null }
   if (x.record) return [{ label: '名单人数', value: x.roster }, hours, vio]
   const e = x.enroll, c = x.checkin
+  // 开抢前最关心有多少人在等，排第一；开始报名后挪到末尾留作参考
+  const subs = { label: '订阅报名提醒', value: x.subscribers,
+                 sub: x.reg_started ? '报名已开始' : '开始前 3 分钟提醒' }
   return [
+    ...(x.reg_started ? [] : [subs]),
     { label: '报名人次 / 总名额', value: `${e.count} / ${e.capacity}`,
       sub: `去重 ${e.people} 人` + (e.applied ? ` · 待筛选 ${e.applied}` : '') },
     { label: '候补', value: e.waitlist },
@@ -122,6 +126,7 @@ const kpis = computed(() => {
     hours,
     vio,
     { label: '锁定后退出', value: x.locked_quit, tone: x.locked_quit ? 'warn' : '' },
+    ...(x.reg_started ? [subs] : []),
   ]
 })
 </script>
