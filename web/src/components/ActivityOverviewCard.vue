@@ -114,7 +114,7 @@ const kpis = computed(() => {
   const e = x.enroll, c = x.checkin
   // 开抢前最关心有多少人在等，排第一；开始报名后挪到末尾留作参考
   const subs = { label: '订阅报名提醒', value: x.subscribers,
-                 sub: x.reg_started ? '报名已开始' : '报名开始前 3 分钟提醒' }
+                 sub: x.reg_started ? '报名已开始' : '开始前 3 分钟提醒' }
   return [
     ...(x.reg_started ? [] : [subs]),
     { label: '报名人次 / 总名额', value: `${e.count} / ${e.capacity}`,
