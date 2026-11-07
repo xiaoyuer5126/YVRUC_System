@@ -13,13 +13,14 @@ from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm.attributes import set_committed_value
 
-from . import pubcache
+from . import config, pubcache
 from .enroll_logic import (Occupancy, active_rows, applies_to_shift, conflicts_among,
                            dedupe_conflicts,
                            enroll_deadline, group_leader_task, group_needs_leader, lock_at,
                            shift_counts, unmet_for_tags, waitlist_position)
-from .models import (Activity, Application, Attachment, AuditLog, Enrollment,
-                     FormQuestion, Position, Shift, ShiftPeriod, User, iso, now)
+from .models import (Activity, ActivitySubscription, Application, Attachment,
+                     AuditLog, Enrollment, FormQuestion, Position, Shift,
+                     ShiftPeriod, User, iso, now)
 
 
 def iso_of(dt):
@@ -239,6 +240,7 @@ def opens_in(act: Activity, t=None) -> int:
 #             contact_group_qr    联络群二维码，只给管理者
 #             attire_issued       只给管理者（后台有没有服装台账）
 #             manager / review_preview   路由里按人填
+#             subscribed          我订阅了报名开始提醒没有（广场卡片在路由里填）
 #   场次      my_enrollment       我的报名状态、候补名次、是否组长、确认期限
 #   培训/彩排 mine / my_enrollment_id / excused / excuse_reason
 #   岗位      eligible / ineligible_reason     按我的档案匹配条件
@@ -797,6 +799,11 @@ def _for_viewer(db: OrmSession, act: Activity, out: dict, user,
         for g in act.shifts:
             clashes += conflicts_among(rows, g)
         out["my_time_conflicts"] = dedupe_conflicts(clashes)
+        out["subscribed"] = db.query(ActivitySubscription.id).filter(
+            ActivitySubscription.activity_id == act.id,
+            ActivitySubscription.user_id == user.id).first() is not None
+    # 离报名开始不到这么久就不显示订阅按钮（订了也赶不上发）
+    out["reg_reminder_minutes"] = config.REG_REMINDER_MINUTES
     return with_times(out)
 
 
