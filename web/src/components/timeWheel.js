@@ -10,8 +10,12 @@
 
 const H = 32 // 每格高度，和 Element 的 el-time-spinner__item 一样
 const RANGE = 3 // 中间上下各画几格
-const DECAY = 0.84 // 松手后的衰减，越小停得越快
-const FLY_MAX = 22 // 松手最多再滑多少格/秒
+const DECAY = 0.9 // 松手后每 16ms 剩下的速度比例，越小停得越快
+// 松手速度的上限，单位「像素/16ms」（一帧约 16ms）。按这个衰减，最快一甩
+// 再滑 FLY_MAX / H / (1 - DECAY) = 10 格；正常一划（约 1000px/s）走 5 格左右
+const FLY_MAX = 32
+// 松手前停顿超过这么久（ms）就当作停住了：没有新的 pointermove 不代表还在动
+const FLY_STALE = 80
 const NUDGE = 0.32 // 慢慢划时，过了这么多格就算要走一格
 
 const CSS = `
@@ -153,7 +157,8 @@ class Column {
         }
         moved = true
       } else if (Math.abs(this.vel) > 0.008) {
-        this.pos += (this.vel * dt) / H
+        // vel 是每 16ms 走的像素，换成这一帧走几格
+        this.pos += (this.vel * dt) / 16 / H
         this.vel *= Math.pow(DECAY, dt / 16)
         if (Math.abs(this.vel) <= 0.008) this.vel = 0
         moved = true
@@ -226,7 +231,9 @@ class Column {
 
     const s = this.samples || []
     this.vel = 0
-    if (s.length >= 2) {
+    // 拖到位停住再松手：最后一次移动已经是一阵子之前，不再甩出去
+    const last = s[s.length - 1]
+    if (s.length >= 2 && performance.now() - last.t <= FLY_STALE) {
       const a = s[0]
       const b = s[s.length - 1]
       const dt = Math.max(1, b.t - a.t)
