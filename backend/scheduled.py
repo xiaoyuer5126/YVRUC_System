@@ -1,4 +1,4 @@
-"""定时任务：候补清扫、活动状态自动流转、签到提醒、人员变动日报、编辑解冻、
+"""定时任务：候补清扫、活动状态自动流转、报名开始提醒、签到提醒、人员变动日报、编辑解冻、
 值班日报、审批超时催办、志愿北京外联确认催办与重提提醒。
 
 由 main.py 的协程每分钟驱动一次。几件事互不依赖，一件出错不影响其余——
@@ -15,7 +15,8 @@ from . import config
 from .audit import log as audit_log
 from .enroll_logic import close_waitlists_at_start, expire_stale_promotions
 from .integrations import msgcenter
-from .models import (Activity, ApprovalEvent, AuditLog, Department, DutyHandover,
+from .models import (Activity, ActivitySubscription, ApprovalEvent, AuditLog,
+                     Department, DutyHandover,
                      Enrollment, HoursClaim, HoursRequest, Shift, ShiftPeriod,
                      User, VbConfirm, now)
 from .notify import (notify_checkin, notify_edit_changes, notify_finished,
@@ -25,6 +26,7 @@ from .perm import activity_manager_ids
 logger = logging.getLogger(__name__)
 
 REMINDER_LEAD = timedelta(minutes=config.CHECKIN_REMINDER_MINUTES)
+REG_REMINDER_LEAD = timedelta(minutes=config.REG_REMINDER_MINUTES)
 
 
 def run_once(db: OrmSession) -> dict[str, int]:
@@ -36,6 +38,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("undecided", expire_undecided_applications),
                       ("advanced", auto_advance_activities),
                       ("reminders", send_checkin_reminders),
+                      ("reg_reminders", send_reg_open_reminders),
                       ("digests", send_roster_digests),
                       ("approvals", remind_stale_approvals),
                       ("hours_approvals", remind_stale_hours_requests),
@@ -775,6 +778,48 @@ def send_checkin_reminders(db: OrmSession) -> int:
                     g.name, period.text(), n)
     if rows:
         db.commit()
+    return sent
+
+
+# ======================= 报名开始提醒 =======================
+
+def send_reg_open_reminders(db: OrmSession) -> int:
+    """报名开始前 REG_REMINDER_MINUTES 分钟，给订阅了的志愿者推一条提醒。
+
+    只推还没开始报名的：服务停过一段再起来，报名已经开了，「即将开始」的
+    提醒就是错的。按 reminded_for 判断发没发过，开始时间改了就按新时间再
+    发一次。活动撤回、开始时间被清空（立即开放）、本人已不在招募范围内的，
+    都不发。
+    """
+    from .enroll_logic import unmet_recruit_scope
+
+    t = now()
+    rows = (db.query(ActivitySubscription, Activity)
+            .join(Activity, ActivitySubscription.activity_id == Activity.id)
+            .filter(Activity.status == "published",
+                    Activity.reg_start.isnot(None),
+                    Activity.reg_start > t,
+                    Activity.reg_start <= t + REG_REMINDER_LEAD,
+                    (ActivitySubscription.reminded_for.is_(None))
+                    | (ActivitySubscription.reminded_for != Activity.reg_start))
+            .all())
+    if not rows:
+        return 0
+    users = {u.id: u for u in db.query(User).filter(
+        User.id.in_({sub.user_id for sub, _act in rows}))}
+    sent = 0
+    for sub, act in rows:
+        sub.reminded_for = act.reg_start
+        u = users.get(sub.user_id)
+        if u is None or unmet_recruit_scope(u, act):
+            continue
+        msgcenter.send_user(db, u, "reg_open_reminder", activity=act.title,
+                            time=act.headline_time() or "待定",
+                            loc=act.location or "待定",
+                            data={"activity_id": act.id})
+        sent += 1
+    db.commit()
+    logger.info("报名开始提醒已发送 %d 人", sent)
     return sent
 
 
