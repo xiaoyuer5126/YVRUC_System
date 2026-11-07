@@ -123,6 +123,12 @@
       <span>{{ t('报名于') }} <b>{{ fmtDT(act.reg_start) }}</b> {{ t('开始，还有') }}</span>
       <el-countdown :value="opensAt" :format="openFormat" @finish="unlock" />
       <span class="dim">{{ t('时间到自动开放，不用刷新页面') }}</span>
+      <!-- 订阅报名开始提醒：离开始不到几分钟就收起，那时页面上的倒计时已经够用 -->
+      <el-button v-if="!subClosed" class="sub-btn" type="primary"
+                 :plain="!act.subscribed" :loading="subBusy"
+                 :icon="act.subscribed ? BellFilled : Bell"
+                 @mouseenter="subHover = true" @mouseleave="subHover = false"
+                 @click="toggleSubscribe">{{ subLabel }}</el-button>
     </div>
 
     <!-- 下面两段各占一整行：报名申请、场次与岗位 -->
@@ -688,7 +694,7 @@ import PositionAction from '../components/PositionAction.vue'
 import TrainingItem from '../components/TrainingItem.vue'
 import { useNarrow } from '../composables/useNarrow'
 import { useCloseGuard } from '../composables/closeGuard'
-import { Clock, Warning } from '@element-plus/icons-vue'
+import { Bell, BellFilled, Clock, Warning } from '@element-plus/icons-vue'
 import { posName, t, tTags, tTime } from '../i18n'
 
 const route = useRoute()
@@ -1023,8 +1029,54 @@ function unlock() {
 }
 onBeforeUnmount(() => {
   clearTimeout(refreshTimer)
+  clearTimeout(subTimer)
   infoRO?.disconnect()
 })
+
+/** 订阅报名开始提醒。
+ *
+ * 离报名开始不到 reg_reminder_minutes 分钟时按钮收起（subClosed）：提醒在
+ * 开始前那几分钟发，再订就赶不上了，后端也会拒。到点用定时器收，不等重拉。
+ * 已订阅的按钮鼠标移上去显示「取消订阅」，手机上没有悬停，直接写在按钮上。
+ */
+const subClosed = ref(true)
+const subBusy = ref(false)
+const subHover = ref(false)
+let subTimer = null
+function armSubscribe() {
+  clearTimeout(subTimer)
+  const lead = (act.value?.reg_reminder_minutes ?? 3) * 60000
+  const left = opensAt.value ? opensAt.value - lead - Date.now() : 0
+  subClosed.value = left <= 0
+  // setTimeout 超过 2^31-1 毫秒（约 24.8 天）会立刻触发
+  if (left > 0 && left < 2 ** 31 - 1) {
+    subTimer = setTimeout(() => { subClosed.value = true }, left)
+  }
+}
+watch(opensAt, armSubscribe)
+const subLabel = computed(() => {
+  if (!act.value?.subscribed) return t('订阅开始提醒')
+  if (narrow.value) return t('已订阅 · 点此取消')
+  return subHover.value ? t('取消订阅') : t('已订阅')
+})
+async function toggleSubscribe() {
+  const a = act.value
+  const url = `/api/activities/${a.id}/subscription`
+  subBusy.value = true
+  try {
+    if (a.subscribed) {
+      await api.del(url)
+      a.subscribed = false
+      ElMessage.success(t('已取消订阅'))
+    } else {
+      const r = await api.post(url)
+      a.subscribed = true
+      ElMessage.success(t('已订阅，将在报名开始前 {0} 分钟提醒你', [r.lead_minutes]))
+    }
+  } finally {
+    subBusy.value = false
+  }
+}
 
 function doEnroll(g, position) {
   if (g.mode === 'pick' && g.positions.length && !position) {
@@ -1137,6 +1189,10 @@ const openProfileDialog = () => profileDialog.value.open(true)
 }
 .reg-countdown :deep(.el-statistic__content) {
   font-size: 15px; font-weight: 600; color: var(--el-color-primary);
+}
+.reg-countdown .sub-btn { margin-left: auto; }
+@media (max-width: 860px) {
+  .reg-countdown .sub-btn { width: 100%; margin-left: 0; }
 }
 
 /* —— 窄屏的场次／岗位卡片 —— */
