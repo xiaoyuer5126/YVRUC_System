@@ -27,13 +27,14 @@ from ..qrcodes import trusted_root
 from ..integrations import msgcenter
 from ..locks import current_checkin_code
 from ..notify import notify, notify_checkin
-from ..models import (Activity, CheckinGeo, CheckinRecord, CheckinTask,
+from ..models import (Activity, ActivitySubscription, CheckinGeo, CheckinRecord, CheckinTask,
                       Department, Enrollment, HoursAppeal, HoursRecord,
                       HoursRequest, HoursSegment, Shift, Position, User,
                       ViolationRecord, day_of, iso, new_checkin_token, now,
                       day_text, parse_local_dt, part_is_pay, segment_out,
                       span_text, uid)
-from ..serializers import applies_text, iso_of, recruit_scope_phrase
+from ..serializers import (applies_text, iso_of, recruit_scope_phrase,
+                           reg_started)
 from .checkin import active_period, checkout_open, find_record
 from .geo import tiles_configured
 
@@ -1922,6 +1923,11 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
                     "rate": round(arrived / due, 4) if due else None,
                     "not_checked_out": open_out},
         "locked_quit": locked_quit,
+        # 订阅了报名开始提醒的人数：开抢前预估热度用
+        "subscribers": db.query(func.count(ActivitySubscription.id))
+                         .filter(ActivitySubscription.activity_id == act.id)
+                         .scalar(),
+        "reg_started": reg_started(act.reg_start, now()),
         "shifts": rows})
     return out
 
