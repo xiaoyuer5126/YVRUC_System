@@ -163,6 +163,8 @@ export default {
   '已取消订阅': 'Reminder cancelled',
   '已订阅，将在报名开始前 {0} 分钟提醒你': 'Reminder set. We will notify you {0} minutes before sign-up opens.',
   '已订阅开始提醒，点击取消': 'Reminder set. Click to cancel.',
+  '+ 订阅': '+ Remind me',
+  '报名开始前 {0} 分钟提醒我': 'Notify me {0} minutes before sign-up opens',
   '报名申请': 'Application',
   '勾选意向场次并填写报名问卷，截止后由负责人筛选录取； 场次与岗位见下方安排':
     'Choose your preferred sessions and fill in the sign-up form; the organizer selects volunteers after the deadline. Sessions and positions are listed below.',
