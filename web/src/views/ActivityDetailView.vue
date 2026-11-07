@@ -124,8 +124,8 @@
       <el-countdown :value="opensAt" :format="openFormat" @finish="unlock" />
       <span class="dim">{{ t('时间到自动开放，不用刷新页面') }}</span>
       <!-- 订阅报名开始提醒：离开始不到几分钟就收起，那时页面上的倒计时已经够用 -->
-      <el-button v-if="!subClosed" class="sub-btn" type="primary"
-                 :plain="!act.subscribed" :loading="subBusy"
+      <el-button v-if="!subClosed" class="sub-btn" :class="{ 'sub-on': act.subscribed }"
+                 :type="act.subscribed ? '' : 'primary'" plain :loading="subBusy"
                  :icon="act.subscribed ? BellFilled : Bell"
                  @mouseenter="subHover = true" @mouseleave="subHover = false"
                  @click="toggleSubscribe">{{ subLabel }}</el-button>
@@ -1191,6 +1191,13 @@ const openProfileDialog = () => profileDialog.value.open(true)
   font-size: 15px; font-weight: 600; color: var(--el-color-primary);
 }
 .reg-countdown .sub-btn { margin-left: auto; }
+/* 已订阅：灰底，和广场卡片上的「已订阅」一个样子 */
+.reg-countdown .sub-btn.sub-on {
+  --el-button-bg-color: #f0f2f5; --el-button-border-color: #f0f2f5;
+  --el-button-text-color: #909399;
+  --el-button-hover-bg-color: #e9ecf1; --el-button-hover-border-color: #e9ecf1;
+  --el-button-hover-text-color: #606266;
+}
 @media (max-width: 860px) {
   .reg-countdown .sub-btn { width: 100%; margin-left: 0; }
 }
