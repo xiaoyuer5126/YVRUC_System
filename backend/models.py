@@ -479,6 +479,10 @@ class Activity(Base):
     # 也不该看到改了一半的安排。点「保存并发布」解冻，超时自动解冻兜底。
     editing_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     editing_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 进入编辑态那一刻的场次、岗位与活动基本信息，见 backend/editing.py。
+    # 管理者点「放弃改动」时照它还原；和编辑态一起清掉
+    editing_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True,
+                                                          default=None)
 
     shifts: Mapped[list["Shift"]] = relationship(
         back_populates="activity", order_by="(Shift.start_time, Shift.sort)",
@@ -638,8 +642,10 @@ def _drop_edit_lock_off_published(act: Activity, value, _old, _initiator) -> Non
     if value != "published":
         act.editing_since = None
         act.editing_by = None
+        act.editing_snapshot = None
         flag_modified(act, "editing_since")
         flag_modified(act, "editing_by")
+        flag_modified(act, "editing_snapshot")
 
 
 class ApprovalEvent(Base):

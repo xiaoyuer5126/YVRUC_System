@@ -66,6 +66,10 @@
         <el-tag v-else-if="act.status === 'pending'" type="warning" size="large" effect="dark">
           待 {{ approval?.department || '青协' }} 审批
         </el-tag>
+        <!-- 改了一轮发现不对路：还原成进编辑态时的安排，一并恢复报名 -->
+        <el-button v-if="act.editing" :loading="lockBusy" @click="discardChanges">
+          放弃改动
+        </el-button>
         <!-- 草稿是首次发布，编辑态是发布改动，对管理者是同一件事：改完了，让学生看到 -->
         <el-popconfirm v-if="canPublish" :title="publishConfirm"
                        @confirm="saveAndPublish">
@@ -93,7 +97,7 @@
 
     <el-alert v-if="act.editing" type="warning" :closable="false" show-icon
               title="正在调整岗位，学生已暂停报名与退选"
-              :description="`改完点页面顶部的「保存并发布」恢复报名并通知志愿者；${lockHours} 小时未保存会自动退出编辑。`" />
+              :description="`改完点页面顶部的「保存并发布」恢复报名并通知志愿者；改错了点「放弃改动」还原成进入调整时的安排。${lockHours} 小时未保存会自动退出编辑。`" />
 
     <el-tabs v-model="tab" style="margin-top:8px">
       <!-- ============ 概览：发布之后才有报名、签到、时长可看 ============ -->
@@ -1914,6 +1918,24 @@ const canPublish = computed(
 const publishConfirm = computed(() => act.value?.status === 'approved'
   ? `发布后学生即可看到活动，${act.value?.publish_hint}，确认？`
   : '恢复报名，并把改动通知志愿者？')
+
+async function discardChanges() {
+  try {
+    await ElMessageBox.confirm(
+      '这一轮调整过的场次、岗位和活动信息都会还原成进入调整时的样子，'
+      + '报名随即恢复。志愿者不会收到改动通知。',
+      '放弃这次调整？',
+      { type: 'warning', confirmButtonText: '放弃改动', cancelButtonText: '继续调整' })
+  } catch { return }
+  lockBusy.value = true
+  try {
+    const d = await api.post(`/api/staff/activities/${activityId}/discard-changes`)
+    ElMessage.success(`已还原为进入调整时的安排（${d.restored} 处），报名已恢复`
+      + (d.promoted ? `；已通知 ${d.promoted} 位候补确认转正` : ''))
+    warnBusy(d.busy)
+    await loadAll()
+  } catch { /* 错误提示由 api 层统一弹出 */ } finally { lockBusy.value = false }
+}
 
 async function saveAndPublish() {
   lockBusy.value = true

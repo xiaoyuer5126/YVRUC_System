@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import timedelta
 
 from backend import config, scheduled
-from backend.models import Activity, Enrollment, Notification, Position, now
+from backend.models import (Activity, Enrollment, Notification, Position, Shift,
+                            now)
 from conftest import mk_shift
 from conftest import POSITION_TEXT, editing, login
 
@@ -520,3 +521,105 @@ def test_待审批和待发布的活动也直接改(client, admin, db):
     # 待发布的照常能首次发布
     r = client.post(f"/api/staff/activities/{approved}/publish", headers=admin)
     assert r.status_code == 200, r.text
+
+
+# ======================= 放弃改动：还原到进入编辑态时 =======================
+
+def test_放弃改动还原场次岗位与活动信息(client, admin, db, enrolled_activity,
+                                    take_student):
+    """改了一轮发现不对路：场次、岗位、活动基本信息都回到进入调整时的样子。"""
+    act, shift, _u = enrolled_activity
+    pos = shift.positions[0]
+    old_name, old_quota = shift.name, pos.quota
+    old_title, old_intro = act.title, act.intro
+    old_span = shift.span_text()
+
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    assert client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
+                        json={"name": "改到北门集合",
+                              "periods": [{"start_time": (now() + timedelta(days=4)).isoformat(),
+                                           "end_time": (now() + timedelta(days=4, hours=2)).isoformat()}]}
+                        ).status_code == 200
+    assert client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                        json={"quota": 9, "name": "改了名的岗位"}).status_code == 200
+    assert client.patch(f"/api/staff/activities/{act.id}", headers=admin,
+                        json={"title": f"{old_title}（改）", "intro": "改过的简介"}
+                        ).status_code == 200
+    created = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
+                          json={"name": "临时加的场次", "mode": "pick",
+                                "periods": [{"start_time": (now() + timedelta(days=12)).isoformat(),
+                                             "end_time": (now() + timedelta(days=12, hours=2)).isoformat()}]})
+    assert created.status_code == 200, created.text
+    new_shift = created.json()["id"]
+
+    r = client.post(f"/api/staff/activities/{act.id}/discard-changes", headers=admin)
+    assert r.status_code == 200, r.text
+    assert r.json()["editing"] is False and r.json()["restored"] >= 4
+
+    db.expire_all()
+    act = db.get(Activity, act.id)
+    assert act.editing_since is None and act.editing_snapshot is None
+    assert act.title == old_title and act.intro == old_intro
+    g = db.get(Shift, shift.id)
+    assert g is not None and g.name == old_name and g.span_text() == old_span
+    p = db.get(Position, pos.id)
+    assert p is not None and p.quota == old_quota and p.name != "改了名的岗位"
+    assert db.get(Shift, new_shift) is None
+
+    # 报名随即恢复，学生能照常报名
+    t = login(client, take_student())
+    r = client.post(f"/api/activities/{act.id}/shifts/{shift.id}/enroll",
+                    headers=t, json={"position_id": pos.id})
+    assert r.status_code == 200, r.text
+
+
+def test_删过有人的场次就放弃不了改动(client, admin, db, enrolled_activity):
+    """按 id 建回来的场次填不回一并清掉的名单，整件事都不做，先让人处理。"""
+    act, shift, _u = enrolled_activity
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    r = client.delete(f"/api/staff/shifts/{shift.id}?force=1", headers=admin)
+    assert r.status_code == 200, r.text
+
+    r = client.post(f"/api/staff/activities/{act.id}/discard-changes", headers=admin)
+    assert r.status_code == 409 and "报名记录" in r.json()["detail"]
+    # 没还原、也没解冻：活动还在编辑态里，管理者可以接着改或保存发布
+    db.expire_all()
+    assert db.get(Activity, act.id).editing_since is not None
+
+
+def test_删过学习材料就放弃不了改动(client, admin, db, enrolled_activity):
+    act, shift, _u = enrolled_activity
+    pos = shift.positions[0]
+    r = client.post("/api/staff/materials", headers=admin,
+                    data={"owner_type": "position", "owner_id": pos.id,
+                          "title": "上岗须知"},
+                    files={"file": ("a.png", b"\x89PNG", "image/png")})
+    assert r.status_code == 200, r.text
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    assert client.delete(f"/api/staff/materials/{r.json()['id']}",
+                         headers=admin).status_code == 200
+
+    r = client.post(f"/api/staff/activities/{act.id}/discard-changes", headers=admin)
+    assert r.status_code == 409 and "学习材料" in r.json()["detail"]
+
+
+def test_不在编辑态时不能放弃改动(client, admin, enrolled_activity):
+    act, _shift, _u = enrolled_activity
+    r = client.post(f"/api/staff/activities/{act.id}/discard-changes", headers=admin)
+    assert r.status_code == 409 and "不在编辑态" in r.json()["detail"]
+
+
+def test_放弃改动不动名单(client, admin, db, enrolled_activity, take_student):
+    """报名的人是来赴约的，不是管理者改出来的结构：还原只碰场次岗位。"""
+    act, shift, u = enrolled_activity
+    pos = shift.positions[0]
+    client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
+    assert client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+                        json={"quota": 9}).status_code == 200
+    assert client.post(f"/api/staff/activities/{act.id}/discard-changes",
+                       headers=admin).status_code == 200
+
+    db.expire_all()
+    enr = db.query(Enrollment).filter(Enrollment.activity_id == act.id,
+                                      Enrollment.user_id == u.id).one()
+    assert enr.status == "enrolled" and enr.position_id == pos.id
