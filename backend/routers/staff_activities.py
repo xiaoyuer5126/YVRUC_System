@@ -777,6 +777,9 @@ def discard_editing(activity_id: str, bg: BackgroundTasks,
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"放弃调整，恢复为进入调整时的安排（还原 {restored} 处），恢复报名")
     db.commit()
+    # 提交之后这份会话里的对象已经被删改过一轮（撤掉的场次、岗位都删了），
+    # 补位要在一个干净的会话状态里读名单
+    db.expire_all()
     promoted, busy = _fill_vacancies(db, act)
     return {"ok": True, "editing": False, "restored": restored,
             "promoted": promoted, "busy": busy}

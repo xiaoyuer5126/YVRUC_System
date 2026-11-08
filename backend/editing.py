@@ -210,7 +210,8 @@ def _restore_shifts(db: OrmSession, act: Activity, rows: list[dict]) -> int:
     for gid, g in list(current.items()):
         if gid in snap:
             continue
-        db.delete(g)              # 场次下的岗位、时段随它一起删
+        act.shifts.remove(g)      # 场次下的岗位、时段随它一起删
+        db.delete(g)
         del current[gid]
         changed += 1
     for gid, row in snap.items():
@@ -250,8 +251,8 @@ def _restore_periods(db: OrmSession, g: Shift, rows: list[dict]) -> int:
                       parse_local_dt(row["end_time"]))
         p = current.get(pid)
         if p is None:
-            db.add(ShiftPeriod(id=pid, shift_id=g.id, sort=row["sort"],
-                               start_time=start, end_time=end))
+            g.periods.append(ShiftPeriod(id=pid, sort=row["sort"],
+                                         start_time=start, end_time=end))
             changed += 1
             continue
         if (p.start_time, p.end_time, p.sort) != (start, end, row["sort"]):
