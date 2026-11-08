@@ -717,6 +717,7 @@ def release_stale_edit_locks(db: OrmSession) -> int:
         since = act.editing_since
         act.editing_since = None
         act.editing_by = None
+        act.editing_snapshot = None
         # 改到一半的东西也已经生效了：和「保存并发布」一样按人告诉志愿者
         if not act.is_unpublished():
             notify_edit_changes(db, act, since)

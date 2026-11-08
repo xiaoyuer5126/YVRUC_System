@@ -189,6 +189,7 @@ LABELS = {
     'pin': '置顶活动',
     'publish': '发布活动',
     'finish_editing': '退出编辑态',
+    'discard_editing': '放弃岗位调整改动',
     'reopen': '手动开放报名',
     'create_shift': '新建场次',
     'contact_qr': '查看联络群二维码',

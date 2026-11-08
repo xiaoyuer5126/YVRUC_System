@@ -17,7 +17,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
-from .. import (assign, config, copying, downloads, hours as hours_flow,
+from .. import (assign, config, copying, downloads, editing, hours as hours_flow,
                 scoring, uploads)
 from ..stage import ensure_hours_editable, ensure_not_finished
 from ..audit import diff_changes, log as audit_log, value_text
@@ -689,6 +689,7 @@ def start_editing(activity_id: str, db: OrmSession = Depends(db_session),
                                  f"正在编辑本活动，请等对方保存后再试")
     act.editing_since = now()
     act.editing_by = user.id
+    act.editing_snapshot = editing.snapshot(db, act)
     audit_log(db, actor=user, action="update", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary="进入编辑态，暂停报名")
@@ -717,6 +718,7 @@ def finish_editing(activity_id: str, bg: BackgroundTasks,
     since = act.editing_since
     act.editing_since = None
     act.editing_by = None
+    act.editing_snapshot = None
 
     rows = (db.query(AuditLog)
             .filter(AuditLog.activity_id == act.id,
@@ -740,6 +742,44 @@ def finish_editing(activity_id: str, bg: BackgroundTasks,
     promoted, busy = _fill_vacancies(db, act)
     return {"ok": True, "editing": False, "changes": len(rows),
             "promoted": promoted, "busy": busy, "summary": summary}
+
+
+@router.post("/activities/{activity_id}/discard-changes")
+def discard_editing(activity_id: str, bg: BackgroundTasks,
+                    db: OrmSession = Depends(db_session),
+                    user: User = Depends(require_manager)):
+    """放弃改动：把场次、岗位与活动基本信息还原成进入编辑态时的样子，恢复报名。
+
+    还原不了的（编辑期间删过有人的场次、删过学习材料）整件事都不做，回一句
+    说明——按 id 建回来的行填不回连带清掉的名单和文件，半还原比不还原更难
+    收拾。还原完和保存并发布一样补候补：恢复报名那一刻空出来的位子该有人顶上。
+
+    活动行加锁，理由同 finish_editing：撞上同时点的保存或超时自动解冻时，
+    只有一边生效。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    db.refresh(act, with_for_update=True)
+    if act.editing_since is None:
+        raise HTTPException(409, "本活动不在编辑态")
+    snap = act.editing_snapshot
+    if not snap:
+        raise HTTPException(
+            409, "这次调整没有留下快照（进入编辑态的是旧版本页面），"
+                 "无法还原；请照原来的样子改回去，或点「保存并发布」")
+    restored = editing.restore(db, act, snap)
+    # 还原之后名单没动过，只有候选补位的空位可能来自还原前的删除——名额恢复
+    # 了就按候补顺序顶上，和保存并发布一致
+    act.editing_since = None
+    act.editing_by = None
+    act.editing_snapshot = None
+    audit_log(db, actor=user, action="update", target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=f"放弃调整，恢复为进入调整时的安排（还原 {restored} 处），恢复报名")
+    db.commit()
+    promoted, busy = _fill_vacancies(db, act)
+    return {"ok": True, "editing": False, "restored": restored,
+            "promoted": promoted, "busy": busy}
 
 
 def _notify_edit_changes_bg(activity_id: str, since: datetime):
