@@ -99,11 +99,18 @@ export const api = {
 
 const TIME_CONFLICT = 'time_conflict'
 
+/** 冲突行末尾挂的状态，与后端 enroll_logic.STATUS_TAIL 一一对应。
+ *  「已报名」不挂：默认就是报上了。 */
+const CONFLICT_TAILS = {
+  applied: '（申请中）', waitlisted: '（候补中）', pending_confirm: '（待确认）',
+}
+
 /** 冲突列表的一行：本活动的写「本活动 xx」，别的活动写活动名。纯文本。 */
 export function conflictLine(c, activityId = '') {
   const where = activityId && c.activity_id === activityId
     ? t('本活动 ') : t('「{0}」', [c.activity_title])
-  return `${where}${c.shift_name}${t('（{0}）', [tTime(c.time)])}${c.waiting ? t('（候补中）') : ''}`
+  const tail = CONFLICT_TAILS[c.status]
+  return `${where}${c.shift_name}${t('（{0}）', [tTime(c.time)])}${tail ? t(tail) : ''}`
 }
 
 /** 后端回「时段冲突」（409，code=time_conflict）时先问一句，确认后带上

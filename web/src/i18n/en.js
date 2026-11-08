@@ -149,6 +149,8 @@ export default {
   '本活动 ': 'This activity: ',
   '「{0}」': '“{0}” ',
   '（候补中）': ' (waitlisted)',
+  '（申请中）': ' (under review)',
+  '（待确认）': ' (awaiting confirmation)',
   '时间冲突': 'Time conflict',
   '仍要继续？': 'Continue anyway?',
   '仍要继续': 'Continue',

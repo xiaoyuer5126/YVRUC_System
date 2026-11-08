@@ -570,6 +570,43 @@ def test_申请时时段冲突先提示_确认后照交(client, admin, db, enrol
     assert r.status_code == 200, r.text
 
 
+def test_冲突提示按报名真实状态挂尾巴(client, admin, db, open_group, take_student):
+    """等录取的意向标「申请中」、排队的人标「候补中」、转正待确认标「待确认」。
+    只提交了申请、没排过队的人看到「候补中」，会以为自己已经排上了。"""
+    from backend.models import Shift
+    act, g = open_group(5, day_offset=352, start_in_hours=4)
+    act_id, ids, q = _create_screened(client, admin, db, shifts=1)
+    sg = db.get(Shift, ids[0])
+    set_shift_time(db, sg, g.start_time, g.end_time)     # 跟 g 同一时段
+    db.commit()
+    sid = take_student()
+    h = login(client, sid)
+    r = client.post(f"/api/activities/{act_id}/apply", headers=h,
+                    json={"position_ids": _holders(db, ids), "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+
+    conf = client.get(f"/api/activities/{act.id}",
+                      headers=h).json()["my_time_conflicts"]
+    assert [(c["activity_id"], c["status"]) for c in conf] == [(act_id, "applied")]
+    r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll", headers=h,
+                    json={"position_id": g.test_position_id})
+    assert r.status_code == 409
+    msg = r.json()["detail"]["message"]
+    assert "（申请中）" in msg and "候补中" not in msg
+
+    # 状态变了尾巴跟着变：排进候补，再转成待确认
+    enr = (db.query(Enrollment)
+           .filter(Enrollment.activity_id == act_id,
+                   Enrollment.user_id == student_row(db, sid).id).one())
+    for status, tail in (("waitlisted", "（候补中）"),
+                         ("pending_confirm", "（待确认）")):
+        enr.status = status
+        db.commit()
+        r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll", headers=h,
+                        json={"position_id": g.test_position_id})
+        assert tail in r.json()["detail"]["message"], (status, r.text)
+
+
 def test_撤回申请后可以重新填(client, admin, db, take_student):
     """撤回等于没申请过：改答案、改意向场次都是先撤回再重填。"""
     act_id, ids, q = _create_screened(client, admin, db)
