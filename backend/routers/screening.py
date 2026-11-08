@@ -661,8 +661,7 @@ def _check_clash(db: OrmSession, act: Activity, u: User, rows: list[Enrollment],
                              f"「{b.name}」（{b.span_text()}）时间重叠")
                 clashes.append({"enrollment_id": tb.id, "activity_id": act.id,
                                 "activity_title": act.title, "shift_name": b.name,
-                                "time": b.span_text(), "status": tb.status,
-                                "waiting": False})
+                                "time": b.span_text(), "status": tb.status})
     own = {e.id for e in rows}
     others = [r for r in logic.active_rows(db, u) if r[0].id not in own]
     for _t, g, _p in chosen:

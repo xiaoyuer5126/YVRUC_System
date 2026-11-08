@@ -2,7 +2,7 @@
 
 关键机制：
   · 时段冲突：只比场次的时间区间，重叠就提示（跨活动、也比本活动的别的场次，
-    含候补中的场次——排了队就等于预留了这段时间）。志愿者或管理者看过提示、
+    含申请中、候补中的场次——占着这段就预留了这段时间）。志愿者或管理者看过提示、
     确认仍要报（confirm_conflict）就放行，见 conflict_error；候补转正、一键
     排班这类没人可问的自动路径不查冲突；
   · 名额账本：已报名 + 候补转正待确认（确认窗内位子给他留着）；
@@ -78,9 +78,19 @@ def conflicts_among(rows, target: Shift) -> list[dict]:
                 "enrollment_id": enr.id, "activity_id": act.id,
                 "activity_title": act.title, "shift_name": g.name,
                 "time": g.span_text(), "status": enr.status,
-                "waiting": enr.status != "enrolled",
             })
     return out
+
+
+# 冲突行末尾挂的状态：申请中、候补中、待确认转正各说各的。
+# 只有「已报名」不带尾巴——默认就是报上了，写了反而啰嗦。
+STATUS_TAIL = {"applied": "（申请中）", "waitlisted": "（候补中）",
+               "pending_confirm": "（待确认）"}
+
+
+def status_tail(status: str) -> str:
+    """该状态在冲突行末尾挂什么；空串 = 不挂。"""
+    return STATUS_TAIL.get(status, "")
 
 
 def clash_with(pairs: list[tuple[Shift, Shift]]) -> bool:
@@ -181,10 +191,10 @@ def conflict_message(clashes: list[dict], activity_id: str = "") -> str:
     """冲突列表拼成一句话。给了 activity_id 时，本活动里的那几场写成「本活动 xx 场」。"""
     parts = []
     for c in clashes[:3]:
-        tail = "（候补中）" if c["waiting"] else ""
         where = ("本活动" if activity_id and c["activity_id"] == activity_id
                  else f"「{c['activity_title']}」")
-        parts.append(f"{where}{c['shift_name']}（{c['time']}）{tail}")
+        parts.append(f"{where}{c['shift_name']}（{c['time']}）"
+                     f"{status_tail(c['status'])}")
     return "；".join(parts)
 
 
