@@ -87,6 +87,20 @@ server {
     # 监控不在只是这一个路径返回 502。
     location = /monitor { return 301 /monitor/; }
 
+    # 静态资源要单独剥掉 /monitor：GlitchTip 的 WhiteNoise 只按 /static/... 查
+    # （实测同一个文件：/static/... 是 200，/monitor/static/... 是 404）。不剥的话
+    # 页面能打开、样式与脚本全 404，浏览器拿到 HTML 却跑不起来，表现是白屏。
+    # 这条必须写在下面那条之前——nginx 的正则 location 按书写顺序匹配。
+    location ~ ^/monitor/static/(.*)$ {
+        resolver 127.0.0.11 valid=30s ipv6=off;
+        set $monitoring http://glitchtip:8000;
+        proxy_pass $monitoring/static/$1$is_args$args;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
     location ~ ^/monitor(/|$) {
         # Docker 自带的内网 DNS。换了别的容器网络时要跟着改。
         resolver 127.0.0.11 valid=30s ipv6=off;
