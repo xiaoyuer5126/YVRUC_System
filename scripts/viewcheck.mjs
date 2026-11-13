@@ -298,9 +298,14 @@ const PROBE = `(() => {
 })()`
 
 // 每次导航都注入一次：收 window 错误、未处理的 Promise，以及 console.error /
-// 带 deprecat 或 [Vue warn] 的 console.warn（Vue 把 setup 的异常接住后就是这么打的）
+// 带 deprecat 或 [Vue warn] 的 console.warn（Vue 把 setup 的异常接住后就是这么打的）。
+// 违反内容安全策略（web/nginx-shared.conf 的 Content-Security-Policy）也算：
+// 拦下的资源页面上未必看得出来，在这里报出是哪条规则拦了什么。
 await send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
   window.__errs = [];
+  addEventListener('securitypolicyviolation', e => window.__errs.push(
+    'CSP ' + e.effectiveDirective + ' 拦下 ' + (e.blockedURI || '(内联)') +
+    (e.sourceFile ? ' @' + e.sourceFile + ':' + e.lineNumber : '')));
   addEventListener('error', e => window.__errs.push(String(e.message)));
   addEventListener('unhandledrejection', e => window.__errs.push(String(e.reason)));
   const ce = console.error.bind(console);
