@@ -9,12 +9,12 @@ from __future__ import annotations
 from datetime import timedelta
 
 from backend.models import Activity, now, uid
-from conftest import login
+from conftest import login, upload_qr
 
 
 def _new_activity(client, headers, **over):
     """建一场活动。organizer 必填，co_organizer 选填。"""
-    body = {"contact_group_qr": "x", "title": f"联合主办{uid('t')}",
+    body = {"contact_group_qr": upload_qr(client, headers), "title": f"联合主办{uid('t')}",
             "organizer": "校青年志愿者协会", "intro": "x", "location": "世纪馆",
             "contacts": [{"name": "王", "phone": "13900000000"}],
             "reg_start": (now() - timedelta(days=1)).isoformat(),
@@ -98,7 +98,7 @@ def test_复制活动带上联合主办方(client, admin):
                         co_organizer="文学院青年志愿者协会").json()["id"]
     r = client.post(f"/api/staff/activities/{aid}/copy", headers=admin,
                     json={"shift_days": 7, "title": f"复制件{uid('t')}",
-                          "contact_group_qr": "data:new"})
+                          "contact_group_qr": upload_qr(client, admin)})
     assert r.status_code == 200, r.text
     d = client.get(f"/api/activities/{r.json()['id']}", headers=admin).json()
     assert d["co_organizer"] == "文学院青年志愿者协会"

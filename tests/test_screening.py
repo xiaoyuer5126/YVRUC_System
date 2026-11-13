@@ -6,7 +6,7 @@ from urllib.parse import unquote
 
 from backend.models import (Activity, Application, Enrollment, Notification,
                             User, now)
-from conftest import set_shift_time
+from conftest import set_shift_time, upload_qr
 from conftest import dl_url, login, student_row
 
 
@@ -14,7 +14,7 @@ def _create_screened(client, admin, db, *, status="published", shifts=2):
     r = client.post("/api/staff/activities", headers=admin,
                     json={"title": f"筛选活动 {now():%H%M%S%f}", "organizer": "校青协",
                           "recruit_mode": "screened", "intro": "x",
-                          "location": "东门", "contact_group_qr": "data:qr",
+                          "location": "东门", "contact_group_qr": upload_qr(client, admin),
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
                           "reg_end": (now() + timedelta(days=3)).isoformat()})
@@ -681,7 +681,7 @@ def test_录取与未录取(client, admin, db, take_student):
     mine = client.get("/api/me/enrollments", headers=login(client, sids[0])).json()
     mine = [r for r in mine if r["activity"]["id"] == act_id]
     assert len(mine) == 1 and mine[0]["status"] == "enrolled"
-    assert mine[0]["contact_group_qr"] == "data:qr"
+    assert mine[0]["contact_group_qr"]
 
     # 未录取：通知留余地，档案里不留痕
     u2 = db.query(User).filter(User.student_id == sids[2]).one()
@@ -987,12 +987,13 @@ def test_复制活动带报名问卷不带联络群(client, admin, db):
                    ]})
     assert r.status_code == 200, r.text
 
+    qr = upload_qr(client, admin)
     r = client.post(f"/api/staff/activities/{act_id}/copy", headers=admin,
-                    json={"shift_days": 3, "title": "副本", "contact_group_qr": "data:new"})
+                    json={"shift_days": 3, "title": "副本", "contact_group_qr": qr})
     assert r.status_code == 200, r.text
     new_id = r.json()["id"]
     d = client.get(f"/api/activities/{new_id}", headers=admin).json()
-    assert d["recruit_mode"] == "screened" and d["contact_group_qr"] == "data:new"
+    assert d["recruit_mode"] == "screened" and d["contact_group_qr"] == qr
     qs = d["application"]["questions"]
     assert [x["title"] for x in qs] == ["参加过吗", "只问引导岗", "上次做了什么"]
     new_positions = {p["id"] for g in d["shifts"] for p in g["positions"]}
@@ -1055,7 +1056,7 @@ def test_报名问卷结果导出excel(client, admin, db, take_student):
     # 即选即得的活动没有报名问卷
     other = client.post("/api/staff/activities", headers=admin,
                         json={"title": f"即选即得 {now():%H%M%S%f}", "organizer": "校青协",
-                              "intro": "x", "location": "东门", "contact_group_qr": "q",
+                              "intro": "x", "location": "东门", "contact_group_qr": upload_qr(client, admin),
                               "contacts": [{"name": "王", "phone": "13900000000"}],
                               "reg_start": now().isoformat(),
                               "reg_end": (now() + timedelta(days=1)).isoformat()}).json()["id"]
@@ -1182,7 +1183,7 @@ def test_报名问卷没有附件时附件包404(client, admin, db, take_student
     # 即选即得的活动没有报名问卷
     other = client.post("/api/staff/activities", headers=admin,
                         json={"title": f"即选即得 {now():%H%M%S%f}", "organizer": "校青协",
-                              "intro": "x", "location": "东门", "contact_group_qr": "q",
+                              "intro": "x", "location": "东门", "contact_group_qr": upload_qr(client, admin),
                               "contacts": [{"name": "王", "phone": "13900000000"}],
                               "reg_start": now().isoformat(),
                               "reg_end": (now() + timedelta(days=1)).isoformat()}).json()["id"]

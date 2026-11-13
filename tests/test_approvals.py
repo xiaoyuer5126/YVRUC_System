@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from backend.models import Activity, Department, User, now, uid
-from conftest import POSITION_TEXT, login, upload_proposal
+from conftest import POSITION_TEXT, login, upload_proposal, upload_qr
 
 QINGXIE_HEAD = "2025004"        # 周砚，对外联络部部长
 COUNCIL = "2025003"             # 张远航，会长团
@@ -17,7 +17,7 @@ def _make_draft(client, admin, *, reg_start_in=timedelta(days=-1),
                 proposal=True) -> str:
     """一个结构完整、可以提交审批的草稿。reg_start_in 是报名开始距现在多久。"""
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"contact_group_qr": "x", "title": f"待审批活动 {uid('t')}", "organizer": "文学院青协",
+                    json={"contact_group_qr": upload_qr(client, admin), "title": f"待审批活动 {uid('t')}", "organizer": "文学院青协",
                           "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() + reg_start_in).isoformat(),
@@ -256,7 +256,7 @@ def test_青协建的活动自动归口自己部门(client, db, draft):
     """提交时不选部门也能交：归口已经按创建者所在部门预填。"""
     head = login(client, QINGXIE_HEAD)
     r = client.post("/api/staff/activities", headers=head,
-                    json={"contact_group_qr": "x", "title": f"归口预填 {uid('t')}", "organizer": "校青协",
+                    json={"contact_group_qr": upload_qr(client, head), "title": f"归口预填 {uid('t')}", "organizer": "校青协",
                           "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),

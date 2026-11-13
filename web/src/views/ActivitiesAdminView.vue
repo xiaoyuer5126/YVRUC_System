@@ -215,7 +215,7 @@ import { useNarrow } from '../composables/useNarrow'
 import { useCloseGuard } from '../composables/closeGuard'
 import { activityBody, emptyActivity, validateActivity } from '../composables/activityForm'
 import { uploadImage } from '../composables/uploadImage'
-import { useAuthedImage } from '../composables/authedImage'
+import { useQrImage } from '../composables/authedImage'
 import ActivityForm from '../components/ActivityForm.vue'
 import AiActivityAssist from '../components/AiActivityAssist.vue'
 import DataCards from '../components/DataCards.vue'
@@ -250,8 +250,8 @@ const saving = ref(false)
 const modes = ref({})
 const copyDlg = ref({ visible: false, source: null, title: '', shiftDays: 7,
                       qr: '', uploading: false, busy: false })
-// 二维码要鉴权，地址不能直接放进 <img>，得带凭据取回来（见 authedImage）
-const copyQrSrc = useAuthedImage(() => copyDlg.value.qr)
+// qr 是二维码的文件编号；图要鉴权，带凭据取回来（见 authedImage）
+const copyQrSrc = useQrImage(() => copyDlg.value.qr)
 const form = ref({})
 const aiDraft = ref(null)
 const guardCreate = useCloseGuard(() => [form.value, createRange.value])

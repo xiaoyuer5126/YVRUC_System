@@ -12,7 +12,7 @@ import pytest
 from backend.deps import TRAINEE_ALLOWED_WRITES
 from backend.routers import all_routers
 from backend.models import Activity, ActivityManager, Department, User, now, uid
-from conftest import ADMIN, POSITION_TEXT, dl_url, login, student_row
+from conftest import ADMIN, POSITION_TEXT, dl_url, login, student_row, upload_qr
 
 COUNCIL, HEAD, CORE, MEMBER = "2025003", "2025004", "2025005", "2025006"
 
@@ -30,7 +30,7 @@ def dept_activity(client, db):
     """一个归口对外联络部、由部长建的草稿，带一个场次一个岗位。"""
     head = login(client, HEAD)
     r = client.post("/api/staff/activities", headers=head,
-                    json={"contact_group_qr": "x", "title": f"部门活动 {uid('t')}", "organizer": "校青协",
+                    json={"contact_group_qr": upload_qr(client, head), "title": f"部门活动 {uid('t')}", "organizer": "校青协",
                           "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
@@ -142,7 +142,7 @@ def test_骨干升迁后成员不再继承可见范围(client, db, admin):
 
     # 一场与对外联络部无关、骨干也不在共管名单里的活动
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"contact_group_qr": "x",
+                    json={"contact_group_qr": upload_qr(client, admin),
                           "title": f"无关活动 {uid('t')}", "organizer": "校青协",
                           "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],

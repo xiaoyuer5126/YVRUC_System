@@ -148,7 +148,7 @@ import { Plus, Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { DAY_END, DAY_START } from '../store'
 import { uploadImage } from '../composables/uploadImage'
-import { useAuthedImage } from '../composables/authedImage'
+import { useQrImage } from '../composables/authedImage'
 import { RECORD_MODE } from '../composables/activityForm'
 import { useCloseGuard } from '../composables/closeGuard'
 import DateTimeField from './DateTimeField.vue'
@@ -169,8 +169,8 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'update:range'])
 
 const f = computed(() => props.modelValue)
-// 二维码要鉴权，地址不能直接放进 <img>，得带凭据取回来（见 authedImage）
-const qrSrc = useAuthedImage(() => f.value.contact_group_qr)
+// contact_group_qr 是二维码的文件编号；图要鉴权，带凭据取回来（见 authedImage）
+const qrSrc = useQrImage(() => f.value.contact_group_qr)
 const isRecord = computed(() => f.value.recruit_mode === RECORD_MODE)
 // 草稿之后：补记录活动只剩它自己，招募活动里不再出现补记录
 const shownModes = computed(() => {

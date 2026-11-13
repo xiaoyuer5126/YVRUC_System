@@ -8,7 +8,7 @@ import pytest
 from backend.models import (Activity, ActivityManager, CheckinRecord,
                             CheckinTask, Enrollment, FormQuestion, Shift,
                             Position, User, new_checkin_token, now, uid)
-from conftest import set_shift_time
+from conftest import set_shift_time, upload_qr
 from conftest import mk_shift
 from conftest import (ADMIN, POSITION_TEXT, QINGXIE, approve, editing,
                       make_draft, upload_proposal,
@@ -242,7 +242,7 @@ def test_copy_activity_shifts_times_and_drops_enrollments(
     assert r.status_code == 400 and "联络群" in r.json()["detail"]
     r = client.post(f"/api/staff/activities/{act.id}/copy", headers=admin,
                     json={"shift_days": 7, "title": "复制出来的活动",
-                          "contact_group_qr": "data:new"})
+                          "contact_group_qr": upload_qr(client, admin)})
     assert r.status_code == 200
     new_id = r.json()["id"]
 
@@ -347,12 +347,13 @@ def test_联络群二维码必填且不公开(client, admin, take_student):
             "reg_end": (now() + timedelta(days=1)).isoformat()}
     r = client.post("/api/staff/activities", headers=admin, json=body)
     assert r.status_code == 400 and "联络群" in r.json()["detail"]
+    qr = upload_qr(client, admin)
     r = client.post("/api/staff/activities", headers=admin,
-                    json={**body, "contact_group_qr": "data:qr"})
+                    json={**body, "contact_group_qr": qr})
     assert r.status_code == 200, r.text
     act_id = r.json()["id"]
     assert client.get(f"/api/activities/{act_id}",
-                      headers=admin).json()["contact_group_qr"] == "data:qr"
+                      headers=admin).json()["contact_group_qr"] == qr
     # 改成空也不行
     r = client.patch(f"/api/staff/activities/{act_id}", headers=admin,
                      json={"contact_group_qr": ""})
@@ -362,7 +363,7 @@ def test_联络群二维码必填且不公开(client, admin, take_student):
 def test_没有岗位的场次不能发布(client, admin, db):
     """pick 模式没岗位就是没名额，发出去学生一个都报不了。"""
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"contact_group_qr": "x", "title": "空场次活动", "organizer": "校青协", "intro": "x",
+                    json={"contact_group_qr": upload_qr(client, admin), "title": "空场次活动", "organizer": "校青协", "intro": "x",
                           "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
@@ -493,7 +494,7 @@ def test_删除草稿要连带清干净引用(client, admin, db):
     from backend.models import ActivityManager, ApprovalEvent
 
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"contact_group_qr": "x", "title": f"待删草稿 {uid('t')}", "organizer": "校青协",
+                    json={"contact_group_qr": upload_qr(client, admin), "title": f"待删草稿 {uid('t')}", "organizer": "校青协",
                           "intro": "x", "location": "x",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
@@ -681,7 +682,7 @@ def test_没发布的活动不能现场补招(client, admin, db, draft_activity,
 
 def test_活动不许重名(client, admin, db, draft_activity):
     """重名的活动在广场、名单、导出文件名里全都分不清是哪一场。"""
-    body = {"contact_group_qr": "x", "title": draft_activity.title,
+    body = {"contact_group_qr": upload_qr(client, admin), "title": draft_activity.title,
             "organizer": "校青协", "intro": "x", "location": "世纪馆",
             "contacts": [{"name": "王", "phone": "13900000000"}],
             "reg_start": now().isoformat(),
@@ -700,11 +701,11 @@ def test_活动不许重名(client, admin, db, draft_activity):
 
     # 复制不打断操作：默认名撞了就往后加序号
     r = client.post(f"/api/staff/activities/{other}/copy", headers=admin,
-                    json={"shift_days": 1, "contact_group_qr": "x"})
+                    json={"shift_days": 1, "contact_group_qr": upload_qr(client, admin)})
     assert r.status_code == 200, r.text
     first_copy = r.json()["title"]
     r = client.post(f"/api/staff/activities/{other}/copy", headers=admin,
-                    json={"shift_days": 1, "contact_group_qr": "x"})
+                    json={"shift_days": 1, "contact_group_qr": upload_qr(client, admin)})
     assert r.json()["title"] == f"{first_copy} 2"
 
 
@@ -732,7 +733,7 @@ def test_补招要通知本人(client, admin, db, assigned_group, take_student):
 def _new_activity(client, headers, **over):
     from datetime import timedelta
     from backend.models import now, uid
-    body = {"contact_group_qr": "x", "title": f"保障测试 {uid('t')}", "organizer": "青协",
+    body = {"contact_group_qr": upload_qr(client, headers), "title": f"保障测试 {uid('t')}", "organizer": "青协",
             "intro": "x", "location": "世纪馆",
             "contacts": [{"name": "王", "phone": "13900000000"}],
             "reg_start": (now() - timedelta(days=1)).isoformat(),

@@ -10,14 +10,14 @@ from datetime import timedelta
 import pytest
 
 from backend.models import Activity, AuditLog, Enrollment, Position, Shift, now, uid
-from conftest import POSITION_TEXT, editing, login
+from conftest import POSITION_TEXT, editing, login, upload_qr
 
 
 @pytest.fixture
 def published(client, admin, db):
     """报名中的活动 + 一个 assign 场次（人数上限 3、候补 2）。"""
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"contact_group_qr": "x", "title": f"开放选岗 {uid('t')}",
+                    json={"contact_group_qr": upload_qr(client, admin), "title": f"开放选岗 {uid('t')}",
                           "organizer": "校青协", "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(hours=1)).isoformat(),

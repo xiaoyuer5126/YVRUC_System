@@ -337,6 +337,9 @@ services:
     container_name: yvruc-seed
     environment: *backend_env
     entrypoint: ["python", "-X", "utf8", "-m", "backend.seed"]
+    volumes:
+      # 演示活动的联络群二维码是真文件，要落进后端读的同一个卷
+      - yvruc_files:/app/data/files
     depends_on:
       postgres:
         condition: service_healthy

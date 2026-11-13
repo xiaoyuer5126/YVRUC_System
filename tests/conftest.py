@@ -329,6 +329,18 @@ def enrolled_activity(db, take_student):
     return make_enrolled_activity(db, take_student)
 
 
+QR_PNG = b"\x89PNG\r\n\x1a\n" + "用例用的二维码图".encode()
+
+
+def upload_qr(client, headers) -> str:
+    """传一张联络群二维码，返回文件编号：建活动、复制活动要的就是它。
+    一张只能挂一个活动，每建一个活动传一张。"""
+    r = client.post("/api/staff/upload-image", headers=headers,
+                    files={"file": ("群二维码.png", QR_PNG, "image/png")})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
 def upload_proposal(client, headers, activity_id, name="立项书.pdf"):
     """传一份立项书。提交对外联络部审批必须带它（种子里只有这个部门有部长，
     走审批的用例大多交到这里）。"""
@@ -484,7 +496,7 @@ def make_draft(client, headers, *, proposal: bool = True) -> str:
     from datetime import timedelta
     from backend.models import now, uid
     r = client.post("/api/staff/activities", headers=headers,
-                    json={"contact_group_qr": "x", "title": f"二级团体活动 {uid('t')}",
+                    json={"contact_group_qr": upload_qr(client, headers), "title": f"二级团体活动 {uid('t')}",
                           "organizer": "文学院青协", "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
