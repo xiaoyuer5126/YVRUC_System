@@ -12,6 +12,7 @@
 <script setup>
 import { onUnmounted, ref, watch } from 'vue'
 import { authHeaders } from '../api'
+import { isOwnApi } from '../composables/authedImage'
 
 const props = defineProps({ images: { type: Array, default: () => [] } })
 const srcs = ref([])
@@ -24,6 +25,7 @@ function release() {
 async function load() {
   release()
   const got = await Promise.all(props.images.map(async (img) => {
+    if (!isOwnApi(img.url)) return ''   // 只给本站接口带令牌
     try {
       const resp = await fetch(img.url, { headers: authHeaders() })
       return resp.ok ? URL.createObjectURL(await resp.blob()) : ''
