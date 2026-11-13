@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -17,20 +18,21 @@ import pytest
 from backend import config
 from backend.models import Attachment, Enrollment, now, uid
 from backup import job
-from conftest import login, student_row
+from conftest import ADMIN, login, student_row
 
 PNG = b"\x89PNG\r\n\x1a\n" + "用例用的二维码图".encode()
 
 
 def _upload(client, headers, data: bytes = PNG, name: str = "群二维码.png"):
+    """传一张二维码，返回文件编号（活动里存的就是它）。"""
     r = client.post("/api/staff/upload-image", headers=headers,
                     files={"file": (name, data, "image/png")})
     assert r.status_code == 200, r.text
-    return r.json()["url"]
+    return r.json()["id"]
 
 
-def _att_id(url: str) -> str:
-    return url.rstrip("/").rsplit("/", 1)[-1]
+def _url(att_id: str) -> str:
+    return f"/api/staff/contact-qr/{att_id}"
 
 
 # ---------------------------------------------------------------- 目录
@@ -79,8 +81,9 @@ def test_compose_把_data_下每个目录都挂上了卷():
 # ---------------------------------------------------------------- 上传与读回
 
 def test_上传的二维码落在挂载卷里_能原样读回(client, admin, db):
-    url = _upload(client, admin)
-    row = db.get(Attachment, _att_id(url))
+    att = _upload(client, admin)
+    url = _url(att)
+    row = db.get(Attachment, att)
     assert row is not None and row.owner_type == "activity_qr"
 
     path = config.MATERIAL_DIR / row.stored_name
@@ -110,13 +113,13 @@ def test_只收图片_且单份不超过_2MB(client, admin):
 # ---------------------------------------------------------------- 鉴权
 
 def test_没人登录读不到(client, admin):
-    url = _upload(client, admin)
+    url = _url(_upload(client, admin))
     assert client.get(url).status_code == 401
 
 
 def test_别的管理者也读不到(client, admin, initiator):
     """有管理身份、但不管这个活动的人，和陌生人一样只看到 404。"""
-    url = _upload(client, admin)
+    url = _url(_upload(client, admin))
     r = client.get(url, headers=initiator)
     assert r.status_code == 404 and "不存在" in r.json()["detail"]
 
@@ -125,26 +128,28 @@ def test_活动管理者和报上名的志愿者读得到(client, admin, db, ope
                                             take_student):
     act, g = open_group(5)
     act.contact_group_qr = _upload(client, admin)
+    url = _url(act.contact_group_qr)
     db.commit()
 
-    assert client.get(act.contact_group_qr, headers=admin).status_code == 200
+    assert client.get(url, headers=admin).status_code == 200
 
     sid = take_student()
     me = login(client, sid)
     # 没报名的人读不到
-    assert client.get(act.contact_group_qr, headers=me).status_code == 404
+    assert client.get(url, headers=me).status_code == 404
 
     db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
                       user_id=student_row(db, sid).id,
                       position_id=g.test_position_id, status="enrolled",
                       joined_at=now()))
     db.commit()
-    assert client.get(act.contact_group_qr, headers=me).status_code == 200
+    assert client.get(url, headers=me).status_code == 200
 
 
 def test_退了选就读不到(client, admin, db, open_group, take_student):
     act, g = open_group(5)
     act.contact_group_qr = _upload(client, admin)
+    url = _url(act.contact_group_qr)
     sid = take_student()
     me = login(client, sid)
     enr = Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
@@ -153,16 +158,16 @@ def test_退了选就读不到(client, admin, db, open_group, take_student):
                      joined_at=now())
     db.add(enr)
     db.commit()
-    assert client.get(act.contact_group_qr, headers=me).status_code == 200
+    assert client.get(url, headers=me).status_code == 200
 
     enr.status = "cancelled"
     db.commit()
-    assert client.get(act.contact_group_qr, headers=me).status_code == 404
+    assert client.get(url, headers=me).status_code == 404
 
 
 def test_传了还没保存的图_只有传的人看得到(client, admin, initiator):
     """表单里先传图后保存：这时还没有活动指向它，只给传的人预览。"""
-    url = _upload(client, admin)
+    url = _url(_upload(client, admin))
     assert client.get(url, headers=admin).status_code == 200
     assert client.get(url, headers=initiator).status_code == 404
 
@@ -181,8 +186,9 @@ def test_别的附件不走这条路(client, admin, db):
 
 def test_文件真丢了就说重新上传(client, admin, db):
     """卷被换掉、文件没跟着来时，别回一个空白图：说清要重新上传。"""
-    url = _upload(client, admin)
-    row = db.get(Attachment, _att_id(url))
+    att = _upload(client, admin)
+    url = _url(att)
+    row = db.get(Attachment, att)
     (config.MATERIAL_DIR / row.stored_name).unlink()
     r = client.get(url, headers=admin)
     assert r.status_code == 404 and "重新上传" in r.json()["detail"]
@@ -191,3 +197,77 @@ def test_文件真丢了就说重新上传(client, admin, db):
 def test_匿名直链_media_已经没了(client):
     """老的那条 /api/media/{name} 是被这次事故掩盖过的匿名口子，删掉不许再开。"""
     assert client.get("/api/media/x.png").status_code == 404
+
+
+# ---------------------------------------------------------------- 存进活动的只能是自己刚传的二维码
+# 2026-11-12 学校渗透测试：抓包把 contact_group_qr 改成外站地址，前端取图时
+# 会带着登录令牌去请求它。活动里只存二维码的文件编号，保存时认领。
+
+def _body(qr: str) -> dict:
+    return {"contact_group_qr": qr, "title": f"二维码认领 {uid('t')}",
+            "organizer": "校青协", "intro": "x", "location": "世纪馆",
+            "contacts": [{"name": "王", "phone": "13900000000"}],
+            "reg_start": (now() - timedelta(days=1)).isoformat(),
+            "reg_end": (now() + timedelta(days=5)).isoformat()}
+
+
+def _create(client, headers, qr: str):
+    return client.post("/api/staff/activities", headers=headers, json=_body(qr))
+
+
+EVIL = ["https://nsjz.oastify.com/iamam", "https://10.173.23.54/login?signout=1",
+        "/api/staff/contact-qr/x", "data:image/png;base64,AAAA", "x"]
+
+
+@pytest.mark.parametrize("value", EVIL)
+def test_新建活动不收外站地址和随手填的值(client, admin, value):
+    r = _create(client, admin, value)
+    assert r.status_code == 400 and "二维码" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("value", EVIL)
+def test_修改与复制同样不收(client, admin, value):
+    aid = _create(client, admin, _upload(client, admin)).json()["id"]
+    r = client.patch(f"/api/staff/activities/{aid}", headers=admin,
+                     json={"contact_group_qr": value})
+    assert r.status_code == 400 and "二维码" in r.json()["detail"]
+    r = client.post(f"/api/staff/activities/{aid}/copy", headers=admin,
+                    json={"shift_days": 1, "contact_group_qr": value})
+    assert r.status_code == 400 and "二维码" in r.json()["detail"]
+
+
+def test_别人传的二维码挂不过来(client, admin, initiator):
+    theirs = _upload(client, initiator)
+    r = _create(client, admin, theirs)
+    assert r.status_code == 400
+
+
+def test_已挂在别的活动上的二维码不能再挂一次(client, admin):
+    qr = _upload(client, admin)
+    assert _create(client, admin, qr).status_code == 200
+    assert _create(client, admin, qr).status_code == 400
+
+
+def test_别的附件编号不算二维码(client, admin, db):
+    row = Attachment(id=uid("att"), owner_type="application", owner_id="",
+                     activity_id="", kind="file", title="立项书.pdf",
+                     stored_name="whatever.pdf", size=1,
+                     uploaded_by=student_row(db, ADMIN).id)
+    db.add(row)
+    db.commit()
+    assert _create(client, admin, row.id).status_code == 400
+
+
+def test_没换图照常保存_换成自己新传的也行(client, admin, db):
+    from backend.models import Activity
+    qr = _upload(client, admin)
+    aid = _create(client, admin, qr).json()["id"]
+    r = client.patch(f"/api/staff/activities/{aid}", headers=admin,
+                     json={"contact_group_qr": qr, "intro": "改了简介"})
+    assert r.status_code == 200, r.text
+    new = _upload(client, admin)
+    r = client.patch(f"/api/staff/activities/{aid}", headers=admin,
+                     json={"contact_group_qr": new})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(Activity, aid).contact_group_qr == new
