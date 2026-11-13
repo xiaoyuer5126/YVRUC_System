@@ -433,8 +433,8 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
         body.contact_group_qr = ""
         body.reg_start = body.reg_end = None
         body.recruit_campuses, body.recruit_stages, body.recruit_colleges = [], [], []
-    elif not body.contact_group_qr.strip():
-        raise HTTPException(400, "请上传志愿者联络群二维码")
+    else:
+        body.contact_group_qr = claim_qr(db, body.contact_group_qr, user)
     reg_start, reg_end = _parse_dt(body.reg_start), _parse_dt(body.reg_end)
     if not record and (reg_start is None or reg_end is None):
         raise HTTPException(400, "请选择报名开始与截止时间")
@@ -444,7 +444,7 @@ def create_activity(body: ActivityBody, db: OrmSession = Depends(db_session),
                    co_organizer=(body.co_organizer or "").strip(),
                    intro=body.intro.strip(), location=body.location.strip(),
                    location_point=None if record else _clean_point(body.location_point),
-                   contact_group_qr=body.contact_group_qr.strip(),
+                   contact_group_qr=body.contact_group_qr,
                    cover_hue=body.cover_hue,
                    volunteer_requirement=body.volunteer_requirement.strip(),
                    precautions=body.precautions.strip(),
@@ -520,9 +520,7 @@ def update_activity(activity_id: str, body: dict, bg: BackgroundTasks,
         elif key == "recruit_colleges":
             act.recruit_colleges = _clean_colleges(value)
         elif key == "contact_group_qr":
-            if not str(value).strip():
-                raise HTTPException(400, "志愿者联络群二维码不能为空")
-            act.contact_group_qr = str(value).strip()
+            act.contact_group_qr = claim_qr(db, value, user, act)
         elif key == "co_organizer":
             # 选填：清空就是各自单独主办，不留空白。长度同新建时的上限，超长
             # 直接写库会撞列宽报 500
@@ -831,7 +829,7 @@ def _fill_vacancies(db: OrmSession, act: Activity) -> tuple[int, list[str]]:
 class CopyActivityBody(BaseModel):
     title: str = ""
     shift_days: int = 7      # 所有时间整体平移多少天
-    contact_group_qr: str = ""   # 新活动新群，复制时就要传新图
+    contact_group_qr: str = ""   # 新活动新群，复制时就要传新图（上传后拿到的编号）
 
 
 @router.post("/activities/{activity_id}/copy")
@@ -848,11 +846,9 @@ def copy_activity_route(activity_id: str, body: CopyActivityBody,
     if len(title) > 128:
         raise HTTPException(400, "活动名称过长")
     # 补记录活动不公开，没有联络群
-    if not src.is_record() and not body.contact_group_qr.strip():
-        raise HTTPException(400, "请上传新活动的志愿者联络群二维码")
+    qr = "" if src.is_record() else claim_qr(db, body.contact_group_qr, user)
     act = copying.copy_activity(db, src, user, title=title,
-                                shift_days=body.shift_days,
-                                contact_group_qr=body.contact_group_qr.strip())
+                                shift_days=body.shift_days, contact_group_qr=qr)
     audit_log(db, actor=user, action="copy", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary=f"复制自「{src.title}」（{copying.describe(src)}），"
@@ -2939,39 +2935,56 @@ def add_walkin(shift_id: str, body: dict,
 # 二维码是用户上传的文件，和材料走同一条路：落在 config.MATERIAL_DIR（挂载卷）、
 # 写一条 Attachment、读的时候判权限。别为了 <img src> 好写另开一条匿名直链——
 # 2026-10-13 那次丢文件就出在这条自成一体的路上（目录自己拼，还错了一层）。
+#
+# 活动的 contact_group_qr 里存的是这条 Attachment 的编号，不是地址：前端拿编号
+# 自己拼出 /api/staff/contact-qr/<编号> 去取。存地址的话，抓包改成外站网址，
+# 前端取图时会把登录令牌一并发过去（2026-11-12 学校渗透测试报的就是这个）。
 QR_OWNER = "activity_qr"
-QR_URL_PREFIX = "/api/staff/contact-qr/"
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
-
-
-def qr_url(attachment_id: str) -> str:
-    """二维码的访问地址。活动的 contact_group_qr 里存的就是它。"""
-    return f"{QR_URL_PREFIX}{attachment_id}"
 
 
 def qr_activity(db: OrmSession, attachment_id: str) -> Activity | None:
     """这张二维码挂在哪个活动上。
 
     上传发生在活动存在之前（表单里先传图、后保存），所以归属不看
-    Attachment.owner_id，认的是活动里存着的那个地址——上传后没保存的，
+    Attachment.owner_id，认的是活动里存着的编号——上传后没保存的，
     这里就是 None。
     """
     return (db.query(Activity)
-            .filter(Activity.contact_group_qr == qr_url(attachment_id)).first())
+            .filter(Activity.contact_group_qr == attachment_id).first())
+
+
+def claim_qr(db: OrmSession, value, user: User, act: Activity | None = None) -> str:
+    """把表单传来的二维码编号认领给活动，返回要存的编号。
+
+    没改（还是这个活动现在的那张）直接放行；换图只认本人刚传、还没挂到任何
+    活动上的二维码。别人的图、别的活动的图、外站地址一律当无效——不然改个
+    请求就能把别人的图挂过来，或者让前端去取一个外站地址。
+    """
+    value = str(value or "").strip()
+    if not value:
+        raise HTTPException(400, "请上传志愿者联络群二维码")
+    if act is not None and value == act.contact_group_qr:
+        return value
+    row = db.get(Attachment, value)
+    if (row is None or row.owner_type != QR_OWNER or row.uploaded_by != user.id
+            or qr_activity(db, value) is not None):
+        raise HTTPException(400, "志愿者联络群二维码无效，请重新上传")
+    return value
 
 
 @router.post("/upload-image")
 async def upload_image(file: UploadFile = File(...),
                        db: OrmSession = Depends(db_session),
                        user: User = Depends(require_manager)):
-    """上传志愿者联络群二维码（png/jpg/jpeg/webp，≤2MB），返回访问地址。"""
+    """上传志愿者联络群二维码（png/jpg/jpeg/webp，≤2MB），返回文件编号。"""
     files = await uploads.read_files([file], label="二维码",
                                      exts=uploads.IMAGE_TYPES, max_count=1,
                                      max_bytes=MAX_IMAGE_BYTES)
     row = uploads.save_files(db, files, owner_type=QR_OWNER, owner_id="",
                              uploaded_by=user.id)[0]
     db.commit()
-    return {"url": qr_url(row.id)}
+    return {"id": row.id}
 
 
 @router.get("/contact-qr/{attachment_id}")
