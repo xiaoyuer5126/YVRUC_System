@@ -26,11 +26,12 @@ from . import config
 from .audit import log as audit_log
 from . import migrate
 from .database import SessionLocal, engine
-from .qrcodes import qr_svg
+from . import uploads
 from .models import (Activity, ActivityManager, Application, AuditLog, CheckinRecord, CheckinTask, Enrollment, FormQuestion, HoursRecord, Notification, Position, Shift, ShiftPeriod, User, ViolationRecord, day_of, day_text, iso, uid)
 # 已确认的时长要连明细一起种：明细不是另写的一段文字，是这套算法从签到记录
 # 里推出来的，所以直接借过来用，免得演示数据和线上算出来的两套口径
 from .routers.records import _import_fields
+from .routers.staff_activities import QR_OWNER
 from .routers.staff_ops import checkin_segments
 
 random.seed(42)
@@ -64,19 +65,21 @@ def fake_id_card(birth: str, seq: int) -> str:
 
 
 
-def demo_qr(label: str) -> str:
-    """演示用志愿者联络群二维码（内联 SVG，不依赖外部文件）。
+def demo_qr(db) -> str:
+    """演示用志愿者联络群二维码，返回文件编号。
 
     创建活动时二维码是必填项，报名成功后要弹给志愿者看，种子数据不给的话
-    弹窗就是一片空白，看起来像功能没做。
+    弹窗就是一片空白，看起来像功能没做。和线上一样落一份真文件、写一条
+    Attachment；每个活动一张，读图时按活动判权限。
     """
-    import base64
-    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160">'
-           f'<rect width="160" height="160" fill="#fff"/>'
-           f'{"".join(qr_svg(label).split(chr(10))[1:-1])}'
-           f'</svg>')
-    return "data:image/svg+xml;base64," + base64.b64encode(
-        svg.encode("utf-8")).decode()
+    import io
+    import segno
+    buf = io.BytesIO()
+    segno.make("YVRUC-CONTACT-GROUP", error="m").save(
+        buf, kind="png", scale=6, border=2, dark="#1f2329", light="#ffffff")
+    return uploads.save_files(db, [("png", "联络群二维码.png", buf.getvalue())],
+                              owner_type=QR_OWNER, owner_id="",
+                              uploaded_by="")[0].id
 
 
 def dt(days=0, hours=0, minutes=0, base=None):
@@ -233,7 +236,7 @@ def main() -> None:
                          location_point={"lat": 39.96785, "lng": 116.30905},
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"},
                                    {"name": "王砚秋", "phone": "13950010000"}],
-                         contact_group_qr=demo_qr("YVRUC-CONTACT-GROUP"),
+                         contact_group_qr=demo_qr(db),
                          status="published",
                          reg_start=dt(days=-3), reg_end=dt(days=2),
                          created_by=wang.id, created_at=dt(days=-4))
@@ -322,7 +325,7 @@ def main() -> None:
                               "具体分工将在报名截止后由青协统一排班公布。",
                         location="图书馆（明德楼）",
                         contacts=[{"name": "张远航", "phone": "13950030000"}],
-                        contact_group_qr=demo_qr("YVRUC-CONTACT-GROUP"),
+                        contact_group_qr=demo_qr(db),
                         status="published",
                         reg_start=dt(days=-2), reg_end=dt(days=3),
                         created_by=wang.id, created_at=dt(days=-3))
@@ -372,7 +375,7 @@ def main() -> None:
                         location="明德广场",
                         location_point={"lat": 39.96921, "lng": 116.30772},
                         contacts=[{"name": "张远航", "phone": "13950030000"}],
-                        contact_group_qr=demo_qr("YVRUC-CONTACT-GROUP"),
+                        contact_group_qr=demo_qr(db),
                         status="published", reg_start=dt(days=-1),
                         reg_end=dt(days=4), created_by=zhang.id,
                         created_at=dt(days=-2))
@@ -414,7 +417,7 @@ def main() -> None:
                         location="明德堂",
                         contacts=[{"name": "王砚秋", "phone": "13950010000"},
                                   {"name": "张远航", "phone": "13950030000"}],
-                        contact_group_qr=demo_qr("YVRUC-CONTACT-GROUP"),
+                        contact_group_qr=demo_qr(db),
                         status="closed", reg_start=dt(days=-6), reg_end=dt(days=-2),
                         created_by=zhang.id, created_at=dt(days=-7))
         db.add(gala)
@@ -483,7 +486,7 @@ def main() -> None:
                                "岗位简单，仅按场次报名。",
                          location="海淀街道敬老院",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
-                         contact_group_qr=demo_qr("YVRUC-CONTACT-GROUP"),
+                         contact_group_qr=demo_qr(db),
                          status="completed", reg_start=dt(days=-20),
                          hours_approved_at=dt(days=-6),
                          appeal_deadline=dt(days=-5),
@@ -541,7 +544,7 @@ def main() -> None:
                                "报名截止后由青协统一筛选，录取结果通过企业微信通知。",
                          location="东门迎新广场",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
-                         contact_group_qr=demo_qr("YVRUC-CONTACT-GROUP"),
+                         contact_group_qr=demo_qr(db),
                          status="published",
                          reg_start=dt(days=-2), reg_end=dt(days=5),
                          created_by=limu.id, created_at=dt(days=-3))
