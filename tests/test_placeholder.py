@@ -12,7 +12,7 @@ from datetime import timedelta
 import pytest
 
 from backend.models import Shift, now, uid
-from conftest import POSITION_TEXT, editing, login
+from conftest import POSITION_TEXT, editing, login, upload_qr
 
 ASSIGN = {"name": "统一分配场", "mode": "assign", "capacity": 3,
           "waitlist_quota": 2}
@@ -22,7 +22,7 @@ ASSIGN = {"name": "统一分配场", "mode": "assign", "capacity": 3,
 def assign_shift(client, admin, db):
     """一个草稿活动 + 一个 assign 场次（自动带占位岗位）。"""
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"contact_group_qr": "x", "title": f"占位测试 {uid('t')}", "organizer": "校青协",
+                    json={"contact_group_qr": upload_qr(client, admin), "title": f"占位测试 {uid('t')}", "organizer": "校青协",
                           "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(hours=1)).isoformat(),

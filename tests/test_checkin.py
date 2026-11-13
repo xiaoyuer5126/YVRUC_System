@@ -11,7 +11,7 @@ from backend import config
 from backend.locks import CHECKIN_CODE_LEN
 from backend.models import (Activity, ActivityManager, CheckinRecord, CheckinTask,
                             Enrollment, Position, Shift, User, now, uid)
-from conftest import mk_shift
+from conftest import mk_shift, upload_qr
 from conftest import ADMIN, login, student_row
 
 
@@ -1137,7 +1137,7 @@ def test_时间灵活场次补签落在开着的那张码上(client, admin, db, 
 def test_时间灵活场次时长不能按场次时长固定计(client, admin, db):
     r = client.post("/api/staff/activities", headers=admin,
                     json={"title": f"灵活场次 {uid('t')}", "organizer": "校青协",
-                          "intro": "x", "location": "东门", "contact_group_qr": "q",
+                          "intro": "x", "location": "东门", "contact_group_qr": upload_qr(client, admin),
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": now().isoformat(),
                           "reg_end": (now() + timedelta(days=1)).isoformat()})

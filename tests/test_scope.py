@@ -14,7 +14,7 @@ import pytest
 
 from backend import config
 from backend.models import Activity, Shift, User, now, uid
-from conftest import POSITION_TEXT, login, student_row
+from conftest import POSITION_TEXT, login, student_row, upload_qr
 
 CAMPUS_A, CAMPUS_B = config.CAMPUSES[0], config.CAMPUSES[1]
 STAGE_A, STAGE_B = config.STAGES[0], config.STAGES[1]
@@ -213,7 +213,7 @@ def test_学院取值去空白去重且限长(client, admin, db, scoped):
 
 def test_创建活动时就能带上学院(client, admin, db):
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"contact_group_qr": "x", "title": f"学院活动 {uid('t')}",
+                    json={"contact_group_qr": upload_qr(client, admin), "title": f"学院活动 {uid('t')}",
                           "organizer": "青协", "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "recruit_colleges": [REAL_COLLEGE, REAL_COLLEGE],
@@ -228,7 +228,7 @@ def test_复制活动带上招募学院(client, admin, db, scoped):
     assert _set_colleges(client, admin, act, [REAL_COLLEGE]).status_code == 200
     r = client.post(f"/api/staff/activities/{act.id}/copy", headers=admin,
                     json={"shift_days": 7, "title": f"学院副本 {uid('t')}",
-                          "contact_group_qr": "data:new"})
+                          "contact_group_qr": upload_qr(client, admin)})
     assert r.status_code == 200, r.text
     d = client.get(f"/api/activities/{r.json()['id']}", headers=admin).json()
     assert d["recruit_colleges"] == [REAL_COLLEGE]

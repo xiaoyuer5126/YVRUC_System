@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from conftest import editing, login
+from conftest import editing, login, upload_qr
 
 
 def _visible_summaries(client, headers, activity_id):
@@ -82,7 +82,7 @@ def test_筹备期的改动不进志愿者的变更记录(client, admin, db, tak
     from conftest import POSITION_TEXT
 
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"contact_group_qr": "x", "title": f"筹备期留痕 {now():%H%M%S%f}",
+                    json={"contact_group_qr": upload_qr(client, admin), "title": f"筹备期留痕 {now():%H%M%S%f}",
                           "organizer": "校青协", "intro": "x",
                           "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
@@ -128,7 +128,7 @@ def test_审批中的改动同样不可见(client, admin, db, take_student):
     from backend.models import Activity, now
 
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"contact_group_qr": "x", "title": f"审批期留痕 {now():%H%M%S%f}",
+                    json={"contact_group_qr": upload_qr(client, admin), "title": f"审批期留痕 {now():%H%M%S%f}",
                           "organizer": "校青协", "intro": "x",
                           "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],

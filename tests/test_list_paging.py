@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from backend.models import Notification, now, uid
-from conftest import login, student_row
+from conftest import login, student_row, upload_qr
 
 
 def _batch(db, take_student, n: int, **fields) -> list[str]:
@@ -130,7 +130,7 @@ def test_管理端活动列表分页_同一时刻建的也不重不漏(client, a
     for i in range(7):
         r = client.post("/api/staff/activities", headers=admin,
                         json={"title": f"{tag}-{i}", "organizer": "文学院青协",
-                              "location": "世纪馆", "intro": "x", "contact_group_qr": "x",
+                              "location": "世纪馆", "intro": "x", "contact_group_qr": upload_qr(client, admin),
                               "contacts": [{"name": "王", "phone": "13900000000"}],
                               "reg_start": now().isoformat(),
                               "reg_end": (now() + timedelta(days=5)).isoformat()})

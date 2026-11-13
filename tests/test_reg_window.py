@@ -12,7 +12,7 @@ from datetime import timedelta
 import pytest
 
 from backend.models import Activity, Shift, now, uid
-from conftest import set_shift_time
+from conftest import set_shift_time, upload_qr
 from conftest import mk_shift
 from conftest import POSITION_TEXT, login
 
@@ -21,7 +21,7 @@ from conftest import POSITION_TEXT, login
 def two_shifts(client, admin, db):
     """一个草稿 + 两个服务场次（第 3 天、第 9 天），报名截止在第 5 天。"""
     r = client.post("/api/staff/activities", headers=admin,
-                    json={"contact_group_qr": "x", "title": f"报名窗口 {uid('t')}", "organizer": "校青协",
+                    json={"contact_group_qr": upload_qr(client, admin), "title": f"报名窗口 {uid('t')}", "organizer": "校青协",
                           "intro": "x", "location": "世纪馆",
                           "contacts": [{"name": "王", "phone": "13900000000"}],
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
@@ -237,7 +237,7 @@ def test_已结束的活动改不了任何东西(client, admin, db, two_shifts):
 
 def _new_activity(client, admin, reg_start, reg_end):
     return client.post("/api/staff/activities", headers=admin,
-                       json={"contact_group_qr": "x", "title": f"报名时间 {uid('t')}",
+                       json={"contact_group_qr": upload_qr(client, admin), "title": f"报名时间 {uid('t')}",
                              "organizer": "校青协", "intro": "x", "location": "世纪馆",
                              "contacts": [{"name": "王", "phone": "13900000000"}],
                              "reg_start": reg_start.isoformat(),
