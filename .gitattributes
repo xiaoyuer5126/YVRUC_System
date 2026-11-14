@@ -1,0 +1,6 @@
+# 行尾：shell 脚本一律 LF。
+#
+# 仓库在 Windows 上开发，core.autocrlf=true 会把检出的文本文件换成 CRLF。脚本一旦
+# 带 \r 到 Linux 服务器或容器里，会报 "$'\r': command not found"，而在 Windows 的
+# Git Bash 里跑又看不出问题——等部署时才炸。钉成 LF 后，检出与提交两头都是 LF。
+*.sh text eol=lf
