@@ -1,10 +1,11 @@
 """备份容器（backup/job.py）：保留策略、定时判断、文件卷的备份与恢复。
 
-数据库那一步要 pg_dump，这里不测；它在本地 compose 上实际跑过一遍备份和恢复。
+数据库那一步替换掉 pg_dump / pg_restore，只测调用顺序和失败时不留半截。
 """
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -116,6 +117,43 @@ def test_备份中途失败不留半截(dirs, monkeypatch):
     with pytest.raises(RuntimeError):
         job.make_backup("manual", root=root, now=datetime(2026, 10, 12, 10, 0), with_db=False)
     assert list(root.iterdir()) == []
+
+
+def test_导出数据库后校验可读_读不出就不留这份(dirs, monkeypatch):
+    root, _ = dirs
+    monkeypatch.setenv("YVRUC_DATABASE_URL", "postgresql+psycopg://u:p@db/yvruc")
+    calls = []
+
+    def fake_run(cmd):
+        calls.append(cmd[0])
+        if cmd[0] == "pg_dump":
+            # 写出一个半截文件
+            Path(cmd[cmd.index("--file") + 1]).write_bytes(b"PGDMP")
+        elif cmd[0] == "pg_restore":
+            raise RuntimeError("pg_restore 失败：could not read input file")
+
+    monkeypatch.setattr(job, "_run", fake_run)
+    with pytest.raises(RuntimeError):
+        job.make_backup("manual", root=root, now=datetime(2026, 10, 12, 10, 0), with_db=True)
+    assert calls == ["pg_dump", "pg_restore"]
+    assert list(root.iterdir()) == []
+
+
+def test_导出数据库并校验通过后备份带上_db_dump(dirs, monkeypatch):
+    root, _ = dirs
+    monkeypatch.setenv("YVRUC_DATABASE_URL", "postgresql+psycopg://u:p@db/yvruc")
+    calls = []
+
+    def fake_run(cmd):
+        calls.append(cmd)
+        if cmd[0] == "pg_dump":
+            Path(cmd[cmd.index("--file") + 1]).write_bytes(b"PGDMP-full")
+
+    monkeypatch.setattr(job, "_run", fake_run)
+    made = job.make_backup("manual", root=root, now=datetime(2026, 10, 12, 10, 0), with_db=True)
+    assert [c[0] for c in calls] == ["pg_dump", "pg_restore"]
+    assert calls[1][1] == "--list"
+    assert (made / "db.dump").read_bytes() == b"PGDMP-full"
 
 
 def test_不认识的文件夹不动(dirs):
