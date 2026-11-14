@@ -10,12 +10,15 @@
 #   docker-compose.school-db.yml     连外部库：不起本机 postgres，migrate 不再等它
 #   docker-compose.prod.yml（本文件）生产特有：证书、443、不起内测的两个入口
 #
-# 本文件只做四件事：
+# 本文件只做三件事：
 #   · 不起 caddy / cloudflared：域名直接解析到这台服务器，TLS 由 nginx 用学校证书终止
 #   · web 换上 https 配置（web/nginx-https.conf.template），证书目录一起挂进去：
 #     YVRUC_CERTS_DIR（默认仓库下 ./.certs）
 #   · web 只开 443（校园网入向唯一放行的端口）
-#   · 备份不再导出数据库：学校库账户没有导入导出权限，只备文件卷
+#
+# 备份照 base 的 backup 服务：每天导出学校库 + 打包文件卷。学校不替我们备这个库，
+# 数据库备份由我们负责；YVRUC_BACKUP_DB 跟随 .env（默认 1）。上线前先跑一次
+# docker compose run --rm backup now，确认学校给的账户能完整导出。
 #
 # 上线前要填的值（.env 里）：
 #   YVRUC_DATABASE_URL      学校统一库的连接串（含账户与口令，密码里的特殊字符要转义）
@@ -48,9 +51,3 @@ services:
     ports: !override
       # 入向唯一放行的端口。校园网防火墙在宿主机外面挡着其余端口，这里不做绑定限制。
       - "${HTTPS_HOST_PORT:-443}:443"
-
-  backup:
-    environment:
-      # 学校统一库的账户没有导入导出权限（见《统一数据库管理规范》第六条），
-      # 数据库备份由学校侧负责；这里只备文件卷。拿到导出权限后可改成 1。
-      YVRUC_BACKUP_DB: "0"
