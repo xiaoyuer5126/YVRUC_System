@@ -215,7 +215,9 @@ backup_db() {
     # pg_dump 的大版本不能低于服务器：版本不匹配时 dump 出来也还原不了，
     # 与其等到救火时才发现，不如现在就报错。
     local server_major
-    server_major=$(psql_remote 'show server_version_num' | cut -c1-2)
+    # 这一句失败（连不上、账户口令错）时 set -e 会让脚本无声退出，所以单独接住
+    server_major=$(psql_remote 'show server_version_num' | cut -c1-2) \
+        || die "连不上学校库，取不到版本号（$DB_USER@$DB_HOST:$DB_PORT/$DB_NAME）：核对 .env 里的 YVRUC_DATABASE_URL，以及本机到库的网络"
     log "学校库大版本：${server_major:-未知}（本机 pg_dump 16）"
     if [ "${server_major:-0}" -gt 16 ]; then
         die "学校库是 PostgreSQL $server_major，本机 pg_dump 16 备份不了；把脚本里的镜像换成 postgres:$server_major"
