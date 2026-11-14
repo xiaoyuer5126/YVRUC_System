@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# 生产部署：记录回滚点 → 备份（文件卷 + 学校库）→ 拉代码 → 构建 → 启动 → 验证。
+# 生产部署：记录回滚点 → 备份（备份容器：学校库 + 文件卷）→ 拉代码 → 构建 → 启动 → 验证。
+#
+# 备份只调备份容器的 `backup now`：库和文件卷一份，导出后校验可读，按它的保留策略
+# 轮换（手动备份留最近 10 份，见 README「备份与恢复」）。脚本自己不 pg_dump、不清理。
 #
 # 在服务器上从仓库任意目录跑（脚本会自己定位仓库根）：
 #   bash ops/deploy.sh                 # 完整流程（先让你确认）
@@ -14,7 +17,6 @@
 #   LOG_DIR        部署日志与回滚点，默认 ~/yvruc-deploy-logs
 #   DOMAIN         平台域名，默认 volunteer.ruc.edu.cn
 #   HEALTH_TIMEOUT 等后端健康的上限秒数，默认 120
-#   KEEP_DB_DUMPS  数据库备份保留份数，默认 14
 #
 # 失败时**不自动回滚**：根因不明时把代码和数据库一起动，比原地停下更难收拾。
 # 脚本退出前会打印这次的回滚命令。
@@ -26,7 +28,6 @@ BACKUP_DIR=${BACKUP_DIR:-/data/backups}
 LOG_DIR=${LOG_DIR:-$HOME/yvruc-deploy-logs}
 DOMAIN=${DOMAIN:-volunteer.ruc.edu.cn}
 HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-120}
-KEEP_DB_DUMPS=${KEEP_DB_DUMPS:-14}
 
 COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.school-db.yml -f docker-compose.prod.yml)
 
@@ -35,8 +36,7 @@ DO_BACKUP=1
 BACKUP_ONLY=0
 ASSUME_YES=0
 NOTHING_TO_DO=0
-FILE_BACKUP=""
-DB_DUMP=""
+BACKUP_NAME=""
 
 for arg in "$@"; do
     case "$arg" in
@@ -96,7 +96,7 @@ load_db_env() {
     local tmp
     tmp=$(mktemp); chmod 600 "$tmp"
     python3 - "$APP_DIR/.env" "$tmp" <<'PY'
-"""把 .env 里的连接串拆成 pg_dump 要的几项；口令单独走 PGPASSWORD，不进命令行。"""
+"""把 .env 里的连接串拆成 psql 要的几项（查部署前的迁移版本）；口令单独走 PGPASSWORD，不进命令行。"""
 import re, shlex, sys, urllib.parse
 
 env_path, out_path = sys.argv[1], sys.argv[2]
@@ -130,48 +130,17 @@ psql_remote() {
 
 # ---------- 备份 ----------
 
-backup_files() {
-    log "备份文件卷与操作日志（上传件、学习材料、操作日志）"
+run_backup() {
+    log "备份（学校库 + 上传件 + 操作日志，走备份容器）"
     if [ "$DRY_RUN" = 1 ]; then log "[dry-run] compose run --rm backup now"; return; fi
-    compose run --rm backup now || die "文件卷备份失败"
-    FILE_BACKUP=$(in_backup_dir 'ls -1t /b | grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}_" | head -1' || true)
-    log "文件卷备份：${FILE_BACKUP:-（没找到，去 $BACKUP_DIR 看看）}"
-}
-
-backup_db() {
-    if [ "${DB_EMPTY:-1}" = "1" ]; then
-        warn "YVRUC_DATABASE_URL 未配置，跳过数据库备份"
-        return
+    compose run --rm backup now || die "备份失败（看上面备份容器的输出）"
+    BACKUP_NAME=$(in_backup_dir 'ls -1 /b | grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}_manual$" | sort | tail -1' || true)
+    [ -n "$BACKUP_NAME" ] || die "备份容器说成功了，但 $BACKUP_DIR 里找不到这份备份：确认 .env 的 YVRUC_BACKUP_DIR 与 BACKUP_DIR 是同一个目录"
+    if in_backup_dir "test -f /b/$BACKUP_NAME/db.dump"; then
+        log "备份完成：$BACKUP_NAME（含数据库，已校验可读）"
+    else
+        warn "备份 $BACKUP_NAME 不含数据库：.env 里 YVRUC_BACKUP_DB 是不是设成了 0？"
     fi
-    local name="db-$NOW.dump"
-    log "备份数据库 → $BACKUP_DIR/$name（库 $DB_NAME）"
-
-    if [ "$DRY_RUN" = 1 ]; then
-        log "[dry-run] pg_dump -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME"
-        return
-    fi
-
-    # pg_dump 的大版本不能低于服务器：版本不匹配时 dump 出来也还原不了，
-    # 与其等到救火时才发现，不如现在就报错。
-    local server_major
-    server_major=$(psql_remote 'show server_version_num' | cut -c1-2)
-    log "学校库大版本：${server_major:-未知}（本机 pg_dump 16）"
-    if [ "${server_major:-0}" -gt 16 ]; then
-        die "学校库是 PostgreSQL $server_major，本机 pg_dump 16 备份不了；把脚本里的镜像换成 postgres:$server_major"
-    fi
-
-    docker run --rm -e PGPASSWORD="$DB_PASSWORD" -v "$BACKUP_DIR:/b" postgres:16-alpine \
-        pg_dump -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
-                -Fc -f "/b/$name" || die "数据库备份失败"
-
-    # 校验：dump 能被 pg_restore 读出目录才算可用。空文件或半截文件这里就拦住。
-    docker run --rm -v "$BACKUP_DIR:/b" postgres:16-alpine \
-        pg_restore --list "/b/$name" >/dev/null || die "数据库备份无法读取（$name）"
-
-    DB_DUMP="$name"
-    log "数据库备份完成：$name（$(in_backup_dir "du -h /b/$name | cut -f1")，已校验可读）"
-
-    in_backup_dir "ls -1t /b/db-*.dump 2>/dev/null | tail -n +$((KEEP_DB_DUMPS + 1)) | while read -r f; do rm -f \"/b/\$f\"; echo \"  清理旧数据库备份 \$f\"; done"
 }
 
 # ---------- 回滚点 ----------
@@ -194,8 +163,7 @@ record_rollback() {
 数据库迁移版本（部署前）：${OLD_MIGRATION:-未知}
 backend 镜像：$OLD_BACKEND_IMAGE
 web 镜像：$OLD_WEB_IMAGE
-文件卷备份：${FILE_BACKUP:-未做}
-数据库备份：${DB_DUMP:-未做}
+部署前备份：${BACKUP_NAME:-未做}（备份容器，库 + 文件卷）
 数据库：$DB_USER@$DB_HOST:$DB_PORT/$DB_NAME
 
 回滚命令（在 $APP_DIR 下执行）：
@@ -204,7 +172,7 @@ web 镜像：$OLD_WEB_IMAGE
   docker compose ${COMPOSE_FILES[*]} up -d
 EOF
     log "回滚点：$f"
-    log "  代码 ${OLD_SHA_SHORT}　迁移 ${OLD_MIGRATION:-未知}　数据库备份 ${DB_DUMP:-未做}"
+    log "  代码 ${OLD_SHA_SHORT}　迁移 ${OLD_MIGRATION:-未知}　备份 ${BACKUP_NAME:-未做}"
 }
 
 # ---------- 部署 ----------
@@ -290,15 +258,13 @@ print_rollback() {
    docker compose ${COMPOSE_FILES[*]} build
    docker compose ${COMPOSE_FILES[*]} up -d
 
-2) 文件卷回滚（上传件、学习材料、操作日志会被覆盖）：
-   docker compose ${COMPOSE_FILES[*]} run --rm backup list
-   docker compose ${COMPOSE_FILES[*]} run --rm backup restore ${FILE_BACKUP:-<备份名>} --yes
-
-3) 数据库回滚（谨慎：先把当前库再备一份）：
-   # 用部署前的 dump 覆盖（--clean 需要建表与删除权限）
-   docker run --rm -e PGPASSWORD='<口令>' -v $BACKUP_DIR:/b postgres:16-alpine \\
-     pg_restore --clean --if-exists -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME \\
-                /b/${DB_DUMP:-<dump 文件>}
+2) 数据回滚（学校库 + 上传件 + 操作日志一起回到部署前；部署后的改动全部丢失）。
+   要做就放在 1) 的 up -d 之前：库还是新版本时旧代码起不来；新代码 up -d 又会把库升回去。
+   docker compose ${COMPOSE_FILES[*]} run --rm backup now      # 先把现在的状态也备一份
+   docker compose ${COMPOSE_FILES[*]} stop backend             # 恢复库时不能有别的连接
+   docker compose ${COMPOSE_FILES[*]} run --rm backup restore ${BACKUP_NAME:-<备份名>} --yes
+   docker compose ${COMPOSE_FILES[*]} up -d
+   只恢复其中一样加 --only db 或 --only files；有哪些备份：run --rm backup list
 ====================================================
 EOF
 }
@@ -314,7 +280,7 @@ main() {
     if [ "$ASSUME_YES" = 0 ] && [ "$DRY_RUN" = 0 ]; then
         if [ -t 0 ]; then
             echo
-            echo "将要：备份（文件卷 + 学校库）→ git pull → 构建 → 启动 → 验证"
+            echo "将要：备份（学校库 + 文件卷）→ git pull → 构建 → 启动 → 验证"
             echo "仓库：$APP_DIR"
             read -r -p "继续？[y/N] " ans
             case "${ans:-}" in
@@ -329,8 +295,7 @@ main() {
     load_db_env
 
     if [ "$DO_BACKUP" = 1 ]; then
-        backup_files
-        backup_db
+        run_backup
     else
         warn "按参数跳过备份"
     fi
