@@ -91,6 +91,7 @@ ASSUME_YES=0
 NOTHING_TO_DO=0
 FILE_BACKUP=""
 DB_DUMP=""
+ROLLBACK_READY=0
 
 for arg in "$@"; do
     case "$arg" in
@@ -244,30 +245,97 @@ record_rollback() {
     OLD_SHA_SHORT=$(cd "$APP_DIR" && git rev-parse --short HEAD)
     OLD_BACKEND_IMAGE=$(docker inspect -f '{{.Image}}' yvruc-backend 2>/dev/null || echo 'n/a')
     OLD_WEB_IMAGE=$(docker inspect -f '{{.Image}}' yvruc-web 2>/dev/null || echo 'n/a')
-    if [ "$DRY_RUN" = 1 ]; then
-        OLD_MIGRATION=$(echo '（dry-run 不查）')
-    else
-        OLD_MIGRATION=$(psql_remote 'select version_num from alembic_version' 2>/dev/null | tr -d '[:space:]' || true)
+    OLD_MIGRATION=""
+    if [ "$DRY_RUN" = 0 ] && [ "${DB_EMPTY:-1}" = 0 ]; then
+        OLD_MIGRATION=$(current_migration)
     fi
 
     local f="$LOG_DIR/rollback-$NOW.txt"
-    cat > "$f" <<EOF
-部署时间：$NOW
-回滚点（部署前的代码）：$OLD_SHA
-数据库迁移版本（部署前）：${OLD_MIGRATION:-未知}
-backend 镜像：$OLD_BACKEND_IMAGE
-web 镜像：$OLD_WEB_IMAGE
-文件卷备份：${FILE_BACKUP:-未做}
-数据库备份：${DB_DUMP:-未做}
-数据库：$DB_USER@$DB_HOST:$DB_PORT/$DB_NAME
-
-回滚命令（在 $APP_DIR 下执行）：
-  git checkout $OLD_SHA
-  docker compose ${COMPOSE_FILES[*]} build
-  docker compose ${COMPOSE_FILES[*]} up -d
-EOF
+    {
+        echo "部署时间：$NOW"
+        echo "回滚点（部署前的代码）：$OLD_SHA"
+        echo "数据库迁移版本（部署前）：${OLD_MIGRATION:-未知}"
+        echo "backend 镜像：$OLD_BACKEND_IMAGE"
+        echo "web 镜像：$OLD_WEB_IMAGE"
+        echo "文件卷备份：${FILE_BACKUP:-未做}"
+        echo "数据库备份：${DB_DUMP:-未做}"
+        echo "数据库：${DB_USER:-}@${DB_HOST:-}:${DB_PORT:-}/${DB_NAME:-}"
+        echo
+        # 写这份文件时还没部署，不知道库会不会升级，两种情况都写上
+        rollback_guide ""
+    } > "$f"
+    ROLLBACK_READY=1
     log "回滚点：$f"
     log "  代码 ${OLD_SHA_SHORT}　迁移 ${OLD_MIGRATION:-未知}　数据库备份 ${DB_DUMP:-未做}"
+}
+
+# 库现在的迁移版本号；查不到时为空
+current_migration() {
+    psql_remote 'select version_num from alembic_version' 2>/dev/null | tr -d '[:space:]' || true
+}
+
+# 回滚步骤。参数是现在库里的迁移版本：和部署前一样就只切代码；不一样或不知道
+# （参数为空）时先处理数据库。
+#
+# 为什么数据库要先处理：后端启动时要求库版本恰好等于代码里最新的迁移
+# （backend/database.py 的 check_schema），而 migrate 服务只会升级。库已经升到
+# 新版本时只把代码切回去，migrate 在旧代码里找不到库里的版本号，直接失败，后端
+# 起不来。所以要先用**现在这份新代码**把库降回部署前的版本（降级脚本只在新代码
+# 里有），或者用部署前的库备份整库恢复，然后再切代码。
+rollback_guide() {
+    local cur=$1 old=${OLD_MIGRATION:-}
+    local dc="docker compose ${COMPOSE_FILES[*]}"
+    local code_steps="   cd $APP_DIR
+   git checkout ${OLD_SHA:-<部署前的提交>}
+   $dc build
+   $dc up -d
+   # 回滚后下次再部署前，先 git checkout main，不然 git pull 会失败"
+
+    echo "回滚命令（都在 $APP_DIR 下执行）："
+    echo
+    if [ -n "$cur" ] && [ -n "$old" ] && [ "$cur" = "$old" ]; then
+        echo "数据库版本没变（$old），只回滚代码："
+        echo "$code_steps"
+    else
+        if [ -n "$cur" ]; then
+            echo "数据库已从 ${old:-（部署前版本未记下）} 升到 $cur，要先回滚数据库，再回滚代码。"
+        else
+            echo "先查库现在的版本（用现在这份代码查）："
+            echo "   $dc run --rm --no-deps --entrypoint alembic migrate -c backend/alembic.ini current"
+            echo "等于 ${old:-部署前的版本} 就跳过第 1、2 步，只做第 3 步；不等于就照顺序做。"
+        fi
+        cat <<EOF
+
+1) 先把现在的库和文件卷再备一份（回滚做错了还能回来）：
+   bash ops/deploy.sh --backup-only
+
+2) 回滚数据库，二选一，都必须在切代码之前做：
+   a. 降级到部署前的版本（保留部署后新写入的数据；新迁移加的表和列里的数据会丢，
+      各迁移的 downgrade 写了丢什么）。降级脚本只在新代码里有，所以趁代码还没切回去：
+   $dc stop backend
+   $dc run --rm --no-deps --entrypoint alembic migrate -c backend/alembic.ini downgrade ${old:-<部署前的版本号>}
+EOF
+        if [ -z "$old" ]; then
+            echo "      （部署前的版本号没记下，这一条用不了，走 b）"
+        fi
+        cat <<EOF
+   b. 用部署前的库备份整库恢复（部署之后写入的数据全部丢失）：
+   $dc stop backend
+   docker run --rm -e PGPASSWORD='<口令>' -v $BACKUP_DIR:/b postgres:16-alpine \\
+     pg_restore --clean --if-exists -h ${DB_HOST:-<主机>} -p ${DB_PORT:-<端口>} -U ${DB_USER:-<用户>} -d ${DB_NAME:-<库名>} \\
+                /b/${DB_DUMP:-<部署前的 dump 文件>}
+   （--clean 需要建表与删除权限）
+
+3) 回滚代码：
+$code_steps
+EOF
+    fi
+    cat <<EOF
+
+文件卷回滚（只在上传件、学习材料、操作日志也要退回时做，会整卷覆盖）：
+   $dc run --rm backup list
+   $dc run --rm backup restore ${FILE_BACKUP:-<备份名>} --yes
+EOF
 }
 
 # ---------- 部署 ----------
@@ -350,29 +418,25 @@ verify() {
 }
 
 print_rollback() {
-    cat <<EOF
+    local cur=""
+    if [ "$DRY_RUN" = 0 ] && [ "${DB_EMPTY:-1}" = 0 ]; then
+        cur=$(current_migration)
+    fi
+    echo
+    echo "================ 出问题时照这里回滚 ================"
+    echo "回滚点文件：$LOG_DIR/rollback-$NOW.txt"
+    echo "部署日志：  $LOG_FILE"
+    echo
+    rollback_guide "$cur"
+    echo "===================================================="
+}
 
-================ 出问题时照这里回滚 ================
-回滚点文件：$LOG_DIR/rollback-$NOW.txt
-部署日志：  $LOG_FILE
-
-1) 代码回滚：
-   cd $APP_DIR
-   git checkout ${OLD_SHA_SHORT:-<部署前的提交>}
-   docker compose ${COMPOSE_FILES[*]} build
-   docker compose ${COMPOSE_FILES[*]} up -d
-
-2) 文件卷回滚（上传件、学习材料、操作日志会被覆盖）：
-   docker compose ${COMPOSE_FILES[*]} run --rm backup list
-   docker compose ${COMPOSE_FILES[*]} run --rm backup restore ${FILE_BACKUP:-<备份名>} --yes
-
-3) 数据库回滚（谨慎：先把当前库再备一份）：
-   # 用部署前的 dump 覆盖（--clean 需要建表与删除权限）
-   docker run --rm -e PGPASSWORD='<口令>' -v $BACKUP_DIR:/b postgres:16-alpine \\
-     pg_restore --clean --if-exists -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME \\
-                /b/${DB_DUMP:-<dump 文件>}
-====================================================
-EOF
+# 中途失败也打印回滚指引。只在记下回滚点之后才有意义，之前什么都还没动。
+on_exit() {
+    local rc=$?
+    if [ "$rc" != 0 ] && [ "$ROLLBACK_READY" = 1 ]; then
+        print_rollback
+    fi
 }
 
 # ---------- 主流程 ----------
@@ -382,6 +446,7 @@ main() {
     if [ "$DRY_RUN" = 1 ]; then warn "dry-run：只打印步骤，不改任何东西"; fi
 
     preflight
+    trap on_exit EXIT
 
     if [ "$ASSUME_YES" = 0 ] && [ "$DRY_RUN" = 0 ]; then
         if [ -t 0 ]; then
