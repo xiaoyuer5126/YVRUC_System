@@ -8,11 +8,18 @@
 #   bash ops/deploy.sh --no-backup     # 跳过备份（只在库确实为空时用）
 #   bash ops/deploy.sh --dry-run       # 只打印将要做的事
 #
-# 可覆盖的环境变量（一般不用改）：
-#   APP_DIR        仓库目录，默认脚本所在目录的上一级（/opt/yvruc）
-#   BACKUP_DIR     备份目录，默认 /data/backups（数据盘）
+# 路径、域名、端口都从仓库根的 .env 读，和 docker compose 用的是同一份：
+#   YVRUC_BACKUP_DIR       备份目录；留空时与 compose 的 backup 服务一样，是仓库下 ./backups
+#   YVRUC_PUBLIC_BASE_URL  平台网址，取其中的主机名做验证
+#   HTTPS_HOST_PORT        nginx 在宿主机上听的 HTTPS 端口，留空为 443
+# 和 compose 一样，shell 里同名的环境变量优先于 .env。
+#
+# 也可以在命令行上用下面的变量直接覆盖（一般不用）：
+#   APP_DIR        仓库目录，默认脚本所在目录的上一级
+#   BACKUP_DIR     备份目录
+#   DOMAIN         验证用的域名
+#   HTTPS_PORT     验证用的 HTTPS 端口
 #   LOG_DIR        部署日志与回滚点，默认 ~/yvruc-deploy-logs
-#   DOMAIN         平台域名，默认 volunteer.ruc.edu.cn
 #   HEALTH_TIMEOUT 等后端健康的上限秒数，默认 120
 #   KEEP_DB_DUMPS  数据库备份保留份数，默认 14
 #
@@ -22,9 +29,56 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 APP_DIR=${APP_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}
-BACKUP_DIR=${BACKUP_DIR:-/data/backups}
+ENV_FILE="$APP_DIR/.env"
+
+# 取 .env 里一项的值。按行解析，不 source：口令里有 $、引号、空格这类字符，
+# 交给 shell 解释会被改写甚至执行。规则与 compose 读 .env 一致的部分：
+# 同名取最后一行；整值带成对引号时去掉引号；不带引号时「空白 + #」之后是注释。
+env_get() {
+    local key=$1 line val
+    [ -f "$ENV_FILE" ] || return 0
+    line=$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" "$ENV_FILE" | tail -n 1 || true)
+    [ -n "$line" ] || return 0
+    val=${line#*=}
+    val=${val%$'\r'}
+    val=${val#"${val%%[![:space:]]*}"}
+    if [[ $val =~ ^\"(.*)\"[[:space:]]*$ ]] || [[ $val =~ ^\'(.*)\'[[:space:]]*$ ]]; then
+        val=${BASH_REMATCH[1]}
+    else
+        val=${val%%[[:space:]]#*}
+        val=${val%"${val##*[![:space:]]}"}
+    fi
+    printf '%s' "$val"
+}
+
+# shell 环境变量优先，其次 .env，都没有用默认值（compose 插值的顺序）
+setting() {
+    local key=$1 default=${2:-} val
+    val=${!key:-}
+    [ -n "$val" ] || val=$(env_get "$key")
+    printf '%s' "${val:-$default}"
+}
+
+# 备份目录：compose 把相对路径按仓库根解析，这里也一样，docker -v 要绝对路径
+if [ -z "${BACKUP_DIR:-}" ]; then
+    BACKUP_DIR=$(setting YVRUC_BACKUP_DIR ./backups)
+fi
+case "$BACKUP_DIR" in
+    /*) ;;
+    *) BACKUP_DIR="$APP_DIR/${BACKUP_DIR#./}" ;;
+esac
+BACKUP_DIR=${BACKUP_DIR%/}
+
+# 域名：从平台网址取主机名（去掉协议、路径、端口）
+if [ -z "${DOMAIN:-}" ]; then
+    DOMAIN=$(setting YVRUC_PUBLIC_BASE_URL)
+    DOMAIN=${DOMAIN#*://}
+    DOMAIN=${DOMAIN%%/*}
+    DOMAIN=${DOMAIN%%:*}
+fi
+HTTPS_PORT=${HTTPS_PORT:-$(setting HTTPS_HOST_PORT 443)}
+
 LOG_DIR=${LOG_DIR:-$HOME/yvruc-deploy-logs}
-DOMAIN=${DOMAIN:-volunteer.ruc.edu.cn}
 HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-120}
 KEEP_DB_DUMPS=${KEEP_DB_DUMPS:-14}
 
@@ -78,6 +132,13 @@ preflight() {
     [ -f "$APP_DIR/.certs/fullchain.pem" ] || die "找不到证书：$APP_DIR/.certs/fullchain.pem"
     [ -f "$APP_DIR/.certs/privkey.pem" ] || die "找不到私钥：$APP_DIR/.certs/privkey.pem"
     docker info >/dev/null 2>&1 || die "docker 不可用（当前用户不在 docker 组？）"
+    if [ "$BACKUP_ONLY" = 0 ] && [ -z "$DOMAIN" ]; then
+        die ".env 里的 YVRUC_PUBLIC_BASE_URL 是空的，取不到验证用的域名（也可以用 DOMAIN=… 指定）"
+    fi
+    case "$HTTPS_PORT" in
+        ''|*[!0-9]*) die "HTTPS 端口不是数字：$HTTPS_PORT（看 .env 里的 HTTPS_HOST_PORT）" ;;
+    esac
+    log "  备份目录 $BACKUP_DIR　域名 ${DOMAIN:-（未配置）}　HTTPS 端口 $HTTPS_PORT"
 
     local dirty
     dirty=$(cd "$APP_DIR" && git status --porcelain --untracked-files=no)
@@ -264,16 +325,25 @@ wait_healthy() {
 }
 
 verify() {
-    log "验证"
-    local health page tls
-    health=$(curl -sS -o /dev/null -w '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/api/health" || echo 000)
-    page=$(curl -sS -o /dev/null -w '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" || echo 000)
-    tls=$(curl -sS -o /dev/null -w '%{ssl_verify_result}' --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" || echo 99)
-    log "  /api/health → $health　首页 → $page　TLS 校验 → $tls"
-    [ "$health" = "200" ] || die "健康检查不通过（$health）"
-    [ "$page" = "200" ] || die "首页不通过（$page）"
+    log "验证（https://$DOMAIN:$HTTPS_PORT，解析到本机）"
+    local base="https://$DOMAIN:$HTTPS_PORT" resolve="$DOMAIN:$HTTPS_PORT:127.0.0.1"
+    local err health page tls
+
+    # 先单独探连接和 TLS 握手：这一步不通时，后面的状态码只会是 000，看不出原因。
+    # -k 只跳过证书校验，握手本身失败照样报错；证书问题在下面单独看。
+    if ! err=$(curl -sS -k -o /dev/null --max-time 15 --resolve "$resolve" "$base/" 2>&1); then
+        die "连不上本机 $HTTPS_PORT 端口，或 TLS 握手失败：$err
+  先看 nginx：docker logs yvruc-web --tail 50"
+    fi
+
+    tls=$(curl -s -k -o /dev/null --max-time 15 -w '%{ssl_verify_result}' --resolve "$resolve" "$base/" || echo 99)
+    health=$(curl -s -k -o /dev/null --max-time 15 -w '%{http_code}' --resolve "$resolve" "$base/api/health" || echo 000)
+    page=$(curl -s -k -o /dev/null --max-time 15 -w '%{http_code}' --resolve "$resolve" "$base/" || echo 000)
+    log "  TLS 证书校验 → $tls　/api/health → $health　首页 → $page"
+    [ "$health" = "200" ] || die "健康检查不通过（/api/health 返回 $health），看日志：docker logs yvruc-backend --tail 50"
+    [ "$page" = "200" ] || die "首页不通过（返回 $page）"
     if [ "$tls" != "0" ]; then
-        warn "TLS 校验结果不是 0（$tls）：证书链或域名有问题"
+        warn "证书校验结果不是 0（$tls）：证书链不全或证书与域名 $DOMAIN 不符"
     fi
 }
 
