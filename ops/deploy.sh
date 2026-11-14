@@ -360,7 +360,7 @@ wait_healthy() {
 verify() {
     log "验证（https://$DOMAIN:$HTTPS_PORT，解析到本机）"
     local base="https://$DOMAIN:$HTTPS_PORT" resolve="$DOMAIN:$HTTPS_PORT:127.0.0.1"
-    local err health page tls
+    local err health page tls tls_err
 
     # 先单独探连接和 TLS 握手：这一步不通时，后面的状态码只会是 000，看不出原因。
     # -k 只跳过证书校验，握手本身失败照样报错；证书问题在下面单独看。
@@ -369,14 +369,23 @@ verify() {
   先看 nginx：docker logs yvruc-web --tail 50"
     fi
 
-    tls=$(curl -s -k -o /dev/null --max-time 15 -w '%{ssl_verify_result}' --resolve "$resolve" "$base/" || echo 99)
+    # 证书校验不能带 -k：带了 -k 的 curl 不加载根证书库，%{ssl_verify_result} 恒为 20。
+    # 不带 -k 时，链不全、根证书不认、域名不符都会让 curl 失败并在 stderr 说明原因。
+    if tls_err=$(curl -sS -o /dev/null --max-time 15 --resolve "$resolve" "$base/" 2>&1); then
+        tls="通过"
+    else
+        tls="不通过"
+        tls_err=$(printf '%s\n' "$tls_err" | head -n 1)
+    fi
     health=$(curl -s -k -o /dev/null --max-time 15 -w '%{http_code}' --resolve "$resolve" "$base/api/health" || echo 000)
     page=$(curl -s -k -o /dev/null --max-time 15 -w '%{http_code}' --resolve "$resolve" "$base/" || echo 000)
     log "  TLS 证书校验 → $tls　/api/health → $health　首页 → $page"
     [ "$health" = "200" ] || die "健康检查不通过（/api/health 返回 $health），看日志：docker logs yvruc-backend --tail 50"
     [ "$page" = "200" ] || die "首页不通过（返回 $page）"
-    if [ "$tls" != "0" ]; then
-        warn "证书校验结果不是 0（$tls）：证书链不全或证书与域名 $DOMAIN 不符"
+    if [ "$tls" != "通过" ]; then
+        warn "本机 curl 校验证书不通过：${tls_err:-（无输出）}
+  这一步用的是本机的根证书库，库太旧也会报错，不一定影响用户。确认服务器发出的证书链：
+  openssl s_client -connect 127.0.0.1:$HTTPS_PORT -servername $DOMAIN </dev/null 2>/dev/null | grep -E '^ *[0-9] s:|^ *i:|Verify return code'"
     fi
 }
 
