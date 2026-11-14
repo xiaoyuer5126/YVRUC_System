@@ -194,7 +194,7 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 | `CLOUDFLARE_TOKEN` | 隧道令牌，勿提交/外传。留空 = 隧道容器起不来，内网 https 入口不受影响 |
 | `YVRUC_BACKUP_DIR` | 备份写到宿主机的哪个文件夹，默认仓库下 `./backups`。Windows 写 `D:/yvruc-backups` 这样的正斜杠路径 |
 | `YVRUC_BACKUP_AT` | 每天几点备份，默认 `03:00` |
-| `YVRUC_BACKUP_DB` | 设为 `0` 不导出数据库、只备文件卷（数据库由别处备份时用），默认 `1` |
+| `YVRUC_BACKUP_DB` | 设为 `0` 不导出数据库、只备文件卷（数据库确实由别处备份时用；生产连学校库也要备，留空），默认 `1` |
 | `APK_MIRROR` | 备份容器构建时装系统包用的 Alpine 镜像站，默认清华镜像。服务器在境外时改成官方源 `https://dl-cdn.alpinelinux.org/alpine` |
 | `HTTPS_/WEB_/BACKEND_/POSTGRES_/REDIS_HOST_PORT` | 宿主机端口，被别的项目占用时改这里 |
 
@@ -228,9 +228,13 @@ compose 里的 `backup` 服务随 `up -d` 一起起来，每天 3:00 备一份�
   另一块盘上，或者定期把这个文件夹拷走。
 - **身份证加密密钥不在备份里**：`YVRUC_ID_CARD_KEY` 只在 `.env`。备份里的身份证号是加密的，
   密钥丢了恢复出来也读不出。把密钥单独存一份（密码管理器或打印出来），不要和备份放在一起。
-- **数据库不归我们备时**（例如连学校统一数据库）：`.env` 设 `YVRUC_BACKUP_DB=0`，只备文件卷。
-  完全不要了就删掉 compose 里的 `backup` 服务。导数据库时连的是 `YVRUC_DATABASE_URL`，
-  和 backend 同一个库；连接串里用到证书文件的话，`backup` 容器也要挂上。
+- **连学校统一数据库时照样备库**：学校不替我们备这个库。导数据库时连的是 `YVRUC_DATABASE_URL`，
+  和 backend 同一个库；连接串里用到证书文件的话，`backup` 容器也要挂上。上线前先跑一次
+  `docker compose run --rm backup now`，确认学校给的账户能完整导出。
+- **导出后校验**：`pg_dump` 之后用 `pg_restore --list` 读一遍，读不出就算这次备份失败，不留半截。
+  学校库的 PostgreSQL 大版本比备份镜像（`backup/Dockerfile`，现为 16）新时 `pg_dump` 会拒绝导出，
+  把镜像换成同一大版本。
+- **数据库确实由别处备份时**：`.env` 设 `YVRUC_BACKUP_DB=0`，只备文件卷。
 - 备份文件夹在 Windows 上的写法：`.env` 里写 `YVRUC_BACKUP_DIR=D:/yvruc-backups`
   （正斜杠；Docker Desktop 设置里的 File sharing 要包含这个盘）。改完 `docker compose up -d backup`。
 - Linux 上先用部署账号建好这个文件夹（`mkdir -p /srv/yvruc-backups`）：备份交给文件夹的属主，
