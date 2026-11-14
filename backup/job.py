@@ -13,7 +13,10 @@
     manifest.json        时间、种类、各文件大小
 先写进 .tmp- 开头的文件夹，全部成功才改名，所以没改名的都是半截，下次启动时清掉。
 
-只用标准库：镜像是 postgres 官方镜像加一个 python3，pg_dump 版本与数据库对齐。
+导出数据库后用 pg_restore --list 读一遍目录，读不出就算这次备份失败。
+
+只用标准库：镜像是 postgres 官方镜像加一个 python3，pg_dump 版本与数据库对齐
+（pg_dump 比数据库旧时自己会拒绝导出，报 server version mismatch，见 Dockerfile）。
 """
 from __future__ import annotations
 
@@ -196,6 +199,8 @@ def make_backup(kind: str, root: Path = BACKUP_ROOT, now: datetime | None = None
         if with_db:
             _run(["pg_dump", "--format=custom", "--no-owner", "--no-privileges",
                   "--file", str(tmp / "db.dump"), "--dbname", libpq_url()])
+            # 读得出目录才算导出完整：空文件、半截文件在这里拦住，不等恢复时才发现
+            _run(["pg_restore", "--list", str(tmp / "db.dump")])
             files["db.dump"] = (tmp / "db.dump").stat().st_size
         for vol in VOLUMES:
             src = DATA_ROOT / vol
