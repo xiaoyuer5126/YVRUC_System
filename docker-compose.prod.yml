@@ -1,4 +1,4 @@
-# 生产形态：部署在学校虚机上，域名解析指过来、入向只放行 443。
+# 生产形态：部署在学校虚机上，域名解析指过来、入向放行 443 和 80（80 只做跳转）。
 #
 #   docker compose -f docker-compose.yml -f docker-compose.school-db.yml \
 #                  -f docker-compose.prod.yml up -d --build
@@ -8,13 +8,14 @@
 # 三份文件各管一段，互不重复：
 #   docker-compose.yml               公共部分（redis、migrate、backend、web、backup）
 #   docker-compose.school-db.yml     连外部库：不起本机 postgres，migrate 不再等它
-#   docker-compose.prod.yml（本文件）生产特有：证书、443、不起内测的两个入口
+#   docker-compose.prod.yml（本文件）生产特有：证书、443/80、不起内测的两个入口
 #
 # 本文件只做三件事：
 #   · 不起 caddy / cloudflared：域名直接解析到这台服务器，TLS 由 nginx 用学校证书终止
 #   · web 换上 https 配置（web/nginx-https.conf.template），证书目录一起挂进去：
 #     YVRUC_CERTS_DIR（默认仓库下 ./.certs）
-#   · web 只开 443（校园网入向唯一放行的端口）
+#   · web 开 443 和 80：80 上所有请求 301 跳到 https 同一地址，不提供任何内容
+#     （学校信息技术中心 2026-11-16 许可放行 80 入向）
 #
 # 备份照 base 的 backup 服务：每天导出学校库 + 打包文件卷。学校不替我们备这个库，
 # 数据库备份由我们负责；YVRUC_BACKUP_DB 跟随 .env（默认 1）。上线前先跑一次
@@ -43,11 +44,16 @@ services:
     profiles: ["tunnel-disabled"]
 
   web:
+    environment:
+      # 80 跳 443 时拼地址用：不是 443 就在跳转地址里带上端口。值要与下面的映射一致。
+      HTTPS_HOST_PORT: ${HTTPS_HOST_PORT:-443}
     volumes:
-      # 镜像默认是内测用的 http 80 那份；生产换成听 443、读证书的这份
+      # 镜像默认是内测用的 http 80 那份；生产换成听 443（另听 80 只做跳转）、读证书的这份
       - ./web/nginx-https.conf.template:/etc/nginx/templates/default.conf.template:ro
       # 证书只读挂进来：容器里固定是 /etc/nginx/certs/{fullchain,privkey}.pem
       - ${YVRUC_CERTS_DIR:-./.certs}:/etc/nginx/certs:ro
     ports: !override
-      # 入向唯一放行的端口。校园网防火墙在宿主机外面挡着其余端口，这里不做绑定限制。
+      # 入向放行的两个端口。校园网防火墙在宿主机外面挡着其余端口，这里不做绑定限制。
       - "${HTTPS_HOST_PORT:-443}:443"
+      # 只做 http → https 跳转。80 被占用或学校收回放行时，删掉这一行即可，443 不受影响。
+      - "${HTTP_HOST_PORT:-80}:80"
