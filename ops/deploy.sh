@@ -15,6 +15,7 @@
 #   YVRUC_BACKUP_DIR       备份目录；留空时与 compose 的 backup 服务一样，是仓库下 ./backups
 #   YVRUC_PUBLIC_BASE_URL  平台网址，取其中的主机名做验证
 #   HTTPS_HOST_PORT        nginx 在宿主机上听的 HTTPS 端口，留空为 443
+#   HTTP_HOST_PORT         nginx 在宿主机上听的 HTTP 端口（只做跳 https），留空为 80
 # 和 compose 一样，shell 里同名的环境变量优先于 .env。
 #
 # 也可以在命令行上用下面的变量直接覆盖（一般不用）：
@@ -22,6 +23,7 @@
 #   BACKUP_DIR     备份目录
 #   DOMAIN         验证用的域名
 #   HTTPS_PORT     验证用的 HTTPS 端口
+#   HTTP_PORT      验证用的 HTTP 端口
 #   LOG_DIR        部署日志与回滚点，默认 ~/yvruc-deploy-logs
 #   HEALTH_TIMEOUT 等后端健康的上限秒数，默认 120
 #
@@ -79,6 +81,7 @@ if [ -z "${DOMAIN:-}" ]; then
     DOMAIN=${DOMAIN%%:*}
 fi
 HTTPS_PORT=${HTTPS_PORT:-$(setting HTTPS_HOST_PORT 443)}
+HTTP_PORT=${HTTP_PORT:-$(setting HTTP_HOST_PORT 80)}
 
 LOG_DIR=${LOG_DIR:-$HOME/yvruc-deploy-logs}
 HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-120}
@@ -387,6 +390,23 @@ verify() {
   这一步用的是本机的根证书库，库太旧也会报错，不一定影响用户。确认服务器发出的证书链：
   openssl s_client -connect 127.0.0.1:$HTTPS_PORT -servername $DOMAIN </dev/null 2>/dev/null | grep -E '^ *[0-9] s:|^ *i:|Verify return code'"
     fi
+
+    # 80 只做 http → https 跳转。不通过只告警：平台本身走 443，跳转坏了不影响已在用的人。
+    # 不跟随跳转（不带 -L），只看第一跳的状态码和 Location。
+    local redir code loc
+    redir=$(curl -s -o /dev/null --max-time 10 -w '%{http_code} %{redirect_url}' \
+        --resolve "$DOMAIN:$HTTP_PORT:127.0.0.1" "http://$DOMAIN:$HTTP_PORT/" || true)
+    # 连不上时 curl 照样按 -w 输出 "000 "，这里统一拆成状态码和地址
+    code=${redir%% *}
+    code=${code:-000}
+    loc=${redir#* }
+    [ "$loc" != "$redir" ] || loc=""
+    log "  http 跳转（本机 $HTTP_PORT 端口）→ $code ${loc:-（无 Location）}"
+    case "$code:$loc" in
+        301:https://*) ;;
+        *) warn "本机 $HTTP_PORT 端口没有 301 跳到 https（返回 $code，Location：${loc:-无}）
+  看 web 容器是否映射了 80：docker port yvruc-web；以及 nginx 日志：docker logs yvruc-web --tail 50" ;;
+    esac
 }
 
 print_rollback() {
