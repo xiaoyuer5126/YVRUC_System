@@ -28,8 +28,11 @@ check() {
     # 不给 --entrypoint：镜像的入口脚本先展开模板、再执行 nginx -t，与线上同一条路。
     # 共用片段里 /api/ 的 proxy_pass 直接写了主机名 backend，nginx -t 也要能解析它，
     # 所以给两个服务名各挂一条主机记录指向本机——这里只查语法，不转发请求。
+    # HTTPS_HOST_PORT 是生产那份里 80 跳转用的端口，生产由 compose 传进去；
+    # 不给的话入口脚本不替换它，nginx 会把 ${HTTPS_HOST_PORT} 当成未知变量拒绝启动。
     docker run --rm \
         -e YVRUC_TRUSTED_PROXY_CIDR=172.30.0.0/16 \
+        -e HTTPS_HOST_PORT=443 \
         --add-host backend:127.0.0.1 \
         --add-host glitchtip:127.0.0.1 \
         -v "$repo/$template:/etc/nginx/templates/default.conf.template:ro" \

@@ -35,7 +35,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 yv
   - 本机调试：没有 TLS，nginx 直接监听 80 映射到宿主机端口，http 访问
   - 内测：`caddy` 在宿主机 80/443 终止 TLS（证书用 Let's Encrypt 的 DNS-01 签，见
     「内网 https 与证书」）；cloudflared 隧道是公网那条路，TLS 在 Cloudflare 边缘终止
-  - 生产：**nginx 自己**监听 443、用学校发的证书终止 TLS，前面没有 caddy、没有隧道
+  - 生产：**nginx 自己**监听 443、用学校发的证书终止 TLS（80 只做 301 跳 https），前面没有 caddy、没有隧道
 - 每种形态的配置项都写在各自叠加文件的头部注释里；`.env` 里的
   `COMPOSE_FILE` 也能固定形态（**Windows 用分号分隔、Linux/macOS 用冒号**），
   三种换着用时建议不用它、直接 `-f` 写清楚。
@@ -137,7 +137,7 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 
 ### 生产 https 与证书（学校证书，不用 caddy）
 
-生产形态下 **nginx 自己监听 443、用学校发的证书终止 TLS**，前面没有 caddy——证书是
+生产形态下 **nginx 自己监听 443、用学校发的证书终止 TLS**（另听 80 只做跳转），前面没有 caddy——证书是
 学校签好的，不需要自动签发那一套，少一个容器、少一跳，客户端 IP 也不用再从
 `X-Forwarded-For` 里还原（nginx 直接看到浏览器地址）。
 配置是 `web/nginx-https.conf.template`，由 `docker-compose.prod.yml` 连同证书目录挂进 web 容器，
@@ -152,8 +152,16 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
   记下证书到期日，到期前换；过期当天浏览器会直接拦下整个站点。
 - 证书里写的是哪个域名，访问就必须用哪个域名。学校发的是 `*.ruc.edu.cn` 通配符证书，
   覆盖 `volunteer.ruc.edu.cn`（**只覆盖一级子域**，`a.b.ruc.edu.cn` 不在内）。
-- 没有 caddy 就没有 `http → https` 跳转（本形态不开 80 端口），浏览器与 HSTS 会自己
-  走到 https；确需 80 跳转时再给 nginx 加一个 `listen 80` 的 server 并申请放行。
+- **80 端口只做 `http → https` 跳转**：nginx 另听 80，所有请求 301 到 https 的同一地址，
+  不反代 `/api`、`/monitor`，也不发 HSTS（HSTS 只在 443 上发）。学校信息技术中心已许可放行
+  80 入向（2026-11-16）。宿主机端口用 `.env` 的 `HTTP_HOST_PORT`（默认 80）、`HTTPS_HOST_PORT`
+  （默认 443）调整，HTTPS 端口不是 443 时跳转地址自动带端口。80 被收回时删掉
+  `docker-compose.prod.yml` 里 80 那行映射即可。部署脚本最后会探一次本机 80，不是 301 到
+  https 只告警、不中断。验证：
+  ```bash
+  curl -sI http://volunteer.ruc.edu.cn/some/path?x=1 | grep -iE '^HTTP|^location'
+  # 应看到 301 和 Location: https://volunteer.ruc.edu.cn/some/path?x=1
+  ```
 - 验证换证书是否生效（把域名换成实际的）：
   ```bash
   curl -sS -o /dev/null -w '%{http_code} TLS=%{ssl_verify_result}\n' https://volunteer.ruc.edu.cn/
@@ -661,7 +669,7 @@ YVRUC_System/
 │                               （+ seed / tests 两个一次性任务 profile）
 ├── docker-compose.local.yml      本机调试形态：http 直连宿主机端口，不要 caddy/隧道
 ├── docker-compose.intranet.yml   内测形态：caddy（Let's Encrypt 证书，内网 80/443）+ 隧道
-├── docker-compose.prod.yml       生产形态：nginx 用学校证书听 443，不要 caddy/隧道
+├── docker-compose.prod.yml       生产形态：nginx 用学校证书听 443（80 只跳转），不要 caddy/隧道
 ├── docker-compose.school-db.yml  连外部数据库时叠加：不起 postgres 容器
 ├── Caddyfile / caddy.env.example  内测入口的 TLS 与 Cloudflare DNS-01 令牌
 ├── .certs/                     生产证书目录（已在 .gitignore 里，不入库）
@@ -710,7 +718,7 @@ YVRUC_System/
 └── web/                        Vue3 + Element Plus + ECharts（Vite，无 Pinia）
     ├── Dockerfile / nginx.conf.template  Node 构建 → nginx 托管并反代 /api；
     │                          默认只监听 80，TLS 由前面的 caddy 或 Cloudflare 终止
-    ├── nginx-https.conf.template  生产形态：听 443、用学校证书终止 TLS
+    ├── nginx-https.conf.template  生产形态：听 443、用学校证书终止 TLS；80 一律 301 到 https
     ├── nginx-local.conf.template  本机调试形态：听 80、不还原真实 IP
     ├── nginx-shared.conf     三份形态共用的站点主体
     └── src/
