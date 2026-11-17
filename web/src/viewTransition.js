@@ -51,8 +51,9 @@ function nameMorph(key) {
   const named = []
   for (const part of PARTS) {
     const el = document.querySelector(`[data-vt-morph="${key}"][data-vt-part="${part}"]`)
-    // 只在屏幕上看得见的元素上起名：display:none 的元素起了名也拍不出快照
-    if (el && el.getClientRects().length) {
+    // 只给排成一个框的元素起名：display:none 的拍不出快照，折成两行的行内
+    // 元素（长标题）有好几个框，浏览器也不拿它做变形
+    if (el && el.getClientRects().length === 1) {
       el.style.viewTransitionName = 'vt-' + part
       named.push(el)
     }
