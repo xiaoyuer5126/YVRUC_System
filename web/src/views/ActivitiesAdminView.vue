@@ -64,7 +64,7 @@
         </template>
         <template #actions="{ row }">
           <el-button size="small" type="primary"
-                     @click="$router.push('/manage/' + row.id)">管理</el-button>
+                     @click="openActivity(row)">管理</el-button>
           <el-button size="small" @click="openCopy(row)">复制</el-button>
           <el-popconfirm v-if="row.status === 'approved'"
                          :title="`发布后学生即可看到活动，${row.publish_hint}，确认？`"
@@ -125,7 +125,7 @@
           <template #default="{row}">
             <div class="btn-row">
               <el-button size="small" type="primary" link
-                         @click="$router.push('/manage/' + row.id)">管理</el-button>
+                         @click="openActivity(row)">管理</el-button>
               <el-button size="small" link @click="openCopy(row)">复制</el-button>
               <el-popconfirm v-if="row.status === 'approved'"
                              :title="`发布后学生即可看到活动，${row.publish_hint}，确认？`"
@@ -215,6 +215,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, download } from '../api'
 import { MODE_COLORS, auth } from '../store'
+import { peekActivity } from '../viewTransition'
 import { useNarrow } from '../composables/useNarrow'
 import { useCloseGuard } from '../composables/closeGuard'
 import { activityBody, emptyActivity, validateActivity } from '../composables/activityForm'
@@ -226,6 +227,12 @@ import DataCards from '../components/DataCards.vue'
 import Pager from '../components/Pager.vue'
 
 const router = useRouter()
+
+// 管理页数据还没到时先拿这一条的标题、时间地点画出页头，切换动画不用等接口
+function openActivity(row) {
+  peekActivity(row)
+  router.push('/manage/' + row.id)
+}
 const narrow = useNarrow()
 // 志愿北京对接部门的实际名称（登录信息里带下来），文案里别写死部门名
 const vbDept = computed(() => auth.user?.vb_dept_name || '校青协')

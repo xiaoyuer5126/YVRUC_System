@@ -424,7 +424,7 @@ p { margin: 8px 0; }
 /* 动画播放的这一小会儿，点击照常落到页面上，不被过场层挡住 */
 ::view-transition { pointer-events: none; }
 ::view-transition-old(root),
-::view-transition-new(root) { animation-duration: 220ms; }
+::view-transition-new(root) { animation-duration: 180ms; }
 
 /* 顶栏、侧栏：切换期间单独起名、不播动画，直接显示新的一版，看上去外框不动 */
 html.vt-nav .vt-frame-top { view-transition-name: vt-frame-top; }
@@ -440,7 +440,7 @@ html.vt-nav .vt-frame-side { view-transition-name: vt-frame-side; }
    靠左上对齐裁在框里交叉淡入淡出；卡片和页头宽高比差得远，拉伸会糊成一团 */
 ::view-transition-group(vt-box),
 ::view-transition-group(vt-title) {
-  animation-duration: 300ms;
+  animation-duration: 250ms;
   animation-timing-function: cubic-bezier(.2, 0, 0, 1);
 }
 ::view-transition-image-pair(vt-box) { overflow: clip; }
@@ -448,11 +448,11 @@ html.vt-nav .vt-frame-side { view-transition-name: vt-frame-side; }
 ::view-transition-new(vt-box) {
   width: 100%; height: 100%;
   object-fit: none; object-position: left top;
-  animation-duration: 300ms;
+  animation-duration: 250ms;
 }
 /* 标题按高度等比缩放、靠左，字号从卡片变到页头时不会被横向压扁 */
 ::view-transition-old(vt-title),
 ::view-transition-new(vt-title) {
   width: auto; height: 100%;
-  animation-duration: 300ms;
+  animation-duration: 250ms;
 }

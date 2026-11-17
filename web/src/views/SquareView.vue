@@ -56,7 +56,7 @@
       <!-- data-vt-*：进详情时这张卡片变成详情页的页头，见 viewTransition.js -->
       <div v-for="a in list" :key="a.id" class="act-card square-card"
            :data-vt-morph="'act-' + a.id" data-vt-part="box"
-           @click="$router.push('/activity/' + a.id)">
+           @click="openActivity(a)">
         <div class="card-top">
           <el-tag size="small" effect="dark" :color="modeColor(a.recruit_mode)" style="border:none">
             {{ t(a.recruit_label) }}
@@ -110,9 +110,16 @@ import SlotPicker from '../components/SlotPicker.vue'
 import { auth, MODE_COLORS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import { t, tTime } from '../i18n'
+import { peekActivity } from '../viewTransition'
 
 const route = useRoute()
 const router = useRouter()
+
+// 详情页数据还没到时先拿这张卡片的标题和标签画出页头，切换动画不用等接口
+function openActivity(a) {
+  peekActivity(a)
+  router.push('/activity/' + a.id)
+}
 const narrow = useNarrow()
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
