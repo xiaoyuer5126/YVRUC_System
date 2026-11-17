@@ -10,10 +10,12 @@
     </el-result>
   </div>
   <div class="page" v-else-if="act">
-    <el-page-header @back="goBack" :title="t('返回')">
+    <!-- data-vt-*：从广场的活动卡片变过来、返回时变回去，见 viewTransition.js -->
+    <el-page-header @back="goBack" :title="t('返回')"
+                    :data-vt-morph="'act-' + act.id" data-vt-part="box">
       <!-- 窄屏下标题与标签分行：三样东西挤一行会被折成三行 -->
       <template #content>
-        <span class="hd-title">{{ act.title }}</span>
+        <span class="hd-title" :data-vt-morph="'act-' + act.id" data-vt-part="title">{{ act.title }}</span>
         <span class="hd-tags">
           <el-tag :color="modeColor(act.recruit_mode)" effect="dark" style="border:none">
             {{ t(act.recruit_label) }}

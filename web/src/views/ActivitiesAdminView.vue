@@ -43,7 +43,9 @@
                      :value="o.value" :label="o.label" />
         </el-select>
       </div>
+      <!-- morph 与表格里的 data-vt-*：进单个活动管理页时这一条变成那页的页头 -->
       <DataCards v-if="narrow" :rows="list" title-key="title" v-loading="loading"
+                 :morph="row => 'act-' + row.id"
                  :fields="[{ key: 'time_text', label: '时间' },
                            { key: 'location', label: '地点' }]"
                  empty="还没有活动">
@@ -89,12 +91,14 @@
              各占一列的话，活动名被挤成窄窄一条，得横着扫三段才对得上一场活动 -->
         <el-table-column label="活动" min-width="240">
           <template #default="{row}">
-            <div class="act-head">
-              <el-tag v-if="row.urgent" size="small" type="danger" effect="dark">急招</el-tag>
-              <b>{{ row.title }}</b>
-              <el-tag size="small" :type="statusType(row.display_status)">{{ row.display_label }}</el-tag>
+            <div :data-vt-morph="'act-' + row.id" data-vt-part="box">
+              <div class="act-head">
+                <el-tag v-if="row.urgent" size="small" type="danger" effect="dark">急招</el-tag>
+                <b :data-vt-morph="'act-' + row.id" data-vt-part="title">{{ row.title }}</b>
+                <el-tag size="small" :type="statusType(row.display_status)">{{ row.display_label }}</el-tag>
+              </div>
+              <div class="dim">{{ row.time_text }} · {{ row.location || '待定' }}</div>
             </div>
-            <div class="dim">{{ row.time_text }} · {{ row.location || '待定' }}</div>
           </template>
         </el-table-column>
         <!-- 列宽按最长的那条类型标签定：「不公开招募（补记录）」在 small 标签里约 134px，
