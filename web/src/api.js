@@ -1,20 +1,21 @@
-/** 极简 fetch 封装：自动带 token、统一错误提示。 */
+/** 极简 fetch 封装：带上防跨站请求头和当前身份、统一错误提示。
+ *  登录令牌在 HttpOnly cookie 里，同源请求浏览器自己带，这里不经手。 */
 import { h } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { auth, clearAuth } from './store'
 import { isEn, t, tTime } from './i18n'
 import { router } from './router'
 
-/** 令牌失效了：清掉本地登录态，把人送回登录页，登完再回到刚才那一页。
+/** 会话失效了：清掉本地登录态，把人送回登录页，登完再回到刚才那一页。
  *
  *  不清的话人卡在原地对着满屏「加载失败」发懵——路由守卫看的是「本地有没有
- *  令牌」，令牌过期或那个用户在库里已经没了（比如库被重置过）都不影响它放行，
- *  于是每个请求各自 401，一个红字接着一个红字。
+ *  用户信息」，会话过期或那个用户在库里已经没了（比如库被重置过）都不影响它
+ *  放行，于是每个请求各自 401，一个红字接着一个红字。
  *
  *  多个请求同时 401 时只处理第一次：不然会连弹好几条提示、反复改地址。
  */
 function sessionExpired() {
-  if (!auth.token) return              // 已经处理过了
+  if (!auth.user) return               // 已经处理过了
   clearAuth()
   ElMessage.warning(t('登录已过期，请重新登录'))
   const here = router.currentRoute.value.fullPath
@@ -23,15 +24,16 @@ function sessionExpired() {
   }
 }
 
-/** 鉴权请求头：令牌 + 当前身份视角。
+/** 每个接口请求都要带的头：防跨站标识 + 当前身份视角。
  *
- *  后端的权限跟着 X-Identity 走（只会收窄：自己没有的身份它不认）。每次请求
+ *  X-YVRUC：后端拒收缺这个头的写请求（见 backend/session_cookie.py）。
+ *  别的网站能让浏览器带着 cookie 发请求，但加不上自定义头。
+ *  X-Identity：后端的权限跟着它走（只会收窄：自己没有的身份它不认）。每次请求
  *  现读 store，切了身份之后下一个请求就带新的，不必刷新页面。
- *  绕开 request() 自己 fetch 的地方（表单上传）也要用它，别只带令牌。
+ *  绕开 request() 自己 fetch 的地方（表单上传、取图）也要用它。
  */
 export function authHeaders() {
-  const headers = {}
-  if (auth.token) headers.Authorization = `Bearer ${auth.token}`
+  const headers = { 'X-YVRUC': '1' }
   if (auth.activeIdentity) headers['X-Identity'] = auth.activeIdentity
   return headers
 }
@@ -226,9 +228,9 @@ export function qrBase() {
 
 /** 直链下载（导出、学习材料）。
  *
- * <a> 发不出 Authorization 头，所以先用带头的请求换一张票据，
- * 再把票据挂在地址上。换票请求带着当前身份，票上记着它，下载时照此判权。票只对这一个网址有效、一分钟——
- * 会话令牌不会再出现在地址栏、浏览器历史和服务器访问日志里。
+ * <a> 发不出 X-Identity 头，微信还会把附件交给系统浏览器打开（那边没有登录
+ * cookie），所以先用带头的请求换一张票据，再把票据挂在地址上。换票请求带着
+ * 当前身份，票上记着它，下载时照此判权。票只对这一个网址有效、一分钟。
  */
 export async function download(url) {
   const path = url.split('?')[0]

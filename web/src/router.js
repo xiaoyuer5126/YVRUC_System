@@ -69,11 +69,11 @@ router.beforeEach((to) => {
     pendingIdentity = ''
   }
   // 统一身份认证回调要**最先**拦下来：CAS 回到的是根地址，不先转走的话，
-  // 下面那条「没令牌就去登录页」会把人直接踢走，授权码白回来一趟。
+  // 下面那条「没登录就去登录页」会把人直接踢走，授权码白回来一趟。
   if (to.path !== '/sso-callback' && to.query.code) {
     return { path: '/sso-callback', query: to.query }
   }
-  if (!to.meta.public && !auth.token) {
+  if (!to.meta.public && !auth.user) {
     return { path: '/login', query: { next: to.fullPath } }
   }
   const manageView = ['admin', 'initiator', 'qingxie'].includes(auth.activeIdentity)
@@ -81,11 +81,11 @@ router.beforeEach((to) => {
 
   // 已登录再打开登录页（收藏的链接、后退回来）：不再登一遍，带 next 就去 next，
   // 否则去当前视角的首页。
-  // signout 是注销自己发起的那一跳（见 MainLayout.onCommand）：那时令牌还没清
-  // 掉——先离开当前页再注销，不然页面拦截里点「保存并发布」必定 401。不放它
+  // signout 是注销自己发起的那一跳（见 MainLayout.onCommand）：那时登录还没
+  // 退——先离开当前页再注销，不然页面拦截里点「保存并发布」必定 401。不放它
   // 过去，这一跳会被重定向到首页，而重定向要以首页为新目标重走一遍导航，
   // 失活页面的离开拦截就跑第二遍，弹窗弹两次
-  if (to.path === '/login' && auth.token && !to.query.signout) {
+  if (to.path === '/login' && auth.user && !to.query.signout) {
     const next = String(to.query.next || '')
     return /^\/(?!\/|login)/.test(next) ? next : home
   }

@@ -28,6 +28,7 @@ from ..locks import (clear_failures, failure_count, issue_ticket,
                      note_failure, note_rate, rate_count)
 from ..models import (MANAGER_ROLES, ROLE_LABELS, Session, User,
                       ViolationRecord, uid)
+from ..session_cookie import clear_session_cookie, set_session_cookie
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -37,6 +38,14 @@ SSO_NONCE_COOKIE = "yvruc_sso_nonce"
 # 只数口令错误：一栋楼共用一个出口 IP，按登录次数限流会误伤正常用户
 MAX_FAILED_ATTEMPTS = 10
 FAIL_WINDOW_SECONDS = 300
+
+
+def _logged_in(request: Request, db: OrmSession, user: User, body: dict) -> JSONResponse:
+    """开会话、把令牌写进 HttpOnly cookie。响应体里没有令牌：页面脚本拿不到它。"""
+    resp = JSONResponse({"user": session_user(db, user), **body})
+    set_session_cookie(resp, create_session(db, user),
+                       secure=request.url.scheme == "https")
+    return resp
 
 
 def demo_login_enabled() -> bool:
@@ -115,8 +124,7 @@ def demo_login(body: DemoLoginBody, request: Request,
         raise HTTPException(404, f"平台没有学号 {sid} 的档案")
     clear_failures(source)
     oplog.mark_login(request, user=user)
-    return {"token": create_session(db, user), "user": session_user(db, user),
-            "mode": "demo"}
+    return _logged_in(request, db, user, {"mode": "demo"})
 
 
 @router.get("/demo-accounts")
@@ -178,9 +186,8 @@ def sso_callback(body: SsoCallbackBody, request: Request,
         _sync_from_school(db, user, info)
     _grant_bootstrap_admin(db, user)
     oplog.mark_login(request, user=user)
-    resp = JSONResponse({"token": create_session(db, user),
-                         "user": session_user(db, user),
-                         "mode": sso.mode(), "next": info.get("next") or ""})
+    resp = _logged_in(request, db, user,
+                      {"mode": sso.mode(), "next": info.get("next") or ""})
     resp.delete_cookie(SSO_NONCE_COOKIE, path="/api/auth")  # noqa: S105
     return resp
 
@@ -268,15 +275,23 @@ def _provision(db: OrmSession, ident: dict) -> User:
 
 
 @router.post("/logout")
-def logout(token: str = Depends(current_token),
-           db: OrmSession = Depends(db_session),
-           user: User = Depends(current_user)):
-    """只吊销当前这一个会话，不影响该用户在别的设备上的登录。"""
-    row = db.get(Session, token)
+def logout(request: Request, token: str = Depends(current_token),
+           db: OrmSession = Depends(db_session)):
+    """只吊销当前这一个会话，不影响该用户在别的设备上的登录。
+
+    不要求登录有效：会话已经过期的人点退出，也要把浏览器里的 cookie 清掉，
+    而不是回一个 401 把人当成「登录过期」再踢一遍。
+    """
+    row = db.get(Session, token) if token else None
     if row is not None:
+        user = db.get(User, row.user_id)
+        if user is not None:
+            oplog.mark_actor(request, user)
         db.delete(row)
         db.commit()
-    return {"ok": True}
+    resp = JSONResponse({"ok": True})
+    clear_session_cookie(resp, secure=request.url.scheme == "https")
+    return resp
 
 
 @router.get("/me")
@@ -293,9 +308,10 @@ class TicketBody(BaseModel):
 def download_ticket(body: TicketBody, user: User = Depends(current_user)):
     """换一张下载票。
 
-    导出与学习材料是 <a> 直链，发不出 Authorization 头。票绑定这一个网址、
-    一分钟有效，所以就算随地址落进日志也换不出任何东西。权限仍由目标接口
-    自己把关，这张票只证明「是谁」。
+    导出与学习材料是 <a> 直链，带不了 X-Identity 头，直链本身也不凭 cookie
+    放行（见 deps.current_user_download）。票绑定这一个网址、一分钟有效，所以
+    就算随地址落进日志也换不出任何东西。权限仍由目标接口自己把关，这张票只
+    证明「是谁、以哪个身份」。
     """
     path = body.path.strip()
     # 「|」是票据内容的分隔符（见 locks.issue_ticket），合法网址里不会有

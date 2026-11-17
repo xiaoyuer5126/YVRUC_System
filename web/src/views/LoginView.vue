@@ -101,7 +101,7 @@ async function doLogin() {
   try {
     const d = await api.post('/api/auth/demo-login',
                              { student_id: sid.value.trim(), password: password.value })
-    setAuth(d.token, d.user)
+    setAuth(d.user)
     ElMessage.success(t('欢迎，{name}', { name: d.user.name }))
     router.push(route.query.next || '/')
   } finally {

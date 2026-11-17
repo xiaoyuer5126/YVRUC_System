@@ -1,14 +1,16 @@
-"""登录、会话与令牌传递方式。"""
+"""登录、会话 cookie、跨站请求防护与令牌传递方式。"""
 from __future__ import annotations
 
 import time
 from datetime import timedelta
 
 import pytest
+from fastapi.testclient import TestClient
 
 from backend import locks
 from backend.models import Session, User, now
-from conftest import ADMIN, DEMO_PASSWORD, dl_url, login
+from backend.session_cookie import SESSION_COOKIE
+from conftest import ADMIN, CSRF, DEMO_PASSWORD, dl_url, login, session_token
 
 
 def test_login_requires_password(client):
@@ -34,7 +36,7 @@ def test_login_succeeds_with_password(client):
 
 def test_expired_session_rejected(client, db):
     headers = login(client, ADMIN)
-    token = headers["Authorization"].removeprefix("Bearer ")
+    token = session_token(headers)
 
     row = db.get(Session, token)
     assert row.expires_at > now()                     # 默认还没过期
@@ -48,7 +50,7 @@ def test_会话3天有效且用一次顺延一次(client, db):
     """滑动有效期：新登录 3 天后到期；用过之后从使用那一刻再算 3 天；
     一小时内反复用不重复写库。"""
     headers = login(client, ADMIN)
-    token = headers["Authorization"].removeprefix("Bearer ")
+    token = session_token(headers)
     row = db.get(Session, token)
     left = row.expires_at - now()
     assert timedelta(days=3) - timedelta(minutes=1) < left <= timedelta(days=3)
@@ -81,7 +83,7 @@ def test_会话3天有效且用一次顺延一次(client, db):
 
 def test_会话令牌不能走地址栏(client, admin):
     """令牌走 URL 就会漏进访问日志、浏览器历史与 Referer，一处都不认。"""
-    token = admin["Authorization"].removeprefix("Bearer ")
+    token = session_token(admin)
 
     assert client.get(f"/api/auth/me?token={token}").status_code == 401
 
@@ -99,6 +101,120 @@ def test_logout_only_kills_current_session(client):
     assert client.post("/api/auth/logout", headers=phone).status_code == 200
     assert client.get("/api/auth/me", headers=phone).status_code == 401
     assert client.get("/api/auth/me", headers=laptop).status_code == 200
+
+
+# ======================= 会话 cookie 与跨站请求防护 =======================
+
+def _set_cookie(r) -> str:
+    return "; ".join(v for k, v in r.headers.multi_items()
+                     if k.lower() == "set-cookie" and v.startswith(SESSION_COOKIE + "="))
+
+
+def test_登录下发HttpOnly_cookie且响应体里没有令牌(client):
+    """令牌只在 HttpOnly cookie 里：页面脚本读不到，注入的脚本也偷不走。"""
+    r = client.post("/api/auth/demo-login",
+                    json={"student_id": ADMIN, "password": DEMO_PASSWORD})
+    assert r.status_code == 200, r.text
+    assert "token" not in r.json()
+    cookie = _set_cookie(r).lower()
+    assert "httponly" in cookie and "samesite=lax" in cookie
+    assert "path=/api" in cookie and "max-age=259200" in cookie   # 与会话 3 天一致
+    # 浏览器存下的 cookie 自己就能用，不必前端再塞任何东西
+    me = client.get("/api/auth/me")
+    assert me.status_code == 200 and me.json()["user"]["student_id"] == ADMIN
+    client.cookies.delete(SESSION_COOKIE)
+
+
+def test_https请求下发的cookie带Secure(client):
+    r = client.post("https://testserver/api/auth/demo-login",
+                    json={"student_id": ADMIN, "password": DEMO_PASSWORD})
+    assert r.status_code == 200, r.text
+    assert "secure" in _set_cookie(r).lower()
+    client.cookies.delete(SESSION_COOKIE)
+
+
+def test_Authorization头不再认(client, admin):
+    """令牌只从 cookie 读：拿到令牌的脚本也没法换个头冒充登录。"""
+    bearer = {"Authorization": f"Bearer {session_token(admin)}"}
+    assert client.get("/api/auth/me", headers=bearer).status_code == 401
+
+
+def test_写请求缺X_YVRUC头一律拒绝(client, admin):
+    """cookie 会被浏览器自动带上，别的网站诱导发来的写请求加不上自定义头。"""
+    cookie = {"Cookie": admin["Cookie"]}
+    acts = client.get("/api/staff/activities", headers=admin).json()["items"]
+    with TestClient(client.app) as bare:          # 不带默认防跨站头的客户端
+        # 读请求不要这个头
+        assert bare.get("/api/auth/me", headers=cookie).status_code == 200
+        # 写请求缺头：带着有效 cookie 也进不去，四种方法都一样
+        for method, path in (("POST", "/api/auth/download-ticket"),
+                             ("PUT", "/api/me/profile"),
+                             ("PATCH", f"/api/staff/activities/{acts[0]['id']}"),
+                             ("DELETE", f"/api/staff/activities/{acts[0]['id']}")):
+            r = bare.request(method, path, headers=cookie, json={})
+            assert r.status_code == 403, (method, path, r.text)
+        # 登录接口同样要这个头：挡住跨站替人登录
+        r = bare.post("/api/auth/demo-login",
+                      json={"student_id": ADMIN, "password": DEMO_PASSWORD})
+        assert r.status_code == 403
+        # 对照：带上头就照常
+        r = bare.post("/api/auth/download-ticket", headers={**cookie, **CSRF},
+                      json={"path": "/api/staff/roles.xlsx"})
+        assert r.status_code == 200, r.text
+
+
+def test_退出登录清cookie且旧cookie失效(client, db):
+    headers = login(client, ADMIN)
+    token = session_token(headers)
+    r = client.post("/api/auth/logout", headers=headers)
+    assert r.status_code == 200
+    cleared = _set_cookie(r).lower()
+    assert 'max-age=0' in cleared and "path=/api" in cleared
+    db.expire_all()
+    assert db.get(Session, token) is None
+    assert client.get("/api/auth/me", headers=headers).status_code == 401
+
+
+def test_会话过期后退出照样清cookie(client, db):
+    """过期了点退出不该回 401 把人当「登录过期」再踢一遍，cookie 也得清掉。"""
+    headers = login(client, ADMIN)
+    row = db.get(Session, session_token(headers))
+    row.expires_at = now() - timedelta(seconds=1)
+    db.commit()
+    r = client.post("/api/auth/logout", headers=headers)
+    assert r.status_code == 200
+    assert "max-age=0" in _set_cookie(r).lower()
+    # 根本没登录过的也一样
+    r = client.post("/api/auth/logout")
+    assert r.status_code == 200
+
+
+def test_会话续期时同步刷新cookie(client, db):
+    """服务端顺延了 3 天，cookie 也要跟着顺延，不然用着用着被浏览器丢掉。"""
+    headers = login(client, ADMIN)
+    token = session_token(headers)
+    # 刚登录：不续期，不重发 cookie
+    assert _set_cookie(client.get("/api/auth/me", headers=headers)) == ""
+    row = db.get(Session, token)
+    row.expires_at = now() + timedelta(days=1)
+    db.commit()
+    r = client.get("/api/auth/me", headers=headers)
+    assert r.status_code == 200
+    cookie = _set_cookie(r).lower()
+    assert f"{SESSION_COOKIE}={token}".lower() in cookie and "max-age=259200" in cookie
+    client.cookies.delete(SESSION_COOKIE)
+
+
+def test_直链下载不凭cookie放行(client, admin):
+    """<a> 直链带不了 X-Identity，凭 cookie 放行就按全部身份判权；别的网站放个
+    导出链接，用户一点也会真导出一份。没票、没 X-YVRUC 头的一律 401。"""
+    path = "/api/staff/roles.xlsx"
+    with TestClient(client.app) as bare:          # 不带默认防跨站头的客户端
+        assert bare.get(path, headers={"Cookie": admin["Cookie"]}).status_code == 401
+        # 前端自己 fetch 的（带 X-YVRUC）照常认 cookie
+        assert bare.get(path, headers=admin).status_code == 200
+        # 票据照常能用，换到没有 cookie 的浏览器里也一样（微信转系统浏览器）
+        assert bare.get(dl_url(client, admin, path)).status_code == 200
 
 
 # ======================= 校区 =======================
@@ -230,7 +346,7 @@ def test_下载票据过了有效期就作废(client, admin, db, enrolled_activi
 def test_过期会话会被定时任务清掉(client, db):
     from backend.scheduled import purge_expired_sessions
 
-    tok = login(client, ADMIN)["Authorization"].split()[1]
+    tok = session_token(login(client, ADMIN))
     row = db.get(Session, tok)
     row.expires_at = now() - timedelta(minutes=1)
     db.commit()

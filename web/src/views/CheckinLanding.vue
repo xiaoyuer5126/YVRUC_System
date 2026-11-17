@@ -117,14 +117,14 @@ async function load() {
 }
 
 onMounted(async () => {
-  if (!auth.token) {
+  if (!auth.user) {
     // 未登录先去登录（模拟扫码后需身份核验）
     localStorage.setItem('yvruc_after_checkin', route.params.token)
     router.replace({ path: '/login', query: { next: `/checkin/${route.params.token}` } })
     return
   }
   const pending = localStorage.getItem('yvruc_after_checkin')
-  if (pending && auth.token) {
+  if (pending && auth.user) {
     localStorage.removeItem('yvruc_after_checkin')
     afterLogin.value = true
   }

@@ -388,7 +388,7 @@ def activity_qr(request: Request, activity_id: str, base: str = "",
                 db: OrmSession = Depends(db_session)):
     """活动页二维码，贴海报、发群里都用它。内容就是活动详情页的地址。
 
-    不要登录态：<img> 标签不会带 Authorization 头，加了鉴权图就是裂的。
+    不要登录态：码要能下载下来贴海报、转发到群里，离开登录态也得显示得出。
     码里只有一个本来就要公开发出去的链接，扫码后照常要登录才看得到内容。
     仍然查一下活动在不在，免得打错 id 印出一张扫不出东西的码。
     """

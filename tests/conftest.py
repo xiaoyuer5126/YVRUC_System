@@ -85,6 +85,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from backend import seed  # noqa: E402
 from backend.database import SessionLocal  # noqa: E402
+from backend.session_cookie import SESSION_COOKIE  # noqa: E402
 
 # 先把测试库清空、用迁移重建，**再**导入 app。顺序不能颠倒：导入 backend.main
 # 会跑 create_app() → check_schema()，库的迁移版本不是最新就拒绝启动。上一次
@@ -123,9 +124,14 @@ def set_shift_time(db, g, start=None, end=None):
         p.end_time = end
 
 
+# 前端每个请求都带的防跨站头（见 backend/session_cookie.py）。客户端默认带上，
+# 没登录的写请求才测得到后面的逻辑；测「缺头被拒」的用例自己去掉它
+CSRF = {"X-YVRUC": "1"}
+
+
 @pytest.fixture
 def client():
-    with TestClient(app) as c:
+    with TestClient(app, headers=CSRF) as c:
         yield c
 
 
@@ -148,8 +154,8 @@ def db():
 def dl_url(client: TestClient, headers: dict, path: str) -> str:
     """下载直链：先换一张一次性票据，再拼进地址。
 
-    浏览器里 <a> 发不出 Authorization 头，用例也照这条路走，
-    才验得到真实的下载流程。
+    浏览器里 <a> 直链不凭 cookie 放行（见 deps.current_user_download），
+    用例也照这条路走，才验得到真实的下载流程。
     """
     r = client.post("/api/auth/download-ticket", headers=headers,
                     json={"path": path.split("?")[0]})
@@ -158,10 +164,23 @@ def dl_url(client: TestClient, headers: dict, path: str) -> str:
 
 
 def login(client: TestClient, student_id: str) -> dict:
-    r = client.post("/api/auth/demo-login",
+    """登录，返回这个人的请求头：会话 cookie + 防跨站头。
+
+    令牌只在 Set-Cookie 里。拿到后从客户端的 cookie 罐里删掉：同一个客户端上
+    要切换好几个人，罐里留着最后登录那位，不带请求头的请求就会冒充他，
+    「没登录被拒」这类断言全都测不出来。
+    """
+    r = client.post("/api/auth/demo-login", headers=CSRF,
                     json={"student_id": student_id, "password": DEMO_PASSWORD})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}"}
+    token = r.cookies[SESSION_COOKIE]
+    client.cookies.delete(SESSION_COOKIE)
+    return {"Cookie": f"{SESSION_COOKIE}={token}", **CSRF}
+
+
+def session_token(headers: dict) -> str:
+    """从 login() 返回的请求头里取出会话令牌（直接查会话表时用）。"""
+    return headers["Cookie"].split("=", 1)[1]
 
 
 # 岗位的服务地点、要求原文、培训内容都是必填（志愿者到岗前只能看到这些）

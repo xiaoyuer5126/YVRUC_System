@@ -268,8 +268,9 @@ def test_回调建号并开会话(client, monkeypatch):
         assert body["next"] == "/my"
         assert body["user"]["student_id"] == TEST_SID
         # 发出来的会话真能用
-        me = client.get("/api/auth/me",
-                        headers={"Authorization": f"Bearer {body['token']}"})
+        assert "token" not in body          # 令牌只在 HttpOnly cookie 里
+        me = client.get("/api/auth/me", headers={
+            "Cookie": f"yvruc_session={r.cookies['yvruc_session']}"})
         assert me.status_code == 200
         assert me.json()["user"]["student_id"] == TEST_SID
     finally:
