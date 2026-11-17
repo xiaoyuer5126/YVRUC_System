@@ -4,7 +4,7 @@
     <el-card shadow="never">
       <div class="toolbar">
         <el-input v-model="q" placeholder="姓名 / 学号" clearable style="width:220px"
-                  @input="onSearch" @keyup.enter="reload" @clear="reload">
+                  @input="onSearch" @keydown.enter="onEnter($event, reload)" @clear="reload">
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
         <el-select v-model="college" clearable placeholder="学院筛选" style="width:180px" @change="reload">
@@ -61,7 +61,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { Search } from '@element-plus/icons-vue'
-import { api } from '../api'
+import { api, onEnter } from '../api'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'
 import Pager from '../components/Pager.vue'

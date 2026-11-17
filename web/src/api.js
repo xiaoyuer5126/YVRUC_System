@@ -197,6 +197,18 @@ export function fmtDTShort(iso) {
   return p[3] == null ? day : `${day} ${p[3]}:${p[4]}`
 }
 
+/** 输入框回车提交：输入法组字时按的回车（选词上屏）不算，模板里写
+ *   @keydown.enter="onEnter($event, reload)"
+ *
+ * 必须挂在 keydown 上：Chrome 里选词那一下的 keyup 已经是普通的 Enter
+ * （isComposing 为 false），挂 keyup 判断不出来。Safari 先结束组字再发
+ * keydown，isComposing 也是 false，只能靠 keyCode 229 认出来。
+ */
+export function onEnter(e, fn) {
+  if (e.isComposing || e.keyCode === 229) return
+  fn()
+}
+
 /** 站内页面的对外网址，二维码与分享链接都用它。
  *
  * path 形如 '/checkin/AB12CD'。取当前浏览器地址作为前缀：这是管理者此刻

@@ -17,7 +17,7 @@
     </div>
     <div class="geo-line">
       <el-input v-model="query" size="small" style="width:200px"
-                placeholder="地名，如「明德楼」" clearable @keyup.enter="search" />
+                placeholder="地名，如「明德楼」" clearable @keydown.enter="onEnter($event, search)" />
       <el-button size="small" :loading="searching" @click="search">搜索</el-button>
     </div>
     <!-- 同名异地很常见（「明德楼」全国一堆），所以地址必须列出来 -->
@@ -59,7 +59,7 @@ let campusCache = null
 <script setup>
 import { defineAsyncComponent, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api } from '../api'
+import { api, onEnter } from '../api'
 
 // leaflet 六十来 KB，只有真要选点时才用得上，别让它跟着页面一起进包
 const GeoMap = defineAsyncComponent(() => import('./GeoMap.vue'))

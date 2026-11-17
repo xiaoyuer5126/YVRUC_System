@@ -11,9 +11,9 @@
         <span class="dim">至</span>
         <div class="when"><DateTimeField v-model="filter.end" placeholder="结束时间（默认现在）" /></div>
         <el-input v-model="filter.person" clearable placeholder="学号或姓名" class="field"
-                  @input="onSearch" @keyup.enter="reload" @clear="reload" />
+                  @input="onSearch" @keydown.enter="onEnter($event, reload)" @clear="reload" />
         <el-input v-model="filter.activity" clearable placeholder="活动名称" class="field"
-                  @input="onSearch" @keyup.enter="reload" @clear="reload" />
+                  @input="onSearch" @keydown.enter="onEnter($event, reload)" @clear="reload" />
         <el-select v-model="filter.kind" clearable placeholder="操作类型" class="kind" @change="reload">
           <el-option v-for="(label, k) in kinds" :key="k" :value="k" :label="label" />
         </el-select>
@@ -75,7 +75,7 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { api, download, fmtDTs } from '../api'
+import { api, download, fmtDTs, onEnter } from '../api'
 import { ROLE_LABELS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import DataCards from '../components/DataCards.vue'

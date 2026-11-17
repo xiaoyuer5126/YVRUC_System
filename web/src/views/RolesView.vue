@@ -20,7 +20,7 @@
 
     <div class="toolbar">
       <el-input v-model="q" placeholder="按姓名或学号搜索"
-                style="width:280px" clearable @input="onSearch" @keyup.enter="reload" @clear="reload" />
+                style="width:280px" clearable @input="onSearch" @keydown.enter="onEnter($event, reload)" @clear="reload" />
       <el-button type="primary" @click="reload">查询</el-button>
       <!-- 批量：学号一行一个，添加/移除身份；骨干用不上（他们只认领成员） -->
       <el-button v-if="!coreOnly" @click="openBatch">批量调整</el-button>
@@ -259,7 +259,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api, download } from '../api'
+import { api, download, onEnter } from '../api'
 import { useCloseGuard } from '../composables/closeGuard'
 import { auth, ROLE_LABELS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
