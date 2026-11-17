@@ -2938,7 +2938,7 @@ def add_walkin(shift_id: str, body: dict,
 #
 # 活动的 contact_group_qr 里存的是这条 Attachment 的编号，不是地址：前端拿编号
 # 自己拼出 /api/staff/contact-qr/<编号> 去取。存地址的话，抓包改成外站网址，
-# 前端取图时会把登录令牌一并发过去（2026-11-12 学校渗透测试报的就是这个）。
+# 前端取图时会把鉴权头一并发过去（2026-11-12 学校渗透测试报的就是这个）。
 QR_OWNER = "activity_qr"
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
 
@@ -2993,7 +2993,8 @@ def contact_qr(attachment_id: str, db: OrmSession = Depends(db_session),
     """读二维码：活动管理者、已报上名的志愿者本人，以及刚传完还没保存的那位
     （表单里的预览）。别人一律 404，不透露这张图存不存在。
 
-    <img src> 带不了 Authorization 头，所以前端是带凭据把图取回来再显示
+    <img src> 带不了 X-YVRUC、X-Identity 头，直链不凭 cookie 放行（见
+    deps.current_user_download），所以前端是带头 fetch 把图取回来再显示
     （见 web/src/composables/authedImage.js），不能只靠文件名难猜。
     """
     row = db.get(Attachment, attachment_id)

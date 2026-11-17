@@ -1,4 +1,4 @@
-/** 带 token 的文件上传。fetch 封装（api.js）只走 JSON，表单文件在这里单独发。 */
+/** 带鉴权头的文件上传。fetch 封装（api.js）只走 JSON，表单文件在这里单独发。 */
 import { authHeaders } from '../api'
 
 export async function uploadTo(url, file) {

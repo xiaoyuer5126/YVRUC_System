@@ -147,7 +147,7 @@ const identityLabel = computed(() => {
 watch(() => route.path, () => { drawer.value = false })
 
 async function poll() {
-  if (!auth.token) return
+  if (!auth.user) return
   try {
     // 只问数字：完整那个接口会把一页通知的正文一并拉回来，
     // 而这儿只用得上一个 unread。30 秒一次 × 每个开着的页面，省下来不少
@@ -191,7 +191,7 @@ async function refreshUser() {
 const announcing = ref(false)
 const announcement = ref({ title: '', body: '' })
 async function showAnnouncement() {
-  if (!auth.token || !takeAnnouncementTurn()) return
+  if (!auth.user || !takeAnnouncementTurn()) return
   try {
     const d = await api.get('/api/announcement', { silent: true })
     if (d.announcement) {
@@ -203,11 +203,11 @@ async function showAnnouncement() {
 
 onMounted(() => {
   poll(); timer = setInterval(poll, 30000)
-  if (auth.token) refreshUser()
+  if (auth.user) refreshUser()
   showAnnouncement()
   openFeedbackFromQuery()
   // 学生资料未完善 → 强制弹出（不可关闭），补全前不可报名
-  if (auth.token && auth.user?.user_type === 'student' && !auth.user.profile_complete) {
+  if (auth.user?.user_type === 'student' && !auth.user.profile_complete) {
     openProfileDialog(true)
   }
 })
@@ -216,7 +216,7 @@ onUnmounted(() => clearInterval(timer))
 async function onCommand(cmd) {
   if (cmd === 'logout') {
     // 先离开当前页、再注销：离开时页面可能要拦一下（活动管理页「改动还没发布」，
-    // 里面点「保存并发布」要带着令牌请求后端）。先注销的话那一下必定 401，
+    // 里面点「保存并发布」要带着登录态请求后端）。先注销的话那一下必定 401，
     // 跳转被中止，人卡在一个已经退出了的页面上。
     // 带 signout 让守卫放这一跳直接去登录页：不带的话它会被「已登录访问登录页
     // → 回首页」重定向，而重定向要重走一遍导航，离开拦截跑第二遍、弹窗弹两次。
@@ -225,7 +225,7 @@ async function onCommand(cmd) {
     if (isNavigationFailure(failure, NavigationFailureType.aborted)) return
     try { await api.post('/api/auth/logout', {}) } catch { /* 忽略 */ }
     clearAuth()
-    // 令牌清掉之后那个标记就没用了，从地址栏去掉
+    // 退出之后那个标记就没用了，从地址栏去掉
     router.replace({ path: '/login' })
     return
   }

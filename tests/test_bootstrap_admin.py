@@ -57,7 +57,8 @@ def sso_login(client, monkeypatch):
                         json={"code": "c", "state": "s"})
         assert r.status_code == 200, r.text
         me = client.get("/api/auth/me", headers={
-            "Authorization": f"Bearer {r.json()['token']}"})
+            "Cookie": f"yvruc_session={r.cookies['yvruc_session']}"})
+        client.cookies.delete("yvruc_session")
         assert me.status_code == 200, me.text
         return me.json()["user"]
     return _login

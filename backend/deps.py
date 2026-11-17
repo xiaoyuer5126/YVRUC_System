@@ -1,9 +1,9 @@
 """FastAPI 依赖：会话鉴权与权限。
 
-令牌只从 Authorization 头读，一处例外都没有。浏览器直链下载（导出 Excel、
-学习材料）发不出请求头，走一次性票据：前端先用带头的请求换一张票，票绑定
-这一个网址、一分钟有效、用一次即作废（见 locks.issue_ticket）。地址栏里
-再也没有会话令牌，日志、浏览器历史、Referer 里捡到的票也早已作废。
+会话令牌只从 HttpOnly cookie 读，一处例外都没有（cookie 的属性和跨站请求
+防护见 session_cookie.py）。浏览器直链下载（导出 Excel、学习材料）走票据：
+前端先用带头的请求换一张票，票绑定这一个网址、一分钟有效，记着换票时的身份
+视角（见 locks.issue_ticket 和下面的 current_user_download）。
 
 权限模型：
   · 身份（User.roles，可多个）：管理员 / 青协 / 活动发起方 / 学生
@@ -30,9 +30,10 @@ from sqlalchemy.orm import Session as OrmSession
 from . import config, locks, oplog
 from .database import db_session
 from .models import Session, User, now
+from .session_cookie import CSRF_HEADER, SESSION_COOKIE
 
 
-def _authorize(db: OrmSession, token: str) -> User:
+def _authorize(db: OrmSession, token: str, request: Request) -> User:
     if not token:
         raise HTTPException(401, "未登录")
     row = db.get(Session, token)
@@ -46,20 +47,17 @@ def _authorize(db: OrmSession, token: str) -> User:
     user = db.get(User, row.user_id)
     if user is None:
         raise HTTPException(401, "用户不存在")
-    # 滑动续期，见 config.SESSION_TTL。随后的 _release 会把它提交掉
+    # 滑动续期，见 config.SESSION_TTL。随后的 _release 会把它提交掉；
+    # cookie 的到期时间由 SessionCookieMiddleware 在响应上一并刷新
     if row.expires_at <= t + config.SESSION_TTL - config.SESSION_RENEW_AFTER:
         row.expires_at = t + config.SESSION_TTL
+        request.state.session_renew = token
     return user
-
-
-def _bearer(request: Request) -> str:
-    auth = request.headers.get("Authorization", "")
-    return auth[7:].strip() if auth.startswith("Bearer ") else ""
 
 
 def current_token(request: Request) -> str:
     """当前请求所用的令牌（退出登录时只吊销这一个会话）。"""
-    return _bearer(request)
+    return request.cookies.get(SESSION_COOKIE, "").strip()
 
 
 def _release(db: OrmSession, user: User) -> User:
@@ -87,22 +85,28 @@ def _viewed(request: Request, user: User, identity: str) -> User:
 
 def current_user(request: Request,
                  db: OrmSession = Depends(db_session)) -> User:
-    return _release(db, _viewed(request, _authorize(db, _bearer(request)),
+    return _release(db, _viewed(request, _authorize(db, current_token(request), request),
                                 _identity(request)))
 
 
 def current_user_download(request: Request,
                           db: OrmSession = Depends(db_session)) -> User:
-    """浏览器直链下载：认 Authorization 头，或票据 ?ticket=。
+    """浏览器直链下载：认票据 ?ticket=，或前端 fetch 发来的请求（带 X-YVRUC 头）。
+
+    <a> 直链也会带上会话 cookie，但不凭 cookie 放行：直链带不了 X-Identity，
+    凭 cookie 放行就按全部身份的并集判权，绕开了「权限跟随当前身份」；
+    别的网站放一个指向导出接口的链接，用户一点也会真的导出一份、记一条下载。
+    票据还管微信里的下载：微信把附件交给系统浏览器打开，那边没有 cookie
+    （见 locks.issue_ticket）。
+    前端自己 fetch 的（看截图、看附件图）带着 X-YVRUC 和 X-Identity，照常认 cookie。
 
     走这个依赖的都是导出和附件下载，操作日志要记下来。
     """
     oplog.mark_download(request)
-    token = _bearer(request)
-    if token:
-        return _release(db, _viewed(request, _authorize(db, token),
-                                    _identity(request)))
     ticket = request.query_params.get("ticket", "").strip()
+    if not ticket and request.headers.get(CSRF_HEADER):
+        return _release(db, _viewed(request, _authorize(db, current_token(request), request),
+                                    _identity(request)))
     redeemed = locks.redeem_ticket(ticket, request.url.path)
     if redeemed is None:
         raise HTTPException(401, "下载链接已失效，请回到页面重新点一次")
@@ -201,7 +205,7 @@ def require_council(user: User = Depends(current_user)) -> User:
 
 
 def require_council_download(user: User = Depends(current_user_download)) -> User:
-    """同上的直链下载版：数据总览的活动汇总导出走 <a>，带不了 Authorization 头。"""
+    """同上的直链下载版：数据总览的活动汇总导出走 <a> 直链（见 current_user_download）。"""
     if not user.has_full_access():
         raise HTTPException(403, "需要 管理员/会长团 身份")
     return user
@@ -232,7 +236,7 @@ def require_claim_decider(user: User = Depends(current_user),
 
 def require_claim_decider_download(user: User = Depends(current_user_download),
                                    db: OrmSession = Depends(db_session)) -> User:
-    """同上的直链下载版：补登表导出走 <a>，带不了 Authorization 头。"""
+    """同上的直链下载版：补登表导出走 <a> 直链（见 current_user_download）。"""
     from .liaison import vb_decider, vb_dept_name
     if not vb_decider(db, user):
         raise HTTPException(403, f"需要 {vb_dept_name(db)}（值班人或部长）身份")

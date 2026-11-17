@@ -349,10 +349,12 @@ async function settle(cap = 9000) {
 }
 
 for (const [who, route, name, min, open, expect, lang] of PAGES) {
+  // 登录令牌在 HttpOnly cookie 里，页面脚本写不进去，由浏览器协议直接种
+  await send('Network.setCookie', { name: 'yvruc_session', value: TOK[who],
+    url: 'http://127.0.0.1:8080/api/', path: '/api', httpOnly: true, sameSite: 'Lax' })
   await send('Page.navigate', { url: 'http://127.0.0.1:8080/' })
   await sleep(700)
   await send('Runtime.evaluate', { expression: `
-    localStorage.setItem('yvruc_token', ${JSON.stringify(TOK[who])});
     localStorage.setItem('yvruc_user', ${JSON.stringify(USR[who])});
     sessionStorage.setItem('yvruc_active_identity', ${JSON.stringify(who)});
     localStorage.setItem('yvruc_locale', ${JSON.stringify(lang || 'zh')});

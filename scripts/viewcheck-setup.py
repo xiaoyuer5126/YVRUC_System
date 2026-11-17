@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+from http.cookies import SimpleCookie
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -16,25 +17,39 @@ PASSWORD = "devpass"
 ADMIN_ID = "2025001"
 
 
+SESSION_COOKIE = "yvruc_session"
+
+
 def call(method: str, path: str, body=None, token: str = ""):
     req = urllib.request.Request(
         BASE + path, method=method,
         data=json.dumps(body).encode() if body is not None else None,
-        headers={"Authorization": f"Bearer {token}",
+        headers={"Cookie": f"{SESSION_COOKIE}={token}", "X-YVRUC": "1",
                  "Content-Type": "application/json"})
     return json.load(urllib.request.urlopen(req))
+
+
+def login(student_id: str) -> dict:
+    """演示登录，返回 {token, user}。令牌只在 Set-Cookie 里，响应体里没有。"""
+    req = urllib.request.Request(
+        BASE + "/api/auth/demo-login", method="POST",
+        data=json.dumps({"student_id": student_id, "password": PASSWORD}).encode(),
+        headers={"X-YVRUC": "1", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as resp:
+        jar = SimpleCookie()
+        for h in resp.headers.get_all("Set-Cookie") or []:
+            jar.load(h)
+        return {"token": jar[SESSION_COOKIE].value, "user": json.load(resp)["user"]}
 
 
 def main(out_dir: str) -> None:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    admin = call("POST", "/api/auth/demo-login",
-                 {"student_id": ADMIN_ID, "password": PASSWORD})
+    admin = login(ADMIN_ID)
     users = call("GET", "/api/staff/users?size=100", token=admin["token"])["items"]
     student_id = next(u["student_id"] for u in users if u["profile_complete"])
-    student = call("POST", "/api/auth/demo-login",
-                   {"student_id": student_id, "password": PASSWORD})
+    student = login(student_id)
     activities = call("GET", "/api/activities?status=published",
                       token=student["token"])["items"]
 

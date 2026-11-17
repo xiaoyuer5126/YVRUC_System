@@ -6,23 +6,25 @@ import json, time, threading
 from concurrent.futures import ThreadPoolExecutor
 import httpx
 cfg = json.load(open("/tmp/b.json")); B = "http://127.0.0.1:8111"
-c = httpx.Client(timeout=60)
+c = httpx.Client(timeout=60, headers={"X-YVRUC": "1"})
 tok = {}
 for s in cfg["sids"]:
     r = c.post(B + "/api/auth/demo-login", json={"student_id": s, "password": "test-pass"})
-    tok[s] = r.json()["token"]
+    tok[s] = r.cookies["yvruc_session"]
+    c.cookies.clear()
+auth = lambda s: {"Cookie": "yvruc_session=" + tok[s], "X-YVRUC": "1"}
 bar = threading.Barrier(len(cfg["sids"]) + 20)
 def go(s):
     cl = httpx.Client(timeout=60)
     bar.wait()
     t = time.perf_counter()
     r = cl.post(f"{B}/api/activities/{cfg['act']}/shifts/{cfg['g']}/enroll",
-                json={"position_id": cfg["p"]}, headers={"Authorization": "Bearer " + tok[s]})
+                json={"position_id": cfg["p"]}, headers=auth(s))
     return r.status_code, (r.json().get("status") if r.status_code == 200 else r.text[:20]), time.perf_counter() - t
 read_lat = []; read_err = [0]; stop = [False]
 def reader(s):
     cl = httpx.Client(timeout=60)
-    h = {"Authorization": "Bearer " + tok[s]}
+    h = auth(s)
     bar.wait()
     while not stop[0]:
         t = time.perf_counter()
