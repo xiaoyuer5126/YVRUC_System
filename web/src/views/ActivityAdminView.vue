@@ -21,11 +21,13 @@
     <ArchiveDrawer ref="archiveDrawer" />
     <ViolationDialog ref="violationDlg" :activity-id="activityId" @saved="loadAll" />
 
-    <el-page-header @back="$router.push('/manage')" title="返回列表">
+    <!-- data-vt-*：从活动管理列表的那一条变过来、返回时变回去，见 viewTransition.js -->
+    <el-page-header @back="$router.push('/manage')" title="返回列表"
+                    :data-vt-morph="'act-' + act.id" data-vt-part="box">
       <!-- 标题与副信息各占一行：一行挤不下活动名+状态+时间地点 -->
       <template #content>
         <div class="hd-title">
-          <b>{{ act.title }}</b>
+          <b :data-vt-morph="'act-' + act.id" data-vt-part="title">{{ act.title }}</b>
           <el-tag size="small" :type="headStatus.type">{{ headStatus.label }}</el-tag>
           <el-tag v-if="act.urgent" size="small" type="danger" effect="dark">急招</el-tag>
           <el-tag v-if="isRecord" size="small" type="info" effect="plain">不公开·补记录</el-tag>
