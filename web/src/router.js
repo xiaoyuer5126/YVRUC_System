@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, isNavigationFailure, NavigationFailureType } from 'vue-router'
 import { auth, canSee, setActiveIdentity, hasIdentity, isManager } from './store'
+import { installViewTransitions } from './viewTransition'
 
 const routes = [
   { path: '/login', component: () => import('./views/LoginView.vue'), meta: { public: true } },
@@ -126,3 +127,5 @@ router.beforeEach((to) => {
   }
   return '/square'
 })
+
+installViewTransitions(router)

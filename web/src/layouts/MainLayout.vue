@@ -1,6 +1,6 @@
 <template>
   <el-container class="app-root">
-    <el-header class="topbar" height="48px">
+    <el-header class="topbar vt-frame-top" height="48px">
       <div class="left">
         <el-button v-if="narrow" text class="hamburger" :aria-label="t('打开菜单')"
                    @click="drawer = true">
@@ -63,7 +63,7 @@
     </el-header>
 
     <el-container class="app-body">
-      <el-aside v-if="!narrow" width="175px" class="side">
+      <el-aside v-if="!narrow" width="175px" class="side vt-frame-side">
         <SideMenu :active="$route.path" />
       </el-aside>
       <el-main class="app-main">
