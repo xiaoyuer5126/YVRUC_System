@@ -1,5 +1,5 @@
 # 生产形态的站点配置：nginx 自己监听 443、用学校发的证书终止 TLS，本容器直接
-# 对校园网提供服务，前面没有 caddy、没有隧道。80 只做一件事：把 http 301 跳到
+# 对校园网提供服务，前面没有 caddy。80 只做一件事：把 http 301 跳到
 # https 的同一地址（见文件末尾）。由 docker-compose.prod.yml 和证书
 # 目录一起挂到 /etc/nginx/templates/default.conf.template，顶掉镜像默认的
 # nginx.conf.template（内测与 CI 用的 http 那份）。
