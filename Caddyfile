@@ -1,8 +1,6 @@
 # 内测入口（内网直连）的 TLS 终止。
 #
 # 拓扑：浏览器 ──443/HTTPS──▶ caddy ──http──▶ web(nginx:80) ──/api──▶ backend
-#      公网走 Cloudflare 隧道：cloudflared 在 compose 内网里直连 web:80，
-#      TLS 由 Cloudflare 边缘终止，与这里无关。
 #
 # 证书用 Let's Encrypt 的 **DNS-01** 挑战签发：它靠往 DNS 写一条 TXT 记录来
 # 证明域名所有权，不需要任何从公网连进来的入站请求，也不需要 80 端口可达。
@@ -36,7 +34,7 @@
 	reverse_proxy web:80
 }
 
-# 兜住 http 访问（收藏夹里的 http://<IP>、隧道以外的旧链接）：一律跳 https。
+# 兜住 http 访问（收藏夹里的 http://<IP>、旧链接）：一律跳 https。
 :80 {
 	redir https://{$YVRUC_DOMAIN}{uri} permanent
 }

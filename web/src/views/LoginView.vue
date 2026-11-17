@@ -18,12 +18,12 @@
       <!-- 内测登录：学号 + 组内共享口令 -->
       <el-form v-else @submit.prevent>
         <el-input v-model="sid" size="large" :placeholder="t('学号 / 工号')"
-                  clearable @keyup.enter="focusPassword">
+                  clearable @keydown.enter="onEnter($event, focusPassword)">
           <template #prefix><el-icon><User /></el-icon></template>
         </el-input>
         <el-input ref="passwordInput" v-model="password" size="large" type="password"
                   :placeholder="t('内测口令')" show-password clearable
-                  style="margin-top:12px" @keyup.enter="doLogin">
+                  style="margin-top:12px" @keydown.enter="onEnter($event, doLogin)">
           <template #prefix><el-icon><Lock /></el-icon></template>
         </el-input>
         <el-button type="primary" size="large" style="width:100%;margin-top:12px"
@@ -49,7 +49,7 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { api } from '../api'
+import { api, onEnter } from '../api'
 import { setAuth } from '../store'
 import { t } from '../i18n'
 import LocaleSwitch from '../components/LocaleSwitch.vue'

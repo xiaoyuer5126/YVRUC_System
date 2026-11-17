@@ -1,9 +1,7 @@
 # 镜像默认的站点配置：内测形态与 CI 的页面自检用它。
 #
-# 本容器只监听 80，前面有两个入口，两边都以 http 打进来：
-#   · caddy（宿主机 443，TLS 由它终止）→ web:80，内网直连这条路
-#   · cloudflared（TLS 在 Cloudflare 边缘终止）→ web:80，公网这条路
-# 所以这里不配证书、不开 443。生产形态由 docker-compose.prod.yml 换成
+# 本容器只监听 80，前面的入口是 caddy（宿主机 443，TLS 由它终止），以 http
+# 转到 web:80，所以这里不配证书、不开 443。生产形态由 docker-compose.prod.yml 换成
 # nginx-https.conf.template；本机调试形态由 docker-compose.local.yml 换成
 # nginx-local.conf.template。
 #
@@ -15,7 +13,7 @@
 # /etc/nginx/snippets/yvruc-shared.conf，三份形态共用一份，见 nginx-shared.conf。
 
 # —— 真实客户端地址 ——
-# 本容器前面一定有一跳反代（caddy 或 cloudflared），它看到的对端只是那一跳的
+# 本容器前面一定有一跳反代（caddy），它看到的对端只是那一跳的
 # 容器 IP。反代把它看到的真实客户端写在 X-Forwarded-For 的最右边（caddy 丢掉
 # 客户端自带的这个头、只写自己看到的对端），这里用 real_ip 模块把它还原成 $remote_addr：
 # 不这样做，操作日志里的 IP 全是容器地址，登录失败限流也会把所有人算成一个人。
@@ -30,7 +28,7 @@ real_ip_header X-Forwarded-For;
 real_ip_recursive off;
 
 # 二维码要按「浏览器实际用的地址」拼出对外网址，所以协议不能被这一跳覆盖：
-# caddy / cloudflared 到本容器之间都是明文 http，$scheme 就是 http，直接写下去
+# caddy 到本容器之间是明文 http，$scheme 就是 http，直接写下去
 # 会让 https 站点生成 http:// 的码。有上游传下来的就用上游的，没有才用 $scheme。
 map $http_x_forwarded_proto $fwd_proto {
     default $http_x_forwarded_proto;

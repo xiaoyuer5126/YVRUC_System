@@ -176,8 +176,16 @@ jobs:
             echo "YVRUC_ID_CARD_KEY=$(python3 -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
             echo "YVRUC_WORKERS=2"
           } > .env
-      - name: 起栈（不起 cloudflared）
+      - name: 起栈
         run: docker compose up -d --build --wait postgres redis backend web
+      # 响应头由 nginx 发（web/nginx-shared.conf），后端测试碰不到，在这里对真栈断言
+      - name: 响应头检查
+        run: |
+          h=$(curl -sS -D - -o /dev/null http://127.0.0.1:8080/)
+          echo "$h"
+          echo "$h" | grep -qi '^cross-origin-opener-policy: same-origin\s*$' || { echo "缺 COOP 头"; exit 1; }
+          echo "$h" | grep -qi '^content-security-policy:' || { echo "缺 CSP 头"; exit 1; }
+          if echo "$h" | grep -i '^content-security-policy:' | grep -qi cloudflare; then echo "CSP 里还有 Cloudflare 放行"; exit 1; fi
       - name: 导入演示数据
         run: docker compose --profile seed run --rm seed
       - uses: actions/setup-node@v7

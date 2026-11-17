@@ -180,8 +180,8 @@ AI_BASE_URL = (os.environ.get("YVRUC_AI_BASE_URL", "").strip().rstrip("/")
 AI_MODEL = os.environ.get("YVRUC_AI_MODEL", "").strip() or "deepseek-flash"
 AI_API_KEY = os.environ.get("YVRUC_AI_API_KEY", "").strip()
 # 一次起草最多等几秒。场次多的时候模型要写好一阵，给宽一点；但要小于前面
-# 两跳的上限——Cloudflare 回源最多等 100 秒、nginx 的 /api/ 是 120 秒，超了
-# 浏览器拿到的是一张 524/504 网关错误页，而不是「AI 想得太久」这句话
+# nginx 的 /api/ 上限 120 秒，超了
+# 浏览器拿到的是一张 504 网关错误页，而不是「AI 想得太久」这句话
 AI_TIMEOUT = int(os.environ.get("YVRUC_AI_TIMEOUT", "").strip() or "90")
 # 每人每小时最多起草几次：按 token 计费，也免得被当成聊天工具
 AI_HOURLY_LIMIT = 30

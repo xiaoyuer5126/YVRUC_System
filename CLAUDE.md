@@ -59,5 +59,4 @@ conftest 还堵住了 urllib 出网，全量 pytest 不会触达学校接口。
 
 ## 这台机器
 
-这是开发机，数据可弃。容器用完就停（`docker compose down`），不留后台常驻；
-不需要公网访问时不起 `cloudflared`。
+这是开发机，数据可弃。容器用完就停（`docker compose down`），不留后台常驻。
