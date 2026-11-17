@@ -1,5 +1,5 @@
 # 本机调试形态：只起 postgres + redis + migrate + backend + web，web 用 http 直接
-# 映射到宿主机端口，浏览器访问 http://localhost:8080。不要 caddy、不要 cloudflared、
+# 映射到宿主机端口，浏览器访问 http://localhost:8080。不要 caddy、
 # 不需要证书、不需要域名。
 #
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build

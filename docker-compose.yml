@@ -7,11 +7,9 @@
 #   docker compose --profile seed run --rm seed     # 重置演示数据
 #   docker compose run --rm backup now              # 立即备份（部署、重建库、改表前）
 #   docker logs yvruc-caddy --tail 20               # 看证书签发情况
-#   docker logs yvruc-cloudflared --tail 20         # 看隧道连接状态
 #
-# 服务拓扑（两个入口，都落到同一个 web 容器）：
+# 服务拓扑（内测形态的入口是 caddy；生产形态由 web 自己听 443，见 docker-compose.prod.yml）：
 #   caddy(80/443, TLS 终止) ──▶ web(nginx:80) ──/api──▶ backend(uvicorn:8000)
-#   cloudflared(隧道, TLS 在 Cloudflare 边缘终止) ──▶ web(nginx:80) ──▶ 同上
 #        └──▶ postgres + redis
 #
 # 数据库默认是这里的 postgres 容器。连外部的库（学校统一数据库）时在 .env 里填
@@ -23,9 +21,8 @@
 # 信任范围与网段必须一致；网段由 Docker 随机分配的话，这个值就没法提前写死。
 # 换网段时两处一起改：这里是 172.30.0.0/16，.env 里是 172.30.0.0/16。
 #
-# 内网这条路：域名的 A 记录指向本机内网 IP，caddy 用 Let's Encrypt 的 DNS-01
+# 内测入口：域名的 A 记录指向本机内网 IP，caddy 用 Let's Encrypt 的 DNS-01
 # 挑战签证书（不需要 80/443 从公网可达，见 Caddyfile）。
-# 公网这条路：Cloudflare 隧道，域名在 Zero Trust 控制台绑定。
 #
 # 数据库与 Redis 端口只绑 127.0.0.1：调试用得上，公网碰不到。
 # 宿主机端口可在 .env 里改——同一台机器上别的项目也可能占着这些端口。
@@ -187,7 +184,7 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # 对外的入口在形态叠加文件里：内测是 caddy + cloudflared，生产是 nginx 自己
+  # 对外的入口在形态叠加文件里：内测是 caddy，生产是 nginx 自己
   # 用学校证书听 443，本机调试直接映射端口。这里的映射只绑 127.0.0.1，局域网
   # 连不上，不构成绕过 TLS 的入口；本机调试和 CI 的页面自检
   # （scripts/viewcheck.mjs）走它。
@@ -241,18 +238,6 @@ services:
       # 而 Let's Encrypt 对同一注册域限每周 50 张——调试期间重建几次就会被锁一周。
       - yvruc_caddy_data:/data
       - yvruc_caddy_config:/config
-    depends_on:
-      - web
-    restart: unless-stopped
-
-  # 固定域名隧道（内测形态的公网入口：TLS 在 Cloudflare 边缘终止，它在 compose
-  # 内网里直连 web:80）。token 存于 .env 的 CLOUDFLARE_TOKEN（勿提交/外传）。
-  # 官方镜像为 distroless（无 shell），故命令必须直接可执行、不能做条件分支。
-  cloudflared:
-    profiles: ["tunnel"]
-    image: cloudflare/cloudflared:latest
-    container_name: yvruc-cloudflared
-    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TOKEN}"]
     depends_on:
       - web
     restart: unless-stopped

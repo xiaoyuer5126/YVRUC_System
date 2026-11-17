@@ -176,7 +176,7 @@ jobs:
             echo "YVRUC_ID_CARD_KEY=$(python3 -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
             echo "YVRUC_WORKERS=2"
           } > .env
-      - name: 起栈（不起 cloudflared）
+      - name: 起栈
         run: docker compose up -d --build --wait postgres redis backend web
       - name: 导入演示数据
         run: docker compose --profile seed run --rm seed
