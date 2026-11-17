@@ -38,8 +38,7 @@ def page_qr(request: Request, path: str, base: str = "") -> Response:
 
     base（形如 https://host/）由前端传，那是管理者浏览器此刻的地址，也正是
     要让志愿者打开的地址，最可靠。没传才按请求头兜底——反代后面推不准：
-    cloudflared 到 nginx 之间是明文 http，nginx 又把 X-Forwarded-Proto
-    覆写成 $scheme，照着推会得到一个 http:// 的错网址。
+    前面一跳反代到 nginx 之间是明文 http 时，照着推会得到一个 http:// 的错网址。
 
     base 只认自家域名：这个接口不需要登录，收下任意 base 就等于让任何人
     拿平台的地址生成一张指向别处的码，贴在海报上，扫的人无从分辨。

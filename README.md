@@ -12,8 +12,8 @@ FastAPI + SQLAlchemy（PostgreSQL）+ Redis + Vue3 / Element Plus / ECharts（Vi
 | 形态 | 叠加文件 | 起的服务 | 访问方式 |
 |---|---|---|---|
 | **本机调试** | `docker-compose.local.yml` | postgres + redis + migrate + backend + web + backup | http://localhost:8080 |
-| **内测** | `docker-compose.intranet.yml` | 上面这些 **+ caddy + cloudflared** | https://<域名>（caddy 终止 TLS；隧道兜公网） |
-| **生产** | `docker-compose.school-db.yml` + `docker-compose.prod.yml` | redis + migrate + backend + web + backup（**无本机 postgres、无 caddy、无隧道**） | https://volunteer.ruc.edu.cn（nginx 用学校证书终止 TLS） |
+| **内测** | `docker-compose.intranet.yml` | 上面这些 **+ caddy** | https://<域名>（caddy 终止 TLS） |
+| **生产** | `docker-compose.school-db.yml` + `docker-compose.prod.yml` | redis + migrate + backend + web + backup（**无本机 postgres、无 caddy**） | https://volunteer.ruc.edu.cn（nginx 用学校证书终止 TLS） |
 
 ```bash
 cp .env.example .env          # 填 POSTGRES_PASSWORD、YVRUC_ID_CARD_KEY
@@ -21,7 +21,7 @@ cp .env.example .env          # 填 POSTGRES_PASSWORD、YVRUC_ID_CARD_KEY
 # 本机调试（日常开发，http 直连）
 docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 
-# 内测（本机当服务器；另需 cp caddy.env.example caddy.env 填域名与 Cloudflare 令牌）
+# 内测（本机当服务器；另需 cp caddy.env.example caddy.env 填域名与 Cloudflare DNS 令牌）
 docker compose -f docker-compose.yml -f docker-compose.intranet.yml up -d --build
 
 # 生产（学校虚机；另需把学校证书放成 .certs/{fullchain,privkey}.pem）
@@ -34,8 +34,8 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 yv
 - 三种形态都往同一个 web 容器里落（nginx）；区别只在**谁终止 TLS、证书从哪来**：
   - 本机调试：没有 TLS，nginx 直接监听 80 映射到宿主机端口，http 访问
   - 内测：`caddy` 在宿主机 80/443 终止 TLS（证书用 Let's Encrypt 的 DNS-01 签，见
-    「内网 https 与证书」）；cloudflared 隧道是公网那条路，TLS 在 Cloudflare 边缘终止
-  - 生产：**nginx 自己**监听 443、用学校发的证书终止 TLS（80 只做 301 跳 https），前面没有 caddy、没有隧道
+    「内网 https 与证书」）
+  - 生产：**nginx 自己**监听 443、用学校发的证书终止 TLS（80 只做 301 跳 https），前面没有 caddy
 - 每种形态的配置项都写在各自叠加文件的头部注释里；`.env` 里的
   `COMPOSE_FILE` 也能固定形态（**Windows 用分号分隔、Linux/macOS 用冒号**），
   三种换着用时建议不用它、直接 `-f` 写清楚。
@@ -44,7 +44,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 yv
 - 前端 8080 / 数据库 5433 / Redis 6380 / 后端 8000 都只绑 `127.0.0.1`，调试用得上、
   局域网和公网都连不上（本机调试形态的 8080 会放开到局域网，方便手机连同一个 wifi 测签到）。
 - `caddy.env` 不存在时 compose 照常加载（CI 上就没有），只是 caddy 起不来。
-- `docker logs yvruc-caddy` 看证书签发，`docker logs yvruc-cloudflared` 看隧道状态。
+- `docker logs yvruc-caddy` 看证书签发。
 - **用户上传的文件全在一个命名卷 `yvruc_files` 里**（挂在容器的 `/app/data/files`）：
   学习材料、立项书与结项书、模板、报名问卷附件、反馈截图、时长补登的证明与照片、
   活动联络群二维码。谁能看由各接口自己的鉴权决定，和目录无关，所以不按「材料 / 二维码」
@@ -54,7 +54,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 yv
   半可用的服务比起不来更难排查。数据库的迁移版本不是代码里最新的那一版，后端也拒绝
   启动，见下面「数据库迁移」。
 - **证书与私钥不进仓库**：`.certs/`（生产用学校证书）与 `caddy.env`（内测的
-  Cloudflare 令牌）都已在 `.gitignore` 里，误提交后先吊销令牌再清历史。
+  Cloudflare DNS 令牌）都已在 `.gitignore` 里，误提交后先吊销令牌再清历史。
 
 
 ### 数据库迁移（Alembic）
@@ -199,7 +199,6 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 | `YVRUC_SENTRY_SAMPLE_RATE` | 错误事件的采样率 `0`～`1`，默认 `1`。填成 `10`、`100` 这种百分比写法后端拒绝启动 |
 | `YVRUC_SENTRY_TRACES_SAMPLE_RATE` | 性能追踪的采样率 `0`～`1`，默认 `0` 不报（追踪是每个请求一条，自建的轻量服务存不住） |
 | `YVRUC_SENTRY_ALERT_THRESHOLD` | 同一个错误 10 分钟内到多少次就给全体管理员推一条站内通知（每个错误每天至多一条），默认 `20`，`0` = 不推 |
-| `CLOUDFLARE_TOKEN` | 隧道令牌，勿提交/外传。留空 = 隧道容器起不来，内网 https 入口不受影响 |
 | `YVRUC_BACKUP_DIR` | 备份写到宿主机的哪个文件夹，默认仓库下 `./backups`。Windows 写 `D:/yvruc-backups` 这样的正斜杠路径 |
 | `YVRUC_BACKUP_AT` | 每天几点备份，默认 `03:00` |
 | `YVRUC_BACKUP_DB` | 设为 `0` 不导出数据库、只备文件卷（数据库确实由别处备份时用；生产连学校库也要备，留空），默认 `1` |
@@ -667,9 +666,9 @@ YVRUC_System/
 ├── docker-compose.yml          公共部分：redis + migrate（一次性，升级数据库）
 │                               + backend + web + backup（每日备份）+ postgres
 │                               （+ seed / tests 两个一次性任务 profile）
-├── docker-compose.local.yml      本机调试形态：http 直连宿主机端口，不要 caddy/隧道
-├── docker-compose.intranet.yml   内测形态：caddy（Let's Encrypt 证书，内网 80/443）+ 隧道
-├── docker-compose.prod.yml       生产形态：nginx 用学校证书听 443（80 只跳转），不要 caddy/隧道
+├── docker-compose.local.yml      本机调试形态：http 直连宿主机端口，不要 caddy
+├── docker-compose.intranet.yml   内测形态：caddy（Let's Encrypt 证书，内网 80/443）
+├── docker-compose.prod.yml       生产形态：nginx 用学校证书听 443（80 只跳转），不要 caddy
 ├── docker-compose.school-db.yml  连外部数据库时叠加：不起 postgres 容器
 ├── Caddyfile / caddy.env.example  内测入口的 TLS 与 Cloudflare DNS-01 令牌
 ├── .certs/                     生产证书目录（已在 .gitignore 里，不入库）
@@ -677,7 +676,7 @@ YVRUC_System/
 ├── ops/                        运维：错误监控服务的编排与运维说明（docker-compose.monitoring.yml
 │                               + monitoring.env.example + monitoring.md，见 monitoring.md）、
 │                               证书与密钥自检脚本
-├── .env.example                环境变量模板（数据库口令、加密密钥、演示登录、隧道令牌）
+├── .env.example                环境变量模板（数据库口令、加密密钥、演示登录）
 ├── pytest.ini / requirements-dev.txt
 ├── tests/                      回归测试：登录会话、报名闸门与并发、审批、分配、签到闭环、
 │                               时长与申诉、服装、材料、角色、可见范围
@@ -717,7 +716,7 @@ YVRUC_System/
 │   └── integrations/           msgcenter / sso
 └── web/                        Vue3 + Element Plus + ECharts（Vite，无 Pinia）
     ├── Dockerfile / nginx.conf.template  Node 构建 → nginx 托管并反代 /api；
-    │                          默认只监听 80，TLS 由前面的 caddy 或 Cloudflare 终止
+    │                          默认只监听 80，TLS 由前面的 caddy 终止
     ├── nginx-https.conf.template  生产形态：听 443、用学校证书终止 TLS；80 一律 301 到 https
     ├── nginx-local.conf.template  本机调试形态：听 80、不还原真实 IP
     ├── nginx-shared.conf     三份形态共用的站点主体

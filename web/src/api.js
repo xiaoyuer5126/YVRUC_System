@@ -201,8 +201,7 @@ export function fmtDTShort(iso) {
  *
  * path 形如 '/checkin/AB12CD'。取当前浏览器地址作为前缀：这是管理者此刻
  * 打开的地址，也正是要让志愿者扫到的地址。别让后端按请求头去推——
- * cloudflared 到 nginx 之间是明文 http，nginx 还把 X-Forwarded-Proto
- * 覆写成了 $scheme，推出来会是个 http:// 的错网址。
+ * 前面一跳反代到 nginx 之间是明文 http 时，推出来会是个 http:// 的错网址。
  */
 export function pageUrl(path) {
   return `${window.location.origin}${path}`
