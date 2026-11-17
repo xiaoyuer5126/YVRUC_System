@@ -1,5 +1,5 @@
 <!-- 反馈截图的缩略图，点开看大图。
-     截图只给提交人和管理员看，接口要鉴权：<img src> 带不了 Authorization 头，
+     截图只给提交人和管理员看，接口要鉴权：<img src> 带不了 X-YVRUC、X-Identity 头，
      所以用带头的 fetch 取回来，转成本地 blob 地址再显示；组件卸载时释放。 -->
 <template>
   <div v-if="images.length" class="shots">
@@ -25,7 +25,7 @@ function release() {
 async function load() {
   release()
   const got = await Promise.all(props.images.map(async (img) => {
-    if (!isOwnApi(img.url)) return ''   // 只给本站接口带令牌
+    if (!isOwnApi(img.url)) return ''   // 只给本站接口带鉴权头
     try {
       const resp = await fetch(img.url, { headers: authHeaders() })
       return resp.ok ? URL.createObjectURL(await resp.blob()) : ''

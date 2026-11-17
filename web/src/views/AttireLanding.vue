@@ -84,7 +84,7 @@ async function load() {
   } catch { task.value = null } finally { loading.value = false }
 }
 onMounted(() => {
-  if (!auth.token) {
+  if (!auth.user) {
     // 扫码的人多半还没登录：先带去登录，登完回到这张服装码
     router.replace({ path: '/login', query: { next: `/attire/${token}` } })
     return

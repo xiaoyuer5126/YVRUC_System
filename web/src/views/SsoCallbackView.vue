@@ -51,7 +51,7 @@ onMounted(async () => {
   try {
     const d = await api.post('/api/auth/sso-callback', { code, state },
                              { skipErrorToast: true })
-    setAuth(d.token, d.user)
+    setAuth(d.user)
     ElMessage.success(t('欢迎，{name}', { name: d.user.name }))
     // replace 而不是 push：带授权码的那一页不该留在前进/后退里。
     // next 是跳转前想去的页面（比如从签到二维码落地页被弹去登录的志愿者）。

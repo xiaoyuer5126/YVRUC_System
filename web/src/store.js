@@ -9,9 +9,13 @@ const IDENTITY_KEY = 'yvruc_active_identity'
 // 放 sessionStorage：登录完刷新页面还没看到也照样弹，开新标签页不会再弹
 const ANNOUNCE_KEY = 'yvruc_announce_pending'
 const storedUser = JSON.parse(localStorage.getItem('yvruc_user') || 'null')
+// 登录令牌只在 HttpOnly cookie 里，页面脚本碰不到；本地存储里不该有令牌，
+// 见到就删，别让它留在磁盘上被脚本读走
+localStorage.removeItem('yvruc_token')
 
+// 是否已登录看本地有没有用户信息。cookie 过期了这里还会以为登着，
+// 第一个请求回 401 时由 api.js 的 sessionExpired 清掉、送回登录页
 export const auth = reactive({
-  token: localStorage.getItem('yvruc_token') || '',
   user: storedUser,
   // 当前身份视角（在持有的身份之间切换；决定菜单与默认落地页）
   activeIdentity: '',
@@ -27,11 +31,9 @@ auth.activeIdentity = storedUser && (storedUser.roles || []).includes(storedIden
 // 顶栏铃铛的未读数：主框架轮询写它，消息页标已读后立刻改，不用等下一轮轮询
 export const unreadState = reactive({ count: 0 })
 
-export function setAuth(token, user) {
-  auth.token = token
+export function setAuth(user) {
   auth.user = user
   auth.activeIdentity = pickDefaultIdentity(user)
-  localStorage.setItem('yvruc_token', token)
   localStorage.setItem('yvruc_user', JSON.stringify(user))
   sessionStorage.setItem(IDENTITY_KEY, auth.activeIdentity)
   sessionStorage.setItem(ANNOUNCE_KEY, '1')
@@ -60,10 +62,8 @@ function pickDefaultIdentity(user) {
 }
 
 export function clearAuth() {
-  auth.token = ''
   auth.user = null
   auth.activeIdentity = ''
-  localStorage.removeItem('yvruc_token')
   localStorage.removeItem('yvruc_user')
   sessionStorage.removeItem(IDENTITY_KEY)
   sessionStorage.removeItem(ANNOUNCE_KEY)

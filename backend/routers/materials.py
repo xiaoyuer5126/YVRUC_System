@@ -188,7 +188,7 @@ def download_material(material_id: str, db: OrmSession = Depends(db_session),
                       user: User = Depends(current_user_download)):
     """志愿者下载培训材料。
 
-    走 current_user_download：这是 <a href> 直链，带不了 Authorization 头。
+    走 current_user_download：这是 <a href> 直链，凭下载票据认人。
     登录即可下载——材料本身就是发给报名者看的；但筹备中的活动整体不对外，
     它的材料也不能漏出去。
     """

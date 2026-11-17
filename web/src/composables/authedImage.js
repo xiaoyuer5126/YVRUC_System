@@ -1,14 +1,14 @@
 /** 需要鉴权的图片地址。
  *
- *  <img src> 带不了 Authorization 头，所以带凭据把图取回来、转成本地 blob
- *  地址再显示（和反馈截图同一套，见 components/FeedbackShots.vue）。
- *  只取本站 /api/ 下的地址：取图要带登录令牌，地址要是被人改成了外站，
- *  令牌就跟着发出去了。
+ *  <img src> 带不了 X-YVRUC、X-Identity 头，后端不凭 cookie 放行这种直链
+ *  （见 backend/deps.py 的 current_user_download），所以带头把图取回来、
+ *  转成本地 blob 地址再显示（和反馈截图同一套，见 components/FeedbackShots.vue）。
+ *  只取本站 /api/ 下的地址：地址要是被人改成了外站，当前身份这些头就跟着发出去了。
  */
 import { onUnmounted, ref, watch } from 'vue'
 import { authHeaders } from '../api'
 
-/** 能带着令牌去取的地址：本站接口，不含协议和主机名。 */
+/** 能带着鉴权头去取的地址：本站接口，不含协议和主机名。 */
 export function isOwnApi(url) {
   return typeof url === 'string' && url.startsWith('/api/') && !url.startsWith('//')
 }
