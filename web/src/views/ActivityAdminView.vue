@@ -1,5 +1,5 @@
 <template>
-  <div class="page page-wide" v-if="loading && !act" v-loading="loading" style="min-height:300px"></div>
+  <div class="page page-wide" v-if="loading && !act && !peeked" v-loading="loading" style="min-height:300px"></div>
   <div class="page page-wide" v-else-if="notFound">
     <el-result icon="warning" title="活动不存在"
                sub-title="可能已被删除，或演示数据重置后 ID 已变化">
@@ -15,6 +15,20 @@
         <el-button @click="$router.push('/manage')">返回活动列表</el-button>
       </template>
     </el-result>
+  </div>
+  <!-- 从活动管理列表点进来、数据还没到：页头先用列表里那一条画出来，切换动画
+       不用等接口，见 viewTransition.js。状态标签和按钮等数据到了再出 -->
+  <div class="page page-wide" v-else-if="!act && peeked">
+    <el-page-header @back="$router.push('/manage')" title="返回列表"
+                    :data-vt-morph="'act-' + peeked.id" data-vt-part="box">
+      <template #content>
+        <div class="hd-title">
+          <b :data-vt-morph="'act-' + peeked.id" data-vt-part="title">{{ peeked.title }}</b>
+        </div>
+        <div class="hd-meta dim">{{ peeked.time_text }} · {{ peeked.location || '待定' }}</div>
+      </template>
+    </el-page-header>
+    <div v-loading="true" style="min-height:300px"></div>
   </div>
   <div class="page page-wide" v-else-if="act">
     <!-- 志愿者档案与违规登记：都从名单里点进来，限本活动的人 -->
@@ -1774,6 +1788,7 @@
 <script setup>
 import { computed, h, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
+import { peekFor } from '../viewTransition'
 import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
 import { api, download as dl, downloadExport, fmtDT, pageUrl, qrBase, uploadFile } from '../api'
 import AiStructureAssist from '../components/AiStructureAssist.vue'
@@ -1805,6 +1820,7 @@ import { useCloseGuard } from '../composables/closeGuard'
 import { DAY_END, DAY_START, auth, canSee } from '../store'
 
 const route = useRoute()
+const peeked = computed(() => peekFor(() => route.params.id))
 const act = ref(null)
 const narrow = useNarrow()
 // 支持 ?tab=roster 直达页签；没带时等活动加载完再定（见 loadAll）

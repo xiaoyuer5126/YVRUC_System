@@ -16,7 +16,14 @@
 //   的元素，data-vt-part 标出是整块（box）还是标题（title）。名字只在切换的
 //   这一下临时设上：同一个 view-transition-name 在页面上出现两次，浏览器会
 //   直接放弃这次动画，所以平时谁都不带名字。
-import { nextTick } from 'vue'
+//   动画不等接口：详情页的页头要等接口回来才有内容，等的这段时间画面冻在旧页面
+//   的快照上，看着就是点了没反应。所以列表页在跳转前把被点的活动交给 peek，
+//   详情页数据还没到时先用它画出页头，变形当场就有对象。
+//
+// 内容区的滚动位置也在这里管：页面在 .app-main 里滚，不是整个窗口在滚，
+// 浏览器和路由都不替它记位置。不管的话换页时滚动条原样留着，点进详情页
+// 落在半中间。进新页面滚回顶部，后退、前进回到离开时的位置。
+import { nextTick, shallowRef } from 'vue'
 
 const PARTS = ['box', 'title']
 
@@ -26,11 +33,19 @@ const PAIRS = [
   [/^\/manage$/, /^\/manage\/([^/]+)$/],
 ]
 
-// 详情页的页头要等接口回来才渲染。最多等这么久，过了就只做淡入淡出：
-// 等待期间画面停在旧页面的快照上，等太久会显得点了没反应
-const MORPH_WAIT_MS = 400
 // 兜底：新页面怎么也渲染不出来时，最多冻住这么久就放手
-const UPDATE_CAP_MS = 1500
+const UPDATE_CAP_MS = 1000
+// 后退回列表时，列表要等接口回来才够高，滚动位置得跟着内容长高再补；最多跟这么久
+const RESTORE_FOLLOW_MS = 1500
+
+// —— 列表页交给详情页的活动（只用来先画页头） ——
+const peek = shallowRef(null)
+export function peekActivity(a) { peek.value = a }
+// 当前详情页的 id 对得上才用，id 取值函数如 () => route.params.id
+export function peekFor(id) {
+  const p = peek.value
+  return p && String(p.id) === String(id()) ? p : null
+}
 
 function supported() {
   return typeof document.startViewTransition === 'function'
@@ -61,32 +76,57 @@ function nameMorph(key) {
   return named
 }
 
-function waitForMorph(key) {
-  const sel = `[data-vt-morph="${key}"]`
-  if (document.querySelector(sel)) return Promise.resolve()
-  return new Promise((resolve) => {
-    const t0 = Date.now()
-    // 切换期间页面不重绘，requestAnimationFrame 不一定会来，用定时器轮询
-    const tick = () => {
-      if (document.querySelector(sel) || Date.now() - t0 >= MORPH_WAIT_MS) resolve()
-      else setTimeout(tick, 16)
-    }
-    setTimeout(tick, 16)
+// —— 内容区滚动位置 ——
+const scrollBox = () => document.querySelector('.app-main')
+const savedScroll = new Map()     // fullPath → 离开时的 scrollTop
+let stopFollow = () => {}
+
+function applyScroll(to, back) {
+  stopFollow()
+  const el = scrollBox()
+  if (!el) return
+  const top = back ? savedScroll.get(to.fullPath) || 0 : 0
+  el.scrollTop = top
+  if (el.scrollTop >= top - 1) return
+  // 页面还不够高：内容长出来一次就再滚一次，到位、超时或用户自己动了就停
+  const mo = new MutationObserver(() => {
+    el.scrollTop = top
+    if (el.scrollTop >= top - 1) stopFollow()
   })
+  const timer = setTimeout(() => stopFollow(), RESTORE_FOLLOW_MS)
+  const userMoved = () => stopFollow()
+  stopFollow = () => {
+    mo.disconnect()
+    clearTimeout(timer)
+    el.removeEventListener('wheel', userMoved)
+    el.removeEventListener('touchstart', userMoved)
+    stopFollow = () => {}
+  }
+  mo.observe(el, { childList: true, subtree: true })
+  el.addEventListener('wheel', userMoved, { passive: true })
+  el.addEventListener('touchstart', userMoved, { passive: true })
 }
 
-// 手机上手势返回（iOS 右滑、安卓预测式返回）时浏览器自己已经播了一段过场，
-// 再叠一层就是两段动画。浏览器在 popstate 上用 hasUAVisualTransition 说明这件事
+// popstate 在路由守卫之前同步触发：记下这一趟是后退/前进，以及浏览器是不是
+// 已经自己播了过场（iOS 右滑、安卓预测式返回）。后者再叠一层就是两段动画
+let popNav = false
 let uaTransition = false
-window.addEventListener('popstate', (e) => { uaTransition = !!e.hasUAVisualTransition }, true)
+window.addEventListener('popstate', (e) => {
+  popNav = true
+  uaTransition = !!e.hasUAVisualTransition
+}, true)
 
 export function installViewTransitions(router) {
-  // 正在等新页面渲染的那一次切换：{ key, finish }
+  // 正在等新页面渲染的那一次切换：{ key, named, finish }
   let pending = null
 
   router.beforeResolve((to, from) => {
     const ua = uaTransition
     uaTransition = false
+    if (to.path !== from.path && from.matched.length) {
+      const el = scrollBox()
+      if (el) savedScroll.set(from.fullPath, el.scrollTop)
+    }
     // 首次打开（from 还没有匹配的路由）、同一页只改查询串（筛选、页签）不播
     if (!supported() || ua || !from.matched.length || to.path === from.path) return
     pending?.finish()
@@ -95,12 +135,11 @@ export function installViewTransitions(router) {
     const root = document.documentElement
     return new Promise((proceed) => {
       root.classList.add('vt-nav')
-      const named = key ? nameMorph(key) : []
       let release
       const updated = new Promise((r) => { release = r })
       const me = {
         key,
-        named,
+        named: key ? nameMorph(key) : [],
         finish() {
           if (pending === me) pending = null
           release()
@@ -122,15 +161,15 @@ export function installViewTransitions(router) {
   })
 
   router.afterEach(async (to, from, failure) => {
+    const back = popNav
+    popNav = false
     const me = pending
-    if (!me) return
-    if (!failure) {
+    if (!failure && to.path !== from.path) {
       await nextTick()
-      if (me.key) {
-        await waitForMorph(me.key)
-        me.named.push(...nameMorph(me.key))
-      }
+      // 滚动要在新页面拍快照之前定好，不然动画播完画面又跳一下
+      applyScroll(to, back)
+      if (me?.key) me.named.push(...nameMorph(me.key))
     }
-    me.finish()
+    me?.finish()
   })
 }
