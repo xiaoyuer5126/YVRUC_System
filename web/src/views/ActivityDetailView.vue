@@ -1,6 +1,6 @@
 <template>
   <!-- 首次加载还没有内容可显示，放个占位；数据在时刷新走原来的刷新条，不闪 -->
-  <div v-if="loading && !act && !peeked" class="page" v-loading="loading" style="min-height:300px"></div>
+  <div v-if="loading && !act" class="page" v-loading="loading" style="min-height:300px"></div>
   <div v-else-if="loadError" class="page">
     <el-result icon="error" :title="t('加载失败：{0}', [loadError])">
       <template #extra>
@@ -9,24 +9,19 @@
       </template>
     </el-result>
   </div>
-  <div class="page" v-else-if="act || (peeked && !blocked)">
-    <!-- data-vt-*：从广场的活动卡片变过来、返回时变回去，见 viewTransition.js。
-         数据还没到时页头先用广场卡片上的那份（peeked），下面放加载占位 -->
-    <el-page-header @back="goBack" :title="t('返回')"
-                    :data-vt-morph="'act-' + head.id" data-vt-part="box">
+  <div class="page" v-else-if="act">
+    <el-page-header @back="goBack" :title="t('返回')">
       <!-- 窄屏下标题与标签分行：三样东西挤一行会被折成三行 -->
       <template #content>
-        <span class="hd-title" :data-vt-morph="'act-' + head.id" data-vt-part="title">{{ head.title }}</span>
+        <span class="hd-title">{{ act.title }}</span>
         <span class="hd-tags">
-          <el-tag :color="modeColor(head.recruit_mode)" effect="dark" style="border:none">
-            {{ t(head.recruit_label) }}
+          <el-tag :color="modeColor(act.recruit_mode)" effect="dark" style="border:none">
+            {{ t(act.recruit_label) }}
           </el-tag>
-          <el-tag :type="statusType">{{ t(head.display_label) }}</el-tag>
+          <el-tag :type="statusType">{{ t(act.display_label) }}</el-tag>
         </span>
       </template>
     </el-page-header>
-    <div v-if="!act" v-loading="true" style="min-height:300px"></div>
-    <template v-else>
 
     <el-row :gutter="16" style="margin-top:16px">
       <el-col :span="17">
@@ -672,7 +667,6 @@
 
     <ProfileDialog ref="profileDialog" />
     <GroupQrDialog ref="groupQr" />
-    </template>
   </div>
   <!-- 转发来的链接：不在招募范围内的人看到的不是 404，而是原因 -->
   <div v-else-if="blocked" class="page">
@@ -702,7 +696,6 @@ import { useNarrow } from '../composables/useNarrow'
 import { useCloseGuard } from '../composables/closeGuard'
 import { Bell, BellFilled, Clock, Warning } from '@element-plus/icons-vue'
 import { posName, t, tTags, tTime } from '../i18n'
-import { peekFor } from '../viewTransition'
 
 const route = useRoute()
 const router = useRouter()
@@ -711,9 +704,6 @@ const act = ref(null)
 const blocked = ref('')
 const loading = ref(false)
 const loadError = ref('')
-// 从广场点进来时，数据到之前页头先用卡片上的那份，见 viewTransition.js
-const peeked = computed(() => peekFor(() => route.params.id))
-const head = computed(() => act.value || peeked.value)
 const groupDetail = ref({ visible: false, data: null })
 const enrollDlg = ref({ visible: false, shift: null, position: null,
                         leaderWilling: false, allowReassign: true })
@@ -759,7 +749,7 @@ const STATUS_TYPES = {
   draft: 'warning', upcoming: 'primary', published: 'success',
   closed: 'warning', ongoing: 'danger', finished: 'info',
 }
-const statusType = computed(() => STATUS_TYPES[head.value?.display_status] || 'info')
+const statusType = computed(() => STATUS_TYPES[act.value?.display_status] || 'info')
 // 负责人正在改安排：报名、退选、确认转正后端一律拦，按钮跟着灰掉
 const paused = computed(() => !!act.value?.editing)
 // 活动地点的导航链接（高德网页版标点，见模板里那段说明）

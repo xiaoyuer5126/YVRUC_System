@@ -43,9 +43,7 @@
                      :value="o.value" :label="o.label" />
         </el-select>
       </div>
-      <!-- morph 与表格里的 data-vt-*：进单个活动管理页时这一条变成那页的页头 -->
       <DataCards v-if="narrow" :rows="list" title-key="title" v-loading="loading"
-                 :morph="row => 'act-' + row.id"
                  :fields="[{ key: 'time_text', label: '时间' },
                            { key: 'location', label: '地点' }]"
                  empty="还没有活动">
@@ -64,7 +62,7 @@
         </template>
         <template #actions="{ row }">
           <el-button size="small" type="primary"
-                     @click="openActivity(row)">管理</el-button>
+                     @click="$router.push('/manage/' + row.id)">管理</el-button>
           <el-button size="small" @click="openCopy(row)">复制</el-button>
           <el-popconfirm v-if="row.status === 'approved'"
                          :title="`发布后学生即可看到活动，${row.publish_hint}，确认？`"
@@ -91,14 +89,12 @@
              各占一列的话，活动名被挤成窄窄一条，得横着扫三段才对得上一场活动 -->
         <el-table-column label="活动" min-width="240">
           <template #default="{row}">
-            <div :data-vt-morph="'act-' + row.id" data-vt-part="box">
-              <div class="act-head">
-                <el-tag v-if="row.urgent" size="small" type="danger" effect="dark">急招</el-tag>
-                <b :data-vt-morph="'act-' + row.id" data-vt-part="title">{{ row.title }}</b>
-                <el-tag size="small" :type="statusType(row.display_status)">{{ row.display_label }}</el-tag>
-              </div>
-              <div class="dim">{{ row.time_text }} · {{ row.location || '待定' }}</div>
+            <div class="act-head">
+              <el-tag v-if="row.urgent" size="small" type="danger" effect="dark">急招</el-tag>
+              <b>{{ row.title }}</b>
+              <el-tag size="small" :type="statusType(row.display_status)">{{ row.display_label }}</el-tag>
             </div>
+            <div class="dim">{{ row.time_text }} · {{ row.location || '待定' }}</div>
           </template>
         </el-table-column>
         <!-- 列宽按最长的那条类型标签定：「不公开招募（补记录）」在 small 标签里约 134px，
@@ -125,7 +121,7 @@
           <template #default="{row}">
             <div class="btn-row">
               <el-button size="small" type="primary" link
-                         @click="openActivity(row)">管理</el-button>
+                         @click="$router.push('/manage/' + row.id)">管理</el-button>
               <el-button size="small" link @click="openCopy(row)">复制</el-button>
               <el-popconfirm v-if="row.status === 'approved'"
                              :title="`发布后学生即可看到活动，${row.publish_hint}，确认？`"
@@ -215,7 +211,6 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, download } from '../api'
 import { MODE_COLORS, auth } from '../store'
-import { peekActivity } from '../viewTransition'
 import { useNarrow } from '../composables/useNarrow'
 import { useCloseGuard } from '../composables/closeGuard'
 import { activityBody, emptyActivity, validateActivity } from '../composables/activityForm'
@@ -227,12 +222,6 @@ import DataCards from '../components/DataCards.vue'
 import Pager from '../components/Pager.vue'
 
 const router = useRouter()
-
-// 管理页数据还没到时先拿这一条的标题、时间地点画出页头，切换动画不用等接口
-function openActivity(row) {
-  peekActivity(row)
-  router.push('/manage/' + row.id)
-}
 const narrow = useNarrow()
 // 志愿北京对接部门的实际名称（登录信息里带下来），文案里别写死部门名
 const vbDept = computed(() => auth.user?.vb_dept_name || '校青协')

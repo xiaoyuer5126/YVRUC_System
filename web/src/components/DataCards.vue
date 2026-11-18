@@ -15,12 +15,11 @@
       <span class="dim">{{ t('已选 {0} / {1}', [picked.length, pickableRows.length]) }}</span>
     </div>
     <div v-for="(row, i) in rows" :key="keyOf(row) ?? i" class="card"
-         :class="{ picked: isPicked(row) }"
-         :data-vt-morph="morph?.(row)" :data-vt-part="morph && 'box'">
+         :class="{ picked: isPicked(row) }">
       <div class="card-head">
         <el-checkbox v-if="pickable(row)" :model-value="isPicked(row)"
                      @change="toggle(row)" />
-        <div class="card-title" :data-vt-morph="morph?.(row)" :data-vt-part="morph && 'title'">
+        <div class="card-title">
           <slot name="title" :row="row">{{ valueOf(row, titleKey) }}</slot>
         </div>
         <div class="card-extra"><slot name="extra" :row="row" /></div>
@@ -58,8 +57,6 @@ const props = defineProps({
   empty: { type: String, default: '' },
   /** 布尔：整表可选；函数：按行判 (row) => 布尔，与 el-table 同义 */
   selectable: { type: [Boolean, Function], default: false },
-  /** (row) => 'act-<id>'：点进详情时这张卡片变成详情页的页头，见 viewTransition.js */
-  morph: { type: Function, default: null },
 })
 const emit = defineEmits(['selection-change'])
 
