@@ -1,4 +1,5 @@
-// 页面切换动画（View Transitions，同文档的 document.startViewTransition）。
+// 页面切换动画（View Transitions，同文档的 document.startViewTransition）：
+// 整页淡入淡出，顶栏和侧栏单独起名、不播动画，看上去外框不动。
 //
 // 只是锦上添花：浏览器没有这个接口（iOS 16 及以下的 iPhone、老内核的安卓微信）、
 // 或者系统开了「减少动态效果」，就照常直接换页，不加 polyfill。直接调这个接口
@@ -7,73 +8,23 @@
 // 挂在 beforeResolve 上：它在所有守卫和懒加载组件都过完之后才跑。页面的离开
 // 拦截（「改动还没发布」那种确认框）在它之前，确认框弹着的时候画面不会被冻住；
 // 被守卫重定向走的那一趟也到不了这里，只有最终落地的那一趟播动画。
-//
-// 效果分两层：
-// - 整页淡入淡出（根元素的默认 crossfade）。顶栏和侧栏在切换期间单独起名、
-//   不播动画，看上去是外框不动、只有内容区在换。
-// - 列表 ↔ 详情的「共享元素」：被点的那张卡片（或那一行）平滑变成详情页的
-//   页头，返回时反过来。两边各用 data-vt-morph="act-<活动 id>" 标出可以对上
-//   的元素，data-vt-part 标出是整块（box）还是标题（title）。名字只在切换的
-//   这一下临时设上：同一个 view-transition-name 在页面上出现两次，浏览器会
-//   直接放弃这次动画，所以平时谁都不带名字。
-//   动画不等接口：详情页的页头要等接口回来才有内容，等的这段时间画面冻在旧页面
-//   的快照上，看着就是点了没反应。所以列表页在跳转前把被点的活动交给 peek，
-//   详情页数据还没到时先用它画出页头，变形当场就有对象。
+// 新页面挂上就放手，不等接口：等的这段时间画面冻在旧页面的快照上，看着就是
+// 点了没反应。
 //
 // 内容区的滚动位置也在这里管：页面在 .app-main 里滚，不是整个窗口在滚，
 // 浏览器和路由都不替它记位置。不管的话换页时滚动条原样留着，点进详情页
-// 落在半中间。进新页面滚回顶部，后退、前进回到离开时的位置。
-import { nextTick, shallowRef } from 'vue'
-
-const PARTS = ['box', 'title']
-
-// 列表页与详情页成对出现：从列表进详情、从详情回列表都做共享元素变形
-const PAIRS = [
-  [/^\/square$/, /^\/activity\/([^/]+)$/],
-  [/^\/manage$/, /^\/manage\/([^/]+)$/],
-]
+// 落在半中间。进新页面滚回顶部，后退、前进回到离开时的位置。这部分不依赖
+// 动画，不播动画的浏览器上也生效。
+import { nextTick } from 'vue'
 
 // 兜底：新页面怎么也渲染不出来时，最多冻住这么久就放手
 const UPDATE_CAP_MS = 1000
 // 后退回列表时，列表要等接口回来才够高，滚动位置得跟着内容长高再补；最多跟这么久
 const RESTORE_FOLLOW_MS = 1500
 
-// —— 列表页交给详情页的活动（只用来先画页头） ——
-const peek = shallowRef(null)
-export function peekActivity(a) { peek.value = a }
-// 当前详情页的 id 对得上才用，id 取值函数如 () => route.params.id
-export function peekFor(id) {
-  const p = peek.value
-  return p && String(p.id) === String(id()) ? p : null
-}
-
 function supported() {
   return typeof document.startViewTransition === 'function'
     && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
-function morphKey(from, to) {
-  for (const [list, detail] of PAIRS) {
-    let m
-    if (list.test(from.path) && (m = detail.exec(to.path))) return 'act-' + m[1]
-    if (list.test(to.path) && (m = detail.exec(from.path))) return 'act-' + m[1]
-  }
-  return ''
-}
-
-// 给页面上 key 对应的元素临时起名，返回起了名的元素，结束后好清掉
-function nameMorph(key) {
-  const named = []
-  for (const part of PARTS) {
-    const el = document.querySelector(`[data-vt-morph="${key}"][data-vt-part="${part}"]`)
-    // 只给排成一个框的元素起名：display:none 的拍不出快照，折成两行的行内
-    // 元素（长标题）有好几个框，浏览器也不拿它做变形
-    if (el && el.getClientRects().length === 1) {
-      el.style.viewTransitionName = 'vt-' + part
-      named.push(el)
-    }
-  }
-  return named
 }
 
 // —— 内容区滚动位置 ——
@@ -117,7 +68,7 @@ window.addEventListener('popstate', (e) => {
 }, true)
 
 export function installViewTransitions(router) {
-  // 正在等新页面渲染的那一次切换：{ key, named, finish }
+  // 正在等新页面渲染的那一次切换
   let pending = null
 
   router.beforeResolve((to, from) => {
@@ -131,15 +82,12 @@ export function installViewTransitions(router) {
     if (!supported() || ua || !from.matched.length || to.path === from.path) return
     pending?.finish()
 
-    const key = morphKey(from, to)
     const root = document.documentElement
     return new Promise((proceed) => {
       root.classList.add('vt-nav')
       let release
       const updated = new Promise((r) => { release = r })
       const me = {
-        key,
-        named: key ? nameMorph(key) : [],
         finish() {
           if (pending === me) pending = null
           release()
@@ -147,16 +95,13 @@ export function installViewTransitions(router) {
       }
       pending = me
       setTimeout(me.finish, UPDATE_CAP_MS)
-      // 回调在旧页面拍完快照后才被调用：这时才放导航继续走，新页面渲染完、
+      // 回调在旧页面拍完快照后才被调用：这时才放导航继续走，新页面挂上、
       // afterEach 里 finish 之后，浏览器再拍新页面、开始播动画
       const vt = document.startViewTransition(() => {
         proceed()
         return updated
       })
-      vt.finished.finally(() => {
-        root.classList.remove('vt-nav')
-        for (const el of me.named) el.style.viewTransitionName = ''
-      })
+      vt.finished.finally(() => root.classList.remove('vt-nav'))
     })
   })
 
@@ -168,7 +113,6 @@ export function installViewTransitions(router) {
       await nextTick()
       // 滚动要在新页面拍快照之前定好，不然动画播完画面又跳一下
       applyScroll(to, back)
-      if (me?.key) me.named.push(...nameMorph(me.key))
     }
     me?.finish()
   })
