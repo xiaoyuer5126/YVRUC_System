@@ -933,7 +933,6 @@ export default {
   '未采纳': 'Rejected',
   // 活动上新提醒
   '上新提醒': 'New activity alerts',
-  '上新提醒已开启': 'Alerts on',
   '活动上新提醒': 'New Activity Alerts',
   '有新活动上线时，场次落在你勾选的空闲时段里，或者由你关注的组织单位举办，就给你发一条提醒。只提醒招募范围包括你的活动。': 'When a new activity goes live with a session in your free time, or is run by an organizing unit you follow, we will notify you. Only activities open to you count.',
   '每周空闲时段': 'Weekly free time',

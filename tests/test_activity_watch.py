@@ -16,7 +16,7 @@ from conftest import (INITIATOR, approve, inbox, login, make_draft, student_row)
 from test_record_activity import _create as create_record
 from test_record_activity import _submit_and_approve
 
-TITLE = "新志愿活动上线｜"
+TITLE = "志愿活动上新提醒｜"
 URL = "/api/me/activity-watch"
 
 

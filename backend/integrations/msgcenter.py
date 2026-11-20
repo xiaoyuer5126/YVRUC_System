@@ -102,7 +102,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "活动时间：{time}\n地点：{loc}"),
     # 活动上新提醒（见 watch.py）：reason 说明为什么发给他，reg_line 是报名开始那一行
     "new_activity": (
-        "新志愿活动上线｜{activity}",
+        "志愿活动上新提醒｜{activity}",
         "「{activity}」已上线，{reason}。\n"
         "组织单位：{organizer}\n活动时间：{time}\n{reg_line}"),
     "checkin_reminder": (
