@@ -1,19 +1,38 @@
 # 内测形态：本机当服务器，同学通过域名访问。
-#   · 域名 A 记录指向本机内网 IP，caddy 终止 TLS（Let's Encrypt DNS-01）
+#   · 入口是宿主机上的全局 nginx（不归本仓库管）：它终止 TLS，经外部网络 web-net
+#     把请求转给 yvruc-web:80
 #   · 本机 postgres 照旧，数据可弃
 #
+#   docker network create web-net        # 首次；网段不能与平台默认网络 172.30.0.0/16 冲突
 #   docker compose -f docker-compose.yml -f docker-compose.intranet.yml up -d --build
 #   或写进 .env：COMPOSE_FILE=docker-compose.yml;docker-compose.intranet.yml
 #   （Linux/macOS 用冒号分隔，Windows 用分号）
 #
-# base 里 caddy 在 intranet profile，默认不起；这个文件把它的 profile 清空，
-# 跟其余服务一起启动。web 用镜像默认的 http 80 配置，caddy 往 web:80 转。证书由 caddy 自己管，不需要
-# YVRUC_CERTS_DIR，也不需要学校证书。
+# 这个文件只改 web：
+#   · 加入外部网络 web-net，同时留在 default 网络里（要连 backend）
+#   · 去掉 base 里绑本机的 8080 映射，宿主机上不再有直连 web 的端口。base 里那条
+#     映射不能删：CI 的页面自检靠它访问页面
+#
+# 全局 nginx 那边要有（见 README「内测形态」）：
+#   proxy_pass http://yvruc-web:80;
+#   proxy_set_header X-Forwarded-Proto https;   没有它二维码会是 http:// 地址、登录 cookie 不带 Secure
+#   client_max_body_size 64m;                   不小于平台自己的上传上限
+#   proxy_read_timeout 120s;                    自动排班、智能起草这些请求比较慢
+#
+# 客户端真实 IP 暂不还原：web 只信任 172.30.0.0/16 来的 X-Forwarded-For，全局 nginx
+# 从 web-net 进来，操作日志里记下的是它的地址（内测阶段可接受，2026-11-20 定）。
 #
 # 要填的值（.env 里）：
 #   YVRUC_PUBLIC_BASE_URL   https://<内测域名>      二维码与通知链接用它
 #   YVRUC_SITE_URL          同上（通知卡片打开地址，可留空自动取前者）
-#   caddy.env               YVRUC_DOMAIN（同一个域名）、CF_API_TOKEN（DNS-01 用）
 services:
-  caddy:
-    profiles: !reset []
+  web:
+    ports: !reset []
+    networks:
+      - default
+      - web-net
+
+networks:
+  web-net:
+    external: true
+    name: web-net

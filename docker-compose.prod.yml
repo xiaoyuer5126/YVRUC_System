@@ -8,10 +8,9 @@
 # 三份文件各管一段，互不重复：
 #   docker-compose.yml               公共部分（redis、migrate、backend、web、backup）
 #   docker-compose.school-db.yml     连外部库：不起本机 postgres，migrate 不再等它
-#   docker-compose.prod.yml（本文件）生产特有：证书、443/80、不起内测入口 caddy
+#   docker-compose.prod.yml（本文件）生产特有：证书、443/80
 #
-# 本文件只做三件事：
-#   · 不起 caddy：域名直接解析到这台服务器，TLS 由 nginx 用学校证书终止
+# 本文件只做两件事（域名直接解析到这台服务器，TLS 由 nginx 用学校证书终止）：
 #   · web 换上 https 配置（web/nginx-https.conf.template），证书目录一起挂进去：
 #     YVRUC_CERTS_DIR（默认仓库下 ./.certs）
 #   · web 开 443 和 80：80 上所有请求 301 跳到 https 同一地址，不提供任何内容
@@ -35,11 +34,6 @@
 #   <YVRUC_CERTS_DIR>/privkey.pem     私钥（权限 600）
 # 换证书＝替换这两个文件 + docker exec yvruc-web nginx -s reload。
 services:
-  # base 里的内测入口 caddy 在这里不起：它只是内测的证书管家，生产由 nginx 自己
-  # 用学校证书终止 TLS，域名直接解析到服务器。
-  caddy:
-    profiles: ["intranet-disabled"]
-
   web:
     environment:
       # 80 跳 443 时拼地址用：不是 443 就在跳转地址里带上端口。值要与下面的映射一致。

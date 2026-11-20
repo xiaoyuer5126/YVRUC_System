@@ -20,9 +20,8 @@ data/
 .env.*
 !.env.example
 !.env.example.*
-# caddy 的域名与 Cloudflare 令牌：本机那份永不入库，模板是 caddy.env.example
+# 老版本内测入口 caddy 留下的 Cloudflare 令牌文件：caddy 已移除，机器上还留着这份时也不能入库
 caddy.env
-!caddy.env.example
 # 错误监控服务的库口令与密钥：同理，模板是 ops/monitoring.env.example
 ops/monitoring.env
 !ops/monitoring.env.example

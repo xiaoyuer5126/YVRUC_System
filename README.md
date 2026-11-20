@@ -12,8 +12,8 @@ FastAPI + SQLAlchemy（PostgreSQL）+ Redis + Vue3 / Element Plus / ECharts（Vi
 | 形态 | 叠加文件 | 起的服务 | 访问方式 |
 |---|---|---|---|
 | **本机调试** | `docker-compose.local.yml` | postgres + redis + migrate + backend + web + backup | http://localhost:8080 |
-| **内测** | `docker-compose.intranet.yml` | 上面这些 **+ caddy** | https://<域名>（caddy 终止 TLS） |
-| **生产** | `docker-compose.school-db.yml` + `docker-compose.prod.yml` | redis + migrate + backend + web + backup（**无本机 postgres、无 caddy**） | https://volunteer.ruc.edu.cn（nginx 用学校证书终止 TLS） |
+| **内测** | `docker-compose.intranet.yml` | 同本机调试；web 加入外部网络 `web-net`，不占宿主机端口 | https://<域名>（宿主机上的全局 nginx 终止 TLS） |
+| **生产** | `docker-compose.school-db.yml` + `docker-compose.prod.yml` | redis + migrate + backend + web + backup（**无本机 postgres**） | https://volunteer.ruc.edu.cn（nginx 用学校证书终止 TLS） |
 
 ```bash
 cp .env.example .env          # 填 POSTGRES_PASSWORD、YVRUC_ID_CARD_KEY
@@ -21,7 +21,7 @@ cp .env.example .env          # 填 POSTGRES_PASSWORD、YVRUC_ID_CARD_KEY
 # 本机调试（日常开发，http 直连）
 docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 
-# 内测（本机当服务器；另需 cp caddy.env.example caddy.env 填域名与 Cloudflare DNS 令牌）
+# 内测（本机当服务器；先 docker network create web-net，全局 nginx 的要求见「内测形态的入口」）
 docker compose -f docker-compose.yml -f docker-compose.intranet.yml up -d --build
 
 # 生产（学校虚机；另需把学校证书放成 .certs/{fullchain,privkey}.pem）
@@ -33,28 +33,25 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 yv
 
 - 三种形态都往同一个 web 容器里落（nginx）；区别只在**谁终止 TLS、证书从哪来**：
   - 本机调试：没有 TLS，nginx 直接监听 80 映射到宿主机端口，http 访问
-  - 内测：`caddy` 在宿主机 80/443 终止 TLS（证书用 Let's Encrypt 的 DNS-01 签，见
-    「内网 https 与证书」）
-  - 生产：**nginx 自己**监听 443、用学校发的证书终止 TLS（80 只做 301 跳 https），前面没有 caddy
+  - 内测：宿主机上的全局 nginx 终止 TLS，经外部网络 `web-net` 转给 web 容器的 80，见
+    「内测形态的入口（全局 nginx）」
+  - 生产：**nginx 自己**监听 443、用学校发的证书终止 TLS（80 只做 301 跳 https），前面没有别的反代
 - 每种形态的配置项都写在各自叠加文件的头部注释里；`.env` 里的
   `COMPOSE_FILE` 也能固定形态（**Windows 用分号分隔、Linux/macOS 用冒号**），
   三种换着用时建议不用它、直接 `-f` 写清楚。
-- 平台域名写两处：`.env` 的 `YVRUC_PUBLIC_BASE_URL`（二维码与通知链接用它）和
-  内测时 `caddy.env` 的 `YVRUC_DOMAIN`（caddy 按它签证书），两个填同一个。
+- 平台域名填在 `.env` 的 `YVRUC_PUBLIC_BASE_URL`（二维码与通知链接用它）。
 - 前端 8080 / 数据库 5433 / Redis 6380 / 后端 8000 都只绑 `127.0.0.1`，调试用得上、
-  局域网和公网都连不上（本机调试形态的 8080 会放开到局域网，方便手机连同一个 wifi 测签到）。
-- `caddy.env` 不存在时 compose 照常加载（CI 上就没有），只是 caddy 起不来。
-- `docker logs yvruc-caddy` 看证书签发。
+  局域网和公网都连不上（本机调试形态的 8080 会放开到局域网，方便手机连同一个 wifi 测签到；
+  内测形态去掉了 8080，生产形态换成 443/80）。
 - **用户上传的文件全在一个命名卷 `yvruc_files` 里**（挂在容器的 `/app/data/files`）：
   学习材料、立项书与结项书、模板、报名问卷附件、反馈截图、时长补登的证明与照片、
   活动联络群二维码。谁能看由各接口自己的鉴权决定，和目录无关，所以不按「材料 / 二维码」
   分两个卷。数据库存 `yvruc_pgdata`，天地图瓦片缓存存 `yvruc_tiles`，操作日志存
-  `yvruc_oplog`，caddy 的证书与账户密钥存 `yvruc_caddy_data`。
+  `yvruc_oplog`。
 - 启动时 Redis 与身份证加密密钥都是**硬依赖**：连不上、密钥不对直接起不来——
   半可用的服务比起不来更难排查。数据库的迁移版本不是代码里最新的那一版，后端也拒绝
   启动，见下面「数据库迁移」。
-- **证书与私钥不进仓库**：`.certs/`（生产用学校证书）与 `caddy.env`（内测的
-  Cloudflare DNS 令牌）都已在 `.gitignore` 里，误提交后先吊销令牌再清历史。
+- **证书与私钥不进仓库**：`.certs/`（生产用学校证书）已在 `.gitignore` 里。
 
 
 ### 数据库迁移（Alembic）
@@ -111,33 +108,40 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 yv
 
 不填 `YVRUC_DATABASE_URL` 时连 compose 里的 postgres 容器，口令取 `POSTGRES_PASSWORD`。
 
-### 内网 https 与证书（caddy）
+### 内测形态的入口（全局 nginx）
 
-caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TXT 记录证明域名
-所有权，**不需要 80/443 从公网可达**，所以域名的 A 记录指向内网 IP 也照样能签下来。
-签发与续期全自动（90 天一轮，到期前 30 天自己续），不需要人工介入。
+内测机器上有一台宿主机级的全局 nginx（不归本仓库管），由它终止 TLS，再经外部
+Docker 网络 `web-net` 转给 web 容器。平台自己不占宿主机端口，`docker-compose.intranet.yml`
+把 base 里绑本机的 8080 去掉了。
 
-- 需要 `caddy.env` 里的 `CF_API_TOKEN`：Cloudflare 令牌，权限 **Zone → DNS → Edit**，
-  范围覆盖该域名所在的 zone。`caddy.env` 由 `caddy.env.example` 复制而来，**是本机
-  文件、已被忽略，永不入库**——这个令牌能改你的 DNS，提交上去等于把它交出去；
-  一旦误提交，先把令牌吊销重发，再改历史。
-- 域名在 Cloudflare 里的 A 记录必须是 **DNS only（灰云）**：开橙云的话 Cloudflare 会
-  尝试回源到那个内网 IP，整个域名就挂了。
-- 镜像里的 Caddy 必须带 Cloudflare DNS 插件：官方 `caddy` 镜像没有，会报
-  `unknown directive: dns`。所以用 `caddybuilds/caddy-cloudflare`（同一作者的
-  `ghcr.io` 那份已经拉不到，registry 返回 denied；Docker Hub 这份正常）。
-- 镜像用 `latest`，重建时跟着镜像作者的最新版本走。镜像里 Caddy 与插件的组合
-  一旦对不上，会在装配 TLS 时 panic，报 `expected ModuleMap because inline_key is empty`
-  ——这句话完全不指向版本，会让人去查配置（v2.9/v2.10 配插件 v0.2.x 就是这样）。
-  撞上就换回已知能用的标签（如 `:2.11.7`），并确认证书还能签下来。
-- 证书落在命名卷 `yvruc_caddy_data`，**别随手 `down -v`**：卷一删就重新签发，
-  而 Let's Encrypt 对同一注册域限每周 50 张，调试期间重建几次会被锁一周。
-  真要反复试配置，先在 Caddyfile 顶部加 `{ local_certs }`（浏览器会报证书不受信任，
-  属正常），调掉后删掉再 `docker compose restart caddy`。
+- `web-net` 要先建好：`docker network create web-net`。网段不能与平台默认网络
+  `172.30.0.0/16` 冲突（不指定时 Docker 自己挑，一般不会撞）。
+- web 同时在 `web-net` 和平台的默认网络里：前者让全局 nginx 连得到，后者连 backend。
+- 全局 nginx 的站点要有这几项：
 
-### 生产 https 与证书（学校证书，不用 caddy）
+  ```nginx
+  location / {
+      proxy_pass http://yvruc-web:80;              # 全局 nginx 也要在 web-net 里
+      proxy_set_header Host $host;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto https;    # 必须有，见下
+      client_max_body_size 64m;                    # 不小于平台自己的上传上限
+      proxy_read_timeout 120s;                     # 自动排班、智能起草这些请求比较慢
+  }
+  ```
 
-生产形态下 **nginx 自己监听 443、用学校发的证书终止 TLS**（另听 80 只做跳转），前面没有 caddy——证书是
+  - `X-Forwarded-Proto https`：web 容器靠它判断是不是 https。没有的话二维码会印成
+    `http://` 地址，登录 cookie 也不带 Secure。
+  - `client_max_body_size` 小于 64m 时，大附件会先被全局 nginx 挡下，报 413。
+- 客户端真实 IP 暂不还原（2026-11-20 定，内测可接受）：web 只信任 `172.30.0.0/16`
+  来的 `X-Forwarded-For`，全局 nginx 从 `web-net` 进来，操作日志里记的是它的地址。
+- 从老版本升级的机器上可能还跑着 cloudflared、caddy 容器（名字以 `docker ps` 为准，
+  老配置里是 `yvruc-caddy`），要手动停掉删掉：`docker rm -f <容器名>`；
+  老的 `caddy.env` 和名字里带 `caddy_data`、`caddy_config` 的两个卷（`docker volume ls` 查）也用不上了，可以删。
+
+### 生产 https 与证书（学校证书）
+
+生产形态下 **nginx 自己监听 443、用学校发的证书终止 TLS**（另听 80 只做跳转），前面没有别的反代——证书是
 学校签好的，不需要自动签发那一套，少一个容器、少一跳，客户端 IP 也不用再从
 `X-Forwarded-For` 里还原（nginx 直接看到浏览器地址）。
 配置是 `web/nginx-https.conf.template`，由 `docker-compose.prod.yml` 连同证书目录挂进 web 容器，
@@ -186,7 +190,7 @@ caddy 用 Let's Encrypt 的 **DNS-01** 挑战签证书：靠往 DNS 写一条 TX
 | `YVRUC_SSO_CLIENT_ID` / `_CLIENT_SECRET` | OAuth 的 client_id / secret，留空用开放平台的 appid / secret |
 | `YVRUC_SSO_REDIRECT_URI` | OAuth 回调地址，必须与应用中心登记的一字不差 |
 | `YVRUC_MSGCENTER_CHANNELS` | 推送通道，`2` 邮件、`4` 企业微信，逗号分隔，默认 `4`。填 `1`（短信）后端拒绝启动 |
-| `YVRUC_PUBLIC_BASE_URL` | 平台对外网址（多个用逗号分隔）。二维码里写的就是它，只有列在这里的域名才允许出现在码里。与 `caddy.env` 的 `YVRUC_DOMAIN` 填同一个 |
+| `YVRUC_PUBLIC_BASE_URL` | 平台对外网址（多个用逗号分隔）。二维码里写的就是它，只有列在这里的域名才允许出现在码里 |
 | `YVRUC_EXPOSE_DOCS` | 设为 `1` 才暴露 `/docs` 与 `/openapi.json`，默认关闭 |
 | `YVRUC_TIANDITU_TK_SERVER` | 天地图**服务端** tk：管理端地图瓦片转发 + 地名搜索。要在天地图后台登记服务器公网出口 IP；只在后端用，不进前端。留空 = 地图只显示点和圈 |
 | `YVRUC_TIANDITU_DAILY_LIMIT` | 每天向天地图取瓦片的上限，默认 10000（天地图给的额度），到上限直接 503 |
@@ -225,7 +229,7 @@ compose 里的 `backup` 服务随 `up -d` 一起起来，每天 3:00 备一份�
 
 - **备什么**：数据库（`pg_dump`，服务不用停）和两个文件卷：`yvruc_files`（用户上传的
   文件：材料、立项书结项书、反馈截图、二维码等）、`yvruc_oplog`（操作日志）。
-  不备天地图瓦片缓存、Redis、caddy 证书，它们丢了能重建。
+  不备天地图瓦片缓存、Redis，它们丢了能重建。
 - **每份备份**是一个文件夹，名字形如 `2026-10-12_0300_daily`，里面是 `db.dump`、
   `files.tar.gz`、`oplog.tar.gz` 和 `manifest.json`。`files.tar.gz` 里装的是
   用户上传的全部文件——包括二维码，它们和材料同卷。
@@ -666,11 +670,10 @@ YVRUC_System/
 ├── docker-compose.yml          公共部分：redis + migrate（一次性，升级数据库）
 │                               + backend + web + backup（每日备份）+ postgres
 │                               （+ seed / tests 两个一次性任务 profile）
-├── docker-compose.local.yml      本机调试形态：http 直连宿主机端口，不要 caddy
-├── docker-compose.intranet.yml   内测形态：caddy（Let's Encrypt 证书，内网 80/443）
-├── docker-compose.prod.yml       生产形态：nginx 用学校证书听 443（80 只跳转），不要 caddy
+├── docker-compose.local.yml      本机调试形态：http 直连宿主机端口
+├── docker-compose.intranet.yml   内测形态：web 加入 web-net，入口是宿主机上的全局 nginx
+├── docker-compose.prod.yml       生产形态：nginx 用学校证书听 443（80 只跳转）
 ├── docker-compose.school-db.yml  连外部数据库时叠加：不起 postgres 容器
-├── Caddyfile / caddy.env.example  内测入口的 TLS 与 Cloudflare DNS-01 令牌
 ├── .certs/                     生产证书目录（已在 .gitignore 里，不入库）
 ├── backup/                     备份容器：定时与手动备份、保留策略、恢复（job.py）
 ├── ops/                        运维：错误监控服务的编排与运维说明（docker-compose.monitoring.yml
@@ -716,7 +719,7 @@ YVRUC_System/
 │   └── integrations/           msgcenter / sso
 └── web/                        Vue3 + Element Plus + ECharts（Vite，无 Pinia）
     ├── Dockerfile / nginx.conf.template  Node 构建 → nginx 托管并反代 /api；
-    │                          默认只监听 80，TLS 由前面的 caddy 终止
+    │                          默认只监听 80，TLS 由前面的全局 nginx 终止
     ├── nginx-https.conf.template  生产形态：听 443、用学校证书终止 TLS；80 一律 301 到 https
     ├── nginx-local.conf.template  本机调试形态：听 80、不还原真实 IP
     ├── nginx-shared.conf     三份形态共用的站点主体
