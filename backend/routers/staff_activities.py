@@ -17,6 +17,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
+from .. import watch
 from .. import (assign, config, copying, downloads, editing, hours as hours_flow,
                 scoring, uploads)
 from ..stage import ensure_hours_editable, ensure_not_finished
@@ -903,7 +904,8 @@ def copy_positions_route(shift_id: str, body: CopyPositionsBody,
 # ======================= 状态流转 =======================
 
 @router.post("/activities/{activity_id}/publish")
-def publish(activity_id: str, db: OrmSession = Depends(db_session),
+def publish(activity_id: str, bg: BackgroundTasks,
+            db: OrmSession = Depends(db_session),
             user: User = Depends(require_manager)):
     """手动发布。只有提交审批时关掉了「通过即发布」的活动才会走到这里。"""
     ensure_activity_manager(db, user, activity_id)
@@ -915,16 +917,20 @@ def publish(activity_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(409, "请先提交校青协审批，通过后再发布")
     if act.status != "approved":
         raise HTTPException(409, f"当前状态为「{act.label_status()}」，不能发布")
-    publish_approved(db, act, user)
+    alert = publish_approved(db, act, user)
     db.commit()
+    watch.queue(bg, act, alert)
     # 发布成功的提示由服务端给：设了将来的报名开始时间就说清是哪一刻开始，
     # 别让页面写死「学生现在可以报名」
     return {"ok": True, "hint": published_hint(act.reg_start)}
 
 
-def publish_approved(db: OrmSession, act: Activity, user: User) -> None:
+def publish_approved(db: OrmSession, act: Activity, user: User) -> bool:
     """把审批通过的活动放到广场上。审批人拍板时自动走这里，
-    关掉了「通过即发布」的则由发起方点按钮走这里。不提交事务，交给调用方。"""
+    关掉了「通过即发布」的则由发起方点按钮走这里。不提交事务，交给调用方。
+
+    返回要不要发活动上新提醒：True 时调用方提交之后用 watch.queue 交给后台。
+    """
     ensure_ready_to_publish(act)
     act.status = "published"
     if act.reg_start is None:
@@ -932,6 +938,7 @@ def publish_approved(db: OrmSession, act: Activity, user: User) -> None:
     audit_log(db, actor=user, action="publish", target_type="activity",
               target_id=act.id, target_label=act.title, activity_id=act.id,
               summary="发布活动，开始报名")
+    return watch.claim(act)
 
 
 def ensure_ready_to_publish(act: Activity) -> None:

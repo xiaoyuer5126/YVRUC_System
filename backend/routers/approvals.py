@@ -14,7 +14,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as OrmSession
 
@@ -435,7 +435,7 @@ class DecideBody(BaseModel):
 
 
 @router.post("/activities/{activity_id}/decide")
-def decide(activity_id: str, body: DecideBody,
+def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
            db: OrmSession = Depends(db_session),
            user: User = Depends(require_manager)):
     """通过或驳回。
@@ -478,6 +478,7 @@ def decide(activity_id: str, body: DecideBody,
         comment = f"【本人审批】{comment}" if comment else "【本人审批】"
 
     act.approval_comment = comment
+    alert = False       # 要不要发活动上新提醒，见 watch.py
     if body.approve and act.is_record():
         # 补记录：活动线下已经办完，不发布、不招人，通过即「已结束」，
         # 接下来就是导入名单、结时长——和别的活动结束之后走同一条路
@@ -498,7 +499,7 @@ def decide(activity_id: str, body: DecideBody,
         published = False
         if act.auto_publish:
             from .staff_activities import publish_approved
-            publish_approved(db, act, user)
+            alert = publish_approved(db, act, user)
             published = True
         summary = (f"审批通过（{who}）" + ("并发布" if published else "")
                    + (f"：{comment}" if comment else ""))
@@ -533,6 +534,8 @@ def decide(activity_id: str, body: DecideBody,
         _notify(db, db.get(User, row.user_id), title, body_text, act,
                 route="manage", tab="review")
     db.commit()
+    from .. import watch
+    watch.queue(bg, act, alert)
     return {"ok": True, "status": act.status}
 
 

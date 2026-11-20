@@ -232,6 +232,70 @@ def my_team(enrollment_id: str, db: OrmSession = Depends(db_session),
             "members": members}
 
 
+# ======================= 活动上新提醒 =======================
+
+def _watch_out(db: OrmSession, w) -> dict:
+    from .. import watch
+    slots = list(w.slots or []) if w else []
+    organizers = list(w.organizers or []) if w else []
+    options = watch.organizer_options(db)
+    # 关注过、但现在已公开的活动里找不到的单位也列着，免得一打开就被悄悄去掉
+    options += [o for o in organizers if o not in options]
+    return {"slots": slots, "organizers": organizers,
+            "organizer_options": options,
+            "parts": [{"key": k, "label": label, "start": h0, "end": h1}
+                      for k, label, h0, h1 in watch.PARTS]}
+
+
+def _no_teacher(user: User) -> None:
+    if user.user_type == "teacher":
+        raise HTTPException(403, "老师类型用户不参与志愿报名")
+
+
+@router.get("/activity-watch")
+def get_activity_watch(db: OrmSession = Depends(db_session),
+                       user: User = Depends(current_user)):
+    """我的活动上新提醒订阅：勾了哪些每周时段、关注了哪些主单位，以及可选的主单位。"""
+    from ..models import ActivityWatch
+    _no_teacher(user)
+    return _watch_out(db, db.get(ActivityWatch, user.id))
+
+
+class WatchBody(BaseModel):
+    slots: list[str] = []
+    organizers: list[str] = []
+
+
+@router.put("/activity-watch")
+def put_activity_watch(body: WatchBody, db: OrmSession = Depends(db_session),
+                       user: User = Depends(current_user)):
+    """保存上新提醒订阅（整份替换）。两样都清空就是不订阅。"""
+    from .. import watch
+    from ..models import ActivityWatch
+    _no_teacher(user)
+    bad = [s for s in body.slots if s not in watch.SLOT_KEYS]
+    if bad:
+        raise HTTPException(400, "时段格式不对")
+    # 按周一到周日、上午到晚上排好再存，读出来的顺序和格子一致
+    slots = [k for k in watch.SLOT_KEYS if k in set(body.slots)]
+    organizers: list[str] = []
+    for o in body.organizers:
+        o = (o or "").strip()
+        if o and o not in organizers:
+            organizers.append(o)
+    if len(organizers) > watch.MAX_ORGANIZERS:
+        raise HTTPException(400, f"关注的组织单位最多 {watch.MAX_ORGANIZERS} 个")
+    if any(len(o) > 64 for o in organizers):
+        raise HTTPException(400, "组织单位名称太长")
+    w = db.get(ActivityWatch, user.id)
+    if w is None:
+        w = ActivityWatch(user_id=user.id)
+        db.add(w)
+    w.slots, w.organizers, w.updated_at = slots, organizers, now()
+    db.commit()
+    return _watch_out(db, w)
+
+
 @router.get("/notifications")
 def my_notifications(page: int = Query(1, ge=1),
                      size: int = Query(20, ge=1, le=100),

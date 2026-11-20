@@ -420,6 +420,9 @@ class Activity(Base):
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 上新提醒发过的时刻（见 watch.py）。一个活动只在第一次上广场时按订阅
+    # 发一轮；有值就不再发，之后改场次、设急招、恢复报名都不会再提醒一遍
+    new_alert_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # 提醒过一次就记下来，别每分钟催一遍
     approval_reminded_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True)
@@ -714,6 +717,22 @@ class ActivitySubscription(Base):
         Index("ux_subscription_activity_user", "activity_id", "user_id",
               unique=True),
     )
+
+
+class ActivityWatch(Base):
+    """志愿者订阅「活动上新提醒」：一人一行。
+
+    slots 是勾选的每周时段，元素形如 "0-am"（周一上午），星期 0～6 对应
+    周一～周日，时段见 watch.PARTS；organizers 是关注的主单位（Activity.organizer
+    的原文）。两样都空 = 不订阅，行留着也不发。新活动上广场时，有一个服务场次
+    落在勾选的时段里、或者主单位在关注列表里，就提醒一次（见 watch.py）。
+    """
+    __tablename__ = "activity_watches"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    slots: Mapped[list] = mapped_column(JSON, default=list)
+    organizers: Mapped[list] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
 WEEKDAYS = "一二三四五六日"

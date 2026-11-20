@@ -100,6 +100,11 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "您订阅的「{activity}」志愿活动即将开始报名，报名先后顺序是重要依据，"
         "可提前打开活动页面准备。\n"
         "活动时间：{time}\n地点：{loc}"),
+    # 活动上新提醒（见 watch.py）：reason 说明为什么发给他，reg_line 是报名开始那一行
+    "new_activity": (
+        "志愿活动上新提醒｜{activity}",
+        "「{activity}」已上线，{reason}。\n"
+        "组织单位：{organizer}\n活动时间：{time}\n{reg_line}"),
     "checkin_reminder": (
         "志愿活动签到提醒｜{activity}",
         "您报名的「{activity}」· {shift} 即将开始。\n"
@@ -133,6 +138,7 @@ TEMPLATE_LABELS: dict[str, str] = {
     "walkin_added": "补招",
     "walkin_recorded": "补记志愿者",
     "reg_open_reminder": "报名提醒",
+    "new_activity": "上新提醒",
     "checkin_reminder": "签到提醒",
     "ack_reminder": "签收催办",
     "custom": "其他",

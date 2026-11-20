@@ -126,6 +126,7 @@ LABELS = {
     'ack_notification': '签收通知',
     'read_notification': '阅读通知',
     'update_profile': '完善/修改个人资料',
+    'put_activity_watch': '设置活动上新提醒',
     'upload_project_file': '上传审批材料',
     'repush_vb': '重提志愿北京名称-再次',
     'resubmit_vb': '重提志愿北京名称-退回',
