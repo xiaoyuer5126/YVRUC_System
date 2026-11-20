@@ -1,7 +1,14 @@
 <template>
   <div class="page">
     <div class="hero">
-      <h2>{{ t('活动广场') }}</h2>
+      <div class="hero-title">
+        <h2>{{ t('活动广场') }}</h2>
+        <!-- 活动上新提醒：老师不参与报名，不给订 -->
+        <el-button v-if="!isTeacher" :type="watching ? 'primary' : ''" plain
+                   @click="watchOpen = true">
+          <el-icon><Bell /></el-icon><span>{{ watching ? t('上新提醒已开启') : t('上新提醒') }}</span>
+        </el-button>
+      </div>
       <p>{{ t('即选即得——报名即生效；报名后筛选——由负责人筛选录取') }}</p>
     </div>
 
@@ -93,6 +100,8 @@
     </div>
     <el-empty v-else :description="emptyText" />
 
+    <WatchDialog v-if="!isTeacher" v-model="watchOpen" @saved="onWatchSaved" />
+
     <el-pagination v-if="total > f.size" class="pager" layout="prev, pager, next"
                    background :current-page="f.page" :page-size="f.size"
                    :total="total" @current-change="goPage" />
@@ -105,6 +114,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, fmtDTShort } from '../api'
 import SlotPicker from '../components/SlotPicker.vue'
+import WatchDialog from '../components/WatchDialog.vue'
 import { auth, MODE_COLORS } from '../store'
 import { useNarrow } from '../composables/useNarrow'
 import { t, tTime } from '../i18n'
@@ -277,12 +287,23 @@ function onSearch() {
   clearTimeout(timer)
   timer = setTimeout(reload, 300)
 }
-onMounted(load)
+
+// 上新提醒开着没有：按钮上标出来，订了的人知道自己订过
+const watchOpen = ref(false)
+const watching = ref(false)
+const onWatchSaved = d => { watching.value = d.slots.length > 0 || d.organizers.length > 0 }
+async function loadWatch() {
+  if (isTeacher.value) return
+  onWatchSaved(await api.get('/api/me/activity-watch'))
+}
+onMounted(() => { load(); loadWatch() })
 </script>
 
 <style scoped>
 .hero { margin-bottom:12px; }
 .hero h2 { margin:0; }
+.hero-title { display:flex; align-items:center; flex-wrap:wrap; gap:12px; }
+.hero-title .el-icon { margin-right:4px; }
 .filters { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
 .pager { margin-top:16px; justify-content:center; }
 .slot-apply { margin-top:16px; }
