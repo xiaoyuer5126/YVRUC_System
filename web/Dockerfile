@@ -19,7 +19,7 @@ FROM nginx:1.31-alpine
 
 # 站点主体：三份形态配置都 include /etc/nginx/snippets/yvruc-shared.conf
 COPY web/nginx-shared.conf /etc/nginx/snippets/yvruc-shared.conf
-# 默认进镜像的是 http 80 那份（内测与 CI 用，内测时前面有 caddy）。
+# 默认进镜像的是 http 80 那份（内测与 CI 用，内测时前面是宿主机上的全局 nginx）。
 # 另两种形态把各自的配置挂到 /etc/nginx/templates/default.conf.template 顶掉它：
 # 生产由 docker-compose.prod.yml 挂 nginx-https.conf.template（连同证书），
 # 本机调试由 docker-compose.local.yml 挂 nginx-local.conf.template。

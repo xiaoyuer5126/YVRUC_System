@@ -1,7 +1,7 @@
 # 镜像默认的站点配置：内测形态与 CI 的页面自检用它。
 #
-# 本容器只监听 80，前面的入口是 caddy（宿主机 443，TLS 由它终止），以 http
-# 转到 web:80，所以这里不配证书、不开 443。生产形态由 docker-compose.prod.yml 换成
+# 本容器只监听 80，前面的入口是宿主机上的全局 nginx（TLS 由它终止），经外部
+# 网络 web-net 以 http 转到 yvruc-web:80，所以这里不配证书、不开 443。生产形态由 docker-compose.prod.yml 换成
 # nginx-https.conf.template；本机调试形态由 docker-compose.local.yml 换成
 # nginx-local.conf.template。
 #
@@ -13,9 +13,9 @@
 # /etc/nginx/snippets/yvruc-shared.conf，三份形态共用一份，见 nginx-shared.conf。
 
 # —— 真实客户端地址 ——
-# 本容器前面一定有一跳反代（caddy），它看到的对端只是那一跳的
-# 容器 IP。反代把它看到的真实客户端写在 X-Forwarded-For 的最右边（caddy 丢掉
-# 客户端自带的这个头、只写自己看到的对端），这里用 real_ip 模块把它还原成 $remote_addr：
+# 本容器前面一定有一跳反代（宿主机上的全局 nginx），它看到的对端只是那一跳的
+# 地址。反代把它看到的真实客户端写在 X-Forwarded-For 的最右边，这里用 real_ip
+# 模块把它还原成 $remote_addr：
 # 不这样做，操作日志里的 IP 全是容器地址，登录失败限流也会把所有人算成一个人。
 #
 # real_ip_recursive off = 取**最右边那一跳**。后端启动参数是
@@ -23,12 +23,14 @@
 # 那个对端；取最左边等于让客户端自己填。信任范围限定成 compose 网络
 # （YVRUC_TRUSTED_PROXY_CIDR，默认 172.30.0.0/16，见 docker-compose.yml 的
 # networks 定义——两者必须一致），公网来的请求伪造这个头也不会被采信。
+# 内测形态下全局 nginx 从外部网络 web-net 进来，不在这个范围里，所以暂时
+# 不还原，日志记下的是全局 nginx 的地址（2026-11-20 定，内测可接受）。
 set_real_ip_from ${YVRUC_TRUSTED_PROXY_CIDR};
 real_ip_header X-Forwarded-For;
 real_ip_recursive off;
 
 # 二维码要按「浏览器实际用的地址」拼出对外网址，所以协议不能被这一跳覆盖：
-# caddy 到本容器之间是明文 http，$scheme 就是 http，直接写下去
+# 全局 nginx 到本容器之间是明文 http，$scheme 就是 http，直接写下去
 # 会让 https 站点生成 http:// 的码。有上游传下来的就用上游的，没有才用 $scheme。
 map $http_x_forwarded_proto $fwd_proto {
     default $http_x_forwarded_proto;
