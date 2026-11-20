@@ -9,7 +9,6 @@ data
 *.log
 .env
 .env.*
-caddy.env
 backups
 # 证书与私钥不进镜像：生产由 compose 从宿主机目录只读挂载
 .certs
