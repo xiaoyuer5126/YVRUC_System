@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm.attributes import set_committed_value
 
 from . import config, pubcache
-from .enroll_logic import (Occupancy, active_rows, applies_to_shift, conflicts_among,
+from .enroll_logic import (Occupancy, active_rows, reusable_answers, applies_to_shift, conflicts_among,
                            dedupe_conflicts,
                            enroll_deadline, group_leader_task, group_needs_leader, lock_at,
                            shift_counts, unmet_for_tags, waitlist_position)
@@ -799,6 +799,10 @@ def _for_viewer(db: OrmSession, act: Activity, out: dict, user,
         for g in act.shifts:
             clashes += conflicts_among(rows, g)
         out["my_time_conflicts"] = dedupe_conflicts(clashes)
+        # 报名问卷里他在本活动已经答过的题：报名弹窗不再问这些，只问这个岗位
+        # 新增的；显示条件也拿这些答案判断（见 enroll_logic.reusable_answers）
+        if out["recruit_mode"] != "screened":
+            out["my_answers"] = reusable_answers(db, act.id, user.id)
         out["subscribed"] = db.query(ActivitySubscription.id).filter(
             ActivitySubscription.activity_id == act.id,
             ActivitySubscription.user_id == user.id).first() is not None
