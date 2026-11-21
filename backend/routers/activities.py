@@ -584,9 +584,21 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         _check_eligibility(db, user, act, g)
 
         # 报名问卷答案：题目不存在就是空表，答案照样为空。挂了适用岗位的题只问
-        # 报这个岗位的人，所以要等岗位定下来再校验
+        # 报这个岗位的人，所以要等岗位定下来再校验。
+        #
+        # 本活动里还有效的报名上答过的题不再问（报名弹窗只露没答过的），这里把
+        # 那些答案并进来，再按这个岗位筛题、校验必填、判显示条件——存下的仍是
+        # 这个岗位适用的整份答案。答过的题以已存的为准：页面数据旧了又交上来
+        # 一遍，也不会把同一题在两条报名上答成两样。
+        #
+        # 沿用的答案在锁外读：都是本人自己的答案，读完到落库之间他刚好退掉了
+        # 那条报名，也只是这条报名带上他刚才的答案；附件不随退选删除（见
+        # scheduled.purge_orphan_attachments），引用的文件还在。放进场次锁里
+        # 就要在抢报的锁内多跑一条查询。
         from .screening import validate_answers
-        answers = validate_answers(db, act, user, body.answers or {}, [position.id])
+        merged = {**(body.answers or {}),
+                  **logic.reusable_answers(db, act.id, user.id)}
+        answers = validate_answers(db, act, user, merged, [position.id])
 
         # ★ 时段冲突（粗粒度）：与所有有效报名的场次比区间，重叠就先提示，
         # 志愿者确认仍要报（confirm_conflict）才往下走。

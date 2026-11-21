@@ -34,6 +34,30 @@ from .models import (Activity, CheckinRecord, Enrollment, Shift, ShiftPeriod,
 ACTIVE = ("applied", "enrolled", "waitlisted", "pending_confirm")
 
 
+# 报名问卷可以沿用答案的报名：即选即得里还算数的那几种（申请中只出现在报名后
+# 筛选的活动里，那边一人一份申请表，不走沿用）
+ANSWER_SOURCES = ("enrolled", "waitlisted", "pending_confirm")
+
+
+def reusable_answers(db: OrmSession, activity_id: str, user_id: str) -> dict:
+    """这个人在本活动里还有效的报名上答过的题：{题目 id: 答案}。
+
+    同一活动报第二个场次时，这些题不再问，报名时并进新报名的答案里（见
+    routers.activities.enroll）。全部退掉之后就是空的，再报从头答——这是他改
+    答案的唯一途径。答过的题在每条报名上答案相同（后报的那条就是沿用来的），
+    按报名先后合并，后面的覆盖前面的。
+    """
+    rows = (db.query(Enrollment.answers)
+            .filter(Enrollment.activity_id == activity_id,
+                    Enrollment.user_id == user_id,
+                    Enrollment.status.in_(ANSWER_SOURCES))
+            .order_by(Enrollment.joined_at).all())
+    out: dict = {}
+    for (answers,) in rows:
+        out.update(answers or {})
+    return out
+
+
 def overlaps(a1, a2, b1, b2) -> bool:
     """两个时间区间 [start,end) 是否重叠。"""
     return a1 < b2 and b1 < a2
