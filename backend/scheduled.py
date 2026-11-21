@@ -939,13 +939,13 @@ def purge_orphan_attachments(db: OrmSession) -> int:
     """清掉没人引用的问卷附件与联络群二维码：文件与记录一起删。
 
     报名问卷的文件题是先传文件、再提交答案。填到一半关掉页面，文件就留在
-    磁盘上，没有任何申请指向它。提交与撤回时会当场清一遍，这里管的是
+    磁盘上，没有任何申请或报名指向它。提交与撤回时会当场清一遍，这里管的是
     「传了就再也没回来」的那些，留够重来的时间再删。
 
     联络群二维码同样是先传图、后保存活动：传完就没再回来（关掉表单、活动删掉
     了）的那些，这里一并清掉。
     """
-    from .models import Application, Attachment
+    from .models import Application, Attachment, Enrollment
     from .routers.materials import MATERIAL_DIR
     from .routers.staff_activities import QR_OWNER, qr_activity
 
@@ -955,11 +955,17 @@ def purge_orphan_attachments(db: OrmSession) -> int:
                     Attachment.created_at <= cutoff).all())
     if not rows:
         return 0
-    # 还被某份申请的答案引用着的，一律不动
+    # 还被某份申请或某条报名（即选即得的问卷答案记在报名上）引用着的，一律
+    # 不动。报名不论状态都算：一个文件可能被同一个人好几条报名沿用，退掉其中
+    # 一条不能把另外几条的附件带走；退掉的那条，管理端名单里也还看得到答案
     used: set[str] = set()
-    for app in db.query(Application).filter(
-            Application.activity_id.in_({r.activity_id for r in rows})).all():
-        used |= {str(v) for v in (app.answers or {}).values()
+    acts = {r.activity_id for r in rows}
+    for (answers,) in (
+            db.query(Application.answers)
+            .filter(Application.activity_id.in_(acts)).all()
+            + db.query(Enrollment.answers)
+            .filter(Enrollment.activity_id.in_(acts)).all()):
+        used |= {str(v) for v in (answers or {}).values()
                  if isinstance(v, str)}
     n = 0
     for att in rows:
