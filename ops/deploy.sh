@@ -9,6 +9,7 @@
 #   bash ops/deploy.sh --yes           # 不确认，直接跑（无人值守）
 #   bash ops/deploy.sh --backup-only   # 只备份，不动代码
 #   bash ops/deploy.sh --no-backup     # 跳过备份（只在库确实为空时用）
+#   bash ops/deploy.sh --rebuild       # 代码没变也重新构建并重启（补上 base 镜像等更新）
 #   bash ops/deploy.sh --dry-run       # 只打印将要做的事
 #
 # 路径、域名、端口都从仓库根的 .env 读，和 docker compose 用的是同一份：
@@ -95,12 +96,14 @@ ASSUME_YES=0
 NOTHING_TO_DO=0
 BACKUP_NAME=""
 ROLLBACK_READY=0
+REBUILD=0
 
 for arg in "$@"; do
     case "$arg" in
         --dry-run)     DRY_RUN=1 ;;
         --no-backup)   DO_BACKUP=0 ;;
         --backup-only) BACKUP_ONLY=1 ;;
+        --rebuild)     REBUILD=1 ;;
         --yes|-y)      ASSUME_YES=1 ;;
         -h|--help)     sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "未知参数：$arg（用 --help 看用法）" >&2; exit 2 ;;
@@ -316,9 +319,16 @@ pull_and_report() {
 
     after=$(cd "$APP_DIR" && git rev-parse HEAD)
     if [ "$before" = "$after" ]; then
-        log "代码已是最新（${after:0:7}），跳过构建与重启，只做验证"
-        NOTHING_TO_DO=1
-        return
+        # 代码没变时默认不重建：一次部署动的东西越少越安全。但要重建的原因不只有代码：
+        # base 镜像换了、有人在服务器上手动 pull 过、只改了 .env，这些都让「跳过」变成
+        # 看着成功其实没变。--rebuild 就是为这几种情况留的。
+        if [ "$REBUILD" = 1 ]; then
+            log "代码已是最新（${after:0:7}），按要求重建"
+        else
+            log "代码已是最新（${after:0:7}），跳过构建与重启，只做验证"
+            NOTHING_TO_DO=1
+            return
+        fi
     fi
     log "新代码：${before:0:7} → ${after:0:7}"
 
@@ -339,10 +349,42 @@ $envdiff"
 build_and_up() {
     if [ "$NOTHING_TO_DO" = 1 ]; then return; fi
     log "构建镜像"
-    if [ "$DRY_RUN" = 1 ]; then log "[dry-run] compose build"; else compose build || die "构建失败"; fi
+    # --pull：每次构建都重新拉 base 镜像。不加时本地已有同名 tag 就直接用缓存，
+    # 安全修复会被旧镜像悄悄挡掉（web 的 nginx base 就是这种情况）。拉不动时
+    # 构建会失败——不退回用旧缓存，否则又回到「以为升了其实没升」。
+    if [ "$DRY_RUN" = 1 ]; then log "[dry-run] compose build --pull"; else compose build --pull || die "构建失败"; fi
 
     log "启动服务（先跑迁移，再起后端）"
     if [ "$DRY_RUN" = 1 ]; then log "[dry-run] compose up -d"; else compose up -d || die "启动失败"; fi
+}
+
+# 部署后的 nginx 版本：扫描器按 Server 头里的版本号匹配 CVE，停在旧的补丁版会
+# 被整批记成漏洞。低于 1.31.9 只告警不失败——平台已经在跑，为一个版本号让部署
+# 红掉不如让人自己决定要不要重来（多半是 base 镜像没拉到，重跑一次即可）。
+# 我们走主线版，下限是 1.31.9（修了 CVE-2026-123007 / 123633 / 123634）。
+# 稳定线 1.30.7 也有同批修复，但比这个数字小，真切到稳定线时这条会误报，
+# 到时把下限改成 1030007。
+NGINX_MIN=1031009
+
+check_nginx_version() {
+    if [ "$DRY_RUN" = 1 ]; then return; fi
+    local v ma mi pa
+    v=$(docker exec yvruc-web nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9][0-9.]*\).*#\1#p' || true)
+    if [ -z "$v" ]; then
+        warn "读不到 web 容器里的 nginx 版本（docker exec yvruc-web nginx -v），自己确认一下"
+        return
+    fi
+    # 主.次.补丁 各取一段拼成整数比（1.31.9 → 1031009），后面的发行版后缀丢掉
+    ma=${v%%.*}; ma=${ma:-0}
+    mi=${v#*.}; mi=${mi%%.*}; mi=${mi:-0}
+    pa=${v#*.*.}; pa=${pa%%.*}; pa=${pa:-0}
+    case "$ma$mi$pa" in *[!0-9]*) warn "nginx 版本号读不懂：$v"; return ;; esac
+    if [ "$((10#$ma * 1000000 + 10#$mi * 1000 + 10#$pa))" -lt "$NGINX_MIN" ]; then
+        warn "nginx 版本是 $v，低于 1.31.9，HTTP/2 的已知漏洞没有修。
+  base 镜像可能没拉到新的：在仓库目录跑 docker compose build --pull，再 bash ops/deploy.sh"
+        return
+    fi
+    log "  nginx 版本 $v"
 }
 
 wait_healthy() {
@@ -475,6 +517,7 @@ main() {
     build_and_up
     wait_healthy
     verify
+    check_nginx_version
 
     log "完成。回滚点：$LOG_DIR/rollback-$NOW.txt"
     print_rollback

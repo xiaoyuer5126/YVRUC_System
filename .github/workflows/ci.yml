@@ -178,6 +178,13 @@ jobs:
           } > .env
       - name: 起栈
         run: docker compose up -d --build --wait postgres redis backend web
+      # Server 头里的版本号是扫描器匹配 CVE 的依据，也是「补丁到底上没上」的唯一凭据。
+      # web/Dockerfile 钉的 base 版本一变，这里是第一个发现没钉上的地方。
+      - name: nginx 版本
+        run: |
+          docker exec yvruc-web nginx -v 2>&1
+          docker exec yvruc-web nginx -v 2>&1 | grep -qE 'nginx/1\.31\.(9|[1-9][0-9])' \
+            || { echo "web 镜像里的 nginx 低于 1.31.9（CVE-2026-123007 等未修）"; exit 1; }
       # 响应头由 nginx 发（web/nginx-shared.conf），后端测试碰不到，在这里对真栈断言
       - name: 响应头检查
         run: |
