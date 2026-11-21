@@ -339,10 +339,42 @@ $envdiff"
 build_and_up() {
     if [ "$NOTHING_TO_DO" = 1 ]; then return; fi
     log "构建镜像"
-    if [ "$DRY_RUN" = 1 ]; then log "[dry-run] compose build"; else compose build || die "构建失败"; fi
+    # --pull：每次构建都重新拉 base 镜像。不加时本地已有同名 tag 就直接用缓存，
+    # 安全修复会被旧镜像悄悄挡掉（web 的 nginx base 就是这种情况）。拉不动时
+    # 构建会失败——不退回用旧缓存，否则又回到「以为升了其实没升」。
+    if [ "$DRY_RUN" = 1 ]; then log "[dry-run] compose build --pull"; else compose build --pull || die "构建失败"; fi
 
     log "启动服务（先跑迁移，再起后端）"
     if [ "$DRY_RUN" = 1 ]; then log "[dry-run] compose up -d"; else compose up -d || die "启动失败"; fi
+}
+
+# 部署后的 nginx 版本：扫描器按 Server 头里的版本号匹配 CVE，停在旧的补丁版会
+# 被整批记成漏洞。低于 1.31.9 只告警不失败——平台已经在跑，为一个版本号让部署
+# 红掉不如让人自己决定要不要重来（多半是 base 镜像没拉到，重跑一次即可）。
+# 我们走主线版，下限是 1.31.9（修了 CVE-2026-123007 / 123633 / 123634）。
+# 稳定线 1.30.7 也有同批修复，但比这个数字小，真切到稳定线时这条会误报，
+# 到时把下限改成 1030007。
+NGINX_MIN=1031009
+
+check_nginx_version() {
+    if [ "$DRY_RUN" = 1 ]; then return; fi
+    local v ma mi pa
+    v=$(docker exec yvruc-web nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9][0-9.]*\).*#\1#p' || true)
+    if [ -z "$v" ]; then
+        warn "读不到 web 容器里的 nginx 版本（docker exec yvruc-web nginx -v），自己确认一下"
+        return
+    fi
+    # 主.次.补丁 各取一段拼成整数比（1.31.9 → 1031009），后面的发行版后缀丢掉
+    ma=${v%%.*}; ma=${ma:-0}
+    mi=${v#*.}; mi=${mi%%.*}; mi=${mi:-0}
+    pa=${v#*.*.}; pa=${pa%%.*}; pa=${pa:-0}
+    case "$ma$mi$pa" in *[!0-9]*) warn "nginx 版本号读不懂：$v"; return ;; esac
+    if [ "$((10#$ma * 1000000 + 10#$mi * 1000 + 10#$pa))" -lt "$NGINX_MIN" ]; then
+        warn "nginx 版本是 $v，低于 1.31.9，HTTP/2 的已知漏洞没有修。
+  base 镜像可能没拉到新的：在仓库目录跑 docker compose build --pull，再 bash ops/deploy.sh"
+        return
+    fi
+    log "  nginx 版本 $v"
 }
 
 wait_healthy() {
@@ -475,6 +507,7 @@ main() {
     build_and_up
     wait_healthy
     verify
+    check_nginx_version
 
     log "完成。回滚点：$LOG_DIR/rollback-$NOW.txt"
     print_rollback

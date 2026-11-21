@@ -15,7 +15,14 @@ RUN npm run build
 # 主线版 nginx：安全修复随版本发布，扫描器按 Server 头里的版本号匹配 CVE，
 # 版本停在旧的一批会被整批记成漏洞；HTTP/2 头部压缩炸弹的 max_headers 也是
 # 1.29.8 起才有的。
-FROM nginx:1.31-alpine
+#
+# 钉到具体补丁版，不用 1.31-alpine 这种浮动 tag：浮动 tag 下线上是哪个补丁版，
+# 取决于构建时本地有没有旧的 base 镜像，安全修复会被镜像缓存悄悄挡掉。1.31.9 修的是
+# 2026-11-18 F5 公布的 10 个漏洞，其中 HTTP/2 流控下溢（CVE-2026-123007）、
+# HTTP/2 use-after-free（CVE-2026-123633）、resolver use-after-free（CVE-2026-123634）
+# 都在我们的 http2 + proxy_pass + resolver 配置范围内。
+# 升级时改这里，同时改 scripts/nginxcheck.sh 的 image 和 CI 里对 nginx -v 的断言。
+FROM nginx:1.31.9-alpine
 
 # 站点主体：三份形态配置都 include /etc/nginx/snippets/yvruc-shared.conf
 COPY web/nginx-shared.conf /etc/nginx/snippets/yvruc-shared.conf
