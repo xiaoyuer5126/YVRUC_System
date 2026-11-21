@@ -487,6 +487,7 @@ export default {
   '上传文件': 'Upload file',
   '重新上传': 'Replace file',
   '「{0}」为必填': '“{0}” is required',
+  '已沿用你之前填写的 {0} 题答案': 'Reused your earlier answers to {0} question(s)',
   '把现场二维码放进框里，扫到自动完成': 'Hold the on-site QR code inside the frame. It scans automatically.',
   '扫码签到': 'Scan to check in',
   '扫码签退': 'Scan to check out',
