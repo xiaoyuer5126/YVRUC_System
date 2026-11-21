@@ -644,10 +644,11 @@
                   :closable="false"
                   :title="t('请确认这些时间你可到场，如时间冲突需向负责人请假。')" />
 
-        <!-- 活动设了报名问卷：报名时一并答，答案跟着报名记录走 -->
+        <!-- 活动设了报名问卷：报名时一并答，答案跟着报名记录走。
+             本活动别的报名答过的题不再问，只问这个岗位新增的 -->
         <el-form v-if="enrollQuestions.length" label-position="top" style="margin-top:12px">
           <QuestionFields ref="enrollFields" v-model="enrollDlg.answers"
-                          :questions="enrollQuestions"
+                          :questions="enrollQuestions" :reused="act.my_answers || {}"
                           :upload-url="`/api/activities/${act.id}/apply/upload`" />
         </el-form>
 
@@ -1082,8 +1083,10 @@ function doEnroll(g, position) {
   if (g.mode === 'pick' && g.positions.length && !position) {
     return ElMessage.warning(t('请先展开该场次，选择一个岗位'))
   }
+  // 答过的题先放进答案：不再露出，但后面的题的显示条件要拿它们判断
   enrollDlg.value = { visible: true, shift: g, position, allowReassign: true,
-                      leaderWilling: false, answers: {} }
+                      leaderWilling: false,
+                      answers: structuredClone(act.value.my_answers || {}) }
 }
 
 const enrollFields = ref(null)

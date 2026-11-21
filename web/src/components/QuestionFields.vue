@@ -1,7 +1,11 @@
 <!-- 报名问卷答题区：即选即得的报名弹窗与报名后筛选的申请表共用。
-     题目按显示条件逐题露出；被挡掉的题不填也不提交，后端按同一套规则再算一次。 -->
+     题目按显示条件逐题露出；被挡掉的题不填也不提交，后端按同一套规则再算一次。
+     reused 里的题（同一活动之前的报名答过）不再露出，答案由后端并进来。 -->
 <template>
-  <el-form-item v-for="q in shown" :key="q.id" :label="q.title" :required="q.required">
+  <div v-if="reusedCount" class="dim reused-note">
+    {{ t('已沿用你之前填写的 {0} 题答案', [reusedCount]) }}
+  </div>
+  <el-form-item v-for="q in asked" :key="q.id" :label="q.title" :required="q.required">
     <el-radio-group v-if="q.kind === 'single'" v-model="answers[q.id]">
       <el-radio v-for="o in q.options" :key="o" :value="o">{{ o }}</el-radio>
     </el-radio-group>
@@ -30,6 +34,9 @@ import { t } from '../i18n'
 const props = defineProps({
   questions: { type: Array, default: () => [] },
   uploadUrl: { type: String, required: true },   // 文件题的上传接口
+  // 之前的报名答过的题：{题目 id: 答案}。调用方要把它们一并放进 v-model 的答案里，
+  // 后面的题的显示条件才判得出来
+  reused: { type: Object, default: () => ({}) },
 })
 const answers = defineModel({ type: Object, default: () => ({}) })
 
@@ -40,7 +47,7 @@ watch(() => props.questions, qs => {
   }
 }, { immediate: true })
 
-const shown = computed(() => {
+const shown = computed(() => {   // vuecheck: script-only（模板经 asked / reusedCount 读它）
   const seen = new Set()
   const out = []
   for (const q of props.questions) {
@@ -56,6 +63,10 @@ const shown = computed(() => {
   }
   return out
 })
+
+// 显示条件挡住的题不算沿用：它这次本来就不问
+const asked = computed(() => shown.value.filter(q => !(q.id in props.reused)))
+const reusedCount = computed(() => shown.value.length - asked.value.length)
 
 const files = reactive({})
 const uploading = ref('')
@@ -73,10 +84,10 @@ async function uploadFile(q, file) {
 
 const isEmpty = v => v === '' || v === undefined || v === null || (Array.isArray(v) && !v.length)
 
-/** 收齐当前显示的题的答案；必填没填就返回 { error }。 */
+/** 收齐这次问到的题的答案；必填没填就返回 { error }。沿用的题不交，后端自己并。 */
 function collect() {
   const out = {}
-  for (const q of shown.value) {
+  for (const q of asked.value) {
     const v = answers.value[q.id]
     if (q.required && isEmpty(v)) return { error: t('「{0}」为必填', [q.title]) }
     if (!isEmpty(v)) out[q.id] = v
@@ -88,4 +99,5 @@ defineExpose({ collect })
 
 <style scoped>
 .file-row { display: flex; align-items: center; gap: 12px; }
+.reused-note { margin-bottom: 12px; }
 </style>
