@@ -42,7 +42,15 @@ FAIL_WINDOW_SECONDS = 300
 
 
 def _logged_in(request: Request, db: OrmSession, user: User, body: dict) -> JSONResponse:
-    """开会话、把令牌写进 HttpOnly cookie。响应体里没有令牌：页面脚本拿不到它。"""
+    """开会话、把令牌写进 HttpOnly cookie。响应体里没有令牌：页面脚本拿不到它。
+
+    这台浏览器上原来那个会话一并删掉：新 cookie 会盖掉旧的，旧会话没人再用，
+    却在库里一直有效到过期；公用电脑上换人登录时，上一位的会话也跟着作废。
+    """
+    old = current_token(request)
+    if old:
+        db.query(Session).filter(Session.token == session_key(old)).delete(
+            synchronize_session=False)
     resp = JSONResponse({"user": session_user(db, user), **body})
     set_session_cookie(resp, create_session(db, user),
                        secure=cookie_secure(request.url.scheme))

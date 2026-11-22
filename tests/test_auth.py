@@ -171,6 +171,21 @@ def test_会话表里不存令牌原文(client, db, admin):
     assert client.get("/api/auth/me", headers=admin).status_code == 200
 
 
+def test_同一浏览器重新登录会作废旧会话(client, db):
+    """公用电脑上换人登录：上一位的会话不能留在库里继续有效。"""
+    first = login(client, ADMIN)
+    r = client.post("/api/auth/demo-login", headers=first,
+                    json={"student_id": ADMIN, "password": DEMO_PASSWORD})
+    assert r.status_code == 200, r.text
+    second = r.cookies[SESSION_COOKIE]
+    client.cookies.delete(SESSION_COOKIE)
+    db.expire_all()
+    assert db.get(Session, session_key(session_token(first))) is None
+    assert client.get("/api/auth/me", headers=first).status_code == 401
+    assert client.get("/api/auth/me", headers={
+        "Cookie": f"{SESSION_COOKIE}={second}"}).status_code == 200
+
+
 def test_Authorization头不再认(client, admin):
     """令牌只从 cookie 读：拿到令牌的脚本也没法换个头冒充登录。"""
     bearer = {"Authorization": f"Bearer {session_token(admin)}"}
