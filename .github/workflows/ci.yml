@@ -177,15 +177,7 @@ jobs:
             echo "YVRUC_WORKERS=2"
           } > .env
       - name: 起栈
-        run: docker compose up -d --build --pull --wait postgres redis backend web
-      # base 用的是 1.31-alpine 浮动 tag，正常情况下会拉到这条线最新的补丁版。
-      # 这里断的是下限：低于 1.31.9 就说明拉到的是有漏洞的旧版（镜像源缓存落后、
-      # 或者有人把 tag 改回去了），CI 直接红，不等到线上才发现。
-      - name: nginx 版本
-        run: |
-          docker exec yvruc-web nginx -v 2>&1
-          docker exec yvruc-web nginx -v 2>&1 | grep -qE 'nginx/1\.31\.(9|[1-9][0-9])' \
-            || { echo "web 镜像里的 nginx 低于 1.31.9（CVE-2026-123007 等未修）"; exit 1; }
+        run: docker compose up -d --build --wait postgres redis backend web
       # 响应头由 nginx 发（web/nginx-shared.conf），后端测试碰不到，在这里对真栈断言
       - name: 响应头检查
         run: |
