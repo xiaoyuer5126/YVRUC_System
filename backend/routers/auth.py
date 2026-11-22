@@ -49,6 +49,19 @@ def _logged_in(request: Request, db: OrmSession, user: User, body: dict) -> JSON
     return resp
 
 
+def _in_site_path(next_url: str) -> str:
+    """登录后去向只认站内路径，别的一律当作没指定（回到首页）。
+
+    「/」开头、第二个字符不是「/」或「\\」：「//evil.com」「/\\evil.com」在浏览器
+    里都是别的站点。去向原样回给前端去跳，要是不在这里卡住，别人发一个带
+    next 的登录链接，同学登录完就被带到仿冒的站点上。控制字符一并拒掉。
+    """
+    if (not next_url.startswith("/") or next_url[1:2] in ("/", "\\")
+            or any(ord(c) < 0x20 or ord(c) == 0x7F for c in next_url)):
+        return ""
+    return next_url
+
+
 def demo_login_enabled() -> bool:
     return bool(config.DEMO_LOGIN_PASSWORD) and sso.mode() == "mock"
 
@@ -89,7 +102,7 @@ def sso_login_url(request: Request, response: Response, next: str = ""):
         raise HTTPException(429, "操作过于频繁，请稍后再试")
     if sso.mode() == "mock":
         raise HTTPException(409, "统一身份认证尚未接通")
-    login_url, nonce = sso.login_url(next)
+    login_url, nonce = sso.login_url(_in_site_path(next))
     response.set_cookie(SSO_NONCE_COOKIE, nonce,  # noqa: S105
                         max_age=config.SSO_STATE_SECONDS, path="/api/auth",
                         httponly=True, samesite="lax",
