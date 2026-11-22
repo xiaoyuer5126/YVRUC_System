@@ -199,7 +199,7 @@ onMounted(async () => {
   if (r) {
     fileTip.value = `志愿者上传限制：单个文件最大 ${r.max_mb}MB；每人在本活动最多传 `
       + `${r.max_count} 个、合计不超过 ${r.total_mb}MB；可传 ${r.exts.join('、')}。`
-      + '更长的视频请改出填空题，让志愿者填网盘链接'
+      + '长视频请使用问卷、网盘等方式收集'
   }
 })
 
