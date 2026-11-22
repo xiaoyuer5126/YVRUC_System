@@ -917,6 +917,10 @@ class Shift(Base):
     list_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     # 自动锁定已经生效过：管理者过了锁定点再手动解锁，不会被自动锁回去
     auto_lock_spent: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 这一轮锁定的「组长空缺」提醒发过了（见 enroll_logic.notify_shift_leader_vacancies）：
+    # 锁定时统一提醒一次；不自动锁定的场次在报名截止时兜底提醒一次。
+    # 之后组长再空出来就逐组立即提醒
+    leader_alert_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     sort: Mapped[int] = mapped_column(Integer, default=0)
     # 时间待定/长期活动场次：每张签到码各签一次到、一次退，换码可以再签一轮，
     # 时长按各轮累加（见 routers/checkin.py）。所以时长只能按签到签退计或不计，

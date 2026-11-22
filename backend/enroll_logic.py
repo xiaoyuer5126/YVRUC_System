@@ -562,6 +562,9 @@ def set_lock_hours(shift: Shift, hours: int) -> None:
     shift.list_locked = shift_locked(shift)
     shift.lock_hours = hours
     shift.auto_lock_spent = False
+    if not shift_locked(shift) and lock_at(shift) is not None:
+        # 锁定点挪到了以后：到时候再统一提醒一次组长空缺
+        shift.leader_alert_sent = False
 
 
 def set_shift_locked(shift: Shift, locked: bool) -> None:
@@ -572,6 +575,11 @@ def set_shift_locked(shift: Shift, locked: bool) -> None:
     shift.list_locked = locked
     if not locked and auto_locked(shift):
         shift.auto_lock_spent = True
+    if not locked:
+        at = lock_at(shift)
+        if at is not None and now() < at:
+            # 还没到自动锁定点就解开了：到点自动锁定时再统一提醒一次组长空缺
+            shift.leader_alert_sent = False
 
 
 # ======================= 硬性条件（场次与岗位共用） =======================
@@ -671,19 +679,55 @@ def notify_leader_vacancy(db: OrmSession, position: Position) -> bool:
     组长**只由管理者指定**——组长要协调现场，谁合适只有管理者知道。
     报名时的「我愿意担任组长」是给管理者看的参考，不决定谁当选。
     """
-    from .notify import notify_managers
+    label = vacant_leader_label(db, position)
+    if not label:
+        return False
+    _send_leader_vacancy(db, position.shift, [label])
+    return True
 
+
+def vacant_leader_label(db: OrmSession, position: Position) -> str:
+    """本组需要组长却没有组长时，返回通知里称呼它的「场次·组」；否则空串。"""
     positions = group_positions(db, position)
     if not group_needs_leader(positions):
-        return False
+        return ""
     if group_leader(db, position) is not None:
-        return False
-    activity = db.get(Activity, position.shift.activity_id)
-    scope = leader_scope_label(positions, position)
+        return ""
+    return f"「{position.shift.name}·{leader_scope_label(positions, position)}」"
+
+
+def _send_leader_vacancy(db: OrmSession, shift: Shift, labels: list[str]) -> None:
+    from .notify import notify_managers
+
+    activity = db.get(Activity, shift.activity_id)
     notify_managers(db, activity.id, f"[组长空缺] {activity.title}",
-                    f"「{position.shift.name}·{scope}」目前没有组长，"
+                    f"{'、'.join(labels)}目前没有组长，"
                     f"请在「志愿者管理」中指定。", duty="roster", tab="roster")
-    return True
+
+
+def notify_shift_leader_vacancies(db: OrmSession, shift: Shift) -> int:
+    """名单锁定时（或不自动锁定的场次报名截止时）统一提醒一次组长空缺。
+
+    名单敲定之前组长空着很正常：岗位刚建好、报名还没开始，管理者也没法
+    指定谁。所以开「需要组长」、锁定前组长退选都不提醒，等名单定下来，
+    把这一场所有缺组长的组合成一条发给管理者。发过就记在场次上，之后
+    组长再空出来按组立即提醒（见 on_leader_vacated）。返回缺组长的组数。
+    """
+    shift.leader_alert_sent = True
+    labels, seen = [], set()
+    for p in sorted(shift.positions, key=lambda x: x.sort):
+        if p.is_placeholder:
+            continue
+        key = (p.group_name or "").strip() or p.id
+        if key in seen:
+            continue
+        seen.add(key)
+        label = vacant_leader_label(db, p)
+        if label:
+            labels.append(label)
+    if labels:
+        _send_leader_vacancy(db, shift, labels)
+    return len(labels)
 
 
 def leader_scope_label(positions: list[Position], own: Position) -> str:
@@ -703,12 +747,22 @@ def group_leader(db: OrmSession, position: Position) -> Enrollment | None:
 
 
 def on_leader_vacated(db: OrmSession, position_id: str | None) -> None:
-    """组长退选、被调走、被取消之后调一次：空缺了就提醒管理者，不自动补。"""
+    """组长退选、被调走、被取消，或岗位新勾了「需要组长」之后调一次。
+
+    名单锁定之前不提醒，锁定时会统一提醒（见 notify_shift_leader_vacancies）；
+    锁定后（或兜底提醒已发过）空缺了就立即提醒管理者，不自动补。
+    """
     if not position_id:
         return
     position = db.get(Position, position_id)
-    if position is not None:
+    if position is None:
+        return
+    shift = position.shift
+    if shift.leader_alert_sent:
         notify_leader_vacancy(db, position)
+    elif shift_locked(shift):
+        # 刚过自动锁定点、定时任务还没轮到这一场：现在就把整场的提醒发掉
+        notify_shift_leader_vacancies(db, shift)
 
 
 # ======================= 人员变动流水 =======================

@@ -1799,11 +1799,12 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
     _require_position_text(s)
 
     # 组长开关变化要落到人身上：关掉了还留着组长标记，导出表和大屏就会
-    # 显示一个「不存在的岗位角色」；打开了则提醒管理者去指定一位。
+    # 显示一个「不存在的岗位角色」。打开了不马上提醒：名单锁定时统一提醒
+    # 缺组长的组；名单已经锁定的才立即提醒（见 logic.on_leader_vacated）。
     if s.needs_leader != before_raw["needs_leader"]:
         if s.needs_leader:
             db.flush()
-            logic.notify_leader_vacancy(db, s)
+            logic.on_leader_vacated(db, s.id)
         else:
             (db.query(Enrollment)
              .filter(Enrollment.position_id == s.id,
@@ -1965,13 +1966,17 @@ def lock_shift(shift_id: str, body: LockBody,
 
     锁定后名单视为基本敲定：不收新报名、新候补，候补不自动顶上（管理者手动
     转正），此时退出的志愿者记一次「锁定后退出」。解锁时按候补顺序补齐空位；
-    报名没截止的话，同时重新收新报名和新候补。不进编辑态、不发通知。
+    报名没截止的话，同时重新收新报名和新候补。不进编辑态，不通知志愿者；
+    锁上时还缺组长的组提醒管理者一次（见 logic.notify_shift_leader_vacancies）。
     """
     act, g, _ = _toggle_target(db, user, shift_id=shift_id)
     db.commit()
     with shift_lock(db, g.id):
         logic.reload_shift(db, g)
+        was_locked = logic.shift_locked(g)
         logic.set_shift_locked(g, body.locked)
+        if body.locked and not was_locked:
+            logic.notify_shift_leader_vacancies(db, g)
         out = _toggle_done(db, user, act, g, None, not body.locked,
                            f"{'锁定' if body.locked else '解锁'}场次「{g.name}」的名单")
     return {"ok": True, "locked": logic.shift_locked(g), **out}

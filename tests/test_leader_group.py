@@ -178,6 +178,9 @@ def test_组长退选后不自动补位而是提醒管理者(client, admin, db,
                                    take_student)
     leader = _enrolled(db, p1, p2)[0]
     assert _appoint(client, admin, leader.id).status_code == 200
+    # 锁定前组长退选不提醒（锁定时统一提醒），这里测锁定后的
+    assert client.post(f"/api/staff/shifts/{shift.id}/lock", headers=admin,
+                       json={"locked": True}).status_code == 200
     u = db.get(User, leader.user_id)
     t = login(client, u.student_id)
     assert client.delete(f"/api/activities/enrollments/{leader.id}",

@@ -1,4 +1,4 @@
-"""定时任务：候补清扫、活动状态自动流转、报名开始提醒、签到提醒、人员变动日报、编辑解冻、
+"""定时任务：候补清扫、活动状态自动流转、报名开始提醒、签到提醒、组长空缺提醒、人员变动日报、编辑解冻、
 值班日报、审批超时催办、志愿北京外联确认催办与重提提醒。
 
 由 main.py 的协程每分钟驱动一次。几件事互不依赖，一件出错不影响其余——
@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session as OrmSession
 
 from . import config
@@ -17,7 +18,8 @@ from .enroll_logic import close_waitlists_at_start, expire_stale_promotions
 from .integrations import msgcenter
 from .models import (Activity, ActivitySubscription, ApprovalEvent, AuditLog,
                      Department, DutyHandover,
-                     Enrollment, HoursClaim, HoursRequest, Shift, ShiftPeriod,
+                     Enrollment, HoursClaim, HoursRequest, Position, Shift,
+                     ShiftPeriod,
                      User, VbConfirm, now)
 from .notify import (notify_checkin, notify_edit_changes, notify_finished,
                      notify_managers)
@@ -39,6 +41,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("advanced", auto_advance_activities),
                       ("reminders", send_checkin_reminders),
                       ("reg_reminders", send_reg_open_reminders),
+                      ("leader_vacancies", send_leader_vacancy_alerts),
                       ("digests", send_roster_digests),
                       ("approvals", remind_stale_approvals),
                       ("hours_approvals", remind_stale_hours_requests),
@@ -778,6 +781,43 @@ def send_checkin_reminders(db: OrmSession) -> int:
         logger.info("场次「%s」%s 签到提醒已发送 %d 人",
                     g.name, period.text(), n)
     if rows:
+        db.commit()
+    return sent
+
+
+# ======================= 组长空缺提醒 =======================
+
+def send_leader_vacancy_alerts(db: OrmSession) -> int:
+    """名单锁定时，提醒管理者这一场还有哪些组没有组长。
+
+    自动锁定不落库、按时刻算（见 enroll_logic.shift_locked），所以「锁上了」
+    这件事要靠这里每分钟看一眼；手动锁定在锁定接口里当场提醒。不自动锁定
+    （N = 0）又没人手动锁的场次，报名截止时兜底提醒一次。每场每轮只发一次，
+    记在 Shift.leader_alert_sent 上；已开场的不再提醒。返回发出的条数。
+    """
+    from .enroll_logic import (enroll_deadline, notify_shift_leader_vacancies,
+                               shift_locked)
+
+    t = now()
+    has_leader_post = (select(Position.id)
+                       .where(Position.shift_id == Shift.id,
+                              Position.needs_leader.is_(True)).exists())
+    rows = (db.query(Shift, Activity)
+            .join(Activity, Shift.activity_id == Activity.id)
+            .filter(Shift.leader_alert_sent.is_(False),
+                    Shift.kind == "service",
+                    Shift.start_time > t,
+                    has_leader_post,
+                    Activity.status.in_(("published", "closed"))).all())
+    sent = 0
+    for g, act in rows:
+        due = shift_locked(g, t) or (not g.lock_hours
+                                     and t >= enroll_deadline(act, g))
+        if not due:
+            continue
+        if notify_shift_leader_vacancies(db, g):
+            sent += 1
+            logger.info("场次「%s」组长空缺提醒已发送", g.name)
         db.commit()
     return sent
 
