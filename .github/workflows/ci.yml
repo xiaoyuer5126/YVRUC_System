@@ -177,9 +177,10 @@ jobs:
             echo "YVRUC_WORKERS=2"
           } > .env
       - name: 起栈
-        run: docker compose up -d --build --wait postgres redis backend web
-      # Server 头里的版本号是扫描器匹配 CVE 的依据，也是「补丁到底上没上」的唯一凭据。
-      # web/Dockerfile 钉的 base 版本一变，这里是第一个发现没钉上的地方。
+        run: docker compose up -d --build --pull --wait postgres redis backend web
+      # base 用的是 1.31-alpine 浮动 tag，正常情况下会拉到这条线最新的补丁版。
+      # 这里断的是下限：低于 1.31.9 就说明拉到的是有漏洞的旧版（镜像源缓存落后、
+      # 或者有人把 tag 改回去了），CI 直接红，不等到线上才发现。
       - name: nginx 版本
         run: |
           docker exec yvruc-web nginx -v 2>&1

@@ -16,13 +16,17 @@ RUN npm run build
 # 版本停在旧的一批会被整批记成漏洞；HTTP/2 头部压缩炸弹的 max_headers 也是
 # 1.29.8 起才有的。
 #
-# 钉到具体补丁版，不用 1.31-alpine 这种浮动 tag：浮动 tag 下线上是哪个补丁版，
-# 取决于构建时本地有没有旧的 base 镜像，安全修复会被镜像缓存悄悄挡掉。1.31.9 修的是
-# 2026-11-18 F5 公布的 10 个漏洞，其中 HTTP/2 流控下溢（CVE-2026-123007）、
-# HTTP/2 use-after-free（CVE-2026-123633）、resolver use-after-free（CVE-2026-123634）
-# 都在我们的 http2 + proxy_pass + resolver 配置范围内。
-# 升级时改这里，同时改 scripts/nginxcheck.sh 的 image 和 CI 里对 nginx -v 的断言。
-FROM nginx:1.31.9-alpine
+# 用浮动 tag，不钉到补丁版：1.31.10 这类补丁版一发布，下次部署 `compose build --pull`
+# 就自动跟上了，不用改代码、不用人盯。钉死补丁版要每次手动改，忘了就一直停在旧版本。
+# 补丁版之间的配置兼容性由 CI 的 nginx 配置检查守（scripts/nginxcheck.sh 用同一个
+# 浮动 tag），版本下限由 CI 和 ops/deploy.sh 各断言一次。
+#
+# 真正要防的不是浮动 tag，是「本地有旧的 base 镜像时 build 不去拉」——那才是安全修复
+# 被悄悄挡掉的原因，所以部署和 CI 的构建都带 --pull。
+# 1.31.9 起修的是 2026-11-18 F5 公布的 10 个漏洞，其中 HTTP/2 流控下溢
+# （CVE-2026-123007）、HTTP/2 use-after-free（CVE-2026-123633）、resolver
+# use-after-free（CVE-2026-123634）都在我们 http2 + proxy_pass + resolver 的配置范围内。
+FROM nginx:1.31-alpine
 
 # 站点主体：三份形态配置都 include /etc/nginx/snippets/yvruc-shared.conf
 COPY web/nginx-shared.conf /etc/nginx/snippets/yvruc-shared.conf

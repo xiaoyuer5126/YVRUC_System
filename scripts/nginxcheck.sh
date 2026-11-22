@@ -14,9 +14,9 @@
 # 生产那份要证书才能过语法检查，这里临时生成一份自签名的，只活在这条命令里。
 set -eu
 
-# 与 web/Dockerfile 的 base 镜像一致：配置是按这个版本的 nginx 写的，
-# 两处版本不同时，这里语法过了也不代表线上一样。
-image=nginx:1.31.9-alpine
+# 与 web/Dockerfile 的 base 镜像用同一个浮动 tag：补丁版更新时这里跟着换，
+# 配置在新补丁版上能不能过，CI 第一时间就知道。
+image=nginx:1.31-alpine
 repo=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
