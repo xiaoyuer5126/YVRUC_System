@@ -935,7 +935,7 @@ export default {
   // 活动上新提醒
   '上新提醒': 'New activity alerts',
   '活动上新提醒': 'New Activity Alerts',
-  '有新活动上线时，场次落在你勾选的空闲时段里，或者由你关注的组织单位举办，就给你发一条提醒。只提醒招募范围包括你的活动。': 'When a new activity goes live with a session in your free time, or is run by an organizing unit you follow, we will notify you. Only activities open to you count.',
+  '有新活动上线时，场次落在你勾选的空闲时段里、由你关注的组织单位举办，或者活动名包含你填的关键词，满足一样就给你发一条提醒。只提醒招募范围包括你的活动。': 'When a new activity goes live with a session in your free time, run by an organizing unit you follow, or with a keyword of yours in its name, we will notify you. Only activities open to you count.',
   '每周空闲时段': 'Weekly free time',
   '上午': 'Morning',
   '下午': 'Afternoon',
@@ -945,7 +945,11 @@ export default {
   '关注的组织单位': 'Organizing units you follow',
   '从已有活动的组织单位里选，可多选': 'Pick from existing organizing units',
   '同一个单位可能有几种写法，想都收到就都选上': 'One unit may appear under several names. Pick them all to get every alert.',
-  '两样都没选，保存后就不再提醒': 'Nothing selected. Saving turns alerts off.',
+  '活动名关键词': 'Keywords in activity name',
+  '输入后按回车添加，最多 {0} 个': 'Type and press Enter to add, up to {0}',
+  '活动名包含任一关键词就提醒，不分大小写。每个最多 {0} 个字': 'Alerts when the activity name contains any keyword, case-insensitive. Up to {0} characters each.',
+  '关键词每个最多 {0} 个字': 'Each keyword can have up to {0} characters',
+  '什么都没选，保存后就不再提醒': 'Nothing selected. Saving turns alerts off.',
   '已保存，有符合的新活动上线时会提醒你': 'Saved. We will notify you when a matching activity goes live.',
   '已关闭上新提醒': 'New activity alerts turned off',
 }

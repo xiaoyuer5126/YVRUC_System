@@ -1,12 +1,12 @@
 <!-- 活动上新提醒的订阅弹窗：「活动广场」标题旁的按钮打开。
-     勾每周的空闲时段（周一到周日 × 上午/下午/晚上），或者选关注的组织单位，
-     新活动上广场时满足一样就提醒。两样都不选就是不订阅。
+     勾每周的空闲时段（周一到周日 × 上午/下午/晚上）、选关注的组织单位、
+     填活动名关键词，新活动上广场时满足一样就提醒。三样都不填就是不订阅。
      时段怎么切、怎么匹配见 backend/watch.py。 -->
 <template>
   <el-dialog v-model="visible" :title="t('活动上新提醒')" :width="narrow ? '94%' : '560px'"
              append-to-body :before-close="guard" @opened="guard.snap">
     <div v-loading="loading" class="watch">
-      <p class="lead">{{ t('有新活动上线时，场次落在你勾选的空闲时段里，或者由你关注的组织单位举办，就给你发一条提醒。只提醒招募范围包括你的活动。') }}</p>
+      <p class="lead">{{ t('有新活动上线时，场次落在你勾选的空闲时段里、由你关注的组织单位举办，或者活动名包含你填的关键词，满足一样就给你发一条提醒。只提醒招募范围包括你的活动。') }}</p>
 
       <div class="sec">{{ t('每周空闲时段') }}</div>
       <div class="grid">
@@ -39,8 +39,13 @@
       </el-select>
       <div class="foot-line dim">{{ t('同一个单位可能有几种写法，想都收到就都选上') }}</div>
 
-      <el-alert v-if="!slots.length && !organizers.length" type="info" :closable="false"
-                show-icon :title="t('两样都没选，保存后就不再提醒')" />
+      <div class="sec">{{ t('活动名关键词') }}</div>
+      <el-input-tag v-model="keywords" :max="maxKeywords" clearable
+                    :placeholder="t('输入后按回车添加，最多 {0} 个', [maxKeywords])" />
+      <div class="foot-line dim">{{ t('活动名包含任一关键词就提醒，不分大小写。每个最多 {0} 个字', [maxKeywordLen]) }}</div>
+
+      <el-alert v-if="!slots.length && !organizers.length && !keywords.length" type="info"
+                :closable="false" show-icon :title="t('什么都没选，保存后就不再提醒')" />
     </div>
     <template #footer>
       <el-button @click="visible = false">{{ t('取消') }}</el-button>
@@ -76,10 +81,13 @@ const parts = ref([
 ])
 const slots = ref([])
 const organizers = ref([])
+const keywords = ref([])
+const maxKeywords = ref(5)
+const maxKeywordLen = ref(20)
 const options = ref([])
 const loading = ref(false)
 const saving = ref(false)
-const guard = useCloseGuard(() => [[...slots.value].sort(), organizers.value])
+const guard = useCloseGuard(() => [[...slots.value].sort(), organizers.value, keywords.value])
 
 const picked = computed(() => new Set(slots.value))
 
@@ -89,6 +97,9 @@ async function load() {
     const d = await api.get('/api/me/activity-watch')
     slots.value = d.slots
     organizers.value = d.organizers
+    keywords.value = d.keywords
+    maxKeywords.value = d.max_keywords
+    maxKeywordLen.value = d.max_keyword_len
     options.value = d.organizer_options
     parts.value = d.parts
   } finally {
@@ -111,12 +122,26 @@ const dayFull = i => dayKeys(i).every(k => picked.value.has(k))
 const toggleDay = i => toggle(dayKeys(i))
 const togglePart = key => toggle([0, 1, 2, 3, 4, 5, 6].map(i => `${i}-${key}`))
 
+// 关键词随改随整理：去首尾空格；空的、太长的、和前面重复（不分大小写）的去掉。
+// 后端同样校验，这里先拦下免得保存时才报错。
+watch(keywords, v => {
+  const out = []
+  let tooLong = false
+  for (const raw of v) {
+    const k = String(raw).trim()
+    if (k.length > maxKeywordLen.value) tooLong = true
+    else if (k && !out.some(x => x.toLowerCase() === k.toLowerCase())) out.push(k)
+  }
+  if (tooLong) ElMessage.warning(t('关键词每个最多 {0} 个字', [maxKeywordLen.value]))
+  if (out.length !== v.length || out.some((k, i) => k !== v[i])) keywords.value = out
+})
+
 async function save() {
   saving.value = true
   try {
     const d = await api.put('/api/me/activity-watch',
-      { slots: slots.value, organizers: organizers.value })
-    ElMessage.success(d.slots.length || d.organizers.length
+      { slots: slots.value, organizers: organizers.value, keywords: keywords.value })
+    ElMessage.success(d.slots.length || d.organizers.length || d.keywords.length
       ? t('已保存，有符合的新活动上线时会提醒你') : t('已关闭上新提醒'))
     emit('saved', d)
     visible.value = false

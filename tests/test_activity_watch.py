@@ -1,6 +1,6 @@
-"""活动上新提醒：订阅每周空闲时段 / 关注的主单位，新活动上广场时提醒一次。
+"""活动上新提醒：订阅每周空闲时段 / 关注的主单位 / 活动名关键词，新活动上广场时提醒一次。
 
-时段命中、单位命中各发一条；都不命中、招募范围外、老师、补记录活动不发；
+时段命中、单位命中、关键词命中各发一条，同时命中也只发一条；都不命中、招募范围外、老师、补记录活动不发；
 同一个活动只发一次（恢复报名、再次发布都不再发）；停在「待发布」的活动
 以发起方点发布为准。
 """
@@ -219,3 +219,90 @@ def test_补记录活动不发(client, db, take_student, admin):
     aid = create_record(client, admin)
     assert _submit_and_approve(client, admin, aid)["status"] == "finished"
     assert inbox(db, sid, TITLE + db.get(Activity, aid).title) == []
+
+
+# ======================= 活动名关键词 =======================
+
+def _watch_kw(client, sid, keywords, **kw):
+    r = client.put(URL, headers=login(client, sid),
+                   json={"slots": list(kw.get("slots", ())),
+                         "organizers": list(kw.get("organizers", ())),
+                         "keywords": list(keywords)})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_关键词读写_去空格去重_最多5个(client, take_student):
+    sid = take_student()
+    h = login(client, sid)
+    d = client.get(URL, headers=h).json()
+    assert d["keywords"] == [] and d["max_keywords"] == 5
+
+    out = _watch_kw(client, sid, [" 支教 ", "支教", "Marathon", "marathon", "", "  "])
+    assert out["keywords"] == ["支教", "Marathon"]
+    assert client.get(URL, headers=h).json()["keywords"] == ["支教", "Marathon"]
+
+    five = ["一", "二", "三", "四", "五"]
+    assert _watch_kw(client, sid, five)["keywords"] == five
+    # 去重后不超过 5 个的照收
+    assert _watch_kw(client, sid, five + ["五 "])["keywords"] == five
+
+    r = client.put(URL, headers=h, json={"keywords": five + ["六"]})
+    assert r.status_code == 400 and "最多 5 个" in r.json()["detail"]
+    r = client.put(URL, headers=h, json={"keywords": ["长" * 21]})
+    assert r.status_code == 400
+    assert _watch_kw(client, sid, ["长" * 20])["keywords"] == ["长" * 20]
+    # 被拒的那次没改动已存的
+    assert client.get(URL, headers=h).json()["keywords"] == ["长" * 20]
+
+
+def test_活动名命中关键词发一条_注明关键词(client, db, open_group, take_student, admin):
+    act, g = _approved(db, open_group)
+    act.title = f"北京 Marathon 志愿服务 {uid('t')}"
+    db.commit()
+    sid = take_student()
+    # 不分大小写；时段和单位都不命中
+    _watch_kw(client, sid, ["无关词", "marathon"],
+              slots=[_miss_slot(_slots_of(g))], organizers=["别的单位"])
+    _publish(client, admin, act)
+
+    notes = inbox(db, sid, TITLE + act.title)
+    assert len(notes) == 1
+    assert "关键词「marathon」" in notes[0].content
+    assert "空闲时段" not in notes[0].content and "关注的" not in notes[0].content
+
+
+def test_活动名不含关键词不发(client, db, open_group, take_student, admin):
+    act, g = _approved(db, open_group)
+    act.title = f"图书馆整理 {uid('t')}"
+    db.commit()
+    sid = take_student()
+    _watch_kw(client, sid, ["支教", "马拉松"], slots=[_miss_slot(_slots_of(g))])
+    _publish(client, admin, act)
+    assert inbox(db, sid, TITLE + act.title) == []
+
+
+def test_关键词与时段单位同时命中只发一条(client, db, open_group, take_student, admin):
+    act, g = _approved(db, open_group)
+    act.title = f"社区支教 {uid('t')}"
+    db.commit()
+    sid = take_student()
+    _watch_kw(client, sid, ["支教"], slots=sorted(_slots_of(g)),
+              organizers=[act.organizer])
+    _publish(client, admin, act)
+
+    notes = inbox(db, sid, TITLE + act.title)
+    assert len(notes) == 1
+    c = notes[0].content
+    assert "空闲时段" in c and f"关注的「{act.organizer}」" in c and "关键词「支教」" in c
+
+
+def test_关键词命中_招募范围外仍不发(client, db, open_group, take_student, admin):
+    act, g = _approved(db, open_group)
+    act.title = f"社区支教 {uid('t')}"
+    act.recruit_campuses = ["苏州校区"]   # 用例学生在中关村校区
+    db.commit()
+    sid = take_student()
+    _watch_kw(client, sid, ["支教"])
+    _publish(client, admin, act)
+    assert inbox(db, sid, TITLE + act.title) == []
