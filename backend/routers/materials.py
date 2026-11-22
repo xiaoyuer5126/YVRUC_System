@@ -42,6 +42,16 @@ EXT_TYPES = {
     "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
     "txt": "text/plain; charset=utf-8",
 }
+# 报名问卷的文件题另外收手机拍的短视频：安卓多为 mp4，苹果为 mov。学习材料不收
+# （见模块说明：视频走链接），所以不并进 EXT_TYPES，只在问卷上传和下载时用
+VIDEO_TYPES = {"mp4": "video/mp4", "mov": "video/quicktime"}
+ANSWER_FILE_TYPES = {**EXT_TYPES, **VIDEO_TYPES}
+
+
+def is_video(data: bytes) -> bool:
+    """mp4 与 mov 都是 ISO 媒体容器：第 5～8 字节是第一个盒子的类型。手机录的
+    以 ftyp 开头；老 QuickTime 文件可能直接是 moov/mdat/wide/free。"""
+    return data[4:8] in (b"ftyp", b"moov", b"mdat", b"wide", b"free")
 
 
 def _owner(db: OrmSession, owner_type: str, owner_id: str) -> tuple[str, str]:
@@ -227,4 +237,4 @@ def download_material(material_id: str, db: OrmSession = Depends(db_session),
     ext = row.stored_name.rsplit(".", 1)[-1]
     return downloads.file_response(
         path, row.title,
-        media_type=EXT_TYPES.get(ext, "application/octet-stream"))
+        media_type=ANSWER_FILE_TYPES.get(ext, "application/octet-stream"))

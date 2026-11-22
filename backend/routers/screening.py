@@ -28,7 +28,7 @@ from ..locks import shift_lock, user_lock
 from ..models import (Activity, Application, Attachment, Enrollment, FormQuestion, Position, Shift, User, now, uid)
 from ..perm import ensure_activity_manager, is_activity_manager
 from ..serializers import answer_attachments, application_out, reg_started
-from .materials import EXT_TYPES, MATERIAL_DIR
+from .materials import ANSWER_FILE_TYPES, MATERIAL_DIR, VIDEO_TYPES, is_video
 
 router = APIRouter(prefix="/api", tags=["screening"])
 
@@ -339,13 +339,17 @@ async def upload_answer_file(activity_id: str, file: UploadFile = File(...),
                     Application.user_id == user.id).first()):
         raise HTTPException(409, "您已经申请过本活动")
     ext = Path(file.filename or "").suffix.lower().lstrip(".")
-    if ext not in EXT_TYPES:
-        raise HTTPException(400, f"不支持的文件类型（可上传 {'/'.join(sorted(EXT_TYPES))}）")
+    if ext not in ANSWER_FILE_TYPES:
+        raise HTTPException(
+            400, f"不支持的文件类型（可上传 {'/'.join(sorted(ANSWER_FILE_TYPES))}）")
     # 多读一字节：先判大小再落盘，别把整个动辄几百兆的文件读进内存。
     # 超限的那 50M + 1 字节读完就丢，不会留在内存里
     data = await file.read(config.MAX_MATERIAL_BYTES + 1)
     if len(data) > config.MAX_MATERIAL_BYTES:
         raise HTTPException(400, f"文件不能超过 {config.MAX_MATERIAL_BYTES // (1024 * 1024)}MB")
+    # 视频是浏览器能直接播的类型，按扩展名回 video/* 之前先确认真是视频
+    if ext in VIDEO_TYPES and not is_video(data):
+        raise HTTPException(400, "这个文件不是视频（改后缀也不行）")
     _ensure_upload_quota(db, act, user, len(data))
     MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
     stored = f"{uuid4().hex}.{ext}"
