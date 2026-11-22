@@ -28,7 +28,8 @@ from ..locks import (clear_failures, failure_count, issue_ticket,
                      note_failure, note_rate, rate_count)
 from ..models import (MANAGER_ROLES, ROLE_LABELS, Session, User,
                       ViolationRecord, uid)
-from ..session_cookie import clear_session_cookie, set_session_cookie
+from ..session_cookie import (clear_session_cookie, cookie_secure,
+                              set_session_cookie)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -44,7 +45,7 @@ def _logged_in(request: Request, db: OrmSession, user: User, body: dict) -> JSON
     """开会话、把令牌写进 HttpOnly cookie。响应体里没有令牌：页面脚本拿不到它。"""
     resp = JSONResponse({"user": session_user(db, user), **body})
     set_session_cookie(resp, create_session(db, user),
-                       secure=request.url.scheme == "https")
+                       secure=cookie_secure(request.url.scheme))
     return resp
 
 
@@ -92,7 +93,7 @@ def sso_login_url(request: Request, response: Response, next: str = ""):
     response.set_cookie(SSO_NONCE_COOKIE, nonce,  # noqa: S105
                         max_age=config.SSO_STATE_SECONDS, path="/api/auth",
                         httponly=True, samesite="lax",
-                        secure=request.url.scheme == "https")
+                        secure=cookie_secure(request.url.scheme))
     return {"login_url": login_url}
 
 
@@ -290,7 +291,7 @@ def logout(request: Request, token: str = Depends(current_token),
         db.delete(row)
         db.commit()
     resp = JSONResponse({"ok": True})
-    clear_session_cookie(resp, secure=request.url.scheme == "https")
+    clear_session_cookie(resp, secure=cookie_secure(request.url.scheme))
     return resp
 
 

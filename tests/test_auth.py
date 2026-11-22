@@ -133,6 +133,31 @@ def test_https请求下发的cookie带Secure(client):
     client.cookies.delete(SESSION_COOKIE)
 
 
+def test_站点是https时cookie一律带Secure(client, monkeypatch):
+    """反代漏传 X-Forwarded-Proto 时后端看到的是 http；站点本身是 https，
+    令牌 cookie 照样要带 Secure，不然浏览器会在 http 请求上明文发出它。"""
+    from backend import config
+    monkeypatch.setattr(config, "SITE_URL", "https://v.example.edu.cn")
+    r = client.post("http://testserver/api/auth/demo-login",
+                    json={"student_id": ADMIN, "password": DEMO_PASSWORD})
+    assert r.status_code == 200, r.text
+    assert "secure" in _set_cookie(r).lower()
+    r = client.post("http://testserver/api/auth/logout")
+    assert "secure" in _set_cookie(r).lower()
+    client.cookies.delete(SESSION_COOKIE)
+
+
+def test_本机http调试时cookie不带Secure(client, monkeypatch):
+    """站点地址是 http 或没配：浏览器不存 Secure cookie，带了就登不进去。"""
+    from backend import config
+    monkeypatch.setattr(config, "SITE_URL", "")
+    r = client.post("http://testserver/api/auth/demo-login",
+                    json={"student_id": ADMIN, "password": DEMO_PASSWORD})
+    assert r.status_code == 200, r.text
+    assert "secure" not in _set_cookie(r).lower()
+    client.cookies.delete(SESSION_COOKIE)
+
+
 def test_Authorization头不再认(client, admin):
     """令牌只从 cookie 读：拿到令牌的脚本也没法换个头冒充登录。"""
     bearer = {"Authorization": f"Bearer {session_token(admin)}"}

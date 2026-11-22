@@ -36,13 +36,22 @@ MAX_AGE = int(config.SESSION_TTL.total_seconds())
 CSRF_REJECTED = "请求缺少必要的标识，请刷新页面后重试"
 
 
-def set_session_cookie(response: Response, token: str, *, secure: bool) -> None:
-    """下发会话 cookie。到期时间和服务端会话一致，续期时再下发一次。
+def cookie_secure(scheme: str) -> bool:
+    """cookie 要不要带 Secure。
 
-    secure 跟着请求的协议走（后端在 nginx 之后，uvicorn 开了 --proxy-headers，
-    https 请求在这里看到的就是 https）：本机 http 调试时浏览器不会存
+    请求是 https，或者站点根地址（YVRUC_SITE_URL，没配取正式域名）是 https，
+    就带。只看请求协议的话，全靠反代一路把 X-Forwarded-Proto 传对：内测形态
+    前面还有一层宿主机 nginx，它漏传这个头，后端就以为是 http，令牌 cookie
+    不带 Secure，浏览器在任何 http 请求上都会把它明文发出去。
+    本机 http 调试时站点地址为空或是 http，这里回 False：浏览器不会存
     Secure cookie，写死 True 就登不进去。
     """
+    return scheme == "https" or config.SITE_URL.startswith("https://")
+
+
+def set_session_cookie(response: Response, token: str, *, secure: bool) -> None:
+    """下发会话 cookie。到期时间和服务端会话一致，续期时再下发一次。
+    secure 由 cookie_secure 算。"""
     response.set_cookie(SESSION_COOKIE, token, max_age=MAX_AGE, path=COOKIE_PATH,
                         httponly=True, samesite="lax", secure=secure)
 
@@ -90,7 +99,7 @@ class SessionCookieMiddleware:
                 token = (scope.get("state") or {}).get("session_renew")
                 if token:
                     r = Response()
-                    set_session_cookie(r, token, secure=scope.get("scheme") == "https")
+                    set_session_cookie(r, token, secure=cookie_secure(scope.get("scheme", "")))
                     message = {**message, "headers": [
                         *message.get("headers", []),
                         *[(k, v) for k, v in r.raw_headers if k == b"set-cookie"]]}
