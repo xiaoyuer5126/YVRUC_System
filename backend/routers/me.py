@@ -238,10 +238,13 @@ def _watch_out(db: OrmSession, w) -> dict:
     from .. import watch
     slots = list(w.slots or []) if w else []
     organizers = list(w.organizers or []) if w else []
+    keywords = list(w.keywords or []) if w else []
     options = watch.organizer_options(db)
     # 关注过、但现在已公开的活动里找不到的单位也列着，免得一打开就被悄悄去掉
     options += [o for o in organizers if o not in options]
-    return {"slots": slots, "organizers": organizers,
+    return {"slots": slots, "organizers": organizers, "keywords": keywords,
+            "max_keywords": watch.MAX_KEYWORDS,
+            "max_keyword_len": watch.MAX_KEYWORD_LEN,
             "organizer_options": options,
             "parts": [{"key": k, "label": label, "start": h0, "end": h1}
                       for k, label, h0, h1 in watch.PARTS]}
@@ -255,7 +258,8 @@ def _no_teacher(user: User) -> None:
 @router.get("/activity-watch")
 def get_activity_watch(db: OrmSession = Depends(db_session),
                        user: User = Depends(current_user)):
-    """我的活动上新提醒订阅：勾了哪些每周时段、关注了哪些主单位，以及可选的主单位。"""
+    """我的活动上新提醒订阅：勾了哪些每周时段、关注了哪些主单位、订了哪些
+    活动名关键词，以及可选的主单位。"""
     from ..models import ActivityWatch
     _no_teacher(user)
     return _watch_out(db, db.get(ActivityWatch, user.id))
@@ -264,12 +268,13 @@ def get_activity_watch(db: OrmSession = Depends(db_session),
 class WatchBody(BaseModel):
     slots: list[str] = []
     organizers: list[str] = []
+    keywords: list[str] = []
 
 
 @router.put("/activity-watch")
 def put_activity_watch(body: WatchBody, db: OrmSession = Depends(db_session),
                        user: User = Depends(current_user)):
-    """保存上新提醒订阅（整份替换）。两样都清空就是不订阅。"""
+    """保存上新提醒订阅（整份替换）。三样都清空就是不订阅。"""
     from .. import watch
     from ..models import ActivityWatch
     _no_teacher(user)
@@ -287,11 +292,17 @@ def put_activity_watch(body: WatchBody, db: OrmSession = Depends(db_session),
         raise HTTPException(400, f"关注的组织单位最多 {watch.MAX_ORGANIZERS} 个")
     if any(len(o) > 64 for o in organizers):
         raise HTTPException(400, "组织单位名称太长")
+    keywords = watch.clean_keywords(body.keywords)
+    if len(keywords) > watch.MAX_KEYWORDS:
+        raise HTTPException(400, f"关键词最多 {watch.MAX_KEYWORDS} 个")
+    if any(len(k) > watch.MAX_KEYWORD_LEN for k in keywords):
+        raise HTTPException(400, f"关键词每个最多 {watch.MAX_KEYWORD_LEN} 个字")
     w = db.get(ActivityWatch, user.id)
     if w is None:
         w = ActivityWatch(user_id=user.id)
         db.add(w)
-    w.slots, w.organizers, w.updated_at = slots, organizers, now()
+    w.slots, w.organizers, w.keywords = slots, organizers, keywords
+    w.updated_at = now()
     db.commit()
     return _watch_out(db, w)
 
