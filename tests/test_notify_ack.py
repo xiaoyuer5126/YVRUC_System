@@ -244,7 +244,7 @@ def test_点开一条就算已读_签收仍要本人点(client, admin, db, enrol
 def test_管理者收到的通知也点得进活动(client, admin, db, enrolled_activity):
     """人员变动、排岗提醒这些原来没带活动 id，点了没反应。
 
-    用「打开组长开关 → 提醒管理者指定组长」这条真实链路触发一条给管理者的通知。
+    用「锁定名单时缺组长 → 提醒管理者指定组长」这条真实链路触发一条给管理者的通知。
     """
     act, shift, _u = enrolled_activity
     with editing(client, admin, act.id):
@@ -253,6 +253,9 @@ def test_管理者收到的通知也点得进活动(client, admin, db, enrolled_
                          json={"needs_leader": True,
                                "leader_task": "带队进场、清点人数"})
         assert r.status_code == 200, r.text
+    r = client.post(f"/api/staff/shifts/{shift.id}/lock", headers=admin,
+                    json={"locked": True})
+    assert r.status_code == 200, r.text
     rows = [n for n in client.get("/api/me/notifications", headers=admin).json()["items"]
             if n["title"] == f"[组长空缺] {act.title}"]
     assert len(rows) == 1 and rows[0]["data"].get("activity_id") == act.id
