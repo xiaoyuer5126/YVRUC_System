@@ -111,12 +111,8 @@ def _set_cookie(r) -> str:
                      if k.lower() == "set-cookie" and v.startswith(SESSION_COOKIE + "="))
 
 
-def test_登录下发HttpOnly_cookie且响应体里没有令牌(client, monkeypatch):
+def test_登录下发HttpOnly_cookie且响应体里没有令牌(client):
     """令牌只在 HttpOnly cookie 里：页面脚本读不到，注入的脚本也偷不走。"""
-    # 下面要靠客户端的 cookie 罐在 http 上带回 cookie；站点地址是 https 时
-    # cookie 带 Secure，http 请求不会带它
-    from backend import config
-    monkeypatch.setattr(config, "SITE_URL", "")
     r = client.post("/api/auth/demo-login",
                     json={"student_id": ADMIN, "password": DEMO_PASSWORD})
     assert r.status_code == 200, r.text
@@ -139,23 +135,24 @@ def test_https请求下发的cookie带Secure(client):
 
 
 def test_站点是https时cookie一律带Secure(client, monkeypatch):
-    """反代漏传 X-Forwarded-Proto 时后端看到的是 http；站点本身是 https，
-    令牌 cookie 照样要带 Secure，不然浏览器会在 http 请求上明文发出它。"""
+    """反代漏传 X-Forwarded-Proto 时后端看到的是 http；请求的正是登记的 https
+    站点，令牌 cookie 照样要带 Secure，不然浏览器会在 http 请求上明文发出它。"""
     from backend import config
-    monkeypatch.setattr(config, "SITE_URL", "https://v.example.edu.cn")
+    monkeypatch.setattr(config, "SITE_URL", "https://testserver")
     r = client.post("http://testserver/api/auth/demo-login",
                     json={"student_id": ADMIN, "password": DEMO_PASSWORD})
     assert r.status_code == 200, r.text
     assert "secure" in _set_cookie(r).lower()
-    r = client.post("http://testserver/api/auth/logout")
+    r = client.post("http://testserver/api/auth/logout",
+                    headers={"Cookie": f"{SESSION_COOKIE}={r.cookies[SESSION_COOKIE]}"})
     assert "secure" in _set_cookie(r).lower()
     client.cookies.delete(SESSION_COOKIE)
 
 
-def test_本机http调试时cookie不带Secure(client, monkeypatch):
-    """站点地址是 http 或没配：浏览器不存 Secure cookie，带了就登不进去。"""
+def test_用别的地址走http调试时cookie不带Secure(client, monkeypatch):
+    """局域网 IP、localhost 上的 http：浏览器不存 Secure cookie，带了就登不进去。"""
     from backend import config
-    monkeypatch.setattr(config, "SITE_URL", "")
+    monkeypatch.setattr(config, "SITE_URL", "https://v.example.edu.cn")
     r = client.post("http://testserver/api/auth/demo-login",
                     json={"student_id": ADMIN, "password": DEMO_PASSWORD})
     assert r.status_code == 200, r.text

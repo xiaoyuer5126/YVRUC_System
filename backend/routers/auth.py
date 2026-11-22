@@ -53,7 +53,7 @@ def _logged_in(request: Request, db: OrmSession, user: User, body: dict) -> JSON
             synchronize_session=False)
     resp = JSONResponse({"user": session_user(db, user), **body})
     set_session_cookie(resp, create_session(db, user),
-                       secure=cookie_secure(request.url.scheme))
+                       secure=cookie_secure(request.url.scheme, request.headers.get("host", "")))
     return resp
 
 
@@ -114,7 +114,7 @@ def sso_login_url(request: Request, response: Response, next: str = ""):
     response.set_cookie(SSO_NONCE_COOKIE, nonce,  # noqa: S105
                         max_age=config.SSO_STATE_SECONDS, path="/api/auth",
                         httponly=True, samesite="lax",
-                        secure=cookie_secure(request.url.scheme))
+                        secure=cookie_secure(request.url.scheme, request.headers.get("host", "")))
     return {"login_url": login_url}
 
 
@@ -312,7 +312,7 @@ def logout(request: Request, token: str = Depends(current_token),
         db.delete(row)
         db.commit()
     resp = JSONResponse({"ok": True})
-    clear_session_cookie(resp, secure=cookie_secure(request.url.scheme))
+    clear_session_cookie(resp, secure=cookie_secure(request.url.scheme, request.headers.get("host", "")))
     return resp
 
 
