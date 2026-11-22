@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import config, oplog, school_id
 from ..audit import log as audit_log
 from ..database import db_session
-from ..deps import create_session, current_token, current_user
+from ..deps import create_session, current_token, current_user, session_key
 from ..integrations import sso
 from ..liaison import session_user
 from ..locks import (clear_failures, failure_count, issue_ticket,
@@ -296,7 +296,7 @@ def logout(request: Request, token: str = Depends(current_token),
     不要求登录有效：会话已经过期的人点退出，也要把浏览器里的 cookie 清掉，
     而不是回一个 401 把人当成「登录过期」再踢一遍。
     """
-    row = db.get(Session, token) if token else None
+    row = db.get(Session, session_key(token)) if token else None
     if row is not None:
         user = db.get(User, row.user_id)
         if user is not None:

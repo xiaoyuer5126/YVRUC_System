@@ -340,7 +340,8 @@ class DutyHandover(Base):
 
 class Session(Base):
     """登录会话。expires_at 到点即失效，由 deps.current_user 校验并清理；
-    每次使用往后顺延（滑动有效期，见 config.SESSION_TTL）。"""
+    每次使用往后顺延（滑动有效期，见 config.SESSION_TTL）。
+    token 列存的是令牌的 SHA-256（deps.session_key），令牌原文只在 cookie 里。"""
     __tablename__ = "sessions"
     token: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
