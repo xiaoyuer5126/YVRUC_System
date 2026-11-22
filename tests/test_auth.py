@@ -111,8 +111,12 @@ def _set_cookie(r) -> str:
                      if k.lower() == "set-cookie" and v.startswith(SESSION_COOKIE + "="))
 
 
-def test_登录下发HttpOnly_cookie且响应体里没有令牌(client):
+def test_登录下发HttpOnly_cookie且响应体里没有令牌(client, monkeypatch):
     """令牌只在 HttpOnly cookie 里：页面脚本读不到，注入的脚本也偷不走。"""
+    # 下面要靠客户端的 cookie 罐在 http 上带回 cookie；站点地址是 https 时
+    # cookie 带 Secure，http 请求不会带它
+    from backend import config
+    monkeypatch.setattr(config, "SITE_URL", "")
     r = client.post("/api/auth/demo-login",
                     json={"student_id": ADMIN, "password": DEMO_PASSWORD})
     assert r.status_code == 200, r.text
