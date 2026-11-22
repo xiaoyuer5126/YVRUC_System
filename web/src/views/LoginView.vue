@@ -50,6 +50,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, onEnter } from '../api'
+import { inSitePath } from '../router'
 import { setAuth } from '../store'
 import { t } from '../i18n'
 import LocaleSwitch from '../components/LocaleSwitch.vue'
@@ -103,7 +104,7 @@ async function doLogin() {
                              { student_id: sid.value.trim(), password: password.value })
     setAuth(d.user)
     ElMessage.success(t('欢迎，{name}', { name: d.user.name }))
-    router.push(route.query.next || '/')
+    router.push(inSitePath(route.query.next))
   } finally {
     loading.value = false
   }

@@ -39,6 +39,13 @@ const routes = [
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 
+/** 登录后去向只认站内路径：「/」开头、第二个字符不是 / 或 \（那两种在浏览器
+ *  里指向别的站点），也不回登录页本身。不合格的返回 fallback。 */
+export function inSitePath(next, fallback = '/') {
+  const s = String(next || '')
+  return /^\/(?![/\\]|login)/.test(s) ? s : fallback
+}
+
 export const router = createRouter({
   history: createWebHistory(),
   routes,
@@ -87,8 +94,7 @@ router.beforeEach((to) => {
   // 过去，这一跳会被重定向到首页，而重定向要以首页为新目标重走一遍导航，
   // 失活页面的离开拦截就跑第二遍，弹窗弹两次
   if (to.path === '/login' && auth.user && !to.query.signout) {
-    const next = String(to.query.next || '')
-    return /^\/(?!\/|login)/.test(next) ? next : home
+    return inSitePath(to.query.next, home)
   }
 
   // 首页按视角分流：工作台视角落地活动管理，学生视角落地活动广场
