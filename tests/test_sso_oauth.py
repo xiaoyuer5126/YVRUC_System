@@ -349,6 +349,29 @@ def test_登录去向地址过长就400(client):
                       params={"next": "/" + "a" * 600}).status_code == 400
 
 
+@pytest.mark.parametrize("raw, kept", [
+    ("/checkin/abc?x=1", "/checkin/abc?x=1"),
+    ("", ""),
+    ("https://evil.example.com/", ""),
+    ("//evil.example.com/", ""),
+    ("/\\evil.example.com/", ""),
+    ("javascript:alert(1)", ""),
+    ("/my\nSet-Cookie: x", ""),
+])
+def test_登录后去向只认站内路径(client, monkeypatch, raw, kept):
+    """去向登录完原样回给前端去跳：站外地址存进 state 之前就丢掉，
+    免得别人发个带 next 的登录链接，同学登完被带去仿冒站点。"""
+    from backend import locks
+    locks._client.delete("yvruc:rate:sso-login-url:testclient")
+    monkeypatch.setattr(sso, "mode", lambda: "oauth2")
+    seen = []
+    monkeypatch.setattr(sso, "login_url",
+                        lambda next_url="": (seen.append(next_url), ("https://cas/x", "n"))[1])
+    r = client.get("/api/auth/sso-login-url", params={"next": raw})
+    assert r.status_code == 200, r.text
+    assert seen == [kept]
+
+
 def test_取跳转地址按_ip_限流(client, monkeypatch):
     """每调一次就往 Redis 写一个 state，按客户端 IP 限流，免得被脚本灌满。
 

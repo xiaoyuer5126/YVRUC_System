@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend import locks
+from backend.deps import session_key
 from backend.models import Session, User, now
 from backend.session_cookie import SESSION_COOKIE
 from conftest import ADMIN, CSRF, DEMO_PASSWORD, dl_url, login, session_token
@@ -38,7 +39,7 @@ def test_expired_session_rejected(client, db):
     headers = login(client, ADMIN)
     token = session_token(headers)
 
-    row = db.get(Session, token)
+    row = db.get(Session, session_key(token))
     assert row.expires_at > now()                     # 默认还没过期
     row.expires_at = now() - timedelta(seconds=1)
     db.commit()
@@ -51,7 +52,7 @@ def test_会话3天有效且用一次顺延一次(client, db):
     一小时内反复用不重复写库。"""
     headers = login(client, ADMIN)
     token = session_token(headers)
-    row = db.get(Session, token)
+    row = db.get(Session, session_key(token))
     left = row.expires_at - now()
     assert timedelta(days=3) - timedelta(minutes=1) < left <= timedelta(days=3)
 
@@ -61,24 +62,24 @@ def test_会话3天有效且用一次顺延一次(client, db):
     db.commit()
     assert client.get("/api/auth/me", headers=headers).status_code == 200
     db.expire_all()
-    assert db.get(Session, token).expires_at == fresh
+    assert db.get(Session, session_key(token)).expires_at == fresh
 
     # 上次续期已过两天：用一次就续回整 3 天
-    row = db.get(Session, token)
+    row = db.get(Session, session_key(token))
     row.expires_at = now() + timedelta(days=1)
     db.commit()
     assert client.get("/api/auth/me", headers=headers).status_code == 200
     db.expire_all()
-    left = db.get(Session, token).expires_at - now()
+    left = db.get(Session, session_key(token)).expires_at - now()
     assert left > timedelta(days=3) - timedelta(minutes=1)
 
     # 3 天没用：到期即失效，记录一并删掉
-    row = db.get(Session, token)
+    row = db.get(Session, session_key(token))
     row.expires_at = now() - timedelta(seconds=1)
     db.commit()
     assert client.get("/api/auth/me", headers=headers).status_code == 401
     db.expire_all()
-    assert db.get(Session, token) is None
+    assert db.get(Session, session_key(token)) is None
 
 
 def test_会话令牌不能走地址栏(client, admin):
@@ -133,6 +134,59 @@ def test_https请求下发的cookie带Secure(client):
     client.cookies.delete(SESSION_COOKIE)
 
 
+def test_站点是https时cookie一律带Secure(client, monkeypatch):
+    """反代漏传 X-Forwarded-Proto 时后端看到的是 http；请求的正是登记的 https
+    站点，令牌 cookie 照样要带 Secure，不然浏览器会在 http 请求上明文发出它。"""
+    from backend import config
+    monkeypatch.setattr(config, "SITE_URL", "https://testserver")
+    r = client.post("http://testserver/api/auth/demo-login",
+                    json={"student_id": ADMIN, "password": DEMO_PASSWORD})
+    assert r.status_code == 200, r.text
+    assert "secure" in _set_cookie(r).lower()
+    r = client.post("http://testserver/api/auth/logout",
+                    headers={"Cookie": f"{SESSION_COOKIE}={r.cookies[SESSION_COOKIE]}"})
+    assert "secure" in _set_cookie(r).lower()
+    client.cookies.delete(SESSION_COOKIE)
+
+
+def test_用别的地址走http调试时cookie不带Secure(client, monkeypatch):
+    """局域网 IP、localhost 上的 http：浏览器不存 Secure cookie，带了就登不进去。"""
+    from backend import config
+    monkeypatch.setattr(config, "SITE_URL", "https://v.example.edu.cn")
+    r = client.post("http://testserver/api/auth/demo-login",
+                    json={"student_id": ADMIN, "password": DEMO_PASSWORD})
+    assert r.status_code == 200, r.text
+    assert "secure" not in _set_cookie(r).lower()
+    client.cookies.delete(SESSION_COOKIE)
+
+
+def test_会话表里不存令牌原文(client, db, admin):
+    """库和备份落到别人手里，拿表里的值当 cookie 也登不进去。"""
+    token = session_token(admin)
+    db.expire_all()
+    assert db.get(Session, token) is None
+    row = db.get(Session, session_key(token))
+    assert row is not None
+    stolen = {"Cookie": f"{SESSION_COOKIE}={row.token}"}
+    assert client.get("/api/auth/me", headers=stolen).status_code == 401
+    assert client.get("/api/auth/me", headers=admin).status_code == 200
+
+
+def test_同一浏览器重新登录会作废旧会话(client, db):
+    """公用电脑上换人登录：上一位的会话不能留在库里继续有效。"""
+    first = login(client, ADMIN)
+    r = client.post("/api/auth/demo-login", headers=first,
+                    json={"student_id": ADMIN, "password": DEMO_PASSWORD})
+    assert r.status_code == 200, r.text
+    second = r.cookies[SESSION_COOKIE]
+    client.cookies.delete(SESSION_COOKIE)
+    db.expire_all()
+    assert db.get(Session, session_key(session_token(first))) is None
+    assert client.get("/api/auth/me", headers=first).status_code == 401
+    assert client.get("/api/auth/me", headers={
+        "Cookie": f"{SESSION_COOKIE}={second}"}).status_code == 200
+
+
 def test_Authorization头不再认(client, admin):
     """令牌只从 cookie 读：拿到令牌的脚本也没法换个头冒充登录。"""
     bearer = {"Authorization": f"Bearer {session_token(admin)}"}
@@ -171,14 +225,14 @@ def test_退出登录清cookie且旧cookie失效(client, db):
     cleared = _set_cookie(r).lower()
     assert 'max-age=0' in cleared and "path=/api" in cleared
     db.expire_all()
-    assert db.get(Session, token) is None
+    assert db.get(Session, session_key(token)) is None
     assert client.get("/api/auth/me", headers=headers).status_code == 401
 
 
 def test_会话过期后退出照样清cookie(client, db):
     """过期了点退出不该回 401 把人当「登录过期」再踢一遍，cookie 也得清掉。"""
     headers = login(client, ADMIN)
-    row = db.get(Session, session_token(headers))
+    row = db.get(Session, session_key(session_token(headers)))
     row.expires_at = now() - timedelta(seconds=1)
     db.commit()
     r = client.post("/api/auth/logout", headers=headers)
@@ -195,7 +249,7 @@ def test_会话续期时同步刷新cookie(client, db):
     token = session_token(headers)
     # 刚登录：不续期，不重发 cookie
     assert _set_cookie(client.get("/api/auth/me", headers=headers)) == ""
-    row = db.get(Session, token)
+    row = db.get(Session, session_key(token))
     row.expires_at = now() + timedelta(days=1)
     db.commit()
     r = client.get("/api/auth/me", headers=headers)
@@ -347,10 +401,10 @@ def test_过期会话会被定时任务清掉(client, db):
     from backend.scheduled import purge_expired_sessions
 
     tok = session_token(login(client, ADMIN))
-    row = db.get(Session, tok)
+    row = db.get(Session, session_key(tok))
     row.expires_at = now() - timedelta(minutes=1)
     db.commit()
 
     assert purge_expired_sessions(db) >= 1
     db.expire_all()          # 删除走的是批量语句，本会话的缓存不会自己知道
-    assert db.get(Session, tok) is None
+    assert db.get(Session, session_key(tok)) is None

@@ -27,6 +27,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { inSitePath } from '../router'
 import { setAuth } from '../store'
 import { t } from '../i18n'
 import LocaleSwitch from '../components/LocaleSwitch.vue'
@@ -55,7 +56,7 @@ onMounted(async () => {
     ElMessage.success(t('欢迎，{name}', { name: d.user.name }))
     // replace 而不是 push：带授权码的那一页不该留在前进/后退里。
     // next 是跳转前想去的页面（比如从签到二维码落地页被弹去登录的志愿者）。
-    router.replace(d.next || '/')
+    router.replace(inSitePath(d.next))
   } catch (e) {
     error.value = e.message || t('统一身份认证未通过，请重试。')
   }

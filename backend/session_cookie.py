@@ -22,6 +22,7 @@ cookie 的 Path 是 /api：只有接口请求带它，静态资源、页面都�
 from __future__ import annotations
 
 import json
+from urllib.parse import urlparse
 
 from starlette.responses import Response
 
@@ -36,13 +37,32 @@ MAX_AGE = int(config.SESSION_TTL.total_seconds())
 CSRF_REJECTED = "请求缺少必要的标识，请刷新页面后重试"
 
 
+def _https_hosts() -> frozenset[str]:
+    return frozenset(urlparse(u).hostname or ""
+                     for u in (config.SITE_URL, *config.PUBLIC_BASE_URLS)
+                     if u.startswith("https://"))
+
+
+def cookie_secure(scheme: str, host: str) -> bool:
+    """cookie 要不要带 Secure。
+
+    请求是 https，或者请求的域名就是配置里登记的 https 站点（YVRUC_SITE_URL、
+    YVRUC_PUBLIC_BASE_URL），就带。只看请求协议的话，全靠反代一路把
+    X-Forwarded-Proto 传对：内测形态前面还有一层宿主机 nginx，它漏传这个头，
+    后端就以为是 http，令牌 cookie 不带 Secure，浏览器在任何 http 请求上都会
+    把它明文发出去。
+    用局域网 IP、localhost 走 http 调试时域名对不上，按请求协议回 False：
+    浏览器不会存 Secure cookie，写死 True 就登不进去。
+    """
+    if scheme == "https":
+        return True
+    name = host.rsplit(":", 1)[0].strip("[]").lower() if host else ""
+    return bool(name) and name in _https_hosts()
+
+
 def set_session_cookie(response: Response, token: str, *, secure: bool) -> None:
     """下发会话 cookie。到期时间和服务端会话一致，续期时再下发一次。
-
-    secure 跟着请求的协议走（后端在 nginx 之后，uvicorn 开了 --proxy-headers，
-    https 请求在这里看到的就是 https）：本机 http 调试时浏览器不会存
-    Secure cookie，写死 True 就登不进去。
-    """
+    secure 由 cookie_secure 算。"""
     response.set_cookie(SESSION_COOKIE, token, max_age=MAX_AGE, path=COOKIE_PATH,
                         httponly=True, samesite="lax", secure=secure)
 
@@ -90,7 +110,9 @@ class SessionCookieMiddleware:
                 token = (scope.get("state") or {}).get("session_renew")
                 if token:
                     r = Response()
-                    set_session_cookie(r, token, secure=scope.get("scheme") == "https")
+                    host = (_header(scope, b"host") or b"").decode("latin-1")
+                    set_session_cookie(r, token,
+                                       secure=cookie_secure(scope.get("scheme", ""), host))
                     message = {**message, "headers": [
                         *message.get("headers", []),
                         *[(k, v) for k, v in r.raw_headers if k == b"set-cookie"]]}

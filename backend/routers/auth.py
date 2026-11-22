@@ -21,14 +21,15 @@ from sqlalchemy.orm import Session as OrmSession
 from .. import config, oplog, school_id
 from ..audit import log as audit_log
 from ..database import db_session
-from ..deps import create_session, current_token, current_user
+from ..deps import create_session, current_token, current_user, session_key
 from ..integrations import sso
 from ..liaison import session_user
 from ..locks import (clear_failures, failure_count, issue_ticket,
                      note_failure, note_rate, rate_count)
 from ..models import (MANAGER_ROLES, ROLE_LABELS, Session, User,
                       ViolationRecord, uid)
-from ..session_cookie import clear_session_cookie, set_session_cookie
+from ..session_cookie import (clear_session_cookie, cookie_secure,
+                              set_session_cookie)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -41,11 +42,32 @@ FAIL_WINDOW_SECONDS = 300
 
 
 def _logged_in(request: Request, db: OrmSession, user: User, body: dict) -> JSONResponse:
-    """开会话、把令牌写进 HttpOnly cookie。响应体里没有令牌：页面脚本拿不到它。"""
+    """开会话、把令牌写进 HttpOnly cookie。响应体里没有令牌：页面脚本拿不到它。
+
+    这台浏览器上原来那个会话一并删掉：新 cookie 会盖掉旧的，旧会话没人再用，
+    却在库里一直有效到过期；公用电脑上换人登录时，上一位的会话也跟着作废。
+    """
+    old = current_token(request)
+    if old:
+        db.query(Session).filter(Session.token == session_key(old)).delete(
+            synchronize_session=False)
     resp = JSONResponse({"user": session_user(db, user), **body})
     set_session_cookie(resp, create_session(db, user),
-                       secure=request.url.scheme == "https")
+                       secure=cookie_secure(request.url.scheme, request.headers.get("host", "")))
     return resp
+
+
+def _in_site_path(next_url: str) -> str:
+    """登录后去向只认站内路径，别的一律当作没指定（回到首页）。
+
+    「/」开头、第二个字符不是「/」或「\\」：「//evil.com」「/\\evil.com」在浏览器
+    里都是别的站点。去向原样回给前端去跳，要是不在这里卡住，别人发一个带
+    next 的登录链接，同学登录完就被带到仿冒的站点上。控制字符一并拒掉。
+    """
+    if (not next_url.startswith("/") or next_url[1:2] in ("/", "\\")
+            or any(ord(c) < 0x20 or ord(c) == 0x7F for c in next_url)):
+        return ""
+    return next_url
 
 
 def demo_login_enabled() -> bool:
@@ -88,11 +110,11 @@ def sso_login_url(request: Request, response: Response, next: str = ""):
         raise HTTPException(429, "操作过于频繁，请稍后再试")
     if sso.mode() == "mock":
         raise HTTPException(409, "统一身份认证尚未接通")
-    login_url, nonce = sso.login_url(next)
+    login_url, nonce = sso.login_url(_in_site_path(next))
     response.set_cookie(SSO_NONCE_COOKIE, nonce,  # noqa: S105
                         max_age=config.SSO_STATE_SECONDS, path="/api/auth",
                         httponly=True, samesite="lax",
-                        secure=request.url.scheme == "https")
+                        secure=cookie_secure(request.url.scheme, request.headers.get("host", "")))
     return {"login_url": login_url}
 
 
@@ -282,7 +304,7 @@ def logout(request: Request, token: str = Depends(current_token),
     不要求登录有效：会话已经过期的人点退出，也要把浏览器里的 cookie 清掉，
     而不是回一个 401 把人当成「登录过期」再踢一遍。
     """
-    row = db.get(Session, token) if token else None
+    row = db.get(Session, session_key(token)) if token else None
     if row is not None:
         user = db.get(User, row.user_id)
         if user is not None:
@@ -290,7 +312,7 @@ def logout(request: Request, token: str = Depends(current_token),
         db.delete(row)
         db.commit()
     resp = JSONResponse({"ok": True})
-    clear_session_cookie(resp, secure=request.url.scheme == "https")
+    clear_session_cookie(resp, secure=cookie_secure(request.url.scheme, request.headers.get("host", "")))
     return resp
 
 

@@ -22,6 +22,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import secrets
 
 from fastapi import Depends, HTTPException, Request
@@ -33,10 +34,20 @@ from .models import Session, User, now
 from .session_cookie import CSRF_HEADER, SESSION_COOKIE
 
 
+def session_key(token: str) -> str:
+    """会话表里存的是令牌的 SHA-256，不是令牌本身。
+
+    库在学校的统一数据库上，还有每天的备份；存原文的话，能读到这张表或一份
+    备份的人拿任意一行就能冒充那个人登录。令牌是 32 字节随机数，不需要加盐
+    或慢哈希。
+    """
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def _authorize(db: OrmSession, token: str, request: Request) -> User:
     if not token:
         raise HTTPException(401, "未登录")
-    row = db.get(Session, token)
+    row = db.get(Session, session_key(token))
     if row is None:
         raise HTTPException(401, "登录已过期，请重新登录")
     t = now()
@@ -252,7 +263,7 @@ def require_archive_page(user: User = Depends(current_user)) -> User:
 
 def create_session(db: OrmSession, user: User) -> str:
     token = secrets.token_urlsafe(32)
-    db.add(Session(token=token, user_id=user.id,
+    db.add(Session(token=session_key(token), user_id=user.id,
                    expires_at=now() + config.SESSION_TTL))
     db.commit()
     return token
