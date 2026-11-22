@@ -724,14 +724,16 @@ class ActivityWatch(Base):
 
     slots 是勾选的每周时段，元素形如 "0-am"（周一上午），星期 0～6 对应
     周一～周日，时段见 watch.PARTS；organizers 是关注的主单位（Activity.organizer
-    的原文）。两样都空 = 不订阅，行留着也不发。新活动上广场时，有一个服务场次
-    落在勾选的时段里、或者主单位在关注列表里，就提醒一次（见 watch.py）。
+    的原文）；keywords 是活动名关键词（最多 watch.MAX_KEYWORDS 个）。三样都空 =
+    不订阅，行留着也不发。新活动上广场时，有一个服务场次落在勾选的时段里、
+    主单位在关注列表里、或者活动名包含某个关键词，就提醒一次（见 watch.py）。
     """
     __tablename__ = "activity_watches"
 
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
     slots: Mapped[list] = mapped_column(JSON, default=list)
     organizers: Mapped[list] = mapped_column(JSON, default=list)
+    keywords: Mapped[list] = mapped_column(JSON, default=list)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
