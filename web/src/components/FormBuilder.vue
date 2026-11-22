@@ -27,6 +27,7 @@
           {{ scopeText(q) }}
         </div>
         <div v-if="q.condQ" class="dim">{{ condText(q) }}</div>
+        <div v-if="q.kind === 'file' && fileTip" class="dim">{{ fileTip }}</div>
       </li>
     </ol>
     <div v-for="(q, i) in questions" v-else :key="q.key" class="fb-row">
@@ -46,6 +47,8 @@
       <el-input v-if="q.kind === 'single' || q.kind === 'multi'" v-model="q.optionsText"
                 type="textarea" :rows="2" placeholder="选项，一行一个（至少两个）"
                 :disabled="!editable" class="fb-opts" @change="reconcile" />
+      <!-- 文件题的上传限制，出题时就让管理者知道，别等志愿者传不上来才发现 -->
+      <div v-if="q.kind === 'file' && fileTip" class="dim fb-opts">{{ fileTip }}</div>
       <!-- 适用岗位：只问选了这些岗位的人。留空 = 人人都答 -->
       <div v-if="positionGroups.length" class="fb-cond">
         <span class="dim">适用岗位</span>
@@ -149,6 +152,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
+import { answerFileRules } from '../composables/answerFile'
 import { AI_FILE_ACCEPT, AI_FILE_LIMIT, AI_FILE_TIP, aiEnabled, aiForm } from '../ai'
 
 const props = defineProps({
@@ -187,6 +191,17 @@ async function load() {
   } finally { loading.value = false }
 }
 onMounted(load)
+
+// 文件题的限制说明：数字和格式取自后端，与上传接口同一份配置
+const fileTip = ref('')
+onMounted(async () => {
+  const r = await answerFileRules()
+  if (r) {
+    fileTip.value = `志愿者上传限制：单个文件最大 ${r.max_mb}MB；每人在本活动最多传 `
+      + `${r.max_count} 个、合计不超过 ${r.total_mb}MB；可传 ${r.exts.join('、')}。`
+      + '长视频请使用问卷、网盘等方式收集'
+  }
+})
 
 // key：题目在编辑页上的编号，显示条件按它指向来源题。已保存的题用正式 id，
 // 新题先给一个临时编号，不用保存就能被后面的题选作条件

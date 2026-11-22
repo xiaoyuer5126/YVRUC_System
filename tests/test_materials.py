@@ -178,3 +178,65 @@ def test_附件配额与无人引用的清理(client, db, take_student, enrolled
     assert purge_orphan_attachments(db) >= len(ids)
     assert db.query(Attachment).filter(Attachment.id.in_(ids)).count() == 0
 
+
+
+# —— 报名问卷文件题收视频 ——
+
+MP4_HEAD = b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2avc1mp41"
+MOV_HEAD = b"\x00\x00\x00\x14ftypqt  \x00\x00\x00\x00qt  "
+
+
+@pytest.mark.parametrize("name,head,ctype", [("录像.mp4", MP4_HEAD, "video/mp4"),
+                                             ("IMG_0001.MOV", MOV_HEAD, "video/quicktime")])
+def test_问卷文件题能传视频并按视频类型下载(client, admin, take_student,
+                                        enrolled_activity, name, head, ctype):
+    act, _shift, _u = enrolled_activity
+    stu = login(client, take_student())
+    r = client.post(f"/api/activities/{act.id}/apply/upload", headers=stu,
+                    files={"file": (name, head + b"\x00" * 1000, "video/mp4")})
+    assert r.status_code == 200, r.text
+    aid = r.json()["id"]
+    # 下载仍要鉴权：没令牌拿不到；本人和管理者拿得到，类型是视频
+    assert client.get(f"/api/materials/{aid}").status_code == 401
+    for who in (stu, admin):
+        got = client.get(dl_url(client, who, f"/api/materials/{aid}"))
+        assert got.status_code == 200
+        assert got.headers["content-type"].startswith(ctype)
+
+
+def test_问卷视频改后缀的被拒(client, take_student, enrolled_activity):
+    act, _shift, _u = enrolled_activity
+    stu = login(client, take_student())
+    r = client.post(f"/api/activities/{act.id}/apply/upload", headers=stu,
+                    files={"file": ("x.mp4", b"<html>" + b"x" * 100, "video/mp4")})
+    assert r.status_code == 400 and "视频" in r.json()["detail"]
+
+
+def test_问卷视频超过上限被拒(client, take_student, enrolled_activity):
+    from backend import config
+    act, _shift, _u = enrolled_activity
+    stu = login(client, take_student())
+    big = MP4_HEAD + b"\x00" * (config.MAX_MATERIAL_BYTES + 1 - len(MP4_HEAD))
+    r = client.post(f"/api/activities/{act.id}/apply/upload", headers=stu,
+                    files={"file": ("大.mp4", big, "video/mp4")})
+    assert r.status_code == 400 and "MB" in r.json()["detail"]
+
+
+def test_学习材料仍不收视频(client, admin, enrolled_activity):
+    _act, shift, _u = enrolled_activity
+    for name in ("培训.mp4", "培训.mov"):
+        r = client.post("/api/staff/materials", headers=admin,
+                        data={"owner_type": "position",
+                              "owner_id": _position_of(shift), "title": "x"},
+                        files={"file": (name, io.BytesIO(MP4_HEAD + b"\x00" * 100),
+                                        "video/mp4")})
+        assert r.status_code == 400 and "链接" in r.json()["detail"], name
+
+
+def test_常量接口给出问卷文件题限制(client, admin):
+    from backend import config
+    d = client.get("/api/auth/constants", headers=admin).json()["answer_file"]
+    assert d["max_mb"] == config.MAX_MATERIAL_BYTES // (1024 * 1024)
+    assert d["max_count"] == config.MAX_PENDING_ATTACHMENTS
+    assert d["total_mb"] == config.MAX_PENDING_ATTACHMENT_BYTES // (1024 * 1024)
+    assert {"mp4", "mov", "pdf"} <= set(d["exts"])

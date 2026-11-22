@@ -15,19 +15,24 @@
     <el-input v-else-if="q.kind === 'text'" v-model="answers[q.id]"
               type="textarea" :rows="2" maxlength="2000" show-word-limit />
     <div v-else class="file-row">
-      <el-upload :show-file-list="false" :http-request="uploader(q)">
+      <el-upload :show-file-list="false" :http-request="uploader(q)" :accept="accept">
         <el-button size="small" plain :loading="uploading === q.id">
           {{ t(files[q.id] ? '重新上传' : '上传文件') }}
         </el-button>
       </el-upload>
       <span v-if="files[q.id]" class="dim">{{ files[q.id] }}</span>
+      <div v-if="rules" class="dim file-tip">
+        {{ t('单个不超过 {0}MB，本活动最多传 {1} 个、合计 {2}MB；可传 {3}',
+             [rules.max_mb, rules.max_count, rules.total_mb, rules.exts.join(' / ')]) }}
+      </div>
     </div>
   </el-form-item>
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { acceptOf, answerFileRules } from '../composables/answerFile'
 import { uploadTo } from '../composables/uploadImage'
 import { t } from '../i18n'
 
@@ -68,6 +73,11 @@ const shown = computed(() => {   // vuecheck: script-only（模板经 asked / re
 const asked = computed(() => shown.value.filter(q => !(q.id in props.reused)))
 const reusedCount = computed(() => shown.value.length - asked.value.length)
 
+// 文件题的大小、个数、格式限制（后端常量），上传前就告诉志愿者
+const rules = ref(null)
+const accept = computed(() => acceptOf(rules.value))
+onMounted(async () => { rules.value = await answerFileRules() })
+
 const files = reactive({})
 const uploading = ref('')
 const uploader = q => ({ file }) => uploadFile(q, file)
@@ -98,6 +108,7 @@ defineExpose({ collect })
 </script>
 
 <style scoped>
-.file-row { display: flex; align-items: center; gap: 12px; }
+.file-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.file-tip { width: 100%; line-height: 1.5; }
 .reused-note { margin-bottom: 12px; }
 </style>

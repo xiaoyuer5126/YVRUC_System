@@ -486,6 +486,7 @@ export default {
   '请填写手机号和微信号': 'Enter your phone number and WeChat ID.',
   '上传文件': 'Upload file',
   '重新上传': 'Replace file',
+  '单个不超过 {0}MB，本活动最多传 {1} 个、合计 {2}MB；可传 {3}': 'Max {0} MB per file, up to {1} files and {2} MB in total for this activity. Allowed: {3}',
   '「{0}」为必填': '“{0}” is required',
   '已沿用你之前填写的 {0} 题答案': 'Reused your earlier answers to {0} question(s)',
   '把现场二维码放进框里，扫到自动完成': 'Hold the on-site QR code inside the frame. It scans automatically.',
