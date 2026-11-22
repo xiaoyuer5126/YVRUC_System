@@ -350,6 +350,7 @@ def download_ticket(body: TicketBody, user: User = Depends(current_user)):
 @router.get("/constants")
 def constants(user: User = Depends(current_user)):
     from .. import ai
+    from .materials import ANSWER_FILE_TYPES
     return {
         "recruit_modes": config.RECRUIT_MODES,
         "violation_kinds": ViolationRecord.KINDS,
@@ -362,6 +363,13 @@ def constants(user: User = Depends(current_user)):
             "confirm_hours": config.PROMOTE_CONFIRM_HOURS,
             # 确认窗夜间不计时的起止整点，[23, 8] 即 23:00–次日 8:00
             "confirm_quiet": [config.PROMOTE_QUIET_START, config.PROMOTE_QUIET_END],
+        },
+        # 报名问卷文件题的限制：出题时提示管理者、答题时提示志愿者，与上传接口同源
+        "answer_file": {
+            "max_mb": config.MAX_MATERIAL_BYTES // (1024 * 1024),
+            "max_count": config.MAX_PENDING_ATTACHMENTS,
+            "total_mb": config.MAX_PENDING_ATTACHMENT_BYTES // (1024 * 1024),
+            "exts": sorted(ANSWER_FILE_TYPES),
         },
         # 活动管理里的 智能起草按钮：没配 key 就不出现
         "ai_enabled": ai.enabled(),
