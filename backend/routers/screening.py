@@ -453,10 +453,10 @@ def _wanted_positions(db: OrmSession, act: Activity,
         if g is None or g.activity_id != act.id or g.is_attached():
             raise HTTPException(400, "岗位不属于本活动")
         if g.needs_assign() and not p.is_placeholder:
-            raise HTTPException(400, f"「{g.name}」的岗位截止后统一分配，只能勾「待分配」")
+            raise HTTPException(400, f"「{g.volunteer_label()}」报名后统一安排具体岗位，只能勾「待分配」")
         why = logic.closed_reason(g, p)
         if why:
-            raise HTTPException(409, f"{why}，请勾选别的场次或岗位")
+            raise HTTPException(409, f"{why}，请勾选别的岗位")
         out.setdefault(g, []).append(p)
     if not out:
         raise HTTPException(400, "请至少勾选一个意向岗位")
@@ -717,9 +717,13 @@ def _accept_one(db: OrmSession, act: Activity, app: Application, u: User,
         target.assign_forced = bool(unmet)
         # 立即落库：同一批后面的人判名额时要数得到他
         db.flush()
-        lines.append(f"{g.name}（{g.span_text()}）· "
-                     + ("具体岗位将于稍后公布" if position.is_placeholder
-                        else f"岗位：{position.name}"))
+        # 普通岗位一岗一场，场次名就是岗位名，写一遍就够；统一分配写批名
+        if g.needs_assign():
+            lines.append(f"「{g.volunteer_label()}」{g.span_text()} · "
+                         + ("具体岗位将于稍后公布" if position.is_placeholder
+                            else f"岗位：{position.name}"))
+        else:
+            lines.append(f"「{position.name}」{g.span_text()}")
         placed.append(f"{g.name}·{position.name}"
                       + (f"（不满足：{'；'.join(unmet)}）" if unmet else ""))
     taken = {t.id for t, _g, _p in chosen}

@@ -681,7 +681,8 @@ def test_录取与未录取(client, admin, db, take_student):
     n = (db.query(Notification)
          .filter(Notification.user_id == u0.id,
                  Notification.title.like("志愿活动录取通知｜%")).one())
-    assert "第2场（" in n.content and "具体岗位将于稍后公布" in n.content
+    # 统一分配写「某某志愿者」，岗位截止后才定
+    assert "「第2场志愿者」" in n.content and "具体岗位将于稍后公布" in n.content
 
     # 录取的人：我的报名里只剩录到的那一场，联络群二维码随时点得开
     mine = client.get("/api/me/enrollments", headers=login(client, sids[0])).json()
@@ -796,11 +797,11 @@ def test_一份申请录到多个场次_没选中的意向作废(client, admin, 
             if r["activity"]["id"] == act_id]
     assert sorted(r["status"] for r in mine) == ["enrolled", "enrolled"]
 
-    # 通知只有一条，逐场写实际岗位
+    # 通知只有一条，逐条写实际岗位：统一分配写「某某志愿者」，普通岗位只写一遍岗位名
     g0, gp = db.get(Shift, ids[0]), db.get(Shift, gid)
     n = _accept_note(db, u.id)
-    assert f"{g0.name}（{g0.span_text()}）· 具体岗位将于稍后公布" in n.content
-    assert f"{gp.name}（{gp.span_text()}）· 岗位：登记" in n.content
+    assert f"「{g0.name}志愿者」{g0.span_text()} · 具体岗位将于稍后公布" in n.content
+    assert f"「登记」{gp.span_text()}" in n.content and "岗位：登记" not in n.content
     assert "以负责人后续分配为准" not in n.content
     assert db.get(Shift, ids[1]).name not in n.content
     assert "联络群二维码" in n.content

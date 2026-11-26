@@ -106,7 +106,10 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
         "activity": {"id": act.id, "title": act.title,
                      "recruit_mode": act.recruit_mode,
                      "status": act.status, "location": act.location},
-        "shift": {"id": g.id, "name": g.name, "time_text": g.span_text(),
+        # 普通岗位一岗一场，name 就是岗位名；display_name 是给志愿者看的叫法
+        # （统一分配写「上午场志愿者」），needs_assign 时才另外显示分到的岗位
+        "shift": {"id": g.id, "name": g.name, "display_name": g.volunteer_label(),
+                  "needs_assign": g.needs_assign(), "time_text": g.span_text(),
                   "start_time": iso_of(g.start_time),
                   "end_time": iso_of(g.end_time),
                   # 此刻该看的那一段的结束时间：判断「服务中 / 未签退」用它，
@@ -120,13 +123,14 @@ def _enrollment_row(db: OrmSession, enr: Enrollment) -> dict:
                                                   for r in period_recs)}
                               for p in g.sorted_periods()],
                   "location": g.location,
-                  # 培训/彩排随服务场次的报名产生，学生不能单独退，只能请假
+                  # 培训/彩排随服务岗位的报名产生，学生不能单独退，只能请假
                   "kind": g.kind, "kind_label": g.kind_label(),
                   "attached": g.is_attached(),
                   "flexible_time": g.flexible_time,
                   "hours_mode": g.hours_mode},
         "position": ({"id": st.id, "name": st.name, "time_text": st.time_text(),
-                     "location": st.location} if st else None),
+                      "is_placeholder": st.is_placeholder,
+                      "location": st.location} if st else None),
         "status": enr.status, "cancel_type": enr.cancel_type,
         # 候补第几位：队列按岗位排（见 logic.waitlist_position），报上名的人
         # 没有名次，给 0
@@ -186,7 +190,7 @@ def my_team(enrollment_id: str, db: OrmSession = Depends(db_session),
             user=Depends(current_user)):
     """组长看本组组员的联系方式。
 
-    范围是**同一岗位组**（同一活动里组名相同的岗位共用一名组长，跨场次也算），
+    范围是**同一岗位组**（同一活动里组名相同的岗位共用一名组长，不同时段也算），
     这正是组长的管辖范围。这是把一批同学的手机号给另一个同学，所以每次查看
     都留痕——志愿者侧看不到这条记录，出事时管理员查得到。
     """
@@ -227,7 +231,7 @@ def my_team(enrollment_id: str, db: OrmSession = Depends(db_session),
                       f"{len(members)} 位组员的联系方式")
     db.commit()
     return {"activity_title": act.title if act else "",
-            "shift_name": shift.name if shift else "",
+            "time_text": shift.span_text() if shift else "",
             "scope": logic.leader_scope_label(siblings, position),
             "members": members}
 

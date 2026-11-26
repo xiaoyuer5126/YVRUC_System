@@ -1211,7 +1211,9 @@ def poster(activity_id: str, request: Request, base: str = "",
     名单要用「导出排班表」，那条路有下载留痕。选填的段（培训与彩排、志愿者
     要求）有内容才出现，放在「服务内容」与「志愿者保障」之间。活动时间与网页上的
     「活动时间」是同一句（只有一个时段时带钟点，见 Activity.headline_time）；
-    服务内容里场次一行「◆ 」、岗位一行「  · 」，岗位的补充信息再缩进一层。
+    服务内容里一条岗位一行「  · 」，时段不止一种时带上这条岗位的时段（同名
+    岗位分几个时段招人，靠时段分得清）；统一分配先一行「◆ 某某志愿者」写时段
+    与招募人数，它的候选岗位跟在下面；岗位的补充信息再缩进一层。
     [玫瑰] 原样写：发到微信里显示成玫瑰表情。报名链接的域名同活动二维码：base
     由前端传当前站点地址，只认本平台的域名。
     """
@@ -1229,21 +1231,20 @@ def poster(activity_id: str, request: Request, base: str = "",
         "【活动时间】", act.headline_time(),
         "【活动地点】", act.location or "待定",
         "【服务内容及招募人数】"]
+    # 只有一个时段时活动时间那句已经带了钟点，岗位行不用再写
+    many = len({g.span_text() for g in mains}) > 1
     for g in mains:
-        assign = ""
         if g.needs_assign():
             hold = g.placeholder()
             assign = (f"招募 {hold.quota if hold else g.total_capacity()} 人，"
                       f"岗位于报名截止后统一分配")
-        if len(mains) > 1:
-            L.append(f"◆ {g.name}　{g.span_text()}"
-                     + (f"　{assign}" if assign else ""))
-        elif assign:
-            L.append(assign)
+            L.append(f"◆ {g.volunteer_label()}"
+                     + (f"　{g.span_text()}" if many else "") + f"　{assign}")
         for p in sorted(g.real_positions(), key=lambda x: x.sort):
             task = _one_line(p.service_task)
+            when = f"　{g.span_text()}" if many and not g.needs_assign() else ""
             L.append("  · " + p.name + ("" if g.needs_assign() else f" {p.quota}人")
-                     + (f"：{task}" if task else ""))
+                     + when + (f"：{task}" if task else ""))
             extra = [x for x in (
                 f"岗位地点：{p.location}" if p.location and p.location != act.location else "",
                 f"志愿服装：{p.attire_text()}" if p.attire_text() else "",

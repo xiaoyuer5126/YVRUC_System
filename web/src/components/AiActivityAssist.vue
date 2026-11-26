@@ -3,7 +3,7 @@
 <template>
   <AiAssist ref="assist" title="智能起草活动信息" :run="run"
             placeholder="把活动通知、立项书正文或一段描述粘贴到这里，也可直接上传文件，扫描版 PDF 请转为图片上传"
-            hint="可以提供活动的原始材料，智能起草识别并填写活动表单里的基本信息。场次和岗位请建好活动后到「岗位设置」页面起草。">
+            hint="可以提供活动的原始材料，智能起草识别并填写活动表单里的基本信息。岗位和服务时段请建好活动后到「岗位设置」页面起草。">
     <template #preview="{ result }">
       <el-empty v-if="!Object.keys(result.draft).length" description="原文里没找到能用的活动信息" />
       <el-descriptions v-else :column="1" border size="small">

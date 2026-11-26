@@ -35,7 +35,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "signup_success": (
         "志愿活动报名成功｜{activity}",
         "您已成功报名「{activity}」· {shift}。\n时间：{time}\n{detail}"
-        "\n\n如无法参加，请尽早退选；场次名单锁定后退出将被记录。"),
+        "\n\n如无法参加，请尽早退选；名单锁定后退出将被记录。"),
     "waitlist_queued": (
         "已加入候补｜{activity}",
         "「{activity}」· {shift} 名额已满，您已报名候补，当前队列第 {pos} 位。"
@@ -91,7 +91,7 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "时间：{position_time}\n地点：{position_loc}\n"
         "组长任务：{leader_task}\n"
         "请提前与负责人对接现场安排。"),
-    # 补招：管理者把人直接加进场次。场次还没结束是叫他来，结束了是事后补登记
+    # 补招：管理者把人直接加进岗位。还没结束是叫他来，结束了是事后补登记
     "walkin_added": (
         "您已被补招｜{activity}",
         "负责人已将您加入「{activity}」· {shift}。\n"

@@ -72,10 +72,10 @@ def structure_draft(activity_id: str, text: str = Form(""),
                     files: list[UploadFile] = File(default=[]),
                     db: OrmSession = Depends(db_session),
                     user: User = Depends(require_manager)):
-    """起草这场活动的场次与岗位（含培训、彩排）。草稿只回给前端预览，建不建、怎么改由管理者定。"""
+    """起草这场活动的岗位（自带时段，含培训、彩排）。草稿只回给前端预览，建不建、怎么改由管理者定。"""
     act = _activity(db, user, activity_id)
     if act.is_record():
-        raise HTTPException(409, "补记录活动不设场次与岗位")
+        raise HTTPException(409, "补记录活动不设岗位")
     full, ex = _prepare(user, text, files)
     return _run(ai.structure_draft, ex, act, full)
 

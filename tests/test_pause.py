@@ -27,7 +27,7 @@ def test_暂停岗位与场次都拦新报名(client, admin, db, open_group, tak
     client.post(f"/api/staff/positions/{pid}/pause", headers=admin, json={"paused": False})
     client.post(f"/api/staff/shifts/{g.id}/pause", headers=admin, json={"paused": True})
     r = _enroll(client, act, g, take_student(), pid)
-    assert r.status_code == 409 and "场次「测试场次」暂停报名" in r.json()["detail"]
+    assert r.status_code == 409 and "「测试场次」暂停报名" in r.json()["detail"]
     d = client.get(f"/api/activities/{act.id}", headers=admin).json()["shifts"][0]
     assert d["enroll_paused"] is True
 

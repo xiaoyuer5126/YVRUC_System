@@ -121,7 +121,7 @@ def _notify_assignment_bg(items: list[dict]):
                 continue
             msgcenter.send_user(db, u, "assignment",
                             activity=db.get(Activity, g.activity_id).title,
-                            shift=g.name, position=st.name,
+                            shift=g.volunteer_label(), position=st.name,
                             position_time=st.time_text(),
                             position_loc=st.place())
         db.commit()
@@ -1463,8 +1463,9 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                    f"（{g.span_text()}，{g.location or '地点待定'}，"
                    f"{applies_text(act, g)}参加，{g.hours_label()}）")
     else:
-        summary = (f"新建场次「{g.name}」（{g.span_text()}，"
-                   f"{g.mode_label()}，上限 {body.capacity} 人）")
+        # 场次接口只建统一分配和培训/彩排；这条留痕志愿者在变更记录里看得到
+        summary = (f"新建统一分配「{g.name}」（{g.span_text()}，"
+                   f"上限 {body.capacity} 人）")
     audit_log(db, actor=user, action="create", target_type="group",
               target_id=g.id, target_label=f"{act.title}·{g.name}",
               activity_id=act.id, summary=summary, visible=True)
@@ -1478,7 +1479,7 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
 # 岗位模式不在这张表里：建好之后不从这里切。「截止后统一分配」排完班改成
 # 「报名即选岗位」走 POST /shifts/{id}/open-pick（它要求这一场只剩一个岗位、
 # 「待分配」里没人，并把场次名对齐到岗位名）
-SHIFT_FIELDS = {"name": "场次名",
+SHIFT_FIELDS = {"name": "名称",
                 "note": "备注",
                 "location": "地点", "hours_mode": "时长认定",
                 "requirement_tags": "条件要求", "lock_hours": "开场前自动锁定（小时）",
@@ -1579,7 +1580,7 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
     audit_log(db, actor=user, action="update", target_type="group",
               target_id=g.id, target_label=f"{act.title}·{g.name}",
               activity_id=act.id,
-              summary=f"修改场次「{g.name}」："
+              summary=f"修改{_shift_word(g)}「{g.name}」："
                       f"{'、'.join(c['label'] for c in changes) or '无实质变化'}",
               changes=changes,
               visible=True)
@@ -1640,11 +1641,11 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
     act = _ensure_editing(db, g.activity_id)
     _refuse_post_shift(g)
     label = f"{act.title}·{g.name}"
-    name = g.name
+    name, word = g.name, _shift_word(g)
     n_active, affected = _drop_shift(db, act, g, force)
     audit_log(db, actor=user, action="delete", target_type="group",
               target_id=shift_id, target_label=label, activity_id=act.id,
-              summary=f"删除场次「{name}」" +
+              summary=f"删除{word}「{name}」" +
                       (f"（含 {n_active} 条报名记录）" if n_active else ""),
               visible=True, affected=affected)
     db.commit()
@@ -2015,8 +2016,11 @@ def _reopened(db: OrmSession, g: Shift, s: Position | None) -> dict:
 
 
 def _shift_word(g: Shift) -> str:
-    """留痕里怎么称呼这一场：普通岗位自带场次，对管理者来说它就是「岗位」。"""
-    return "岗位" if is_post_shift(g) else "场次"
+    """留痕里怎么称呼这一场：普通岗位自带场次，它就是「岗位」；其余只有统一
+    分配和培训/彩排。变更记录志愿者也看得到，「场次」这个词他们不认识。"""
+    if is_post_shift(g):
+        return "岗位"
+    return g.kind_label() if g.is_attached() else "统一分配"
 
 
 def _toggle_done(db: OrmSession, user: User, act: Activity, g: Shift,
@@ -3647,10 +3651,10 @@ def add_walkin(shift_id: str, body: dict,
         data = {"activity_id": g.activity_id}
         if g.end_time <= now():
             msgcenter.send_user(db, u, "walkin_recorded", data, activity=act.title,
-                                shift=g.name, time=g.span_text())
+                                shift=g.volunteer_label(), time=g.span_text())
         else:
             msgcenter.send_user(
-                db, u, "walkin_added", data, activity=act.title, shift=g.name,
+                db, u, "walkin_added", data, activity=act.title, shift=g.volunteer_label(),
                 time=g.span_text(), loc=g.location or act.location or "待定",
                 position=(position.name if position is not holder
                           else "待分配，岗位确定后另行通知"),

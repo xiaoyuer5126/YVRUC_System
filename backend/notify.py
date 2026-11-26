@@ -74,7 +74,8 @@ def notify_finished(db: OrmSession, act: Activity) -> int:
 # 改了也不单独告诉志愿者的字段：条件要求是给报名把关用的，已经在岗的人
 # 不受影响，存的又是一串结构化数据，原样念给人听只会让人看不懂
 _QUIET_FIELDS = {"requirement_tags"}
-_WHERE = {"group": "场次", "position": "岗位"}
+# 场次一级的留痕只剩统一分配和培训/彩排，它们的名字自己说得清，不加前缀
+_WHERE = {"position": "岗位"}
 # 一条通知里最多写几项改动。编辑期间改几十处是常事，整摞念完没人看得下去，
 # 剩下的让他到活动页的变更记录里看
 _MAX_LINES = 8
@@ -222,10 +223,10 @@ def notify_checkin(db: OrmSession, g: Shift, *, period=None,
         if g.is_attached():
             label = g.kind_label()          # 「培训」「彩排」，不是「待分配」
         else:
-            label = position.name if position else "待分配"
+            label = position.name if position else "由负责人安排"
         # 多时段时把这一段写进消息：「· 检录组（10-25（周六）上午）」
-        where = (f"{g.name}（{period.text()}）"
-                 if period is not None and len(g.periods) > 1 else g.name)
+        where = (f"{g.volunteer_label()}（{period.text()}）"
+                 if period is not None and len(g.periods) > 1 else g.volunteer_label())
         msgcenter.send_user(db, u, "checkin_reminder", activity=act.title,
                         shift=where, position=label,
                         loc=loc,
@@ -296,7 +297,10 @@ def notify_locked_dropout(db: OrmSession, enr, user: User, *,
     shift = db.get(Shift, enr.shift_id)
     act = db.get(Activity, enr.activity_id)
     position = db.get(Position, enr.position_id) if enr.position_id else None
-    where = f"{shift.name}·{position.name}" if position else shift.name
+    # 普通岗位一岗一场，场次名就是岗位名，写一遍；统一分配写「批名·岗位」
+    where = (f"{shift.name}·{position.name}"
+             if position and shift.needs_assign() and not position.is_placeholder
+             else shift.name)
     enrolled = shift_enrolled_count(db, shift.id)
     capacity = shift.total_capacity()
     gap = max(0, capacity - enrolled)
@@ -306,7 +310,7 @@ def notify_locked_dropout(db: OrmSession, enr, user: User, *,
         f"{user.name}（{user.student_id}）"
         f"{_LOCKED_DROPOUT[what].format(where=where)}，因名单已锁定，"
         f"停止候补自动转正，如需补人，请在志愿者管理页面手动转正。\n"
-        f"该场次当前 {enrolled}/{capacity} 人"
+        f"目前 {enrolled}/{capacity} 人"
         + (f"，缺 {gap} 人。" if gap else "，人数已满。"),
         duty="roster", tab="roster")
 

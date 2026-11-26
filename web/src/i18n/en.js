@@ -5,11 +5,11 @@
  * 短语（Sign up、Check in）；Title Case 只用在页面标题。
  *
  * 术语表：同一个中文概念全篇只用一种英文，加新译文时照着用。
- *   志愿者 volunteer            活动 activity              场次 session
+ *   志愿者 volunteer            活动 activity              时段 time slot
  *   岗位 position               负责人 organizer           组织单位 organizing unit
  *   报名 sign up（动）/ sign-up（名）                      名额 spots
  *   即选即得 First come, first served                      报名后筛选 By application
- *   招募范围 Open to            报名问卷 sign-up form      意向场次 preferred sessions
+ *   招募范围 Open to            报名问卷 sign-up form      意向岗位 preferred positions
  *   录取 select（已录取 Selected / 未录取 Not selected）    调剂 reassignment
  *   候补 waitlist（名）/ waitlisted（形）                   候补转正 spot offered
  *   确认转正 Accept spot        退选 withdraw              锁定后退出 Withdrew after roster lock
@@ -109,7 +109,6 @@ export default {
   '距报名开始': 'Sign-up opens in ',
   '剩余': 'Spots left: ',
   '已报名 {0} 人': '{0} signed up',
-  '场次共 {0} 段，需每段到场': '{0} time blocks; attend all of them',
   '所选时段里没有报名中的活动，换几格试试':
     'No open activities in the selected slots. Try other slots.',
   '这个时间范围内没有活动，换个范围试试':
@@ -133,8 +132,6 @@ export default {
   '志愿者要求': 'Requirements',
   '注意事项': 'Notes',
   '志愿者保障': 'What we provide',
-  '线下已组织过的活动，不在广场展示、不接受报名，没有场次与岗位；审批通过后由管理者导入名单补记时长。':
-    'This activity has already taken place offline. It is not listed and takes no sign-ups; once approved, a manager imports the roster to record hours.',
   '审批预览 · 当前状态「{0}」': 'Approval preview · status: {0}',
   '当前作为审批人查看活动的完整安排。通过或驳回请回「活动审批」页操作。':
     'You are viewing the full schedule as an approver. Approve or reject it on the Approvals page.',
@@ -154,7 +151,6 @@ export default {
   '时间冲突': 'Time conflict',
   '仍要继续？': 'Continue anyway?',
   '仍要继续': 'Continue',
-  '与以下场次时间冲突：': 'This conflicts with the following sessions:',
   '报名于': 'Sign-up opens at',
   '开始，还有': '· time left:',
   '时间到自动开放，不用刷新页面': 'Sign-up opens automatically. No need to refresh.',
@@ -168,33 +164,22 @@ export default {
   '+ 订阅': '+ Remind me',
   '报名开始前 {0} 分钟提醒我': 'Notify me {0} minutes before sign-up opens',
   '报名申请': 'Application',
-  '勾选意向场次并填写报名问卷，截止后由负责人筛选录取； 场次与岗位见下方安排':
-    'Choose your preferred sessions and fill in the sign-up form; the organizer selects volunteers after the deadline. Sessions and positions are listed below.',
   '岗位安排': 'Positions',
-  '点击场次、岗位名称可查看详细安排': 'Click a session or position name for details.',
-  '场次与岗位': 'Sessions and positions',
   '仅供了解；录取后由负责人安排到具体岗位':
     'For reference only. The organizer assigns positions to selected volunteers.',
-  '按场次看': 'By session',
   '按岗位看': 'By position',
-  '（具体时段见下方场次）': ' (see the sessions below for exact times)',
   '报名只锁定时段；岗位在报名截止后统一分配。':
     'Signing up reserves the time only. Positions are assigned after sign-up closes.',
   '暂不选岗位 · 由负责人后续统一分配': 'No position yet · assigned by the organizer later',
   '本场报名已于 {0} 结束': 'Sign-up for this session closed at {0}',
   '已报名 {0} / {1}': '{0} / {1} signed up',
   '· 候补 {0}': ' · {0} waitlisted',
-  '本场次尚未设置岗位，请联系负责人。':
-    'This session has no positions yet. Contact the organizer.',
   '签到码无效或已过期': 'The check-in code is invalid or has expired.',
   '返回首页': 'Back to home',
   '签到方式': 'Check-in method',
   '定位签到': 'Location check-in',
-  '分岗位签到': 'Per-position check-in',
   '统一签到': 'Session check-in',
   '本场已签到': 'Check-ins so far',
-  '已签到 {0} 次（时间灵活场次：每张签到码签一次到、一次退）':
-    'Checked in {0} time(s). In flexible-hours sessions, each code is for one check-in and one check-out.',
   '当前状态': 'Status',
   '已签到{0}': 'Checked in{0}',
   ' · 已签退': ' · checked out',
@@ -204,12 +189,9 @@ export default {
   '尚未开始': 'Not started',
   ' · 服务中': ' · on duty',
   '签到时间': 'Checked in at',
-  '本场次用': 'This session uses ',
   '，不用扫码：「我的报名」里点「签到」，平台会比对您与签到点的距离。':
     '. No QR code is needed: tap Check in under My sign-ups, and the platform checks your distance from the check-in point.',
   '去我的报名签到': 'Check in from My sign-ups',
-  '您不是本场次志愿者，请联系负责人':
-    'You are not signed up for this session. Contact the organizer.',
   '签退离岗': 'Check out',
   '这张码已签到签退，下次请扫新码':
     'This code has been used to check in and out. Scan a new code next time.',
@@ -221,13 +203,11 @@ export default {
   '关闭': 'been closed',
   '截止': 'expired',
   '签到码截止时间': 'check-in code deadline',
-  '场次结束时间': 'session end time',
   '签到成功': 'Checked in',
   '签退成功': 'Checked out',
   '签到成功，{0} 已到岗。': 'Checked in. {0} is on duty.',
   '签退成功，{0} 本次服务时长将按签到签退计算。':
     'Checked out. Hours for {0} will be calculated from check-in and check-out.',
-  '本场第 {0} 次签到': '(check-in #{0} for this session)',
   '距签到点约 {0} 米': '(about {0} m from the check-in point)',
   '查看我的报名': 'View my sign-ups',
   '本次服务时长将按签到签退计算': 'Your hours will be calculated from check-in and check-out.',
@@ -331,8 +311,6 @@ export default {
   '人数': 'Volunteers',
   '剩余名额': 'Spots left',
   '说明': 'Notes',
-  '所属场次': 'Session',
-  '报名本场次后可见': 'Visible after you sign up for this session',
   '报名本岗位所在的组后可见联系方式': 'Contact details are visible after you join this team',
   '本岗位不设组长': 'This position has no team leader',
   '本岗位设组长，报名后可见组长信息':
@@ -341,7 +319,6 @@ export default {
   '不需要': 'Not required',
   '候补名额': 'Waitlist spots',
   '岗位模式': 'Position mode',
-  '{0} · 场次详情': '{0} · session details',
   '{0} · 岗位详情': '{0} · position details',
   '暂无变更': 'No changes yet',
   '空': 'empty',
@@ -365,9 +342,6 @@ export default {
   '加入候补': 'Join waitlist',
   '本活动不面向您招募': 'This activity is not open to you',
   '公告栏': 'Announcement',
-  '同场次只能选一个岗位': 'One position per session',
-  '同场次只能选一个岗位，候补将在名额释放后转正，转正后需在确认窗口内确认（2 小时，夜间 23:00–8:00 不计时）。':
-    'One position per session. When a spot opens up, it is offered to the waitlist in order; accept it within 2 hours (23:00–08:00 does not count).',
   '选中': 'Select',
   '候补': 'Waitlist',
   '立即报名': 'Sign up',
@@ -381,7 +355,6 @@ export default {
   '「{0}」时间冲突': 'Time conflict: “{0}”',
   '仍要报名？': 'Sign up anyway?',
   '仍要提交申请？': 'Submit anyway?',
-  '请先展开该场次，选择一个岗位': 'Expand the session and choose a position first.',
   '报名前需先完善个人信息，便于后期联络与志愿时长录入。':
     'Complete your profile before signing up so we can contact you and record your volunteer hours.',
   '需先完善个人信息': 'Profile incomplete',
@@ -416,15 +389,11 @@ export default {
   '已上传': 'Uploaded',
   '负责人正在调整安排，报名暂停中': 'The organizer is updating the schedule. Sign-up is paused.',
   '提交于 {0}': 'Submitted {0}',
-  '意向场次：': 'Preferred sessions: ',
   '意向岗位：': 'Preferred positions: ',
   '选择意向岗位': 'Choose positions',
   '提交申请': 'Submit application',
   '我的申请': 'My application',
   '报名问卷': 'Sign-up form',
-  '可以跨场次勾多个，同一场次也可以勾几个岗位；负责人可录取其中一场或几场，每场定一个岗位。':
-    'You can choose several positions, in one or more sessions. The organizer may select you for one or more sessions, with one position in each.',
-  '报名开放后填写，并勾选意向场次': 'Fill this in once sign-up opens, and choose your preferred sessions.',
   '报名截止后由负责人筛选，结果会通过通知告诉你。':
     'The organizer selects volunteers after sign-up closes. You will be notified of the result.',
   '填写报名问卷': 'Fill in the form',
@@ -540,7 +509,6 @@ export default {
   '其中校外补登 {0} 小时': 'Including {0} h from outside activities',
   '党校的时长不计入': 'Party School hours are not included',
   '已锁定（小时）': 'Locked hours',
-  '参与活动场次': 'Activities',
   '时长明细': 'Hours breakdown',
   '由负责人核准，展开一行可看当次活动的时长明细。':
     'Approved by the organizer. Expand a row to see the hours breakdown for that activity.',
@@ -648,8 +616,6 @@ export default {
   '已选 {0} 格': '{0} slots selected',
   '清空': 'Clear',
   '清除筛选': 'Clear filters',
-  '只看报名中的活动；场次有一段落在所选时段里就列出来':
-    'Open activities only. An activity is listed if any session overlaps the selected slots.',
   '只按日期范围筛，状态可以照常选':
     'Filtering by date only; you can still filter by status.',
   '一次最多选 {0} 格': 'You can select up to {0} slots.',
@@ -698,7 +664,6 @@ export default {
   '操作': 'Actions',
   '活动': 'Activity',
   '状态': 'Status',
-  '场次 / 岗位': 'Session / position',
   '查看联络群': 'Group chat',
   '二维码可在「我的报名」中随时查看。': 'You can find this QR code under My sign-ups at any time.',
   '已处理': 'Resolved',
@@ -707,20 +672,13 @@ export default {
   '还没有提交过反馈': 'No feedback yet',
   '还没有设置题目': 'No questions yet',
   '还没有岗位，学生无法报名': 'No positions yet, so students cannot sign up',
-  '报名已截止，还没建岗位。在本场次下建好岗位，再到「志愿者管理」一键分配或导入排班。':
-    'Sign-up has closed but there are no positions. Add positions to this session, then assign volunteers or import a rota under Volunteer management.',
   '组长任务：{0}': 'Team leader tasks: {0}',
   '签到：': 'Check-in: ',
   '键': 'key',
   '（候补 {0} 人）': ' ({0} waitlisted)',
-  '随服务场次的报名产生': 'Added with your session sign-up',
-  '随服务场次的报名产生；不能参加请到活动页请假':
-    'Added with your session sign-up. If you can’t attend, report an absence on the activity page.',
   '由负责人分配': 'Assigned by the organizer',
   '这个签到码已经失效了（现场码每分钟更换），请重新扫一次现场的二维码':
     'This check-in code has expired (on-site codes change every minute). Scan the on-site QR code again.',
-  '退选规则：每个场次会按页面说明在设定时间锁定名单，负责人也可能提前锁定；志愿者名单敲定后退出会被记录一次。':
-    'Withdrawal rules: each session’s roster locks at the time stated on the activity page, and the organizer may lock it earlier. Withdrawing after the roster is finalized goes on your record.',
 
   // —— 后端提示（志愿者端会碰到的）——
   '报名成功，名额已锁定。': 'Signed up. Your spot is confirmed.',
@@ -753,21 +711,17 @@ export default {
   '该记录不在待确认状态': 'This spot is not waiting for your confirmation',
   '该报名记录已失效': 'This sign-up is no longer valid',
   '该报名记录不在生效状态': 'This sign-up is no longer active',
-  '该场次您已有报名记录，请勿重复报名': 'You have already signed up for this session.',
   '老师类型用户不参与志愿报名': 'Staff accounts cannot sign up as volunteers.',
   '请先完善个人信息（手机号/微信号/校区/身份证号）后再报名':
     'Complete your profile (phone, WeChat, campus, ID number) before signing up.',
   '请选择具体岗位': 'Choose a position.',
   '岗位无效': 'Invalid position',
-  '场次不属于该活动': 'The session does not belong to this activity',
   '本活动为补记录活动，不接受报名': 'This activity is record-only and does not accept sign-ups.',
   '本活动需填写报名问卷申请，由负责人筛选后录取':
     'This activity is by application: fill in the sign-up form and the organizer will select volunteers.',
   '活动已开始，无法退选；如有特殊情况请联系负责人。':
     'The activity has started, so you cannot withdraw. Contact the organizer if something has come up.',
   '确认窗口已超时，名额已顺延': 'The offer has expired. The spot went to the next person.',
-  '只有培训/彩排可以请假；服务场次请走退选':
-    'You can only report absences for training and rehearsals. For service sessions, withdraw instead.',
   '请简单说明无法参加的原因': 'Briefly explain why you can’t attend.',
   '申请中的活动请在活动页「撤回申请」': 'To cancel an application, use Withdraw application on the activity page.',
   '负责人正在调整本活动的安排，报名暂停中，请稍后再试':
@@ -784,14 +738,6 @@ export default {
   '该签到任务已关闭': 'This check-in is closed',
   '您已用这张签到码签到并签退过；再来服务请扫负责人新开的签到码':
     'You have already checked in and out with this code. Next time, scan the new code from the organizer.',
-  '您已完成本场次的签到与签退，请勿重复操作':
-    'You have already checked in and out for this session.',
-  '本场次是定位签到，请在「我的报名」里点「签到」':
-    'This session uses location check-in. Tap Check in under My sign-ups.',
-  '本场次是扫码签到，请扫描现场的签到二维码':
-    'This session uses QR check-in. Scan the QR code on site.',
-  '您不是本场次的正式志愿者': 'You are not a confirmed volunteer for this session.',
-  '本场次还没有签到任务，请联系负责人': 'Check-in has not been set up for this session. Contact the organizer.',
   '只有组长可以查看组员联系方式': 'Only team leaders can view team members’ contact details',
   '您还没有岗位，暂时没有组员': 'You don’t have a position yet, so there are no team members.',
   '通知不存在': 'Notification not found',
@@ -890,7 +836,6 @@ export default {
 
   // —— 变更记录里的字段名 ——
   '名称': 'Name',
-  '场次名': 'Session name',
   '岗位名': 'Position name',
   '岗位组': 'Team',
   '地点': 'Location',
@@ -936,7 +881,6 @@ export default {
   // 活动上新提醒
   '上新提醒': 'New activity alerts',
   '活动上新提醒': 'New Activity Alerts',
-  '新活动上线时，如果场次落在空闲时段里，或由你关注的组织单位举办，或活动名称包含关键词，就给你发一条上新提醒。': 'When a new activity goes live, you get a notification if a session falls in your free time, it is run by an organizing unit you follow, or its name contains your keyword.',
   '每周空闲时段': 'Weekly free time',
   '上午': 'Morning',
   '下午': 'Afternoon',
@@ -952,4 +896,52 @@ export default {
   '都不选即为关闭提醒': 'Leave everything empty to turn alerts off.',
   '已保存，有符合的新活动上线时会提醒你': 'Saved. We will notify you when a matching activity goes live.',
   '已关闭上新提醒': 'New activity alerts turned off',
+
+  // —— 岗位与时段（志愿者端不再出现「场次」）——
+  '{0} · 详情': '{0} · details',
+  '{0}志愿者': '{0} volunteer',
+  '以下时段分别报名': 'Sign up for each time slot separately',
+  '候补 {0}': 'Waitlist {0}',
+  '候补转正，待确认': 'Spot offered, awaiting your acceptance',
+  '全体参加': 'Everyone attends',
+  '共 {0} 个时段 · 需全部参加': '{0} time slots · attend all',
+  '勾选意向岗位并填写报名问卷，截止后由负责人筛选录取；岗位安排见下方': 'Choose your preferred positions and fill in the sign-up form. The organizer selects volunteers after sign-up closes. Positions are listed below.',
+  '参加：{0}': 'For: {0}',
+  '同一活动里时间重叠的岗位只能报一个。候补将在名额释放后转正，转正后需在确认窗口内确认（2 小时，夜间 23:00–8:00 不计时）。': 'You can sign up for only one of any positions in this activity whose times overlap. Waitlisted volunteers are offered spots as they open up and must accept within the window (2 hours, not counting 23:00–8:00).',
+  '已开始': 'Started',
+  '您报的：': 'You signed up for: ',
+  '报名后统一安排具体岗位': 'Specific positions assigned after sign-up',
+  '报名已于 {0} 截止': 'Sign-up closed at {0}',
+  '报名本岗位后可见': 'Visible after you sign up for this position',
+  '按时间看': 'By time',
+  '时段': 'Time slot',
+  '服务时段': 'Time slots',
+  '点击岗位名称可查看详细安排': 'Click a position name for details.',
+  '线下已组织过的活动，不在广场展示、不接受报名，没有岗位；审批通过后由管理者导入名单补记时长。': 'An activity already held offline. It is not listed in the square, takes no sign-ups and has no positions. After approval, the organizer imports the list to record hours.',
+  '（具体时段见下方岗位安排）': ' (see the positions below for exact times)',
+  '可以勾多个岗位；负责人可录取其中一个或几个。': 'You can choose several positions. The organizer may select you for one or more of them.',
+  '报名开放后填写，并勾选意向岗位': 'Fill this in once sign-up opens, and choose your preferred positions.',
+  '已签到 {0} 次（时间灵活的岗位：每张签到码签一次到、一次退）': 'Checked in {0} time(s). For flexible-hours positions, each code is for one check-in and one check-out.',
+  '您不是本岗位志愿者，请联系负责人': 'You are not signed up for this position. Contact the organizer.',
+  '本岗位已签到': 'Check-ins so far',
+  '本岗位用': 'This position uses ',
+  '本岗位第 {0} 次签到': '(check-in #{0} for this position)',
+  '时段结束时间': 'end of the time slot',
+  '岗位 / 时段': 'Position / time',
+  '退选规则：每个岗位会按页面说明在设定时间锁定名单，负责人也可能提前锁定；志愿者名单敲定后退出会被记录一次。': 'Withdrawal rules: each position’s roster locks at the time stated on the activity page, and the organizer may lock it earlier. Withdrawing after the roster is finalized goes on your record.',
+  '随岗位的报名产生': 'Added with your position sign-up',
+  '随岗位的报名产生；不能参加请到活动页请假': 'Added with your position sign-up. If you can’t attend, report an absence on the activity page.',
+  '参与活动数': 'Activities',
+  '有岗位共 {0} 个时段，需全部参加': 'A position here has {0} time slots; attend all of them',
+  '只看报名中的活动；有岗位的时段落在所选时段里就列出来': 'Open activities only. An activity is listed if any of its positions has a time slot in the selected slots.',
+  '新活动上线时，如果有岗位的时段落在空闲时段里，或由你关注的组织单位举办，或活动名称包含关键词，就给你发一条上新提醒。': 'When a new activity goes live, you get a notification if one of its positions falls in your free time, it is run by an organizing unit you follow, or its name contains your keyword.',
+  '与以下报名时间冲突：': 'This conflicts with the following sign-ups:',
+  '这个时段您已有报名记录，请勿重复报名': 'You have already signed up for this time slot.',
+  '岗位不属于该活动': 'The position does not belong to this activity',
+  '只有培训/彩排可以请假；服务岗位请走退选': 'Absences can only be reported for training or rehearsals. For a service position, withdraw instead.',
+  '您已完成本岗位的签到与签退，请勿重复操作': 'You have already checked in and out for this position.',
+  '本岗位是定位签到，请在「我的报名」里点「签到」': 'This position uses location check-in. Tap “Check in” under “My Sign-ups”.',
+  '本岗位是扫码签到，请扫描现场的签到二维码': 'This position uses QR check-in. Scan the code on site.',
+  '您不是本岗位的正式志愿者': 'You are not a confirmed volunteer for this position.',
+  '本岗位还没有签到任务，请联系负责人': 'Check-in has not been set up for this position. Contact the organizer.',
 }

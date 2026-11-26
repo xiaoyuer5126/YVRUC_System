@@ -338,6 +338,15 @@ def test_培训挂在活动上_跨场次圈人_最后一个报名退掉才退(cl
     assert t["applies_text"] == "检录台" and t["enrolled"] == 0
 
 
+def test_培训只叫同名岗位的某个时段_叫谁写那个时段(client, admin, db, act_with_positions):
+    act, g, east, check = act_with_positions
+    g2, check2 = _second_shift(db, act, g)
+    _add_attached(client, admin, act, g, positions=[check2.id])
+    d = client.get(f"/api/activities/{act.id}", headers=admin).json()
+    [t] = d["trainings"]
+    assert t["applies_text"] == f"检录台（{g2.span_text()}）"
+
+
 def test_删岗位删场次_只叫它们的培训要先处理(client, admin, db, act_with_positions):
     act, g, east, check = act_with_positions
     g2, check2 = _second_shift(db, act, g)
@@ -445,18 +454,31 @@ def test_招募文案按校青协定的格式拼(client, admin, db, act_with_pos
     assert r.status_code == 400
 
 
-def test_招募文案多场次时场次一行带菱形_岗位缩进带圆点(client, admin, db, act_with_positions):
+def test_招募文案几个时段时岗位行带时段_同名岗位分得清(client, admin, db, act_with_positions):
     act, g, _east, _c = act_with_positions
     g2, _check2 = _second_shift(db, act, g)
     text = client.get(f"/api/staff/activities/{act.id}/poster", headers=admin).json()["text"]
     lines = text.split("\n")
-    # 两个场次的时段不同：一句话只写整体起止，各场钟点写在下面的 ◆ 行
+    # 时段不止一种：活动时间只写整体起止，各条岗位的钟点写在岗位行上
     assert lines[lines.index("【活动时间】") + 1] == act.headline_time() == act.time_text()
     body = lines[lines.index("【服务内容及招募人数】") + 1:]
-    heads = [s for s in body if s.startswith("◆ ")]
-    assert [h.split("　")[0] for h in heads] == [f"◆ {g.name}", f"◆ {g2.name}"]
-    assert body[0] == heads[0]
-    assert any(s.startswith("  · 检录台 3人") for s in body)
+    checks = [s for s in body if s.startswith("  · 检录台 3人")]
+    assert [s.split("：")[0] for s in checks] == [f"  · 检录台 3人　{g.span_text()}",
+                                                  f"  · 检录台 3人　{g2.span_text()}"]
+    assert not any(s.startswith("◆ ") for s in body), "没有统一分配就没有 ◆ 行"
+
+
+def test_招募文案统一分配一行带菱形_候选岗位跟在下面(client, admin, db, act_with_positions):
+    act, g, _east, _c = act_with_positions
+    g.mode = "assign"
+    holder = Position(id=uid("p"), shift_id=g.id, name="待分配", quota=10,
+                      is_placeholder=True, sort=-1, **POSITION_TEXT)
+    db.add(holder)
+    db.commit()
+    text = client.get(f"/api/staff/activities/{act.id}/poster", headers=admin).json()["text"]
+    body = text.split("\n")[text.split("\n").index("【服务内容及招募人数】") + 1:]
+    assert body[0] == f"◆ {g.name}志愿者　招募 10 人，岗位于报名截止后统一分配"
+    assert any(s.startswith("  · 东门引导：") for s in body), "候选岗位不写名额"
 
 
 def test_招募文案的招募范围写法():

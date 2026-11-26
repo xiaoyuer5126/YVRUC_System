@@ -1,11 +1,13 @@
-<!-- 一笔时长的明细：由哪几段组成（场次 · 时段 · 岗位 · 小时，选了劳务的段带标签），
-     外加管理者手动补录的那几段（kind="manual"，标签就是备注）。 -->
+<!-- 一笔时长的明细：由哪几段组成（岗位 · 时段 · 小时，选了劳务的段带标签），
+     外加管理者手动补录的那几段（kind="manual"，标签就是备注）。普通岗位一岗
+     一场，标签就是岗位名，岗位名不再写第二遍；统一分配的标签是批名，后面跟
+     分到的岗位。 -->
 <template>
   <div v-if="parts?.length" class="parts">
     <div v-for="(p, i) in parts" :key="i" class="part">
       <span>{{ p.label ? t(p.label) : (p.kind === 'import' ? t('名单导入') : '') }}</span>
       <span v-if="p.time" class="dim">{{ tTime(p.time) }}</span>
-      <span v-if="p.position" class="dim">{{ p.position }}</span>
+      <span v-if="p.position && p.position !== p.label" class="dim">{{ p.position }}</span>
       <b>{{ p.hours }}h</b>
       <el-tag v-if="p.reward === 'pay'" size="small" effect="plain" type="warning">{{ t('劳务') }}</el-tag>
       <!-- 只有管理者能删，而且只删得掉手动加的那几段：签到算出来的那些段是

@@ -1,5 +1,5 @@
 <!-- 一个岗位的报名动作：选中 / 候补 / 退选 / 确认转正，以及为什么点不了。
-     手机的场次卡片、桌面的岗位表、「按岗位看」共用这一份：规则只写一处，
+     手机的岗位卡片、桌面的岗位表、按时间看和按岗位看共用这一份：规则只写一处，
      几种视角下按钮状态一定一致。报名、退选这些动作和「我报了哪」的状态由活动
      详情页 provide('enrollCtx') 给进来，这里只决定显示哪一种。 -->
 <template>
@@ -23,7 +23,7 @@
         </el-button>
       </template>
     </template>
-    <!-- 截止后统一分配的场次：报名只从「待分配」进，真实岗位由负责人分 -->
+    <!-- 统一分配：报名只从「待分配」进，真实岗位由负责人分 -->
     <span v-else-if="g.needs_assign && !s.is_placeholder" class="dim">{{ t('由负责人分配') }}</span>
     <span v-else-if="g.my_enrollment" class="dim">{{ takenText }}</span>
     <el-button v-else-if="ctx.queuedShift(g)" size="small" disabled
@@ -51,19 +51,16 @@ import { computed, inject } from 'vue'
 import { posName, t, tTags } from '../i18n'
 
 const props = defineProps({
-  g: { type: Object, required: true },        // 场次
+  g: { type: Object, required: true },        // 岗位自带的场次，或一批统一分配
   s: { type: Object, required: true },        // 岗位
-  // 按岗位看时，同一时段别的岗位分在别的卡片里：「同场次只能选一个」看不懂，
-  // 直接说这个时段已经报了哪个岗位
-  byRole: { type: Boolean, default: false },
   showWhy: { type: Boolean, default: true },  // 桌面岗位表的「要求」列已经有提示
 })
 const ctx = inject('enrollCtx')
 
 const mine = computed(() => (props.g.my_enrollment
   && props.g.my_enrollment.position_id === props.s.id ? props.g.my_enrollment : null))
+// 同一批统一分配里已经报了别的（还没分到岗位，或分到了另一个）
 const takenText = computed(() => {
-  if (!props.byRole) return t('同场次只能选一个岗位')
   const p = props.g.positions.find(x => x.id === props.g.my_enrollment.position_id)
   return t('这个时段已报了「{0}」', [p ? posName(p) : t('待分配')])
 })
