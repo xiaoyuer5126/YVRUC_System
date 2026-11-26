@@ -10,8 +10,8 @@ from datetime import timedelta
 
 import pytest
 
-from backend.models import (Attachment, AuditLog, Enrollment, Position, Shift,
-                            ShiftPeriod, now, uid)
+from backend.models import (AFFECTED_FIELD, Attachment, AuditLog, Enrollment,
+                            Position, Shift, ShiftPeriod, now, uid)
 from conftest import editing, login, mk_post, student_row, upload_qr
 
 
@@ -135,22 +135,26 @@ def test_有人报名的岗位要确认才删_报名一起取消(client, admin, 
         assert r.status_code == 200, r.text
     db.expire_all()
     assert db.get(Shift, g.id) is None
-    e = db.query(Enrollment).filter(Enrollment.user_id ==
-                                    student_row(db, sid).id).one()
-    assert e.status == "cancelled"
+    # 报名记录挂在场次和岗位上（外键），场次删掉它们也留不住
+    assert db.query(Enrollment).filter(
+        Enrollment.user_id == student_row(db, sid).id).count() == 0
     log = (db.query(AuditLog).filter(AuditLog.target_id == pid,
                                      AuditLog.action == "delete").one())
-    assert "删除岗位「测试岗位」（含 1 条报名记录）" == log.summary
+    assert log.summary == "删除岗位「测试岗位」（含 1 条报名记录）"
+    # 人已经从库里查不到了，靠留痕上的这份名单通知到他
+    assert [c["new"] for c in log.changes
+            if c["field"] == AFFECTED_FIELD] == [student_row(db, sid).id]
 
 
 def test_复制岗位到另一个时段(client, admin, db, draft):
     r = mk_post(client, admin, draft, name="引导", quota=4,
                 periods=_periods((9, 9, 3)), group_name="引导组",
-                position_requirement="能久站", needs_leader=True)
+                position_requirement="能久站", needs_leader=True,
+                leader_task="带队进场、清点人数")
     pid, gid = r.json()["id"], r.json()["shift_id"]
     db.add(Attachment(id=uid("att"), owner_type="position", owner_id=pid,
-                      activity_id=draft, kind="file", title="培训材料.pdf",
-                      stored_name="x.pdf", size=10))
+                      activity_id=draft, kind="link", title="培训材料",
+                      url="https://v.ruc.edu.cn/x"))
     db.commit()
 
     r = client.post(f"/api/staff/posts/{pid}/copy", headers=admin,
