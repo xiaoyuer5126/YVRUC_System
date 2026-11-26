@@ -278,7 +278,7 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
            .filter(Enrollment.shift_id == g.id, Enrollment.user_id == user.id,
                    Enrollment.status == "enrolled").with_for_update().first())
     if enr is None:
-        raise HTTPException(403, f"您不是「{act.title}·{g.name}」的志愿者")
+        raise HTTPException(403, f"您不是「{act.title}·{g.volunteer_label()}」的志愿者")
 
     # 分岗位的码只认本岗位的人：码是这个摊位专有的凭据，别的岗位的人扫了它、
     # 记录就落到这个摊位名下。还没定岗（position_id 还是占位岗位「待分配」或
@@ -300,7 +300,7 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
                             user_id=user.id, method=method, checkin_at=t)
         db.add(rec)
         db.commit()
-        rounds = (f"（本场第 {checkin_count(db, user.id, g)} 次签到）"
+        rounds = (f"（本岗位第 {checkin_count(db, user.id, g)} 次签到）"
                   if g.flexible_time else "")
         return {"ok": True, "action": "checkin",
                 "message": f"签到成功，{user.name} 已到岗{rounds}。" + note,
@@ -312,7 +312,7 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
         if g.flexible_time:
             raise HTTPException(409, "您已用这张签到码签到并签退过；"
                                      "再来服务请扫负责人新开的签到码")
-        raise HTTPException(409, "您已完成本场次的签到与签退，请勿重复操作")
+        raise HTTPException(409, "您已完成本岗位的签到与签退，请勿重复操作")
 
     # 刚签完又扫一遍，多半是「以为没成功」或相机连读了两下。这条要是当成签退，
     # 人就当场被签退了、时长按 0 算——而他自己看不出发生了什么。所以挡回去。
@@ -357,8 +357,15 @@ def task_info(token: str, db: OrmSession = Depends(db_session),
     mine = (db.query(Enrollment)
             .filter(Enrollment.shift_id == g.id, Enrollment.user_id == user.id,
                     Enrollment.status == "enrolled").first())
+    # 统一分配的整场码不带岗位：分到了真实岗位的人看到自己的岗位
+    if position is None and mine is not None and mine.position_id:
+        own = db.get(Position, mine.position_id)
+        position = own if own is not None and not own.is_placeholder else None
     return {
-        "activity_title": act.title, "shift_name": g.name,
+        # 普通岗位一岗一场，shift_name 就是岗位名；统一分配是「上午场志愿者」，
+        # 这时页面再单列一行「您的岗位」
+        "activity_title": act.title, "shift_name": g.volunteer_label(),
+        "needs_assign": g.needs_assign(),
         "group_time": g.span_text(),
         # 这张码属于哪一段：多时段的场次里，签到页要让人认得出今天这一场
         "period_text": period.text(), "period_id": period.id,
@@ -403,7 +410,7 @@ def do_checkin(token: str, db: OrmSession = Depends(db_session),
     # 判的是**他解析到的那一行**有没有锚点，不是这一场有没有：同一场次里
     # 「东门那三个用定位、其余人扫统一码」是正当安排，那种统一码不该被误伤。
     if geo_anchor(db, task):
-        raise HTTPException(409, "本场次是定位签到，请在「我的报名」里点「签到」")
+        raise HTTPException(409, "本岗位是定位签到，请在「我的报名」里点「签到」")
     return _apply_checkin(db, task, act, g, user, method="scan")
 
 
@@ -431,20 +438,20 @@ def geo_checkin(enrollment_id: str, body: GeoBody,
     if enr is None or enr.user_id != user.id:
         raise HTTPException(404, "报名记录不存在")
     if enr.status != "enrolled":
-        raise HTTPException(403, "您不是本场次的正式志愿者")
+        raise HTTPException(403, "您不是本岗位的正式志愿者")
     g = db.get(Shift, enr.shift_id)
     act = db.get(Activity, enr.activity_id)
     if g is None or act is None:
-        raise HTTPException(404, "场次不存在")
+        raise HTTPException(404, "岗位不存在")
 
     task = resolve_task(db, g, enr.position_id)
     if task is None:
-        raise HTTPException(409, "本场次还没有签到任务，请联系负责人")
+        raise HTTPException(409, "本岗位还没有签到任务，请联系负责人")
     geo = geo_anchor(db, task)
     if geo is None:
         # 关键的一道门：扫码签到的场次绝不能从这条入口进来。不挡住的话，
         # 谁都能拿两个坐标把「不用扫码」变成默认选项。
-        raise HTTPException(409, "本场次是扫码签到，请扫描现场的签到二维码")
+        raise HTTPException(409, "本岗位是扫码签到，请扫描现场的签到二维码")
 
     if body.accuracy and body.accuracy > geo.radius_m:
         raise HTTPException(

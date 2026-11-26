@@ -20,7 +20,7 @@
       <el-col :span="8">
         <el-card shadow="never" class="stat">
           <div class="big">{{ data.records.length }}</div>
-          <div class="dim">{{ t('参与活动场次') }}</div>
+          <div class="dim">{{ t('参与活动数') }}</div>
         </el-card>
       </el-col>
     </el-row>
@@ -103,7 +103,8 @@
           <div class="seg-head">
             <span>{{ p.label ? t(p.label) : t('手动补录') }}</span>
             <span v-if="p.time" class="dim">{{ tTime(p.time) }}</span>
-            <span v-if="p.position" class="dim">{{ p.position }}</span>
+            <!-- 普通岗位的标签就是岗位名，不写第二遍 -->
+            <span v-if="p.position && p.position !== p.label" class="dim">{{ p.position }}</span>
             <b>{{ p.hours }}h</b>
           </div>
           <template v-if="p.pay_ok">

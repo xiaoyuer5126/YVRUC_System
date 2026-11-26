@@ -982,6 +982,15 @@ class Shift(Base):
     def needs_assign(self) -> bool:
         return self.mode == "assign"
 
+    def volunteer_label(self) -> str:
+        """给志愿者看的叫法。普通岗位一岗一场，场次名就是岗位名；统一分配的
+        场次名是管理者起的批名（「上午场」），单写批名志愿者看不懂报的是什么，
+        写成「上午场志愿者」。培训/彩排用自己的名字。"""
+        if self.kind == "service" and self.needs_assign() \
+                and not self.name.endswith("志愿者"):
+            return f"{self.name}志愿者"
+        return self.name
+
     def total_capacity(self) -> int:
         """场次总名额（招多少人）。
 

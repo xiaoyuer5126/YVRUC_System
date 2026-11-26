@@ -116,7 +116,7 @@ def _get_activity(db: OrmSession, activity_id: str, user: User) -> Activity:
 def _get_group(db: OrmSession, shift_id: str) -> Shift:
     g = db.get(Shift, shift_id)
     if g is None:
-        raise HTTPException(404, "场次不存在")
+        raise HTTPException(404, "岗位不存在")
     return g
 
 
@@ -425,7 +425,7 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
     if t > deadline:
         raise HTTPException(
             409, "报名已截止" if deadline == act.reg_end else
-            f"「{g.name}」已于 {g.start_time:%Y-%m-%d %H:%M} 开场，不再接受报名")
+            f"「{g.volunteer_label()}」已于 {g.start_time:%Y-%m-%d %H:%M} 开始，不再接受报名")
 
     # 老师类型不参与报名（无信用分/时长等个人数据）
     if user.user_type == "teacher":
@@ -444,7 +444,7 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
         raise HTTPException(403, f"本活动的招募范围不含您：{'；'.join(scope)}")
     unmet_shift = logic.unmet_shift_requirements(user, g)
     if unmet_shift:
-        raise HTTPException(403, f"您不满足场次「{g.name}」的条件："
+        raise HTTPException(403, f"您不满足「{g.volunteer_label()}」的条件："
                                  f"{'；'.join(unmet_shift)}")
 
 
@@ -523,7 +523,7 @@ def _check_time_conflicts(rows, g: Shift, attached: list[Shift]) -> None:
     if clashes:
         clashes = logic.dedupe_conflicts(clashes)
         raise logic.conflict_error(
-            f"时间段与您已报名的场次冲突{where}："
+            f"时间与您已报名的安排重叠{where}："
             f"{logic.conflict_message(clashes, g.activity_id)}", clashes)
 
 
@@ -534,7 +534,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
     act = _get_activity(db, activity_id, user)
     g = _get_group(db, shift_id)
     if g.activity_id != act.id:
-        raise HTTPException(400, "场次不属于该活动")
+        raise HTTPException(400, "岗位不属于该活动")
     if act.is_record():
         raise HTTPException(409, "本活动为补记录活动，不接受报名")
     if act.is_screened():
@@ -547,7 +547,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
     if g.needs_assign():
         position = g.placeholder()
         if position is None:
-            raise HTTPException(409, f"场次「{g.name}」尚未就绪，请联系负责人")
+            raise HTTPException(409, f"「{g.volunteer_label()}」尚未就绪，请联系负责人")
     elif body.position_id:
         position = db.get(Position, body.position_id)
         if position is None or position.shift_id != g.id:
@@ -655,14 +655,14 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                 label = {"enrolled": "已报名为正式成员", "waitlisted": "已在候补队列中",
                          "pending_confirm": "有候补转正待确认"}.get(
                              ledger.mine, "已有报名记录")
-                raise HTTPException(409, f"该场次{label}，请勿重复报名")
+                raise HTTPException(409, f"这个时段{label}，请勿重复报名")
             # 排锁期间负责人进了编辑态：附属场次、名额都可能正在改，锁外那份
             # 名单不能再用（见上面查附属场次处）
             if ledger.editing:
                 raise _editing_paused()
             # 排锁期间这一场开放了选岗，「待分配」已经删掉
             if ledger.gone:
-                raise HTTPException(409, f"场次「{g.name}」刚开放选岗，请刷新后选择岗位再报名")
+                raise HTTPException(409, f"「{g.name}」刚开放选岗，请刷新后选择岗位再报名")
             # 排锁期间负责人点了暂停、锁定，或者过了自动锁定时刻：锁外那一关
             # 已经过时，按锁里读到的再判一次，不然暂停期间名单还在动
             logic.take_flags(g, position, ledger)
@@ -715,13 +715,13 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                     f"（{s.location or act.location or '地点待定'}）"
                     for s in attached)
                 msgcenter.send_user(db, user, "signup_success", activity=act.title,
-                                shift=g.name, time=g.span_text(),
+                                shift=g.volunteer_label(), time=g.span_text(),
                                 detail=(f"岗位：{position.name}（{position.location}）"
                                         if position else "具体岗位将于报名截止后公布")
                                        + extra)
             else:
                 msgcenter.send_user(db, user, "waitlist_queued", activity=act.title,
-                                shift=g.name, pos=wl_pos)
+                                shift=g.volunteer_label(), pos=wl_pos)
             # 在 commit **之前**结算：commit 之后、结算之前那一瞬，这个号既在
             # 数据库里占着名额、又挂在在途里，别的请求对齐闸门时会把它减两遍，
             # 把有位子的人挡在外面。先结算的话最坏是 commit 失败时少还一个号
@@ -731,7 +731,7 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                 db.commit()
             except IntegrityError:  # 唯一索引兜底：锁失效时的并发重复报名
                 db.rollback()
-                raise HTTPException(409, "该场次您已有报名记录，请勿重复报名")
+                raise HTTPException(409, "这个时段您已有报名记录，请勿重复报名")
             enrolled = True         # 到这儿报名已经落库了，剩下的只是收尾
     finally:
         if not enrolled:
@@ -772,7 +772,7 @@ def set_excuse(enrollment_id: str, body: ExcuseBody,
         raise HTTPException(404, "报名记录不存在")
     g = db.get(Shift, enr.shift_id)
     if not g.is_attached():
-        raise HTTPException(400, "只有培训/彩排可以请假；服务场次请走退选")
+        raise HTTPException(400, "只有培训/彩排可以请假；服务岗位请走退选")
     if enr.status != "enrolled":
         raise HTTPException(409, "该报名记录不在生效状态")
     if now() >= g.start_time:
@@ -830,7 +830,7 @@ def cancel_enroll(enrollment_id: str,
     g = db.get(Shift, enr.shift_id)
     if g.is_attached():
         raise HTTPException(
-            409, f"「{g.name}」是本活动的{g.kind_label()}，随服务场次的报名产生，"
+            409, f"「{g.name}」是本活动的{g.kind_label()}，随服务岗位的报名产生，"
                  f"不能单独退出；不能参加的话请点「我无法参加」请假，或联系负责人")
     act = db.get(Activity, enr.activity_id)
     _ensure_not_editing(act)

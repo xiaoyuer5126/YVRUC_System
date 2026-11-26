@@ -63,7 +63,7 @@ def test_手动锁定时缺组长提醒一次_解锁再锁再提醒(client, admi
     _lock(client, admin, g)
     rows = _alerts(db, act)
     assert len(rows) == 1
-    assert "测试场次·测试岗位" in rows[0].content
+    assert f"「测试岗位（{g.span_text()}）」" in rows[0].content
     assert rows[0].data.get("tab") == "roster"
     _lock(client, admin, g)                      # 已经锁着，再点不重复提醒
     assert len(_alerts(db, act)) == 1
@@ -160,8 +160,8 @@ def test_同活动几场同时到点合成一条(client, admin, db, open_group):
     scheduled.send_leader_vacancy_alerts(db)
     rows = _alerts(db, act)
     assert len(rows) == 1, rows
-    assert "测试场次·测试岗位" in rows[0].content
-    assert "第二场·第二岗" in rows[0].content
+    assert f"「测试岗位（{g.span_text()}）」" in rows[0].content
+    assert "「第二岗（" in rows[0].content
 
 
 def test_跨场次的同一个组只说一次(client, admin, db, open_group):

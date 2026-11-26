@@ -77,7 +77,7 @@
         <div class="meta-row"><el-icon><Location /></el-icon>{{ a.location || t('待定') }}</div>
         <!-- 按时段筛出来的：要来好几段、或者钟点只是个大概的，卡片上先说一声 -->
         <div v-if="a.slot_note && (a.slot_note.periods > 1 || a.slot_note.flexible)" class="meta-row">
-          <el-tag v-if="a.slot_note.periods > 1" size="small" type="warning" effect="plain">{{ t('场次共 {0} 段，需每段到场', [a.slot_note.periods]) }}</el-tag>
+          <el-tag v-if="a.slot_note.periods > 1" size="small" type="warning" effect="plain">{{ t('有岗位共 {0} 个时段，需全部参加', [a.slot_note.periods]) }}</el-tag>
           <el-tag v-if="a.slot_note.flexible" size="small" type="success" effect="plain">{{ t('时间灵活') }}</el-tag>
         </div>
         <div class="meta-row">

@@ -145,7 +145,7 @@ def _reason(slot_hit: bool, org_hit: bool, organizer: str,
             keyword: str | None = None) -> str:
     parts = []
     if slot_hit:
-        parts.append("有场次在你订阅的空闲时段")
+        parts.append("有岗位的时段落在你订阅的空闲时段里")
     if org_hit:
         parts.append(f"由你关注的「{organizer}」举办")
     if keyword:

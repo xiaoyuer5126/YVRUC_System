@@ -667,7 +667,10 @@ def application_out(db: OrmSession, act: Activity, user=None) -> dict:
             if not names and e.position_id:
                 p = db.get(Position, e.position_id)
                 names = [p.name] if p else []
-            wanted.append({"shift_id": g.id, "shift_name": g.name,
+            # 志愿者看的：普通岗位 shift_name 就是岗位名，统一分配是「上午场志愿者」
+            wanted.append({"shift_id": g.id, "shift_name": g.volunteer_label(),
+                           "needs_assign": g.needs_assign(),
+                           "time_text": g.span_text(),
                            "position_name": "、".join(names),
                            "status": e.status, "cancel_type": e.cancel_type})
     return {
