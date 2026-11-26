@@ -110,13 +110,13 @@ def test_活动草稿_全选等于不限_缺项一条写完(client, admin, model
     assert "不要写进简介" in calls[0]["body"]["messages"][0]["content"]
 
 
-def test_场次草稿_岗位字段收拾好(client, admin, db, model):
+def test_岗位草稿_岗位字段收拾好(client, admin, db, model):
     calls, replies = model
     aid = make_draft(client, admin)
-    replies.append((200, json.dumps({"shifts": [{
+    replies.append((200, json.dumps({"groups": [{
         "name": "开幕式当天",
         "periods": [{"start_time": "2026-10-18 07:30", "end_time": "不知道"}],
-        "location": "世纪馆北门",                      # 服务场次没有地点字段：丢掉
+        "location": "世纪馆北门",                      # 一组岗位没有地点字段：丢掉
         "requirement_tags": {"校区": ["中关村校区"]},   # 条件全在岗位上：丢掉
         "positions": [
             {"name": "检录引导", "quota": "6", "service_task": "引导运动员检录",
@@ -132,11 +132,11 @@ def test_场次草稿_岗位字段收拾好(client, admin, db, model):
     r = client.post(f"/api/staff/ai/activities/{aid}/structure-draft", headers=admin,
                     data={"text": TEXT})
     assert r.status_code == 200, r.text
-    g = r.json()["shifts"][0]
+    g = r.json()["groups"][0]
     assert g["name"] == "开幕式当天"
     # 开始认出来了、结束没认出来：留半截让人补，不替它猜钟点
     assert g["periods"] == [{"start_time": "2026-10-18T07:30", "end_time": ""}]
-    assert "location" not in g, "服务场次不带地点：地点在岗位与活动上"
+    assert "location" not in g, "一组岗位不带地点：地点在岗位与活动上"
     assert "requirement_tags" not in g, "条件在岗位上：这一组只管时段"
     assert g["attached"] == []
     p1, p2 = g["positions"]
@@ -147,17 +147,17 @@ def test_场次草稿_岗位字段收拾好(client, admin, db, model):
     assert p2["name"] == "志愿者" and p2["quota"] == 1 and p2["service_task"] == ""
     assert p2["pay_optional"] is True and p2["pay_note"] == "100 元/天，活动后统一发放"
     assert r.json()["notes"] == ["还需要自己补上：「开幕式当天」的时段起止时间、岗位「志愿者」的服务任务"]
-    # 活动信息与已有场次带给了模型
+    # 活动信息与已有岗位带给了模型
     title = db.get(Activity, aid).title
     assert title in calls[0]["body"]["messages"][0]["content"]
-    assert "已经建好的岗位与场次" in calls[0]["body"]["messages"][0]["content"]
+    assert "已经建好的岗位（不要重复）" in calls[0]["body"]["messages"][0]["content"]
 
 
-def test_场次草稿_组长任务跟组长一起读(client, admin, db, model):
+def test_岗位草稿_组长任务跟组长一起读(client, admin, db, model):
     """要组长就要写任务，写不出任务就当没要组长——落库时后端会拦。"""
     calls, replies = model
     aid = make_draft(client, admin)
-    replies.append((200, json.dumps({"shifts": [{
+    replies.append((200, json.dumps({"groups": [{
         "name": "开幕式当天",
         "periods": [{"start_time": "2026-10-18 07:30", "end_time": "不知道"}],
         "positions": [
@@ -169,16 +169,16 @@ def test_场次草稿_组长任务跟组长一起读(client, admin, db, model):
     r = client.post(f"/api/staff/ai/activities/{aid}/structure-draft", headers=admin,
                     data={"text": TEXT})
     assert r.status_code == 200, r.text
-    p1, p2 = r.json()["shifts"][0]["positions"]
+    p1, p2 = r.json()["groups"][0]["positions"]
     assert p1["needs_leader"] is True
     assert p1["leader_task"] == "带队进场、清点人数、结束后对账"
     assert p2["needs_leader"] is False and p2["leader_task"] == ""
 
 
-def test_场次草稿_培训彩排挂在场次下(client, admin, model):
+def test_岗位草稿_培训彩排挂在一组岗位下(client, admin, model):
     _calls, replies = model
     aid = make_draft(client, admin)
-    replies.append((200, json.dumps({"shifts": [{
+    replies.append((200, json.dumps({"groups": [{
         "name": "比赛日",
         "periods": [{"start_time": "2026-10-25 07:00", "end_time": "2026-10-25 12:00"}],
         "positions": [{"name": "补给站", "quota": 8, "service_task": "发水"},
@@ -195,7 +195,7 @@ def test_场次草稿_培训彩排挂在场次下(client, admin, model):
     r = client.post(f"/api/staff/ai/activities/{aid}/structure-draft", headers=admin,
                     data={"text": TEXT})
     assert r.status_code == 200, r.text
-    a1, a2 = r.json()["shifts"][0]["attached"]
+    a1, a2 = r.json()["groups"][0]["attached"]
     assert a1 == {"kind": "rehearsal", "name": "终点走台",
                   "periods": [{"start_time": "2026-10-24T16:00",
                                "end_time": "2026-10-24T17:00"}],
@@ -203,22 +203,22 @@ def test_场次草稿_培训彩排挂在场次下(client, admin, model):
                   "positions": ["终点引导"], "hours_mode": "none"}
     assert (a2["kind"], a2["name"], a2["positions"], a2["hours_mode"]) == \
         ("training", "集中培训", [], "fixed")
-    # 点了岗位却一个没对上：按「全场次」放了，必须说出来
+    # 点了岗位却一个没对上：按这一组全部岗位放了，必须说出来
     assert r.json()["notes"] == ["还需要自己补上：「集中培训」的服务时段",
-                                 "「集中培训」要参加的岗位没对上，先按本场次所有人放，请核对"]
+                                 "「集中培训」要参加的岗位没对上，先按这一组的全部岗位放，请核对"]
 
 
-def test_场次草稿_结构不对也不报错(client, admin, model):
+def test_岗位草稿_结构不对也不报错(client, admin, model):
     _calls, replies = model
     aid = make_draft(client, admin)
-    replies.append((200, json.dumps({"shifts": {"name": "不是数组"}})))
-    replies.append((200, json.dumps({"shifts": [{"name": "A", "positions": "x",
+    replies.append((200, json.dumps({"groups": {"name": "不是数组"}})))
+    replies.append((200, json.dumps({"groups": [{"name": "A", "positions": "x",
                                                  "attached": {"k": 1}}]})))
     url = f"/api/staff/ai/activities/{aid}/structure-draft"
     r = client.post(url, headers=admin, data={"text": TEXT})
-    assert r.status_code == 200 and r.json()["shifts"] == []
+    assert r.status_code == 200 and r.json()["groups"] == []
     r = client.post(url, headers=admin, data={"text": TEXT})
-    g = r.json()["shifts"][0]
+    g = r.json()["groups"][0]
     assert g["positions"] == [] and g["attached"] == []
 
 
@@ -250,7 +250,7 @@ def test_问卷草稿_不写原文也行_岗位名对回岗位(client, admin, db
     q1, q2, q3, q4 = d["questions"]
     assert (q1["kind"], q1["options"], q1["required"], q1["applies_to_positions"]) == \
         ("single", ["是", "否"], True, [])
-    # 选项凑不齐两个的选择题当填空放；同名岗位（两个场次的「引导」）一起算
+    # 选项凑不齐两个的选择题当填空放；同名岗位（两个时段的「引导」）一起算
     assert (q2["kind"], q2["options"], q2["applies_to_positions"]) == ("text", [], [trans])
     assert (q3["kind"], q3["options"], q3["required"]) == ("file", [], False)
     assert sorted(q3["applies_to_positions"]) == sorted([first.id, second])

@@ -34,7 +34,8 @@
                     :class="{ missing: !p.service_task.trim() }" />
           <div v-if="extras(p)" class="dim pre">{{ extras(p) }}</div>
         </div>
-        <div v-if="!g.positions.length" class="dim">这一组没有岗位，不会新建任何东西</div>
+        <div v-if="!g.positions.length" class="dim">{{ g.attached.length
+          ? '这一组没有岗位，下面的培训/彩排会按全体参加建' : '这一组没有岗位，不会新建任何东西' }}</div>
         <!-- 培训、彩排：等这一组的岗位建好再建，好把「哪些岗位要来」对上 -->
         <div v-for="(a, ti) in g.attached" :key="'a' + ti" class="ai-pos">
           <div class="ai-head">
@@ -86,7 +87,7 @@ const attachedCount = computed(() => draft.value.reduce((n, g) => n + g.attached
 async function run(text, files) {
   const d = await api.post(`/api/staff/ai/activities/${props.activityId}/structure-draft`,
                            aiForm(text, files))
-  draft.value = JSON.parse(JSON.stringify(d.shifts)).map((g, gi) => {
+  draft.value = JSON.parse(JSON.stringify(d.groups)).map((g, gi) => {
     g.positions.forEach((p, pi) => { p.key = `${gi}-${pi}` })
     g.attached = g.attached.map(({ positions, ...a }) => ({
       ...a, keys: positions.map(n => g.positions.find(p => p.name === n)?.key).filter(Boolean),
@@ -121,7 +122,8 @@ function attachedText(g, a) {
   const names = a.keys.map(k => posName(g, k)).filter(Boolean)
   return [
     `需参加：${names.length ? names.join('、')
-      : a.keys.length ? '（岗位都删掉了）' : '这一组的全部岗位'}`,
+      : a.keys.length ? '（岗位都删掉了）'
+        : g.positions.length || Object.keys(g.done).length ? '这一组的全部岗位' : '全体'}`,
     `时长：${HOURS[a.hours_mode]}`,
     a.location && `地点：${a.location}`,
     a.note && `备注：${a.note}`,
@@ -154,7 +156,7 @@ function problem() {
       if (!a.name.trim()) return `「${g.name}」里有培训/彩排没写名字`
       const badAttached = badPeriods(a.periods)
       if (badAttached) return `「${a.name}」：${badAttached}`
-      // 一个都不剩就成了「全场次都要来」，和原文的意思反了
+      // 一个都不剩就成了「全体都要来」，和原文的意思反了
       if (a.keys.length && !a.keys.some(k => posName(g, k))) {
         return `「${a.name}」要参加的岗位都删掉了：删掉这一场，或者建好后再手动设置`
       }
