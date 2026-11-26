@@ -73,6 +73,12 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "您在「{activity}」· {shift} 的岗位已确定：\n"
         "岗位：{position}\n时间：{position_time}\n地点：{position_loc}\n"
         "请查看培训、小组长等信息，活动时按要求到岗签到。"),
+    # 调岗：管理者把人从一个岗位挪到另一个岗位，时间地点都可能跟着变
+    "position_moved": (
+        "岗位调整通知｜{activity}",
+        "负责人把您在「{activity}」的岗位从「{old_position}」调整为：\n"
+        "岗位：{position}\n时间：{position_time}\n地点：{position_loc}\n"
+        "请按新的时间地点到岗签到；如无法参加，请尽快联系负责人。"),
     "activity_changed": (
         "活动变更提醒｜{activity}",
         "「{activity}」信息变更：\n{change_summary}\n\n请留意最新安排。"),
@@ -132,6 +138,7 @@ TEMPLATE_LABELS: dict[str, str] = {
     "application_rejected": "未录取",
     "waitlist_promoted": "候补转正待确认",
     "assignment": "岗位分配",
+    "position_moved": "岗位调整",
     "activity_changed": "活动变更",
     "activity_finished": "活动结束",
     "leader_appointed": "组长任命",
@@ -156,6 +163,7 @@ TEMPLATE_PAGE: dict[str, str] = {
     "application_accepted": "/my",
     "application_rejected": "/my",
     "assignment": "/my",
+    "position_moved": "/my",
     "walkin_added": "/my",
     "walkin_recorded": "/my",
     "leader_appointed": "/my",

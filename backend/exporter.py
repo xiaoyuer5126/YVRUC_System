@@ -3,7 +3,7 @@
   · 排班表（build_activity_workbook）：交给现场负责人点名、排班。
     活动概览 → 志愿者信息（一人一行，报保险、报入校用）→ 排班表（总表，
     一人一个岗位一行）。
-  · 问卷结果（build_answers_workbook）：志愿者管理页按场次、岗位挑人导出，
+  · 问卷结果（build_answers_workbook）：志愿者管理页按岗位挑人导出，
     答案一题一列，上传的文件按「场次/岗位」分文件夹另打附件包。
   · 报名问卷结果（build_application_workbook）：报名后筛选的全部报名者。
   · 时长记录（build_hours_workbook）：给志愿北京录时长；另附「劳务」页，
@@ -338,11 +338,10 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
 
 
 def build_answers_workbook(db: OrmSession, activity: Activity,
-                           shift_ids: set[str] | None = None,
                            position_ids: set[str] | None = None) -> Export:
     """问卷结果：在册志愿者每人每个岗位一行，一题一列。
 
-    shift_ids / position_ids 为空表示不限。挑了岗位时，还没分到岗位的人不在其中。
+    position_ids 为空表示不限；挑了岗位时，还没分到岗位的人不在其中。
     附件按「场次/岗位/姓名_学号_题目」分文件夹：部长们拿去按点位看简历，
     一个文件夹就是一个点位的人。同一个人在两个岗位，文件就在两个文件夹里各放一份。
     报名后筛选的答案在报名记录（Application）上，即选即得的在每条报名上。
@@ -365,8 +364,6 @@ def build_answers_workbook(db: OrmSession, activity: Activity,
     _style_header(ws, len(header))
 
     for g in sorted(activity.main_shifts(), key=lambda x: x.sort):
-        if shift_ids and g.id not in shift_ids:
-            continue
         positions = {s.id: s for s in g.positions}
         rows = (db.query(Enrollment, User)
                 .filter(Enrollment.shift_id == g.id,
