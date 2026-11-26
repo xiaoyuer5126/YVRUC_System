@@ -123,9 +123,9 @@ def test_删岗位连它那一场一起删(client, admin, db, draft, take_studen
 def test_有人报名的岗位要确认才删_报名一起取消(client, admin, db, take_student,
                                                 open_group):
     act, g = open_group(3)
-    pid = g.test_position_id
+    pid, gid = g.test_position_id, g.id
     sid = take_student()
-    r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+    r = client.post(f"/api/activities/{act.id}/shifts/{gid}/enroll",
                     headers=login(client, sid), json={"position_id": pid})
     assert r.status_code == 200, r.text
     with editing(client, admin, act.id):
@@ -134,7 +134,7 @@ def test_有人报名的岗位要确认才删_报名一起取消(client, admin, 
         r = client.delete(f"/api/staff/posts/{pid}?force=1", headers=admin)
         assert r.status_code == 200, r.text
     db.expire_all()
-    assert db.get(Shift, g.id) is None
+    assert db.get(Shift, gid) is None
     # 报名记录挂在场次和岗位上（外键），场次删掉它们也留不住
     assert db.query(Enrollment).filter(
         Enrollment.user_id == student_row(db, sid).id).count() == 0

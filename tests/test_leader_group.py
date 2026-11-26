@@ -318,7 +318,8 @@ def test_岗位详情展示同组岗位(client, admin, db, enrolled_activity, ta
     leader = _make_leader(client, admin, db, p1, p2)
     name = db.get(User, leader.user_id).name
     d = client.get(f"/api/activities/{act.id}", headers=admin).json()
-    pos = {p["name"]: p for p in d["shifts"][0]["positions"]}
+    # 同组的两个岗位各在自己那一场里：详情里按岗位名找
+    pos = {p["name"]: p for g in d["shifts"] for p in g["positions"]}
     assert set(pos[p1.name]["group_positions"]) == {p1.name, p2.name}
     # 管理者看得到；组里任一岗位问到的都是同一个组长
     assert pos[p1.name]["leader_name"] == pos[p2.name]["leader_name"] == name

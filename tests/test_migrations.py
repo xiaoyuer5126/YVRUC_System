@@ -209,6 +209,9 @@ def _old_shape(session):
                  user_type="student", roles=["student"])
         session.add(u)
         users.append(u)
+    # 先把人写进去：活动的 created_by 是外键，没有对应的关系属性，
+    # 同一次 flush 里 SQLAlchemy 不保证先插用户
+    session.flush()
     act = Activity(id=uid("act"), title="拆分测试", intro="x", location="世纪馆",
                    contacts=[{"name": "王", "phone": "13900000000"}],
                    contact_group_qr="x", status="published",

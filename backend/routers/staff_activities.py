@@ -972,14 +972,13 @@ def ensure_ready_to_publish(act: Activity) -> None:
     if not act.contact_group_qr:
         raise HTTPException(400, "请先在基本信息里上传志愿者联络群二维码")
     if not act.main_shifts():
-        raise HTTPException(400, "请先至少创建一个场次")
-    # 「报名即选岗位」的场次没有岗位就等于没有名额，发出去学生一个都报不了
+        raise HTTPException(400, "本活动还没有岗位，请先至少创建一个岗位")
+    # 没有岗位就等于没有名额，发出去学生一个都报不了
     empty = [g.name for g in act.main_shifts()
              if not g.needs_assign() and not g.positions]
     if empty:
         raise HTTPException(
-            400, f"场次「{'、'.join(empty)}」还没有岗位，学生无法报名。"
-                 f"请先添加岗位，或把这些场次改为「截止后统一分配」")
+            400, f"「{'、'.join(empty)}」还没有岗位，学生无法报名，请先添加岗位")
     ensure_reg_times(act)
     ensure_reg_end_in_range(act)
 

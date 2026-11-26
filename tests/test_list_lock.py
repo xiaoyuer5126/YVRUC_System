@@ -466,6 +466,8 @@ def test_发布时补位排不上锁_汇总照发并提示(client, admin, db, op
                        headers=admin).status_code == 200
     assert client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
                         json={"quota": 2}).status_code == 200
+    db.expire_all()
+    post_name = db.get(Position, g.test_position_id).name
 
     def busy(*_a, **_k):
         raise _busy()
@@ -473,7 +475,8 @@ def test_发布时补位排不上锁_汇总照发并提示(client, admin, db, op
     monkeypatch.setattr(staff_activities, "shift_lock", busy)
     r = client.post(f"/api/staff/activities/{act.id}/publish-changes", headers=admin)
     assert r.status_code == 200, r.text
-    assert r.json()["promoted"] == 0 and r.json()["busy"] == [g.name]
+    # 跳过的那一场就是这个岗位：场次名与岗位名一致，提示里报的是岗位名
+    assert r.json()["promoted"] == 0 and r.json()["busy"] == [post_name]
     db.expire_all()
     u = db.query(User).filter(User.student_id == first).one()
     assert db.query(Notification).filter(
