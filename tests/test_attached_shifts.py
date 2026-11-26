@@ -338,6 +338,15 @@ def test_培训挂在活动上_跨场次圈人_最后一个报名退掉才退(cl
     assert t["applies_text"] == "检录台" and t["enrolled"] == 0
 
 
+def test_培训只叫同名岗位的某个时段_叫谁写那个时段(client, admin, db, act_with_positions):
+    act, g, east, check = act_with_positions
+    g2, check2 = _second_shift(db, act, g)
+    _add_attached(client, admin, act, g, positions=[check2.id])
+    d = client.get(f"/api/activities/{act.id}", headers=admin).json()
+    [t] = d["trainings"]
+    assert t["applies_text"] == f"检录台（{g2.span_text()}）"
+
+
 def test_删岗位删场次_只叫它们的培训要先处理(client, admin, db, act_with_positions):
     act, g, east, check = act_with_positions
     g2, check2 = _second_shift(db, act, g)
