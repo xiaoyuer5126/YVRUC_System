@@ -29,7 +29,8 @@ from ..locks import current_checkin_code
 from ..notify import notify, notify_checkin
 from ..models import (Activity, ActivitySubscription, CheckinGeo, CheckinRecord, CheckinTask,
                       Department, Enrollment, HoursAppeal, HoursRecord,
-                      HoursRequest, HoursSegment, Shift, Position, User,
+                      HoursRequest, HoursSegment, Shift, ShiftPeriod,
+                      Position, User,
                       ViolationRecord, day_of, iso, new_checkin_token, now,
                       day_text, parse_local_dt, part_is_pay, segment_out,
                       span_text, uid)
@@ -54,11 +55,22 @@ def _act(db: OrmSession, activity_id: str, *,
 # ======================= 签到任务 =======================
 
 class TaskBody(BaseModel):
-    mode: str = "shift"                 # shift 统一签到 / position 分岗位
+    """整场统一码：一个场次的一个时段一张，这一段的所有人扫同一张。
+
+    分岗位的码走 POST /activities/{id}/checkin-tasks——那种一张码管好几个岗位，
+    岗位又可以分散在不同场次，所以不挂在某一个场次下面。
+    """
     # 哪一段的码：多时段场次必填；只有一个时段的场次可以不给
     period_id: str | None = None
-    position_id: str | None = None      # 单岗位（旧的调用方式）
-    position_ids: list[str] = []        # 分岗位时可选多个，一个岗位一张码
+    valid_from: str | None = None
+    valid_to: str | None = None
+
+
+class GroupTaskBody(BaseModel):
+    """分岗位的签到码：一张码管这些岗位，岗位可以分散在本活动的几个服务场次里。"""
+    position_ids: list[str] = []
+    # 所选岗位里有多时段的场次时，这一天开始的那一段才是这张码管的那一段
+    date: str | None = None             # YYYY-MM-DD
     valid_from: str | None = None
     valid_to: str | None = None
 
@@ -103,6 +115,8 @@ def _conflict_message(db: OrmSession, t: CheckinTask, g: Shift) -> str:
 def create_task(shift_id: str, body: TaskBody,
                 db: OrmSession = Depends(db_session),
                 user: User = Depends(require_manager)):
+    """整场统一码：这一段的人都扫它，包括还没分到岗位的
+    （「截止后统一分配」场次里待在占位岗位上的那些人）。"""
     g = db.get(Shift, shift_id)
     if g is None:
         raise HTTPException(404, "场次不存在")
@@ -118,54 +132,142 @@ def create_task(shift_id: str, body: TaskBody,
         period = periods[0]
     else:
         raise HTTPException(400, "这场有多个时段，请指定是哪个时段的签到码")
-    positions: list[Position] = []
-    if body.mode == "position":
-        # 可多选：一个岗位一张码。只认本场次下的岗位
-        wanted = body.position_ids or ([body.position_id] if body.position_id else [])
-        # 去重：同一个岗位勾两次会开出两张同时开着的码——冲突检查只比库里已有的
-        wanted = list(dict.fromkeys(wanted))
-        if not wanted:
-            raise HTTPException(400, "分岗位签到必须指定本场次下的岗位")
-        for pid in wanted:
-            st = db.get(Position, pid)
-            if st is None or st.shift_id != g.id:
-                raise HTTPException(400, "分岗位签到必须指定本场次下的岗位")
-            positions.append(st)
     try:
         valid_from = parse_local_dt(body.valid_from) if body.valid_from else None
         valid_to = parse_local_dt(body.valid_to) if body.valid_to else None
     except ValueError:
         raise HTTPException(400, "时间格式不对") from None
-    # 一次一张地查冲突：多选时只要有一个岗位撞上就整体拒绝，别做一半
-    for st in (positions or [None]):
-        live = live_task_conflict(db, g.id, period.id, st.id if st else None)
+    live = live_task_conflict(db, g.id, period.id, None)
+    if live is not None:
+        raise HTTPException(409, _conflict_message(db, live, g))
+    pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
+    task = insert_with_unique_code(
+        db, CheckinTask.token, new_checkin_token,
+        lambda code: CheckinTask(
+            id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+            period_id=period.id, mode="shift", token=code,
+            valid_from=valid_from or period.start_time - pad,
+            valid_to=valid_to or period.end_time + pad,
+            created_by=user.id))
+    audit_log(db, actor=user, action="checkin_task", target_type="checkin",
+              target_id=task.id,
+              target_label=f"{act.title}·{g.name}·{period.text()}·统一签到",
+              activity_id=act.id,
+              summary=f"生成签到码：{task.token}（统一模式，"
+                      f"有效 {task.valid_from:%H:%M}~{task.valid_to:%H:%M}）")
+    db.commit()
+    return {"id": task.id, "token": task.token,
+            "tasks": [{"id": task.id, "token": task.token}]}
+
+
+def _group_period(st: Position, g: Shift, day: datetime | None,
+                  valid_from: datetime | None,
+                  valid_to: datetime | None) -> ShiftPeriod:
+    """这个岗位的码管它场次的哪一段。
+
+    岗位的时间就是它场次的时间：场次只有一段就是那一段；多段的场次按管理者
+    选的日期取那一天开始的那一段，没选日期就按手填的可签时间窗去套（填了
+    9:00~12:00 就是上午那一段）。定不下来时报错说清是哪个岗位——随手猜一段，
+    现场扫的是哪天的码就没人说得清了。
+    """
+    periods = g.sorted_periods()
+    where = f"「{st.name}」所在场次（{g.name}）"
+    if not periods:
+        raise HTTPException(400, where + "还没有服务时段")
+    if len(periods) == 1:
+        return periods[0]
+    cands = periods
+    if day is not None:
+        cands = [p for p in cands if day_of(p.start_time) == day]
+        if not cands:
+            raise HTTPException(400, f"{where}在 {day:%Y-%m-%d} 没有服务时段")
+    if len(cands) > 1 and valid_from and valid_to:
+        cands = [p for p in cands
+                 if p.start_time < valid_to and p.end_time > valid_from]
+    if len(cands) != 1:
+        raise HTTPException(
+            400, f"{where}当天有多个服务时段，请分别为每一段建码" if day
+            else f"{where}有多个服务时段，请选择签到日期")
+    return cands[0]
+
+
+@router.post("/activities/{activity_id}/checkin-tasks")
+def create_group_task(activity_id: str, body: GroupTaskBody,
+                      db: OrmSession = Depends(db_session),
+                      user: User = Depends(require_manager)):
+    """分岗位的签到码：一张码管多个岗位，岗位可以分散在几个服务场次里。
+
+    岗位自带时段（一岗一场），所以多选岗位往往就是跨场次。建出来的仍是一行
+    一格（场次, 时段, 岗位），共用一个 code_group：对外一张码，扫码的人报了
+    自己的岗位就记到他那一格（见 checkin.task_of_user）。
+    每人的可签时间按**他自己那一段**起止各外扩 CHECKIN_WINDOW_PAD_MINUTES；
+    管理者手填了起止，整张码就统一按填的算。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    ensure_not_finished(act)
+    # 去重：同一个岗位勾两次会在组里开出两行同岗位的，冲突检查只比库里已有的
+    wanted = list(dict.fromkeys([p for p in body.position_ids if p]))
+    if not wanted:
+        raise HTTPException(400, "请选择这张码管哪些岗位")
+    try:
+        valid_from = parse_local_dt(body.valid_from) if body.valid_from else None
+        valid_to = parse_local_dt(body.valid_to) if body.valid_to else None
+        day = day_of(parse_local_dt(body.date)) if body.date else None
+    except ValueError:
+        raise HTTPException(400, "时间格式不对") from None
+    if valid_from and valid_to and valid_to <= valid_from:
+        raise HTTPException(400, "结束时间要晚于开始时间")
+
+    rows: list[tuple[Position, Shift, ShiftPeriod]] = []
+    for pid in wanted:
+        st = db.get(Position, pid)
+        g = db.get(Shift, st.shift_id) if st is not None else None
+        if st is None or g is None or g.activity_id != act.id \
+                or g.kind != "service":
+            raise HTTPException(400, "分岗位签到只认本活动服务场次下的岗位")
+        if st.is_placeholder:
+            # 占位岗位不是一个岗位，是「这一场还没分岗」：这些人扫的是整场统一码
+            raise HTTPException(
+                400, f"「{st.name}」不是具体岗位，这一场请用整场统一码")
+        rows.append((st, g, _group_period(st, g, day, valid_from, valid_to)))
+
+    # 先把冲突查完再建：一处撞上就整张码不建，别开出半张
+    for st, g, period in rows:
+        live = live_task_conflict(db, g.id, period.id, st.id)
         if live is not None:
             raise HTTPException(409, _conflict_message(db, live, g))
+
     pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
+    group = uid("cg")
     made: list[CheckinTask] = []
-    for st in (positions or [None]):
-        task = insert_with_unique_code(
+    for st, g, period in rows:
+        made.append(insert_with_unique_code(
             db, CheckinTask.token, new_checkin_token,
-            lambda code, st=st: CheckinTask(
+            lambda code, st=st, g=g, period=period: CheckinTask(
                 id=uid("tsk"), activity_id=act.id, shift_id=g.id,
-                period_id=period.id,
-                position_id=st.id if st else None,
-                mode=body.mode, token=code,
+                period_id=period.id, position_id=st.id,
+                mode="position", token=code, code_group=group,
                 valid_from=valid_from or period.start_time - pad,
                 valid_to=valid_to or period.end_time + pad,
-                created_by=user.id))
-        label = st.name if st else f"{g.name}·{period.text()}·统一签到"
-        audit_log(db, actor=user, action="checkin_task", target_type="checkin",
-                  target_id=task.id, target_label=f"{act.title}·{label}",
-                  activity_id=act.id,
-                  summary=f"生成签到码：{task.token}"
-                          f"（{'岗位' if st else '统一'}模式，"
-                          f"有效 {task.valid_from:%H:%M}~{task.valid_to:%H:%M}）")
-        made.append(task)
+                created_by=user.id)))
+    head = made[0]
+    # 一张码一条留痕，写清它管哪些岗位：一组一行地记，事后翻起来认不出
+    # 这几行本来是同一张码
+    names = "、".join(f"{st.name}（{g.name}·{period.text()}）"
+                      for st, g, period in rows)
+    audit_log(db, actor=user, action="checkin_task", target_type="checkin",
+              target_id=head.id, target_label=f"{act.title}·分岗位签到",
+              activity_id=act.id,
+              summary=f"生成签到码：{head.token}（分岗位模式，"
+                      f"{len(rows)} 个岗位共用一张：{names}）")
     db.commit()
-    return {**({"id": made[0].id, "token": made[0].token} if made else {}),
-            # 多选时一次生成好几张，按 tasks 拿全的
-            "tasks": [{"id": t.id, "token": t.token} for t in made]}
+    return {"id": head.id, "token": head.token, "code_group": group,
+            # 组里每一行各是一格（场次, 时段, 岗位）
+            "tasks": [{"id": t.id, "token": t.token, "shift_id": t.shift_id,
+                       "period_id": t.period_id, "position_id": t.position_id,
+                       "valid_from": iso(t.valid_from),
+                       "valid_to": iso(t.valid_to)} for t in made]}
 
 
 @router.get("/activities/{activity_id}/checkin-tasks")
