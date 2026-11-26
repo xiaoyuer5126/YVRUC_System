@@ -339,6 +339,7 @@ def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
                 "period_count": len(shift.periods),
                 "position_name": st.name if st else "",
                 "count": counts.get(t.id, 0),
+                "valid_from": iso(t.valid_from), "valid_to": iso(t.valid_to),
                 # 截止早于这一段结束、或这一段没完就关码，前端要先提醒：
                 # 那之后没签退的人都按这一段结束兜底、进待核
                 "shift_end": iso(period.end_time if period else shift.end_time),
@@ -359,7 +360,13 @@ def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
             "shift_end": max(m["shift_end"] for m in members),
             "shift_kind": g.kind, "shift_kind_label": g.kind_label(),
             "position_name": "、".join(names),
-            "valid_from": iso(head.valid_from), "valid_to": iso(head.valid_to),
+            # 可签时段给整张码的范围：管理者没手动设时，组里各行按自己那一段
+            # 外扩，范围是「最早能签」到「最晚能签」。window_varies 说明各行
+            # 并不一致，前端要标出来，别让人以为所有岗位都从同一刻开始
+            "valid_from": min(m["valid_from"] for m in members),
+            "valid_to": max(m["valid_to"] for m in members),
+            "window_varies": len({(m["valid_from"], m["valid_to"])
+                                  for m in members}) > 1,
             "active": head.active,
             "count": sum(m["count"] for m in members),
             # 有锚点 = 这张码走定位签到，前端据此显示「方式」列
