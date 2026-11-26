@@ -22,6 +22,22 @@ def enroll(client, headers, act, g, **body):
                        json=body, headers=headers)
 
 
+def overlapping_shift(db, act, g, *, name="同日第二场", hours_later=1):
+    """在同一活动里再加一个与 g 时段重叠的服务场次，带一个测试岗位。"""
+    g2 = mk_shift(id=uid("g"), activity_id=act.id, name=name,
+                  start_time=g.start_time + timedelta(hours=hours_later),
+                  end_time=g.end_time + timedelta(hours=hours_later),
+                  mode="pick", sort=1)
+    db.add(g2)
+    db.flush()
+    p = Position(id=uid("p"), shift_id=g2.id, name="岗位", quota=5,
+                 **POSITION_TEXT)
+    db.add(p)
+    db.commit()
+    g2.test_position_id = p.id
+    return g2
+
+
 def test_duplicate_enroll_rejected(client, open_group, take_student):
     act, g = open_group(5)
     h = login(client, take_student())
@@ -60,24 +76,45 @@ def test_确认冲突也绕不过名额(client, open_group, take_student):
     assert r.status_code == 409 and "候补名额已满" in r.json()["detail"], r.text
 
 
-def test_本活动两场重叠也提示(client, db, open_group, take_student):
+def test_本活动两场重叠硬拦_确认也不放行(client, db, open_group, take_student):
+    """同一活动里两个服务场次压在一起：直接拦住。同一时间只能站一个岗位，
+    两个都报上必然空一个。"""
     act, g1 = open_group(5, day_offset=202, start_in_hours=4)
-    g2 = mk_shift(id=uid("g"), activity_id=act.id, name="同日第二场",
-               start_time=g1.start_time + timedelta(hours=1),
-               end_time=g1.end_time + timedelta(hours=1), mode="pick", sort=1)
-    db.add(g2)
-    db.flush()
-    p = Position(id=uid("p"), shift_id=g2.id, name="岗位", quota=5,
-                 **POSITION_TEXT)
-    db.add(p)
-    db.commit()
-    g2.test_position_id = p.id
+    g2 = overlapping_shift(db, act, g1)
     h = login(client, take_student())
     first = enroll(client, h, act, g1).json()["enrollment_id"]
+
+    r = enroll(client, h, act, g2)
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "same_activity_clash"
+    assert g1.name in detail["message"]
+    assert "同一时间只能报一个岗位" in detail["message"]
+    assert [c["enrollment_id"] for c in detail["conflicts"]] == [first]
+
+    r = enroll(client, h, act, g2, confirm_conflict=True)
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["code"] == "same_activity_clash"
+    assert db.query(Enrollment).filter(Enrollment.shift_id == g2.id).count() == 0
+
+
+def test_本活动的培训彩排撞上仍可确认(client, db, open_group, take_student):
+    """硬拦只管两个服务场次。培训/彩排附属于服务场次，跟别的服务场次压上是
+    排期的事，照旧提示一句、由人决定。"""
+    act, g1 = open_group(5, day_offset=204, start_in_hours=4)
+    # 彩排挂在 g1 上（报 g1 连带报上），时段压在本活动第二场上
+    g2 = overlapping_shift(db, act, g1, name="第二场", hours_later=30)
+    db.add(mk_shift(id=uid("g"), activity_id=act.id, name="赛前彩排",
+                    kind="rehearsal",
+                    start_time=g2.start_time + timedelta(minutes=30),
+                    end_time=g2.end_time, sort=2))
+    db.commit()
+    h = login(client, take_student())
+    assert enroll(client, h, act, g1).status_code == 200
+
     r = enroll(client, h, act, g2)
     assert r.status_code == 409 and r.json()["detail"]["code"] == "time_conflict"
-    assert "本活动" in r.json()["detail"]["message"]
-    assert [c["enrollment_id"] for c in r.json()["detail"]["conflicts"]] == [first]
+    assert "赛前彩排" in r.json()["detail"]["message"]
     assert enroll(client, h, act, g2, confirm_conflict=True).status_code == 200
 
 

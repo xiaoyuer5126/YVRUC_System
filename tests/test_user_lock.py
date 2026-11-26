@@ -22,7 +22,7 @@ from backend.models import Activity, Enrollment, Shift, User, now, uid
 from backend.routers import activities as activities_router
 from conftest import mk_shift
 from conftest import login
-from test_enroll import enroll
+from test_enroll import enroll, overlapping_shift
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def slow_in_lock(monkeypatch):
     monkeypatch.setattr(activities_router, "shift_lock", slow)
 
 
-def _race(pairs, h):
+def _race(pairs, h, **body):
     """每个 (act, g) 一条线程，齐步走发报名，返回各自的响应。"""
     gate = threading.Barrier(len(pairs))
     out = [None] * len(pairs)
@@ -46,7 +46,7 @@ def _race(pairs, h):
     def go(i, act, g):
         with TestClient(app) as c:
             gate.wait()
-            out[i] = enroll(c, h, act, g)
+            out[i] = enroll(c, h, act, g, **body)
 
     ths = [threading.Thread(target=go, args=(i, a, g))
            for i, (a, g) in enumerate(pairs)]
@@ -90,6 +90,26 @@ def test_同一人同时报两场重叠的班_只成一个(client, open_group, t
         finally:
             s.close()
         assert _live(uid_, [g1.id, g2.id]) == 1
+
+
+def test_同一活动两场重叠_确认也只成一个(client, db, open_group, take_student,
+                               slow_in_lock):
+    """同一活动里两个重叠的岗位同时点下去，两条都带着「已确认冲突」：
+    锁里按人排队重查时照样硬拦，只成一个。"""
+    act, g1 = open_group(5, day_offset=660, start_in_hours=4)
+    g2 = overlapping_shift(db, act, g1)
+    sid = take_student()
+    h = login(client, sid)
+    rs = _race([(act, g1), (act, g2)], h, confirm_conflict=True)
+    assert _codes(rs) == [200, 409], [r.text for r in rs]
+    lost = next(r for r in rs if r.status_code == 409)
+    assert lost.json()["detail"]["code"] == "same_activity_clash", lost.text
+    s = SessionLocal()
+    try:
+        uid_ = s.query(User.id).filter(User.student_id == sid).scalar()
+    finally:
+        s.close()
+    assert _live(uid_, [g1.id, g2.id]) == 1
 
 
 def test_撞的是另一场的彩排_同样只成一个(client, db, open_group, take_student,

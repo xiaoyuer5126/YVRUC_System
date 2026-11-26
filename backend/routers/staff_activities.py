@@ -2804,7 +2804,9 @@ def add_walkin(shift_id: str, body: dict,
 
     名额超出拦一道，勾选强制才放行——补招是常规操作，不该顺手把场次搞超员；
     真要超也得是明确按下去的，且留痕。时段冲突先提示（code=time_conflict），
-    管理者确认后带 confirm_conflict 重发，同样留痕。
+    管理者确认后带 confirm_conflict 重发，同样留痕；本活动另一个服务场次
+    压在这一场上的硬拦（code=same_activity_clash），确认也不放行——一个人
+    同一时间只能站一个岗位。
 
     attached_ids：一并报上的培训/彩排（本场次下、对这个岗位生效的）。
     补招**不自动**连带：现场临时加进来的人，赶不赶得上培训、要不要去彩排，
@@ -2857,7 +2859,10 @@ def add_walkin(shift_id: str, body: dict,
             if position is None or position.shift_id != g.id:
                 raise HTTPException(400, "岗位不属于该场次")
 
-        hit = logic.time_conflicts(db, u, g)
+        # 本人全部有效报名查一次，这一场和勾上的培训/彩排都拿它比
+        rows = logic.active_rows(db, u)
+        logic.block_same_activity(rows, g, f"{u.name}：")
+        hit = logic.conflicts_among(rows, g)
         if hit:
             clashes += hit
             clash_notes.append(f"时段与{logic.conflict_message(hit, g.activity_id)}冲突")
@@ -2874,7 +2879,7 @@ def add_walkin(shift_id: str, body: dict,
                     .filter(Enrollment.shift_id == s.id, Enrollment.user_id == u.id)
                     .first()) is not None:
                 continue            # 已经在那场里了（比如之前连带报过），不重复加
-            hit = logic.time_conflicts(db, u, s)
+            hit = logic.conflicts_among(rows, s)
             if hit:
                 clashes += hit
                 clash_notes.append(f"{s.kind_label()}「{s.name}」时段与"

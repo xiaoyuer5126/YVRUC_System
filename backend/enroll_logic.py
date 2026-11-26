@@ -1,10 +1,11 @@
 """报名核心逻辑：冲突检测、名额账本、候补流转。
 
 关键机制：
-  · 时段冲突：只比场次的时间区间，重叠就提示（跨活动、也比本活动的别的场次，
-    含申请中、候补中的场次——占着这段就预留了这段时间）。志愿者或管理者看过提示、
-    确认仍要报（confirm_conflict）就放行，见 conflict_error；候补转正、一键
-    排班这类没人可问的自动路径不查冲突；
+  · 时段冲突：只比场次的时间区间（含申请中、候补中的场次——占着这段就预留了
+    这段时间）。跨活动、以及涉及培训/彩排的重叠只提示：志愿者或管理者看过提示、
+    确认仍要报（confirm_conflict）就放行，见 conflict_error；同一活动里两个
+    服务场次压在一起的硬拦，确认也不放行，见 same_activity_clashes；候补转正、
+    一键排班这类没人可问的自动路径不查冲突；
   · 名额账本：已报名 + 候补转正待确认（确认窗内位子给他留着）；
   · 候补按 joined_at 排队，退选释放名额 → 队首转正，2 小时确认窗口
     （夜间 23:00–8:00 不计时，且不晚于场次开始，见 promote_confirm_deadline）；
@@ -32,6 +33,12 @@ from .models import (Activity, CheckinRecord, Enrollment, Shift, ShiftPeriod,
 
 # 申请中的场次同样占着时段：申请时就提示冲突，不等录取
 ACTIVE = ("applied", "enrolled", "waitlisted", "pending_confirm")
+
+# 真把这段时间占下来了的状态：正式报名、候补、候补转正待确认。「申请中」不算——
+# 报名后筛选里同一时间勾两个意向是「哪个都行」，录取时管理者挑一个，
+# 所以意向之间、意向与补招之间不按「同一时间只能站一个岗位」硬拦
+# （见 same_activity_clashes）。
+HOLDING = ("enrolled", "waitlisted", "pending_confirm")
 
 
 # 报名问卷可以沿用答案的报名：即选即得里还算数的那几种（申请中只出现在报名后
@@ -85,25 +92,37 @@ def periods_overlap(left: list[ShiftPeriod],
                for a in left for b in right)
 
 
-def time_conflicts(db: OrmSession, user: User,
-                   target: Shift) -> list[dict]:
-    """该用户有效报名中与 target 的时段重叠的记录（跨活动）。"""
-    return conflicts_among(active_rows(db, user), target)
-
-
 def conflicts_among(rows, target: Shift) -> list[dict]:
     """在 active_rows 查回来的报名里挑出与 target 的时段重叠的（本场次自己除外）。"""
-    out = []
-    for enr, g, act in rows:
-        if enr.shift_id == target.id:
-            continue
-        if periods_overlap(g.periods, target.periods):
-            out.append({
-                "enrollment_id": enr.id, "activity_id": act.id,
-                "activity_title": act.title, "shift_name": g.name,
-                "time": g.span_text(), "status": enr.status,
-            })
-    return out
+    return [conflict_row(enr, g, act) for enr, g, act in rows
+            if enr.shift_id != target.id
+            and periods_overlap(g.periods, target.periods)]
+
+
+def conflict_row(enr: Enrollment, g: Shift, act: Activity) -> dict:
+    """冲突列表里的一行：撞上的是哪个活动、哪一场、什么时候、什么状态。"""
+    return {"enrollment_id": enr.id, "activity_id": act.id,
+            "activity_title": act.title, "shift_name": g.name,
+            "time": g.span_text(), "status": enr.status}
+
+
+def same_activity_clashes(rows, target: Shift) -> list[dict]:
+    """在 active_rows 查回来的报名里挑出「同一活动、两个服务场次压在一起」的。
+
+    一个人在同一个活动里同一时间只能站一个岗位：岗位自带时段，两个时段重叠的
+    岗位都报上，现场必然有一个空着，签到、时长、名单全都对不上。所以这一类
+    重叠硬拦（见 same_activity_clash_error），不给「确认后仍要报」的余地。
+    培训/彩排不算——它附属于服务场次，跟服务场次压上是排期的事，由人判断；
+    「申请中」的意向也不算（见 HOLDING）。
+    """
+    if target.kind != "service":
+        return []
+    return [conflict_row(enr, g, act) for enr, g, act in rows
+            if enr.shift_id != target.id
+            and g.activity_id == target.activity_id
+            and g.kind == "service"
+            and enr.status in HOLDING
+            and periods_overlap(g.periods, target.periods)]
 
 
 # 冲突行末尾挂的状态：申请中、候补中、待确认转正各说各的。
@@ -223,14 +242,37 @@ def conflict_message(clashes: list[dict], activity_id: str = "") -> str:
 
 
 TIME_CONFLICT = "time_conflict"
+SAME_ACTIVITY_CLASH = "same_activity_clash"
 
 
 def conflict_error(message: str, clashes: list[dict]):
     """时段冲突的 409：前端认 code 弹确认框，列出 conflicts，确认后带
-    confirm_conflict 重发。冲突只提示不硬拦——同一时段两场都报、到时候请假
-    一场，是志愿者自己能拿主意的事。"""
+    confirm_conflict 重发。跨活动的冲突只提示不硬拦——同一时段两场都报、
+    到时候请假一场，是志愿者自己能拿主意的事。"""
     return HTTPException(409, {"code": TIME_CONFLICT, "message": message,
                                "conflicts": clashes})
+
+
+def same_activity_clash_error(clashes: list[dict], prefix: str = ""):
+    """同一活动内两个服务场次时段重叠的 409：硬拦，confirm_conflict 也不放行。
+
+    code 与 time_conflict 分开：前端按 code 决定弹不弹「仍要报名」的确认框，
+    这一类没有「仍要」可言，只把这句话原样显示出来。
+    prefix 写在句首（管理者补招、录取时写上是谁）。
+    """
+    names = "、".join(f"「{c['shift_name']}」" for c in clashes[:3])
+    return HTTPException(409, {
+        "code": SAME_ACTIVITY_CLASH,
+        "message": f"{prefix}与本活动已报的{names}时间重叠，"
+                   f"同一时间只能报一个岗位",
+        "conflicts": clashes})
+
+
+def block_same_activity(rows, target: Shift, prefix: str = "") -> None:
+    """同一活动里的服务场次时段重叠就抛 409，没有就什么也不做。"""
+    clashes = same_activity_clashes(rows, target)
+    if clashes:
+        raise same_activity_clash_error(dedupe_conflicts(clashes), prefix)
 
 
 def dedupe_conflicts(clashes: list[dict]) -> list[dict]:
@@ -425,11 +467,11 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
         whole_shift（报的是占位岗位）时按整场数，同 has_room；
       · 候补：waitlist_rows——waitlisted + pending_confirm，限本场次本岗位。
         待确认既占名额又在队列里，两边都算；
-      · 冲突：time_conflicts——本人 ACTIVE 的报名，时段与 targets 里任一场
+      · 冲突：conflicts_among——本人 ACTIVE 的报名，时段与 targets 里任一场
         （主场次和它的培训/彩排）的任一时段重叠，比某一场时不算那一场自己。
         这里只要「有没有」；真有的话调用方再走 active_rows 拼出详细的提示，
         那是少见的路径，常见路径省下一个往返。本人已确认冲突仍要报时，调用方
-        不看这一项。
+        仍要拿这一项去查同活动的硬拦（见 same_activity_clashes）。
     """
     live = Enrollment.status.in_(ACTIVE)
     mine = (Enrollment.shift_id == shift_id) & (Enrollment.user_id == user_id)

@@ -389,7 +389,8 @@ def apply(activity_id: str, body: ApplyBody,
 
     # 每个意向场次都要过一遍资格、岗位条件与时段冲突：资格不符就拦，时段冲突
     # 先提示，本人确认后再交。意向之间重叠不算——他只是说这几场都能来，
-    # 录取时管理者那边再看。
+    # 录取时管理者那边再看；跟本活动同时间的两个意向都勾上是「哪个都行」，
+    # 所以申请这一步不像报名那样硬拦同活动的重叠。
     # 先拿本人的用户锁再比时段：同一个人可能正同时在别的活动报名，不锁的话
     # 两边都看不见对方、各自落库（见 locks 的「用户锁」）。这条路不拿场次锁，
     # 锁顺序无从违反
@@ -648,14 +649,37 @@ def _accept_targets(db: OrmSession, rows: list[Enrollment],
     return out
 
 
-def _check_clash(db: OrmSession, act: Activity, u: User, rows: list[Enrollment],
+def _others(db: OrmSession, u: User, rows: list[Enrollment]) -> list[tuple]:
+    """他在库里的其他有效报名：这份申请自己的意向记录不算。
+
+    没选中的意向马上作废，选中的就是要录的这几场，拿它们跟自己比没有意义。
+    """
+    own = {e.id for e in rows}
+    return [r for r in logic.active_rows(db, u) if r[0].id not in own]
+
+
+def _block_same_activity(others: list[tuple],
+                         chosen: list[tuple[Enrollment, Shift, Pick]]) -> None:
+    """录到的场次与他在本活动已占的服务场次重叠：硬拦，确认也不放行。
+
+    已占的是正式报名、候补、候补转正待确认——同一时间只能站一个岗位，录进去
+    等于让他在两个地方签到。选中的几场彼此重叠是管理者当场的选择，仍由
+    _check_clash 提示后放行。
+    """
+    clashes = []
+    for _t, g, _p in chosen:
+        clashes += logic.same_activity_clashes(others, g)
+    if clashes:
+        raise logic.same_activity_clash_error(logic.dedupe_conflicts(clashes))
+
+
+def _check_clash(act: Activity, others: list[tuple],
                  chosen: list[tuple[Enrollment, Shift, Pick]]) -> None:
     """选中的几场之间、以及和他在库里其他有效报名之间，时段重叠就提示。
 
     申请时意向之间可以重叠（他只是说这几场都能来），录取时一个人同时在两个
     地方多半是选错了，所以先回「时段冲突」，管理者确认后（confirm_conflict）
-    照录。他这份申请自己的意向记录不跟库里比：没选中的马上作废，选中的就是
-    要录的这几场。
+    照录。
     """
     clashes, parts = [], []
     for i, (_ta, a, _pa) in enumerate(chosen):
@@ -666,8 +690,6 @@ def _check_clash(db: OrmSession, act: Activity, u: User, rows: list[Enrollment],
                 clashes.append({"enrollment_id": tb.id, "activity_id": act.id,
                                 "activity_title": act.title, "shift_name": b.name,
                                 "time": b.span_text(), "status": tb.status})
-    own = {e.id for e in rows}
-    others = [r for r in logic.active_rows(db, u) if r[0].id not in own]
     for _t, g, _p in chosen:
         hit = logic.conflicts_among(others, g)
         if hit:
@@ -683,8 +705,10 @@ def _accept_one(db: OrmSession, act: Activity, app: Application, u: User,
     """录取一个人：落库并返回（录到哪儿的说明, 通知正文）。录不了就抛 HTTPException，
     调用方回滚这一个人的保存点。"""
     chosen = _accept_targets(db, rows, picks)
+    others = _others(db, u, rows)
+    _block_same_activity(others, chosen)
     if not confirm:
-        _check_clash(db, act, u, rows, chosen)
+        _check_clash(act, others, chosen)
     lines, placed = [], []
     for target, g, pick in chosen:
         position = _accept_position(db, g, target, pick.position_id)
@@ -755,11 +779,13 @@ def decide(activity_id: str, body: DecideBody, bg: BackgroundTasks,
     岗位」的场次落到行里选的岗位（默认他勾的意向岗位），「截止后统一分配」的
     场次落到占位岗位上等一键分配。逐场判名额，哪一场不够只拦这个人；选中的
     几场彼此重叠、或与他别处的报名重叠，回「时段冲突」，管理者确认后带
-    confirm_conflict 重提。没选中的意向场次当场作废。
+    confirm_conflict 重提；录到的场次与他在本活动已占的服务场次重叠，回
+    「同活动时段重叠」（code=same_activity_clash）硬拦，确认也不放行。
+    没选中的意向场次当场作废。
     不录取：意向场次全部作废，通知一句留余地的话；档案里不留痕迹。
 
     返回 results：每人一条，成功的写录到哪儿，失败的写原因（时段冲突另带
-    code=time_conflict 与冲突列表）。
+    code=time_conflict / same_activity_clash 与冲突列表）。
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
