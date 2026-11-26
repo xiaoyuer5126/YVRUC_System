@@ -371,7 +371,7 @@ def constants(user: User = Depends(current_user)):
             "total_mb": config.MAX_PENDING_ATTACHMENT_BYTES // (1024 * 1024),
             # 按固定顺序列（见 ANSWER_FILE_ORDER），漏掉的排在后面
             "exts": ([e for e in ANSWER_FILE_ORDER if e in ANSWER_FILE_TYPES]
-                     + sorted(ANSWER_FILE_TYPES - set(ANSWER_FILE_ORDER))),
+                     + sorted(set(ANSWER_FILE_TYPES) - set(ANSWER_FILE_ORDER))),
         },
         # 活动管理里的 智能起草按钮：没配 key 就不出现
         "ai_enabled": ai.enabled(),
