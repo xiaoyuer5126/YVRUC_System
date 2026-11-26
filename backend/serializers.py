@@ -430,12 +430,16 @@ def _unassigned_count(db: OrmSession, g: Shift) -> int:
                     | (Enrollment.position_id == holder.id)).count()
 
 
-def _group_of(p: Position, positions: list[Position]) -> list[Position]:
-    """同组岗位（含自己）。口径同 enroll_logic.group_positions，只是在本场次
-    已加载的岗位里找，不必一个岗位查一次。"""
+def _group_of(p: Position, activity_positions: list[Position]) -> list[Position]:
+    """同组岗位（含自己）。口径同 enroll_logic.group_positions，只是在本活动
+    已加载的岗位里找，不必一个岗位查一次。
+
+    activity_positions 是本活动全部服务场次的真实岗位（按场次、岗位的 sort
+    排好）：组跨场次，只看本场次的岗位会把同一个组拆成几个。
+    """
     if not (p.group_name or "").strip():
         return [p]
-    return [x for x in positions if x.group_name == p.group_name]
+    return [x for x in activity_positions if x.group_name == p.group_name]
 
 
 def _position_public(p: Position, siblings: list[Position], occ: Occupancy,
@@ -550,7 +554,8 @@ def _attached_public(s: Shift, occ: Occupancy) -> dict:
     }
 
 
-def _shift_public(g: Shift, occ: Occupancy, n_materials: dict) -> dict:
+def _shift_public(g: Shift, occ: Occupancy, n_materials: dict,
+                  activity_positions: list[Position]) -> dict:
     positions = sorted(g.positions, key=lambda p: p.sort)
     capacity = g.total_capacity()
     holder = g.placeholder()
@@ -585,7 +590,7 @@ def _shift_public(g: Shift, occ: Occupancy, n_materials: dict) -> dict:
         "attached": [_attached_public(s, occ) for s in g.activity.trainings()
                      if applies_to_shift(s, g)],
         "note": g.note, "sort": g.sort,
-        "positions": [_position_public(p, _group_of(p, positions), occ,
+        "positions": [_position_public(p, _group_of(p, activity_positions), occ,
                                        n_materials.get(p.id, 0))
                       for p in positions],
         # 还没安排到真实岗位的人：待在占位岗位里的，加上岗位为空的
@@ -651,6 +656,11 @@ def _detail_public(db: OrmSession, act: Activity) -> dict:
     occ = Occupancy(db, act.id)
     n_materials = _material_counts(
         db, [p.id for g in act.shifts for p in g.positions])
+    # 岗位组跨场次（口径同 enroll_logic.group_positions）：本活动全部服务场次的
+    # 真实岗位排成一份，各岗位在这里面找同组的
+    group_pool = [p for g in sorted(act.main_shifts(), key=lambda x: x.sort)
+                  for p in sorted(g.positions, key=lambda x: x.sort)
+                  if not p.is_placeholder]
     out = _brief_public(act, {g.id: (occ.shift_enrolled(g.id),
                                      occ.shift_occupied(g.id), 0)
                               for g in act.shifts})
@@ -671,7 +681,7 @@ def _detail_public(db: OrmSession, act: Activity) -> dict:
         # 全部培训/彩排（挂在整个活动上）：管理端列一处，「按岗位看」按岗位挑；
         # 每个服务场次的 attached 里另有叫这一场的那几个
         "trainings": [_attached_public(s, occ) for s in act.trainings()],
-        "shifts": sorted([_shift_public(g, occ, n_materials)
+        "shifts": sorted([_shift_public(g, occ, n_materials, group_pool)
                           for g in act.main_shifts()],
                          key=lambda x: x["start_time"]),
     })
@@ -730,14 +740,21 @@ def _for_viewer(db: OrmSession, act: Activity, out: dict, user,
         atts = attachments_by_owner(db, "position", visible_pids)
         leaders = _leaders(db, act.id)
 
+    # 组名 → 组里各岗位的 id。组跨场次（口径同 enroll_logic.group_positions），
+    # 所以在整份名单里归并，不在单个场次里找
+    by_group: dict[str, list[str]] = {}
+    for g in out["shifts"]:
+        for p in g["positions"]:
+            name = (p["group_name"] or "").strip()
+            if name:
+                by_group.setdefault(name, []).append(p["id"])
+
     for g in out["shifts"]:
         my_enr = mine.get(g["id"])
         enrolled = my_enr is not None
         visible = enrolled or manager
         for p in g["positions"]:
-            group = ([p["id"]] if not (p["group_name"] or "").strip() else
-                     [x["id"] for x in g["positions"]
-                      if x["group_name"] == p["group_name"]])
+            group = by_group.get((p["group_name"] or "").strip()) or [p["id"]]
             leader = next((leaders[i] for i in group if i in leaders), None)
             # 组长联系方式只给**同组已正式报名**的人：现场要找得到组长，
             # 但候补和别的组的人拿他的手机号没有意义，只是多暴露一份个人信息。

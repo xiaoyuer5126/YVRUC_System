@@ -688,15 +688,23 @@ def unmet_recruit_scope(user: User, act) -> list[str]:
 def group_positions(db: OrmSession, position: Position) -> list[Position]:
     """与该岗位同组的全部岗位（含自己）。
 
-    组名相同即同组；没填组名的岗位自成一组。分组是为了让相邻岗位共用一名
-    组长——「东门片区」的引导、检录、医疗点现场本来就是一个人在协调。
+    **同一活动里**组名相同即同组，跨场次也算；没填组名的岗位自成一组，占位
+    岗位不进组。分组是为了让相邻岗位共用一名组长——「东门片区」的引导、检录、
+    医疗点现场本来就是一个人在协调，这些岗位各带自己的时段，不一定落在同一个
+    场次里，按场次分组就会给同一片区派出好几名组长。
     """
     if not (position.group_name or "").strip():
         return [position]
+    # 活动按 shift_id 取，不走 position.shift：新建岗位时对齐组长任务那一步，
+    # 这个对象还没进会话，关系取不到（见 staff_activities.create_position）
+    shift = db.get(Shift, position.shift_id)
     return (db.query(Position)
-            .filter(Position.shift_id == position.shift_id,
+            .join(Shift, Position.shift_id == Shift.id)
+            .filter(Shift.activity_id == shift.activity_id,
+                    Shift.kind == "service",
+                    Position.is_placeholder.is_(False),
                     Position.group_name == position.group_name)
-            .order_by(Position.sort).all())
+            .order_by(Shift.sort, Position.sort).all())
 
 
 def group_needs_leader(positions: list[Position]) -> bool:
@@ -729,13 +737,13 @@ def notify_leader_vacancy(db: OrmSession, position: Position) -> bool:
 
 
 def vacant_leader_label(db: OrmSession, position: Position) -> str:
-    """本组需要组长却没有组长时，返回通知里称呼它的「场次·组」；否则空串。"""
+    """本组需要组长却没有组长时，返回通知里称呼它的那一句；否则空串。"""
     positions = group_positions(db, position)
     if not group_needs_leader(positions):
         return ""
     if group_leader(db, position) is not None:
         return ""
-    return f"「{position.shift.name}·{leader_scope_label(positions, position)}」"
+    return f"「{leader_scope_label(positions, position)}」"
 
 
 def _send_leader_vacancy(db: OrmSession, shift: Shift, labels: list[str]) -> None:
@@ -773,9 +781,14 @@ def notify_shift_leader_vacancies(db: OrmSession, shift: Shift) -> int:
 
 
 def leader_scope_label(positions: list[Position], own: Position) -> str:
-    """通知里怎么称呼组长的管辖范围。"""
+    """通知里怎么称呼组长的管辖范围。
+
+    一个组的岗位可以分布在本活动的几个场次上，所以成了组就只写组名和组里的
+    岗位，不挂某一个场次的名字（挂上去只说对了其中一场）；不分组的岗位自成
+    一组，写「场次名·岗位名」才说得清是哪一场的哪个岗位。
+    """
     if len(positions) <= 1:
-        return own.name
+        return f"{own.shift.name}·{own.name}"
     names = "、".join(p.name for p in positions)
     return f"{positions[0].group_name}（{names}）"
 

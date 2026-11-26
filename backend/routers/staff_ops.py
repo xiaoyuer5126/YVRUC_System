@@ -474,6 +474,16 @@ class ReminderBody(BaseModel):
     need_ack: bool = False   # 要求志愿者点「我已知悉」，管理端能看到谁没回
 
 
+def _group_members(db: OrmSession, g: Shift, group_name: str) -> list[Position]:
+    """本活动里这个岗位组的全部岗位，口径同 enroll_logic.group_positions。"""
+    return (db.query(Position)
+            .join(Shift, Position.shift_id == Shift.id)
+            .filter(Shift.activity_id == g.activity_id,
+                    Shift.kind == "service",
+                    Position.is_placeholder.is_(False),
+                    Position.group_name == group_name).all())
+
+
 @router.post("/shifts/{shift_id}/checkin-reminder")
 def send_reminder(shift_id: str, body: ReminderBody | None = None,
                   db: OrmSession = Depends(db_session),
@@ -482,7 +492,9 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
 
     自动提醒在场次开始前 30 分钟发一次；这个按钮用于临时催场——
     只发给还没签到的正式志愿者，已经到岗的不再打扰。
-    可只催某几个岗位或某个岗位组：现场往往是「东门那三个人没到」。
+    可只催某几个岗位或某个岗位组：现场往往是「东门那三个人没到」。岗位组按
+    整个活动认（口径同 enroll_logic.group_positions），催到的仍只是本场次
+    这一段里没签到的人——别的场次的组员这会儿不在岗。
     勾选签收后，这一批会出现在活动的「待签收批次」里，能看到谁还没回。
     """
     g = db.get(Shift, shift_id)
@@ -494,9 +506,9 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
     body = body or ReminderBody()
     ids, scope = None, "全场次"
     if body.group_name.strip():
-        ids = [p.id for p in g.positions if p.group_name == body.group_name.strip()]
+        ids = [p.id for p in _group_members(db, g, body.group_name.strip())]
         if not ids:
-            raise HTTPException(400, f"本场次没有岗位组「{body.group_name}」")
+            raise HTTPException(400, f"本活动没有岗位组「{body.group_name}」")
         scope = f"岗位组「{body.group_name}」"
     elif body.position_ids:
         known = {p.id: p for p in g.positions}

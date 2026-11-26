@@ -186,9 +186,9 @@ def my_team(enrollment_id: str, db: OrmSession = Depends(db_session),
             user=Depends(current_user)):
     """组长看本组组员的联系方式。
 
-    范围是**同一岗位组**（组名相同的岗位共用一名组长），这正是组长的管辖
-    范围。这是把一批同学的手机号给另一个同学，所以每次查看都留痕——
-    志愿者侧看不到这条记录，出事时管理员查得到。
+    范围是**同一岗位组**（同一活动里组名相同的岗位共用一名组长，跨场次也算），
+    这正是组长的管辖范围。这是把一批同学的手机号给另一个同学，所以每次查看
+    都留痕——志愿者侧看不到这条记录，出事时管理员查得到。
     """
     from .. import enroll_logic as logic
     from ..audit import log as audit_log
@@ -222,8 +222,8 @@ def my_team(enrollment_id: str, db: OrmSession = Depends(db_session),
     audit_log(db, actor=user, action="view_team", target_type="enrollment",
               target_id=enr.id, target_label=user.name,
               activity_id=enr.activity_id,
-              summary=f"组长{user.name} 查看了「{shift.name}·"
-                      f"{logic.leader_scope_label(siblings, position)}」"
+              summary=f"组长{user.name} 查看了"
+                      f"「{logic.leader_scope_label(siblings, position)}」"
                       f"{len(members)} 位组员的联系方式")
     db.commit()
     return {"activity_title": act.title if act else "",

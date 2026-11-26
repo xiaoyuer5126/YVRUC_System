@@ -1506,7 +1506,7 @@
         <el-form-item label="岗位组">
           <el-input v-model="stationForm.group_name" style="width:220px"
                     maxlength="64" placeholder="如：东门片区（选填）" />
-          <div class="dim">岗位组共用一名组长，留空则本岗位自成一组</div>
+          <div class="dim">本活动里组名相同的岗位（跨场次也算）是一个组，共用一名组长；留空则本岗位自成一组</div>
         </el-form-item>
         <el-form-item label="志愿服装">
           <el-radio-group v-model="stationForm.attire">
@@ -1539,7 +1539,7 @@
           <el-input v-model="stationForm.leader_task" maxlength="256" show-word-limit
                     placeholder="组长要带队做什么：如 带队进场、清点人数、结束后对账" />
           <div v-if="stationForm.group_name?.trim()" class="dim">
-            一个岗位组共用一名组长，也共用这一份任务：保存时会同步到同组其他岗位
+            一个岗位组共用一名组长，也共用这一份任务：保存时会同步到本活动里同组的其他岗位
           </div>
         </el-form-item>
         <el-form-item label="条件要求">
