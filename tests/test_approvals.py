@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from backend.models import Activity, Department, User, now, uid
-from conftest import POSITION_TEXT, login, upload_proposal, upload_qr
+from conftest import login, mk_post, upload_proposal, upload_qr
 
 QINGXIE_HEAD = "2025004"        # 周砚，对外联络部部长
 COUNCIL = "2025003"             # 张远航，会长团
@@ -24,13 +24,7 @@ def _make_draft(client, admin, *, reg_start_in=timedelta(days=-1),
                           "reg_end": (now() + timedelta(days=5)).isoformat()})
     assert r.status_code == 200, r.text
     aid = r.json()["id"]
-    r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
-                    json={"name": "上午场", "mode": "pick",
-                          "periods": [{"start_time": (now() + timedelta(days=9)).isoformat(),
-                          "end_time": (now() + timedelta(days=9, hours=3)).isoformat()}]})
-    assert r.status_code == 200, r.text
-    r = client.post(f"/api/staff/shifts/{r.json()['id']}/positions", headers=admin,
-                    json={"name": "引导", "quota": 3, **POSITION_TEXT})
+    r = mk_post(client, admin, aid)
     assert r.status_code == 200, r.text
     # 这里的用例大多交给对外联络部（种子里唯一有部长的部门），它要立项书
     if proposal:

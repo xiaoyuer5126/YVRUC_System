@@ -314,6 +314,11 @@ def with_times(out: dict, t=None) -> dict:
             # 哪几场还收人，不拿客户端时钟去比截止时间（道理同 opens_in）
             g["closes_in_ms"] = max(0, math.floor(
                 (deadline - t).total_seconds() * 1000))
+            # 按岗位看时，每个岗位身上带的那份场次信息也要是此刻的状态
+            for p in g.get("positions") or []:
+                p["shift"].update({k: g[k] for k in
+                                   ("locked", "enroll_open", "started",
+                                    "closes_in_ms", "enroll_deadline")})
     return out
 
 
@@ -442,8 +447,32 @@ def _group_of(p: Position, activity_positions: list[Position]) -> list[Position]
     return [x for x in activity_positions if x.group_name == p.group_name]
 
 
-def _position_public(p: Position, siblings: list[Position], occ: Occupancy,
-                     n_materials: int) -> dict:
+def _position_shift(g: Shift) -> dict:
+    """岗位所属场次里跟这个岗位有关的那几项，按岗位看时要用。
+
+    普通岗位自带场次（一场一岗），这就是这个岗位自己的时段、计时方式、自动
+    锁定与暂停/锁定状态：管理端「按岗位」平铺时直接
+    `shifts.flatMap(g => g.positions)`，每个岗位身上就带齐了，不必再去场次
+    那一层对着 shift_id 找。此刻锁没锁、还收不收人这类随时间变的字段由
+    with_times 填进来。
+    """
+    return {
+        "id": g.id,
+        "periods": [p.out() for p in g.sorted_periods()],
+        "start_time": iso_of(g.start_time), "end_time": iso_of(g.end_time),
+        "time_text": g.span_text(),
+        "lock_hours": g.lock_hours, "lock_at": iso_of(lock_at(g)),
+        "list_locked": g.list_locked, "enroll_paused": g.enroll_paused,
+        "hours_mode": g.hours_mode, "hours_label": g.hours_label(),
+        "flexible_time": bool(g.flexible_time),
+        "note": g.note,
+        # 统一分配的场次才挂多个岗位；其余每个岗位各占一场（岗位自带时段）
+        "needs_assign": g.needs_assign(),
+    }
+
+
+def _position_public(p: Position, g: Shift, siblings: list[Position],
+                     occ: Occupancy, n_materials: int) -> dict:
     """岗位里人人都一样的部分。培训内容、材料列表、组长、能不能报见 _for_viewer。
 
     占位岗位的人数按整场数（同 enroll_logic.has_room）：它的名额就是这一场的
@@ -452,6 +481,9 @@ def _position_public(p: Position, siblings: list[Position], occ: Occupancy,
     whole = p.is_placeholder
     return {
         "id": p.id, "name": p.name,
+        "shift_id": p.shift_id,
+        # 岗位的时段、计时方式、暂停/锁定状态都在它所属的场次上
+        "shift": _position_shift(g),
         # 岗位没有独立时间：显示所属场次的时段
         "time_text": p.time_text(),
         "location": p.location, "quota": p.quota,
@@ -590,8 +622,8 @@ def _shift_public(g: Shift, occ: Occupancy, n_materials: dict,
         "attached": [_attached_public(s, occ) for s in g.activity.trainings()
                      if applies_to_shift(s, g)],
         "note": g.note, "sort": g.sort,
-        "positions": [_position_public(p, _group_of(p, activity_positions), occ,
-                                       n_materials.get(p.id, 0))
+        "positions": [_position_public(p, g, _group_of(p, activity_positions),
+                                       occ, n_materials.get(p.id, 0))
                       for p in positions],
         # 还没安排到真实岗位的人：待在占位岗位里的，加上岗位为空的
         # （岗位被删或管理员补录留下的）。管理者要当场看见这个缺口，

@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from conftest import editing, login, upload_qr
+from conftest import editing, login, mk_post, upload_qr
 
 
 def _visible_summaries(client, headers, activity_id):
@@ -53,12 +53,13 @@ def test_结构性变更仍然对志愿者公开(client, admin, db, enrolled_act
     """「谁动了我的岗位」是设计目标，不能因为收紧默认值把它一起关掉。"""
     act, shift, _u = enrolled_activity
     with editing(client, admin, act.id):
-        assert client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
+        assert client.patch(f"/api/staff/posts/{shift.positions[0].id}",
+                            headers=admin,
                             json={"note": "集合点改到北门"}).status_code == 200
 
     student = login(client, take_student())
     summaries = _visible_summaries(client, student, act.id)
-    assert any("修改场次" in s for s in summaries), summaries
+    assert any("修改岗位" in s for s in summaries), summaries
 
 
 def test_默认不公开(db):
@@ -79,7 +80,6 @@ def test_筹备期的改动不进志愿者的变更记录(client, admin, db, tak
     from datetime import timedelta
 
     from backend.models import Activity, now
-    from conftest import POSITION_TEXT
 
     r = client.post("/api/staff/activities", headers=admin,
                     json={"contact_group_qr": upload_qr(client, admin), "title": f"筹备期留痕 {now():%H%M%S%f}",
@@ -90,17 +90,10 @@ def test_筹备期的改动不进志愿者的变更记录(client, admin, db, tak
                           "reg_end": (now() + timedelta(days=2)).isoformat()})
     assert r.status_code == 200, r.text
     aid = r.json()["id"]
-    r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
-                    json={"name": "上午场", "mode": "pick",
-                          "periods": [{"start_time": (now() + timedelta(days=5)).isoformat(),
-                          "end_time": (now() + timedelta(days=5, hours=3)).isoformat()}]})
-    assert r.status_code == 200, r.text
-    gid = r.json()["id"]
-    r = client.post(f"/api/staff/shifts/{gid}/positions", headers=admin,
-                    json={"name": "引导岗", "quota": 3, **POSITION_TEXT})
+    r = mk_post(client, admin, aid, name="引导岗", quota=3, days=5)
     assert r.status_code == 200, r.text
     pid = r.json()["id"]
-    assert client.patch(f"/api/staff/positions/{pid}", headers=admin,
+    assert client.patch(f"/api/staff/posts/{pid}", headers=admin,
                         json={"quota": 5}).status_code == 200
 
     # 发布之前：这些留痕都在，但一条都不该对学生可见
@@ -115,7 +108,7 @@ def test_筹备期的改动不进志愿者的变更记录(client, admin, db, tak
     # 发布之后的改动才进得去
     assert client.post(f"/api/staff/activities/{aid}/edit-lock",
                        headers=admin).status_code == 200
-    assert client.patch(f"/api/staff/positions/{pid}", headers=admin,
+    assert client.patch(f"/api/staff/posts/{pid}", headers=admin,
                         json={"quota": 8}).status_code == 200
     got = _visible_summaries(client, t, aid)
     assert len(got) == 1 and "修改岗位「引导岗」" in got[0]

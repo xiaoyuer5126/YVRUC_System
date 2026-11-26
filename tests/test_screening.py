@@ -7,7 +7,7 @@ from urllib.parse import unquote
 from backend.models import (Activity, Application, Enrollment, Notification,
                             User, now)
 from conftest import set_shift_time, upload_qr
-from conftest import dl_url, login, student_row
+from conftest import dl_url, login, mk_post, student_row
 
 
 def _create_screened(client, admin, db, *, status="published", shifts=2):
@@ -59,24 +59,23 @@ def _holders(db, shift_ids):
     return [db.get(Shift, g).placeholder().id for g in shift_ids]
 
 
-def _pick_shift(client, admin, act_id, name="选岗场", *, days=6, positions=("引导", "登记")):
-    """给筛选活动加一个「报名即选岗位」的场次，返回 (场次 id, 岗位 id 列表)。"""
+def _pick_shift(client, admin, act_id, *, days=6, positions=("引导", "登记")):
+    """给筛选活动加几个普通岗位（岗位自带时段，这几个的时段相同）。
+
+    返回 (各岗位自己那一场的 id, 岗位 id)，两份列表一一对应。
+    """
     start = now() + timedelta(days=days)
-    r = client.post(f"/api/staff/activities/{act_id}/shifts", headers=admin,
-                    json={"name": name, "mode": "pick",
-                          "periods": [{"start_time": start.isoformat(),
-                          "end_time": (start + timedelta(hours=3)).isoformat()}]})
-    assert r.status_code == 200, r.text
-    gid = r.json()["id"]
-    pids = []
+    periods = [{"start_time": start.isoformat(),
+                "end_time": (start + timedelta(hours=3)).isoformat()}]
+    gids, pids = [], []
     for p in positions:
-        rp = client.post(f"/api/staff/shifts/{gid}/positions", headers=admin,
-                         json={"name": p, "quota": 2, "location": "东门",
-                               "service_task": "现场服务",
-                               "training_note": "到岗讲解"})
+        rp = mk_post(client, admin, act_id, name=p, quota=2, periods=periods,
+                     location="东门", service_task="现场服务",
+                     training_note="到岗讲解")
         assert rp.status_code == 200, rp.text
+        gids.append(rp.json()["shift_id"])
         pids.append(rp.json()["id"])
-    return gid, pids
+    return gids, pids
 
 
 def _placed(client, admin, act_id) -> dict[str, list[str]]:
@@ -90,17 +89,17 @@ def _placed(client, admin, act_id) -> dict[str, list[str]]:
 def test_筛选活动的两类场次都能用(client, admin, db):
     """统一分配的场次只勾场次；报名即选岗位的场次连岗位一起勾。"""
     act_id, ids, _q = _create_screened(client, admin, db, status="draft")
-    gid, _pids = _pick_shift(client, admin, act_id)
+    gids, _pids = _pick_shift(client, admin, act_id)
     d = client.get(f"/api/activities/{act_id}", headers=admin).json()
-    modes = {g["name"]: g["mode"] for g in d["shifts"]}
-    assert modes["第1场"] == "assign" and modes["选岗场"] == "pick"
+    modes = {g["id"]: g["mode"] for g in d["shifts"]}
+    assert modes[ids[0]] == "assign" and modes[gids[0]] == "pick"
     assert any(p["is_placeholder"]
                for g in d["shifts"] if g["id"] == ids[0] for p in g["positions"])
 
 
 def test_报名即选岗位的场次要连岗位一起勾(client, admin, db, take_student):
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    gid, pids = _pick_shift(client, admin, act_id)
+    gids, pids = _pick_shift(client, admin, act_id)
     db.get(Activity, act_id).status = "published"
     db.commit()
     t = login(client, take_student())
@@ -109,23 +108,26 @@ def test_报名即选岗位的场次要连岗位一起勾(client, admin, db, tak
                     json={"position_ids": [], "answers": _answers(q)})
     assert r.status_code == 400 and "意向岗位" in r.json()["detail"]
 
-    # 同一场次可以勾好几个岗位：意向不占名额，录取时管理者挑一个
+    # 几个岗位可以一起勾（哪个都行）：意向不占名额，录取时管理者挑一个。
+    # 岗位自带时段，所以一个岗位一条意向记录
     r = client.post(f"/api/activities/{act_id}/apply", headers=t,
                     json={"position_ids": [pids[1], pids[0]],
                           "answers": _answers(q)})
     assert r.status_code == 200, r.text
     mine = client.get(f"/api/activities/{act_id}", headers=t).json()["application"]["mine"]
-    assert mine["wanted"][0]["position_name"] == "登记、引导"
+    assert sorted(x["position_name"] for x in mine["wanted"]) == ["引导", "登记"]
     assert mine["wanted_positions"] == [pids[1], pids[0]]
 
     # 录取后就在他勾的那个岗位上，不用再分配
     lst = client.get(f"/api/staff/activities/{act_id}/applications", headers=admin).json()
-    assert lst["shifts"][0]["mode"] == "pick"
-    assert [p["name"] for p in lst["shifts"][0]["positions"]] == ["引导", "登记"]
-    # 岗位留空就是他自己勾的首选意向岗位；名单上也把它给出来当默认值
+    by_shift = {g["id"]: g for g in lst["shifts"]}
+    assert by_shift[gids[0]]["mode"] == "pick"
+    assert [p["name"] for p in by_shift[gids[0]]["positions"]] == ["引导"]
+    # 岗位留空就是他自己在这一场勾的意向岗位；名单上也把它给出来当默认值
     app = lst["applications"][0]
-    assert app["wanted"][0]["position_id"] == pids[1]
-    r = _decide(client, admin, act_id, app["id"], [{"shift_id": gid}])
+    wanted = {x["shift_id"]: x for x in app["wanted"]}
+    assert wanted[gids[1]]["position_id"] == pids[1]
+    r = _decide(client, admin, act_id, app["id"], [{"shift_id": gids[1]}])
     assert r.status_code == 200 and r.json()["results"][0]["ok"], r.text
     assert _placed(client, admin, act_id) == {app["id"]: ["登记"]}
 
@@ -136,21 +138,22 @@ def test_录取时逐人指定岗位(client, admin, db, take_student):
     第一人的岗位留空，落到他自己的意向岗位；第二人行内改了岗位，按改的录。
     """
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    gid, pids = _pick_shift(client, admin, act_id)       # 引导、登记
+    gids, pids = _pick_shift(client, admin, act_id)       # 引导、登记
     db.get(Activity, act_id).status = "published"
     db.commit()
-    for wish in (pids[1], pids[0]):
+    # 第一人只勾「登记」；第二人两个都勾（哪个都行）
+    for wish in ([pids[1]], [pids[0], pids[1]]):
         t = login(client, take_student())
         r = client.post(f"/api/activities/{act_id}/apply", headers=t,
-                        json={"position_ids": [wish], "answers": _answers(q)})
+                        json={"position_ids": wish, "answers": _answers(q)})
         assert r.status_code == 200, r.text
     apps = client.get(f"/api/staff/activities/{act_id}/applications",
                       headers=admin).json()["applications"]
     first, second = apps[0]["id"], apps[1]["id"]
     r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
                     json={"application_ids": [first, second], "accept": True,
-                          "picks": {first: [{"shift_id": gid}],
-                                    second: [{"shift_id": gid,
+                          "picks": {first: [{"shift_id": gids[1]}],
+                                    second: [{"shift_id": gids[1],
                                               "position_id": pids[1]}]}})
     assert r.status_code == 200, r.text
     assert r.json()["count"] == 2
@@ -162,19 +165,22 @@ def test_录取到不满足条件的岗位会留痕(client, admin, db, take_stud
     from backend.models import AuditLog, Position
 
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    gid, pids = _pick_shift(client, admin, act_id)
-    db.get(Position, pids[1]).requirement_tags = {"学院": ["不存在的学院"]}
+    gids, pids = _pick_shift(client, admin, act_id)
     db.get(Activity, act_id).status = "published"
     db.commit()
     t = login(client, take_student())
-    client.post(f"/api/activities/{act_id}/apply", headers=t,
-                json={"position_ids": [pids[0]],
-                      "answers": _answers(q)})
+    r = client.post(f"/api/activities/{act_id}/apply", headers=t,
+                    json={"position_ids": [pids[0], pids[1]],
+                          "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+    # 条件是申请之后才加上的：报名那一关会拦，录取这一关只提示
+    db.get(Position, pids[1]).requirement_tags = {"学院": ["不存在的学院"]}
+    db.commit()
     app_id = client.get(f"/api/staff/activities/{act_id}/applications",
                         headers=admin).json()["applications"][0]["id"]
     r = client.post(f"/api/staff/activities/{act_id}/applications/decide", headers=admin,
                     json={"application_ids": [app_id], "accept": True,
-                          "picks": {app_id: [{"shift_id": gid,
+                          "picks": {app_id: [{"shift_id": gids[1],
                                               "position_id": pids[1]}]}})
     assert r.status_code == 200, r.text
     row = (db.query(Enrollment)
@@ -243,7 +249,7 @@ def test_带显示条件的必填题_发到填表页由页面实时决定露出(
     连题都没见过。露出与否交给页面按作答实时判（见 QuestionFields.vue）。
     """
     act_id, _ids, _q = _create_screened(client, admin, db, status="draft", shifts=0)
-    _gid, pids = _pick_shift(client, admin, act_id)
+    _gids, pids = _pick_shift(client, admin, act_id)
     base = client.get(f"/api/staff/activities/{act_id}/form", headers=admin).json()
     yes_no = base["questions"][0]        # 单选：参加过吗
     r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
@@ -281,7 +287,7 @@ def test_带显示条件的必填题_发到填表页由页面实时决定露出(
 def test_题目按适用岗位出现(client, admin, db, take_student):
     """挂了适用岗位的题，只问选了那个岗位的人：没选就不出现、不校验、不存。"""
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    gid, pids = _pick_shift(client, admin, act_id)
+    _gids, pids = _pick_shift(client, admin, act_id)
     only_for_first = {"kind": "text", "title": "有无扩音器使用经验",
                       "required": True, "options": [],
                       "applies_to_positions": [pids[0]]}
@@ -348,13 +354,13 @@ def test_出题不能挂待分配占位岗位(client, admin, db):
     """占位岗位迟早会被删（开放选岗、切回「报名即选岗位」都删它），
     题目挂上去就是给以后埋一个悬空的 id：出题下拉不给它，保存时也拦下来。"""
     act_id, ids, q = _create_screened(client, admin, db, status="draft", shifts=1)
-    gid, pids = _pick_shift(client, admin, act_id)
+    gids, pids = _pick_shift(client, admin, act_id)
     holder = _holders(db, ids)[0]
 
     base = client.get(f"/api/staff/activities/{act_id}/form", headers=admin).json()
     by_shift = {g["id"]: [p["id"] for p in g["positions"]] for g in base["shifts"]}
     assert by_shift[ids[0]] == [], "统一分配的场次只列真实岗位，占位岗位不出现"
-    assert by_shift[gid] == pids
+    assert [by_shift[g] for g in gids] == [[p] for p in pids]
 
     r = _save_form(client, admin, act_id, q,
                    {"kind": "text", "title": "只在待分配的人答", "required": False,
@@ -370,7 +376,7 @@ def test_出题不能挂待分配占位岗位(client, admin, db):
 
 def test_挂真实岗位的题目只问那个岗位的人(client, admin, db, take_student):
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    _gid, pids = _pick_shift(client, admin, act_id)
+    _gids, pids = _pick_shift(client, admin, act_id)
     extra = {"kind": "text", "title": "有无扩音器使用经验",
              "applies_to_positions": [pids[0]]}
     r = _save_form(client, admin, act_id, q, extra)
@@ -409,8 +415,8 @@ def test_发布后删岗位题目的适用岗位跟着修剪(client, admin, db, 
     """发布后问卷改不了，删岗位不能要求先改题：直接删，题目的「适用岗位」里拿掉
     这个岗位。它是唯一的一个时，这道题对谁都不显示，不会变成人人都答。"""
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    _gid, pids = _pick_shift(client, admin, act_id,
-                             positions=("引导", "登记", "医疗点"))
+    _gids, pids = _pick_shift(client, admin, act_id,
+                              positions=("引导", "登记", "医疗点"))
     r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
                    json={"questions": _form_with(q, {
                        "kind": "text", "title": "引导或登记的人答",
@@ -428,7 +434,7 @@ def test_发布后删岗位题目的适用岗位跟着修剪(client, admin, db, 
     assert _save_form(client, admin, act_id, q,
                       {"kind": "text", "title": "x"}).status_code == 409
 
-    r = client.delete(f"/api/staff/positions/{pids[0]}", headers=admin)
+    r = client.delete(f"/api/staff/posts/{pids[0]}", headers=admin)
     assert r.status_code == 200, r.text
     form = client.get(f"/api/staff/activities/{act_id}/form", headers=admin).json()
     by_id = {x["id"]: x for x in form["questions"]}
@@ -450,8 +456,8 @@ def test_适用岗位被删的题目拦下重选_对谁都不展示(client, admi
     from backend.models import Position
 
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    _gid, pids = _pick_shift(client, admin, act_id,
-                             positions=("引导", "登记", "医疗点"))
+    _gids, pids = _pick_shift(client, admin, act_id,
+                              positions=("引导", "登记", "医疗点"))
     extra = {"kind": "text", "title": "只问医疗点", "required": True,
              "applies_to_positions": [pids[2]]}
     r = _save_form(client, admin, act_id, q, extra)
@@ -522,7 +528,7 @@ def test_申请也带调剂意愿_默认接受(client, admin, db, take_student):
     """申请表单新增的勾选（默认勾上）：传 false 就存 false，不传按接受——
     和即选即得报名同一个字段，排班时用来提示与留痕。"""
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    _gid, pids = _pick_shift(client, admin, act_id)
+    _gids, pids = _pick_shift(client, admin, act_id)
     db.get(Activity, act_id).status = "published"
     db.commit()
 
@@ -760,18 +766,19 @@ def _accept_note(db, user_id):
 def test_一份申请录到多个场次_没选中的意向作废(client, admin, db, take_student):
     from backend.models import Shift
     act_id, ids, q = _create_screened(client, admin, db, status="draft", shifts=3)
-    gid, pids = _pick_shift(client, admin, act_id)
+    gids, pids = _pick_shift(client, admin, act_id)
+    gid = gids[1]
     db.get(Activity, act_id).status = "published"
     db.commit()
     sid = take_student()
     r = client.post(f"/api/activities/{act_id}/apply", headers=login(client, sid),
-                    json={"position_ids": _holders(db, ids) + [pids[0]],
+                    json={"position_ids": _holders(db, ids) + [pids[1]],
                           "answers": _answers(q)})
     assert r.status_code == 200, r.text
     app_id = client.get(f"/api/staff/activities/{act_id}/applications",
                         headers=admin).json()["applications"][0]["id"]
 
-    # 统一分配的第 1 场 + 选岗场（改到「登记」），其余两场意向作废
+    # 统一分配的第 1 场 + 岗位「登记」，其余两场意向作废
     r = _decide(client, admin, act_id, app_id,
                 [{"shift_id": ids[0]}, {"shift_id": gid, "position_id": pids[1]}])
     assert _one(r)["ok"]
@@ -1017,7 +1024,7 @@ def test_申请过就不能再传报名文件(client, admin, db, take_student):
 def test_复制活动带报名问卷不带联络群(client, admin, db):
     """题目里指着岗位和前一道题的地方，复制后要指向新活动自己的那份。"""
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    gid, pids = _pick_shift(client, admin, act_id)
+    _gids, pids = _pick_shift(client, admin, act_id)
     r = client.put(f"/api/staff/activities/{act_id}/form", headers=admin,
                    json={"questions": [
                        {"kind": "single", "title": "参加过吗", "options": ["是", "否"]},
@@ -1435,7 +1442,7 @@ def test_题目按适用校区学段出现(client, admin, db, take_student):
     """挂了适用校区/学段的题只问对得上的人：对不上的看不到，必填也不用答，
     答了也不存；与适用岗位同时满足才问。"""
     act_id, _ids, q = _create_screened(client, admin, db, status="draft", shifts=0)
-    gid, pids = _pick_shift(client, admin, act_id)
+    _gids, pids = _pick_shift(client, admin, act_id)
     form = client.get(f"/api/staff/activities/{act_id}/form", headers=admin).json()
     assert "苏州校区" in form["campuses"] and "博士研究生" in form["stages"]
 

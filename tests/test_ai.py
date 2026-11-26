@@ -11,7 +11,7 @@ import pytest
 
 from backend import ai, ai_files, config, locks
 from backend.models import Activity
-from conftest import POSITION_TEXT, login, make_draft
+from conftest import login, make_draft, mk_post
 
 
 class _Resp:
@@ -117,14 +117,15 @@ def test_场次草稿_岗位字段收拾好(client, admin, db, model):
         "name": "开幕式当天",
         "periods": [{"start_time": "2026-10-18 07:30", "end_time": "不知道"}],
         "location": "世纪馆北门",                      # 服务场次没有地点字段：丢掉
-        # 场次上只收校区、学段；学段全选 = 不限
-        "requirement_tags": {"校区": ["中关村校区"], "学段": config.STAGES, "性别": ["男"]},
+        "requirement_tags": {"校区": ["中关村校区"]},   # 条件全在岗位上：丢掉
         "positions": [
             {"name": "检录引导", "quota": "6", "service_task": "引导运动员检录",
              "attire": "issued", "attire_note": "",            # 发服装却没说怎么领：按不需要放
              "needs_leader": "yes",                             # 不是 true 就当 false
              "pay_optional": True, "pay_note": "",              # 说可选劳务却没写标准：按只记时长放
-             "requirement_tags": {"性别": "女", "学院": ["文学院"], "校区": ["中关村校区"]}},
+             # 学院不在草稿收的条件里：丢掉；学段全选 = 不限
+             "requirement_tags": {"性别": "女", "学院": ["文学院"],
+                                  "校区": ["中关村校区"], "学段": config.STAGES}},
             {"name": "", "quota": 0, "service_task": "",
              "pay_optional": True, "pay_note": "100 元/天，活动后统一发放"},
         ]}], "notes": []}, ensure_ascii=False)))
@@ -136,19 +137,20 @@ def test_场次草稿_岗位字段收拾好(client, admin, db, model):
     # 开始认出来了、结束没认出来：留半截让人补，不替它猜钟点
     assert g["periods"] == [{"start_time": "2026-10-18T07:30", "end_time": ""}]
     assert "location" not in g, "服务场次不带地点：地点在岗位与活动上"
-    assert g["requirement_tags"] == {"校区": ["中关村校区"]} and g["attached"] == []
+    assert "requirement_tags" not in g, "条件在岗位上：这一组只管时段"
+    assert g["attached"] == []
     p1, p2 = g["positions"]
     assert p1["quota"] == 6 and p1["attire"] == "none" and p1["needs_leader"] is False
     assert p1["pay_optional"] is False and p1["pay_note"] == ""
-    # 岗位上只收性别：校区、学段手建时也只能设在场次上
-    assert p1["requirement_tags"] == {"性别": ["女"]}
+    # 岗位自带时段，条件也都收在岗位上：性别、校区、学段
+    assert p1["requirement_tags"] == {"性别": ["女"], "校区": ["中关村校区"]}
     assert p2["name"] == "志愿者" and p2["quota"] == 1 and p2["service_task"] == ""
     assert p2["pay_optional"] is True and p2["pay_note"] == "100 元/天，活动后统一发放"
     assert r.json()["notes"] == ["还需要自己补上：「开幕式当天」的时段起止时间、岗位「志愿者」的服务任务"]
     # 活动信息与已有场次带给了模型
     title = db.get(Activity, aid).title
     assert title in calls[0]["body"]["messages"][0]["content"]
-    assert "上午场" in calls[0]["body"]["messages"][0]["content"]
+    assert "已经建好的岗位与场次" in calls[0]["body"]["messages"][0]["content"]
 
 
 def test_场次草稿_组长任务跟组长一起读(client, admin, db, model):
@@ -225,14 +227,12 @@ def test_问卷草稿_不写原文也行_岗位名对回岗位(client, admin, db
     aid = make_draft(client, admin)
     act = db.get(Activity, aid)
     first = next(p for g in act.main_shifts() for p in g.positions)       # 上午场「引导」
-    g2 = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
-                     json={"name": "下午场", "mode": "pick",
-                           "periods": [{"start_time": "2026-12-01 13:00",
-                                        "end_time": "2026-12-01 17:00"}]}).json()["id"]
-    second = client.post(f"/api/staff/shifts/{g2}/positions", headers=admin,
-                         json={"name": "引导", "quota": 2, **POSITION_TEXT}).json()["id"]
-    trans = client.post(f"/api/staff/shifts/{g2}/positions", headers=admin,
-                        json={"name": "翻译", "quota": 1, **POSITION_TEXT}).json()["id"]
+    afternoon = [{"start_time": "2026-12-01 13:00",
+                  "end_time": "2026-12-01 17:00"}]
+    second = mk_post(client, admin, aid, name="引导", quota=2,
+                     periods=afternoon).json()["id"]
+    trans = mk_post(client, admin, aid, name="翻译", quota=1,
+                    periods=afternoon).json()["id"]
     replies.append((200, json.dumps({"questions": [
         {"kind": "single", "title": "参加过类似活动吗", "options": ["是", "否", "是"],
          "required": True, "positions": []},
@@ -256,7 +256,8 @@ def test_问卷草稿_不写原文也行_岗位名对回岗位(client, admin, db
     assert sorted(q3["applies_to_positions"]) == sorted([first.id, second])
     assert q4["kind"] == "text"
     prompt = calls[0]["body"]["messages"][0]["content"]
-    assert "报名即录取" in prompt and "- 翻译（下午场，1 人）" in prompt
+    assert "报名即录取" in prompt
+    assert "- 翻译（2026-12-01（周二）13:00-17:00，1 人）" in prompt
     assert "不要再出题问" in prompt
     # 草稿原样就能保存：前端把它加进题目列表，管理者点保存走的是这个接口
     r = client.put(f"/api/staff/activities/{aid}/form", headers=admin, json={"questions": [

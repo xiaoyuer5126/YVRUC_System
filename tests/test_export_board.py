@@ -179,7 +179,7 @@ def test_关掉组长开关会清掉组长标记(client, admin, db, enrolled_act
     assert len(_leaders(client, admin, shift, pos)) == 1
 
     with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                          json={"needs_leader": False})
         assert r.status_code == 200
     assert _leaders(client, admin, shift, pos) == []

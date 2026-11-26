@@ -1,28 +1,26 @@
-<!-- 智能起草场次与岗位：草稿放在可改的预览里，管理者改好、点「按草稿新建」才
-     逐个调新建场次 / 新建岗位的接口——校验、审计和手建的一样。培训、彩排也是
-     新建场次（挂在整个活动上），等它服务的那个场次的岗位建好了再建，好把要来
-     的岗位对上；原文说「这一场的人都来」的，就圈上这一场的全部岗位。
-     只新建、不碰已有的场次岗位。中途某一个被后端拦下就停在那儿：已建好的从
-     预览里划掉，改好剩下的再点一次接着建。 -->
+<!-- 智能起草岗位：草稿放在可改的预览里，管理者改好、点「按草稿新建」才逐条调
+     新建岗位的接口——校验、审计和手建的一样。岗位自带时段，时段相同的岗位在
+     草稿里归成一组，一组里的每条岗位都用这一组的时段与自动锁定。
+     培训、彩排挂在整个活动上，等它服务的那几条岗位建好了再建，好把要来的岗位
+     对上；原文说「这一组的人都来」的，就圈上这一组建出来的全部岗位。
+     只新建、不碰已有的岗位。中途某一条被后端拦下就停在那儿：已建好的从预览里
+     划掉，改好剩下的再点一次接着建。 -->
 <template>
-  <AiAssist ref="assist" title="智能起草场次岗位" :run="run"
+  <AiAssist ref="assist" title="智能起草岗位" :run="run"
             placeholder="把排班安排、立项书里的人员分工贴在这里，如：10 月 18 日 7:30-12:00，检录引导 6 人、颁奖礼仪 4 人（女生）；10 月 16 日晚 7 点全体彩排……"
-            hint="根据材料起草场次（时间安排，可以含多段服务时间）和岗位（这些时段里的分工与名额），培训、彩排会挂在对应场次下。增量新建，不改已有的场次和岗位。">
+            hint="根据材料起草岗位：一条岗位带自己的服务时段（可以多段）、名额与分工，时段相同的岗位归成一组；培训、彩排挂到对应岗位上。增量新建，不改已有的岗位。">
     <template #preview>
-      <el-empty v-if="!draft.length" description="原文里没找到能用的场次安排" />
-      <div v-for="(g, gi) in draft" :key="gi" class="ai-shift">
+      <el-empty v-if="!draft.length" description="原文里没找到能用的岗位安排" />
+      <div v-for="(g, gi) in draft" :key="gi" class="ai-group">
         <div class="ai-head">
-          <el-input v-model="g.name" placeholder="场次名" style="flex:1 1 160px" />
-          <el-button link type="danger" @click="draft.splice(gi, 1)">删掉这个场次</el-button>
+          <b style="flex:1 1 160px">{{ g.name }}</b>
+          <el-button link type="danger" @click="draft.splice(gi, 1)">删掉这一组</el-button>
         </div>
-        <PeriodEditor v-model="g.periods" />
+        <PeriodEditor v-model="g.periods" :tip="GROUP_TIP" />
         <div class="ai-head">
           <span class="dim">开场前</span>
           <el-input-number v-model="g.lock_hours" :min="0" :max="72" style="width:120px" />
           <span class="dim">小时锁定名单（0 = 不自动锁定）</span>
-        </div>
-        <div v-if="tagText(g.requirement_tags)" class="dim">
-          场次条件：{{ tagText(g.requirement_tags) }}
         </div>
         <div v-for="(p, pi) in g.positions" :key="p.key" class="ai-pos">
           <div class="ai-head">
@@ -36,8 +34,8 @@
                     :class="{ missing: !p.service_task.trim() }" />
           <div v-if="extras(p)" class="dim pre">{{ extras(p) }}</div>
         </div>
-        <div v-if="!g.positions.length" class="dim">这个场次没有岗位，建好后再手动加</div>
-        <!-- 培训、彩排：挂在这个场次下，等它的岗位建好再建，好把「哪些岗位要来」对上 -->
+        <div v-if="!g.positions.length" class="dim">这一组没有岗位，不会新建任何东西</div>
+        <!-- 培训、彩排：等这一组的岗位建好再建，好把「哪些岗位要来」对上 -->
         <div v-for="(a, ti) in g.attached" :key="'a' + ti" class="ai-pos">
           <div class="ai-head">
             <el-select v-model="a.kind" style="width:88px">
@@ -54,9 +52,9 @@
     </template>
     <template #footer="{ close }">
       <el-button @click="close">先不用</el-button>
-      <el-button type="primary" :disabled="!draft.length" :loading="creating"
-                 @click="create(close)">
-        按草稿新建 {{ draft.length }} 个场次、{{ positionCount }} 个岗位{{
+      <el-button type="primary" :disabled="!positionCount && !attachedCount"
+                 :loading="creating" @click="create(close)">
+        按草稿新建 {{ positionCount }} 条岗位{{
           attachedCount ? `、${attachedCount} 场培训/彩排` : '' }}
       </el-button>
     </template>
@@ -77,6 +75,9 @@ const emit = defineEmits(['created'])
 const assist = ref(null)
 const draft = ref([])          // 可改的草稿：起草结果拷一份进来，预览里直接改它
 const creating = ref(false)
+// 一组里的岗位共用这一组的时段：填的时候就要说清楚「每段都要来」
+const GROUP_TIP = '这一组里的每条岗位都用下面的时段，'
+  + '报名的人每个时段都要来；时段不一样的岗位分在别的组里。'
 const positionCount = computed(() => draft.value.reduce((n, g) => n + g.positions.length, 0))
 const attachedCount = computed(() => draft.value.reduce((n, g) => n + g.attached.length, 0))
 
@@ -119,7 +120,8 @@ const HOURS = { fixed: '固定计时', checkin: '扫码计时', none: '不计时
 function attachedText(g, a) {
   const names = a.keys.map(k => posName(g, k)).filter(Boolean)
   return [
-    `需参加：${names.length ? names.join('、') : a.keys.length ? '（岗位都删掉了）' : '本场次所有人'}`,
+    `需参加：${names.length ? names.join('、')
+      : a.keys.length ? '（岗位都删掉了）' : '这一组的全部岗位'}`,
     `时长：${HOURS[a.hours_mode]}`,
     a.location && `地点：${a.location}`,
     a.note && `备注：${a.note}`,
@@ -141,7 +143,6 @@ function badPeriods(list) {
 /** 建之前先在前端过一遍：后端照样会查，但建到一半才被拦，前面那几个已经落库了 */
 function problem() {
   for (const g of draft.value) {
-    if (!g.name.trim()) return '有场次没写名字'
     const bad = badPeriods(g.periods)
     if (bad) return `「${g.name}」：${bad}`
     for (const p of g.positions) {
@@ -166,31 +167,25 @@ async function create(close) {
   const err = problem()
   if (err) return ElMessage.warning(err)
   creating.value = true
-  let shifts = 0
   let positions = 0
   let attached = 0
   try {
     while (draft.value.length) {
       const g = draft.value[0]
-      // 场次建过了（上一次停在它的岗位上）就跳过，接着建剩下的
-      if (!g.createdId) {
-        g.createdId = (await api.post(`/api/staff/activities/${props.activityId}/shifts`, {
-          name: g.name.trim(), periods: g.periods,
-          mode: 'pick', requirement_tags: g.requirement_tags, lock_hours: g.lock_hours,
-        })).id
-        shifts += 1
-      }
       while (g.positions.length) {
         const { name, key, ...rest } = g.positions[0]
-        const { id } = await api.post(`/api/staff/shifts/${g.createdId}/positions`,
-                                      { ...rest, name: name.trim() })
+        // 岗位自带时段：这一组的时段与自动锁定跟着每条岗位一起建
+        const { id } = await api.post(
+          `/api/staff/activities/${props.activityId}/posts`,
+          { ...rest, name: name.trim(), periods: g.periods,
+            lock_hours: g.lock_hours })
         g.done[key] = { id, name: name.trim() }
         g.positions.shift()
         positions += 1
       }
       while (g.attached.length) {
         const { keys, ...a } = g.attached[0]
-        // 圈空了在活动一级是「全体」，原文的意思是「这一场的人」：圈上这一场的全部岗位
+        // 圈空了在活动一级是「全体」，原文的意思是「这一组的人」：圈上这一组的全部岗位
         const ids = (keys.length ? keys.map(k => g.done[k]?.id)
                                  : Object.values(g.done).map(x => x.id)).filter(Boolean)
         await api.post(`/api/staff/activities/${props.activityId}/shifts`, {
@@ -201,7 +196,7 @@ async function create(close) {
       }
       draft.value.shift()
     }
-    ElMessage.success(`已新建 ${shifts} 个场次、${positions} 个岗位`
+    ElMessage.success(`已新建 ${positions} 条岗位`
                       + (attached ? `、${attached} 场培训/彩排` : '') + '，请逐个核对')
     close()
     assist.value.reset()
@@ -209,13 +204,13 @@ async function create(close) {
     // 后端的提示 api 层已经弹过；建好的已从预览里划掉，改好剩下的再点一次
   } finally {
     creating.value = false
-    if (shifts || positions || attached) emit('created')
+    if (positions || attached) emit('created')
   }
 }
 </script>
 
 <style scoped>
-.ai-shift { border: 1px solid #eceef1; border-radius: 4px; padding: 12px;
+.ai-group { border: 1px solid #eceef1; border-radius: 4px; padding: 12px;
             margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 .ai-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ai-head .el-button { margin-left: auto; }

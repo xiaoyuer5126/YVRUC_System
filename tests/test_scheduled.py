@@ -106,10 +106,10 @@ def test_截止时提醒管理者排岗_统一分配还没建岗位(client, db, 
 def test_截止时提醒管理者排岗_岗位建了人没分完(client, admin, db, open_group,
                                                take_student):
     """场次里已有真岗位，但报名的人还在占位岗位上——最常见的漏排。"""
-    act, g = open_group(5)               # 先按 pick 建好一个真岗位
-    with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
-                         json={"mode": "assign", "capacity": 5})
+    act, g = open_group(5, mode="assign")
+    with editing(client, admin, act.id):     # 建一个分配用的真岗位
+        r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
+                        json={"name": "分拣", "quota": 5, **POSITION_TEXT})
         assert r.status_code == 200, r.text
     r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
                     headers=login(client, take_student()), json={})

@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from backend.models import Enrollment, Position, Shift, now, uid
+from backend.models import (AuditLog, Enrollment, Position, Shift, now, uid)
 from conftest import mk_shift
-from conftest import POSITION_TEXT, inbox, login
+from conftest import POSITION_TEXT, inbox, login, mk_post
 
 
 def _enroll(client, act, g, sid, pid=None):
@@ -64,7 +64,7 @@ def _raise_quota(client, admin, act, g, quota):
     """管理者加名额：进编辑态、改岗位、保存并发布。返回发布接口的结果。"""
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    r = client.patch(f"/api/staff/positions/{g.test_position_id}", headers=admin,
+    r = client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
                      json={"quota": quota})
     assert r.status_code == 200, r.text
     r = client.post(f"/api/staff/activities/{act.id}/publish-changes", headers=admin)
@@ -108,7 +108,8 @@ def test_过了锁定点手动解锁后不会被自动锁回去(client, admin, d
     # 只改了场次名：不碰锁定状态
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin, json={"name": "改个名"})
+    r = client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
+                     json={"name": "改个名"})
     assert r.status_code == 200, r.text
     client.post(f"/api/staff/activities/{act.id}/publish-changes", headers=admin)
     assert _enroll(client, act, g, take_student()).status_code == 200
@@ -119,34 +120,37 @@ def test_改N后锁定点已过的立即锁定_已锁的改小不自动解锁(cl
     act, g = open_group(3, day_offset=0, start_in_hours=20, lock_hours=12)
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin, json={"lock_hours": 24})
+    r = client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
+                     json={"lock_hours": 24})
     assert r.status_code == 200, r.text
     db.expire_all()
     from backend.enroll_logic import shift_locked
     assert shift_locked(db.get(Shift, g.id))
 
     # 已经锁上的，把 N 改小（锁定点挪到将来）也不会自己解开
-    r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin, json={"lock_hours": 2})
+    r = client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
+                     json={"lock_hours": 2})
     assert r.status_code == 200, r.text
     db.expire_all()
     assert shift_locked(db.get(Shift, g.id))
 
-    r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin, json={"lock_hours": 73})
+    r = client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
+                     json={"lock_hours": 73})
     assert r.status_code == 400
 
 
-def test_新建场次带N_超出范围拒绝(client, admin, db, open_group):
+def test_新建岗位带N_超出范围拒绝(client, admin, db, open_group):
     act, g = open_group(3)
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    body = {"name": "晚场",
-            "periods": [{"start_time": (g.start_time + timedelta(days=1)).isoformat(),
-            "end_time": (g.end_time + timedelta(days=1)).isoformat()}], "lock_hours": 30}
-    r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin, json=body)
+    periods = [{"start_time": (g.start_time + timedelta(days=1)).isoformat(),
+                "end_time": (g.end_time + timedelta(days=1)).isoformat()}]
+    r = mk_post(client, admin, act.id, name="晚场", periods=periods,
+                lock_hours=30)
     assert r.status_code == 200, r.text
-    assert db.get(Shift, r.json()["id"]).lock_hours == 30
-    r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
-                    json={**body, "lock_hours": 80})
+    assert db.get(Shift, r.json()["shift_id"]).lock_hours == 30
+    r = mk_post(client, admin, act.id, name="晚场", periods=periods,
+                lock_hours=80)
     assert r.status_code == 422
 
 
@@ -460,8 +464,10 @@ def test_发布时补位排不上锁_汇总照发并提示(client, admin, db, op
     assert _enroll(client, act, g, take_student()).json()["status"] == "waitlisted"
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    assert client.patch(f"/api/staff/positions/{g.test_position_id}", headers=admin,
+    assert client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
                         json={"quota": 2}).status_code == 200
+    db.expire_all()
+    post_name = db.get(Position, g.test_position_id).name
 
     def busy(*_a, **_k):
         raise _busy()
@@ -469,7 +475,8 @@ def test_发布时补位排不上锁_汇总照发并提示(client, admin, db, op
     monkeypatch.setattr(staff_activities, "shift_lock", busy)
     r = client.post(f"/api/staff/activities/{act.id}/publish-changes", headers=admin)
     assert r.status_code == 200, r.text
-    assert r.json()["promoted"] == 0 and r.json()["busy"] == [g.name]
+    # 跳过的那一场就是这个岗位：场次名与岗位名一致，提示里报的是岗位名
+    assert r.json()["promoted"] == 0 and r.json()["busy"] == [post_name]
     db.expire_all()
     u = db.query(User).filter(User.student_id == first).one()
     assert db.query(Notification).filter(
@@ -525,3 +532,110 @@ def test_待确认期间名额不会被别人抢走(client, db, open_group, take
     assert _cancel(client, taker, enr_id).json()["effect"] == "released"
     assert _status(db, wl_id) == "pending_confirm"
     assert _enroll(client, act, g, take_student()).json()["status"] == "waitlisted"
+
+
+# ======================= 一键暂停 / 一键锁定 =======================
+
+def _second_post(db, act, g, *, quota=1, **fields):
+    """同一个活动里的第二个普通岗位：自带时段，跟第一个错开一天。"""
+    g2 = mk_shift(id=uid("g"), activity_id=act.id, name="第二个岗位",
+                  start_time=g.start_time + timedelta(days=1),
+                  end_time=g.end_time + timedelta(days=1), mode="pick", sort=1)
+    db.add(g2)
+    db.flush()
+    p = Position(id=uid("p"), shift_id=g2.id, name="第二个岗位", quota=quota,
+                 waitlist_quota=3, sort=0, **POSITION_TEXT, **fields)
+    db.add(p)
+    db.commit()
+    g2.test_position_id = p.id
+    return g2
+
+
+def _fill_one(client, act, g, take_student):
+    """这一场报满 + 排一个候补：返回 (占位的人, 他的报名 id, 候补的报名 id)。"""
+    taker = take_student()
+    enr = _enroll(client, act, g, taker).json()
+    assert enr["status"] == "enrolled", enr
+    wl = _enroll(client, act, g, take_student()).json()
+    assert wl["status"] == "waitlisted", wl
+    return taker, enr["enrollment_id"], wl["enrollment_id"]
+
+
+def _all(client, admin, act, path, body):
+    r = client.post(f"/api/staff/activities/{act.id}/{path}", headers=admin,
+                    json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_一键暂停全部岗位_恢复时逐场补齐(client, admin, db, open_group,
+                                        take_student):
+    """调整活动时一个一个点既慢又容易漏，漏掉的那个还在收人。"""
+    act, g = open_group(1)
+    g2 = _second_post(db, act, g)
+    att = mk_shift(id=uid("g"), activity_id=act.id, name="彩排", kind="rehearsal",
+                   start_time=g.start_time, end_time=g.end_time, sort=2)
+    db.add(att)
+    db.commit()
+    a1, e1, w1 = _fill_one(client, act, g, take_student)
+    a2, e2, w2 = _fill_one(client, act, g2, take_student)
+
+    d = _all(client, admin, act, "pause-all", {"paused": True})
+    # 彩排不在内：它跟着服务场次走，自己不招人
+    assert (d["paused"], d["shifts"], d["promoted"]) == (True, 2, 0)
+    db.expire_all()
+    assert [db.get(Shift, x.id).enroll_paused for x in (g, g2, att)] == \
+        [True, True, False]
+    for x in (g, g2):
+        assert _enroll(client, act, x, take_student()).status_code == 409
+    _cancel(client, a1, e1)
+    _cancel(client, a2, e2)
+    assert _status(db, w1) == "waitlisted" and _status(db, w2) == "waitlisted"
+
+    d = _all(client, admin, act, "pause-all", {"paused": False})
+    assert (d["promoted"], d["hint"]) == (2, "")
+    assert _status(db, w1) == "pending_confirm"
+    assert _status(db, w2) == "pending_confirm"
+    # 一次操作一条汇总留痕，挂在活动上
+    log = (db.query(AuditLog)
+           .filter(AuditLog.target_id == act.id, AuditLog.action == "update")
+           .order_by(AuditLog.created_at.desc()).first())
+    assert log.summary == "恢复全部岗位的报名（2 个），递补 2 人"
+
+
+def test_一键锁定全部岗位_解锁时逐场补齐(client, admin, db, open_group,
+                                        take_student):
+    act, g = open_group(1)
+    g2 = _second_post(db, act, g)
+    a1, e1, w1 = _fill_one(client, act, g, take_student)
+    a2, e2, w2 = _fill_one(client, act, g2, take_student)
+
+    d = _all(client, admin, act, "lock-all", {"locked": True})
+    assert (d["locked"], d["shifts"]) == (True, 2)
+    db.expire_all()
+    assert [db.get(Shift, x.id).list_locked for x in (g, g2)] == [True, True]
+    for x in (g, g2):
+        r = _enroll(client, act, x, take_student())
+        assert r.status_code == 409 and "名单已锁定" in r.json()["detail"]
+    # 锁定后退出照记，候补不顶上
+    assert _cancel(client, a1, e1).json()["effect"] == "locked"
+    assert _cancel(client, a2, e2).json()["effect"] == "locked"
+    assert _status(db, w1) == "waitlisted" and _status(db, w2) == "waitlisted"
+
+    d = _all(client, admin, act, "lock-all", {"locked": False})
+    assert (d["promoted"], d["hint"]) == (2, "")
+    assert _status(db, w1) == "pending_confirm"
+    assert _status(db, w2) == "pending_confirm"
+
+
+def test_一键锁定缺组长的几个组合成一条提醒(client, admin, db, open_group,
+                                          take_student):
+    """发给管理者的活动通知一律一个活动一条，锁两场不发两条。"""
+    act, g = open_group(2, needs_leader=True)
+    g2 = _second_post(db, act, g, quota=2, needs_leader=True)
+    _enroll(client, act, g, take_student())
+    _enroll(client, act, g2, take_student())
+    _all(client, admin, act, "lock-all", {"locked": True})
+    msgs = inbox(db, "2025001", f"[组长空缺] {act.title}")
+    assert len(msgs) == 1
+    assert "测试岗位" in msgs[0].content and "第二个岗位" in msgs[0].content

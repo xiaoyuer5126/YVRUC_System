@@ -128,7 +128,7 @@ def test_管理者改完学生立刻看到(client, admin, open_group, take_stude
     assert [a["total_capacity"] for a in listed] == [3]
 
     with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{g.test_position_id}",
+        r = client.patch(f"/api/staff/posts/{g.test_position_id}",
                          headers=admin, json={"name": "检录岗", "quota": 5})
         assert r.status_code == 200, r.text
         # 编辑冻结本身也要立刻看到：报名按钮得跟着停

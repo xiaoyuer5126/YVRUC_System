@@ -59,8 +59,7 @@ def test_排完班开放选岗_之后按岗位名额自选(client, admin, db, pu
     # 第三个人报了又退：「待分配」上留下一条历史记录
     assert client.delete(f"/api/activities/enrollments/{ids[2]}",
                          headers=toks[2]).status_code == 200
-    a = _position(client, admin, aid, g, "甲", 2)
-    b = _position(client, admin, aid, g, "乙", 1)
+    a = _position(client, admin, aid, g, "甲", 3)
     assert client.post(f"/api/staff/shifts/{g.id}/assign/apply", headers=admin,
                        json={"plan": [{"enrollment_id": i, "position_id": a}
                                       for i in ids[:2]]}).status_code == 200
@@ -70,7 +69,8 @@ def test_排完班开放选岗_之后按岗位名额自选(client, admin, db, pu
 
     sh = client.get(f"/api/activities/{aid}", headers=admin).json()["shifts"][0]
     assert sh["mode"] == "pick"
-    assert sorted(p["id"] for p in sh["positions"]) == sorted([a, b]), "待分配删掉了"
+    assert [p["id"] for p in sh["positions"]] == [a], "待分配删掉了"
+    assert sh["name"] == "甲", "场次名跟岗位名对齐"
     db.expire_all()
     assert db.get(Position, holder_id) is None
     assert db.get(Enrollment, ids[2]).status == "cancelled", "历史记录还在"
@@ -84,11 +84,21 @@ def test_排完班开放选岗_之后按岗位名额自选(client, admin, db, pu
     t = login(client, take_student())
     r = _enroll(client, aid, g, t)
     assert r.status_code == 400 and "请选择具体岗位" in r.json()["detail"]
-    # 乙空着一个位子；甲 2/2 满了，再报进候补
-    r = _enroll(client, aid, g, t, position_id=b)
+    # 甲还空着一个位子，第三个位子给了他；再来的人进候补
+    r = _enroll(client, aid, g, t, position_id=a)
     assert r.status_code == 200 and r.json()["status"] == "enrolled", r.text
     r = _enroll(client, aid, g, login(client, take_student()), position_id=a)
     assert r.status_code == 200 and r.json()["status"] == "waitlisted", r.text
+
+
+def test_挂着几个岗位的统一分配场次不开放选岗(client, admin, published):
+    """开放选岗等于把这一场变成一个普通岗位（岗位自带时段），
+    几个岗位共用一份时段与名单是上一套模型，不再允许。"""
+    aid, g = published
+    _position(client, admin, aid, g, "甲", 2)
+    _position(client, admin, aid, g, "乙", 1)
+    r = _open(client, admin, g)
+    assert r.status_code == 409 and "共用一份时段" in r.json()["detail"]
 
 
 def test_判完之后才报进来的待筛选报名不被清掉(client, admin, db, published,
@@ -181,8 +191,7 @@ def test_圈着待分配的题换成圈这一场的岗位(client, admin, db, pub
     db.add_all([mine, other])
     db.commit()
     a = _position(client, admin, aid, g, "甲", 2)
-    b = _position(client, admin, aid, g, "乙", 1)
     assert _open(client, admin, g).status_code == 200
     db.expire_all()
-    assert sorted(db.get(FormQuestion, mine.id).applies_to_positions) == sorted([a, b])
+    assert db.get(FormQuestion, mine.id).applies_to_positions == [a]
     assert db.get(FormQuestion, other.id).applies_to_positions == ["p_elsewhere"]

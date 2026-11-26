@@ -12,7 +12,7 @@ import pytest
 from backend.deps import TRAINEE_ALLOWED_WRITES
 from backend.routers import all_routers
 from backend.models import Activity, ActivityManager, Department, User, now, uid
-from conftest import ADMIN, POSITION_TEXT, dl_url, login, student_row, upload_qr
+from conftest import ADMIN, dl_url, login, mk_post, student_row, upload_qr
 
 COUNCIL, HEAD, CORE, MEMBER = "2025003", "2025004", "2025005", "2025006"
 
@@ -37,14 +37,9 @@ def dept_activity(client, db):
                           "reg_end": (now() + timedelta(days=5)).isoformat()})
     assert r.status_code == 200, r.text
     aid = r.json()["id"]
-    g = client.post(f"/api/staff/activities/{aid}/shifts", headers=head,
-                    json={"name": "上午场", "mode": "pick",
-                          "periods": [{"start_time": (now() + timedelta(days=9)).isoformat(),
-                          "end_time": (now() + timedelta(days=9, hours=3)).isoformat()}]}
-                    ).json()["id"]
-    client.post(f"/api/staff/shifts/{g}/positions", headers=head,
-                json={"name": "引导", "quota": 3, **POSITION_TEXT})
-    return aid, g
+    r = mk_post(client, head, aid)
+    assert r.status_code == 200, r.text
+    return aid, r.json()["shift_id"]
 
 
 # ======================= 部门成员：学习权限 =======================

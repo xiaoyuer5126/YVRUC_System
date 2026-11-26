@@ -192,10 +192,10 @@ def test_统一发放或自备都必须写服装备注(client, admin, db, open_g
     act, g = open_group(2)
     pos_id = g.test_position_id
     with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{pos_id}", headers=admin,
                          json={"attire": "issued"})
         assert r.status_code == 400 and "服装备注" in r.json()["detail"]
-        r = client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{pos_id}", headers=admin,
                          json={"attire": "own", "attire_note": "白色上衣"})
         assert r.status_code == 200, r.text
     d = client.get(f"/api/activities/{act.id}", headers=admin).json()

@@ -11,7 +11,7 @@ from backend.main import app
 from backend.models import Enrollment, Position, Shift, now, uid
 from conftest import set_shift_time
 from conftest import mk_shift
-from conftest import POSITION_TEXT, editing, login, student_row
+from conftest import POSITION_TEXT, editing, login, mk_post, student_row
 
 
 def enroll(client, headers, act, g, **body):
@@ -269,15 +269,13 @@ def test_allow_reassign_recorded(client, open_group, take_student):
 
 def test_quota_zero_is_rejected(client, admin, open_group):
     """0 人的岗位没有意义，也不能被当成「不限人数」。"""
-    act, g = open_group(5)
+    act, _g = open_group(5)
     with editing(client, admin, act.id):
-        r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
-                        json={"name": "零名额", "quota": 0, **POSITION_TEXT})
+        r = mk_post(client, admin, act.id, name="零名额", quota=0, days=402)
         assert r.status_code == 422
         assert [e["loc"][-1] for e in r.json()["detail"]] == ["quota"]
         # 对照：同一个请求只把名额改成 1 就能建，拦下的确实是 0 这个数
-        r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
-                        json={"name": "一个名额", "quota": 1, **POSITION_TEXT})
+        r = mk_post(client, admin, act.id, name="一个名额", quota=1, days=402)
         assert r.status_code == 200, r.text
 
 
@@ -292,28 +290,35 @@ def test_assign_shift_requires_capacity(client, admin, open_group):
         assert r.status_code == 400 and "人数上限" in r.json()["detail"]
 
 
-def test_候补名次按岗位算而不是按场次(client, db, open_group, take_student):
+def test_候补名次按岗位算(client, db, open_group, take_student):
     """排在自己岗位第一位的人，不该因为别的岗位排了人就被说成第三位。"""
     act, g = open_group(1)
     p1_id = g.test_position_id
-    p2 = Position(id=uid("p"), shift_id=g.id, name="第二岗位",
-                  quota=1, waitlist_quota=3, sort=1, **POSITION_TEXT)
+    # 第二个岗位自带时段（一岗一场），时间排在第一个岗位之后
+    g2 = mk_shift(id=uid("g"), activity_id=act.id, name="第二岗位",
+                  start_time=g.end_time + timedelta(hours=1),
+                  end_time=g.end_time + timedelta(hours=4),
+                  mode="pick", sort=1)
+    db.add(g2)
+    db.flush()
+    p2 = Position(id=uid("p"), shift_id=g2.id, name="第二岗位",
+                  quota=1, waitlist_quota=3, sort=0, **POSITION_TEXT)
     db.add(p2)
     db.commit()
-    p2_id = p2.id
+    p2_id, g2_id = p2.id, g2.id
 
-    def go(position_id):
+    def go(shift_id, position_id):
         t = login(client, take_student())
-        r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+        r = client.post(f"/api/activities/{act.id}/shifts/{shift_id}/enroll",
                         headers=t, json={"position_id": position_id})
         assert r.status_code == 200, r.text
         return r.json()
 
-    assert go(p1_id)["status"] == "enrolled"      # 占满 p1
-    assert go(p2_id)["status"] == "enrolled"      # 占满 p2
-    go(p1_id); go(p1_id)                            # p1 排两个候补
+    assert go(g.id, p1_id)["status"] == "enrolled"      # 占满 p1
+    assert go(g2_id, p2_id)["status"] == "enrolled"     # 占满 p2
+    go(g.id, p1_id); go(g.id, p1_id)                    # p1 排两个候补
 
-    third = go(p2_id)                               # p2 的第一个候补
+    third = go(g2_id, p2_id)                            # p2 的第一个候补
     assert third["status"] == "waitlisted"
     assert third["waitlist_position"] == 1
 

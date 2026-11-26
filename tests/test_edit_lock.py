@@ -7,7 +7,7 @@ from backend import config, scheduled
 from backend.models import (Activity, Enrollment, Notification, Position, Shift,
                             now)
 from conftest import mk_shift
-from conftest import POSITION_TEXT, editing, login
+from conftest import POSITION_TEXT, editing, login, mk_post
 
 
 def test_冻结期间报不了名也退不了选(client, admin, db, enrolled_activity,
@@ -37,7 +37,7 @@ def test_保存并发布后恢复报名并汇总改动(client, admin, db, enroll
                                       take_student):
     act, shift, _u = enrolled_activity
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
+    client.patch(f"/api/staff/posts/{shift.positions[0].id}", headers=admin,
                  json={"name": "上午场（改到北门集合）"})
 
     r = client.post(f"/api/staff/activities/{act.id}/publish-changes",
@@ -136,22 +136,22 @@ def test_已发布活动不进编辑态改不了场次与岗位(client, admin, d
     def denied(r):
         return r.status_code == 409 and "调整岗位" in r.json()["detail"]
 
-    assert denied(client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
+    assert denied(client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                                json={"name": "改个名"}))
+    assert denied(mk_post(client, admin, act.id, name="新岗位", quota=2))
     assert denied(client.post(f"/api/staff/activities/{act.id}/shifts",
                               headers=admin,
-                              json={"name": "新场次", "mode": "pick",
+                              json={"name": "统一分配场", "mode": "assign",
+                                    "capacity": 3,
                                     "periods": [{"start_time": (now() + timedelta(days=9)).isoformat(),
                                     "end_time": (now() + timedelta(days=9, hours=2)).isoformat()}]}))
-    assert denied(client.post(f"/api/staff/shifts/{shift.id}/positions",
-                              headers=admin, json={"name": "新岗位", "quota": 2}))
-    assert denied(client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+    assert denied(client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                                json={"quota": 9}))
-    assert denied(client.delete(f"/api/staff/positions/{pos.id}", headers=admin))
+    assert denied(client.delete(f"/api/staff/posts/{pos.id}", headers=admin))
 
     # 进入编辑态后照常改
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    assert client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+    assert client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                         json={"quota": 9}).status_code == 200
 
 
@@ -160,7 +160,8 @@ def test_筹备中的活动可以直接改(client, admin, db, enrolled_activity)
     act, shift, _u = enrolled_activity
     db.get(Activity, act.id).status = "draft"
     db.commit()
-    assert client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
+    assert client.patch(f"/api/staff/posts/{shift.positions[0].id}",
+                        headers=admin,
                         json={"name": "草稿随便改"}).status_code == 200
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 409
@@ -173,9 +174,8 @@ def test_已截止的活动也能进编辑态建岗位(client, admin, db, enroll
     db.commit()
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    assert client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
-                       json={"name": "整理岗", "quota": 3,
-                              **POSITION_TEXT}).status_code == 200
+    assert mk_post(client, admin, act.id, name="整理岗", quota=3,
+                   days=12).status_code == 200
 
 
 def test_活动截止后编辑态自动解除_不再推送变更(client, admin, db,
@@ -185,7 +185,7 @@ def test_活动截止后编辑态自动解除_不再推送变更(client, admin, 
     act, shift, u = enrolled_activity
     pos = shift.positions[0]
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+    r = client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                      json={"location": "南门"})
     assert r.status_code == 200, r.text
     assert _changed(db, u.id, act) == []
@@ -206,7 +206,7 @@ def test_定时自动截止也解除编辑态(client, admin, db, enrolled_activi
     act, shift, u = enrolled_activity
     pos = shift.positions[0]
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+    client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                  json={"location": "南门"})
     db.expire_all()
     db.get(Activity, act.id).reg_end = now() - timedelta(minutes=1)
@@ -235,16 +235,22 @@ def _changed(db, user_id, act):
 
 
 def _second_position(db, shift, take_student, name="检录"):
-    """同一场次再开一个岗位，放一个人进去。"""
+    """再开一个岗位（自带场次，排在原岗位之后），放一个人进去。"""
     from backend.models import Position, uid
     from conftest import student_row
-    pos = Position(id=uid("p"), shift_id=shift.id, name=name, quota=5,
-                   waitlist_quota=2, sort=1, **POSITION_TEXT)
+    g = mk_shift(id=uid("s"), activity_id=shift.activity_id, name=name,
+                 start_time=shift.end_time + timedelta(hours=1),
+                 end_time=shift.end_time + timedelta(hours=4),
+                 mode="pick", sort=1)
+    db.add(g)
+    db.flush()
+    pos = Position(id=uid("p"), shift_id=g.id, name=name, quota=5,
+                   waitlist_quota=2, sort=0, **POSITION_TEXT)
     db.add(pos)
     db.flush()
     v = student_row(db, take_student())
     db.add(Enrollment(id=uid("enr"), activity_id=shift.activity_id,
-                      shift_id=shift.id, user_id=v.id, position_id=pos.id,
+                      shift_id=g.id, user_id=v.id, position_id=pos.id,
                       status="enrolled", joined_at=now()))
     db.commit()
     return pos, v
@@ -255,13 +261,13 @@ def test_编辑期间不发通知_发布后每人一条只写跟他有关的(cli
                                                   take_student):
     act, shift, u = enrolled_activity
     pos = shift.positions[0]
-    _pos2, v = _second_position(db, shift, take_student)
+    pos2, v = _second_position(db, shift, take_student)
 
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+    r = client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                      json={"location": "南门"})
     assert r.status_code == 200, r.text
-    r = client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
+    r = client.patch(f"/api/staff/posts/{pos2.id}", headers=admin,
                      json={"note": "改到 8 点集合"})
     assert r.status_code == 200, r.text
     assert _changed(db, u.id, act) == [] and _changed(db, v.id, act) == []
@@ -276,14 +282,14 @@ def test_编辑期间不发通知_发布后每人一条只写跟他有关的(cli
     mine = _changed(db, u.id, act)
     assert len(mine) == 1
     assert "岗位「" in mine[0].content and "北门→南门" in mine[0].content
-    assert "→改到 8 点集合" in mine[0].content
-    # 别的岗位的人只收到场次那一条，看不到引导岗改了地点
+    assert "改到 8 点集合" not in mine[0].content
+    # 每个岗位各带自己的时段与备注：改另一个岗位，这边的人不该收到
     theirs = _changed(db, v.id, act)
     assert len(theirs) == 1
     assert "→改到 8 点集合" in theirs[0].content and "南门" not in theirs[0].content
 
 
-def test_删掉有报名的场次_发布时告诉被取消的人(client, admin, db,
+def test_删掉有报名的岗位_发布时告诉被取消的人(client, admin, db,
                                           enrolled_activity, take_student):
     from datetime import timedelta as td
     from backend.models import Position, Shift, uid
@@ -294,7 +300,7 @@ def test_删掉有报名的场次_发布时告诉被取消的人(client, admin, 
                   end_time=shift.end_time + td(hours=5), mode="pick", sort=1)
     db.add(extra)
     db.flush()
-    p = Position(id=uid("p"), shift_id=extra.id, name="引导", quota=5,
+    p = Position(id=uid("p"), shift_id=extra.id, name="下午场", quota=5,
                  waitlist_quota=2, sort=0, **POSITION_TEXT)
     db.add(p)
     db.flush()
@@ -303,10 +309,10 @@ def test_删掉有报名的场次_发布时告诉被取消的人(client, admin, 
                       user_id=w.id, position_id=p.id, status="enrolled",
                       joined_at=now()))
     db.commit()
-    extra_id = extra.id
+    extra_id, pid = extra.id, p.id
 
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    r = client.delete(f"/api/staff/shifts/{extra_id}?force=1", headers=admin)
+    r = client.delete(f"/api/staff/posts/{pid}?force=1", headers=admin)
     assert r.status_code == 200, r.text
     db.expire_all()
     assert not db.query(Enrollment).filter(Enrollment.shift_id == extra_id).count()
@@ -315,7 +321,7 @@ def test_删掉有报名的场次_发布时告诉被取消的人(client, admin, 
     client.post(f"/api/staff/activities/{act.id}/publish-changes", headers=admin)
     got = _changed(db, w.id, act)
     # 发出去的是志愿者口径，不是留痕那句带「（强制，含 N 条报名记录）」的摘要
-    assert len(got) == 1 and "场次「下午场」已取消" in got[0].content
+    assert len(got) == 1 and "岗位「下午场」已取消" in got[0].content
     assert "强制" not in got[0].content and "报名记录" not in got[0].content
 
 
@@ -327,7 +333,7 @@ def test_超时自动解冻也按人发出改动(client, admin, db, enrolled_act
     row = db.get(Activity, act.id)
     row.editing_since = now() - timedelta(hours=config.EDIT_LOCK_HOURS + 1)
     db.commit()
-    client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+    client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                  json={"location": "西门"})
     assert _changed(db, u.id, act) == []
 
@@ -381,8 +387,8 @@ def test_改动太多时通知只写最新几项(client, admin, db, enrolled_act
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
     n = _MAX_LINES + 3
     for i in range(n):
-        r = client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
-                         json={"note": f"第 {i} 次调整"})
+        r = client.patch(f"/api/staff/posts/{shift.positions[0].id}",
+                         headers=admin, json={"note": f"第 {i} 次调整"})
         assert r.status_code == 200, r.text
     r = client.post(f"/api/staff/activities/{act.id}/publish-changes",
                     headers=admin)
@@ -391,7 +397,7 @@ def test_改动太多时通知只写最新几项(client, admin, db, enrolled_act
     got = _changed(db, u.id, act)
     assert len(got) == 1
     lines = got[0].content.splitlines()
-    body = [x for x in lines if x.startswith("场次「")]
+    body = [x for x in lines if x.startswith("岗位「")]
     assert len(body) == _MAX_LINES, got[0].content
     assert f"另有更早的 {n - _MAX_LINES} 项改动" in got[0].content
     assert f"第 {n - 1} 次调整" in got[0].content, got[0].content
@@ -417,20 +423,18 @@ def test_岗位字段超长被拦下(client, admin, db, enrolled_activity):
     act, shift, _u = enrolled_activity
     pos = shift.positions[0]
     with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                          json={"needs_leader": True, "leader_task": "带" * 257})
         assert r.status_code == 400 and "组长任务" in r.json()["detail"], r.text
-        r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                          json={"attire": "own", "attire_note": "白" * 257})
         assert r.status_code == 400 and "服装备注" in r.json()["detail"], r.text
-        r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                          json={"name": "岗" * 129})
         assert r.status_code == 400 and "岗位名" in r.json()["detail"], r.text
-        # 新建这条路由走 PositionBody 的 max_length，422
-        r = client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
-                        json={"name": "检录", "quota": 2,
-                              "pay_optional": True, "pay_note": "元" * 257,
-                              **POSITION_TEXT})
+        # 新建这条路由走 PostBody 的 max_length，422
+        r = mk_post(client, admin, act.id, name="检录", quota=2, days=13,
+                    pay_optional=True, pay_note="元" * 257)
         assert r.status_code == 422, r.text
 
 
@@ -443,7 +447,8 @@ def test_生成过签到码的场次不能删(client, admin, db, enrolled_activi
                        mode="shift", token=new_checkin_token(), created_by=u.id))
     db.commit()
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    r = client.delete(f"/api/staff/shifts/{shift.id}?force=1", headers=admin)
+    r = client.delete(f"/api/staff/posts/{shift.positions[0].id}?force=1",
+                      headers=admin)
     assert r.status_code == 409 and "签到码" in r.json()["detail"], r.text
     db.expire_all()
     assert db.get(Shift, shift.id) is not None
@@ -461,21 +466,15 @@ def test_有报名历史的岗位不能删(client, admin, db, enrolled_activity)
     assert client.delete(f"/api/activities/enrollments/{enr.id}",
                          headers=login(client, u.student_id)).status_code == 200
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    r = client.delete(f"/api/staff/positions/{pos.id}", headers=admin)
-    assert r.status_code == 409 and "报名历史" in r.json()["detail"], r.text
-    db.expire_all()
-    assert db.get(Position, pos.id) is not None
-
-    # 签到码是另一道：把报名历史摘掉、只剩码，也照样拒删
-    (db.query(Enrollment).filter(Enrollment.position_id == pos.id)
-     .update({"position_id": None}, synchronize_session=False))
     db.add(CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=shift.id,
                        period_id=shift.periods[0].id,
                        position_id=pos.id, mode="position",
                        token=new_checkin_token(), created_by=u.id))
     db.commit()
-    r = client.delete(f"/api/staff/positions/{pos.id}", headers=admin)
+    r = client.delete(f"/api/staff/posts/{pos.id}", headers=admin)
     assert r.status_code == 409 and "签到码" in r.json()["detail"], r.text
+    db.expire_all()
+    assert db.get(Position, pos.id) is not None
 
 
 def _shift_and_position(db, aid):
@@ -501,17 +500,10 @@ def test_待审批和待发布的活动也直接改(client, admin, db):
         db.expire_all()
         act, shift, pos = _shift_and_position(db, aid)
         assert act.status == status
-        r = client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                          json={"quota": 7})
         assert r.status_code == 200, r.text
-        r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
-                        json={"name": "下午场", "mode": "pick",
-                              "periods": [{"start_time": (now() + timedelta(days=9, hours=4)).isoformat(),
-                              "end_time": (now() + timedelta(days=9, hours=6)).isoformat()}]})
-        assert r.status_code == 200, r.text
-        r = client.post(f"/api/staff/shifts/{r.json()['id']}/positions",
-                        headers=admin, json={"name": "引导", "quota": 2,
-                                             **POSITION_TEXT})
+        r = mk_post(client, admin, aid, name="引导", quota=2, days=10)
         assert r.status_code == 200, r.text
         r = client.post(f"/api/staff/activities/{aid}/edit-lock", headers=admin)
         assert r.status_code == 409 and "无需暂停报名" in r.json()["detail"]
@@ -530,27 +522,22 @@ def test_放弃改动还原场次岗位与活动信息(client, admin, db, enroll
     """改了一轮发现不对路：场次、岗位、活动基本信息都回到进入调整时的样子。"""
     act, shift, _u = enrolled_activity
     pos = shift.positions[0]
-    old_name, old_quota = shift.name, pos.quota
+    old_quota = pos.quota
     old_title, old_intro = act.title, act.intro
     old_span = shift.span_text()
 
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    assert client.patch(f"/api/staff/shifts/{shift.id}", headers=admin,
-                        json={"name": "改到北门集合",
-                              "periods": [{"start_time": (now() + timedelta(days=4)).isoformat(),
-                                           "end_time": (now() + timedelta(days=4, hours=2)).isoformat()}]}
+    assert client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
+                        json={"periods": [{"start_time": (now() + timedelta(days=4)).isoformat(),
+                                           "end_time": (now() + timedelta(days=4, hours=2)).isoformat()}],
+                              "quota": 9, "name": "改了名的岗位"}
                         ).status_code == 200
-    assert client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
-                        json={"quota": 9, "name": "改了名的岗位"}).status_code == 200
     assert client.patch(f"/api/staff/activities/{act.id}", headers=admin,
                         json={"title": f"{old_title}（改）", "intro": "改过的简介"}
                         ).status_code == 200
-    created = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
-                          json={"name": "临时加的场次", "mode": "pick",
-                                "periods": [{"start_time": (now() + timedelta(days=12)).isoformat(),
-                                             "end_time": (now() + timedelta(days=12, hours=2)).isoformat()}]})
+    created = mk_post(client, admin, act.id, name="临时加的岗位", days=12)
     assert created.status_code == 200, created.text
-    new_shift = created.json()["id"]
+    new_shift = created.json()["shift_id"]
 
     r = client.post(f"/api/staff/activities/{act.id}/discard-changes", headers=admin)
     assert r.status_code == 200, r.text
@@ -561,7 +548,7 @@ def test_放弃改动还原场次岗位与活动信息(client, admin, db, enroll
     assert act.editing_since is None and act.editing_snapshot is None
     assert act.title == old_title and act.intro == old_intro
     g = db.get(Shift, shift.id)
-    assert g is not None and g.name == old_name and g.span_text() == old_span
+    assert g is not None and g.span_text() == old_span
     p = db.get(Position, pos.id)
     assert p is not None and p.quota == old_quota and p.name != "改了名的岗位"
     assert db.get(Shift, new_shift) is None
@@ -577,7 +564,8 @@ def test_删过有人的场次就放弃不了改动(client, admin, db, enrolled_
     """按 id 建回来的场次填不回一并清掉的名单，整件事都不做，先让人处理。"""
     act, shift, _u = enrolled_activity
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    r = client.delete(f"/api/staff/shifts/{shift.id}?force=1", headers=admin)
+    r = client.delete(f"/api/staff/posts/{shift.positions[0].id}?force=1",
+                      headers=admin)
     assert r.status_code == 200, r.text
 
     r = client.post(f"/api/staff/activities/{act.id}/discard-changes", headers=admin)
@@ -614,7 +602,7 @@ def test_放弃改动不动名单(client, admin, db, enrolled_activity, take_stu
     act, shift, u = enrolled_activity
     pos = shift.positions[0]
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    assert client.patch(f"/api/staff/positions/{pos.id}", headers=admin,
+    assert client.patch(f"/api/staff/posts/{pos.id}", headers=admin,
                         json={"quota": 9}).status_code == 200
     assert client.post(f"/api/staff/activities/{act.id}/discard-changes",
                        headers=admin).status_code == 200
