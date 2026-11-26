@@ -36,7 +36,7 @@ def test_导出改好再导入(client, admin, db, open_group, take_student):
     r = client.get(dl_url(client, admin, f"/api/staff/activities/{act.id}/export.xlsx"))
     assert r.status_code == 200
     wb = load_workbook(BytesIO(r.content))
-    ws = wb[g.name]
+    ws = wb["排班表"]
     header = [c.value for c in ws[1]]
     col_sid, col_pos, col_leader = (header.index(k) + 1 for k in ("学号", "岗位", "组长"))
     rows = {ws.cell(row=i, column=col_sid).value: i for i in range(2, ws.max_row + 1)
@@ -131,3 +131,50 @@ def test_调岗不把候补转正待确认的位子当空位(client, admin, db, 
     assert r.status_code == 409 and "超出名额" in r.json()["detail"], r.text
     db.expire_all()
     assert db.get(Enrollment, c_id).status == "enrolled"
+
+
+def test_导入只认这一场的行_别的时段和别场的人不报错(client, admin, db, open_group,
+                                              take_student):
+    """总表里同一个人报的别的岗位也各占一行，别的岗位的人也在：都不归这次导入。"""
+    from datetime import timedelta
+
+    from conftest import mk_shift
+
+    act, g = open_group(5, mode="assign")
+    a = Position(id=uid("p"), shift_id=g.id, name="甲", quota=2, sort=0, **POSITION_TEXT)
+    b = Position(id=uid("p"), shift_id=g.id, name="乙", quota=2, sort=1, **POSITION_TEXT)
+    other = mk_shift(id=uid("g"), activity_id=act.id, name="甲",
+                     start_time=g.start_time + timedelta(days=1),
+                     end_time=g.start_time + timedelta(days=1, hours=2),
+                     mode="pick", sort=1, lock_hours=0)
+    db.add_all([a, b, other])
+    db.flush()
+    solo = Position(id=uid("p"), shift_id=other.id, name="甲", quota=5, sort=0,
+                    **POSITION_TEXT)
+    db.add(solo)
+    db.commit()
+    both, outsider = take_student(), take_student()
+    r = client.post(f"/api/activities/{act.id}/shifts/{g.id}/enroll",
+                    headers=login(client, both), json={})
+    assert r.status_code == 200, r.text
+    for sid in (both, outsider):
+        r = client.post(f"/api/activities/{act.id}/shifts/{other.id}/enroll",
+                        headers=login(client, sid), json={"position_id": solo.id})
+        assert r.status_code == 200, r.text
+
+    r = client.get(dl_url(client, admin, f"/api/staff/activities/{act.id}/export.xlsx"))
+    wb = load_workbook(BytesIO(r.content))
+    ws = wb["排班表"]
+    header = [c.value for c in ws[1]]
+    col_sid, col_pos, col_span = (header.index(k) + 1 for k in ("学号", "岗位", "时段"))
+    mine = [i for i in range(2, ws.max_row + 1)
+            if ws.cell(row=i, column=col_sid).value == both
+            and ws.cell(row=i, column=col_span).value == g.span_text()]
+    assert len(mine) == 1 and ws.cell(row=mine[0], column=col_pos).value == "待分配"
+    ws.cell(row=mine[0], column=col_pos, value="乙")
+    buf = BytesIO()
+    wb.save(buf)
+
+    d = _upload(client, admin, g, buf.getvalue()).json()
+    assert {x["user"]["student_id"]: x["position_id"] for x in d["plan"]} == {both: b.id}
+    assert d["errors"] == []

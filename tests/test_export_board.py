@@ -23,12 +23,12 @@ def _leaders(client, admin, shift, pos) -> list[str]:
 
 
 def _export_sheet(client, admin, act):
-    """排班表里第一个场次的那张名单。"""
+    """排班表里的那张总表。"""
     r = client.get(dl_url(client, admin,
                           f"/api/staff/activities/{act.id}/export.xlsx"))
     assert r.status_code == 200
     wb = load_workbook(BytesIO(r.content))
-    return wb[[s for s in wb.sheetnames if s not in ("活动概览", "志愿者信息")][0]]
+    return wb["排班表"]
 
 
 def _answers(client, admin, act, query: str = "") -> list[list]:
@@ -70,8 +70,9 @@ def test_排班表带组长性别与微信号(client, admin, db, enrolled_activi
                                      take_student)
     ws = _export_sheet(client, admin, act)
     header = [c.value for c in ws[1]]
-    assert header[:7] == ["姓名", "学号", "性别", "学院", "手机号", "微信号", "场次时间"]
-    assert "组长" in header and "岗位" in header and "接受调剂" not in header
+    assert header == ["姓名", "学号", "性别", "学院", "手机号", "微信号", "岗位", "时段",
+                      "岗位组", "组长", "服务地点", "签到状态", "签退时间"]
+    assert "接受调剂" not in header
 
     col = header.index("组长") + 1
     leaders = [ws.cell(row=i, column=col).value
@@ -309,7 +310,7 @@ def test_微信号不能以公式符号开头(client, take_student):
     assert ok.status_code == 200, ok.text
 
 
-def test_排班表的页签是概览志愿者信息和各场次名单(client, admin, db,
+def test_排班表的页签是概览志愿者信息和一张总表(client, admin, db,
                                                 enrolled_activity, take_student):
     """这张表是拿去现场点名、报保险的。时长和问卷各有专门的导出，不混在这儿。"""
     act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
@@ -324,8 +325,7 @@ def test_排班表的页签是概览志愿者信息和各场次名单(client, ad
                           f"/api/staff/activities/{act.id}/export.xlsx"))
     assert r.status_code == 200
     wb = load_workbook(BytesIO(r.content))
-    assert wb.sheetnames[:2] == ["活动概览", "志愿者信息"]
-    assert len(wb.sheetnames) == 2 + len(act.shifts)
+    assert wb.sheetnames == ["活动概览", "志愿者信息", "排班表"]
     # 概览页的活动时间与网页上同一个写法：只写日期带星期
     held = {r[0].value: r[1].value for r in wb["活动概览"].iter_rows() if len(r) > 1}
     db.refresh(act)
@@ -465,3 +465,69 @@ def test_打包时文件刚被删掉也跳过不报错(db):
     finally:
         here.unlink()
     assert Export(db, "").attachments_zip() is None
+
+
+# ======================= 排班总表 =======================
+
+def test_排班总表一人一个岗位一行_按时段排_签到各看各的(client, admin, db,
+                                                  enrolled_activity, take_student):
+    """同名岗位的两个时段各占一行；签到状态只看这一行那个时段，不串到别的岗位。"""
+    from datetime import timedelta
+
+    from backend.models import Position
+    from conftest import POSITION_TEXT, mk_shift, student_row
+
+    act, late, u = enrolled_activity            # 「引导」，三天后
+    v = student_row(db, take_student())
+    early = mk_shift(id=uid("s"), activity_id=act.id, name="引导",
+                     start_time=late.start_time - timedelta(days=1),
+                     end_time=late.start_time - timedelta(days=1) + timedelta(hours=2),
+                     mode="pick", sort=1)
+    train = mk_shift(id=uid("s"), activity_id=act.id, name="岗前培训",
+                     start_time=late.start_time - timedelta(days=2),
+                     end_time=late.start_time - timedelta(days=2) + timedelta(hours=1),
+                     kind="training", sort=2)
+    db.add_all([early, train])
+    db.flush()
+    pos = Position(id=uid("p"), shift_id=early.id, name="引导", quota=5, sort=0,
+                   group_name="东门", **POSITION_TEXT)
+    db.add(pos)
+    db.flush()
+    for who, g, p in ((u, early, pos), (v, early, pos), (u, train, None)):
+        db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                          user_id=who.id, position_id=p.id if p else None,
+                          status="enrolled", joined_at=now()))
+    task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=early.id,
+                       period_id=early.periods[0].id, mode="group",
+                       token=new_checkin_token(), valid_from=early.start_time,
+                       valid_to=early.end_time, created_by="system")
+    db.add(task)
+    db.flush()
+    db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
+                         shift_id=early.id, period_id=early.periods[0].id,
+                         position_id=pos.id, user_id=u.id, method="manual",
+                         checkin_at=early.start_time,
+                         checkout_at=early.end_time))
+    db.commit()
+
+    ws = _export_sheet(client, admin, act)
+    header = [c.value for c in ws[1]]
+    rows = [dict(zip(header, (c.value for c in row))) for row in ws.iter_rows(min_row=2)]
+    db.refresh(act)
+    assert [(r["学号"], r["岗位"], r["时段"]) for r in rows] == [
+        (u.student_id, "培训：岗前培训", train.span_text()),
+        (u.student_id, "引导", early.span_text()),
+        (v.student_id, "引导", early.span_text()),
+        (u.student_id, "引导", late.span_text()),
+    ]
+    assert rows[1]["岗位组"] == "东门" and rows[3]["岗位组"] == "—"
+    assert rows[1]["签到状态"] == "已到岗 ✓"
+    assert rows[1]["签退时间"] == early.end_time.strftime("%Y-%m-%d %H:%M")
+    # 同一个人在另一个时段没来，就是没来
+    assert (rows[3]["签到状态"], rows[3]["签退时间"]) == ("未签到", "—")
+    assert rows[2]["签到状态"] == "未签到"
+
+    r = client.get(dl_url(client, admin, f"/api/staff/activities/{act.id}/export.xlsx"))
+    info = load_workbook(BytesIO(r.content))["志愿者信息"]
+    assert sorted(row[1].value for row in info.iter_rows(min_row=2)) \
+        == sorted([u.student_id, v.student_id])

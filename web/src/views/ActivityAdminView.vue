@@ -2885,7 +2885,7 @@ async function transition(action) {
 }
 
 // —— 导出 ——
-// 排班表：活动概览、志愿者信息、每个场次一张名单（含签到状态），交付现场
+// 排班表：活动概览、志愿者信息、一张排班总表（一人一个岗位一行，含签到状态），交付现场
 function doExport() { dl(`/api/staff/activities/${activityId}/export.xlsx`) }
 // 问卷结果：按场次、岗位挑人；有附件时再问要不要一起下附件包
 const answersDlg = ref({ visible: false, shifts: [], positions: [] })

@@ -1094,7 +1094,7 @@ def _attachments_download(db: OrmSession, user: User, act: Activity, ex,
 @router.get("/activities/{activity_id}/export.xlsx")
 def export(activity_id: str, db: OrmSession = Depends(db_session),
            user: User = Depends(require_manager_download)):
-    """排班表：活动概览、志愿者信息、每个场次一张名单。"""
+    """排班表：活动概览、志愿者信息、一张排班总表（一人一个岗位一行）。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
     filename = f"{act.title}_排班表_{now():%Y%m%d_%H%M}.xlsx"
@@ -2046,6 +2046,13 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
     · 锁定后退出：本活动服务场次里有过锁定后退出（cancel_type=locked）的人数。
     补记录活动没有场次与报名，只给名单人数、时长和违规。
 
+    cards：下面的卡片按岗位合（场次在界面上已经消失，一个普通岗位一个看不见的
+    场次）。同名岗位跨时段合成一张卡，slots 一个时段一行；统一分配的场次自成一张
+    卡，positions 列它的岗位。每行的报名、候补、签到、未签退、锁定后退出口径
+    同上面的全活动数，卡头 total 是各行之和。时长和违规不按时段拆：违规记录不挂
+    场次，时长按人结算取整、核定与申诉的调整也不挂场次，拆开加不回总数。
+    shifts 是改版前按场次的那份，留着给还没改过来的调用方。
+
     全部是按活动聚合的几条查询，条数不随人数、岗位数涨。
     """
     ensure_activity_manager(db, user, activity_id)
@@ -2109,6 +2116,26 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
                 .filter(CheckinRecord.activity_id == act.id,
                         Shift.kind == "service", Shift.hours_mode == "checkin",
                         CheckinRecord.checkout_at.is_(None)).scalar())
+    # 同样几项按场次分组再取一遍，给卡片里每个时段一行用
+    due_by = {sid: (n, k) for sid, n, k in (
+        db.query(Enrollment.shift_id, func.count(func.distinct(Enrollment.id)),
+                 func.count(func.distinct(Enrollment.id))
+                 .filter(CheckinRecord.id.isnot(None)))
+        .join(Shift, service).outerjoin(CheckinRecord, signed)
+        .filter(Enrollment.activity_id == act.id, enrolled,
+                Shift.start_time <= t)
+        .group_by(Enrollment.shift_id).all())}
+    open_by = dict(db.query(CheckinRecord.shift_id, func.count(CheckinRecord.id))
+                   .join(Shift, CheckinRecord.shift_id == Shift.id)
+                   .filter(CheckinRecord.activity_id == act.id,
+                           Shift.kind == "service", Shift.hours_mode == "checkin",
+                           CheckinRecord.checkout_at.is_(None))
+                   .group_by(CheckinRecord.shift_id).all())
+    quit_by = dict(db.query(Enrollment.shift_id,
+                            func.count(func.distinct(Enrollment.user_id)))
+                   .filter(Enrollment.activity_id == act.id,
+                           Enrollment.cancel_type == "locked")
+                   .group_by(Enrollment.shift_id).all())
 
     rows = []
     for g in shifts:
@@ -2136,6 +2163,7 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
                      # 截止后分配的场次：还在占位岗位里、没分到岗位的人
                      "unassigned": occ.position_enrolled(holder.id) if holder else 0,
                      "positions": positions})
+    cards = _overview_cards(shifts, rows, due_by, open_by, quit_by)
     out.update({
         "enroll": {"count": sum(r["enrolled"] for r in rows), "people": people,
                    "capacity": sum(r["capacity"] for r in rows),
@@ -2151,8 +2179,68 @@ def activity_overview(activity_id: str, db: OrmSession = Depends(db_session),
                          .filter(ActivitySubscription.activity_id == act.id)
                          .scalar(),
         "reg_started": reg_started(act.reg_start, now()),
-        "shifts": rows})
+        "shifts": rows,
+        "cards": cards})
     return out
+
+
+# 卡头把各时段一行加起来的几项
+_CARD_SUMS = ("enrolled", "occupied", "capacity", "waitlist", "due", "arrived",
+              "not_checked_out", "locked_quit")
+
+
+def _overview_cards(shifts: list[Shift], rows: list[dict], due_by: dict,
+                    open_by: dict, quit_by: dict) -> list[dict]:
+    """概览的卡片：同名岗位跨时段合一张，统一分配的场次一张（见 activity_overview）。
+
+    rows 是按场次算好的那份（与 shifts 一一对应），这里只重新分组、补上按场次
+    分组查出来的签到几项，不再查库。卡片按第一个时段的开始时间排。
+    """
+    by_id = {r["id"]: r for r in rows}
+    cards: list[dict] = []
+    merged: dict[str, dict] = {}
+    for g in sorted(shifts, key=lambda g: (g.start_time or datetime.max, g.sort)):
+        r = by_id[g.id]
+        due, arrived = due_by.get(g.id, (0, 0))
+        slot = {"shift_id": g.id, "position_id": None, "time": r["time"],
+                "periods": r["periods"], "started": r["started"],
+                "enrolled": r["enrolled"], "occupied": r["occupied"],
+                "capacity": r["capacity"], "waitlist": r["waitlist"],
+                "due": due, "arrived": arrived,
+                "rate": round(arrived / due, 4) if due else None,
+                "not_checked_out": open_by.get(g.id, 0),
+                "locked_quit": quit_by.get(g.id, 0),
+                "paused": r["paused"], "locked": r["locked"], "full": r["full"]}
+        real = r["positions"]
+        if g.needs_assign() or len(real) > 1:
+            # 统一分配（老数据里一个场次挂好几个岗位的也这样）：一张卡，列岗位
+            cards.append({"key": g.id, "kind": "assign" if g.needs_assign() else "shift",
+                          "name": g.name, "group": "", "slots": [slot],
+                          "unassigned": r["unassigned"], "positions": real})
+            continue
+        p = real[0] if real else None
+        if p:
+            slot["position_id"] = p["id"]
+            # 暂停、锁定场次和岗位各有一个开关，哪个开着这个时段都算
+            slot["paused"] = slot["paused"] or p["paused"]
+            slot["locked"] = slot["locked"] or p["locked"]
+        name = p["name"] if p else g.name
+        card = merged.get(name)
+        if card is None:
+            card = merged[name] = {"key": f"position:{name}", "kind": "position",
+                                   "name": name, "group": p["group"] if p else "",
+                                   "slots": [], "unassigned": 0, "positions": []}
+            cards.append(card)
+        card["slots"].append(slot)
+    for card in cards:
+        slots = card["slots"]
+        total = {k: sum(x[k] for x in slots) for k in _CARD_SUMS}
+        total["rate"] = (round(total["arrived"] / total["due"], 4)
+                         if total["due"] else None)
+        total["full_slots"] = sum(1 for x in slots if x["full"])
+        card["total"] = total
+        card["full"] = all(x["full"] for x in slots)
+    return cards
 
 
 @router.get("/activities/{activity_id}/hours-appeals")
