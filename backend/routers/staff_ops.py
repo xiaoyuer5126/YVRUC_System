@@ -37,7 +37,7 @@ from ..models import (Activity, ActivitySubscription, CheckinGeo, CheckinRecord,
 from ..serializers import (applies_text, iso_of, recruit_scope_phrase,
                            reg_started)
 from .checkin import (active_period, checkout_open, find_record,
-                      group_head, group_tasks, task_of_user)
+                      group_head, group_tasks, tasks_of_user)
 from .geo import tiles_configured
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
@@ -668,70 +668,85 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
 @router.get("/checkin-tasks/{task_id}/board")
 def board(task_id: str, db: OrmSession = Depends(db_session),
           user: User = Depends(require_manager)):
-    """签到实时大屏。以已报名报名名单为主表（含未签到者），前端 5s 轮询。"""
+    """签到实时大屏。以已报名报名名单为主表（含未签到者），前端 5s 轮询。
+
+    一张码管好几个岗位时，把组内各行的名单合在一起：现场盯的是这张码前面
+    排的队，组里哪一行是哪个场次的，由每人那一行各自算到岗、签退。
+    """
     task = db.get(CheckinTask, task_id)
     if task is None:
         raise HTTPException(404, "任务不存在")
     ensure_activity_manager(db, user, task.activity_id)
-    g = db.get(Shift, task.shift_id)
     act = db.get(Activity, task.activity_id)
-
-    roster = (db.query(Enrollment, User)
-              .join(User, Enrollment.user_id == User.id)
-              .filter(Enrollment.shift_id == g.id,
-                      Enrollment.status == "enrolled")
-              .order_by(User.college, User.name).all())
-    # 这一段的码：大屏说的是这一段到了多少人，不把上午的记录算进下午
-    recs = (db.query(CheckinRecord)
-            .filter(CheckinRecord.shift_id == g.id,
-                    CheckinRecord.period_id == task.period_id)
-            .order_by(CheckinRecord.checkin_at).all())
-    rec_by_user, rounds = _board_records(g, recs, task)
+    rows = group_tasks(db, task)
+    head = rows[0]
+    g = db.get(Shift, head.shift_id)
 
     items = []
-    checked = checked_out = 0
+    expected = checked = checked_out = 0
     # 分母是「分到这个岗位的人数」，不是名额——同 shift_board 里的说明
-    by_position: dict[str, int] = {}
-    expected_by_position: dict[str, int] = {}
-    for enr, u in roster:
-        st = db.get(Position, enr.position_id) if enr.position_id else None
-        rec = rec_by_user.get(u.id)
-        key = enr.position_id or "_shift"
-        expected_by_position[key] = expected_by_position.get(key, 0) + 1
-        if rec:
-            checked += 1
-            if rec.checkout_at:
-                checked_out += 1
-            by_position[key] = by_position.get(key, 0) + 1
-        items.append({
-            "record_id": rec.id if rec else "",
-            "name": u.name, "student_id": u.student_id,
-            "college": u.college or "",
-            "position": st.name if st else "待分配",
-            "is_leader": enr.is_leader,
-            "checked_in": bool(rec),
-            "method": rec.method if rec else "",
-            "time": (rec.checkin_at.strftime("%H:%M:%S") if rec else ""),
-            "checkout_at": (rec.checkout_at.strftime("%H:%M:%S")
-                            if rec and rec.checkout_at else ""),
-            "checkout_method": (rec.checkout_method or "") if rec else "",
-            "checkin_count": rounds.get(u.id, 0),
-        })
-    positions = [{"id": s.id, "name": s.name, "quota": s.quota,
-                  "checked": by_position.get(s.id, 0),
-                  "expected": expected_by_position.get(s.id, 0)}
-                 for s in sorted(g.positions, key=lambda x: x.sort)]
+    cards: list[dict] = []
+    for t in rows:
+        shift = db.get(Shift, t.shift_id)
+        q = (db.query(Enrollment, User)
+             .join(User, Enrollment.user_id == User.id)
+             .filter(Enrollment.shift_id == shift.id,
+                     Enrollment.status == "enrolled"))
+        # 分岗位的那一行只算它那个岗位的人：别的岗位扫的是别的码
+        if t.position_id is not None:
+            q = q.filter(Enrollment.position_id == t.position_id)
+        roster = q.order_by(User.college, User.name).all()
+        # 这一段的码：大屏说的是这一段到了多少人，不把上午的记录算进下午
+        recs = (db.query(CheckinRecord)
+                .filter(CheckinRecord.shift_id == shift.id,
+                        CheckinRecord.period_id == t.period_id)
+                .order_by(CheckinRecord.checkin_at).all())
+        rec_by_user, rounds = _board_records(shift, recs, t)
+        by_position: dict[str, int] = {}
+        expected_by_position: dict[str, int] = {}
+        for enr, u in roster:
+            st = db.get(Position, enr.position_id) if enr.position_id else None
+            rec = rec_by_user.get(u.id)
+            key = enr.position_id or "_shift"
+            expected += 1
+            expected_by_position[key] = expected_by_position.get(key, 0) + 1
+            if rec:
+                checked += 1
+                if rec.checkout_at:
+                    checked_out += 1
+                by_position[key] = by_position.get(key, 0) + 1
+            items.append({
+                "record_id": rec.id if rec else "",
+                "name": u.name, "student_id": u.student_id,
+                "college": u.college or "",
+                "position": st.name if st else "待分配",
+                "is_leader": enr.is_leader,
+                "checked_in": bool(rec),
+                "method": rec.method if rec else "",
+                "time": (rec.checkin_at.strftime("%H:%M:%S") if rec else ""),
+                "checkout_at": (rec.checkout_at.strftime("%H:%M:%S")
+                                if rec and rec.checkout_at else ""),
+                "checkout_method": (rec.checkout_method or "") if rec else "",
+                "checkin_count": rounds.get(u.id, 0),
+            })
+        # 这一行管哪些岗位的卡片：分岗位的只有它自己那个，整场统一的是全场
+        wanted = ([db.get(Position, t.position_id)] if t.position_id
+                  else sorted(shift.positions, key=lambda x: x.sort))
+        cards += [{"id": s.id, "name": s.name, "quota": s.quota,
+                   "checked": by_position.get(s.id, 0),
+                   "expected": expected_by_position.get(s.id, 0)}
+                  for s in wanted]
     return {
         "flexible_time": g.flexible_time,
-        "task": {"id": task.id, "token": task.token, "mode": task.mode,
-                 "active": task.active},
+        "task": {"id": head.id, "token": head.token, "mode": head.mode,
+                 "active": head.active, "code_group": head.code_group or ""},
         "activity_title": act.title, "shift_name": g.name,
-        "period_id": task.period_id,
-        "period_text": (g.period_of(task.period_id).text()
-                        if task.period_id else ""),
-        "expected": len(roster), "checked": checked,
+        "period_id": head.period_id,
+        "period_text": (g.period_of(head.period_id).text()
+                        if head.period_id else ""),
+        "expected": expected, "checked": checked,
         "checked_out": checked_out,
-        "positions": positions, "records": items[:500],
+        "positions": cards, "records": items[:500],
     }
 
 
@@ -869,6 +884,9 @@ def batch_op(task_id: str, body: dict,
     时间灵活的场次一张码一轮，补签、签退、取消都作用在这张码的那一轮上，
     而且这张码要开着：补签补的是「现在这一轮」，没开码就没有这一轮。要补
     以前某一轮，先把那张码重新开启。
+
+    一张码管好几个岗位时，每个人补到**他自己那一行**（同扫码的解析口径，见
+    checkin.tasks_of_user）：补签要和他自己扫出来的那条记录落在同一格上。
     """
     task = db.get(CheckinTask, task_id)
     if task is None:
@@ -877,8 +895,10 @@ def batch_op(task_id: str, body: dict,
     # 补签卡在「时长封账」而不是「活动结束」：签到记录是算时长的依据，
     # 账没结完就还得能补
     ensure_hours_editable(db, _act(db, task.activity_id))
-    g = db.get(Shift, task.shift_id)
-    if g.flexible_time and not task.active:
+    rows = group_tasks(db, task)
+    head = rows[0]
+    g = db.get(Shift, head.shift_id)
+    if g.flexible_time and not head.active:
         raise HTTPException(409, "时间灵活的场次按签到码分轮次，补签要落在开着的签到码上；"
                                  "请先开启签到码")
     action = body.get("action")
@@ -894,27 +914,35 @@ def batch_op(task_id: str, body: dict,
         if u is None:
             skipped.append(f"{sid}（学号不存在）")
             continue
-        # 行锁读这一人的报名行：同一人同场次的补签/退签（含志愿者自己扫码）
-        # 在这里串行，下面「找记录再插入」不会各插一条重复签到
-        enr = (db.query(Enrollment)
-               .filter(Enrollment.shift_id == task.shift_id,
-                       Enrollment.user_id == u.id,
-                       Enrollment.status == "enrolled").with_for_update().first())
-        if enr is None:
+        # 他在这张码里的那一行：一张码管好几个岗位时，场次、时段、岗位
+        # 都按这一行算
+        mine = tasks_of_user(db, task, u.id)
+        if not mine:
             # 不回姓名：这条提示等于「输个学号就能查出他叫什么」——不是本场次
             # 的人，管理者本来也不该从这儿认识他。学号是他自己填进来的，还给他
             skipped.append(f"{sid}（非本场次确认志愿者）")
             continue
-        rec = find_record(db, u.id, g, task)
+        row = mine[0]
+        shift = db.get(Shift, row.shift_id)
+        # 行锁读这一人的报名行：同一人同场次的补签/退签（含志愿者自己扫码）
+        # 在这里串行，下面「找记录再插入」不会各插一条重复签到
+        enr = (db.query(Enrollment)
+               .filter(Enrollment.shift_id == row.shift_id,
+                       Enrollment.user_id == u.id,
+                       Enrollment.status == "enrolled").with_for_update().first())
+        if enr is None:
+            skipped.append(f"{sid}（非本场次确认志愿者）")
+            continue
+        rec = find_record(db, u.id, shift, row)
 
         if action == "checkin":
             if rec:
                 skipped.append(f"{u.name}（已签到）")
                 continue
-            db.add(CheckinRecord(id=uid("ckr"), task_id=task.id,
-                                 activity_id=task.activity_id,
-                                 shift_id=task.shift_id,
-                                 period_id=task.period_id,
+            db.add(CheckinRecord(id=uid("ckr"), task_id=row.id,
+                                 activity_id=row.activity_id,
+                                 shift_id=row.shift_id,
+                                 period_id=row.period_id,
                                  position_id=enr.position_id, user_id=u.id,
                                  method="manual", by_user=user.id))
             done.append(u.name)
@@ -956,7 +984,7 @@ def batch_op(task_id: str, body: dict,
     # 人多时列前 5 个再报总数，不至于把一条留痕撑成几十个人的名单
     named = ("：" + "、".join(who[:5]) + (f" 等 {len(who)} 人" if len(who) > 5 else "")) if who else ""
     audit_log(db, actor=user, action="manual_checkin", target_type="checkin",
-              target_id=task.id, target_label=g.name,
+              target_id=head.id, target_label=_code_label(db, rows),
               activity_id=task.activity_id,
               summary=f"{ACTION_SUMMARY[action]} {len(done)} 人" + named
                       + (f"（跳过：{'、'.join(skipped[:5])}"

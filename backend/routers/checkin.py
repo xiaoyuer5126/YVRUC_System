@@ -86,17 +86,13 @@ def group_head(db: OrmSession, task: CheckinTask) -> CheckinTask:
     return group_tasks(db, task)[0]
 
 
-def task_of_user(db: OrmSession, task: CheckinTask,
-                 user_id: str) -> CheckinTask:
-    """扫到这张码的人落在组里哪一行：他在那一场有正式报名、岗位又对得上的那行。
+def tasks_of_user(db: OrmSession, task: CheckinTask,
+                  user_id: str) -> list[CheckinTask]:
+    """这张码里跟某个人对得上的那些行：他在那一场有正式报名、岗位又对得上。
 
-    一张码管好几个岗位时，记录要落到**他自己的岗位**那一格上：时段、可签时间
-    窗、到岗名单、时长全按那一格算。独享一张码的行原样返回（岗位对不上由
-    _apply_checkin 说明是哪个岗位的码）。
-    组里一行都对不上他，就是拿错了码——这张码上没有他该签的那一格。
+    开着的排在前面——都关着时也照样给出来，好让调用方按「码关了」说清楚，
+    而不是说成「这张码里没有你」。
     """
-    if not task.code_group:
-        return task
     mine = []
     for x in group_tasks(db, task):
         enr = (db.query(Enrollment)
@@ -108,11 +104,24 @@ def task_of_user(db: OrmSession, task: CheckinTask,
         if x.position_id is not None and enr.position_id != x.position_id:
             continue
         mine.append(x)
+    return sorted(mine, key=lambda x: not x.active)
+
+
+def task_of_user(db: OrmSession, task: CheckinTask,
+                 user_id: str) -> CheckinTask:
+    """扫到这张码的人落在组里哪一行：他在那一场有正式报名、岗位又对得上的那行。
+
+    一张码管好几个岗位时，记录要落到**他自己的岗位**那一格上：时段、可签时间
+    窗、到岗名单、时长全按那一格算。独享一张码的行原样返回（没报名、岗位对
+    不上由 _apply_checkin 分别说明是哪一种）。
+    组里一行都对不上他，就是拿错了码——这张码上没有他该签的那一格。
+    """
+    if not task.code_group:
+        return task
+    mine = tasks_of_user(db, task, user_id)
     if not mine:
         raise HTTPException(403, "这张签到码不包含您报名的岗位")
-    # 开着的优先；都关着时给关着的那一行，好让下面按「已关闭」说清楚，
-    # 而不是说成「不包含您的岗位」
-    return next((x for x in mine if x.active), mine[0])
+    return mine[0]
 
 
 def load_for_user(db: OrmSession, code: str,
