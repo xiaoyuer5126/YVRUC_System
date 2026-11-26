@@ -1106,7 +1106,7 @@ def test_报名问卷结果导出excel(client, admin, db, take_student):
     assert len(rows) == 3
     first = dict(zip(header, rows[1]))
     assert first["参加过吗"] == "是" and first["能做什么"] == "引导、登记"
-    assert first["录取结果"] == "已录取" and "（录取）" in first["意向场次"]
+    assert first["录取结果"] == "已录取" and "（录取）" in first["意向岗位"]
     assert dict(zip(header, rows[2]))["组长意愿"] == "愿意"
 
     # 即选即得的活动没有报名问卷

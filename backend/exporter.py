@@ -508,7 +508,7 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
     ws = ex.wb.active
     ws.title = "报名问卷结果"
     header = ["序号", "姓名", "学号", "学院", "校区", "学段", "手机号", "提交时间",
-              "意向场次", "录取结果", "组长意愿", "内部提示分"]
+              "意向岗位", "录取结果", "组长意愿", "内部提示分"]
     header += [q.title for q in questions]
     ws.append(header)
     _style_header(ws, len(header))
@@ -523,7 +523,9 @@ def build_application_workbook(db: OrmSession, activity: Activity) -> Export:
                 continue
             st = positions.get(e.position_id) if e.position_id else None
             mark = "（录取）" if e.status == "enrolled" else ""
-            wanted.append(f"{g.name}{'·' + st.name if st else ''}{mark}")
+            # 普通岗位自带的场次和岗位同名，只写一次
+            extra = '·' + st.name if st and st.name != g.name else ''
+            wanted.append(f"{g.name}{extra}{mark}")
         line = [seq, u.name, u.student_id, u.college, u.campus, u.stage, u.phone,
                 f"{app.created_at:%Y-%m-%d %H:%M}", "、".join(wanted),
                 app.status_label(), "愿意" if app.leader_willing else "",

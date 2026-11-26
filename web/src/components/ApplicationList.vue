@@ -23,14 +23,14 @@
       </div>
     </template>
     <p class="dim" style="margin:0 0 8px">
-      每行勾选录到他意向里的哪几场，选岗位的场次可以改岗位，再点「录取」；
-      也可以勾选几个人后点上方「录取所选」，每人按自己那一行勾的场次录取，结果逐人列出。
-      没录取的意向场次随即作废。统一分配的场次先落在「待分配」，再分配岗位。
-      场次开始时仍未处理的申请会自动落选并通知志愿者。
+      每行勾选录到他意向里的哪几个岗位，再点「录取」；
+      也可以勾选几个人后点上方「录取所选」，每人按自己那一行勾的岗位录取，结果逐人列出。
+      没录取的意向岗位随即作废。意向是统一分配的先落在「待分配」，再分配岗位。
+      岗位开始时仍未处理的申请会自动落选并通知志愿者。
     </p>
-    <!-- 手机上这张表明细挤不下，意向场次的勾选和岗位下拉也没处放：改成卡片，
+    <!-- 手机上这张表明细挤不下，意向岗位的勾选也没处放：改成卡片，
          多选走 DataCards 自己的勾选（只勾得动待处理的申请，与桌面同一条规则），
-         意向场次的勾选、岗位下拉和这一行的「录取/不录取」都放进卡片正文 -->
+         意向岗位的勾选和这一行的「录取/不录取」都放进卡片正文 -->
     <!-- key 跟着筛选开关走：切开关时重挂一次，等于清掉卡片自己的勾选，
          与桌面那版 clearSelection 一致，免得留下看不见的勾选 -->
     <DataCards v-if="narrow" :key="pendingOnly ? 'pending' : 'all'" :rows="shown"
@@ -64,11 +64,11 @@
               <el-option v-for="o in positionsOf(w.shift_id)" :key="o.id" :value="o.id"
                          :label="`${o.name}（${o.quota} 人）`" />
             </el-select>
-            <span v-else class="dim">{{ w.position_name || '待分配' }}</span>
+            <span v-else-if="!isSingle(w.shift_id)" class="dim">{{ w.position_name || '待分配' }}</span>
           </template>
           <el-tag v-else size="small" effect="plain"
                   :type="w.status === 'enrolled' ? 'success' : (w.status === 'applied' ? 'primary' : 'info')">
-            {{ w.shift_name }}{{ w.position_name ? ' · ' + w.position_name : '' }}
+            {{ w.shift_name }}{{ w.position_name && w.position_name !== w.shift_name ? ' · ' + w.position_name : '' }}
           </el-tag>
         </div>
         <AnswerList :answers="row.answers" style="margin:8px 0 0" />
@@ -118,9 +118,9 @@
           <span v-else class="dim">—</span>
         </template>
       </el-table-column>
-      <!-- 意向场次就是录取去向：还在申请中的意向逐场勾选（默认全勾），选岗位的
-           场次后面跟岗位下拉，默认他自己勾的意向岗位；已处理的意向只显示结果 -->
-      <el-table-column label="意向场次（勾选录取到哪几场）" min-width="300">
+      <!-- 意向岗位就是录取去向：还在申请中的意向逐个勾选（默认全勾）；统一分配开放选岗后
+           一处有几个岗位可选，后面跟岗位下拉，默认他自己勾的那个；已处理的意向只显示结果 -->
+      <el-table-column label="意向岗位（勾选录取到哪几个）" min-width="300">
         <template #default="{ row }">
           <div v-for="w in row.wanted" :key="w.shift_id" class="al-pick">
             <template v-if="row.status === 'applied' && w.status === 'applied' && choice[row.id]">
@@ -131,11 +131,11 @@
                 <el-option v-for="o in positionsOf(w.shift_id)" :key="o.id" :value="o.id"
                            :label="`${o.name}（${o.quota} 人）`" />
               </el-select>
-              <span v-else class="dim">{{ w.position_name || '待分配' }}</span>
+              <span v-else-if="!isSingle(w.shift_id)" class="dim">{{ w.position_name || '待分配' }}</span>
             </template>
             <el-tag v-else size="small" effect="plain"
                     :type="w.status === 'enrolled' ? 'success' : (w.status === 'applied' ? 'primary' : 'info')">
-              {{ w.shift_name }}{{ w.position_name ? ' · ' + w.position_name : '' }}
+              {{ w.shift_name }}{{ w.position_name && w.position_name !== w.shift_name ? ' · ' + w.position_name : '' }}
             </el-tag>
           </div>
         </template>
@@ -203,7 +203,10 @@ const selected = ref([])
 const choice = ref({})
 const positionsOf = id => shifts.value.find(g => g.id === id)?.positions || []
 const isPick = id => shifts.value.find(g => g.id === id)?.mode === 'pick'
-  && positionsOf(id).length > 0
+  && positionsOf(id).length > 1
+// 普通岗位自带一个场次、名字就是岗位名，勾选框已经写明了，后面不再重复
+const isSingle = id => shifts.value.find(g => g.id === id)?.mode === 'pick'
+  && positionsOf(id).length === 1
 // 各场次已录/上限，放在上方按钮旁边，录人时心里有数
 const shiftsLoad = computed(() => shifts.value
   .map(g => `${g.name} ${g.enrolled}/${g.capacity}`).join(' · '))
@@ -217,16 +220,16 @@ function initChoice(rows) {
       .map(w => [w.shift_id, before[w.shift_id] || {
         on: true,
         position_id: positionsOf(w.shift_id).some(p => p.id === w.position_id)
-          ? w.position_id : '',
+          ? w.position_id : (isSingle(w.shift_id) ? positionsOf(w.shift_id)[0].id : ''),
       }]))
   }
   choice.value = out
 }
-/** 这一行勾的场次，按接口要的样子：[{ shift_id, position_id }] */
+/** 这一行勾的岗位，按接口要的样子：[{ shift_id, position_id }] */
 function picksOf(row) {
   return Object.entries(choice.value[row.id] || {})
     .filter(([, c]) => c.on)
-    .map(([sid, c]) => ({ shift_id: sid, position_id: isPick(sid) ? c.position_id : '' }))
+    .map(([sid, c]) => ({ shift_id: sid, position_id: isPick(sid) || isSingle(sid) ? c.position_id : '' }))
 }
 const loading = ref(false)
 const busy = ref(false)
@@ -302,13 +305,13 @@ async function decide(accept, list) {
   if (accept) {
     const empty = rows.filter(a => !a.picks.length)
     if (empty.length) {
-      ElMessage.warning(`${empty.map(a => a.name).join('、')} 没有勾选录取到哪一场`)
+      ElMessage.warning(`${empty.map(a => a.name).join('、')} 没有勾选录取到哪个岗位`)
       return
     }
   }
   const names = rows.map(a => a.name).join('、')
   await ElMessageBox.confirm(
-    accept ? `录取 ${names}？各人按自己那一行勾的场次录取，通知将立即发送。`
+    accept ? `录取 ${names}？各人按自己那一行勾的岗位录取，通知将立即发送。`
            : `不录取 ${names}？将发送通知，不留记录。`,
     accept ? '确认录取' : '确认不录取', { type: accept ? 'success' : 'warning' })
   busy.value = true
