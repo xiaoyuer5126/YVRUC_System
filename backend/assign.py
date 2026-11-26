@@ -72,8 +72,8 @@ def match(candidates: list[tuple[str, list[str]]],
     return placed
 
 
-NOT_ASSIGN_SHIFT = ("本场次是「报名即选岗位」，志愿者报名时已各自选好岗位，"
-                    "不需要排班；个别调整请用「调岗」")
+NOT_ASSIGN_SHIFT = ("这是普通岗位，志愿者报名时就选好了岗位，"
+                    "不需要排班；个别调整请用名单里的「调岗」")
 
 
 def _brief(u: User) -> dict:
@@ -138,10 +138,10 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
     # 占位岗位不参与分配：它是「还没安排的人」待的地方，人只能从里面出去。
     positions = sorted(shift.real_positions(), key=lambda p: p.sort)
     if not positions:
-        raise ValueError("请先在「岗位设置」里为本场次建好岗位")
+        raise ValueError("请先在「岗位设置」里为这一批统一分配建好岗位")
     rows = _waiting(db, shift)
     if not rows:
-        raise ValueError("本场次没有待分配的同学，不需要一键分配")
+        raise ValueError("这一批没有待分配的同学，不需要一键分配")
     users = {r.id: db.get(User, r.user_id) for r in rows}
     candidates = [(r.id, _eligible_positions(users[r.id], positions))
                   for r in rows]
@@ -252,7 +252,9 @@ def plan_from_workbook(db: OrmSession, shift: Shift, data: bytes) -> dict:
         if sid not in enrolled:
             # 表底「以下人员尚未分配岗位」那几行也有学号，岗位是空的：一并跳过
             if cell(line, col_pos) and sid not in elsewhere:
-                errors.append({"row": no, "message": f"学号 {sid} 不在本场次的已报名名单里"})
+                errors.append({"row": no,
+                               "message": f"学号 {sid} 不在这一批统一分配的"
+                                          f"已报名名单里"})
             continue
         pos_name = cell(line, col_pos)
         if not pos_name:
@@ -263,7 +265,8 @@ def plan_from_workbook(db: OrmSession, shift: Shift, data: bytes) -> dict:
         seen.add(sid)
         target = holder if pos_name == Position.PLACEHOLDER_NAME else by_name.get(pos_name)
         if target is None:
-            errors.append({"row": no, "message": f"本场次没有「{pos_name}」这个岗位"})
+            errors.append({"row": no,
+                           "message": f"这一批统一分配里没有「{pos_name}」这个岗位"})
             continue
         e, u = enrolled[sid]
         if target.id != e.position_id:

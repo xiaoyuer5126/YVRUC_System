@@ -8,7 +8,7 @@
     <div class="toolbar">
       <el-checkbox v-model="continuity" size="small">尽量同一人同一岗位</el-checkbox>
       <el-tooltip placement="top"
-                  content="本活动其它场次排过同名岗位的人，优先留在该岗位">
+                  content="本活动别处排过同名岗位的人，优先留在这个岗位">
         <el-icon class="dim"><QuestionFilled /></el-icon>
       </el-tooltip>
       <span style="margin-left:auto" class="dim" v-if="preview">
@@ -197,8 +197,8 @@ function overQuota(row) {
 
 const gap = row => row.quota - row.existing - row.planned
 
-/** 点了之前先看要不要：报名即选岗位的场次人人自己选好了；截止后分配的场次
- *  没人在待分配，也就没什么可排的。后端同样拦，这里先给一句好懂的话。 */
+/** 点了之前先看要不要：普通岗位人人自己选好了；这一批统一分配里没人在
+ *  待分配，也就没什么可排的。后端同样拦，这里先给一句好懂的话。 */
 function notNeeded(forImport) {
   if (!props.shift.needs_assign) {
     ElMessage.info('这是普通岗位，志愿者报名时就选好了岗位，不需要排班；'

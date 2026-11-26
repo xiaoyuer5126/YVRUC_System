@@ -676,8 +676,8 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
     自动提醒在场次开始前 30 分钟发一次；这个按钮用于临时催场——
     只发给还没签到的正式志愿者，已经到岗的不再打扰。
     可只催某几个岗位或某个岗位组：现场往往是「东门那三个人没到」。岗位组按
-    整个活动认（口径同 enroll_logic.group_positions），催到的仍只是本场次
-    这一段里没签到的人——别的场次的组员这会儿不在岗。
+    整个活动认（口径同 enroll_logic.group_positions），催到的仍只是这一段里
+    没签到的人——别处的组员这会儿不在岗。
     勾选签收后，这一批会出现在活动的「待签收批次」里，能看到谁还没回。
     """
     g = db.get(Shift, shift_id)
@@ -687,7 +687,8 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
     ensure_not_finished(_act(db, g.activity_id))
 
     body = body or ReminderBody()
-    ids, scope = None, "全场次"
+    # 不限岗位时话里只写这一场的名字：普通岗位一岗一场，场次名就是岗位名
+    ids, scope = None, f"「{g.name}」"
     if body.group_name.strip():
         ids = [p.id for p in _group_members(db, g, body.group_name.strip())]
         if not ids:

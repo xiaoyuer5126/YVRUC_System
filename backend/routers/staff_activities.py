@@ -3559,7 +3559,8 @@ def add_walkin(shift_id: str, body: dict,
                 .filter(Enrollment.shift_id == g.id, Enrollment.user_id == u.id)
                 .filter(Enrollment.status.in_(logic.ACTIVE)).first())
         if live is not None:
-            raise HTTPException(409, f"{u.name} 在该场次已有记录（{_status_label(live)}）")
+            raise HTTPException(409, f"{u.name} 在「{g.name}」已有记录"
+                                     f"（{_status_label(live)}）")
 
         # 名额要按落点算：pick 模式下名额在岗位上，不传岗位一律判「满」，
         # 补招任何按岗位报名的场次都会被要求勾强制。
@@ -3569,7 +3570,7 @@ def add_walkin(shift_id: str, body: dict,
         if body.get("position_id"):
             position = db.get(Position, body["position_id"])
             if position is None or position.shift_id != g.id:
-                raise HTTPException(400, "岗位不属于该场次")
+                raise HTTPException(400, f"岗位不属于「{g.name}」")
 
         # 本人全部有效报名查一次，这一场和勾上的培训/彩排都拿它比
         rows = logic.active_rows(db, u)
@@ -3585,7 +3586,8 @@ def add_walkin(shift_id: str, body: dict,
         for aid in wanted:
             s = allowed.get(aid)
             if s is None:
-                raise HTTPException(400, "所选培训/彩排不属于该场次，或对这个岗位不生效")
+                raise HTTPException(400, "所选培训/彩排不属于这个活动，"
+                                         "或对这个岗位不生效")
             if (db.query(Enrollment)
                     .filter(Enrollment.shift_id == s.id, Enrollment.user_id == u.id)
                     .first()) is not None:

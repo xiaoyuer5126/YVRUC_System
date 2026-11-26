@@ -1858,7 +1858,8 @@
 import { computed, h, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
-import { api, download as dl, downloadExport, fmtDT, pageUrl, qrBase, uploadFile } from '../api'
+import { api, download as dl, downloadExport, fmtDT, pageUrl, qrBase,
+         uploadFile, withConflictConfirm } from '../api'
 import AiStructureAssist from '../components/AiStructureAssist.vue'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'

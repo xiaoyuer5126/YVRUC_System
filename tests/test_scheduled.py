@@ -226,7 +226,7 @@ def test_manual_reminder_skips_checked_in(client, db, admin, make_activity,
     db.commit()
     r = client.post(f"/api/staff/shifts/{g.id}/checkin-reminder", headers=admin)
     assert r.status_code == 400
-    assert r.json()["detail"] == "全场次没有需要提醒的志愿者"
+    assert r.json()["detail"] == f"「{g.name}」没有需要提醒的志愿者"
 
 
 def test_值班交接提醒每周一次_按接班的星期几(db, monkeypatch, extra_core):
