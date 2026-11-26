@@ -344,7 +344,7 @@ def test_排班表的页签是概览志愿者信息和一张总表(client, admin
     assert [c.value for c in ws[1]][-2:] == ["签到状态", "签退时间"]
 
 
-def test_问卷结果按场次与岗位筛选(client, admin, db, enrolled_activity, take_student):
+def test_问卷结果按岗位筛选(client, admin, db, enrolled_activity, take_student):
     from backend.models import FormQuestion, Position
 
     act, shift, pos, people = _setup(client, db, admin, enrolled_activity,
@@ -372,9 +372,10 @@ def test_问卷结果按场次与岗位筛选(client, admin, db, enrolled_activi
 
     only = _answers(client, admin, act, f"?positions={other.id}")
     assert [r[1] for r in only] == [people[2].student_id]
-    both = _answers(client, admin, act, f"?shifts={shift.id}&positions={pos.id},{other.id}")
+    both = _answers(client, admin, act, f"?positions={pos.id},{other.id}")
     assert len(both) == 3
-    assert _answers(client, admin, act, "?shifts=nope") == []
+    # 认不出的岗位 id 就是一个人都不选：导出条件写错了，宁可交白卷也不多给
+    assert _answers(client, admin, act, "?positions=nope") == []
 
 
 # ======================= 排班表与附件分开下 =======================

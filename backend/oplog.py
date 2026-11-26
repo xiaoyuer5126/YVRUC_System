@@ -195,6 +195,7 @@ LABELS = {
     'create_shift': '新建场次',
     'contact_qr': '查看联络群二维码',
     'set_leader': '设置岗位组长',
+    'move_enrollment': '调岗',
     'promote_manually': '手动候补转正',
     'remind_batch': '提醒签收通知',
     'update_position': '修改岗位',
