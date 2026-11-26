@@ -1506,7 +1506,7 @@
         <el-form-item label="岗位组">
           <el-input v-model="stationForm.group_name" style="width:220px"
                     maxlength="64" placeholder="如：东门片区（选填）" />
-          <div class="dim">岗位组共用一名组长，留空则本岗位自成一组</div>
+          <div class="dim">本活动里组名相同的岗位（跨场次也算）是一个组，共用一名组长；留空则本岗位自成一组</div>
         </el-form-item>
         <el-form-item label="志愿服装">
           <el-radio-group v-model="stationForm.attire">
@@ -1539,7 +1539,7 @@
           <el-input v-model="stationForm.leader_task" maxlength="256" show-word-limit
                     placeholder="组长要带队做什么：如 带队进场、清点人数、结束后对账" />
           <div v-if="stationForm.group_name?.trim()" class="dim">
-            一个岗位组共用一名组长，也共用这一份任务：保存时会同步到同组其他岗位
+            一个岗位组共用一名组长，也共用这一份任务：保存时会同步到本活动里同组的其他岗位
           </div>
         </el-form-item>
         <el-form-item label="条件要求">
@@ -2664,7 +2664,8 @@ async function saveStation() {
       training_note: f.training_note,
     }
     if (positionDlg.value.editing) {
-      await api.patch(`/api/staff/positions/${positionDlg.value.editing.id}`, body)
+      const d = await api.patch(
+        `/api/staff/positions/${positionDlg.value.editing.id}`, body)
       if (positionDlg.value.syncSame) {
         const shared = { ...body }        // 名额、候补名额是各时段自己的
         delete shared.quota
@@ -2675,6 +2676,8 @@ async function saveStation() {
       }
       ElMessage.success(positionDlg.value.syncSame
         ? `已保存，其他 ${sameNameOthers.value.length} 个时段一并修改` : '已保存')
+      // 同组岗位时段不一致：保存照常，提醒一句组长可能顾不全
+      if (d.warning) ElMessage.warning(d.warning)
       positionDlg.value.visible = false
       await loadAll()
     } else {
@@ -2688,6 +2691,7 @@ async function saveStation() {
       } else {
         ElMessage.success('岗位已创建')
       }
+      if (d.warning) ElMessage.warning(d.warning)
       positionDlg.value.visible = false
       await loadAll()
     }

@@ -1045,8 +1045,9 @@ class Position(Base):
     # 确认时长时可以选劳务，选了平台就不记这次时长。备注写标准与发放方式。
     pay_optional: Mapped[bool] = mapped_column(Boolean, default=False)
     pay_note: Mapped[str] = mapped_column(String(256), default="")
-    # 岗位组：同一场次内组名相同的岗位共用一名组长（如「东门片区」下的
-    # 引导/检录/医疗点）。留空 = 该岗位自成一组。
+    # 岗位组：同一活动里组名相同的岗位共用一名组长（如「东门片区」下的
+    # 引导/检录/医疗点），跨场次也算，见 enroll_logic.group_positions。
+    # 留空 = 该岗位自成一组。
     group_name: Mapped[str] = mapped_column(String(64), default="")
     # 占位岗位：「截止后统一分配」场次自动建的那一个，见 Shift.placeholder()
     is_placeholder: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -227,7 +227,7 @@ def test_锁定后转正超时也通知管理者_日报也计(client, admin, db,
     monkeypatch.setattr(config, "ROSTER_DIGEST_HOUR", 0)
     scheduled.send_roster_digests(db)
     notes = (db.query(Notification)
-             .filter(Notification.title == f"[人员变动] {act.title} · {g.name}").all())
+             .filter(Notification.title == f"[人员变动] {act.title}").all())
     assert notes and "候补转正超时未确认：1 人。" in notes[-1].content, notes
 
 

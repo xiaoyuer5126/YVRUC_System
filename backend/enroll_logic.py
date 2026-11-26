@@ -1,10 +1,11 @@
 """报名核心逻辑：冲突检测、名额账本、候补流转。
 
 关键机制：
-  · 时段冲突：只比场次的时间区间，重叠就提示（跨活动、也比本活动的别的场次，
-    含申请中、候补中的场次——占着这段就预留了这段时间）。志愿者或管理者看过提示、
-    确认仍要报（confirm_conflict）就放行，见 conflict_error；候补转正、一键
-    排班这类没人可问的自动路径不查冲突；
+  · 时段冲突：只比场次的时间区间（含申请中、候补中的场次——占着这段就预留了
+    这段时间）。跨活动、以及涉及培训/彩排的重叠只提示：志愿者或管理者看过提示、
+    确认仍要报（confirm_conflict）就放行，见 conflict_error；同一活动里两个
+    服务场次压在一起的硬拦，确认也不放行，见 same_activity_clashes；候补转正、
+    一键排班这类没人可问的自动路径不查冲突；
   · 名额账本：已报名 + 候补转正待确认（确认窗内位子给他留着）；
   · 候补按 joined_at 排队，退选释放名额 → 队首转正，2 小时确认窗口
     （夜间 23:00–8:00 不计时，且不晚于场次开始，见 promote_confirm_deadline）；
@@ -32,6 +33,12 @@ from .models import (Activity, CheckinRecord, Enrollment, Shift, ShiftPeriod,
 
 # 申请中的场次同样占着时段：申请时就提示冲突，不等录取
 ACTIVE = ("applied", "enrolled", "waitlisted", "pending_confirm")
+
+# 真把这段时间占下来了的状态：正式报名、候补、候补转正待确认。「申请中」不算——
+# 报名后筛选里同一时间勾两个意向是「哪个都行」，录取时管理者挑一个，
+# 所以志愿者报名时，意向不按「同一时间只能站一个岗位」硬拦
+# （见 same_activity_clashes）。
+HOLDING = ("enrolled", "waitlisted", "pending_confirm")
 
 
 # 报名问卷可以沿用答案的报名：即选即得里还算数的那几种（申请中只出现在报名后
@@ -85,25 +92,37 @@ def periods_overlap(left: list[ShiftPeriod],
                for a in left for b in right)
 
 
-def time_conflicts(db: OrmSession, user: User,
-                   target: Shift) -> list[dict]:
-    """该用户有效报名中与 target 的时段重叠的记录（跨活动）。"""
-    return conflicts_among(active_rows(db, user), target)
-
-
 def conflicts_among(rows, target: Shift) -> list[dict]:
     """在 active_rows 查回来的报名里挑出与 target 的时段重叠的（本场次自己除外）。"""
-    out = []
-    for enr, g, act in rows:
-        if enr.shift_id == target.id:
-            continue
-        if periods_overlap(g.periods, target.periods):
-            out.append({
-                "enrollment_id": enr.id, "activity_id": act.id,
-                "activity_title": act.title, "shift_name": g.name,
-                "time": g.span_text(), "status": enr.status,
-            })
-    return out
+    return [conflict_row(enr, g, act) for enr, g, act in rows
+            if enr.shift_id != target.id
+            and periods_overlap(g.periods, target.periods)]
+
+
+def conflict_row(enr: Enrollment, g: Shift, act: Activity) -> dict:
+    """冲突列表里的一行：撞上的是哪个活动、哪一场、什么时候、什么状态。"""
+    return {"enrollment_id": enr.id, "activity_id": act.id,
+            "activity_title": act.title, "shift_name": g.name,
+            "time": g.span_text(), "status": enr.status}
+
+
+def same_activity_clashes(rows, target: Shift) -> list[dict]:
+    """在 active_rows 查回来的报名里挑出「同一活动、两个服务场次压在一起」的。
+
+    一个人在同一个活动里同一时间只能站一个岗位：岗位自带时段，两个时段重叠的
+    岗位都报上，现场必然有一个空着，签到、时长、名单全都对不上。所以这一类
+    重叠在志愿者自己报名时硬拦（见 same_activity_clash_error），不给「确认后
+    仍要报」的余地；管理者补招、录取只提示，确认后照加。培训/彩排不算——它附属于服务场次，跟服务场次压上是排期的事，由人判断；
+    「申请中」的意向也不算（见 HOLDING）。
+    """
+    if target.kind != "service":
+        return []
+    return [conflict_row(enr, g, act) for enr, g, act in rows
+            if enr.shift_id != target.id
+            and g.activity_id == target.activity_id
+            and g.kind == "service"
+            and enr.status in HOLDING
+            and periods_overlap(g.periods, target.periods)]
 
 
 # 冲突行末尾挂的状态：申请中、候补中、待确认转正各说各的。
@@ -223,14 +242,37 @@ def conflict_message(clashes: list[dict], activity_id: str = "") -> str:
 
 
 TIME_CONFLICT = "time_conflict"
+SAME_ACTIVITY_CLASH = "same_activity_clash"
 
 
 def conflict_error(message: str, clashes: list[dict]):
     """时段冲突的 409：前端认 code 弹确认框，列出 conflicts，确认后带
-    confirm_conflict 重发。冲突只提示不硬拦——同一时段两场都报、到时候请假
-    一场，是志愿者自己能拿主意的事。"""
+    confirm_conflict 重发。跨活动的冲突只提示不硬拦——同一时段两场都报、
+    到时候请假一场，是志愿者自己能拿主意的事。"""
     return HTTPException(409, {"code": TIME_CONFLICT, "message": message,
                                "conflicts": clashes})
+
+
+def same_activity_clash_error(clashes: list[dict], prefix: str = ""):
+    """同一活动内两个服务场次时段重叠的 409：硬拦，confirm_conflict 也不放行。
+
+    code 与 time_conflict 分开：前端按 code 决定弹不弹「仍要报名」的确认框，
+    这一类没有「仍要」可言，只把这句话原样显示出来。
+    prefix 写在句首（管理者补招、录取时写上是谁）。
+    """
+    names = "、".join(f"「{c['shift_name']}」" for c in clashes[:3])
+    return HTTPException(409, {
+        "code": SAME_ACTIVITY_CLASH,
+        "message": f"{prefix}与本活动已报的{names}时间重叠，"
+                   f"同一时间只能报一个岗位",
+        "conflicts": clashes})
+
+
+def block_same_activity(rows, target: Shift, prefix: str = "") -> None:
+    """同一活动里的服务场次时段重叠就抛 409，没有就什么也不做。"""
+    clashes = same_activity_clashes(rows, target)
+    if clashes:
+        raise same_activity_clash_error(dedupe_conflicts(clashes), prefix)
 
 
 def dedupe_conflicts(clashes: list[dict]) -> list[dict]:
@@ -425,11 +467,11 @@ def enroll_ledger(db: OrmSession, activity_id: str, shift_id: str,
         whole_shift（报的是占位岗位）时按整场数，同 has_room；
       · 候补：waitlist_rows——waitlisted + pending_confirm，限本场次本岗位。
         待确认既占名额又在队列里，两边都算；
-      · 冲突：time_conflicts——本人 ACTIVE 的报名，时段与 targets 里任一场
+      · 冲突：conflicts_among——本人 ACTIVE 的报名，时段与 targets 里任一场
         （主场次和它的培训/彩排）的任一时段重叠，比某一场时不算那一场自己。
         这里只要「有没有」；真有的话调用方再走 active_rows 拼出详细的提示，
         那是少见的路径，常见路径省下一个往返。本人已确认冲突仍要报时，调用方
-        不看这一项。
+        仍要拿这一项去查同活动的硬拦（见 same_activity_clashes）。
     """
     live = Enrollment.status.in_(ACTIVE)
     mine = (Enrollment.shift_id == shift_id) & (Enrollment.user_id == user_id)
@@ -646,15 +688,47 @@ def unmet_recruit_scope(user: User, act) -> list[str]:
 def group_positions(db: OrmSession, position: Position) -> list[Position]:
     """与该岗位同组的全部岗位（含自己）。
 
-    组名相同即同组；没填组名的岗位自成一组。分组是为了让相邻岗位共用一名
-    组长——「东门片区」的引导、检录、医疗点现场本来就是一个人在协调。
+    **同一活动里**组名相同即同组，跨场次也算；没填组名的岗位自成一组，占位
+    岗位不进组。分组是为了让相邻岗位共用一名组长——「东门片区」的引导、检录、
+    医疗点现场本来就是一个人在协调，这些岗位各带自己的时段，不一定落在同一个
+    场次里，按场次分组就会给同一片区派出好几名组长。
     """
     if not (position.group_name or "").strip():
         return [position]
+    # 活动按 shift_id 取，不走 position.shift：新建岗位时对齐组长任务那一步，
+    # 这个对象还没进会话，关系取不到（见 staff_activities.create_position）
+    shift = db.get(Shift, position.shift_id)
     return (db.query(Position)
-            .filter(Position.shift_id == position.shift_id,
+            .join(Shift, Position.shift_id == Shift.id)
+            .filter(Shift.activity_id == shift.activity_id,
+                    Shift.kind == "service",
+                    Position.is_placeholder.is_(False),
                     Position.group_name == position.group_name)
-            .order_by(Position.sort).all())
+            .order_by(Shift.sort, Position.sort).all())
+
+
+def group_time_warning(db: OrmSession, position: Position) -> str:
+    """同组岗位所在场次的时段不完全相同时的提醒语；一样（或自成一组）为空串。
+
+    一个组共用一名组长，而组长只有一个人：组里的岗位时段不一样，总有一段他
+    不在场。保存照常放行——上下午轮岗、一人盯两段是常见安排，到底怎么排由
+    负责人定，平台只提醒一句。
+    """
+    if not (position.group_name or "").strip():
+        return ""
+    shift_ids = {position.shift_id} | {p.shift_id
+                                       for p in group_positions(db, position)}
+    if len(shift_ids) <= 1:
+        return ""
+    spans = {periods_key(db.get(Shift, sid)) for sid in shift_ids}
+    if len(spans) <= 1:
+        return ""
+    return "本组岗位时间不完全相同，组长可能无法全程在场"
+
+
+def periods_key(shift: Shift) -> tuple:
+    """这一场的时段指纹，用来判断两场的时间是不是完全一样。"""
+    return tuple((p.start_time, p.end_time) for p in shift.sorted_periods())
 
 
 def group_needs_leader(positions: list[Position]) -> bool:
@@ -682,36 +756,40 @@ def notify_leader_vacancy(db: OrmSession, position: Position) -> bool:
     label = vacant_leader_label(db, position)
     if not label:
         return False
-    _send_leader_vacancy(db, position.shift, [label])
+    send_leader_vacancy(db, position.shift.activity_id, [label])
     return True
 
 
 def vacant_leader_label(db: OrmSession, position: Position) -> str:
-    """本组需要组长却没有组长时，返回通知里称呼它的「场次·组」；否则空串。"""
+    """本组需要组长却没有组长时，返回通知里称呼它的那一句；否则空串。"""
     positions = group_positions(db, position)
     if not group_needs_leader(positions):
         return ""
     if group_leader(db, position) is not None:
         return ""
-    return f"「{position.shift.name}·{leader_scope_label(positions, position)}」"
+    return f"「{leader_scope_label(positions, position)}」"
 
 
-def _send_leader_vacancy(db: OrmSession, shift: Shift, labels: list[str]) -> None:
+def send_leader_vacancy(db: OrmSession, activity_id: str,
+                        labels: list[str]) -> None:
+    """缺组长的那几个组合成一条发给管理者。
+
+    发给管理者的活动通知一律活动级，所以收件单位是活动，不是场次：
+    labels 里可以是几个场次的组（见 scheduled.send_leader_vacancy_alerts）。
+    """
     from .notify import notify_managers
 
-    activity = db.get(Activity, shift.activity_id)
+    activity = db.get(Activity, activity_id)
     notify_managers(db, activity.id, f"[组长空缺] {activity.title}",
-                    f"{'、'.join(labels)}目前没有组长，"
+                    f"{'、'.join(dict.fromkeys(labels))}目前没有组长，"
                     f"请在「志愿者管理」中指定。", duty="roster", tab="roster")
 
 
-def notify_shift_leader_vacancies(db: OrmSession, shift: Shift) -> int:
-    """名单锁定时（或不自动锁定的场次报名截止时）统一提醒一次组长空缺。
+def shift_leader_vacancy_labels(db: OrmSession, shift: Shift) -> list[str]:
+    """这一场缺组长的组各一句，并记下这一场的统一提醒已经发过。
 
-    名单敲定之前组长空着很正常：岗位刚建好、报名还没开始，管理者也没法
-    指定谁。所以开「需要组长」、锁定前组长退选都不提醒，等名单定下来，
-    把这一场所有缺组长的组合成一条发给管理者。发过就记在场次上，之后
-    组长再空出来按组立即提醒（见 on_leader_vacated）。返回缺组长的组数。
+    同一个组可能在本活动几个场次里都有岗位，拿到的是同一句（组名加组内岗位），
+    合成一条时由 send_leader_vacancy 去重。
     """
     shift.leader_alert_sent = True
     labels, seen = [], set()
@@ -725,15 +803,35 @@ def notify_shift_leader_vacancies(db: OrmSession, shift: Shift) -> int:
         label = vacant_leader_label(db, p)
         if label:
             labels.append(label)
+    return labels
+
+
+def notify_shift_leader_vacancies(db: OrmSession, shift: Shift) -> int:
+    """名单锁定时（或不自动锁定的场次报名截止时）统一提醒一次组长空缺。
+
+    名单敲定之前组长空着很正常：岗位刚建好、报名还没开始，管理者也没法
+    指定谁。所以开「需要组长」、锁定前组长退选都不提醒，等名单定下来，
+    把这一场所有缺组长的组合成一条发给管理者。发过就记在场次上，之后
+    组长再空出来按组立即提醒（见 on_leader_vacated）。返回缺组长的组数。
+
+    手动锁定一个场次就是一次独立的事件，所以一场一条；定时任务同一轮里
+    到点的几个场次合成一条（见 scheduled.send_leader_vacancy_alerts）。
+    """
+    labels = shift_leader_vacancy_labels(db, shift)
     if labels:
-        _send_leader_vacancy(db, shift, labels)
+        send_leader_vacancy(db, shift.activity_id, labels)
     return len(labels)
 
 
 def leader_scope_label(positions: list[Position], own: Position) -> str:
-    """通知里怎么称呼组长的管辖范围。"""
+    """通知里怎么称呼组长的管辖范围。
+
+    一个组的岗位可以分布在本活动的几个场次上，所以成了组就只写组名和组里的
+    岗位，不挂某一个场次的名字（挂上去只说对了其中一场）；不分组的岗位自成
+    一组，写「场次名·岗位名」才说得清是哪一场的哪个岗位。
+    """
     if len(positions) <= 1:
-        return own.name
+        return f"{own.shift.name}·{own.name}"
     names = "、".join(p.name for p in positions)
     return f"{positions[0].group_name}（{names}）"
 

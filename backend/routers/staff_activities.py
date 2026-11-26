@@ -1765,7 +1765,8 @@ def create_position(shift_id: str, body: PositionBody,
                          if source else ""),
               visible=True)
     db.commit()
-    return {"id": s.id}
+    # 组长只有一个人：同组岗位的时段不完全相同时提醒一句，岗位照常保存
+    return {"id": s.id, "warning": logic.group_time_warning(db, s)}
 
 
 @router.patch("/positions/{position_id}")
@@ -1840,7 +1841,9 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
         # 名额在闸门之外变了：作废计数器，下一个报名按数据库重新对齐。
         # 不作废的话，加了名额之后要等核库限流窗口过去才报得上
         invalidate_gates(g.id, s.id)
-    return {"ok": True, "changes": changes}
+    # 口径同 create_position：同组时段不一致只提醒，不拦保存
+    return {"ok": True, "changes": changes,
+            "warning": logic.group_time_warning(db, s)}
 
 
 class PauseBody(BaseModel):
@@ -2804,7 +2807,9 @@ def add_walkin(shift_id: str, body: dict,
 
     名额超出拦一道，勾选强制才放行——补招是常规操作，不该顺手把场次搞超员；
     真要超也得是明确按下去的，且留痕。时段冲突先提示（code=time_conflict），
-    管理者确认后带 confirm_conflict 重发，同样留痕。
+    管理者确认后带 confirm_conflict 重发，同样留痕。本活动另一个服务场次
+    压在这一场上也一样只提示：志愿者自己报名时这种重叠硬拦，管理者知道
+    现场怎么安排（上下半场轮换之类），确认了就照加。
 
     attached_ids：一并报上的培训/彩排（本场次下、对这个岗位生效的）。
     补招**不自动**连带：现场临时加进来的人，赶不赶得上培训、要不要去彩排，
@@ -2857,7 +2862,9 @@ def add_walkin(shift_id: str, body: dict,
             if position is None or position.shift_id != g.id:
                 raise HTTPException(400, "岗位不属于该场次")
 
-        hit = logic.time_conflicts(db, u, g)
+        # 本人全部有效报名查一次，这一场和勾上的培训/彩排都拿它比
+        rows = logic.active_rows(db, u)
+        hit = logic.conflicts_among(rows, g)
         if hit:
             clashes += hit
             clash_notes.append(f"时段与{logic.conflict_message(hit, g.activity_id)}冲突")
@@ -2874,7 +2881,7 @@ def add_walkin(shift_id: str, body: dict,
                     .filter(Enrollment.shift_id == s.id, Enrollment.user_id == u.id)
                     .first()) is not None:
                 continue            # 已经在那场里了（比如之前连带报过），不重复加
-            hit = logic.time_conflicts(db, u, s)
+            hit = logic.conflicts_among(rows, s)
             if hit:
                 clashes += hit
                 clash_notes.append(f"{s.kind_label()}「{s.name}」时段与"

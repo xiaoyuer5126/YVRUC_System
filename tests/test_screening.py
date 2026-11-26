@@ -828,6 +828,54 @@ def test_录取时选中的场次时间重叠先提示_确认后照录(client, a
     assert "第1场" in n.content and "第2场" in n.content
 
 
+def test_申请可以勾两个时间重叠的意向(client, admin, db, take_student):
+    """同一时间勾两个意向是「哪个都行」：申请这一步不拦，录取时管理者挑一个。"""
+    from backend.models import Shift
+    act_id, ids, q = _create_screened(client, admin, db, shifts=2)
+    a, b = db.get(Shift, ids[0]), db.get(Shift, ids[1])
+    set_shift_time(db, b, a.start_time, a.end_time)        # 完全同一时段
+    db.commit()
+    sid = take_student()
+    r = client.post(f"/api/activities/{act_id}/apply", headers=login(client, sid),
+                    json={"position_ids": _holders(db, ids), "answers": _answers(q)})
+    assert r.status_code == 200, r.text
+    u = student_row(db, sid)
+    mine = (db.query(Enrollment)
+            .filter(Enrollment.activity_id == act_id,
+                    Enrollment.user_id == u.id).all())
+    assert {e.shift_id for e in mine} == set(ids)
+    assert {e.status for e in mine} == {"applied"}
+
+
+def test_录取与本活动已占的场次重叠先提示_确认后照录(client, admin, db, take_student):
+    """他在本活动已经占下了那一段（这里是现场补招进来的）：录到压着的那一场
+    先提示冲突，管理者确认后照录。"""
+    from backend.models import Shift
+    act_id, ids, q = _create_screened(client, admin, db, shifts=2)
+    a, b = db.get(Shift, ids[0]), db.get(Shift, ids[1])
+    set_shift_time(db, b, a.start_time + timedelta(hours=1),
+                   a.end_time + timedelta(hours=1))
+    db.commit()
+    sid = take_student()
+    _u, app = _apply(client, db, act_id, q, sid, ids[1:])      # 只勾第 2 场
+    # 第 1 场由管理者补招进来（跟他申请中的意向撞时间，确认一下就加得进去）
+    r = client.post(f"/api/staff/shifts/{ids[0]}/add-walkin", headers=admin,
+                    json={"student_id": sid, "confirm_conflict": True})
+    assert r.status_code == 200, r.text
+
+    x = _one(_decide(client, admin, act_id, app.id, [{"shift_id": ids[1]}]))
+    assert not x["ok"] and x["code"] == "time_conflict", x
+    assert "第1场" in x["reason"]
+    db.refresh(app)
+    assert app.status == "applied"
+
+    x = _one(_decide(client, admin, act_id, app.id, [{"shift_id": ids[1]}],
+                     confirm=True))
+    assert x["ok"], x
+    db.refresh(app)
+    assert app.status == "accepted"
+
+
 def test_录取只录一场时自己另一场意向不算冲突(client, admin, db, take_student):
     from backend.models import Shift
     act_id, ids, q = _create_screened(client, admin, db, shifts=2)

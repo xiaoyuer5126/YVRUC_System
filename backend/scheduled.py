@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as OrmSession
@@ -788,15 +788,19 @@ def send_checkin_reminders(db: OrmSession) -> int:
 # ======================= 组长空缺提醒 =======================
 
 def send_leader_vacancy_alerts(db: OrmSession) -> int:
-    """名单锁定时，提醒管理者这一场还有哪些组没有组长。
+    """名单锁定时，提醒管理者还有哪些组没有组长，**一个活动一条**。
 
     自动锁定不落库、按时刻算（见 enroll_logic.shift_locked），所以「锁上了」
-    这件事要靠这里每分钟看一眼；手动锁定在锁定接口里当场提醒。不自动锁定
-    （N = 0）又没人手动锁的场次，报名截止时兜底提醒一次。每场每轮只发一次，
-    记在 Shift.leader_alert_sent 上；已开场的不再提醒。返回发出的条数。
+    这件事要靠这里每分钟看一眼；手动锁定在锁定接口里当场提醒（那是一次独立的
+    事件，一场一条）。不自动锁定（N = 0）又没人手动锁的场次，报名截止时兜底
+    提醒一次。一个活动的几个场次常常同时到点（同一个锁定小时数），按场次各发
+    一条就是几条标题一样的通知，所以这一轮里到点的场次合成一条发：同一个组在
+    几场里都有岗位时只说一次（组跨场次，见 enroll_logic.group_positions）。
+    每场的统一提醒只发一次，记在 Shift.leader_alert_sent 上；已开场的不再
+    提醒。返回发出的条数。
     """
-    from .enroll_logic import (enroll_deadline, notify_shift_leader_vacancies,
-                               shift_locked)
+    from .enroll_logic import (enroll_deadline, send_leader_vacancy,
+                               shift_leader_vacancy_labels, shift_locked)
 
     t = now()
     has_leader_post = (select(Position.id)
@@ -808,17 +812,26 @@ def send_leader_vacancy_alerts(db: OrmSession) -> int:
                     Shift.kind == "service",
                     Shift.start_time > t,
                     has_leader_post,
-                    Activity.status.in_(("published", "closed"))).all())
-    sent = 0
+                    Activity.status.in_(("published", "closed")))
+            .order_by(Shift.start_time).all())
+    labels: dict[str, list[str]] = {}
+    names: dict[str, list[str]] = {}
     for g, act in rows:
         due = shift_locked(g, t) or (not g.lock_hours
                                      and t >= enroll_deadline(act, g))
         if not due:
             continue
-        if notify_shift_leader_vacancies(db, g):
-            sent += 1
-            logger.info("场次「%s」组长空缺提醒已发送", g.name)
-        db.commit()
+        hit = shift_leader_vacancy_labels(db, g)
+        if hit:
+            labels.setdefault(act.id, []).extend(hit)
+            names.setdefault(act.id, []).append(g.name)
+    sent = 0
+    for activity_id, rows_labels in labels.items():
+        send_leader_vacancy(db, activity_id, rows_labels)
+        sent += 1
+        logger.info("活动 %s 的场次「%s」组长空缺提醒已发送",
+                    activity_id, "、".join(names[activity_id]))
+    db.commit()
     return sent
 
 
@@ -867,15 +880,18 @@ def send_reg_open_reminders(db: OrmSession) -> int:
 # ======================= 人员变动日报 =======================
 
 def send_roster_digests(db: OrmSession) -> int:
-    """活动前几天，每天给管理者每个场次一条人员变动摘要。
+    """活动前几天，每天给管理者**每个活动**一条人员变动摘要，正文按场次分段。
 
     逐条推变动会被无视（报名期一天几十条），完全不推又会让老师在现场
     才发现少人。折中：临近时每天一条「昨日 +2 −1，当前 18/20」，
     真正紧急的（名单锁定后的服务场次减员）另有即时提醒。
     培训/彩排的请假也只进这里：逐条即时推，彩排前一天几个人请假就是几条通知。
-    """
-    from .enroll_logic import shift_enrolled_count
 
+    发给管理者的活动通知一律活动级：一个活动连着办三天，按场次各发一条就是
+    三条标题几乎一样的通知，谁也分不清哪条该看。所以几个场次的数字分段写进
+    同一条，每段以场次名开头。发没发过仍记在各个场次上（digest_sent_on），
+    同一活动里第二天才临近的那几场进第二天那一条。
+    """
     t = now()
     # 每天固定时间推一条：扫描是每分钟一跑的，不定点的话零点整就发出去了
     cutoff = t.replace(hour=config.ROSTER_DIGEST_HOUR, minute=0,
@@ -891,62 +907,76 @@ def send_roster_digests(db: OrmSession) -> int:
               .order_by(Shift.start_time)
               .all())
     since = t - timedelta(days=1)
-    sent = 0
+    due: dict[str, list[Shift]] = {}
     for g in shifts:
         if g.digest_sent_on and g.digest_sent_on >= cutoff:
             continue
         g.digest_sent_on = t
-        # 变动按这一场算：流水挂在报名记录上，报名记录不会换场次。
-        # 按活动算的话，同一活动的几场会收到同一组数字，看不出是哪一场少了人
-        rows = (db.query(AuditLog)
-                .join(Enrollment, AuditLog.target_id == Enrollment.id)
-                .filter(AuditLog.activity_id == g.activity_id,
-                        AuditLog.target_type == "enrollment",
-                        Enrollment.shift_id == g.id,
-                        AuditLog.action.in_(_DIGEST_JOIN + _DIGEST_LEAVE
-                                            + _DIGEST_ABANDON + _DIGEST_EXPIRE
-                                            + _DIGEST_EXCUSE),
-                        AuditLog.created_at >= since)
-                .order_by(AuditLog.created_at).all())
-        if not rows:
-            continue          # 没有变动就不打扰
-        joined = sum(1 for r in rows if r.action in _DIGEST_JOIN)
-        left = sum(1 for r in rows if r.action in _DIGEST_LEAVE)
-        lines = []
-        if joined or left:
-            lines.append(f"过去 24 小时：新增 {joined} 人，退出 {left} 人。")
-        abandoned = sum(1 for r in rows if r.action in _DIGEST_ABANDON)
-        if abandoned:
-            lines.append(f"放弃候补转正：{abandoned} 人。")
-        expired = sum(1 for r in rows if r.action in _DIGEST_EXPIRE)
-        if expired:
-            lines.append(f"候补转正超时未确认：{expired} 人。")
-        excuses = [r.summary for r in rows if r.action in _DIGEST_EXCUSE]
-        if excuses:
-            lines.append("请假/销假：")
-            lines += [f"· {x}" for x in excuses]
-        enrolled = shift_enrolled_count(db, g.id)
-        if g.is_attached():
-            # 培训/彩排不设名额，报上服务场次就连带在册；要看的是会少几个人
-            excused = (db.query(Enrollment)
-                       .filter(Enrollment.shift_id == g.id,
-                               Enrollment.status == "enrolled",
-                               Enrollment.excused.is_(True)).count())
-            lines.append(f"当前在册 {enrolled} 人"
-                         + (f"，其中请假 {excused} 人。" if excused else "。"))
-        else:
-            capacity = g.total_capacity()
-            gap = max(0, capacity - enrolled)
-            lines.append(f"当前 {enrolled}/{capacity} 人"
-                         + (f"，缺 {gap} 人。" if gap else "，人数已满。"))
-        lines.append(f"服务时间：{g.span_text()}")
-        act = db.get(Activity, g.activity_id)
-        notify_managers(db, act.id, f"[人员变动] {act.title} · {g.name}",
-                        "\n".join(lines), duty="roster", tab="roster")
+        due.setdefault(g.activity_id, []).append(g)
+    sent = 0
+    for activity_id, rows in due.items():
+        blocks = [b for b in (_digest_block(db, g, since) for g in rows) if b]
+        if not blocks:
+            continue          # 这个活动一点变动都没有，不打扰
+        act = db.get(Activity, activity_id)
+        notify_managers(db, act.id, f"[人员变动] {act.title}",
+                        "\n\n".join(blocks), duty="roster", tab="roster")
         sent += 1
     if shifts:
         db.commit()
     return sent
+
+
+def _digest_block(db: OrmSession, g: Shift, since: datetime) -> str:
+    """一个场次在日报里的那一段，以场次名开头；这一场没有变动就是空串。
+
+    变动按这一场算：流水挂在报名记录上，报名记录不会换场次。整个活动合起来
+    数的话，看不出是哪一场少了人。
+    """
+    from .enroll_logic import shift_enrolled_count
+
+    rows = (db.query(AuditLog)
+            .join(Enrollment, AuditLog.target_id == Enrollment.id)
+            .filter(AuditLog.activity_id == g.activity_id,
+                    AuditLog.target_type == "enrollment",
+                    Enrollment.shift_id == g.id,
+                    AuditLog.action.in_(_DIGEST_JOIN + _DIGEST_LEAVE
+                                        + _DIGEST_ABANDON + _DIGEST_EXPIRE
+                                        + _DIGEST_EXCUSE),
+                    AuditLog.created_at >= since)
+            .order_by(AuditLog.created_at).all())
+    if not rows:
+        return ""
+    joined = sum(1 for r in rows if r.action in _DIGEST_JOIN)
+    left = sum(1 for r in rows if r.action in _DIGEST_LEAVE)
+    lines = [f"{g.name}（{g.span_text()}）"]
+    if joined or left:
+        lines.append(f"过去 24 小时：新增 {joined} 人，退出 {left} 人。")
+    abandoned = sum(1 for r in rows if r.action in _DIGEST_ABANDON)
+    if abandoned:
+        lines.append(f"放弃候补转正：{abandoned} 人。")
+    expired = sum(1 for r in rows if r.action in _DIGEST_EXPIRE)
+    if expired:
+        lines.append(f"候补转正超时未确认：{expired} 人。")
+    excuses = [r.summary for r in rows if r.action in _DIGEST_EXCUSE]
+    if excuses:
+        lines.append("请假/销假：")
+        lines += [f"· {x}" for x in excuses]
+    enrolled = shift_enrolled_count(db, g.id)
+    if g.is_attached():
+        # 培训/彩排不设名额，报上服务场次就连带在册；要看的是会少几个人
+        excused = (db.query(Enrollment)
+                   .filter(Enrollment.shift_id == g.id,
+                           Enrollment.status == "enrolled",
+                           Enrollment.excused.is_(True)).count())
+        lines.append(f"当前在册 {enrolled} 人"
+                     + (f"，其中请假 {excused} 人。" if excused else "。"))
+    else:
+        capacity = g.total_capacity()
+        gap = max(0, capacity - enrolled)
+        lines.append(f"当前 {enrolled}/{capacity} 人"
+                     + (f"，缺 {gap} 人。" if gap else "，人数已满。"))
+    return "\n".join(lines)
 
 
 # 进日报的动作。候补的进出不改变到场人数，只进管理页的人员变动流水；

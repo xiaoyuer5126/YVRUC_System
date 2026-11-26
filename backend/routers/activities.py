@@ -510,7 +510,9 @@ def _check_time_conflicts(rows, g: Shift, attached: list[Shift]) -> None:
     有重叠就回「时段冲突」的 409（logic.conflict_error），由志愿者确认后重发。
 
     一次查、在内存里比，不必每个目标场次各查一遍全部报名。本活动别的场次的
-    报名同样算：同一活动里两场时间压着，也只能去一场。
+    报名同样算：同一活动里两场时间压着，也只能去一场——其中「两个服务场次
+    压在一起」那一类在这之前已由 logic.block_same_activity 硬拦掉，到这里的
+    是跨活动的重叠，以及和培训/彩排撞上的。
     """
     clashes, where = [], ""
     for target in [g] + attached:
@@ -600,8 +602,10 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                   **logic.reusable_answers(db, act.id, user.id)}
         answers = validate_answers(db, act, user, merged, [position.id])
 
-        # ★ 时段冲突（粗粒度）：与所有有效报名的场次比区间，重叠就先提示，
-        # 志愿者确认仍要报（confirm_conflict）才往下走。
+        # ★ 时段冲突（粗粒度）：与所有有效报名的场次比区间。本活动里另一个
+        # 服务场次压在这一场上就硬拦——同一时间只能站一个岗位，没有「确认后
+        # 仍要报」可言；其余重叠（跨活动、撞上培训/彩排）先提示，志愿者确认
+        # 仍要报（confirm_conflict）才往下走。
         # 候补中的场次同样算已占用——排了队就等于预留了这段时间。
         # 培训/彩排是连带报上的，它们的时间也要一起比：报完才发现彩排那晚
         # 有别的活动，等于把冲突留给了现场。
@@ -614,8 +618,10 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
         # （编辑接口不拿场次锁，锁里再查一遍也挡不住它）。
         attached_all = logic.attached_shifts(db, g.id)
         attached = logic.for_position(attached_all, position.id)
+        rows = logic.active_rows(db, user)
+        logic.block_same_activity(rows, g)
         if not body.confirm_conflict:
-            _check_time_conflicts(logic.active_rows(db, user), g, attached)
+            _check_time_conflicts(rows, g, attached)
 
         # 上面全是读，先落一个空事务把**数据库连接还回池子**，再去抢场次锁。
         # 不还的话，排进程名额（见 locks.shift_lock）的这段时间是「占着一条连接
@@ -665,9 +671,15 @@ def enroll(activity_id: str, shift_id: str, body: EnrollBody,
                 raise HTTPException(409, why)
             # 同一个人别的报名可能刚在别的场次锁下提交：持用户锁重比一遍时段。
             # 有没有冲突已经在上面那条里数过了，真撞上才去查明细拼提示。
-            # 已确认冲突的不再比，名额照样按下面锁里数到的判
-            if ledger.clash and not body.confirm_conflict:
-                _check_time_conflicts(logic.active_rows(db, user), g, attached)
+            # 这一步是「同时点两个重叠岗位」唯一拦得住的地方：锁外两个请求
+            # 各看各的，谁也看不见对方，到这里后到的那个才看得见先提交的那条。
+            # 同活动服务场次压上的硬拦，确认过冲突的也照拦；其余重叠确认过就不再比，
+            # 名额照样按下面锁里数到的判
+            if ledger.clash:
+                rows = logic.active_rows(db, user)
+                logic.block_same_activity(rows, g)
+                if not body.confirm_conflict:
+                    _check_time_conflicts(rows, g, attached)
 
             enr = Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
                              user_id=user.id, joined_at=now(),

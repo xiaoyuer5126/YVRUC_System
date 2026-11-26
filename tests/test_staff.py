@@ -161,6 +161,32 @@ def test_walkin_needs_force_when_group_is_full(client, admin, db,
     assert r.status_code == 200 and r.json()["forced_reasons"]
 
 
+def test_补招同活动时段重叠先提示_确认后照加(client, admin, db, open_group, take_student):
+    """志愿者自己报名时同活动重叠硬拦，管理者补招只提示：确认后照加，
+    现场怎么轮换由管理者判断。"""
+    from test_enroll import overlapping_shift
+
+    act, g1 = open_group(5, day_offset=420, start_in_hours=4)
+    g2 = overlapping_shift(db, act, g1)
+    sid = take_student()
+    r = client.post(f"/api/staff/shifts/{g1.id}/add-walkin", headers=admin,
+                    json={"student_id": sid, "position_id": g1.test_position_id})
+    assert r.status_code == 200, r.text
+
+    r = client.post(f"/api/staff/shifts/{g2.id}/add-walkin", headers=admin,
+                    json={"student_id": sid, "position_id": g2.test_position_id})
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "time_conflict"
+    assert db.query(Enrollment).filter(Enrollment.shift_id == g2.id).count() == 0
+
+    r = client.post(f"/api/staff/shifts/{g2.id}/add-walkin", headers=admin,
+                    json={"student_id": sid, "position_id": g2.test_position_id,
+                          "confirm_conflict": True})
+    assert r.status_code == 200, r.text
+    assert db.query(Enrollment).filter(Enrollment.shift_id == g2.id).count() == 1
+
+
 def test_unchecked_out_hours_need_review(client, admin, db, take_student):
     """扫码即走的人不能和全程服务的人一样自动拿满时长。"""
     admin_user = db.query(User).filter(User.student_id == ADMIN).one()

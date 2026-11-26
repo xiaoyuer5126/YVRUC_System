@@ -1,8 +1,10 @@
-"""岗位组：同组岗位共用一名组长。"""
+"""岗位组：同一活动里组名相同的岗位共用一名组长，跨场次也算。"""
 from __future__ import annotations
 
+from datetime import timedelta
+
 from backend.models import Enrollment, Position, User, uid
-from conftest import ADMIN, POSITION_TEXT, login
+from conftest import ADMIN, POSITION_TEXT, login, mk_shift
 
 
 def _group_of(client, admin, db, enrolled_activity, take_student, *,
@@ -53,6 +55,82 @@ def _enrolled(db, *positions):
             .filter(Enrollment.position_id.in_([p.id for p in positions]),
                     Enrollment.status == "enrolled")
             .order_by(Enrollment.joined_at).all())
+
+
+def _same_group_elsewhere(db, act, shift, group_name, *, name="下午引导",
+                          hours_later=6):
+    """同一活动的另一个场次里放一个同组岗位，返回 (场次, 岗位)。"""
+    g2 = mk_shift(id=uid("g"), activity_id=act.id, name="下午场",
+                  start_time=shift.start_time + timedelta(hours=hours_later),
+                  end_time=shift.end_time + timedelta(hours=hours_later),
+                  mode="pick", sort=1)
+    db.add(g2)
+    db.flush()
+    p = Position(id=uid("p"), shift_id=g2.id, name=name, quota=5,
+                 group_name=group_name, needs_leader=True, sort=0,
+                 **POSITION_TEXT)
+    db.add(p)
+    db.commit()
+    return g2, p
+
+
+def test_同组岗位跨场次共用一名组长(client, admin, db, enrolled_activity,
+                                take_student):
+    """「东门片区」的引导在上午场、检录在下午场：还是一个组、一名组长——
+    岗位各带自己的时段，按场次分组就会给同一片区派出好几名组长。"""
+    act, shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,
+                                   take_student)
+    g2, p3 = _same_group_elsewhere(db, act, shift, p1.group_name)
+    t = login(client, take_student())
+    r = client.post(f"/api/activities/{act.id}/shifts/{g2.id}/enroll", headers=t,
+                    json={"position_id": p3.id, "leader_willing": True})
+    assert r.status_code == 200, r.text
+
+    # 指定上午场的人当组长，下午场那个岗位问到的是同一个人
+    head = _make_leader(client, admin, db, p1)
+    name = db.get(User, head.user_id).name
+    d = client.get(f"/api/activities/{act.id}", headers=admin).json()
+    pos = {p["name"]: p for g in d["shifts"] for p in g["positions"]}
+    assert pos[p3.name]["leader_name"] == name
+    assert set(pos[p3.name]["group_positions"]) == {p1.name, p2.name, p3.name}
+    assert pos[p3.name]["needs_leader"] is True
+
+    # 一个组只有一名组长：指定下午场的人，上午场那位跟着卸任
+    later = _enrolled(db, p3)[0]
+    assert _appoint(client, admin, later.id).status_code == 200
+    db.expire_all()
+    assert [x.id for x in _leaders(db, p1, p2, p3)] == [later.id]
+
+
+def test_同组时段不同保存时提醒组长顾不全(client, admin, db, enrolled_activity,
+                                    take_student):
+    """组长只有一个人：同组岗位的时段不一样，保存照常，但要提醒一句。"""
+    from conftest import editing
+
+    act, shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,
+                                   take_student)
+    note = "本组岗位时间不完全相同，组长可能无法全程在场"
+    with editing(client, admin, act.id):
+        # 同一场次里的两个同组岗位：时段相同，不提醒
+        r = client.patch(f"/api/staff/positions/{p2.id}", headers=admin,
+                         json={"location": "东门外侧"})
+        assert r.status_code == 200 and not r.json()["warning"], r.text
+
+        # 新岗位落在另一个场次、时段不一样：照常建，带上提醒
+        g2 = mk_shift(id=uid("g"), activity_id=act.id, name="下午场",
+                      start_time=shift.start_time + timedelta(hours=6),
+                      end_time=shift.end_time + timedelta(hours=6),
+                      mode="pick", sort=1)
+        db.add(g2)
+        db.commit()
+        r = client.post(f"/api/staff/shifts/{g2.id}/positions", headers=admin,
+                        json={"name": "下午检录", "quota": 2,
+                              "group_name": p1.group_name, **POSITION_TEXT})
+        assert r.status_code == 200 and r.json()["warning"] == note, r.text
+        # 改组里已有的岗位也照样提醒
+        r = client.patch(f"/api/staff/positions/{p2.id}", headers=admin,
+                         json={"location": "东门内侧"})
+        assert r.status_code == 200 and r.json()["warning"] == note, r.text
 
 
 def test_需要组长就必须写组长任务(client, admin, db, open_group):
