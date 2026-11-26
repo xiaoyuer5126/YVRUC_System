@@ -3,7 +3,7 @@
 名额只有一个来源——岗位。assign 场次建出来时自动带一个「待分配」占位岗位，
 报名的人都落在它上面，名额按整场数。分工定下来后直接在场次下建真实岗位，
 一键分配或导入排班把人从「待分配」挪过去；已经在岗位上的人一键分配不动。
-有人报名之后场次不能再切换模式。
+场次的岗位模式建好之后不改，排完班要开放选岗见 test_open_pick。
 """
 from __future__ import annotations
 
@@ -96,25 +96,23 @@ def test_assign场次学生端看到的是说明而不是岗位名(client, db, p
     assert pos[0]["name"] == "待分配", "管理端仍按「待分配」记账"
 
 
-def test_有人报名后不能切模式_没人时切到pick删掉占位(client, admin, db, published,
-                                             take_student):
-    """两种场次的人记在不同的账上，有人之后再切，总有人的去处说不清。"""
+def test_场次的岗位模式不从场次接口切(client, admin, db, published):
+    """两种场次的人记在不同的账上：pick 的人各自占着自己选的岗位，assign 的人
+    都从占位岗位进来、名额按整场数。换一种记账方式总有人的去处说不清，所以
+    建好之后不改：排完班要让新来的人自己选岗走「开放选岗」（见 test_open_pick），
+    要按岗位各自招人就新建岗位（各带自己的时段）。
+    """
     aid, g = published
     with editing(client, admin, aid):
+        r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+                         json={"mode": "pick"})
+        assert r.status_code == 400 and "开放选岗" in r.json()["detail"], r.text
+        # 同一个值照常放行：前端整份表单回传时不该因为带了 mode 就被拒
         assert client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
-                            json={"mode": "pick"}).status_code == 200
+                            json={"mode": "assign", "capacity": 4}
+                            ).status_code == 200
     sh = _shift_view(client, admin, aid)
-    assert sh["mode"] == "pick" and sh["positions"] == [], "没人报过，占位直接删掉"
-
-    with editing(client, admin, aid):
-        assert client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
-                            json={"mode": "assign", "capacity": 3}).status_code == 200
-    t = login(client, take_student())
-    assert client.post(f"/api/activities/{aid}/shifts/{g.id}/enroll",
-                       headers=t, json={}).status_code == 200
-    with editing(client, admin, aid):
-        r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin, json={"mode": "pick"})
-        assert r.status_code == 409 and "已有 1 人报名" in r.json()["detail"]
+    assert sh["mode"] == "assign" and sh["capacity"] == 4
 
 
 def test_名额满了排到占位岗位的候补(client, admin, db, published, take_student):

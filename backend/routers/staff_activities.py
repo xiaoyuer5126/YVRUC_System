@@ -1427,55 +1427,6 @@ def _ensure_single_post(g: Shift) -> None:
                  f"或保持「截止后统一分配」")
 
 
-def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
-    """切换场次模式：只在这一场一个人都没报（含候补）时允许。
-
-    两种场次的人记在不同的账上：pick 的人各自占着自己选的岗位；assign 的人
-    都从占位岗位进来、名额按整场数，分到真实岗位后仍算这一场的名额。有人
-    之后再切，要么作废大家选好的岗位，要么让「还没安排的人」无处可放——
-    建错模式的场次趁没人报的时候改，或者删了重建。
-
-    「截止后统一分配」的场次不用切模式就能建岗位：直接建，再一键分配或导入。
-    切到 pick 时占位岗位用不上了，删掉；它上面有过报名记录（报了又退的）
-    就删不掉，也就不让切。切过去就是一个普通岗位，所以场次只能剩一个岗位，
-    场次名也跟着对齐到岗位名。
-    """
-    if mode not in SHIFT_MODES:
-        raise HTTPException(400, "场次模式必须是 pick 或 assign")
-    if mode == g.mode:
-        return
-    if g.id:
-        if mode == "pick":
-            _ensure_single_post(g)
-        rows = db.query(Enrollment).filter(Enrollment.shift_id == g.id)
-        live = rows.filter(Enrollment.status.in_(logic.ACTIVE)).count()
-        if live:
-            raise HTTPException(
-                409, f"「{g.name}」已有 {live} 人报名，不能再切换岗位模式；"
-                     f"如确需调整请新建场次")
-        holder = g.placeholder()
-        if mode == "pick" and holder is not None:
-            if rows.filter(Enrollment.position_id == holder.id).count():
-                raise HTTPException(
-                    409, f"「{g.name}」有过报名记录，不能再改成「报名即选岗位」；"
-                         f"如确需调整请新建场次")
-            _prune_questions(db, g.activity_id, holder,
-                             [p.id for p in g.real_positions()])
-            g.positions.remove(holder)
-            db.delete(holder)
-        if mode == "pick":
-            # 场次名跟岗位名保持一致：这一场从此就是那个岗位
-            real = g.real_positions()
-            if real:
-                g.name = real[0].name
-        if mode == "assign":
-            # 暂停、锁定在 assign 场次里只按整场算（见 _toggle_target），
-            # 岗位上留着的开关没有入口能关掉
-            for p in g.positions:
-                p.enroll_paused = p.list_locked = False
-    g.mode = mode
-
-
 @router.post("/activities/{activity_id}/shifts")
 def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                  db: OrmSession = Depends(db_session),
@@ -1497,7 +1448,9 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                       note=body.note.strip(), sort=len(act.shifts),
                       location=body.location.strip(), lock_hours=body.lock_hours,
                       flexible_time=bool(body.flexible_time) and body.kind == "service")
-    _apply_shift_mode(db, g, body.mode)
+    if body.mode not in SHIFT_MODES:
+        raise HTTPException(400, "场次模式必须是 pick 或 assign")
+    g.mode = body.mode
     _apply_attachment(db, g, body, act)
     _validate_flexible_hours(g)
     db.add(g)
@@ -1522,12 +1475,14 @@ def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
 
 
 # 名额与候补不在这张表里：它们记在占位岗位上，由 _sync_placeholder 处理
+# 岗位模式不在这张表里：建好之后不从这里切。「截止后统一分配」排完班改成
+# 「报名即选岗位」走 POST /shifts/{id}/open-pick（它要求这一场只剩一个岗位、
+# 「待分配」里没人，并把场次名对齐到岗位名）
 SHIFT_FIELDS = {"name": "场次名",
-                "mode": "岗位模式", "note": "备注",
+                "note": "备注",
                 "location": "地点", "hours_mode": "时长认定",
                 "requirement_tags": "条件要求", "lock_hours": "开场前自动锁定（小时）",
                 "flexible_time": "时间灵活（可多次签到）"}
-SHIFT_LABELS = {**SHIFT_FIELDS, "periods": "时间"}
 # 库里 name/location 是 String(n)、note 是 String(512)：修改是 PATCH 任意字段，
 # 超了直接写库会撞列宽 500
 _SHIFT_MAX = {"name": 128, "location": 128, "note": 512}
@@ -1567,9 +1522,7 @@ def _apply_shift_body(db: OrmSession, g: Shift, body: dict,
         if key not in body or key == "lock_hours":
             continue
         v = body[key]
-        if key == "mode":
-            _apply_shift_mode(db, g, v)
-        elif key == "hours_mode":
+        if key == "hours_mode":
             if v not in HOURS_MODES:
                 raise HTTPException(400, "时长认定方式不合法")
             g.hours_mode = v
@@ -1603,6 +1556,11 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
     _refuse_post_shift(g)
+    if str(body.get("mode", g.mode)) != g.mode:
+        raise HTTPException(
+            400, "场次的岗位模式建好之后不改：排完班要让新来的人自己选岗，"
+                 "请用「开放选岗」（POST /api/staff/shifts/{id}/open-pick）；"
+                 "要按岗位各自招人，请用 POST /api/staff/activities/{id}/posts")
     changes = _apply_shift_body(db, g, body, SHIFT_FIELDS)
     if "applies_to_positions" in body and g.is_attached():
         g.applies_to_positions = _clean_applies(act, body["applies_to_positions"])
@@ -1636,12 +1594,13 @@ def _drop_shift(db: OrmSession, act: Activity, g: Shift,
     返回（有效报名条数, 受影响的人）。不留痕、不提交，由调用方按「删的是场次
     还是岗位」各写各的那句话。
     """
+    word = _shift_word(g)   # 普通岗位自带场次，对管理者来说删的是「岗位」
     # 签到记录挂在场次上（checkin_records / checkin_geos 都随签到任务走），
     # 场次没了它们没处安放：生成过签到码的场次一律不删，签到历史不能跟着没
     if db.query(CheckinTask).filter(CheckinTask.shift_id == g.id).first():
         raise HTTPException(
-            409, "该场次已经生成过签到码，签到记录挂在场次上，不能删除。"
-                 "如确定这一场不作数，请在签到面板停用签到码，场次保留即可")
+            409, f"该{word}已经生成过签到码，签到记录挂在{word}上，不能删除。"
+                 f"如确定这一场不作数，请在签到面板停用签到码，{word}保留即可")
     # 这一场的培训/彩排先查出来再修剪范围：修剪完它们就不再圈这一场的岗位，
     # attached_shifts 查不回来，下面重算时只因这一场才去的那些就退不掉了
     attached = [] if g.is_attached() else logic.attached_shifts(db, g.id)
@@ -1651,7 +1610,7 @@ def _drop_shift(db: OrmSession, act: Activity, g: Shift,
         Enrollment.shift_id == g.id,
         Enrollment.status.in_(logic.ACTIVE)).count()
     if n_active and not force:
-        raise HTTPException(409, f"该场次已有 {n_active} 人有效报名，"
+        raise HTTPException(409, f"该{word}已有 {n_active} 人有效报名，"
                                  f"删除需强制执行（force=1），全部记录将被取消")
     db.flush()
     # 报名记录挂在场次和它的岗位上，场次删掉它们也留不住（外键），连同已经
@@ -2275,7 +2234,7 @@ def lock_all(activity_id: str, body: LockBody,
 def _holder_occupants(db: OrmSession, holder: Position) -> str:
     """「待分配」上还挂着的人，拼成一句提示；没人返回空串。
 
-    口径同 _apply_shift_mode 判 live：ACTIVE。候补、待确认、
+    口径同报名是否算「在册」：ACTIVE。候补、待确认、
     待筛选在 assign 场次里都排在占位岗位上，一键分配只挪正式报名的人，
     他们得先由负责人处理掉，所以单独点出来。
     """

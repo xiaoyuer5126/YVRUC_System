@@ -399,7 +399,10 @@ Redis 上记一次数：错误风暴多半就是数据库出了问题，那时�
   占位岗位里。它走场次接口：`POST /api/staff/activities/{id}/shifts` 建场，
   `POST /api/staff/shifts/{gid}/positions` 加坑位，`PATCH /api/staff/positions/{pid}` 改坑位；
   往报名即选岗位的场次里加第二个岗位一律 400。排完班可以「开放选岗」
-  （`POST /api/staff/shifts/{gid}/open-pick`）把只剩一个岗位的统一分配场次转成普通岗位。
+  （`POST /api/staff/shifts/{gid}/open-pick`）把只剩一个岗位的统一分配场次转成普通岗位
+  （场次名对齐到岗位名，「待分配」里有人就拒）。岗位模式建好之后不从 `PATCH /shifts/{gid}`
+  改（带上不同的 `mode` 一律 400）：切过去就是一个普通岗位，这件事只有「开放选岗」
+  一条路，它才核得清「待分配」上的人与岗位数。
 - 培训 / 彩排也是场次（`kind=training/rehearsal`），挂在整个活动上：报名任一个被圈到的
   岗位就连带报上、最后一个被圈到的报名退掉才连带退，自己不设名额。这样签到码、到岗大屏、
   时长计算、冲突检测全部原样复用。可以指定只对某几个岗位生效（东门组周五彩排、检录组
