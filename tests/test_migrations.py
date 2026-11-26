@@ -184,3 +184,249 @@ def test_部门列表接口给出迁移铺好的部门(client):
     rows = client.get("/api/staff/departments",
                       headers=login(client, ADMIN)).json()
     assert [d["name"] for d in rows if d["name"] in DEPARTMENTS] == DEPARTMENTS
+
+
+# ======================= 0024：拆开挂了多个岗位的普通场次 =======================
+#
+# 岗位自带时段之后，service/pick 的场次恰好装一个岗位。这一组用例在「升到 0023
+# 的库」里造出老形状的数据（一个场次三个岗位），跑完迁移再逐项核对搬没搬对：
+# 0024 只动数据、不动表结构，所以造数据和读回来都能直接用模型。
+
+def _old_shape(session):
+    """老形状：一个 pick 场次（两段时段）+ 三个岗位，带报名、意向、签到码、
+    签到记录、时长明细与场次级学习材料。返回要在断言里用到的那些 id。"""
+    from datetime import timedelta
+
+    from backend.models import (Activity, Application, Attachment, CheckinGeo,
+                                CheckinRecord, CheckinTask, Enrollment,
+                                HoursRecord, HoursSegment, Position, Shift,
+                                ShiftPeriod, User, day_of, now, uid)
+
+    base = now().replace(microsecond=0) + timedelta(days=20)
+    users = []
+    for i in range(4):
+        u = User(id=uid("u"), student_id=f"7{i:06d}", name=f"拆分{i}",
+                 user_type="student", roles=["student"])
+        session.add(u)
+        users.append(u)
+    act = Activity(id=uid("act"), title="拆分测试", intro="x", location="世纪馆",
+                   contacts=[{"name": "王", "phone": "13900000000"}],
+                   contact_group_qr="x", status="published",
+                   reg_start=base - timedelta(days=10),
+                   reg_end=base - timedelta(days=1), created_by=users[0].id)
+    session.add(act)
+    g = Shift(id=uid("g"), activity_id=act.id, name="运动会当天",
+              mode="pick", kind="service", location="北门", note="七点集合",
+              hours_mode="fixed", lock_hours=24, enroll_paused=True,
+              list_locked=True, auto_lock_spent=True, leader_alert_sent=True,
+              digest_sent_on=day_of(base), flexible_time=False, sort=3,
+              requirement_tags={"校区": ["中关村校区", "苏州校区"]})
+    session.add(g)
+    periods = []
+    for i in range(2):
+        p = ShiftPeriod(id=uid("sp"), shift_id=g.id, sort=i,
+                        start_time=base + timedelta(days=i),
+                        end_time=base + timedelta(days=i, hours=3),
+                        reminder_sent_at=base - timedelta(days=2))
+        session.add(p)
+        periods.append(p)
+    kept, moved_b, moved_c = (
+        Position(id=uid("p"), shift_id=g.id, name=name, quota=3, sort=i,
+                 service_task="现场服务", training_note="到岗讲解",
+                 location="" if i == 0 else "南门",
+                 requirement_tags={"性别": ["女"]} if i == 0 else {})
+        for i, name in enumerate(("甲", "乙", "丙")))
+    session.add_all([kept, moved_b, moved_c])
+    session.flush()
+
+    # 正式报名在「乙」，候补在「丙」
+    session.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                           user_id=users[0].id, position_id=moved_b.id,
+                           status="enrolled", joined_at=now()))
+    session.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                           user_id=users[1].id, position_id=moved_c.id,
+                           status="waitlisted", joined_at=now()))
+    # 申请中的意向：勾了「甲」和「丙」，意向记录上写的是首选「甲」
+    session.add(Application(id=uid("app"), activity_id=act.id,
+                            user_id=users[2].id, answers={},
+                            wanted_positions=[kept.id, moved_c.id]))
+    session.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                           user_id=users[2].id, position_id=kept.id,
+                           status="applied", joined_at=now()))
+    # 没写岗位的意向：整场都行，拆开后每个岗位都该有一条
+    session.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                           user_id=users[3].id, position_id=None,
+                           status="applied", joined_at=now()))
+
+    whole = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+                        period_id=periods[0].id, mode="shift", token="AAA111",
+                        created_by=users[0].id,
+                        valid_from=periods[0].start_time,
+                        valid_to=periods[0].end_time)
+    session.add(whole)
+    session.add(CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=g.id,
+                            period_id=periods[1].id, position_id=moved_b.id,
+                            mode="position", token="BBB222",
+                            created_by=users[0].id))
+    session.flush()
+    session.add(CheckinGeo(id=uid("geo"), task_id=whole.id, lat=39.9, lng=116.3,
+                           radius_m=100, set_by=users[0].id))
+    # 第一条认得出岗位；第二条是扫整场统一码留下的，只能按报名记录认人
+    session.add(CheckinRecord(id=uid("ckr"), task_id=whole.id,
+                              activity_id=act.id, shift_id=g.id,
+                              period_id=periods[0].id, position_id=moved_b.id,
+                              user_id=users[0].id, method="manual"))
+    session.add(CheckinRecord(id=uid("ckr"), task_id=whole.id,
+                              activity_id=act.id, shift_id=g.id,
+                              period_id=periods[1].id, position_id=None,
+                              user_id=users[0].id, method="manual"))
+    rec = HoursRecord(id=uid("hr"), activity_id=act.id, user_id=users[0].id,
+                      hours=3.0)
+    session.add(rec)
+    session.flush()
+    session.add(HoursSegment(id=uid("seg"), record_id=rec.id,
+                             activity_id=act.id, user_id=users[0].id,
+                             kind="shift", seq=0, date=day_of(base), hours=3.0,
+                             position_name="乙", time_text="第一段",
+                             shift_id=g.id, period_id=periods[0].id,
+                             position_id=moved_b.id))
+    session.add(Attachment(id=uid("att"), owner_type="shift", owner_id=g.id,
+                           activity_id=act.id, kind="link", title="场地图",
+                           url="https://v.ruc.edu.cn/x"))
+    session.commit()
+    return {"activity": act.id, "shift": g.id, "periods": [p.id for p in periods],
+            "spans": [(p.start_time, p.end_time) for p in periods],
+            "kept": kept.id, "moved": [moved_b.id, moved_c.id],
+            "users": [u.id for u in users], "whole_task": whole.id}
+
+
+@pytest.fixture(scope="module")
+def split_result():
+    """在 0023 的库里造老形状的数据，跑完迁移把库交给下面几条用例读。"""
+    from sqlalchemy.orm import Session
+
+    with scratch_db("split") as eng:
+        upgrade_to(eng, "0023")
+        with Session(eng) as session:
+            ids = _old_shape(session)
+        migrate.upgrade(eng)
+        with Session(eng) as session:
+            yield session, ids
+
+
+def _shifts_of(session, activity_id):
+    from backend.models import Shift
+    return {g.name: g for g in session.query(Shift)
+            .filter(Shift.activity_id == activity_id).all()}
+
+
+def test_迁移_一岗一场且场次名跟岗位名一致(split_result):
+    session, ids = split_result
+    shifts = _shifts_of(session, ids["activity"])
+    assert sorted(shifts) == ["丙", "乙", "甲"]
+    for name, g in shifts.items():
+        assert [p.name for p in g.positions] == [name]
+    assert shifts["甲"].id == ids["shift"], "第一个岗位留在原场次"
+
+
+def test_迁移_新场次复制了全部字段与时段(split_result):
+    session, ids = split_result
+    shifts = _shifts_of(session, ids["activity"])
+    old = shifts["甲"]
+    for name in ("乙", "丙"):
+        g = shifts[name]
+        assert g.id != old.id
+        for key in ("activity_id", "mode", "kind", "note", "hours_mode",
+                    "lock_hours", "enroll_paused", "list_locked",
+                    "auto_lock_spent", "leader_alert_sent", "digest_sent_on",
+                    "flexible_time", "sort"):
+            assert getattr(g, key) == getattr(old, key), (name, key)
+        assert [(p.start_time, p.end_time) for p in g.sorted_periods()] \
+            == ids["spans"]
+        assert {p.id for p in g.periods} & set(ids["periods"]) == set(), \
+            "时段是新建的行，不是把原来那几行搬过去"
+        assert all(p.reminder_sent_at is not None for p in g.periods), \
+            "签到提醒发没发跟着复制，不再提醒一遍"
+
+
+def test_迁移_报名与意向跟着岗位走(split_result):
+    from backend.models import Enrollment
+    session, ids = split_result
+    shifts = _shifts_of(session, ids["activity"])
+    rows = session.query(Enrollment).filter(
+        Enrollment.activity_id == ids["activity"]).all()
+    by_user = {}
+    for row in rows:
+        by_user.setdefault(row.user_id, []).append(row)
+    u1, u2, u3, u4 = ids["users"]
+
+    [enrolled] = by_user[u1]
+    assert (enrolled.status, enrolled.shift_id) == ("enrolled", shifts["乙"].id)
+    [waiting] = by_user[u2]
+    assert (waiting.status, waiting.shift_id) == ("waitlisted", shifts["丙"].id)
+    # 勾了「甲」「丙」：首选留在原场次，「丙」在新场次补一条意向
+    assert {(r.shift_id, r.position_id) for r in by_user[u3]} == {
+        (shifts["甲"].id, ids["kept"]),
+        (shifts["丙"].id, ids["moved"][1])}
+    assert all(r.status == "applied" for r in by_user[u3])
+    # 没写岗位的意向：三个岗位各一条，岗位写上去
+    assert {(r.shift_id, r.position_id) for r in by_user[u4]} == {
+        (shifts[name].id, g.positions[0].id) for name, g in shifts.items()}
+
+
+def test_迁移_签到码与签到记录时长段都搬过去(split_result):
+    from backend.models import CheckinGeo, CheckinRecord, CheckinTask, HoursSegment
+    session, ids = split_result
+    shifts = _shifts_of(session, ids["activity"])
+    tasks = session.query(CheckinTask).filter(
+        CheckinTask.activity_id == ids["activity"]).all()
+
+    whole = [t for t in tasks if t.mode == "shift"]
+    assert len(whole) == 3, "整场统一码给每个新场次各复制一行"
+    assert {t.shift_id for t in whole} == {g.id for g in shifts.values()}
+    assert len({t.code_group for t in whole}) == 1, "共用一个 code_group"
+    assert all(t.code_group for t in whole), "原来那行也补上了 code_group"
+    assert len({t.token for t in whole}) == 3, "固定码各是一串"
+    first = {g.id: g.sorted_periods()[0].id for g in shifts.values()}
+    assert {t.shift_id: t.period_id for t in whole} == first, \
+        "时段按起止时间对到新场次自己那一段"
+    # 锚点跟着码走：三张码各有一行
+    assert session.query(CheckinGeo).filter(
+        CheckinGeo.task_id.in_([t.id for t in whole])).count() == 3
+
+    [mine] = [t for t in tasks if t.mode == "position"]
+    assert mine.shift_id == shifts["乙"].id
+    assert mine.period_id == shifts["乙"].sorted_periods()[1].id
+
+    records = session.query(CheckinRecord).filter(
+        CheckinRecord.activity_id == ids["activity"]).all()
+    assert {r.shift_id for r in records} == {shifts["乙"].id}, \
+        "认得出岗位的按岗位走，扫整场码的按报名记录认人"
+    assert sorted(r.period_id for r in records) \
+        == sorted(p.id for p in shifts["乙"].periods)
+
+    [seg] = session.query(HoursSegment).filter(
+        HoursSegment.activity_id == ids["activity"]).all()
+    assert seg.shift_id == shifts["乙"].id
+    assert seg.period_id == shifts["乙"].sorted_periods()[0].id
+
+
+def test_迁移_场次级材料与条件地点收口到岗位(split_result):
+    from backend.models import Attachment
+    session, ids = split_result
+    shifts = _shifts_of(session, ids["activity"])
+
+    owners = [a.owner_id for a in session.query(Attachment).filter(
+        Attachment.owner_type == "shift").all()]
+    assert sorted(owners) == sorted(g.id for g in shifts.values()), \
+        "挂在场次上的学习材料复制给每个新场次"
+
+    for g in shifts.values():
+        assert g.requirement_tags == {} and g.location == ""
+    from backend.models import Position
+    kept = session.get(Position, ids["kept"])
+    # 岗位原来写了性别，场次写了校区：两份并到岗位上
+    assert kept.requirement_tags == {"性别": ["女"],
+                                     "校区": ["中关村校区", "苏州校区"]}
+    assert kept.location == "北门", "岗位没写地点，搬场次那一份过来"
+    assert shifts["乙"].positions[0].location == "南门", "岗位自己写了的不动"
