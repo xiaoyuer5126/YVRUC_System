@@ -1019,7 +1019,7 @@ def _transition(activity_id: str, target: str, action: str, summary: str,
 def close(activity_id: str, bg: BackgroundTasks,
           db: OrmSession = Depends(db_session),
           user: User = Depends(require_manager)):
-    out = _transition(activity_id, "closed", "close", "截止报名",
+    out = _transition(activity_id, "closed", "close", "停止报名",
                       ("published",), db, user, bg)
     # 手动截止和系统自动截止是同一件事，排岗提醒不能只挂在定时任务上
     from ..scheduled import notify_managers_to_assign

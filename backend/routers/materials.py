@@ -46,6 +46,10 @@ EXT_TYPES = {
 # （见模块说明：视频走链接），所以不并进 EXT_TYPES，只在问卷上传和下载时用
 VIDEO_TYPES = {"mp4": "video/mp4", "mov": "video/quicktime"}
 ANSWER_FILE_TYPES = {**EXT_TYPES, **VIDEO_TYPES}
+# 提示里列格式的顺序：文档、表格、幻灯片、图片、视频。sorted() 按字母排会把 txt
+# 甩到最后、jpeg 夹在文档中间，找要传的那一类得多看一遍。
+ANSWER_FILE_ORDER = ("txt", "doc", "docx", "ppt", "pptx", "xls", "xlsx",
+                     "pdf", "jpeg", "jpg", "png", "mov", "mp4")
 
 
 def is_video(data: bytes) -> bool:

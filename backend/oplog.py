@@ -179,7 +179,7 @@ LABELS = {
     'create_activity': '新建活动',
     'update_activity': '修改活动基本信息',
     'delete_activity': '删除活动草稿',
-    'close': '手动截止报名',
+    'close': '手动停止报名',
     'copy_activity_route': '复制活动',
     'start_editing': '进入编辑态',
     'finish': '手动结束活动',

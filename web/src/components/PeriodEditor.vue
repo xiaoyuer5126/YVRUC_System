@@ -12,8 +12,8 @@
     </div>
     <el-button link type="primary" @click="add">+ 添加时段</el-button>
     <div class="dim tip">
-      同一个场次的人在列出的每个时段都要到场。日期不连续、每天时间不同，
-      就按段各添加一个；钟点填个大概即可，时长按实际签到签退计算。
+      服务时段供志愿者查看，报名该场次的志愿者在列出的每个时段都要到场，
+      志愿时长按实际签到签退计算。
     </div>
   </div>
 </template>
@@ -79,7 +79,7 @@ function remove(i) {
 <style scoped>
 .period-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
               margin-bottom: 8px; }
-.period-row > :deep(.el-date-editor) { flex: 1 1 180px; min-width: 0; }
+.period-row > :deep(.el-date-editor) { flex: 1 1 160px; min-width: 0; }
 .sep { color: var(--el-text-color-secondary); }
 .tip { margin-top: 4px; line-height: 1.6; }
 </style>

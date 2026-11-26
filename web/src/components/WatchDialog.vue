@@ -6,7 +6,7 @@
   <el-dialog v-model="visible" :title="t('活动上新提醒')" :width="narrow ? '94%' : '560px'"
              append-to-body :before-close="guard" @opened="guard.snap">
     <div v-loading="loading" class="watch">
-      <p class="lead">{{ t('有新活动上线时，场次落在你勾选的空闲时段里、由你关注的组织单位举办，或者活动名包含你填的关键词，满足一样就给你发一条提醒。只提醒招募范围包括你的活动。') }}</p>
+      <p class="lead">{{ t('新活动上线时，如果场次落在空闲时段里，或由你关注的组织单位举办，或活动名称包含关键词，就给你发一条上新提醒。') }}</p>
 
       <div class="sec">{{ t('每周空闲时段') }}</div>
       <div class="grid">
@@ -37,7 +37,6 @@
                  :placeholder="t('从已有活动的组织单位里选，可多选')" style="width:100%">
         <el-option v-for="o in options" :key="o" :value="o" :label="o" />
       </el-select>
-      <div class="foot-line dim">{{ t('同一个单位可能有几种写法，想都收到就都选上') }}</div>
 
       <div class="sec">{{ t('活动名关键词') }}</div>
       <el-input-tag v-model="keywords" :max="maxKeywords" clearable
@@ -45,7 +44,7 @@
       <div class="foot-line dim">{{ t('活动名包含任一关键词就提醒，不分大小写。每个最多 {0} 个字', [maxKeywordLen]) }}</div>
 
       <el-alert v-if="!slots.length && !organizers.length && !keywords.length" type="info"
-                :closable="false" show-icon :title="t('什么都没选，保存后就不再提醒')" />
+                :closable="false" show-icon :title="t('都不选即为关闭提醒')" />
     </div>
     <template #footer>
       <el-button @click="visible = false">{{ t('取消') }}</el-button>

@@ -350,7 +350,7 @@ def download_ticket(body: TicketBody, user: User = Depends(current_user)):
 @router.get("/constants")
 def constants(user: User = Depends(current_user)):
     from .. import ai
-    from .materials import ANSWER_FILE_TYPES
+    from .materials import ANSWER_FILE_ORDER, ANSWER_FILE_TYPES
     return {
         "recruit_modes": config.RECRUIT_MODES,
         "violation_kinds": ViolationRecord.KINDS,
@@ -369,7 +369,9 @@ def constants(user: User = Depends(current_user)):
             "max_mb": config.MAX_MATERIAL_BYTES // (1024 * 1024),
             "max_count": config.MAX_PENDING_ATTACHMENTS,
             "total_mb": config.MAX_PENDING_ATTACHMENT_BYTES // (1024 * 1024),
-            "exts": sorted(ANSWER_FILE_TYPES),
+            # 按固定顺序列（见 ANSWER_FILE_ORDER），漏掉的排在后面
+            "exts": ([e for e in ANSWER_FILE_ORDER if e in ANSWER_FILE_TYPES]
+                     + sorted(ANSWER_FILE_TYPES - set(ANSWER_FILE_ORDER))),
         },
         # 活动管理里的 智能起草按钮：没配 key 就不出现
         "ai_enabled": ai.enabled(),

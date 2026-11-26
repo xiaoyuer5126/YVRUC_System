@@ -413,7 +413,7 @@ def main() -> None:
         # ---------- 活动4：校庆晚会当日保障（已截止·签到进行中·今天全天） ----------
         gala = Activity(id=uid("act"), title="校庆文艺晚会·当日保障", organizer="校团委",
                         recruit_mode="instant", cover_hue=280,
-                        intro="校庆晚会当天全流程保障，已截止报名。请按分配岗位准时到岗并扫码签到。",
+                        intro="校庆晚会当天全流程保障，已停止报名。请按分配岗位准时到岗并扫码签到。",
                         location="明德堂",
                         contacts=[{"name": "王砚秋", "phone": "13950010000"},
                                   {"name": "张远航", "phone": "13950030000"}],

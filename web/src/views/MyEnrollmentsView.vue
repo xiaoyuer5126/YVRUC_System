@@ -167,7 +167,7 @@
     </el-table>
 
     <el-alert type="info" :closable="false">
-      <p style="margin:0;font-size:12.5px;line-height:1.6">{{ t('退选规则：每个场次开场前一段时间会锁定名单（活动页上写着几小时），负责人也可能提前锁定； 名单锁定后退出会被记录一次。') }}</p>
+      <p style="margin:0;font-size:12.5px;line-height:1.6">{{ t('退选规则：每个场次会按页面说明在设定时间锁定名单，负责人也可能提前锁定；志愿者名单敲定后退出会被记录一次。') }}</p>
     </el-alert>
 
     <GroupQrDialog ref="groupQr" />

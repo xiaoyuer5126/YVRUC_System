@@ -106,7 +106,7 @@
         <VbNamesInput v-model="draftNames" />
         <div class="toolbar" style="margin-top:8px">
           <el-button type="primary" :loading="vbBusy" @click="saveNames">保存名称</el-button>
-          <span class="dim">提交时长审核时须至少填一个；申诉期满系统自动提交时也用这里存的名称</span>
+          <span class="dim">提交时长审核时需至少填一个</span>
         </div>
       </template>
       <template v-else-if="vbc.can_resubmit">

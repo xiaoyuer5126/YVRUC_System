@@ -73,7 +73,7 @@
                          title="删除草稿不可恢复，确认删除？" @confirm="delActivity(row)">
             <template #reference><el-button size="small" type="danger" plain>删除</el-button></template>
           </el-popconfirm>
-          <el-popconfirm v-if="row.status === 'published'" title="将截止报名，确认截止？"
+          <el-popconfirm v-if="row.status === 'published'" title="将停止报名，确认停止？"
                          @confirm="transition(row, 'close')">
             <template #reference><el-button size="small" type="warning" plain>截止</el-button></template>
           </el-popconfirm>
@@ -132,7 +132,7 @@
                              title="删除草稿不可恢复，确认删除？" @confirm="delActivity(row)">
                 <template #reference><el-button size="small" type="danger" link>删除</el-button></template>
               </el-popconfirm>
-              <el-popconfirm v-if="row.status === 'published'" title="将截止报名，确认截止？"
+              <el-popconfirm v-if="row.status === 'published'" title="将停止报名，确认停止？"
                              @confirm="transition(row, 'close')">
                 <template #reference><el-button size="small" type="warning" link>截止</el-button></template>
               </el-popconfirm>

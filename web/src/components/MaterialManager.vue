@@ -157,5 +157,10 @@ function sizeText(bytes) {
 .row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; }
 .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .size { color: #a8abb2; font-size: 13px; }
-.actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 有材料时和上一条隔一行；一条都没有时不留这个空隙，第一行才跟左边标签对得上 */
+.row + .actions { margin-top: 8px; }
+/* el-upload 外面那层是 inline-block，行盒在按钮下面还留一截基线空隙，
+   flex 居中后「上传文档」就会比旁边的按钮低一两个像素 */
+.actions :deep(.el-upload) { display: flex; align-items: center; }
 </style>

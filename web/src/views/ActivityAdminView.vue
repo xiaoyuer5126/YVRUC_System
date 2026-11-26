@@ -42,9 +42,9 @@
           {{ act.pinned ? '取消急招置顶' : '置顶为急招' }}
         </el-button>
         <el-button v-if="!isOver" @click="editBase = true">编辑基本信息</el-button>
-        <el-popconfirm v-if="act.status === 'published'" title="将截止报名，确认截止？"
+        <el-popconfirm v-if="act.status === 'published'" title="将停止报名，确认停止？"
                        @confirm="transition('close')">
-          <template #reference><el-button type="warning">截止报名</el-button></template>
+          <template #reference><el-button type="warning">停止报名</el-button></template>
         </el-popconfirm>
         <el-button v-else-if="act.status === 'closed'" type="warning" plain
                    @click="openReopen">恢复报名</el-button>
@@ -338,7 +338,7 @@
           </el-table>
           <p v-else class="dim" style="margin:8px 0 0">
             {{ g.mode === 'assign'
-               ? '截止后统一分配：学生报名只选时间；分工定下来后直接在本场次下建岗位，再到「志愿者管理」一键分配或导入排班；排完后可点「开放选岗」，剩余名额让大家按岗位自选。'
+               ? '截止后统一分配：志愿者报名只选时间；分工定下来后直接在本场次下建岗位，再到「志愿者管理」一键分配或导入排班；排完后可点「开放选岗」，剩余名额让大家按岗位自选。'
                : '还没有岗位，请先设置岗位及名额。' }}
           </p>
 
@@ -433,7 +433,7 @@
         <!-- 培训与彩排：挂在整个活动上，按岗位圈人（可以跨场次），空 = 全体 -->
         <div class="section-title">
           培训与彩排
-          <span class="dim">报上被圈到的岗位就连带报上；有独立的签到码与时长</span>
+          <span class="dim">志愿者报名需要培训的岗位时，自动报名培训，可单独请假。培训与彩排可设置独立的签到码与时长</span>
         </div>
         <div v-for="t in act.trainings || []" :key="t.id" class="att-row">
           <el-tag size="small" effect="dark" :type="t.kind === 'training' ? 'success' : 'warning'">
@@ -1033,7 +1033,7 @@
       <el-tab-pane label="管理者" name="managers" lazy>
         <el-alert type="info" :closable="false">
           一个活动可由多人共同管理：创建者自动成为管理者，管理者之间权限相同，
-          管理者须为<b>活动发起方/青协</b>。
+          管理者须具有<b>活动发起方/青协</b>身份。
         </el-alert>
         <el-card shadow="never">
           <div class="toolbar">
@@ -1134,7 +1134,7 @@
     </el-tabs>
 
     <!-- 场次对话框 -->
-    <el-dialog v-model="shiftDlg.visible" :title="shiftDlg.editing ? '编辑场次' : '新建场次'" width="520"
+    <el-dialog v-model="shiftDlg.visible" :title="shiftDlg.editing ? '编辑场次' : '新建场次'" width="620"
                :before-close="guardShift" @opened="guardShift.snap">
       <el-form label-width="100px">
         <el-form-item label="名称" required><el-input v-model="groupForm.name" placeholder="如：上午场" /></el-form-item>
@@ -1149,11 +1149,11 @@
               勾的是「待分配」，录取之后再排岗位。
             </template>
             <template v-else-if="groupForm.mode === 'pick'">
-              提前设置岗位分工，学生报名时自己挑岗位。
+              提前设置岗位分工，志愿者报名时自己挑岗位。
             </template>
             <template v-else>
-              适用于未敲定岗位分工的情况，学生报名时不挑岗位。分工定下来后直接在
-              本场次下建岗位，再一键分配或导入排班。
+              适用于未敲定岗位分工的情况，志愿者报名时不挑岗位，分工确定后直接
+              在本场次下创建岗位，再进行分配。分配完成后可以开放选岗，志愿者自行选择。
             </template>
             有人报名之后不能再切换模式。
           </div>
@@ -1191,9 +1191,9 @@
           <el-input-number v-model="groupForm.lock_hours" :min="0" :max="72" />
           <span class="dim" style="margin-left:8px">小时自动锁定</span>
           <div class="dim" style="margin-top:4px">
-            锁定后不再接受新报名，停止候补自动转正，此时退出的志愿者会被记录；
+            锁定名单后不再接受新报名，停止候补自动转正，此后退出的志愿者会被记录；
             如需补人请在志愿者管理页面手动转正。
-            0 = 不自动锁定，随时可以在岗位设置里手动锁定、解锁。
+            上限 72 小时，0 = 不自动锁定，可随时在岗位设置里按需求手动锁定、解锁。
           </div>
         </el-form-item>
         <el-form-item label="条件要求">
@@ -1218,11 +1218,10 @@
 
     <!-- 培训 / 彩排：挂在整个活动上 -->
     <el-dialog v-model="attDlg.visible"
-               :title="(attDlg.editing ? '编辑' : '添加') + '培训 / 彩排'" width="560"
+               :title="(attDlg.editing ? '编辑' : '添加') + '培训 / 彩排'" width="620"
                :before-close="guardAttached" @opened="guardAttached.snap">
       <p class="dim">
-        报上被圈到的岗位就连带报上，被圈到的报名全退了才连带退；可以跨场次。
-        自己不设名额，但有独立的签到码与时长。
+        与需培训岗位绑定报名，可以跨场次，有独立的签到码与时长。
       </p>
       <el-form label-width="100px">
         <el-form-item label="类型" required>
@@ -1515,7 +1514,7 @@
             <el-radio value="issued">统一发放</el-radio>
             <el-radio value="own">志愿者自备</el-radio>
           </el-radio-group>
-          <div class="dim">统一发放可在「志愿服装」页扫码或手动登记领取与归还</div>
+          <div class="dim">统一发放可在「志愿服装」页下载领取/归还码，支持志愿者扫码登记或管理者手动登记</div>
         </el-form-item>
         <!-- 三处备注出现即必填：左侧红星，saveStation 与后端各拦一道 -->
         <el-form-item v-if="stationForm.attire !== 'none'" label="服装备注" required>
@@ -1585,7 +1584,7 @@
     </el-dialog>
 
     <!-- 按岗位看：给一个岗位加时段 = 在某个场次下复制出同名岗位 -->
-    <el-dialog v-model="slotDlg.visible" :title="`给「${slotDlg.role?.name || ''}」加时段`" width="480"
+    <el-dialog v-model="slotDlg.visible" :title="`给「${slotDlg.role?.name || ''}」加时段`" width="620"
                :before-close="guardSlot" @opened="guardSlot.snap">
       <el-radio-group v-model="slotDlg.mode">
         <el-radio-button value="existing" :disabled="!slotTargets.length">放进已有场次</el-radio-button>
@@ -2426,9 +2425,9 @@ async function onMaterialChanged() {
 
 // —— 培训 / 彩排 ——
 const HOURS_HINT = {
-  fixed: '到场即按本场时长计，不要求签退。彩排和集中培训人就在那儿，不值得卡分钟，也就没有「忘记签退」这回事。固定计时仍要志愿者扫码签到，没扫码不计时长。',
-  checkin: '签退 − 签到，与服务场次一致。适合来去时间确实不一样的场合。',
-  none: '只记出勤，不产生志愿时长。适合线上培训。',
+  fixed: '志愿者扫码签到，不要求签退，时长直接按本场时长计。',
+  checkin: '按签到签退时间记时长。',
+  none: '不计志愿时长，不建议选择。',
 }
 const attDlg = ref({ visible: false, editing: null, busy: false })
 const attForm = ref({})

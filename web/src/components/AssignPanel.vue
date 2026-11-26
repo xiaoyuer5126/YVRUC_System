@@ -17,9 +17,8 @@
     </div>
 
     <div class="dim" style="margin-bottom:12px">
-      一键分配只排「待分配」里的人，已经在岗位上的人不动：按报名先后匹配尚有空位且
-      满足条件的岗位，不满足条件的不排入，可勾选「强制」。导入排班用「导出排班表」的
-      文件，改好「岗位」「组长」两列再传回来。
+      只排未分配岗位的志愿者，按报名先后匹配满足条件的岗位，不满足条件的不排入。
+      导入排班用「导出排班表」的文件，改好「岗位」「组长」两列再传回来。
     </div>
 
     <template v-if="preview">
@@ -171,7 +170,7 @@
         </el-form-item>
         <el-form-item label="">
           <el-checkbox v-model="walkin.force">
-            名额已满时强制加入，计入留痕（时段冲突会另外弹窗确认）
+            名额已满时强制加入，计入留痕
           </el-checkbox>
         </el-form-item>
       </el-form>

@@ -101,7 +101,7 @@ def auto_advance_activities(db: OrmSession) -> int:
             deadline = act.reg_end or (span[0] if span else None)
             if deadline and t > deadline:
                 _advance(db, act, "closed", "close",
-                         f"报名截止时间（{deadline:%Y-%m-%d %H:%M}）已到，系统自动截止报名")
+                         f"报名截止时间（{deadline:%Y-%m-%d %H:%M}）已到，系统自动停止报名")
                 notify_managers_to_assign(db, act)
                 changed += 1
         # 同一轮里接着判：截止后场次也已结束的，一次到位，不用等下一分钟

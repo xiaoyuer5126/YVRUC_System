@@ -13,7 +13,7 @@
     <el-button v-if="!disabled && list.length < MAX" link type="primary"
                @click="add">+ 再加一个名称</el-button>
     <div v-if="!disabled" class="dim">
-      至少填 1 个，最多 {{ MAX }} 个；每个 2～200 字，写志愿北京上的全称。
+      至少填 1 个，最多 {{ MAX }} 个；每个 2～200 字，需与志愿北京平台上一致，便于查找。
     </div>
   </div>
 </template>

@@ -76,9 +76,9 @@
           <el-option v-for="t in stages" :key="t" :value="t" :label="t" />
         </el-select>
       </div>
-      <!-- 显示条件：只能挂在前面某道选择题的某几个选项上 -->
+      <!-- 条件显示：只能挂在前面某道选择题的某几个选项上 -->
       <div class="fb-cond">
-        <span class="dim">显示条件</span>
+        <span class="dim">条件显示</span>
         <el-select v-model="q.condQ" clearable placeholder="一直显示" style="width:220px"
                    :disabled="!editable" @change="clearCondValues(q)">
           <el-option v-for="c in conditionSources(i)" :key="c.key" :value="c.key"
@@ -98,14 +98,14 @@
     </div>
     <div v-if="aiOpen" class="fb-ai">
       <div class="dim">
-        按活动简介和岗位出题。想重点了解什么可以写在下面，不写也行。
+        AI会自动读取活动简介和岗位设置。此外想重点了解什么可以写在下面，也可留空。
       </div>
       <el-input v-model="aiText" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }"
                 maxlength="2000" show-word-limit
                 placeholder="如：翻译岗要会英语或日语，想看相关经历；要统计服装尺码" />
       <el-upload v-model:file-list="aiFiles" :auto-upload="false" multiple
                  :limit="AI_FILE_LIMIT" :accept="AI_FILE_ACCEPT">
-        <el-button size="small">上传文件（招募要求、立项书等）</el-button>
+        <el-button size="small">上传文件（岗位要求等）</el-button>
         <template #tip><div class="dim">{{ AI_FILE_TIP }}</div></template>
       </el-upload>
       <el-alert type="warning" :closable="false" show-icon
@@ -142,7 +142,7 @@
       </template>
     </div>
     <div v-if="editable" class="dim" style="margin-top:8px">
-      适用岗位、校区、学段留空 = 不限，几项同时满足才问；显示条件只能挂在前面的选择题上。
+      适用岗位、校区、学段，留空即为不限；条件显示只能关联在前面的选择题上。
     </div>
     <el-empty v-else-if="!questions.length" description="没有设置题目" />
   </div>
@@ -199,7 +199,7 @@ onMounted(async () => {
   if (r) {
     fileTip.value = `志愿者上传限制：单个文件最大 ${r.max_mb}MB；每人在本活动最多传 `
       + `${r.max_count} 个、合计不超过 ${r.total_mb}MB；可传 ${r.exts.join('、')}。`
-      + '长视频请使用问卷、网盘等方式收集'
+      + '大文件请使用问卷、网盘等方式收集'
   }
 })
 
@@ -265,14 +265,14 @@ function reconcile() {
       const kept = q.condValues.filter(v => opts.includes(v))
       if (kept.length === q.condValues.length) return
       if (kept.length) {
-        notes.push(`「${name}」的显示条件去掉了已不存在的选项：`
+        notes.push(`「${name}」的条件显示去掉了已不存在的选项：`
                    + q.condValues.filter(v => !opts.includes(v)).join(' / '))
         q.condValues = kept
         return
       }
       why = '选中的选项都已不存在'
     }
-    notes.push(`「${name}」的显示条件已清除：${why}`)
+    notes.push(`「${name}」的条件显示已清除：${why}`)
     q.condQ = ''
     q.condValues = []
   })

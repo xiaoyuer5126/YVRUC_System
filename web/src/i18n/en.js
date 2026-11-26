@@ -86,7 +86,7 @@ export default {
   '签收成功': 'Acknowledged',
 
   // —— 活动广场 ——
-  '即选即得——报名即生效；报名后筛选——由负责人筛选录取':
+  '即选即得：报名即生效。报名后筛选：由负责人筛选录取':
     'First come, first served: your spot is confirmed when you sign up. By application: the organizer selects volunteers.',
   '搜索活动名称': 'Search activities',
   '全部状态': 'All statuses',
@@ -542,8 +542,8 @@ export default {
   '已锁定（小时）': 'Locked hours',
   '参与活动场次': 'Activities',
   '时长明细': 'Hours breakdown',
-  '由负责人核准，展开一行可看这次时长由哪几段组成。':
-    'Approved by the organizer. Expand a row to see how the hours add up.',
+  '由负责人核准，展开一行可看当次活动的时长明细。':
+    'Approved by the organizer. Expand a row to see the hours breakdown for that activity.',
   '记录时间': 'Recorded',
   '申诉截止': 'Appeal by',
   '党校': 'Party School',
@@ -719,8 +719,8 @@ export default {
   '由负责人分配': 'Assigned by the organizer',
   '这个签到码已经失效了（现场码每分钟更换），请重新扫一次现场的二维码':
     'This check-in code has expired (on-site codes change every minute). Scan the on-site QR code again.',
-  '退选规则：每个场次开场前一段时间会锁定名单（活动页上写着几小时），负责人也可能提前锁定； 名单锁定后退出会被记录一次。':
-    'Withdrawal rules: each session’s roster locks some hours before it starts (shown on the activity page), and the organizer may lock it earlier. Withdrawing after the roster locks goes on your record.',
+  '退选规则：每个场次会按页面说明在设定时间锁定名单，负责人也可能提前锁定；志愿者名单敲定后退出会被记录一次。':
+    'Withdrawal rules: each session’s roster locks at the time stated on the activity page, and the organizer may lock it earlier. Withdrawing after the roster is finalized goes on your record.',
 
   // —— 后端提示（志愿者端会碰到的）——
   '报名成功，名额已锁定。': 'Signed up. Your spot is confirmed.',
@@ -936,7 +936,7 @@ export default {
   // 活动上新提醒
   '上新提醒': 'New activity alerts',
   '活动上新提醒': 'New Activity Alerts',
-  '有新活动上线时，场次落在你勾选的空闲时段里、由你关注的组织单位举办，或者活动名包含你填的关键词，满足一样就给你发一条提醒。只提醒招募范围包括你的活动。': 'When a new activity goes live with a session in your free time, run by an organizing unit you follow, or with a keyword of yours in its name, we will notify you. Only activities open to you count.',
+  '新活动上线时，如果场次落在空闲时段里，或由你关注的组织单位举办，或活动名称包含关键词，就给你发一条上新提醒。': 'When a new activity goes live, you get a notification if a session falls in your free time, it is run by an organizing unit you follow, or its name contains your keyword.',
   '每周空闲时段': 'Weekly free time',
   '上午': 'Morning',
   '下午': 'Afternoon',
@@ -945,12 +945,11 @@ export default {
   '{0}，全选或清空这一行': '{0}: select or clear the whole row',
   '关注的组织单位': 'Organizing units you follow',
   '从已有活动的组织单位里选，可多选': 'Pick from existing organizing units',
-  '同一个单位可能有几种写法，想都收到就都选上': 'One unit may appear under several names. Pick them all to get every alert.',
   '活动名关键词': 'Keywords in activity name',
   '输入后按回车添加，最多 {0} 个': 'Type and press Enter to add, up to {0}',
   '活动名包含任一关键词就提醒，不分大小写。每个最多 {0} 个字': 'Alerts when the activity name contains any keyword, case-insensitive. Up to {0} characters each.',
   '关键词每个最多 {0} 个字': 'Each keyword can have up to {0} characters',
-  '什么都没选，保存后就不再提醒': 'Nothing selected. Saving turns alerts off.',
+  '都不选即为关闭提醒': 'Leave everything empty to turn alerts off.',
   '已保存，有符合的新活动上线时会提醒你': 'Saved. We will notify you when a matching activity goes live.',
   '已关闭上新提醒': 'New activity alerts turned off',
 }

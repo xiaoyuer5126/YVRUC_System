@@ -21,6 +21,8 @@
                     :checked="activeShortcut === i" @change="applyShortcut(i)">
         {{ t(s.key) }}
       </el-check-tag>
+      <!-- 有筛选条件时摆在这一行末尾：一整排筛选项看完顺手就能清掉 -->
+      <el-button v-if="clearable" text type="primary" @click="emit('clear')">{{ t('清除筛选') }}</el-button>
     </div>
 
     <div class="slot-divider" />
@@ -71,8 +73,10 @@ const props = defineProps({
   start: { type: String, default: '' },
   end: { type: String, default: '' },
   slots: { type: Array, default: () => [] },
+  // 有没有筛选条件：决定快捷选项那一行末尾要不要摆「清除筛选」
+  clearable: { type: Boolean, default: false },
 })
-const emit = defineEmits(['update:start', 'update:end', 'update:slots'])
+const emit = defineEmits(['update:start', 'update:end', 'update:slots', 'clear'])
 
 const HOURS = [8, 10, 12, 14, 16, 18, 20]
 // 星期几的缩写：中文用「一」「二」…，英文自己一列
@@ -209,7 +213,7 @@ const toggleCell = k => toggleKeys([k])
 .slot-sec { font-size: 12px; color: #909399; margin-bottom: 8px; }
 .slot-range { display: flex; align-items: center; gap: 8px; }
 .slot-range :deep(.el-date-editor) { flex: 1; min-width: 0; }
-.slot-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.slot-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .slot-divider { border-top: 1px solid #eceef1; margin: 12px 0; }
 .slot-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px;
             margin-bottom: 8px; }

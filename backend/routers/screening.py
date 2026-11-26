@@ -157,10 +157,10 @@ def _clean_show_if(raw: dict, earlier: dict[str, list[str]], title: str) -> dict
     if not qid:
         return {}
     if qid not in earlier:
-        raise HTTPException(400, f"「{title}」的显示条件只能挂在前面的单选/多选题上")
+        raise HTTPException(400, f"「{title}」的条件显示只能挂在前面的单选/多选题上")
     values = [str(v) for v in (raw.get("values") or []) if str(v) in earlier[qid]]
     if not values:
-        raise HTTPException(400, f"请为「{title}」的显示条件选择至少一个选项")
+        raise HTTPException(400, f"请为「{title}」的条件显示选择至少一个选项")
     return {"question_id": qid, "values": values}
 
 

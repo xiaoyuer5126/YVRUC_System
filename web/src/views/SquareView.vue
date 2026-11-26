@@ -8,7 +8,7 @@
           <el-icon><Bell /></el-icon><span>{{ t('上新提醒') }}</span>
         </el-button>
       </div>
-      <p>{{ t('即选即得——报名即生效；报名后筛选——由负责人筛选录取') }}</p>
+      <p>{{ t('即选即得：报名即生效。报名后筛选：由负责人筛选录取') }}</p>
     </div>
 
     <div class="filters">
@@ -42,20 +42,21 @@
             {{ slotButtonText }}
           </el-button>
         </template>
-        <SlotPicker v-model:start="f.start" v-model:end="f.end" v-model:slots="slots" />
+        <SlotPicker v-model:start="f.start" v-model:end="f.end" v-model:slots="slots"
+                    :clearable="filtered" @clear="clearFilters" />
       </el-popover>
       <el-button v-else class="slot-trigger" :type="slotActive ? 'primary' : ''" plain
                  @click="slotOpen = true">{{ slotButtonText }}</el-button>
       <el-drawer v-if="narrow" v-model="slotOpen" direction="btt" size="85%"
                  :title="t('按时段筛选')" append-to-body>
-        <SlotPicker v-model:start="f.start" v-model:end="f.end" v-model:slots="slots" />
+        <SlotPicker v-model:start="f.start" v-model:end="f.end" v-model:slots="slots"
+                    :clearable="filtered" @clear="clearFilters" />
         <div class="slot-apply">
           <el-button type="primary" class="slot-apply-btn" @click="slotOpen = false">
             {{ slotApplyText }}
           </el-button>
         </div>
       </el-drawer>
-      <el-button v-if="filtered" text type="primary" @click="clearFilters">{{ t('清除筛选') }}</el-button>
     </div>
 
     <div v-if="list.length" class="card-grid">

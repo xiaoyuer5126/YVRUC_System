@@ -25,7 +25,7 @@
       </el-col>
     </el-row>
     <el-card shadow="never">
-      <template #header><b>{{ t('时长明细') }}</b><span class="dim" style="margin-left:8px">{{ t('由负责人核准，展开一行可看这次时长由哪几段组成。') }}</span></template>
+      <template #header><b>{{ t('时长明细') }}</b><span class="dim" style="margin-left:8px">{{ t('由负责人核准，展开一行可看当次活动的时长明细。') }}</span></template>
       <DataCards v-if="narrow" :rows="data.records" title-key="activity_title"
                  :fields="[{ key: 'created_at', label: t('记录时间'), format: fmtDT },
                            { key: 'appeal_deadline', label: t('申诉截止'),
