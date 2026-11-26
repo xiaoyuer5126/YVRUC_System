@@ -1,17 +1,36 @@
-# 生产形态的站点配置：nginx 自己监听 443、用学校发的证书终止 TLS，本容器直接
-# 对校园网提供服务，前面没有别的反代。80 只做一件事：把 http 301 跳到
+# 生产形态的站点配置：nginx 自己监听 443、用学校发的证书终止 TLS。80 只做一件事：把 http 301 跳到
 # https 的同一地址（见文件末尾）。由 docker-compose.prod.yml 和证书
 # 目录一起挂到 /etc/nginx/templates/default.conf.template，顶掉镜像默认的
 # nginx.conf.template（内测与 CI 用的 http 那份）。
-#
-# 不做真实 IP 还原：nginx 就是最外面一层，$remote_addr 直接是浏览器地址。
-# 这里若信任 X-Forwarded-For，校园网里与 compose 网段重叠的来源就能自报 IP。
 #
 # 文件名带 .template：nginx 官方镜像的入口脚本会在启动时把 ${...} 替换成同名
 # 环境变量，替换结果写到 /etc/nginx/conf.d/default.conf。
 #
 # 站点主体（响应头、上传上限、gzip、/api 反代、SPA 回退）在
 # /etc/nginx/snippets/yvruc-shared.conf，三份形态共用一份，见 nginx-shared.conf。
+
+# —— 真实客户端地址 ——
+# 2026-11-25 开通公网后，域名 volunteer.ruc.edu.cn 解析到学校网关
+# （rucfd2026.ruc.edu.cn），按域名来的访问——校外的、校内走 IPv6 的——都由网关
+# 转过来，$remote_addr 是网关地址（已见 10.21.35.55/.56/.60），用户的真实地址
+# 在网关写的 X-Forwarded-For 里，有时还经过网关内部的第二跳。直连服务器内网
+# 地址的请求不经过网关，不带这个头，$remote_addr 本来就是浏览器地址。
+#
+# 不还原的话，统一身份认证登录入口按 IP 的限流会把所有人算成一个人，操作日志
+# 和访问日志里的 IP 全是网关的。
+#
+# 只信网关网段（YVRUC_GATEWAY_CIDR，默认 10.21.35.0/24，由 docker-compose.prod.yml
+# 传进来）：从这个网段来的请求，从 X-Forwarded-For 右边往左跳过所有网关地址，取
+# 第一个不是网关的；别处来的请求带了这个头也不认，$remote_addr 保持原样。
+# 这个头谁都能自己加，所以信任范围不能放宽到网关以外，填 0.0.0.0/0 等于谁都能
+# 伪造 IP、绕过登录限流。网段是负责人观察日志定的，学校信息技术中心还没给准确
+# 范围；给了之后改 .env 里这一项，不用改这里。
+#
+# 后端不用跟着改：/api 反代用 $remote_addr 覆盖 X-Real-IP 和 X-Forwarded-For
+# （nginx-shared.conf 的 /api 段、下面的 /monitor 段），还原后传下去的就是真实地址。
+set_real_ip_from ${YVRUC_GATEWAY_CIDR};
+real_ip_header X-Forwarded-For;
+real_ip_recursive on;
 
 # 二维码要按「浏览器实际用的地址」拼出对外网址。本形态下浏览器直连，$scheme
 # 就是 https；客户端自带的 X-Forwarded-Proto 一律不认。变量名与另两份配置一致，
