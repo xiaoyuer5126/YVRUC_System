@@ -35,7 +35,7 @@ docker compose --profile test run --rm tests    # 跑回归测试（独立的 yv
   - 本机调试：没有 TLS，nginx 直接监听 80 映射到宿主机端口，http 访问
   - 内测：宿主机上的全局 nginx 终止 TLS，经外部网络 `web-net` 转给 web 容器的 80，见
     「内测形态的入口（全局 nginx）」
-  - 生产：**nginx 自己**监听 443、用学校发的证书终止 TLS（80 只做 301 跳 https），前面没有别的反代
+  - 生产：**nginx 自己**监听 443、用学校发的证书终止 TLS（80 只做 301 跳 https）；公网访问经学校网关转来，真实 IP 按 `YVRUC_GATEWAY_CIDR` 还原
 - 每种形态的配置项都写在各自叠加文件的头部注释里；`.env` 里的
   `COMPOSE_FILE` 也能固定形态（**Windows 用分号分隔、Linux/macOS 用冒号**），
   三种换着用时建议不用它、直接 `-f` 写清楚。
@@ -141,9 +141,12 @@ Docker 网络 `web-net` 转给 web 容器。平台自己不占宿主机端口，
 
 ### 生产 https 与证书（学校证书）
 
-生产形态下 **nginx 自己监听 443、用学校发的证书终止 TLS**（另听 80 只做跳转），前面没有别的反代——证书是
-学校签好的，不需要自动签发那一套，少一个容器、少一跳，客户端 IP 也不用再从
-`X-Forwarded-For` 里还原（nginx 直接看到浏览器地址）。
+生产形态下 **nginx 自己监听 443、用学校发的证书终止 TLS**（另听 80 只做跳转）——证书是
+学校签好的，不需要自动签发那一套。
+2026-11-25 开通公网后，域名解析到学校网关（`rucfd2026.ruc.edu.cn`），按域名来的访问都由网关转过来，
+nginx 看到的是网关地址。nginx 只信 `.env` 里 `YVRUC_GATEWAY_CIDR`（默认 `10.21.35.0/24`）来的
+`X-Forwarded-For`，从中还原真实 IP，登录限流和操作日志用的都是还原后的地址；直连内网地址的请求不受影响。
+学校给了网关的准确网段后改这一项，重启 web 生效。
 配置是 `web/nginx-https.conf.template`，由 `docker-compose.prod.yml` 连同证书目录挂进 web 容器，
 顶掉镜像默认那份（内测与 CI 用的 http 80）。
 

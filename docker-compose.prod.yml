@@ -10,7 +10,8 @@
 #   docker-compose.school-db.yml     连外部库：不起本机 postgres，migrate 不再等它
 #   docker-compose.prod.yml（本文件）生产特有：证书、443/80
 #
-# 本文件只做两件事（域名直接解析到这台服务器，TLS 由 nginx 用学校证书终止）：
+# 本文件只做两件事（TLS 由 nginx 用学校证书终止；公网访问经学校网关转过来，
+# 真实 IP 按 YVRUC_GATEWAY_CIDR 还原，见下面 web 的 environment）：
 #   · web 换上 https 配置（web/nginx-https.conf.template），证书目录一起挂进去：
 #     YVRUC_CERTS_DIR（默认仓库下 ./.certs）
 #   · web 开 443 和 80：80 上所有请求 301 跳到 https 同一地址，不提供任何内容
@@ -38,6 +39,10 @@ services:
     environment:
       # 80 跳 443 时拼地址用：不是 443 就在跳转地址里带上端口。值要与下面的映射一致。
       HTTPS_HOST_PORT: ${HTTPS_HOST_PORT:-443}
+      # 学校网关转发过来时的源地址网段：只信这里来的 X-Forwarded-For，用它还原
+      # 用户真实 IP（见 web/nginx-https.conf.template 开头）。默认值是负责人
+      # 2026-11-26 按访问日志定的，学校信息技术中心给了准确范围就在 .env 里改。
+      YVRUC_GATEWAY_CIDR: ${YVRUC_GATEWAY_CIDR:-10.21.35.0/24}
     volumes:
       # 镜像默认是内测用的 http 80 那份；生产换成听 443（另听 80 只做跳转）、读证书的这份
       - ./web/nginx-https.conf.template:/etc/nginx/templates/default.conf.template:ro

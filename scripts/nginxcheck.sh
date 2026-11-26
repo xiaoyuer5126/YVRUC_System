@@ -32,6 +32,7 @@ check() {
     # 不给的话入口脚本不替换它，nginx 会把 ${HTTPS_HOST_PORT} 当成未知变量拒绝启动。
     docker run --rm \
         -e YVRUC_TRUSTED_PROXY_CIDR=172.30.0.0/16 \
+        -e YVRUC_GATEWAY_CIDR=10.21.35.0/24 \
         -e HTTPS_HOST_PORT=443 \
         --add-host backend:127.0.0.1 \
         --add-host glitchtip:127.0.0.1 \
