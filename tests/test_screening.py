@@ -847,9 +847,9 @@ def test_申请可以勾两个时间重叠的意向(client, admin, db, take_stud
     assert {e.status for e in mine} == {"applied"}
 
 
-def test_录取与本活动已占的场次重叠硬拦(client, admin, db, take_student):
+def test_录取与本活动已占的场次重叠先提示_确认后照录(client, admin, db, take_student):
     """他在本活动已经占下了那一段（这里是现场补招进来的）：录到压着的那一场
-    直接拦，确认也不放行——同一时间只能站一个岗位。"""
+    先提示冲突，管理者确认后照录。"""
     from backend.models import Shift
     act_id, ids, q = _create_screened(client, admin, db, shifts=2)
     a, b = db.get(Shift, ids[0]), db.get(Shift, ids[1])
@@ -863,13 +863,17 @@ def test_录取与本活动已占的场次重叠硬拦(client, admin, db, take_s
                     json={"student_id": sid, "confirm_conflict": True})
     assert r.status_code == 200, r.text
 
-    for confirm in (False, True):
-        x = _one(_decide(client, admin, act_id, app.id, [{"shift_id": ids[1]}],
-                         confirm=confirm))
-        assert not x["ok"] and x["code"] == "same_activity_clash", x
-        assert "第1场" in x["reason"]
+    x = _one(_decide(client, admin, act_id, app.id, [{"shift_id": ids[1]}]))
+    assert not x["ok"] and x["code"] == "time_conflict", x
+    assert "第1场" in x["reason"]
     db.refresh(app)
     assert app.status == "applied"
+
+    x = _one(_decide(client, admin, act_id, app.id, [{"shift_id": ids[1]}],
+                     confirm=True))
+    assert x["ok"], x
+    db.refresh(app)
+    assert app.status == "accepted"
 
 
 def test_录取只录一场时自己另一场意向不算冲突(client, admin, db, take_student):

@@ -36,7 +36,7 @@ ACTIVE = ("applied", "enrolled", "waitlisted", "pending_confirm")
 
 # 真把这段时间占下来了的状态：正式报名、候补、候补转正待确认。「申请中」不算——
 # 报名后筛选里同一时间勾两个意向是「哪个都行」，录取时管理者挑一个，
-# 所以意向之间、意向与补招之间不按「同一时间只能站一个岗位」硬拦
+# 所以志愿者报名时，意向不按「同一时间只能站一个岗位」硬拦
 # （见 same_activity_clashes）。
 HOLDING = ("enrolled", "waitlisted", "pending_confirm")
 
@@ -111,8 +111,8 @@ def same_activity_clashes(rows, target: Shift) -> list[dict]:
 
     一个人在同一个活动里同一时间只能站一个岗位：岗位自带时段，两个时段重叠的
     岗位都报上，现场必然有一个空着，签到、时长、名单全都对不上。所以这一类
-    重叠硬拦（见 same_activity_clash_error），不给「确认后仍要报」的余地。
-    培训/彩排不算——它附属于服务场次，跟服务场次压上是排期的事，由人判断；
+    重叠在志愿者自己报名时硬拦（见 same_activity_clash_error），不给「确认后
+    仍要报」的余地；管理者补招、录取只提示，确认后照加。培训/彩排不算——它附属于服务场次，跟服务场次压上是排期的事，由人判断；
     「申请中」的意向也不算（见 HOLDING）。
     """
     if target.kind != "service":
