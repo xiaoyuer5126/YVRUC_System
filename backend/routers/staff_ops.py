@@ -285,40 +285,88 @@ def create_group_task(activity_id: str, body: GroupTaskBody,
 @router.get("/activities/{activity_id}/checkin-tasks")
 def list_tasks(activity_id: str, db: OrmSession = Depends(db_session),
                user: User = Depends(require_manager)):
+    """这个活动的签到码，一张码一行。
+
+    多选岗位建出来的几行共用一个 code_group，对外是一张码，所以在这里合成
+    一行：岗位名连起来、已签人数相加，开关/改时段/大屏/补签对任一行发起都
+    作用于整组。组里每一行（场次, 时段, 岗位）另放在 members 里，前端要据它
+    认出这张码管不管当前大屏那一场。
+    """
     ensure_activity_manager(db, user, activity_id)
     _act(db, activity_id)
     tasks = (db.query(CheckinTask)
              .filter(CheckinTask.activity_id == activity_id)
              .order_by(CheckinTask.created_at.desc()).all())
-    # 锚点一次查完按 task_id 归位，别在循环里一人一次查询
+    ids = [t.id for t in tasks] or [""]
+    # 锚点、已签人数各一次查完按 task_id 归位，别在循环里一行一次查询
     geos = {x.task_id: x for x in db.query(CheckinGeo)
-            .filter(CheckinGeo.task_id.in_([t.id for t in tasks] or [""])).all()}
-    out = []
+            .filter(CheckinGeo.task_id.in_(ids)).all()}
+    counts = dict(db.query(CheckinRecord.task_id, func.count(CheckinRecord.id))
+                  .filter(CheckinRecord.task_id.in_(ids))
+                  .group_by(CheckinRecord.task_id).all())
+
+    # 同一张码的几行归到一起，顺序还是按码的新旧（组里第一行代表这张码）
+    codes: list[list[CheckinTask]] = []
+    by_group: dict[str, list[CheckinTask]] = {}
     for t in tasks:
-        g = db.get(Shift, t.shift_id)
-        period = g.period_of(t.period_id)
-        st = db.get(Position, t.position_id) if t.position_id else None
-        n = (db.query(func.count(CheckinRecord.id))
-             .filter(CheckinRecord.task_id == t.id).scalar() or 0)
-        x = geos.get(t.id)
-        out.append({"id": t.id, "token": t.token, "mode": t.mode,
-                    # shift_id 前端要用：一个活动多场次时，码表要按场次分辨，
-                    # 手动补签也只能打到当前这块大屏对应的那一场上
-                    "shift_id": t.shift_id, "shift_name": g.name,
-                    # 这张码属于哪一段：多时段的场次一个时段一张码
-                    "period_id": t.period_id,
-                    "period_text": period.text() if period else "",
-                    "period_count": len(g.periods),
-                    # 截止早于这一段结束、或这一段没完就关码，前端要先提醒：
-                    # 那之后没签退的人都按这一段结束兜底、进待核
-                    "shift_end": iso(period.end_time if period else g.end_time),
-                    "shift_kind": g.kind, "shift_kind_label": g.kind_label(),
-                    "position_name": st.name if st else "",
-                    "valid_from": iso(t.valid_from), "valid_to": iso(t.valid_to),
-                    "active": t.active, "count": n,
-                    # 有锚点 = 这个任务走定位签到，前端据此显示「方式」列
-                    "geo": ({"lat": x.lat, "lng": x.lng, "radius_m": x.radius_m,
-                             "accuracy_m": x.accuracy_m} if x else None)})
+        if not t.code_group:
+            codes.append([t])
+            continue
+        rows = by_group.get(t.code_group)
+        if rows is None:
+            rows = by_group[t.code_group] = []
+            codes.append(rows)
+        rows.append(t)
+
+    out = []
+    for rows in codes:
+        rows.sort(key=lambda t: (t.created_at, t.id))
+        head = rows[0]
+        g = db.get(Shift, head.shift_id)
+        members = []
+        for t in rows:
+            shift = db.get(Shift, t.shift_id)
+            period = shift.period_of(t.period_id)
+            st = db.get(Position, t.position_id) if t.position_id else None
+            members.append({
+                "task_id": t.id,
+                # shift_id 前端要用：一个活动多场次时，码表要按场次分辨，
+                # 手动补签也只能打到当前这块大屏对应的那一场上
+                "shift_id": t.shift_id, "shift_name": shift.name,
+                # 这一行属于哪一段：多时段的场次一个时段一张码
+                "period_id": t.period_id,
+                "period_text": period.text() if period else "",
+                "period_count": len(shift.periods),
+                "position_name": st.name if st else "",
+                "count": counts.get(t.id, 0),
+                # 截止早于这一段结束、或这一段没完就关码，前端要先提醒：
+                # 那之后没签退的人都按这一段结束兜底、进待核
+                "shift_end": iso(period.end_time if period else shift.end_time),
+            })
+        x = geos.get(head.id)
+        names = [m["position_name"] for m in members if m["position_name"]]
+        out.append({
+            "id": head.id, "token": head.token, "mode": head.mode,
+            "code_group": head.code_group or "",
+            "shift_id": head.shift_id,
+            # 一张码可以跨场次，所以场次、时段都把组里几行的写全
+            "shift_name": "、".join(dict.fromkeys(m["shift_name"] for m in members)),
+            "period_id": head.period_id,
+            "period_text": "、".join(dict.fromkeys(
+                m["period_text"] for m in members if m["period_text"])),
+            "period_count": max(m["period_count"] for m in members),
+            # 提醒「截止早于场次结束」按组里最晚的那一段算：早于它就有人会被兜底
+            "shift_end": max(m["shift_end"] for m in members),
+            "shift_kind": g.kind, "shift_kind_label": g.kind_label(),
+            "position_name": "、".join(names),
+            "valid_from": iso(head.valid_from), "valid_to": iso(head.valid_to),
+            "active": head.active,
+            "count": sum(m["count"] for m in members),
+            # 有锚点 = 这张码走定位签到，前端据此显示「方式」列
+            "geo": ({"lat": x.lat, "lng": x.lng, "radius_m": x.radius_m,
+                     "accuracy_m": x.accuracy_m} if x else None),
+            "members": members,
+        })
     return out
 
 
