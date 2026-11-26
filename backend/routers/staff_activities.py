@@ -1765,7 +1765,8 @@ def create_position(shift_id: str, body: PositionBody,
                          if source else ""),
               visible=True)
     db.commit()
-    return {"id": s.id}
+    # 组长只有一个人：同组岗位的时段不完全相同时提醒一句，岗位照常保存
+    return {"id": s.id, "warning": logic.group_time_warning(db, s)}
 
 
 @router.patch("/positions/{position_id}")
@@ -1840,7 +1841,9 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
         # 名额在闸门之外变了：作废计数器，下一个报名按数据库重新对齐。
         # 不作废的话，加了名额之后要等核库限流窗口过去才报得上
         invalidate_gates(g.id, s.id)
-    return {"ok": True, "changes": changes}
+    # 口径同 create_position：同组时段不一致只提醒，不拦保存
+    return {"ok": True, "changes": changes,
+            "warning": logic.group_time_warning(db, s)}
 
 
 class PauseBody(BaseModel):

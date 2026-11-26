@@ -2664,7 +2664,8 @@ async function saveStation() {
       training_note: f.training_note,
     }
     if (positionDlg.value.editing) {
-      await api.patch(`/api/staff/positions/${positionDlg.value.editing.id}`, body)
+      const d = await api.patch(
+        `/api/staff/positions/${positionDlg.value.editing.id}`, body)
       if (positionDlg.value.syncSame) {
         const shared = { ...body }        // 名额、候补名额是各时段自己的
         delete shared.quota
@@ -2675,6 +2676,8 @@ async function saveStation() {
       }
       ElMessage.success(positionDlg.value.syncSame
         ? `已保存，其他 ${sameNameOthers.value.length} 个时段一并修改` : '已保存')
+      // 同组岗位时段不一致：保存照常，提醒一句组长可能顾不全
+      if (d.warning) ElMessage.warning(d.warning)
       positionDlg.value.visible = false
       await loadAll()
     } else {
@@ -2688,6 +2691,7 @@ async function saveStation() {
       } else {
         ElMessage.success('岗位已创建')
       }
+      if (d.warning) ElMessage.warning(d.warning)
       positionDlg.value.visible = false
       await loadAll()
     }

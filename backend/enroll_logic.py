@@ -707,6 +707,30 @@ def group_positions(db: OrmSession, position: Position) -> list[Position]:
             .order_by(Shift.sort, Position.sort).all())
 
 
+def group_time_warning(db: OrmSession, position: Position) -> str:
+    """同组岗位所在场次的时段不完全相同时的提醒语；一样（或自成一组）为空串。
+
+    一个组共用一名组长，而组长只有一个人：组里的岗位时段不一样，总有一段他
+    不在场。保存照常放行——上下午轮岗、一人盯两段是常见安排，到底怎么排由
+    负责人定，平台只提醒一句。
+    """
+    if not (position.group_name or "").strip():
+        return ""
+    shift_ids = {position.shift_id} | {p.shift_id
+                                       for p in group_positions(db, position)}
+    if len(shift_ids) <= 1:
+        return ""
+    spans = {periods_key(db.get(Shift, sid)) for sid in shift_ids}
+    if len(spans) <= 1:
+        return ""
+    return "本组岗位时间不完全相同，组长可能无法全程在场"
+
+
+def periods_key(shift: Shift) -> tuple:
+    """这一场的时段指纹，用来判断两场的时间是不是完全一样。"""
+    return tuple((p.start_time, p.end_time) for p in shift.sorted_periods())
+
+
 def group_needs_leader(positions: list[Position]) -> bool:
     """组里只要有一个岗位标了需要组长，这个组就要有组长。"""
     return any(p.needs_leader for p in positions)

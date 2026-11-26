@@ -102,6 +102,37 @@ def test_同组岗位跨场次共用一名组长(client, admin, db, enrolled_act
     assert [x.id for x in _leaders(db, p1, p2, p3)] == [later.id]
 
 
+def test_同组时段不同保存时提醒组长顾不全(client, admin, db, enrolled_activity,
+                                    take_student):
+    """组长只有一个人：同组岗位的时段不一样，保存照常，但要提醒一句。"""
+    from conftest import editing
+
+    act, shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,
+                                   take_student)
+    note = "本组岗位时间不完全相同，组长可能无法全程在场"
+    with editing(client, admin, act.id):
+        # 同一场次里的两个同组岗位：时段相同，不提醒
+        r = client.patch(f"/api/staff/positions/{p2.id}", headers=admin,
+                         json={"location": "东门外侧"})
+        assert r.status_code == 200 and not r.json()["warning"], r.text
+
+        # 新岗位落在另一个场次、时段不一样：照常建，带上提醒
+        g2 = mk_shift(id=uid("g"), activity_id=act.id, name="下午场",
+                      start_time=shift.start_time + timedelta(hours=6),
+                      end_time=shift.end_time + timedelta(hours=6),
+                      mode="pick", sort=1)
+        db.add(g2)
+        db.commit()
+        r = client.post(f"/api/staff/shifts/{g2.id}/positions", headers=admin,
+                        json={"name": "下午检录", "quota": 2,
+                              "group_name": p1.group_name, **POSITION_TEXT})
+        assert r.status_code == 200 and r.json()["warning"] == note, r.text
+        # 改组里已有的岗位也照样提醒
+        r = client.patch(f"/api/staff/positions/{p2.id}", headers=admin,
+                         json={"location": "东门内侧"})
+        assert r.status_code == 200 and r.json()["warning"] == note, r.text
+
+
 def test_需要组长就必须写组长任务(client, admin, db, open_group):
     """任务说明是发给组长的：勾了不写，等于让他自己猜。"""
     from conftest import editing
