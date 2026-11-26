@@ -1,14 +1,14 @@
-<!-- 一键分配与导入排班：只给「截止后统一分配」的场次用，只排「待分配」里的人。
+<!-- 一键分配与导入排班：只给「截止后统一分配」的那一批用，只排「待分配」里的人。
      两条路出来的是同一种方案，在这里过目、可改，确认后走同一个提交接口。 -->
 <template>
   <div v-loading="loading || solving">
     <input ref="fileInput" type="file" accept=".xlsx" hidden @change="onImportFile" />
 
-    <!-- 一键分配、导入、补招这些动作放在父级「已报名名单」那一行；这里只留试算选项 -->
+    <!-- 一键分配、导入这些动作放在父级名单那一行；这里只留试算选项 -->
     <div class="toolbar">
       <el-checkbox v-model="continuity" size="small">尽量同一人同一岗位</el-checkbox>
       <el-tooltip placement="top"
-                  content="本活动其它场次排过同名岗位的人，优先留在该岗位">
+                  content="本活动别处排过同名岗位的人，优先留在这个岗位">
         <el-icon class="dim"><QuestionFilled /></el-icon>
       </el-tooltip>
       <span style="margin-left:auto" class="dim" v-if="preview">
@@ -139,54 +139,13 @@
     </template>
 
     <el-empty v-else description="点击名单上方的「一键分配岗位」开始试算，或「导入排班」" />
-
-    <!-- 补招：负责人直接把人加进场次 -->
-    <el-dialog v-model="walkinVisible" title="补招志愿者" width="430"
-               :before-close="guardWalkin" @opened="guardWalkin.snap">
-      <el-form label-width="90px">
-        <el-form-item label="学号"><el-input v-model="walkin.sid" /></el-form-item>
-        <el-form-item label="指定岗位">
-          <el-select v-model="walkin.position" clearable style="width:100%">
-            <el-option v-for="s in stationOpts" :key="s.value" :value="s.value" :label="s.label" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="调剂意愿">
-          <el-checkbox v-model="walkin.allowReassign">本人接受岗位调剂</el-checkbox>
-        </el-form-item>
-        <!-- 补招不自动连带培训/彩排：赶不赶得上、要不要去，由负责人勾 -->
-        <el-form-item v-if="walkinAttached.length" label="培训/彩排">
-          <el-checkbox-group v-model="walkin.attached">
-            <el-checkbox v-for="a in walkinAttached" :key="a.id" :value="a.id"
-                         style="display:block">
-              {{ a.kind_label }}「{{ a.name }}」<span class="dim">{{ a.time_text }}</span>
-            </el-checkbox>
-          </el-checkbox-group>
-          <div class="dim">默认不报；勾上的一并报上</div>
-        </el-form-item>
-        <!-- 党校同学只能从这里加进来 -->
-        <el-form-item label="党校同学">
-          <el-checkbox v-model="walkin.party">是党校同学</el-checkbox>
-          <div class="dim">时长带「党校」标签，不进时长导出表，也不计入本人的累计时长</div>
-        </el-form-item>
-        <el-form-item label="">
-          <el-checkbox v-model="walkin.force">
-            名额已满时强制加入，计入留痕
-          </el-checkbox>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="walkinVisible = false">取消</el-button>
-        <el-button type="primary" @click="addWalkin">确认补招</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api, fmtDTShort, uploadFile, withConflictConfirm } from '../api'
-import { useCloseGuard } from '../composables/closeGuard'
+import { api, fmtDTShort, uploadFile } from '../api'
 
 const props = defineProps({
   shift: { type: Object, required: true },
@@ -200,20 +159,10 @@ const continuity = ref(true)
 const preview = ref(null)
 const rows = ref([])
 
-// 父级的「已报名名单」那一行触发试算与补招。函数会提升，ref 不会——
-// 暴露给父级的东西必须在声明之后再交出去
-function openWalkin() { walkinVisible.value = true }
-defineExpose({ runPreview, openImport, openWalkin, solving })
-const walkinVisible = ref(false)
-const walkin = ref({ sid: '', position: '', force: false, allowReassign: true,
-                     attached: [], party: false })
-const guardWalkin = useCloseGuard(() => walkin.value)
-// 本场次下对所选岗位生效的培训/彩排（没选岗位就全列），口径同后端 attached_shifts
-const walkinAttached = computed(() => (props.shift.attached || []).filter(a =>
-  !walkin.value.position || !a.applies_to_positions?.length
-  || a.applies_to_positions.includes(walkin.value.position)))
+// 父级的名单那一行触发试算与导入
+defineExpose({ runPreview, openImport, solving })
 
-const stationOpts = computed(() =>
+const stationOpts = computed(() =>    // vuecheck: script-only，模板经 targetOpts 读它
   props.shift.positions.map(s => ({
     value: s.id, label: s.name,
     left: Math.max(0, s.quota - (s.enrolled || 0)),
@@ -248,20 +197,20 @@ function overQuota(row) {
 
 const gap = row => row.quota - row.existing - row.planned
 
-/** 点了之前先看要不要：报名即选岗位的场次人人自己选好了；截止后分配的场次
- *  没人在待分配，也就没什么可排的。后端同样拦，这里先给一句好懂的话。 */
+/** 点了之前先看要不要：普通岗位人人自己选好了；这一批统一分配里没人在
+ *  待分配，也就没什么可排的。后端同样拦，这里先给一句好懂的话。 */
 function notNeeded(forImport) {
   if (!props.shift.needs_assign) {
-    ElMessage.info('本场次是「报名即选岗位」，志愿者报名时已各自选好岗位，不需要排班；'
+    ElMessage.info('这是普通岗位，志愿者报名时就选好了岗位，不需要排班；'
                    + '个别调整请用名单里的「调岗」')
     return true
   }
   if (!props.shift.positions.some(s => !s.is_placeholder)) {
-    ElMessage.warning('请先在「岗位设置」里为本场次建好岗位')
+    ElMessage.warning('请先在「岗位设置」里为这一批统一分配建好岗位')
     return true
   }
   if (!forImport && !props.shift.unassigned_count) {
-    ElMessage.info('本场次没有待分配的同学，不需要一键分配；要整体调整可以导入排班')
+    ElMessage.info('这一批没有待分配的同学，不需要一键分配；要整体调整可以导入排班')
     return true
   }
   return false
@@ -322,32 +271,6 @@ async function apply() {
   } catch (e) {
     ElMessage.error(e.message + '，可勾选「强制」后重试')
   } finally { applying.value = false }
-}
-
-async function addWalkin() {
-  try {
-    // 时段冲突先弹窗确认，确认了带 confirm_conflict 重发；名额超出照旧要勾强制
-    const d = await withConflictConfirm(confirm => api.post(
-      `/api/staff/shifts/${props.shift.id}/add-walkin`, {
-        student_id: walkin.value.sid, position_id: walkin.value.position || '',
-        allow_reassign: walkin.value.allowReassign,
-        attached_ids: walkin.value.attached.filter(
-          id => walkinAttached.value.some(a => a.id === id)),
-        force: walkin.value.force, party_school: walkin.value.party,
-        confirm_conflict: confirm }),
-    { head: `${walkin.value.sid} 与以下场次时间冲突：`, ask: '仍要补招？' })
-    if (!d) return
-    ElMessage.success('补招成功')
-    walkinVisible.value = false
-    walkin.value = { sid: '', position: '', force: false, allowReassign: true,
-                     attached: [], party: false }
-    emit('reload')
-  } catch (e) {
-    // 超额需要显式勾选强制，替用户把勾打上并提示重试
-    if ((e.message || '').includes('强制')) {
-      walkin.value.force = true
-    }
-  }
 }
 </script>
 

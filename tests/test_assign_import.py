@@ -60,7 +60,7 @@ def test_导出改好再导入(client, admin, db, open_group, take_student):
     assert by_user == {sids[0]: a.id, sids[1]: b.id}
     msgs = [e["message"] for e in d["errors"]]
     assert any("没有「丙」" in m for m in msgs)
-    assert any("20990001" in m and "不在本场次" in m for m in msgs)
+    assert any("20990001" in m and "不在这一批统一分配" in m for m in msgs)
     assert any("「甲」没有设组长" in m for m in msgs)
     leader = db.query(Enrollment).join(User, Enrollment.user_id == User.id).filter(
         Enrollment.shift_id == g.id, User.student_id == sids[1]).one()

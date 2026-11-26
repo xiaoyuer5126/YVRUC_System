@@ -676,8 +676,8 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
     自动提醒在场次开始前 30 分钟发一次；这个按钮用于临时催场——
     只发给还没签到的正式志愿者，已经到岗的不再打扰。
     可只催某几个岗位或某个岗位组：现场往往是「东门那三个人没到」。岗位组按
-    整个活动认（口径同 enroll_logic.group_positions），催到的仍只是本场次
-    这一段里没签到的人——别的场次的组员这会儿不在岗。
+    整个活动认（口径同 enroll_logic.group_positions），催到的仍只是这一段里
+    没签到的人——别处的组员这会儿不在岗。
     勾选签收后，这一批会出现在活动的「待签收批次」里，能看到谁还没回。
     """
     g = db.get(Shift, shift_id)
@@ -687,7 +687,8 @@ def send_reminder(shift_id: str, body: ReminderBody | None = None,
     ensure_not_finished(_act(db, g.activity_id))
 
     body = body or ReminderBody()
-    ids, scope = None, "全场次"
+    # 不限岗位时话里只写这一场的名字：普通岗位一岗一场，场次名就是岗位名
+    ids, scope = None, f"「{g.name}」"
     if body.group_name.strip():
         ids = [p.id for p in _group_members(db, g, body.group_name.strip())]
         if not ids:
@@ -1069,11 +1070,11 @@ def _ids(raw: str) -> set[str]:
 
 
 def _answers_export(db: OrmSession, user: User, activity_id: str,
-                    shifts: str, positions: str):
-    """问卷结果；shifts / positions 是逗号分隔的 id，空表示不限。"""
+                    positions: str):
+    """问卷结果；positions 是逗号分隔的岗位 id，空表示不限。"""
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    ex = build_answers_workbook(db, act, _ids(shifts), _ids(positions))
+    ex = build_answers_workbook(db, act, _ids(positions))
     return act, ex, f"{act.title}_问卷结果"
 
 
@@ -1107,11 +1108,11 @@ def export(activity_id: str, db: OrmSession = Depends(db_session),
 
 
 @router.get("/activities/{activity_id}/answers.xlsx")
-def export_answers(activity_id: str, shifts: str = "", positions: str = "",
+def export_answers(activity_id: str, positions: str = "",
                    db: OrmSession = Depends(db_session),
                    user: User = Depends(require_manager_download)):
-    """问卷结果：在册志愿者按场次、岗位挑出来，一题一列。"""
-    act, ex, name = _answers_export(db, user, activity_id, shifts, positions)
+    """问卷结果：在册志愿者按岗位挑出来，一题一列。"""
+    act, ex, name = _answers_export(db, user, activity_id, positions)
     filename = f"{name}_{now():%Y%m%d_%H%M}.xlsx"
     audit_log(db, actor=user, action="export", target_type="export",
               target_id=act.id, target_label=act.title, activity_id=act.id,
@@ -1121,22 +1122,20 @@ def export_answers(activity_id: str, shifts: str = "", positions: str = "",
 
 
 @router.get("/activities/{activity_id}/answers/attachments")
-def export_answer_attachment_count(activity_id: str, shifts: str = "",
-                                   positions: str = "",
+def export_answer_attachment_count(activity_id: str, positions: str = "",
                                    db: OrmSession = Depends(db_session),
                                    user: User = Depends(require_manager)):
     """问卷结果的附件数：前端据此决定要不要问「是否同时打包下载」。"""
-    _, ex, _ = _answers_export(db, user, activity_id, shifts, positions)
+    _, ex, _ = _answers_export(db, user, activity_id, positions)
     return {"count": len(ex.files)}
 
 
 @router.get("/activities/{activity_id}/answers/attachments.zip")
-def export_answer_attachments(activity_id: str, shifts: str = "",
-                              positions: str = "",
+def export_answer_attachments(activity_id: str, positions: str = "",
                               db: OrmSession = Depends(db_session),
                               user: User = Depends(require_manager_download)):
     """问卷结果里文件题的附件包，按「场次/岗位」分文件夹；没有附件时 404。"""
-    act, ex, name = _answers_export(db, user, activity_id, shifts, positions)
+    act, ex, name = _answers_export(db, user, activity_id, positions)
     return _attachments_download(db, user, act, ex, name, "问卷结果")
 
 

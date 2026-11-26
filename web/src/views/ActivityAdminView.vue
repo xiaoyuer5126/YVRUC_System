@@ -405,7 +405,7 @@
             </el-table-column>
           </el-table>
           <p v-else class="dim" style="margin:8px 0 0">
-            志愿者报名只选时间；分工定下来后在这里建岗位，再到「志愿者管理」一键分配或导入排班；
+            志愿者报名只选时间；分工定下来后在这里建岗位，再到「志愿者管理」筛到这一批，一键分配或导入排班；
             排完后可点「开放选岗」，剩余名额让大家直接报。
           </p>
 
@@ -456,17 +456,28 @@
       <!-- ============ 志愿者管理 ============ -->
       <el-tab-pane v-if="isPublic && !isRecord" name="roster">
         <template #label>志愿者管理
-          <el-badge v-if="promoShiftIds.size" value="!" type="danger" />
+          <el-badge v-if="promoPending" value="!" type="danger" />
         </template>
 
-        <!-- 场次选择栏 -->
+        <!-- 筛选栏：整个活动一张名单，按岗位、日期、状态挑着看。
+             一个活动十几个岗位，一场一场翻就看不出「这个人今天到底在哪儿」 -->
         <div class="toolbar">
-          <span>场次</span>
-          <el-select v-model="currentGroupId" style="width:260px">
-            <el-option v-for="g in shifts" :key="g.id"
-                       :value="g.id"
-                       :label="`${g.name}（${g.enrolled}/${g.capacity}）${promoShiftIds.has(g.id) ? '· 有转正待确认' : ''}`" />
+          <span>岗位</span>
+          <el-select v-model="rosterPositions" multiple clearable collapse-tags
+                     collapse-tags-tooltip placeholder="全部岗位" style="width:260px">
+            <el-option-group v-for="grp in positionGroups" :key="grp.key" :label="grp.label">
+              <el-option v-for="p in grp.items" :key="p.id" :value="p.id" :label="p.label" />
+            </el-option-group>
           </el-select>
+          <span>日期</span>
+          <el-select v-model="rosterDay" clearable placeholder="全部日期" style="width:150px">
+            <el-option v-for="d in rosterDays" :key="d" :value="d" :label="d" />
+          </el-select>
+          <el-radio-group v-model="rosterStatus">
+            <el-radio-button value="enrolled">已报名</el-radio-button>
+            <el-radio-button value="waitlist">候补与待确认</el-radio-button>
+            <el-radio-button value="cancelled">退选记录</el-radio-button>
+          </el-radio-group>
           <el-button type="primary" plain @click="openNotify">
             <el-icon><Bell /></el-icon>&nbsp;发送通知
           </el-button>
@@ -487,11 +498,13 @@
                          style="margin-bottom:12px"
                          @archive="openArchive" @changed="loadAll" />
 
-        <template v-if="currentShift">
-          <!-- 已报名名单：满宽；动作按钮都在这一行 -->
-          <div class="section-title roster-head" style="margin-top:0">
-            <span>已报名名单（{{ roster.enrolled.length }} 人）</span>
-            <span class="roster-actions">
+        <!-- 名单：满宽；动作按钮都在这一行 -->
+        <div class="section-title roster-head" style="margin-top:0">
+          <span>{{ rosterTitle }}</span>
+          <span class="roster-actions">
+            <!-- 一键分配、导入排班只对「统一分配」有意义（普通岗位的人报名时
+                 已各自选好岗位）：筛到某一批统一分配时才出现，作用于那一批 -->
+            <template v-if="assignShift">
               <el-button type="primary" :loading="assignPanel?.solving"
                          :disabled="isOver" @click="assignPanel.runPreview()">
                 <el-icon><MagicStick /></el-icon>&nbsp;一键分配岗位
@@ -499,192 +512,197 @@
               <el-button plain :disabled="isOver" @click="assignPanel.openImport()">
                 导入排班
               </el-button>
-              <RefreshBar :load="refreshRoster" :at="rosterAt" />
-              <el-button type="success" plain :disabled="hoursFrozen"
-                         @click="assignPanel.openWalkin()">补招志愿者</el-button>
-            </span>
-          </div>
-          <DataCards v-if="narrow" :rows="roster.enrolled" title-key="user.name"
-                     row-key="enrollment_id" style="margin-bottom:12px"
-                     :fields="[{ key: 'user.student_id', label: '学号' },
-                               { key: 'user.college', label: '学院' },
-                               { key: 'user.phone', label: '手机号' },
-                               { key: 'position_name', label: '岗位',
-                                 format: v => v || '待分配' }]"
-                     empty="还没有志愿者报名">
-            <template v-if="roster.questions?.length" #body="{ row }">
-              <AnswerList :answers="row.answers" />
             </template>
-            <template #extra="{ row }">
-              <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
-              <el-tag v-if="row.source === 'party_school'" size="small" effect="plain">党校</el-tag>
-              <el-tag v-if="row.checked_in" size="small" type="success" effect="light">已到岗</el-tag>
+            <RefreshBar :load="refreshRoster" :at="rosterAt" />
+            <el-button type="success" plain :disabled="hoursFrozen"
+                       @click="openWalkin">补招志愿者</el-button>
+          </span>
+        </div>
+
+        <!-- 候补为什么没自动顶上：按筛选到的岗位各说一句 -->
+        <el-alert v-for="g in promoteStops" :key="g.id" type="warning" show-icon
+                  :closable="false" :title="`${g.name}：${g.auto_promote_stop}`"
+                  style="margin-bottom:8px" />
+
+        <DataCards v-if="narrow" :rows="rosterRows" title-key="user.name"
+                   row-key="enrollment_id" style="margin-bottom:12px"
+                   :fields="[{ key: 'user.student_id', label: '学号' },
+                             { key: 'position_name', label: '岗位',
+                               format: v => v || '待分配' },
+                             { key: 'time_text', label: '时段' },
+                             { key: 'user.phone', label: '手机号' }]"
+                   :empty="rosterEmpty">
+          <template v-if="roster.questions?.length" #body="{ row }">
+            <AnswerList :answers="row.answers" />
+          </template>
+          <template #extra="{ row }">
+            <el-tag v-if="row.needs_assign" size="small" effect="plain" type="info">
+              {{ row.shift_name }}
+            </el-tag>
+            <el-tag v-if="row.queue_position" size="small" effect="plain">
+              第 {{ row.queue_position }} 位
+            </el-tag>
+            <el-tag v-if="row.status === 'pending_confirm'" size="small" type="danger">
+              待确认 {{ fmtDT(row.confirm_deadline) }} 前
+            </el-tag>
+            <el-tag v-if="row.status === 'cancelled'" size="small" effect="plain"
+                    :type="row.cancel_type === 'locked' ? 'warning' : 'info'">
+              {{ cancelType(row) }}
+            </el-tag>
+            <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">组长</el-tag>
+            <el-tag v-if="row.source === 'party_school'" size="small" effect="plain">党校</el-tag>
+            <el-tag v-if="row.checked_in" size="small" type="success" effect="light">已到岗</el-tag>
+            <el-tag v-if="row.status === 'enrolled'" size="small" effect="plain"
+                    :type="row.allow_reassign ? 'success' : 'info'">
+              {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
+            </el-tag>
+          </template>
+          <template #actions="{ row }">
+            <el-button v-if="row.status === 'enrolled'" size="small" type="primary" plain
+                       :disabled="isOver" @click="openMove(row)">调岗</el-button>
+            <el-popconfirm v-if="row.status === 'waitlisted'"
+                :title="`通知 ${row.user.name} 确认转正？超时未确认名额将顺延`"
+                @confirm="promoteManually(row)">
+              <template #reference>
+                <el-button size="small" type="primary" plain :disabled="isOver">转正</el-button>
+              </template>
+            </el-popconfirm>
+            <el-button v-if="row.is_leader" size="small" link type="warning"
+                       :disabled="isOver" @click="setLeader(row, false)">取消组长</el-button>
+            <el-button v-else-if="canBeLeader(row)" size="small" link
+                       :disabled="isOver" @click="setLeader(row, true)">设为组长</el-button>
+            <ScoreAlert :user="row.user" />
+            <el-button size="small" link @click="openArchive(row.user)">档案</el-button>
+            <el-button size="small" link type="danger"
+                       @click="violationDlg.open(row.user)">登记违规</el-button>
+          </template>
+        </DataCards>
+        <el-table v-else :data="rosterRows" size="small" max-height="400"
+                  style="margin-bottom:12px" :empty-text="rosterEmpty">
+          <el-table-column v-if="roster.questions?.length" type="expand" width="30">
+            <template #default="{ row }"><AnswerList :answers="row.answers" /></template>
+          </el-table-column>
+          <el-table-column label="姓名" width="110">
+            <template #default="{row}">
+              <ScoreAlert :user="row.user" />
+              <el-link type="primary" underline="never" @click="openArchive(row.user)">
+                {{ row.user.name }}
+              </el-link>
+              <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark"
+                      style="margin-left:4px">组长</el-tag>
+              <el-tooltip v-else-if="row.leader_willing" content="愿意担任组长">
+                <el-tag size="small" type="warning" effect="plain"
+                        style="margin-left:4px">愿任</el-tag>
+              </el-tooltip>
+              <el-tag v-if="row.source === 'party_school'" size="small" effect="plain"
+                      style="margin-left:4px">党校</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="user.student_id" label="学号" width="110" />
+          <el-table-column label="岗位" min-width="150">
+            <template #default="{row}">
+              <el-tag v-if="row.position_group" size="small" effect="plain"
+                      type="warning" style="margin-right:4px">
+                {{ row.position_group }}
+              </el-tag>
+              {{ row.position_name || '待分配' }}
+              <el-tag v-if="row.assign_forced" size="small" type="danger">强制</el-tag>
+              <!-- 统一分配的岗位要注明是哪一批：几批共用岗位名的时候认得出 -->
+              <div v-if="row.needs_assign" class="dim">{{ row.shift_name }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column prop="time_text" label="时段" min-width="150" />
+          <el-table-column prop="user.phone" label="手机号" width="120" />
+          <el-table-column v-if="rosterStatus === 'enrolled'" prop="user.wechat"
+                           label="微信号" width="130" />
+          <el-table-column v-if="rosterStatus === 'enrolled'" label="调剂意愿" width="100">
+            <template #default="{row}">
               <el-tag size="small" effect="plain"
                       :type="row.allow_reassign ? 'success' : 'info'">
                 {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
               </el-tag>
             </template>
-            <template #actions="{ row }">
-              <el-select v-model="moveSel[row.enrollment_id]" size="small" clearable
-                         :disabled="isOver" placeholder="调至岗位…" style="width:150px">
-                <el-option v-for="s in roster.positions" :key="s.id" :value="s.id"
-                           :label="`${s.name}（余${Math.max(0, s.quota - s.enrolled)}）`" />
-              </el-select>
-              <el-button size="small" type="primary" plain
-                         :disabled="isOver || moveSel[row.enrollment_id] === undefined"
-                         @click="applyMove(row)">调岗</el-button>
+          </el-table-column>
+          <el-table-column v-if="rosterStatus === 'enrolled'" label="到岗" width="80">
+            <template #default="{row}">
+              <el-tag v-if="row.checked_in" type="success" size="small" effect="light">✓</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="rosterStatus === 'waitlist'" label="排队" min-width="190">
+            <template #default="{row}">
+              <el-tag size="small" circle>{{ row.queue_position }}</el-tag>
+              <el-tag v-if="row.status === 'pending_confirm'" size="small" type="danger"
+                      style="margin-left:4px">
+                待确认 {{ fmtDT(row.confirm_deadline) }} 前
+              </el-tag>
+              <el-popconfirm v-else
+                  :title="`通知 ${row.user.name} 确认转正？超时未确认名额将顺延`"
+                  @confirm="promoteManually(row)">
+                <template #reference>
+                  <el-button size="small" link type="primary" :disabled="isOver"
+                             style="margin-left:4px">转正</el-button>
+                </template>
+              </el-popconfirm>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="rosterStatus === 'cancelled'" label="退选" width="110">
+            <template #default="{row}">
+              <el-tag size="small" effect="plain"
+                      :type="row.cancel_type === 'locked' ? 'warning' : 'info'">
+                {{ cancelType(row) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="rosterStatus === 'enrolled'" label="组长" width="96">
+            <template #default="{row}">
               <el-button v-if="row.is_leader" size="small" link type="warning"
                          :disabled="isOver" @click="setLeader(row, false)">取消组长</el-button>
-              <el-button v-else-if="canBeLeader(row)" size="small" link
-                         :disabled="isOver" @click="setLeader(row, true)">设为组长</el-button>
-              <ScoreAlert :user="row.user" />
-              <el-button size="small" link @click="openArchive(row.user)">档案</el-button>
+              <el-tooltip v-else-if="canBeLeader(row)" placement="top"
+                          content="设为本岗位组组长">
+                <el-button size="small" link :disabled="isOver"
+                           @click="setLeader(row, true)">
+                  设为组长
+                </el-button>
+              </el-tooltip>
+              <span v-else class="dim">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="rosterStatus !== 'cancelled'" label="违规" width="70">
+            <template #default="{row}">
               <el-button size="small" link type="danger"
                          @click="violationDlg.open(row.user)">登记违规</el-button>
             </template>
-          </DataCards>
-          <el-table v-else :data="roster.enrolled" size="small" max-height="300" style="margin-bottom:12px">
-            <el-table-column v-if="roster.questions?.length" type="expand" width="30">
-              <template #default="{ row }"><AnswerList :answers="row.answers" /></template>
-            </el-table-column>
-            <el-table-column label="姓名" width="110">
-          <template #default="{row}">
-            <ScoreAlert :user="row.user" />
-            <el-link type="primary" underline="never" @click="openArchive(row.user)">
-              {{ row.user.name }}
-            </el-link>
-            <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark"
-                    style="margin-left:4px">组长</el-tag>
-            <el-tooltip v-else-if="row.leader_willing" content="愿意担任组长">
-              <el-tag size="small" type="warning" effect="plain"
-                      style="margin-left:4px">愿任</el-tag>
-            </el-tooltip>
-            <el-tag v-if="row.source === 'party_school'" size="small" effect="plain"
-                    style="margin-left:4px">党校</el-tag>
-          </template>
-        </el-table-column>
-            <el-table-column prop="user.student_id" label="学号" width="110" />
-            <el-table-column prop="user.phone" label="手机号" width="120" />
-            <el-table-column prop="user.wechat" label="微信号" width="130" />
-            <el-table-column label="调剂意愿" width="100">
-              <template #default="{row}">
-                <el-tag size="small" effect="plain"
-                        :type="row.allow_reassign ? 'success' : 'info'">
-                  {{ row.allow_reassign ? '接受调剂' : '不接受调剂' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="岗位" min-width="150">
-              <template #default="{row}">
-                <el-tag v-if="row.position_group" size="small" effect="plain"
-                        type="warning" style="margin-right:4px">
-                  {{ row.position_group }}
-                </el-tag>
-                {{ row.position_name || '待分配' }}
-                <el-tag v-if="row.assign_forced" size="small" type="danger">强制</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="到岗" width="80">
-              <template #default="{row}">
-                <el-tag v-if="row.checked_in" type="success" size="small" effect="light">✓</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="组长" width="96">
-              <template #default="{row}">
-                <el-button v-if="row.is_leader" size="small" link type="warning"
-                           :disabled="isOver" @click="setLeader(row, false)">取消组长</el-button>
-                <el-tooltip v-else-if="canBeLeader(row)" placement="top"
-                            content="设为本岗位组组长">
-                  <el-button size="small" link :disabled="isOver"
-                             @click="setLeader(row, true)">
-                    设为组长
-                  </el-button>
-                </el-tooltip>
-                <span v-else class="dim">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="违规" width="70">
-              <template #default="{row}">
-                <el-button size="small" link type="danger"
-                           @click="violationDlg.open(row.user)">登记违规</el-button>
-              </template>
-            </el-table-column>
-            <el-table-column v-if="roster.positions.length" label="调岗" width="210">
-              <template #default="{row}">
-                <el-select v-model="moveSel[row.enrollment_id]" size="small"
-                           clearable :disabled="isOver" placeholder="调至岗位…"
-                           style="width:140px">
-                  <el-option v-for="s in roster.positions" :key="s.id" :value="s.id"
-                             :label="`${s.name}（余${Math.max(0, s.quota - s.enrolled)}）`" />
-                </el-select>
-                <el-button size="small" link type="primary"
-                           :disabled="isOver || moveSel[row.enrollment_id] === undefined"
-                           @click="applyMove(row)">调岗</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-
-          <el-row :gutter="16" style="margin-top:12px">
-            <!-- 左栏（宽）：分配程序计算结果、人员变动 -->
-            <el-col :xs="24" :md="16">
-              <div class="section-title" style="margin-top:0">分配方案</div>
-              <AssignPanel ref="assignPanel" :shift="currentShift" @reload="loadAll" />
-            <!-- 人员变动流水 -->
-            <template v-if="roster.roster_changes?.length">
-              <div class="section-title">人员变动</div>
-              <el-timeline>
-                <el-timeline-item v-for="(c, i) in roster.roster_changes" :key="i"
-                                  :timestamp="fmtDT(c.created_at)" placement="top"
-                                  :type="['cancel','abandon','expire'].includes(c.action)
-                                         ? 'danger' : 'primary'">
-                  <el-tag size="small" effect="plain"
-                          :type="['cancel','abandon','expire'].includes(c.action)
-                                 ? 'danger' : 'success'">
-                    {{ c.action_label }}
-                  </el-tag>
-                  <span style="margin-left:8px">{{ c.summary }}</span>
-                </el-timeline-item>
-              </el-timeline>
+          </el-table-column>
+          <el-table-column v-if="rosterStatus === 'enrolled'" label="调岗" width="80">
+            <template #default="{row}">
+              <el-button size="small" link type="primary" :disabled="isOver"
+                         @click="openMove(row)">调岗</el-button>
             </template>
-            </el-col>
+          </el-table-column>
+        </el-table>
 
-            <!-- 右栏（窄）：候补队列、退选记录，块与块之间统一 12px -->
-            <el-col :xs="24" :md="8" class="side-stack">
-            <el-card shadow="never" class="wl-card">
-              <template #header><b>候补队列</b></template>
-              <el-alert v-if="roster.auto_promote_stop" type="warning" show-icon
-                        :closable="false" :title="roster.auto_promote_stop" />
-              <div v-for="w in roster.waitlist" :key="w.enrollment_id" class="wl-row">
-                <el-tag size="small" circle>{{ w.queue_position }}</el-tag>
-                {{ w.user.name }}
-                <span class="dim">{{ w.user.student_id }}</span>
-                <el-tag v-if="w.position_name" size="small" effect="plain">
-                  {{ w.position_name }}
-                </el-tag>
-                <el-tag v-if="w.status === 'pending_confirm'" size="small" type="danger">
-                  待确认 {{ fmtDT(w.confirm_deadline) }} 前
-                </el-tag>
-                <el-popconfirm v-if="w.status === 'waitlisted'"
-                    :title="`通知 ${w.user.name} 确认转正？超时未确认名额将顺延`"
-                    @confirm="promoteManually(w)">
-                  <template #reference>
-                    <el-button size="small" link type="primary" :disabled="isOver"
-                               style="margin-left:auto">转正</el-button>
-                  </template>
-                </el-popconfirm>
-              </div>
-              <el-empty v-if="!roster.waitlist.length" description="暂无候补" />
-            </el-card>
-            <el-card shadow="never" class="wl-card" v-if="roster.cancelled.length">
-              <template #header><b>退选记录（近20条）</b></template>
-              <div v-for="x in roster.cancelled" :key="x.enrollment_id" class="wl-row dim">
-                {{ x.user.name }}
-                <el-tag size="small" :type="x.cancel_type === 'locked' ? 'warning' : 'info'"
-                        effect="plain">{{ cancelType(x) }}</el-tag>
-              </div>
-            </el-card>
-            </el-col>
-          </el-row>
+        <!-- 分配方案：只有「统一分配」才谈得上排班 -->
+        <template v-if="assignShift">
+          <div class="section-title">分配方案 · {{ assignShift.name }}</div>
+          <AssignPanel ref="assignPanel" :shift="assignShift" @reload="loadAll" />
+        </template>
+
+        <!-- 人员变动流水 -->
+        <template v-if="roster.roster_changes?.length">
+          <div class="section-title">人员变动</div>
+          <el-timeline>
+            <el-timeline-item v-for="(c, i) in roster.roster_changes" :key="i"
+                              :timestamp="fmtDT(c.created_at)" placement="top"
+                              :type="['cancel','abandon','expire'].includes(c.action)
+                                     ? 'danger' : 'primary'">
+              <el-tag size="small" effect="plain"
+                      :type="['cancel','abandon','expire'].includes(c.action)
+                             ? 'danger' : 'success'">
+                {{ c.action_label }}
+              </el-tag>
+              <span style="margin-left:8px">{{ c.summary }}</span>
+            </el-timeline-item>
+          </el-timeline>
         </template>
       </el-tab-pane>
 
@@ -1655,6 +1673,91 @@
       </el-descriptions>
     </el-dialog>
 
+    <!-- 调岗：把一个人换到另一个岗位，可以跨场次（普通岗位一岗一场） -->
+    <el-dialog v-model="moveDlg.visible" title="调岗" width="460"
+               :before-close="guardMove" @opened="guardMove.snap">
+      <el-form label-width="90px">
+        <el-form-item label="志愿者">
+          <span>{{ moveDlg.row?.user.name }}</span>
+          <span class="dim" style="margin-left:8px">
+            现在在「{{ moveDlg.row?.position_name || '待分配' }}」·
+            {{ moveDlg.row?.time_text }}
+          </span>
+        </el-form-item>
+        <el-form-item label="调至岗位" required>
+          <el-select v-model="moveForm.position" style="width:100%" placeholder="选择岗位">
+            <el-option-group v-for="grp in moveTargets" :key="grp.key" :label="grp.label">
+              <el-option v-for="p in grp.items" :key="p.id" :value="p.id" :label="p.label" />
+            </el-option-group>
+          </el-select>
+          <div class="dim">
+            换到别的岗位就是换时段：新岗位的时间地点会通知本人，原岗位空出的位子
+            按候补顺序递补，组长身份一并卸任。
+          </div>
+        </el-form-item>
+        <el-form-item v-if="moveDlg.row && !moveDlg.row.allow_reassign" label="">
+          <el-alert type="warning" :closable="false" show-icon
+                    title="本人报名时选了不接受调剂，调整会计入留痕" />
+        </el-form-item>
+        <el-form-item label="">
+          <el-checkbox v-model="moveForm.force">
+            名额已满、条件不符时强制调岗，计入留痕
+          </el-checkbox>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="moveDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="moveDlg.saving" @click="doMove">确认调岗</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 补招：负责人直接把人加进某个岗位 -->
+    <el-dialog v-model="walkinDlg.visible" title="补招志愿者" width="460"
+               :before-close="guardWalkin" @opened="guardWalkin.snap">
+      <el-form label-width="90px">
+        <el-form-item label="学号" required>
+          <el-input v-model="walkinForm.sid" />
+        </el-form-item>
+        <el-form-item label="岗位" required>
+          <el-select v-model="walkinForm.position" style="width:100%" placeholder="选择岗位">
+            <el-option-group v-for="grp in positionGroups" :key="grp.key" :label="grp.label">
+              <el-option v-for="p in grp.items" :key="p.id" :value="p.id" :label="p.label" />
+            </el-option-group>
+          </el-select>
+          <div class="dim">统一分配的那几批可以选「待分配」，排班时再定岗位</div>
+        </el-form-item>
+        <el-form-item label="调剂意愿">
+          <el-checkbox v-model="walkinForm.allowReassign">本人接受岗位调剂</el-checkbox>
+        </el-form-item>
+        <!-- 补招不自动连带培训/彩排：赶不赶得上、要不要去，由负责人勾 -->
+        <el-form-item v-if="walkinAttached.length" label="培训/彩排">
+          <el-checkbox-group v-model="walkinForm.attached">
+            <el-checkbox v-for="a in walkinAttached" :key="a.id" :value="a.id"
+                         style="display:block">
+              {{ a.kind_label }}「{{ a.name }}」<span class="dim">{{ a.time_text }}</span>
+            </el-checkbox>
+          </el-checkbox-group>
+          <div class="dim">默认不报；勾上的一并报上</div>
+        </el-form-item>
+        <!-- 党校同学只能从这里加进来 -->
+        <el-form-item label="党校同学">
+          <el-checkbox v-model="walkinForm.party">是党校同学</el-checkbox>
+          <div class="dim">时长带「党校」标签，不进时长导出表，也不计入本人的累计时长</div>
+        </el-form-item>
+        <el-form-item label="">
+          <el-checkbox v-model="walkinForm.force">
+            名额已满时强制加入，计入留痕
+          </el-checkbox>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="walkinDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="walkinDlg.saving" @click="addWalkin">
+          确认补招
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 发送通知 -->
     <el-dialog v-model="notifyDlg.visible" title="发送通知" width="540"
                :before-close="guardNotify" @opened="guardNotify.snap">
@@ -1662,14 +1765,16 @@
         <el-form-item label="发送范围" required>
           <el-radio-group v-model="notifyForm.scope">
             <el-radio-button value="all">全部志愿者</el-radio-button>
-            <el-radio-button value="group">指定场次</el-radio-button>
-            <el-radio-button value="not_checked_in">指定场次未到岗</el-radio-button>
+            <el-radio-button value="positions">指定岗位</el-radio-button>
+            <el-radio-button value="not_checked_in">指定岗位未到岗</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="notifyForm.scope !== 'all'" label="选择场次" required>
-          <el-select v-model="notifyForm.shift_id" style="width:100%" placeholder="请选择场次">
-            <el-option v-for="g in shifts" :key="g.id" :value="g.id"
-                       :label="`${g.name}（${g.time_text}）`" />
+        <el-form-item v-if="notifyForm.scope !== 'all'" label="选择岗位" required>
+          <el-select v-model="notifyForm.position_ids" multiple clearable collapse-tags
+                     collapse-tags-tooltip style="width:100%" placeholder="可多选">
+            <el-option-group v-for="grp in positionGroups" :key="grp.key" :label="grp.label">
+              <el-option v-for="p in grp.items" :key="p.id" :value="p.id" :label="p.label" />
+            </el-option-group>
           </el-select>
         </el-form-item>
         <el-form-item label="通知标题" required>
@@ -1708,20 +1813,14 @@
       </template>
     </el-dialog>
 
-    <!-- 问卷结果：按场次、岗位挑人导出，附件按「场次/岗位」分文件夹 -->
+    <!-- 问卷结果：按岗位挑人导出，附件按「场次/岗位」分文件夹 -->
     <el-dialog v-model="answersDlg.visible" title="导出问卷结果" width="480">
       <el-form label-width="56px">
-        <el-form-item label="场次">
-          <el-select v-model="answersDlg.shifts" multiple clearable collapse-tags
-                     collapse-tags-tooltip placeholder="全部场次" style="width:100%">
-            <el-option v-for="g in shifts" :key="g.id" :value="g.id" :label="g.name" />
-          </el-select>
-        </el-form-item>
         <el-form-item label="岗位">
           <el-select v-model="answersDlg.positions" multiple clearable collapse-tags
                      collapse-tags-tooltip placeholder="全部岗位" style="width:100%">
-            <el-option-group v-for="g in answersShifts" :key="g.id" :label="g.name">
-              <el-option v-for="p in g.positions" :key="p.id" :value="p.id" :label="p.name" />
+            <el-option-group v-for="grp in positionGroups" :key="grp.key" :label="grp.label">
+              <el-option v-for="p in grp.items" :key="p.id" :value="p.id" :label="p.label" />
             </el-option-group>
           </el-select>
         </el-form-item>
@@ -1759,7 +1858,8 @@
 import { computed, h, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox, ElTag } from 'element-plus'
-import { api, download as dl, downloadExport, fmtDT, pageUrl, qrBase, uploadFile } from '../api'
+import { api, download as dl, downloadExport, fmtDT, pageUrl, qrBase,
+         uploadFile, withConflictConfirm } from '../api'
 import AiStructureAssist from '../components/AiStructureAssist.vue'
 import AssignPanel from '../components/AssignPanel.vue'
 import CheckinPanel from '../components/CheckinPanel.vue'
@@ -1854,11 +1954,17 @@ const managers = ref([])
 const newMgrSid = ref('')
 const mgrTyped = ref('')
 const mgrCandidates = ref([])
-const moveSel = ref({})
+
+// —— 调岗 / 补招 ——
+const moveDlg = ref({ visible: false, saving: false, row: null })
+const moveForm = ref({ position: '', force: false })
+const walkinDlg = ref({ visible: false, saving: false })
+const walkinForm = ref({ sid: '', position: '', force: false,
+                         allowReassign: true, attached: [], party: false })
 
 // —— 发送通知 ——
 const notifyDlg = ref({ visible: false, saving: false, uploading: false })
-const notifyForm = ref({ scope: 'all', shift_id: '', title: '', content: '',
+const notifyForm = ref({ scope: 'all', position_ids: [], title: '', content: '',
                          need_ack: false, files: [] })
 const ackBatches = ref([])
 // 各块数据上次拉成功的时刻，给刷新条显示（见 RefreshBar）
@@ -1979,6 +2085,8 @@ const guardShift = useCloseGuard(() => groupForm.value)
 const guardAttached = useCloseGuard(() => attForm.value)
 const guardPosition = useCloseGuard(() => [stationForm.value, positionDlg.value.copyFrom, positionDlg.value.syncSame])
 const guardNotify = useCloseGuard(() => notifyForm.value)
+const guardMove = useCloseGuard(() => moveForm.value)
+const guardWalkin = useCloseGuard(() => walkinForm.value)
 const guardBase = useCloseGuard(() => [baseForm.value, baseRange.value])
 const guardApprove = useCloseGuard(() => approveDlg.value.deadline)
 const guardLock = useCloseGuard(() => [lockDlg.value.names, lockDlg.value.note])
@@ -2001,8 +2109,12 @@ function showStationDetail(p, where = '') {
 }
 
 // —— 名单/调配 ——
-const roster = ref({ enrolled: [], waitlist: [], cancelled: [] })
-const currentGroupId = ref('')
+const roster = ref({ enrolled: [], waitlist: [], cancelled: [],
+                     positions: [], shifts: [], roster_changes: [] })
+// 名单的筛选条件：岗位（多选）、某一天、看哪一组人
+const rosterPositions = ref([])
+const rosterDay = ref('')
+const rosterStatus = ref('enrolled')
 const hours = ref([])
 // 要人过目的排前面：待核（未签退/自动兜底）→ 未确认 → 已确认。
 // 组内保持后端顺序，行对象引用不变，编辑框与勾选都不受影响。
@@ -2052,7 +2164,7 @@ const isOver = computed(
   () => ['finished', 'vb_pending', 'completed'].includes(act.value?.status))
 
 const unassignedHint = computed(() => (regClosed.value
-  ? '报名已截止，这些人还在待分配；到「志愿者管理」一键分配或导入排班'
+  ? '报名已截止，这些人还在待分配；到「志愿者管理」筛到这一批，再一键分配或导入排班'
   : '报名时只锁时段，截止后再分配岗位'))
 
 // 统一分配里的「待分配」不是岗位，是装还没安排的人的地方
@@ -2075,30 +2187,29 @@ const treeAlerts = computed(() => {
     }
     if (!regClosed.value) return []
     if (!real.length) {
-      return alert('报名已截止，还没建岗位。在这批统一分配下建好岗位，再到「志愿者管理」一键分配或导入排班。')
+      return alert('报名已截止，还没建岗位。在这批统一分配下建好岗位，再到「志愿者管理」'
+                   + '筛到这一批，一键分配或导入排班。')
     }
     if (!g.unassigned_count) return []
     const room = real.reduce((n, p) => n + Math.max(0, p.quota - p.enrolled), 0)
     return alert(`还有 ${g.unassigned_count} 人在待分配`
       + (room < g.unassigned_count
          ? `，而各岗位空位合计只有 ${room} 个——先加岗位或名额再分配。`
-         : '，到「志愿者管理」一键分配或导入排班。'))
+         : '，到「志愿者管理」筛到这一批，一键分配或导入排班。'))
   })
 })
 
-// 手动补时长时要认得出人：同名同姓靠学号，排在哪儿靠场次与岗位。
-// 一个人报了多个场次也只出现一次，把几段拼在同一行。
+// 手动补时长时要认得出人：同名同姓靠学号，排在哪儿靠岗位与时段。
+// 一个人报了多个岗位也只出现一次，把几段拼在同一行。
 const rosterOptions = computed(() => {
   const byStudent = new Map()
-  for (const g of shifts.value) {
-    for (const row of g._roster?.enrolled || []) {
-      const where = `${g.name}·${row.position_name || '待分配'}`
-              + (row.is_leader ? '·组长' : '')
-      const hit = byStudent.get(row.user.student_id)
-      if (hit) hit.places.push(where)
-      else byStudent.set(row.user.student_id, {
-        name: row.user.name, student_id: row.user.student_id, places: [where] })
-    }
+  for (const row of roster.value.enrolled || []) {
+    const where = `${row.position_name || '待分配'}·${row.time_text}`
+            + (row.is_leader ? '·组长' : '')
+    const hit = byStudent.get(row.user.student_id)
+    if (hit) hit.places.push(where)
+    else byStudent.set(row.user.student_id, {
+      name: row.user.name, student_id: row.user.student_id, places: [where] })
   }
   return [...byStudent.values()].map(v => ({ ...v, where: v.places.join('、') }))
 })
@@ -2136,14 +2247,9 @@ async function loadAll() {
       notFound.value = true
       return
     }
-    // 名单先挂到各场次上再赋给 act：页面在刷新时不卸掉，act 一换就按新数据渲染，
+    // 名单先取好再赋给 act：页面在刷新时不卸掉，act 一换就按新数据渲染，
     // 名单没到的话依赖名单的地方会读到 undefined
-    const rosters = await Promise.all(d.shifts.map(g => api.get(`/api/staff/shifts/${g.id}/roster`)))
-    const at = Date.now()
-    d.shifts.forEach((g, i) => {
-      g._roster = rosters[i]
-      g._rosterAt = at
-    })
+    await refreshRoster()
     act.value = d
     // 手动加/扣时长的服务日期默认落在活动服务的那天：时长多是事后统一录进来，
     // 空着的话每录一条都要自己挑一次日历
@@ -2169,10 +2275,6 @@ async function loadAll() {
     if (tab.value === 'acks') loadBatches()
     if (tab.value === 'logs') loadLogs()
     loadApproval()
-    if (!currentGroupId.value && shifts.value.length) {
-      currentGroupId.value = shifts.value[0].id
-    }
-    loadRoster()   // 无条件加载：act 赋值时 watcher 可能已抢先跑过一次空加载
   } catch (e) {
     loadError.value = e.message || '加载失败'
   } finally {
@@ -2181,7 +2283,6 @@ async function loadAll() {
 }
 
 const shifts = computed(() => act.value?.shifts || [])
-const currentShift = computed(() => shifts.value.find(g => g.id === currentGroupId.value))
 
 /** 拉平的场次清单：主场次 + 各自挂着的培训/彩排。
  *
@@ -2240,10 +2341,9 @@ const sameNameOthers = computed(() => {
     : assignShifts.value.flatMap(g => g.positions)
   return pool.filter(p => !p.is_placeholder && p.name === ed.name && p.id !== ed.id)
 })
-// 有候补转正待本人确认的场次：页签上的叹号看所有场次，不随下拉框变；下拉框里标出是哪几场
-const promoShiftIds = computed(() => new Set(shifts.value
-  .filter(g => g._roster?.waitlist?.some(w => w.status === 'pending_confirm'))
-  .map(g => g.id)))
+// 有人候补转正待本人确认：页签上挂个叹号，看的是整个活动，不随筛选变
+const promoPending = computed(
+  () => (roster.value.waitlist || []).some(w => w.status === 'pending_confirm'))
 // 已经确认下来的时长条数（手动补录的也在各自那一笔里）：有账才谈得上核准
 const confirmedCount = computed(() => hours.value.filter(h => h.confirmed).length)
 
@@ -2785,7 +2885,10 @@ watch(() => route.params.id, (id) => {
   notFound.value = false
   // 清掉上一个活动，让整页 loading 出来：不然加载期间显示的还是上一个活动
   act.value = null
-  currentGroupId.value = ''
+  roster.value = { enrolled: [], waitlist: [], cancelled: [],
+                   positions: [], shifts: [], roster_changes: [] }
+  rosterPositions.value = []      // 上一个活动的岗位 id 在这一个里不存在
+  rosterDay.value = ''
   loadAll()
 })
 
@@ -2836,7 +2939,8 @@ async function askKeepOutsiders(outsiders) {
 
 // —— 发送通知 ——
 function openNotify() {
-  notifyForm.value = { scope: 'all', shift_id: currentGroupId.value || '',
+  // 正筛着几个岗位时，发通知默认就发给他们
+  notifyForm.value = { scope: 'all', position_ids: [...rosterPositions.value],
                        title: '', content: '', need_ack: false, files: [] }
   notifyDlg.value.visible = true
 }
@@ -2857,12 +2961,14 @@ async function sendNotify() {
   const f = notifyForm.value
   if (!f.title.trim()) return ElMessage.warning('请填写通知标题')
   if (!f.content.trim()) return ElMessage.warning('请填写通知内容')
-  if (f.scope !== 'all' && !f.shift_id) return ElMessage.warning('请选择场次')
+  if (f.scope !== 'all' && !f.position_ids.length) {
+    return ElMessage.warning('请选择岗位')
+  }
   notifyDlg.value.saving = true
   try {
     const d = await api.post(`/api/staff/activities/${activityId}/notify`, {
       scope: f.scope,
-      shift_id: f.scope === 'all' ? '' : f.shift_id,
+      position_ids: f.scope === 'all' ? [] : f.position_ids,
       title: f.title.trim(),
       content: f.content.trim(),
       need_ack: f.need_ack,
@@ -2887,22 +2993,15 @@ async function transition(action) {
 // —— 导出 ——
 // 排班表：活动概览、志愿者信息、一张排班总表（一人一个岗位一行，含签到状态），交付现场
 function doExport() { dl(`/api/staff/activities/${activityId}/export.xlsx`) }
-// 问卷结果：按场次、岗位挑人；有附件时再问要不要一起下附件包
-const answersDlg = ref({ visible: false, shifts: [], positions: [] })
-const answersShifts = computed(() => answersDlg.value.shifts.length
-  ? shifts.value.filter(g => answersDlg.value.shifts.includes(g.id)) : shifts.value)
-// 场次收窄后，不在这些场次里的岗位从已选里去掉，免得导出条件和眼前看到的不一致
-watch(answersShifts, list => {
-  const ok = new Set(list.flatMap(g => g.positions.map(p => p.id)))
-  answersDlg.value.positions = answersDlg.value.positions.filter(id => ok.has(id))
-})
+// 问卷结果：按岗位挑人；有附件时再问要不要一起下附件包
+const answersDlg = ref({ visible: false, positions: [] })
 function openAnswersExport() {
-  answersDlg.value = { visible: true, shifts: [], positions: [] }
+  // 正筛着几个岗位时，导出默认就是这几个
+  answersDlg.value = { visible: true, positions: [...rosterPositions.value] }
 }
 function doAnswersExport() {
-  const { shifts: s, positions: p } = answersDlg.value
+  const { positions: p } = answersDlg.value
   const q = new URLSearchParams()
-  if (s.length) q.set('shifts', s.join(','))
   if (p.length) q.set('positions', p.join(','))
   answersDlg.value.visible = false
   downloadExport(`/api/staff/activities/${activityId}/answers`, q.toString())
@@ -3194,27 +3293,74 @@ async function openUnlock() {
 const hoursFrozen = computed(
   () => !!hoursState.value.locked_at || !!hoursState.value.lock_pending)
 
-function loadRoster() {
-  const g = currentShift.value
-  if (!g?._roster) return
-  roster.value = g._roster
-  rosterAt.value = g._rosterAt
-  moveSel.value = {}
+/** 整个活动一张名单：一次取回全部服务场次的人，筛选在本地做。 */
+async function refreshRoster() {
+  roster.value = await api.get(`/api/staff/activities/${activityId}/roster`)
+  rosterAt.value = Date.now()
 }
 
-/** 重新拉当前场次的名单。loadRoster 只是把缓存搬到视图上，不发请求。 */
-async function refreshRoster() {
-  const g = currentShift.value
-  if (!g) return
-  g._roster = await api.get(`/api/staff/shifts/${g.id}/roster`)
-  g._rosterAt = Date.now()
-  loadRoster()
-}
+// —— 名单的筛选 ——
+/** 岗位选项：普通岗位各自一条（带自己的时段），每一批统一分配单列一组。
+ *
+ * 筛选、调岗、补招、发通知、导出问卷都从这一份里挑：管理者认岗位，
+ * 场次那一层对他不露面——普通岗位一岗一场，岗位名就是场次名。
+ */
+const positionGroups = computed(() => {
+  const posts = { key: 'post', label: '岗位（报名即选岗位）', items: [] }
+  const byShift = new Map()
+  for (const p of roster.value.positions || []) {
+    if (!p.needs_assign) {
+      posts.items.push({ ...p, label: `${p.name}（${p.time_text}）` })
+      continue
+    }
+    if (!byShift.has(p.shift_id)) {
+      byShift.set(p.shift_id, { key: p.shift_id, items: [],
+                                label: `${p.shift_name}（${p.time_text}）` })
+    }
+    // 组标题已经写了这一批的名字和时段，岗位名不再重复
+    byShift.get(p.shift_id).items.push({ ...p, label: p.name })
+  }
+  return [...(posts.items.length ? [posts] : []), ...byShift.values()]
+})
+/** 名单上出现过的日期。选了某一天，看到的就是那天有时段的岗位上的人。 */
+const rosterDays = computed(() => [...new Set(
+  (roster.value.positions || []).flatMap(p => p.days || []))].sort())
+const rosterGroupName = { enrolled: '已报名名单', waitlist: '候补与待确认',
+                          cancelled: '退选记录（近 20 条）' }
+const rosterRows = computed(() => {
+  const pick = new Set(rosterPositions.value)
+  return (roster.value[rosterStatus.value] || []).filter(
+    r => (!pick.size || pick.has(r.position_id))
+      && (!rosterDay.value || (r.days || []).includes(rosterDay.value)))
+})
+const rosterTitle = computed(
+  () => `${rosterGroupName[rosterStatus.value]}（${rosterRows.value.length} 人）`)
+const rosterEmpty = computed(() => (rosterPositions.value.length || rosterDay.value
+  ? '这个筛选条件下没有人' : { enrolled: '还没有志愿者报名', waitlist: '暂无候补',
+                              cancelled: '暂无退选' }[rosterStatus.value]))
+/** 筛到的那一批统一分配：一键分配、导入排班、分配方案只对它有意义。
+ *
+ * 要求选中的岗位全都属于同一批统一分配——混着普通岗位时「排哪一场」没有答案。
+ */
+const assignShift = computed(() => {
+  const picked = (roster.value.positions || []).filter(
+    p => rosterPositions.value.includes(p.id))
+  const ids = new Set(picked.map(p => p.shift_id))
+  if (ids.size !== 1 || picked.some(p => !p.needs_assign)) return null
+  return shifts.value.find(g => g.id === picked[0].shift_id) || null
+})
+/** 候补此刻为什么不自动顶上：只说筛选到的那几个岗位。 */
+const promoteStops = computed(() => {
+  if (rosterStatus.value !== 'waitlist') return []
+  const shown = new Set(rosterRows.value.map(r => r.shift_id))
+  return (roster.value.shifts || []).filter(
+    g => g.auto_promote_stop && (!shown.size || shown.has(g.id)))
+})
 
 // 只有「岗位设了组长」的人才能被指定；没岗位的人后端也会拒
 function canBeLeader(row) {
   const p = roster.value?.positions?.find(x => x.id === row.position_id)
-  return !!p?.needs_leader
+  return row.status === 'enrolled' && !!p?.needs_leader
 }
 
 const assignPanel = ref(null)
@@ -3241,27 +3387,84 @@ async function promoteManually(w) {
   loadAll()
 }
 
-async function applyMove(row) {
-  const target = moveSel.value[row.enrollment_id]
-  if (target === undefined) return
-  const send = (force) => api.post(
-    `/api/staff/shifts/${currentGroupId.value}/assign/apply`,
-    { plan: [{ enrollment_id: row.enrollment_id, position_id: target || '', force }],
-      source: 'manual' })
+// —— 调岗 ——
+function openMove(row) {
+  moveDlg.value = { visible: true, saving: false, row }
+  moveForm.value = { position: '', force: false }
+}
+/** 能调去哪儿：除了他现在这个岗位，本活动的岗位都能选（带余额）。 */
+const moveTargets = computed(() => positionGroups.value.map(grp => ({
+  ...grp,
+  items: grp.items
+    .filter(p => p.id !== moveDlg.value.row?.position_id)
+    .map(p => ({ ...p, label: `${p.label}（余${Math.max(0, p.quota - p.enrolled)}）` })),
+})).filter(grp => grp.items.length))
+
+async function doMove() {
+  const row = moveDlg.value.row
+  const { position, force } = moveForm.value
+  if (!position) return ElMessage.warning('请选择要调去的岗位')
+  moveDlg.value.saving = true
   try {
-    const d = await send(false)
+    // 时段冲突先弹窗确认，确认了带 confirm_conflict 重发；名额、条件要勾强制
+    const d = await withConflictConfirm(confirm => api.post(
+      `/api/staff/enrollments/${row.enrollment_id}/move`,
+      { position_id: position, force, confirm_conflict: confirm }),
+    { head: `${row.user.name} 调岗后与以下安排时间冲突：`, ask: '仍要调岗？',
+      activityId })
+    if (!d) return
     ElMessage.success(d.summary || '已调岗')
+    moveDlg.value.visible = false
     loadAll()
   } catch (e) {
-    if ((e.message || '').includes('名额')) {
-      try {
-        await ElMessageBox.confirm(e.message + '。是否强制调岗（计入留痕）？',
-                                   '名额不足', { type: 'warning' })
-        const d = await send(true)
-        ElMessage.success(d.summary || '已强制调岗')
-        loadAll()
-      } catch { /* 取消 */ }
-    }
+    // 名额、条件这类提示要显式勾强制：替他把勾打上，看过提示再点一次
+    if ((e.message || '').includes('强制')) moveForm.value.force = true
+  } finally {
+    moveDlg.value.saving = false
+  }
+}
+
+// —— 补招 ——
+function openWalkin() {
+  // 正筛着某一个岗位时，补招默认就补到那儿
+  const only = rosterPositions.value.length === 1 ? rosterPositions.value[0] : ''
+  walkinDlg.value = { visible: true, saving: false }
+  walkinForm.value = { sid: '', position: only, force: false,
+                       allowReassign: true, attached: [], party: false }
+}
+const walkinPosition = computed(  // vuecheck: script-only，模板经 walkinAttached 读它
+  () => (roster.value.positions || []).find(p => p.id === walkinForm.value.position))
+// 对所选岗位生效的培训/彩排，口径同后端 enroll_logic.attached_shifts
+const walkinAttached = computed(
+  () => (walkinPosition.value ? attachedOf(walkinPosition.value) : []))
+
+async function addWalkin() {
+  const f = walkinForm.value
+  const p = walkinPosition.value
+  if (!f.sid.trim()) return ElMessage.warning('请填写学号')
+  if (!p) return ElMessage.warning('请选择岗位')
+  walkinDlg.value.saving = true
+  try {
+    // 岗位自带场次，所以补招就报到这个岗位所属的那一场上去
+    const d = await withConflictConfirm(confirm => api.post(
+      `/api/staff/shifts/${p.shift_id}/add-walkin`, {
+        student_id: f.sid.trim(),
+        // 选了「待分配」就是先不定岗位，排班时再定
+        position_id: p.is_placeholder ? '' : p.id,
+        allow_reassign: f.allowReassign,
+        attached_ids: f.attached.filter(
+          id => walkinAttached.value.some(a => a.id === id)),
+        force: f.force, party_school: f.party, confirm_conflict: confirm }),
+    { head: `${f.sid.trim()} 与以下安排时间冲突：`, ask: '仍要补招？', activityId })
+    if (!d) return
+    ElMessage.success('补招成功')
+    walkinDlg.value.visible = false
+    loadAll()
+  } catch (e) {
+    // 超额需要显式勾选强制，替用户把勾打上并提示重试
+    if ((e.message || '').includes('强制')) walkinForm.value.force = true
+  } finally {
+    walkinDlg.value.saving = false
   }
 }
 
@@ -3328,12 +3531,6 @@ watch(tab, async t => {
     loadLogs()
   }
 })
-watch(currentGroupId, loadRoster)
-watch(() => shifts.value.map(g => g.enrolled).join(','), () => {
-  if (!currentGroupId.value && shifts.value.length) currentGroupId.value = shifts.value[0].id
-  loadRoster()
-})
-
 function toISO(v) {
   if (!v) return null
   const d = v instanceof Date ? v : new Date(v)

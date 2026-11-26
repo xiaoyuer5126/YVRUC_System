@@ -481,12 +481,13 @@
     <el-dialog v-model="reminderDlg" title="补发签到提醒" width="460"
                :before-close="guardReminder" @opened="guardReminder.snap">
       <p class="dim">
-        只发给<b>未签到</b>的正式志愿者。场次开始前 30 分钟系统已自动发送过一次。
+        只发给上面这一段里<b>未签到</b>的正式志愿者，可以只催某几个岗位。
+        这一段开始前 30 分钟系统已自动发送过一次。
       </p>
       <el-form label-width="72px">
         <el-form-item label="范围">
           <el-radio-group v-model="reminderScope">
-            <el-radio value="all">全场次</el-radio>
+            <el-radio value="all">不限岗位</el-radio>
             <el-radio v-if="positionGroups.length" value="group">按岗位组</el-radio>
             <el-radio value="position">按岗位</el-radio>
           </el-radio-group>

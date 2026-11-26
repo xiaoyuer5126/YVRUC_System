@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime
 
 from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
@@ -2741,8 +2742,9 @@ def remove_activity_manager(activity_id: str, user_id: str,
 # ======================= 志愿者通知 =======================
 
 class NotifyBody(BaseModel):
-    scope: str = "all"      # all 全部志愿者 / group 指定场次 / not_checked_in 场次未到岗
-    shift_id: str = ""
+    # all 全部志愿者 / positions 指定岗位 / not_checked_in 指定岗位里还没到岗的
+    scope: str = "all"
+    position_ids: list[str] = Field(default_factory=list)
     title: str = Field(max_length=128)
     content: str
     need_ack: bool = False  # 要求志愿者点「我已知悉」
@@ -2775,8 +2777,10 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
                       user: User = Depends(require_manager)):
     """向该活动 status=enrolled 的报名者发送自定义通知。
 
-    scope=group：再按 shift_id 过滤；scope=not_checked_in：按 shift_id 过滤
-    且排除已在该场次有签到记录的人。Mock 模式下消息落 notifications 表。
+    scope=positions：只发选中的那几个岗位上的人；scope=not_checked_in：同样
+    按岗位选人，再去掉已经在那个岗位所属场次签过到的。普通岗位各自带一个
+    场次，所以「按岗位」就够了：管理者想通知的是「东门引导那几个人」，
+    不是「某一场的所有人」。Mock 模式下消息落 notifications 表。
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
@@ -2785,29 +2789,27 @@ def notify_volunteers(activity_id: str, body: NotifyBody,
         raise HTTPException(400, "请填写通知标题")
     if not content:
         raise HTTPException(400, "请填写通知内容")
-    if body.scope not in ("all", "group", "not_checked_in"):
+    if body.scope not in ("all", "positions", "not_checked_in"):
         raise HTTPException(400, "通知范围不合法")
-    shift_id = ""
+    rows = (db.query(Enrollment)
+            .filter(Enrollment.activity_id == act.id,
+                    Enrollment.status == "enrolled"))
     if body.scope != "all":
-        if not body.shift_id:
-            raise HTTPException(400, "请选择场次")
-        g = _shift(db, body.shift_id)
-        if g.activity_id != act.id:
-            raise HTTPException(400, "所选场次不属于该活动")
-        shift_id = g.id
-    # 两步查询：先 DISTINCT user_id（JSON 列在 PG 上无相等运算符，不能整行去重）
-    ids = (db.query(Enrollment.user_id)
-           .filter(Enrollment.activity_id == act.id,
-                   Enrollment.status == "enrolled"))
-    if shift_id:
-        ids = ids.filter(Enrollment.shift_id == shift_id)
-    ids = [r[0] for r in ids.distinct().all()]
-    users = [db.get(User, i) for i in ids]
-    users = [u for u in users if u]
+        if not body.position_ids:
+            raise HTTPException(400, "请选择岗位")
+        known = {p.id for g in act.main_shifts() for p in g.positions}
+        if not set(body.position_ids) <= known:
+            raise HTTPException(400, "所选岗位不属于该活动")
+        rows = rows.filter(Enrollment.position_id.in_(body.position_ids))
+    rows = rows.all()
     if body.scope == "not_checked_in":
-        checked = {r[0] for r in db.query(CheckinRecord.user_id)
-                   .filter(CheckinRecord.shift_id == shift_id).all()}
-        users = [u for u in users if u.id not in checked]
+        # 一个人报了两个岗位、只到了一个的话，没到的那个照样催他
+        checked = {(r[0], r[1]) for r in
+                   db.query(CheckinRecord.shift_id, CheckinRecord.user_id)
+                   .filter(CheckinRecord.activity_id == act.id).all()}
+        rows = [e for e in rows if (e.shift_id, e.user_id) not in checked]
+    users = rows_by_id(db, User, (e.user_id for e in rows))
+    users = list(users.values())
     # 没人可发时不动附件：标成已发送的附件定时任务不再清，会一直留在磁盘上
     if not users:
         raise HTTPException(400, "所选范围内没有可通知的志愿者")
@@ -2926,43 +2928,68 @@ def remind_batch(batch_id: str, db: OrmSession = Depends(db_session),
 
 # ======================= 报名名单 =======================
 
-@router.get("/shifts/{shift_id}/roster")
-def roster(shift_id: str, db: OrmSession = Depends(db_session),
-           user: User = Depends(require_manager)):
-    g = _shift(db, shift_id)
-    ensure_activity_manager(db, user, g.activity_id)
-    act = db.get(Activity, g.activity_id)
-    positions = sorted(g.positions, key=lambda s: s.sort)
-    checked_ids = {r[0] for r in db.query(CheckinRecord.user_id)
-                   .filter(CheckinRecord.shift_id == g.id).all()}
+def _shift_days(g: Shift) -> list[str]:
+    """这一场有时段的那几天（YYYY-MM-DD，去重按先后）。
+
+    名单按日期筛的就是它：选了 10-17，看到的是那天有时段的岗位上的人。
+    """
+    return sorted({p.start_time.date().isoformat() for p in g.periods})
+
+
+def _roster_payload(db: OrmSession, act: Activity, shifts: list[Shift],
+                    occ: logic.Occupancy) -> dict:
+    """这几个服务场次的名单：三组人 + 问卷题目 + 岗位清单 + 人员变动流水。
+
+    给一场就是那一场，给全部服务场次就是整个活动一张名单，字段口径相同。
+    每行都带所属场次与时段：整张名单混着十几个岗位，光有岗位名认不出
+    「上午那个引导岗」和「下午那个引导岗」。
+
+    三组名单先都取出来，再一次性取用户、评分与人数。一行一条 SQL 的话，
+    29 个人的名单就是 88 条（实测），而这里只需要个位数——名单端点是
+    这一页最重的请求。
+    """
+    shift_ids = [g.id for g in shifts]
+    by_shift = {g.id: g for g in shifts}
+    # (场次, 人) 两级：一个人报了两个岗位，到了一个没到另一个，名单上
+    # 要分别显示
+    checked = {(r[0], r[1]) for r in
+               db.query(CheckinRecord.shift_id, CheckinRecord.user_id)
+               .filter(CheckinRecord.shift_id.in_(shift_ids or [""])).all()}
     # 即选即得的报名问卷答案挂在报名记录上；筛选活动的在「报名申请」那张表里看
     questions = [] if act.is_screened() else (
         db.query(FormQuestion).filter(FormQuestion.activity_id == act.id)
         .order_by(FormQuestion.sort).all())
 
-    # 三组名单先都取出来，再一次性取用户与评分。一行一条 SQL 的话，29 个人的
-    # 名单就是 88 条（实测），而这里只需要个位数——名单端点是这一页最重的请求
+    def rows_of(status, newest_first: bool = False, limit: int | None = None):
+        q = (db.query(Enrollment)
+             .filter(Enrollment.shift_id.in_(shift_ids or [""]),
+                     Enrollment.status == status)
+             .order_by(Enrollment.joined_at.desc() if newest_first
+                       else Enrollment.joined_at))
+        return (q.limit(limit) if limit else q).all()
+
     groups = {
-        "enrolled": (db.query(Enrollment)
-                     .filter(Enrollment.shift_id == g.id,
-                             Enrollment.status == "enrolled")
+        "enrolled": rows_of("enrolled"),
+        # 退选记录只看最近的：整个活动一张名单，一场二十条会把页面撑满
+        "cancelled": rows_of("cancelled", newest_first=True, limit=20),
+        "waitlist": (db.query(Enrollment)
+                     .filter(Enrollment.shift_id.in_(shift_ids or [""]),
+                             Enrollment.status.in_(("waitlisted",
+                                                    "pending_confirm")))
                      .order_by(Enrollment.joined_at).all()),
-        "cancelled": (db.query(Enrollment)
-                      .filter(Enrollment.shift_id == g.id,
-                              Enrollment.status == "cancelled")
-                      .order_by(Enrollment.joined_at.desc()).limit(20).all()),
-        "waitlist": logic.waitlist_rows(db, g.id),
     }
     everyone = [e for rows_ in groups.values() for e in rows_]
     users = {u.id: u for u in db.query(User).filter(
         User.id.in_({e.user_id for e in everyone})).all()}
-    pos_by_id = {p.id: p for p in positions}
+    pos_by_id = {p.id: p for g in shifts for p in g.positions}
+    days_by_shift = {g.id: _shift_days(g) for g in shifts}
     scores = scoring.briefs(db, [e.user_id for e in everyone])
     attachments = answer_attachments(db, act.id) if questions else {}
 
     def user_row(e: Enrollment) -> dict:
         u = users[e.user_id]
         st = pos_by_id.get(e.position_id) if e.position_id else None
+        g = by_shift[e.shift_id]
         return {
             "enrollment_id": e.id,
             "answers": (answers_out(questions, e.answers, attachments)
@@ -2973,26 +3000,32 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
             "position_id": e.position_id,
             "position_name": st.name if st else "",
             "position_group": st.group_name if st else "",
+            "shift_id": g.id,
+            "shift_name": g.name,
+            "needs_assign": g.needs_assign(),
+            "time_text": g.span_text(),
+            "days": days_by_shift[g.id],
             "is_leader": e.is_leader,
             "leader_willing": e.leader_willing,
             "assign_forced": e.assign_forced,
             "allow_reassign": e.allow_reassign,
             "source": e.source,
             "joined_at": iso(e.joined_at),
-            "checked_in": u.id in checked_ids,
+            "checked_in": (g.id, u.id) in checked,
             "confirm_deadline": iso(e.confirm_deadline),
             "status": e.status,
             "cancel_type": e.cancel_type,
         }
 
-    enrolled = [user_row(e) for e in groups["enrolled"]]
-    waitlist = []
+    waitlist, seen = [], defaultdict(int)
     for e in groups["waitlist"]:
         row = user_row(e)
-        # 队列按岗位分，名次也要按岗位算（见 logic.waitlist_position）
-        row["queue_position"] = logic.waitlist_position(db, e)
+        # 队列按岗位分，名次也要按岗位算（口径同 logic.waitlist_position）：
+        # 排在「引导岗」第一位的人不该因为「检录岗」前面有两个人被告知第 3 位
+        key = (e.shift_id, e.position_id or "")
+        seen[key] += 1
+        row["queue_position"] = seen[key]
         waitlist.append(row)
-    cancelled = [user_row(e) for e in groups["cancelled"]]
     # 人员变动流水：活动前一天少了几个人，得看得见是谁、什么时候退的
     changes = (db.query(AuditLog)
                .filter(AuditLog.activity_id == act.id,
@@ -3006,31 +3039,98 @@ def roster(shift_id: str, db: OrmSession = Depends(db_session),
             "who": c.actor_name, "summary": c.summary,
             "created_at": iso(c.created_at),
         } for c in changes],
-        # 候补为什么此刻不会自动顶上；空串 = 照常递补
-        "auto_promote_stop": _promote_stop_reason(g),
-        "shift": {"id": g.id, "name": g.name, "time_text": g.span_text(),
-                  "capacity": g.total_capacity(), "needs_assign": g.needs_assign(),
-                  "mode": g.mode, "mode_label": g.mode_label(),
-                  "occupied": logic.shift_occupied_count(db, g.id),
-                  "activity_id": act.id, "activity_title": act.title,
-                  "start_time": iso(g.start_time)},
-        "positions": [{"id": p.id, "name": p.name, "quota": p.quota,
-                       "location": p.location,
-                       "needs_leader": p.needs_leader,
-                       "requirement_desc": p.requirement_desc() or "不限",
-                       "enrolled": logic.position_enrolled_count(db, p.id)}
-                      for p in positions],
-        "enrolled": enrolled,
+        "positions": [_roster_position(p, by_shift[p.shift_id], occ,
+                                       days_by_shift[p.shift_id])
+                      for g in shifts for p in sorted(g.positions,
+                                                      key=lambda s: s.sort)],
+        "enrolled": [user_row(e) for e in groups["enrolled"]],
         "waitlist": waitlist,
-        "cancelled": cancelled,
-        "checked_in_count": len(checked_ids),
+        "cancelled": [user_row(e) for e in groups["cancelled"]],
+        "checked_in_count": len(checked),
     }
 
 
+def _roster_position(p: Position, g: Shift, occ: logic.Occupancy,
+                     days: list[str]) -> dict:
+    """名单上的一个岗位：筛选、调岗、补招、发通知、导出问卷都从这一份里挑。
+
+    普通岗位一岗一场，时段就是它自己的；统一分配的几个岗位共用一场的时段。
+    所以每一项都带上所属场次与「是不是统一分配」，按岗位选人时不必再回到
+    场次那一层对。占位岗位的已报名按整场数（同 Shift.placeholder）。
+    """
+    return {
+        "id": p.id, "name": p.name, "quota": p.quota,
+        "location": p.location,
+        "needs_leader": p.needs_leader,
+        "group_name": p.group_name,
+        "is_placeholder": p.is_placeholder,
+        "requirement_desc": p.requirement_desc() or "不限",
+        "enrolled": (occ.shift_enrolled(g.id) if p.is_placeholder
+                     else occ.position_enrolled(p.id)),
+        "shift_id": g.id,
+        "shift_name": g.name,
+        "needs_assign": g.needs_assign(),
+        "time_text": g.span_text(),
+        "days": days,
+    }
+
+
+def _roster_shift(act: Activity, g: Shift, occ: logic.Occupancy) -> dict:
+    """名单上这一场的概况：名额、此刻的候补状态。"""
+    return {"id": g.id, "name": g.name, "time_text": g.span_text(),
+            "capacity": g.total_capacity(), "needs_assign": g.needs_assign(),
+            "mode": g.mode, "mode_label": g.mode_label(),
+            "occupied": occ.shift_occupied(g.id),
+            "activity_id": act.id, "activity_title": act.title,
+            "start_time": iso(g.start_time),
+            "days": _shift_days(g),
+            # 候补为什么此刻不会自动顶上；空串 = 照常递补
+            "auto_promote_stop": _promote_stop_reason(g)}
+
+
+@router.get("/activities/{activity_id}/roster")
+def activity_roster(activity_id: str, db: OrmSession = Depends(db_session),
+                    user: User = Depends(require_manager)):
+    """整个活动一张名单：全部服务场次的已报名、候补与退选记录。
+
+    管理者看的是「这个活动有哪些人」，而不是「这一场有哪些人」：一个活动
+    十几个岗位，按岗位各取一次就是十几个请求，页面要等最慢的那一个，想
+    按日期或岗位看还得自己在几张表之间对。筛选（岗位、日期、状态）在前端
+    做——人都在这一份里了，再按条件回后端等于让人多等一趟。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    # Activity.shifts 的关系就按（时段开始, sort）排好了：岗位清单与各场次
+    # 因此是按时间先后排的，前端不必再排一遍
+    shifts = act.main_shifts()
+    occ = logic.Occupancy(db, act.id)
+    out = _roster_payload(db, act, shifts, occ)
+    out["shifts"] = [_roster_shift(act, g, occ) for g in shifts]
+    return out
+
+
+@router.get("/shifts/{shift_id}/roster")
+def roster(shift_id: str, db: OrmSession = Depends(db_session),
+           user: User = Depends(require_manager)):
+    """一个场次的名单。统一分配那一场的分配面板按它看人。"""
+    g = _shift(db, shift_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = db.get(Activity, g.activity_id)
+    occ = logic.Occupancy(db, act.id)
+    out = _roster_payload(db, act, [g], occ)
+    out["shift"] = _roster_shift(act, g, occ)
+    out["auto_promote_stop"] = out["shift"]["auto_promote_stop"]
+    return out
+
+
 def _promote_stop_reason(g: Shift) -> str:
-    """名单页上告诉管理者：这一场的候补此刻为什么不会自动顶上。空串 = 照常递补。"""
+    """名单页上告诉管理者：这一场的候补此刻为什么不会自动顶上。空串 = 照常递补。
+
+    普通岗位自带场次，对管理者来说它就是一个岗位，所以话里不提「场次」。
+    """
+    word = _shift_word(g)
     if now() >= g.start_time:
-        return "场次已开始，候补已自动结束，需要补人请用补招"
+        return f"{word}已开始，候补已自动结束，需要补人请用补招"
     if logic.shift_locked(g):
         return "因名单已锁定，停止候补自动转正，如需补人请在志愿者管理页面手动转正"
     if g.enroll_paused:
@@ -3239,6 +3339,181 @@ def assign_apply(shift_id: str, body: ApplyPlanBody, bg: BackgroundTasks,
     return result
 
 
+# ======================= 跨岗位调岗 =======================
+
+class MoveBody(BaseModel):
+    position_id: str                 # 调到哪个岗位（可以在别的场次里）
+    force: bool = False              # 名额、硬性条件这类提示仍要照调
+    confirm_conflict: bool = False   # 时段冲突已经看过，照调
+
+
+def _move_where(g: Shift, p: Position) -> str:
+    """调岗的提示与留痕里怎么称呼落点：统一分配要说清是哪一场的哪个岗位。"""
+    return f"{g.name}·{p.name}" if g.needs_assign() else p.name
+
+
+@router.post("/enrollments/{enrollment_id}/move")
+def move_enrollment(enrollment_id: str, body: MoveBody, bg: BackgroundTasks,
+                    db: OrmSession = Depends(db_session),
+                    user: User = Depends(require_manager)):
+    """把一条正式报名调到另一个岗位上，可以跨场次。
+
+    普通岗位各自带一个场次，所以「换岗位」就是换场次：名额、名单锁、候补
+    队列、时段冲突都按场次算，两边都要动。统一分配场次内部换岗位不换场次，
+    走的仍是一键分配那条路（assign.apply_plan）。
+
+    管理者什么都能做，只是会收到提示：乙岗位名额不够、本人不满足硬性条件、
+    已经在原岗位签到过，都先回 409，勾「强制」再发就照调并记进留痕；与本人
+    其它报名（含本活动别的岗位）时段重叠回 409（code=time_conflict），
+    带 confirm_conflict 重发。调走之后甲岗位空出的位子按候补顺序递补。
+    """
+    enr = db.get(Enrollment, enrollment_id)
+    if enr is None:
+        raise HTTPException(404, "报名记录不存在")
+    ensure_activity_manager(db, user, enr.activity_id)
+    act = _act(db, enr.activity_id)
+    ensure_not_finished(act)
+    if enr.status != "enrolled":
+        raise HTTPException(409, f"只有正式报名的志愿者才能调岗"
+                                 f"（当前状态：{_status_label(enr)}）")
+    position = db.get(Position, body.position_id)
+    if position is None:
+        raise HTTPException(404, "岗位不存在")
+    dst = _shift(db, position.shift_id)
+    if dst.activity_id != act.id:
+        raise HTTPException(400, "所选岗位不属于该活动")
+    if position.id == enr.position_id:
+        raise HTTPException(400, f"他已经在「{_move_where(dst, position)}」上了")
+    src = _shift(db, enr.shift_id)
+    u = db.get(User, enr.user_id)
+
+    notify_items: list[dict] = []
+    db.commit()          # 还连接再排锁，理由同 enroll
+    if dst.id == src.id:
+        # 同一场次内换岗位（统一分配）：名额、冲突都在这一场里算，一键分配
+        # 那条路已经把校验、留痕、递补做齐了
+        with shift_lock(db, src.id):
+            logic.reload_shift(db, src)
+            try:
+                result = assign.apply_plan(
+                    db, src, user,
+                    [{"enrollment_id": enr.id, "position_id": position.id,
+                      "force": body.force}],
+                    source="manual", notify_out=notify_items)
+            except ValueError as exc:
+                db.rollback()
+                raise HTTPException(409, str(exc))
+            result["promoted"] = logic.fill_vacancies(db, src)
+            db.commit()
+        for p in src.positions:
+            invalidate_gates(src.id, p.id)
+        if notify_items:
+            bg.add_task(_notify_assignment_bg, notify_items)
+        return result
+
+    # 跨场次：两把场次锁按 id 排序一起拿（shift_lock 自己排序，两个请求锁
+    # 同一对场次时顺序一致，不会互相等成死锁），再加本人的用户锁——下面
+    # 要判时段冲突，这个人可能正同时在别处报名
+    reasons: list[str] = []
+    with shift_lock(db, src.id, dst.id, user_id=enr.user_id):
+        # 锁外看到的可能已经旧了：他刚自己退了选，或者别的管理者刚调过他
+        db.refresh(enr)
+        if enr.status != "enrolled" or enr.shift_id != src.id:
+            raise HTTPException(409, "该记录已被处理，请刷新名单后重试")
+        logic.reload_shift(db, src)
+        logic.reload_shift(db, dst)
+        live = (db.query(Enrollment)
+                .filter(Enrollment.shift_id == dst.id,
+                        Enrollment.user_id == enr.user_id,
+                        Enrollment.id != enr.id,
+                        Enrollment.status.in_(logic.ACTIVE)).first())
+        if live is not None:
+            raise HTTPException(409, f"{u.name} 在「{dst.name}」已有记录"
+                                     f"（{_status_label(live)}），不能调过去")
+        holder = dst.placeholder()
+        if not logic.has_room(db, dst, position):
+            reasons.append(f"「{position.name}」名额已满（上限{position.quota}人）")
+        elif (holder is not None and position is not holder
+                and not logic.has_room(db, dst, holder)):
+            # 统一分配的名额记在占位岗位上，按整场数人：从别的场次调进来
+            # 等于多占这一场一个位子
+            reasons.append(f"「{dst.name}」名额已满（上限{holder.quota}人）")
+        unmet = logic.unmet_requirements(u, position)
+        if unmet:
+            reasons.append(f"不满足「{position.name}」的条件：{'；'.join(unmet)}")
+        # 已经在原岗位签到过的人调走，那一段时长仍按签到时的岗位记：
+        # 现场已经发生的事不能改写，但得让负责人知道
+        if db.query(CheckinRecord).filter(
+                CheckinRecord.shift_id == src.id,
+                CheckinRecord.user_id == enr.user_id).count():
+            reasons.append(f"已在「{src.name}」签到过，那一段时长仍按原岗位记")
+        if reasons and not body.force:
+            raise HTTPException(409, f"{u.name}：{'；'.join(reasons)}。"
+                                     f"确认调岗请勾选强制")
+        # 时段冲突：要挪走的这条自己不算——甲、乙两个岗位时段压在一起时，
+        # 他正是因为要离开甲才调过去的
+        rows = [r for r in logic.active_rows(db, u) if r[0].id != enr.id]
+        clashes = logic.dedupe_conflicts(logic.conflicts_among(rows, dst))
+        if clashes and not body.confirm_conflict:
+            raise logic.conflict_error(
+                f"{u.name} 调到「{_move_where(dst, position)}」后，时段与"
+                f"{logic.conflict_message(clashes, act.id)}冲突",
+                clashes)
+        if clashes:
+            reasons.append(f"时段与{logic.conflict_message(clashes, act.id)}冲突")
+
+        old = db.get(Position, enr.position_id) if enr.position_id else None
+        from_label = _move_where(src, old) if old else src.name
+        unwilling = not enr.allow_reassign
+        enr.shift_id = dst.id
+        enr.position_id = position.id
+        enr.assigned_at = now()
+        enr.assigned_by = user.id
+        enr.assign_forced = bool(reasons)
+        # 组长跟着岗位：调走就卸任，新岗位要不要他带队由负责人再指定
+        enr.is_leader = False
+        db.flush()
+        if old is not None:
+            logic.on_leader_vacated(db, old.id)
+        # 只对某些岗位生效的培训/彩排跟着人走（口径同 assign.apply_plan）：
+        # 调去检录组之后，东门组那场彩排不该再叫他，检录组那场得叫上他。
+        # 两边的培训/彩排并在一起传进去，不必查两遍
+        attached = {s.id: s for s in logic.attached_shifts(db, src.id)}
+        attached.update({s.id: s for s in logic.attached_shifts(db, dst.id)})
+        logic.sync_attached(db, enr, list(attached.values()))
+        to_label = _move_where(dst, position)
+        audit_log(db, actor=user,
+                  action="force_assign" if reasons else "assign_manual",
+                  target_type="enrollment", target_id=enr.id,
+                  target_label=u.name, activity_id=act.id,
+                  summary=f"调岗 {u.name}（{u.student_id}）："
+                          f"「{from_label}」→「{to_label}」"
+                          + ("（本人不接受调剂）" if unwilling else "")
+                          + (f"（强制：{'；'.join(reasons)}）" if reasons else ""),
+                  changes=[{"field": "enrollment", "label": u.name,
+                            "old": from_label, "new": to_label}])
+        db.flush()
+        # 甲岗位空出来的位子按候补顺序递补：和退选一样，位子不能悬着
+        promoted = logic.fill_vacancies(db, src)
+        # 调岗是管理者单方面定的，本人那边一点动静都没有：时间地点都可能
+        # 换了，不告诉他等于让他照原来的安排去
+        msgcenter.send_user(db, u, "position_moved", {"activity_id": act.id},
+                            activity=act.title, position=position.name,
+                            position_time=position.time_text(),
+                            position_loc=position.place(),
+                            old_position=from_label)
+        db.commit()
+    # 两边各岗位的空位在闸门之外变了：作废计数器，下一个报名按数据库重新对齐
+    for g in (src, dst):
+        for p in g.positions:
+            invalidate_gates(g.id, p.id)
+    return {"ok": True, "enrollment_id": enr.id, "shift_id": dst.id,
+            "position_id": position.id, "position_name": position.name,
+            "promoted": promoted, "forced_reasons": reasons,
+            "summary": f"已把 {u.name} 调到「{to_label}」"
+                       + (f"，原岗位递补 {promoted} 人" if promoted else "")}
+
+
 @router.post("/shifts/{shift_id}/add-walkin")
 def add_walkin(shift_id: str, body: dict,
                db: OrmSession = Depends(db_session),
@@ -3290,7 +3565,8 @@ def add_walkin(shift_id: str, body: dict,
                 .filter(Enrollment.shift_id == g.id, Enrollment.user_id == u.id)
                 .filter(Enrollment.status.in_(logic.ACTIVE)).first())
         if live is not None:
-            raise HTTPException(409, f"{u.name} 在该场次已有记录（{_status_label(live)}）")
+            raise HTTPException(409, f"{u.name} 在「{g.name}」已有记录"
+                                     f"（{_status_label(live)}）")
 
         # 名额要按落点算：pick 模式下名额在岗位上，不传岗位一律判「满」，
         # 补招任何按岗位报名的场次都会被要求勾强制。
@@ -3300,7 +3576,7 @@ def add_walkin(shift_id: str, body: dict,
         if body.get("position_id"):
             position = db.get(Position, body["position_id"])
             if position is None or position.shift_id != g.id:
-                raise HTTPException(400, "岗位不属于该场次")
+                raise HTTPException(400, f"岗位不属于「{g.name}」")
 
         # 本人全部有效报名查一次，这一场和勾上的培训/彩排都拿它比
         rows = logic.active_rows(db, u)
@@ -3316,7 +3592,8 @@ def add_walkin(shift_id: str, body: dict,
         for aid in wanted:
             s = allowed.get(aid)
             if s is None:
-                raise HTTPException(400, "所选培训/彩排不属于该场次，或对这个岗位不生效")
+                raise HTTPException(400, "所选培训/彩排不属于这个活动，"
+                                         "或对这个岗位不生效")
             if (db.query(Enrollment)
                     .filter(Enrollment.shift_id == s.id, Enrollment.user_id == u.id)
                     .first()) is not None:
