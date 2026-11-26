@@ -28,11 +28,12 @@ down_revision = "0023"
 branch_labels = None
 depends_on = None
 
-# 新场次照抄原场次的这些列：id 与 name 另给（name = 岗位名）
+# 新场次照抄原场次的这些列：id、name、sort 另给（name = 岗位名，sort 排在最后，
+# 同一个活动里的 sort 不重复，重复了顺序就由库里的行序说了算）
 SHIFT_COLUMNS = ("activity_id", "location", "mode", "kind",
                  "applies_to_positions", "hours_mode", "requirement_tags",
                  "note", "enroll_paused", "lock_hours", "list_locked",
-                 "auto_lock_spent", "leader_alert_sent", "sort",
+                 "auto_lock_spent", "leader_alert_sent",
                  "flexible_time", "digest_sent_on")
 
 # 补一条「申请中」的意向记录时照抄的列：id、shift_id、position_id 另给
@@ -121,6 +122,10 @@ def _split_shift(conn, old_shift: str, positions: list[dict],
                  tokens: set[str]) -> None:
     """一个挂了多个岗位的服务场次：第一个岗位留下，其余各带一个新场次走。"""
     keep, moving = positions[0], positions[1:]
+    sort = conn.execute(sa.text(
+        "SELECT COALESCE(MAX(sort), 0) FROM shifts WHERE activity_id = "
+        "(SELECT activity_id FROM shifts WHERE id = :old)"),
+        {"old": old_shift}).scalar()
 
     # 申请中的意向：先拍一份快照。下面逐个岗位搬动之后，原场次上就查不全了
     intents = conn.execute(sa.text(
@@ -153,12 +158,13 @@ def _split_shift(conn, old_shift: str, positions: list[dict],
 
     for position in moving:
         new_shift = _uid("g")
+        sort += 1
         cols = ", ".join(SHIFT_COLUMNS)
         conn.execute(sa.text(
-            f"INSERT INTO shifts (id, name, {cols}) "
-            f"SELECT :new, :name, {cols} FROM shifts WHERE id = :old"),
+            f"INSERT INTO shifts (id, name, sort, {cols}) "
+            f"SELECT :new, :name, :sort, {cols} FROM shifts WHERE id = :old"),
             {"new": new_shift, "name": position["name"][:128],
-             "old": old_shift})
+             "sort": sort, "old": old_shift})
         periods = _copy_periods(conn, old_shift, new_shift)
 
         # 岗位本身：新场次下只有它一个

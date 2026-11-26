@@ -1877,8 +1877,11 @@ def _apply_position_body(db: OrmSession, g: Shift, s: Position,
             setattr(s, key, _as_int(body[key], POSITION_FIELDS[key]))
         else:
             value = body[key]
-            if key == "name" and not str(value or "").strip():
-                raise HTTPException(400, "岗位名称不能为空")
+            if key == "name":
+                # 普通岗位的场次名跟着岗位名走：前后空白会连带进签到面板、导出表
+                value = str(value or "").strip()
+                if not value:
+                    raise HTTPException(400, "岗位名称不能为空")
             limit = _POSITION_MAX.get(key)
             if limit and len(str(value or "")) > limit:
                 raise HTTPException(400, f"「{POSITION_FIELDS[key]}」最多 {limit} 个字")

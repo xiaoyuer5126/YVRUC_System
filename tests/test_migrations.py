@@ -339,8 +339,9 @@ def test_迁移_新场次复制了全部字段与时段(split_result):
         for key in ("activity_id", "mode", "kind", "note", "hours_mode",
                     "lock_hours", "enroll_paused", "list_locked",
                     "auto_lock_spent", "leader_alert_sent", "digest_sent_on",
-                    "flexible_time", "sort"):
+                    "flexible_time"):
             assert getattr(g, key) == getattr(old, key), (name, key)
+        assert g.sort > old.sort, "拆出来的排在后面，sort 不跟别人撞"
         assert [(p.start_time, p.end_time) for p in g.sorted_periods()] \
             == ids["spans"]
         assert {p.id for p in g.periods} & set(ids["periods"]) == set(), \
