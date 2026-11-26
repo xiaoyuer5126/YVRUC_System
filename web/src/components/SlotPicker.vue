@@ -58,7 +58,7 @@
         · <el-link type="primary" underline="never" @click="clearSlots">{{ t('清空') }}</el-link>
       </template></span>
       <span class="dim">{{ t(slots.length
-        ? '只看报名中的活动；场次有一段落在所选时段里就列出来'
+        ? '只看报名中的活动；有岗位的时段落在所选时段里就列出来'
         : '只按日期范围筛，状态可以照常选') }}</span>
     </div>
   </div>

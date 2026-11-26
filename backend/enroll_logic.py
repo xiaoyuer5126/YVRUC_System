@@ -100,9 +100,10 @@ def conflicts_among(rows, target: Shift) -> list[dict]:
 
 
 def conflict_row(enr: Enrollment, g: Shift, act: Activity) -> dict:
-    """冲突列表里的一行：撞上的是哪个活动、哪一场、什么时候、什么状态。"""
+    """冲突列表里的一行：撞上的是哪个活动、哪条岗位、什么时候、什么状态。
+    志愿者看得到这一行，岗位用给志愿者的叫法（统一分配写「上午场志愿者」）。"""
     return {"enrollment_id": enr.id, "activity_id": act.id,
-            "activity_title": act.title, "shift_name": g.name,
+            "activity_title": act.title, "shift_name": g.volunteer_label(),
             "time": g.span_text(), "status": enr.status}
 
 
@@ -561,11 +562,11 @@ def closed_reason(shift: Shift, position: Position | None) -> str:
     if now() >= shift.start_time:
         return ""
     if shift_locked(shift):
-        return f"场次「{shift.name}」名单已锁定，不再接受报名"
+        return f"「{shift.volunteer_label()}」名单已锁定，不再接受报名"
     if position is not None and position.list_locked:
         return f"岗位「{position.name}」名单已锁定，不再接受报名"
     if shift.enroll_paused:
-        return f"场次「{shift.name}」暂停报名，请过一会儿再来看看"
+        return f"「{shift.volunteer_label()}」暂停报名，请过一会儿再来看看"
     if position is not None and position.enroll_paused:
         return f"岗位「{position.name}」暂停报名，请过一会儿再来看看"
     return ""
@@ -826,12 +827,14 @@ def notify_shift_leader_vacancies(db: OrmSession, shift: Shift) -> int:
 def leader_scope_label(positions: list[Position], own: Position) -> str:
     """通知里怎么称呼组长的管辖范围。
 
-    一个组的岗位可以分布在本活动的几个场次上，所以成了组就只写组名和组里的
-    岗位，不挂某一个场次的名字（挂上去只说对了其中一场）；不分组的岗位自成
-    一组，写「场次名·岗位名」才说得清是哪一场的哪个岗位。
+    一个组的岗位可以分布在几个时段上，所以成了组就只写组名和组里的岗位；
+    不分组的岗位自成一组：普通岗位同名的可能有好几个时段，写「岗位名（时段）」；
+    统一分配里的岗位写「批名·岗位名」。
     """
     if len(positions) <= 1:
-        return f"{own.shift.name}·{own.name}"
+        if own.shift.needs_assign():
+            return f"{own.shift.name}·{own.name}"
+        return f"{own.name}（{own.shift.span_text()}）"
     names = "、".join(p.name for p in positions)
     return f"{positions[0].group_name}（{names}）"
 
@@ -1004,7 +1007,7 @@ def start_confirm(db: OrmSession, enr: Enrollment, shift: Shift) -> Enrollment:
     # 带上 activity_id：这条通知看完就要去活动页确认，消息卡片据此可点击跳转
     msgcenter.send_user(db, user, "waitlist_promoted",
                     data={"activity_id": activity.id},
-                    activity=activity.title, shift=shift.name,
+                    activity=activity.title, shift=shift.volunteer_label(),
                     deadline=f"{enr.confirm_deadline:%Y-%m-%d %H:%M}")
     return enr
 
@@ -1028,7 +1031,7 @@ def _settle_position(db: OrmSession, enr: Enrollment, user: User,
         position = db.get(Position, enr.position_id)
         activity = db.get(Activity, enr.activity_id)
         msgcenter.send_user(db, user, "assignment", activity=activity.title,
-                        shift=shift.name, position=position.name,
+                        shift=shift.volunteer_label(), position=position.name,
                         position_time=position.time_text(),
                         position_loc=position.place())
     sync_attached(db, enr)
@@ -1145,7 +1148,7 @@ def close_waitlists_at_start(db: OrmSession) -> int:
                 names.append(u.name)
                 msgcenter.send_user(db, u, "waitlist_closed",
                                     data={"activity_id": act.id},
-                                    activity=act.title, shift=g.name)
+                                    activity=act.title, shift=g.volunteer_label())
             audit_log(db, actor=None, action="update", target_type="enrollment",
                       target_id=g.id, target_label=g.name, activity_id=act.id,
                       summary=f"场次「{g.name}」已开始，候补自动结束（未能递补）："

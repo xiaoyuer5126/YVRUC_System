@@ -253,3 +253,12 @@ def test_待分配人数把占位里的人算进去(client, admin, db, published
     sh = d["shifts"][0]
     assert sh["unassigned_count"] == 2
     assert sh["position_quota_sum"] == 0, "占位不算真实岗位名额"
+
+
+def test_给志愿者看的叫法_统一分配写某某志愿者():
+    from backend.models import Shift as _Shift
+    assert _Shift(name="上午场", mode="assign", kind="service").volunteer_label() == "上午场志愿者"
+    assert _Shift(name="引导志愿者", mode="assign", kind="service").volunteer_label() == "引导志愿者"
+    # 普通岗位一岗一场，场次名就是岗位名；培训/彩排用自己的名字
+    assert _Shift(name="检录", mode="pick", kind="service").volunteer_label() == "检录"
+    assert _Shift(name="集中培训", mode="pick", kind="training").volunteer_label() == "集中培训"

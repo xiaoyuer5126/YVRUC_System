@@ -18,7 +18,7 @@
                   :type="row.shift.kind === 'training' ? 'success' : 'warning'">
             {{ t(row.shift.kind_label) }}
           </el-tag>
-          {{ row.shift.name }} · {{ tTime(row.shift.time_text) }}
+          {{ row.shift.display_name }} · {{ tTime(row.shift.time_text) }}
         </div>
         <div v-if="(row.shift.periods || []).length > 1 && row.status === 'enrolled'"
              class="dim">
@@ -28,11 +28,12 @@
             {{ tTime(p.text) }} · {{ t(p.checked_out ? '已签退' : p.checked_in ? '已签到' : '未签到') }}
           </el-tag>
         </div>
-        <div v-if="row.shift.attached" class="dim">{{ t('随服务场次的报名产生；不能参加请到活动页请假') }}<template v-if="row.shift.location"> · {{ row.shift.location }}</template>
+        <div v-if="row.shift.attached" class="dim">{{ t('随岗位的报名产生；不能参加请到活动页请假') }}<template v-if="row.shift.location"> · {{ row.shift.location }}</template>
           <el-tag v-if="row.excused" size="small" type="info" effect="plain">{{ t('已请假') }}</el-tag>
         </div>
         <div v-if="row.position" class="mob-line">
-          <el-tag size="small" effect="plain">{{ row.position.name === '待分配' ? t('待分配') : row.position.name }}</el-tag>
+          <!-- 普通岗位的名字已经写在上面那行；统一分配才另外写分到了哪个岗位 -->
+          <el-tag v-if="row.shift.needs_assign" size="small" effect="plain">{{ row.position.is_placeholder ? t('待分配') : row.position.name }}</el-tag>
           <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">{{ t('组长') }}</el-tag>
           <span class="dim"> {{ row.position.location }}</span>
         </div>
@@ -85,17 +86,17 @@
           <div class="dim">{{ row.activity.location }}</div>
         </template>
       </el-table-column>
-      <el-table-column :label="t('场次 / 岗位')" min-width="240">
+      <el-table-column :label="t('岗位 / 时段')" min-width="240">
         <template #default="{ row }">
           <el-tag v-if="row.shift.attached" size="small" effect="dark"
                   :type="row.shift.kind === 'training' ? 'success' : 'warning'">
             {{ t(row.shift.kind_label) }}
           </el-tag>
-          {{ row.shift.name }}{{ t('（{0}）', [tTime(row.shift.time_text)]) }}
-          <div v-if="row.shift.attached" class="dim">{{ t('随服务场次的报名产生') }}<template v-if="row.shift.location"> · {{ row.shift.location }}</template>
+          {{ row.shift.display_name }}{{ t('（{0}）', [tTime(row.shift.time_text)]) }}
+          <div v-if="row.shift.attached" class="dim">{{ t('随岗位的报名产生') }}<template v-if="row.shift.location"> · {{ row.shift.location }}</template>
             <el-tag v-if="row.excused" size="small" type="info" effect="plain">{{ t('已请假') }}</el-tag>
           </div>
-          <!-- 分段签到的场次：逐段列出签到状态，宽屏窄屏一样 -->
+          <!-- 有几个时段的岗位：逐段列出签到状态，宽屏窄屏一样 -->
           <div v-if="(row.shift.periods || []).length > 1 && row.status === 'enrolled'"
                class="dim">
             <el-tag v-for="p in row.shift.periods" :key="p.id" size="small" effect="plain"
@@ -105,9 +106,10 @@
             </el-tag>
           </div>
           <div v-if="row.position">
-            <el-tag size="small" effect="plain">{{ row.position.name === '待分配' ? t('待分配') : row.position.name }}</el-tag>
+            <!-- 普通岗位的名字已经写在上面那行；统一分配才另外写分到了哪个岗位 -->
+          <el-tag v-if="row.shift.needs_assign" size="small" effect="plain">{{ row.position.is_placeholder ? t('待分配') : row.position.name }}</el-tag>
             <el-tag v-if="row.is_leader" size="small" type="warning" effect="dark">{{ t('组长') }}</el-tag>
-            <!-- 时段跟场次那行重复：这里只留岗位地点（手机端也是这么显示的） -->
+            <!-- 时段跟上面那行重复：这里只留岗位地点（手机端也是这么显示的） -->
             <span v-if="row.position.location" class="dim"> {{ row.position.location }}</span>
           </div>
           <div v-else-if="row.status === 'enrolled'" class="dim">{{ t('岗位待分配') }}</div>
@@ -167,7 +169,7 @@
     </el-table>
 
     <el-alert type="info" :closable="false">
-      <p style="margin:0;font-size:12.5px;line-height:1.6">{{ t('退选规则：每个场次会按页面说明在设定时间锁定名单，负责人也可能提前锁定；志愿者名单敲定后退出会被记录一次。') }}</p>
+      <p style="margin:0;font-size:12.5px;line-height:1.6">{{ t('退选规则：每个岗位会按页面说明在设定时间锁定名单，负责人也可能提前锁定；志愿者名单敲定后退出会被记录一次。') }}</p>
     </el-alert>
 
     <GroupQrDialog ref="groupQr" />
@@ -177,7 +179,7 @@
     <el-dialog v-model="teamDlg.visible" :title="t('组员名单 · {0}', [teamDlg.data?.scope || ''])"
                width="560">
       <p class="dim">
-        {{ t('{0} · {1}。联系方式仅用于本次活动的联络，请勿他用；', [teamDlg.data?.activity_title, teamDlg.data?.shift_name]) }}<b>{{ t('每次查看都会记入审计') }}</b>{{ t('。') }}
+        {{ t('{0} · {1}。联系方式仅用于本次活动的联络，请勿他用；', [teamDlg.data?.activity_title, tTime(teamDlg.data?.time_text)]) }}<b>{{ t('每次查看都会记入审计') }}</b>{{ t('。') }}
       </p>
       <DataCards v-if="narrow" :rows="teamDlg.data?.members || []" title-key="name"
                  :fields="[{ key: 'position', label: t('岗位') },
@@ -334,7 +336,7 @@ async function openTeam(row) {
 function isActive(r) {
   return ['enrolled', 'waitlisted', 'pending_confirm'].includes(r.status)
 }
-// 场次开场后后端不再收退选，按钮也不摆出来
+// 开始之后后端不再收退选，按钮也不摆出来
 function started(r) {
   return !!r.shift.start_time && new Date(r.shift.start_time.replace(' ', 'T')) <= new Date()
 }

@@ -182,15 +182,17 @@ def recruit_scope_phrase(act) -> str:
 
 
 def applies_text(act, s) -> str:
-    """培训/彩排叫谁：「全体」，或者岗位名。同名岗位（几个场次都有「检录」）
-    全圈上了只写名字，只圈了其中几个时段的带上场次名。"""
+    """培训/彩排叫谁：「全体」，或者岗位名。同名岗位（几个时段都有「检录」）
+    全圈上了只写名字，只圈了其中几个时段的带上那几个时段；统一分配里的岗位
+    带它那一批的名字。"""
     ids = s.applies_to_positions or []
     if not ids:
         return "全体"
     by_name: dict[str, list] = defaultdict(list)
     for g in sorted(act.main_shifts(), key=lambda x: x.sort):
+        where = g.name if g.needs_assign() else g.span_text()
         for p in sorted(g.positions, key=lambda x: x.sort):
-            by_name[p.name].append((p.id, g.name))
+            by_name[p.name].append((p.id, where))
     out = []
     for name, items in by_name.items():
         hit = [gname for pid, gname in items if pid in ids]
@@ -665,7 +667,10 @@ def application_out(db: OrmSession, act: Activity, user=None) -> dict:
             if not names and e.position_id:
                 p = db.get(Position, e.position_id)
                 names = [p.name] if p else []
-            wanted.append({"shift_id": g.id, "shift_name": g.name,
+            # 志愿者看的：普通岗位 shift_name 就是岗位名，统一分配是「上午场志愿者」
+            wanted.append({"shift_id": g.id, "shift_name": g.volunteer_label(),
+                           "needs_assign": g.needs_assign(),
+                           "time_text": g.span_text(),
                            "position_name": "、".join(names),
                            "status": e.status, "cancel_type": e.cancel_type})
     return {

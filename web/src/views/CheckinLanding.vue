@@ -9,14 +9,13 @@
 
         <template v-if="!done">
           <el-descriptions :column="1" border size="small">
-            <el-descriptions-item v-if="task.position" :label="t('您的岗位')">
+            <el-descriptions-item v-if="task.needs_assign && task.position" :label="t('您的岗位')">
               {{ task.position.name }}{{ t('（{0}）', [task.position.location]) }}
             </el-descriptions-item>
             <el-descriptions-item :label="t('签到方式')">
-              {{ t(task.method === 'geo' ? '定位签到'
-                 : (task.mode === 'position' ? '分岗位签到' : '统一签到')) }}
+              {{ t(task.method === 'geo' ? '定位签到' : '扫码签到') }}
             </el-descriptions-item>
-            <el-descriptions-item v-if="task.flexible_time" :label="t('本场已签到')">{{ t('已签到 {0} 次（时间灵活场次：每张签到码签一次到、一次退）', [task.checkin_count]) }}</el-descriptions-item>
+            <el-descriptions-item v-if="task.flexible_time" :label="t('本岗位已签到')">{{ t('已签到 {0} 次（时间灵活的岗位：每张签到码签一次到、一次退）', [task.checkin_count]) }}</el-descriptions-item>
             <el-descriptions-item :label="t('当前状态')">
               <template v-if="task.checked_in">{{ t('已签到{0}', [t(task.checked_out ? ' · 已签退'
                         : (task.state === 'expired' ? ' · 未签退' : ' · 服务中'))]) }}</template>
@@ -27,11 +26,11 @@
             </el-descriptions-item>
           </el-descriptions>
 
-          <!-- 定位签到的场次现场没有码。多半是扫了张早先打印的旧码进来的，
+          <!-- 定位签到的岗位现场没有码。多半是扫了张早先打印的旧码进来的，
                说清楚去哪儿签，别让人对着这个按钮点了报错 -->
           <el-alert v-if="task.method === 'geo'" type="info" :closable="false"
                     style="margin-top:16px;text-align:left">
-            <p style="margin:0 0 8px;line-height:1.6">{{ t('本场次用') }}<b>{{ t('定位签到') }}</b>{{ t('，不用扫码：「我的报名」里点「签到」，平台会比对您与签到点的距离。') }}</p>
+            <p style="margin:0 0 8px;line-height:1.6">{{ t('本岗位用') }}<b>{{ t('定位签到') }}</b>{{ t('，不用扫码：「我的报名」里点「签到」，平台会比对您与签到点的距离。') }}</p>
             <el-button size="small" type="primary" @click="$router.push('/my')">{{ t('去我的报名签到') }}</el-button>
           </el-alert>
           <el-button v-else :type="task.checked_in ? 'warning' : 'primary'" size="large"
@@ -39,17 +38,17 @@
                      :disabled="task.state !== 'active' || !task.enrolled
                                 || (task.flexible_time && task.checked_out)"
                      :loading="submitting" @click="doCheckin">
-            <template v-if="!task.enrolled">{{ t('您不是本场次志愿者，请联系负责人') }}</template>
+            <template v-if="!task.enrolled">{{ t('您不是本岗位志愿者，请联系负责人') }}</template>
             <template v-else-if="task.checked_in && !task.checked_out">{{ t('签退离岗') }}</template>
             <template v-else-if="task.flexible_time && task.checked_out">{{ t('这张码已签到签退，下次请扫新码') }}</template>
             <template v-else>{{ t('签到到岗') }}</template>
           </el-button>
           <!-- 签退截止就是这张码的截止（后端 checkout_deadline），不写死几小时：
-               可签时段是管理者定的。过了它还没签退，时长按场次结束时间（时间灵活的
-               场次按这张码的截止时间）记、待核 -->
+               可签时段是管理者定的。过了它还没签退，时长按时段结束时间（时间灵活的
+               岗位按这张码的截止时间）记、待核 -->
           <p v-if="task.checked_in && !task.checked_out" class="dim" style="margin:12px 0 0">
-            <template v-if="task.state === 'active' || task.state === 'early'">{{ t('离岗时请签退，签退截止 {0}；逾期未签退的，时长按{1}记并由负责人核对', [fmtDT(task.checkout_deadline), t(task.flexible_time ? '签到码截止时间' : '场次结束时间')]) }}</template>
-            <template v-else>{{ t('签到码已{0}，无法自行签退；时长按{1}记并由负责人核对，有出入请联系负责人', [t(task.state === 'closed' ? '关闭' : '截止'), t(task.flexible_time ? '签到码截止时间' : '场次结束时间')]) }}</template>
+            <template v-if="task.state === 'active' || task.state === 'early'">{{ t('离岗时请签退，签退截止 {0}；逾期未签退的，时长按{1}记并由负责人核对', [fmtDT(task.checkout_deadline), t(task.flexible_time ? '签到码截止时间' : '时段结束时间')]) }}</template>
+            <template v-else>{{ t('签到码已{0}，无法自行签退；时长按{1}记并由负责人核对，有出入请联系负责人', [t(task.state === 'closed' ? '关闭' : '截止'), t(task.flexible_time ? '签到码截止时间' : '时段结束时间')]) }}</template>
           </p>
         </template>
         <template v-else>

@@ -119,10 +119,10 @@ export function conflictLine(c, activityId = '') {
  *  confirm_conflict 重发。send(confirm) 发请求、返回 promise；取消返回 null，
  *  别的错误照常抛出。冲突只提示不硬拦，是不是真去不了由人自己判断。
  *
- *  head 是列表上方那句话，传 null 就用后端的 message（里面已写明哪几场撞了）。
+ *  head 是列表上方那句话，传 null 就用后端的 message（里面已写明撞了哪几条）。
  *  列表用 h() 拼成节点、文字走文本插值：活动名是别人填的，不能当 HTML 渲染。 */
 export async function withConflictConfirm(send, { title = t('时间冲突'), ask = t('仍要继续？'),
-                                                  head = t('与以下场次时间冲突：'),
+                                                  head = t('与以下报名时间冲突：'),
                                                   activityId = '' } = {}) {
   try {
     return await send(false)

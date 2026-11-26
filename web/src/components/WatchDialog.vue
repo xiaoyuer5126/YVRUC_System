@@ -6,7 +6,7 @@
   <el-dialog v-model="visible" :title="t('活动上新提醒')" :width="narrow ? '94%' : '560px'"
              append-to-body :before-close="guard" @opened="guard.snap">
     <div v-loading="loading" class="watch">
-      <p class="lead">{{ t('新活动上线时，如果场次落在空闲时段里，或由你关注的组织单位举办，或活动名称包含关键词，就给你发一条上新提醒。') }}</p>
+      <p class="lead">{{ t('新活动上线时，如果有岗位的时段落在空闲时段里，或由你关注的组织单位举办，或活动名称包含关键词，就给你发一条上新提醒。') }}</p>
 
       <div class="sec">{{ t('每周空闲时段') }}</div>
       <div class="grid">
