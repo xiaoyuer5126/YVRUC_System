@@ -380,10 +380,18 @@ verify() {
 
     # 先单独探连接和 TLS 握手：这一步不通时，后面的状态码只会是 000，看不出原因。
     # -k 只跳过证书校验，握手本身失败照样报错；证书问题在下面单独看。
-    if ! err=$(curl -sS -k -o /dev/null --max-time 15 --resolve "$resolve" "$base/" 2>&1); then
-        die "连不上本机 $HTTPS_PORT 端口，或 TLS 握手失败：$err
+    # 失败时每 3 秒重试，最多约 30 秒：wait_healthy 只等后端，只改了 web 的部署里
+    # 后端一直健康、立刻放行，而 web 容器刚重建、nginx 还在展开模板，这时连 443
+    # 会被直接断开（unexpected eof），网站几秒后其实就好了（2026-11-26 误报过一次）。
+    local tries=0
+    until err=$(curl -sS -k -o /dev/null --max-time 15 --resolve "$resolve" "$base/" 2>&1); do
+        tries=$((tries + 1))
+        if [ $tries -ge 10 ]; then
+            die "连不上本机 $HTTPS_PORT 端口，或 TLS 握手失败（重试 30 秒仍不通）：$err
   先看 nginx：docker logs yvruc-web --tail 50"
-    fi
+        fi
+        sleep 3
+    done
 
     # 证书校验不能带 -k：带了 -k 的 curl 不加载根证书库，%{ssl_verify_result} 恒为 20。
     # 不带 -k 时，链不全、根证书不认、域名不符都会让 curl 失败并在 stderr 说明原因。
