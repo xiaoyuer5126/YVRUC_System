@@ -3096,7 +3096,9 @@ def activity_roster(activity_id: str, db: OrmSession = Depends(db_session),
     """
     ensure_activity_manager(db, user, activity_id)
     act = _act(db, activity_id)
-    shifts = sorted(act.main_shifts(), key=lambda g: (g.start_time, g.sort))
+    # Activity.shifts 的关系就按（时段开始, sort）排好了：岗位清单与各场次
+    # 因此是按时间先后排的，前端不必再排一遍
+    shifts = act.main_shifts()
     occ = logic.Occupancy(db, act.id)
     out = _roster_payload(db, act, shifts, occ)
     out["shifts"] = [_roster_shift(act, g, occ) for g in shifts]
