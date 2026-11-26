@@ -613,7 +613,8 @@ def toggle_task(task_id: str, body: dict,
                     window[key] = parse_local_dt(raw)
                 except ValueError:
                     raise HTTPException(400, "时间格式不对") from None
-        if window["valid_to"] <= window["valid_from"]:
+        if window["valid_from"] and window["valid_to"] \
+                and window["valid_to"] <= window["valid_from"]:
             raise HTTPException(400, "结束时间要晚于开始时间")
         for t in rows:
             t.valid_from, t.valid_to = window["valid_from"], window["valid_to"]
