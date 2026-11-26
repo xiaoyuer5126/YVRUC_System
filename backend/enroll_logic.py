@@ -756,7 +756,7 @@ def notify_leader_vacancy(db: OrmSession, position: Position) -> bool:
     label = vacant_leader_label(db, position)
     if not label:
         return False
-    _send_leader_vacancy(db, position.shift, [label])
+    send_leader_vacancy(db, position.shift.activity_id, [label])
     return True
 
 
@@ -770,22 +770,26 @@ def vacant_leader_label(db: OrmSession, position: Position) -> str:
     return f"「{leader_scope_label(positions, position)}」"
 
 
-def _send_leader_vacancy(db: OrmSession, shift: Shift, labels: list[str]) -> None:
+def send_leader_vacancy(db: OrmSession, activity_id: str,
+                        labels: list[str]) -> None:
+    """缺组长的那几个组合成一条发给管理者。
+
+    发给管理者的活动通知一律活动级，所以收件单位是活动，不是场次：
+    labels 里可以是几个场次的组（见 scheduled.send_leader_vacancy_alerts）。
+    """
     from .notify import notify_managers
 
-    activity = db.get(Activity, shift.activity_id)
+    activity = db.get(Activity, activity_id)
     notify_managers(db, activity.id, f"[组长空缺] {activity.title}",
-                    f"{'、'.join(labels)}目前没有组长，"
+                    f"{'、'.join(dict.fromkeys(labels))}目前没有组长，"
                     f"请在「志愿者管理」中指定。", duty="roster", tab="roster")
 
 
-def notify_shift_leader_vacancies(db: OrmSession, shift: Shift) -> int:
-    """名单锁定时（或不自动锁定的场次报名截止时）统一提醒一次组长空缺。
+def shift_leader_vacancy_labels(db: OrmSession, shift: Shift) -> list[str]:
+    """这一场缺组长的组各一句，并记下这一场的统一提醒已经发过。
 
-    名单敲定之前组长空着很正常：岗位刚建好、报名还没开始，管理者也没法
-    指定谁。所以开「需要组长」、锁定前组长退选都不提醒，等名单定下来，
-    把这一场所有缺组长的组合成一条发给管理者。发过就记在场次上，之后
-    组长再空出来按组立即提醒（见 on_leader_vacated）。返回缺组长的组数。
+    同一个组可能在本活动几个场次里都有岗位，拿到的是同一句（组名加组内岗位），
+    合成一条时由 send_leader_vacancy 去重。
     """
     shift.leader_alert_sent = True
     labels, seen = [], set()
@@ -799,8 +803,23 @@ def notify_shift_leader_vacancies(db: OrmSession, shift: Shift) -> int:
         label = vacant_leader_label(db, p)
         if label:
             labels.append(label)
+    return labels
+
+
+def notify_shift_leader_vacancies(db: OrmSession, shift: Shift) -> int:
+    """名单锁定时（或不自动锁定的场次报名截止时）统一提醒一次组长空缺。
+
+    名单敲定之前组长空着很正常：岗位刚建好、报名还没开始，管理者也没法
+    指定谁。所以开「需要组长」、锁定前组长退选都不提醒，等名单定下来，
+    把这一场所有缺组长的组合成一条发给管理者。发过就记在场次上，之后
+    组长再空出来按组立即提醒（见 on_leader_vacated）。返回缺组长的组数。
+
+    手动锁定一个场次就是一次独立的事件，所以一场一条；定时任务同一轮里
+    到点的几个场次合成一条（见 scheduled.send_leader_vacancy_alerts）。
+    """
+    labels = shift_leader_vacancy_labels(db, shift)
     if labels:
-        _send_leader_vacancy(db, shift, labels)
+        send_leader_vacancy(db, shift.activity_id, labels)
     return len(labels)
 
 

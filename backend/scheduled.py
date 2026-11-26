@@ -788,15 +788,19 @@ def send_checkin_reminders(db: OrmSession) -> int:
 # ======================= 组长空缺提醒 =======================
 
 def send_leader_vacancy_alerts(db: OrmSession) -> int:
-    """名单锁定时，提醒管理者这一场还有哪些组没有组长。
+    """名单锁定时，提醒管理者还有哪些组没有组长，**一个活动一条**。
 
     自动锁定不落库、按时刻算（见 enroll_logic.shift_locked），所以「锁上了」
-    这件事要靠这里每分钟看一眼；手动锁定在锁定接口里当场提醒。不自动锁定
-    （N = 0）又没人手动锁的场次，报名截止时兜底提醒一次。每场每轮只发一次，
-    记在 Shift.leader_alert_sent 上；已开场的不再提醒。返回发出的条数。
+    这件事要靠这里每分钟看一眼；手动锁定在锁定接口里当场提醒（那是一次独立的
+    事件，一场一条）。不自动锁定（N = 0）又没人手动锁的场次，报名截止时兜底
+    提醒一次。一个活动的几个场次常常同时到点（同一个锁定小时数），按场次各发
+    一条就是几条标题一样的通知，所以这一轮里到点的场次合成一条发：同一个组在
+    几场里都有岗位时只说一次（组跨场次，见 enroll_logic.group_positions）。
+    每场的统一提醒只发一次，记在 Shift.leader_alert_sent 上；已开场的不再
+    提醒。返回发出的条数。
     """
-    from .enroll_logic import (enroll_deadline, notify_shift_leader_vacancies,
-                               shift_locked)
+    from .enroll_logic import (enroll_deadline, send_leader_vacancy,
+                               shift_leader_vacancy_labels, shift_locked)
 
     t = now()
     has_leader_post = (select(Position.id)
@@ -808,17 +812,26 @@ def send_leader_vacancy_alerts(db: OrmSession) -> int:
                     Shift.kind == "service",
                     Shift.start_time > t,
                     has_leader_post,
-                    Activity.status.in_(("published", "closed"))).all())
-    sent = 0
+                    Activity.status.in_(("published", "closed")))
+            .order_by(Shift.start_time).all())
+    labels: dict[str, list[str]] = {}
+    names: dict[str, list[str]] = {}
     for g, act in rows:
         due = shift_locked(g, t) or (not g.lock_hours
                                      and t >= enroll_deadline(act, g))
         if not due:
             continue
-        if notify_shift_leader_vacancies(db, g):
-            sent += 1
-            logger.info("场次「%s」组长空缺提醒已发送", g.name)
-        db.commit()
+        hit = shift_leader_vacancy_labels(db, g)
+        if hit:
+            labels.setdefault(act.id, []).extend(hit)
+            names.setdefault(act.id, []).append(g.name)
+    sent = 0
+    for activity_id, rows_labels in labels.items():
+        send_leader_vacancy(db, activity_id, rows_labels)
+        sent += 1
+        logger.info("活动 %s 的场次「%s」组长空缺提醒已发送",
+                    activity_id, "、".join(names[activity_id]))
+    db.commit()
     return sent
 
 
