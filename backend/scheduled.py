@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as OrmSession
@@ -927,7 +927,7 @@ def send_roster_digests(db: OrmSession) -> int:
     return sent
 
 
-def _digest_block(db: OrmSession, g: Shift, since) -> str:
+def _digest_block(db: OrmSession, g: Shift, since: datetime) -> str:
     """一个场次在日报里的那一段，以场次名开头；这一场没有变动就是空串。
 
     变动按这一场算：流水挂在报名记录上，报名记录不会换场次。整个活动合起来
