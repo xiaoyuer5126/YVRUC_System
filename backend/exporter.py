@@ -1,7 +1,8 @@
 """活动的几份导出表。
 
   · 排班表（build_activity_workbook）：交给现场负责人点名、排班。
-    活动概览 → 志愿者信息（一人一行，报保险、报入校用）→ 每个场次一张名单。
+    活动概览 → 志愿者信息（一人一行，报保险、报入校用）→ 排班表（总表，
+    一人一个岗位一行）。
   · 问卷结果（build_answers_workbook）：志愿者管理页按场次、岗位挑人导出，
     答案一题一列，上传的文件按「场次/岗位」分文件夹另打附件包。
   · 报名问卷结果（build_application_workbook）：报名后筛选的全部报名者。
@@ -142,32 +143,33 @@ HEADER_FONT = Font(name="微软雅黑", bold=True, color="FFFFFF")
 BODY_FONT = Font(name="微软雅黑", size=11)
 CENTER = Alignment(horizontal="center", vertical="center")
 
-SHEET_FORBIDDEN = set(':\\/?*[]')
+ROSTER_SHEET = "排班表"
 
 
-def _safe_sheet_name(name: str, used: set[str]) -> str:
-    base = "".join(c for c in name if c not in SHEET_FORBIDDEN).strip() or "场次"
-    base = base[:28]
-    candidate, i = base, 1
-    while candidate in used:
-        i += 1
-        candidate = f"{base[:26]}~{i}"
-    used.add(candidate)
-    return candidate
+def shift_label(g: Shift) -> str:
+    """一个场次在排班表、概览里叫什么。
+
+    场次在界面上已经消失（一岗一场）：普通岗位的那个看不见的场次用岗位名；
+    统一分配写「统一分配：场次名」；培训/彩排写「培训：场次名」。
+    只有老数据里才会碰到一个普通场次挂好几个真岗位，那时写场次名。
+    """
+    if g.is_attached():
+        return f"{g.kind_label()}：{g.name}"
+    if g.needs_assign():
+        return f"统一分配：{g.name}"
+    real = g.real_positions()
+    return real[0].name if len(real) == 1 else g.name
 
 
-def roster_sheet_names(activity: Activity) -> dict[str, str]:
-    """排班表里每个场次的工作表名（场次 id → 表名）。导出和导入排班共用：
-    名字截断、重名加序号都按同一套规则，导回来才找得到自己那张表。"""
-    used = {"活动概览", "志愿者信息"}
-    return {g.id: _safe_sheet_name(g.name, used)
-            for g in sorted(activity.shifts, key=lambda g: g.sort)}
-
-
-def _checked_records(db: OrmSession, activity_id: str) -> dict[str, CheckinRecord]:
-    rows = db.query(CheckinRecord).filter(
-        CheckinRecord.activity_id == activity_id).all()
-    return {r.user_id: r for r in rows}
+def _checked_records(db: OrmSession, activity_id: str
+                     ) -> dict[tuple[str, str], list[CheckinRecord]]:
+    """本活动的签到记录，按（场次, 人）分好：一人报了几个岗位，各行只看自己那一场。
+    多时段的场次一人每个时段各一条。"""
+    out: dict[tuple[str, str], list[CheckinRecord]] = {}
+    for r in (db.query(CheckinRecord)
+              .filter(CheckinRecord.activity_id == activity_id).all()):
+        out.setdefault((r.shift_id, r.user_id), []).append(r)
+    return out
 
 
 def _style_header(ws, ncols: int) -> None:
@@ -191,19 +193,39 @@ def _roster_order(positions: dict):
     def key(pair):
         enr, _u = pair
         st = positions.get(enr.position_id) if enr.position_id else None
+        if st is not None and st.is_placeholder:
+            st = None
         return (0 if st else 1, st.sort if st else 0,
                 0 if enr.is_leader else 1, enr.joined_at or now())
     return key
 
 
-def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
-    """排班表：活动概览、志愿者信息、每个场次一张名单。
+def _is_unassigned(g: Shift, enr: Enrollment) -> bool:
+    """统一分配里还没分到真岗位的人：挂在「待分配」占位岗位上，或者没有岗位。"""
+    if g.is_attached():
+        return False
+    holder = g.placeholder()
+    return (not enr.position_id and bool(g.positions)) or bool(
+        holder and enr.position_id == holder.id)
 
+
+ROSTER_HEADER = ["姓名", "学号", "性别", "学院", "手机号", "微信号", "岗位", "时段",
+                 "岗位组", "组长", "服务地点", "签到状态", "签退时间"]
+
+
+def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
+    """排班表：活动概览、志愿者信息、一张「排班表」总表。
+
+    总表一人一个岗位一行，按时段开始时间、岗位排；统一分配里还没分岗的
+    岗位写「待分配」。培训/彩排也列进来（岗位写「培训：场次名」），现场要点名。
     这张表是拿去现场点名、报保险的。问卷答案另有「问卷结果」导出，
-    时长另有「时长记录」导出，都不混在这儿。
+    时长另有「时长记录」导出，都不混在这儿。导入排班读的也是这张总表
+    （见 assign.plan_from_workbook）。
     """
     wb = Workbook()
-    shifts = sorted(activity.shifts, key=lambda g: g.sort)
+    # 按时段开始时间排；同一时刻开始的按录入顺序
+    shifts = sorted(activity.shifts,
+                    key=lambda g: (g.start_time or datetime.max, g.sort))
 
     # ---------- 概览 Sheet ----------
     overview = wb.active
@@ -220,9 +242,8 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
     if activity.time_span():
         overview.append(["活动时间", activity.time_text()])
     overview.append([])
-    overview.append(["场次", "类型", "时间段", "模式", "已报名/名额", "已到岗"])
+    overview.append(["岗位", "类型", "时段", "已报名/名额", "已到岗"])
     checked = _checked_records(db, activity.id)
-    from sqlalchemy import func
     for g in shifts:
         enrolled = (db.query(func.count(Enrollment.id))
                      .filter(Enrollment.shift_id == g.id,
@@ -231,18 +252,16 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
                 .filter(CheckinRecord.shift_id == g.id).scalar() or 0)
         # 培训/彩排不招人，名额那一列写有多少人要来
         if g.is_attached():
-            quota = f"{enrolled} 人（随服务场次）"
+            quota = f"{enrolled} 人（随服务岗位）"
         else:
             quota = f"{enrolled}/{g.total_capacity()}"
-        overview.append([g.name, g.kind_label(), g.span_text(),
-                         g.mode_label() if not g.is_attached() else "—",
-                         quota, here])
+        overview.append([shift_label(g), g.kind_label(), g.span_text(), quota, here])
     overview["A1"].font = Font(name="微软雅黑", bold=True, size=14)
-    _style_header(overview, 6)
-    for col, w in zip("ABCDE", (24, 30, 14, 14, 10)):
+    _style_header(overview, 5)
+    for col, w in zip("ABCDE", (24, 30, 30, 14, 10)):
         overview.column_dimensions[col].width = w
 
-    # 每个场次的在册名单，按点名的顺序排好；志愿者信息与各场次名单共用
+    # 每个场次的在册名单，按点名的顺序排好；志愿者信息与总表共用
     rosters = []
     for g in shifts:
         positions = {s.id: s for s in g.positions}
@@ -270,53 +289,46 @@ def build_activity_workbook(db: OrmSession, activity: Activity) -> BytesIO:
     for col, w in zip("ABCDEFGHIJ", (12, 14, 6, 16, 8, 14, 12, 22, 15, 16)):
         info.column_dimensions[col].width = w
 
-    # ---------- 每个场次一个 Sheet ----------
-    sheet_names = roster_sheet_names(activity)
+    # ---------- 排班表 Sheet：一人一个岗位一行 ----------
+    ws = wb.create_sheet(ROSTER_SHEET)
+    ws.append(ROSTER_HEADER)
+    _style_header(ws, len(ROSTER_HEADER))
+    unassigned = []
     for g, positions, rows in rosters:
-        ws = wb.create_sheet(sheet_names[g.id])
-        has_positions = bool(positions)
-        header = ["姓名", "学号", "性别", "学院", "手机号", "微信号", "场次时间"]
-        header += ["岗位组", "岗位", "组长", "服务地点"] if has_positions else []
-        header += ["签到状态", "签退时间"]
-        ws.append(header)
-        _style_header(ws, len(header))
-
+        span = g.span_text()
         for enr, u in rows:
-            line = [u.name, u.student_id, u.gender, u.college, u.phone, u.wechat,
-                    g.span_text()]
             st = positions.get(enr.position_id) if enr.position_id else None
-            if has_positions:
-                line += [(st.group_name if st and st.group_name else "—"),
-                         st.name if st else Position.PLACEHOLDER_NAME,
-                         "组长 ★" if enr.is_leader else "",
-                         st.place() if st else "—"]
-            rec = checked.get(u.id)
-            line += ["已到岗 ✓" if rec else "未签到"]
-            line += [rec.checkout_at.strftime("%Y-%m-%d %H:%M")
-                     if rec and rec.checkout_at else "—"]
-            ws.append(line)
+            if _is_unassigned(g, enr):
+                unassigned.append(u)
+                pos_name, group, place = Position.PLACEHOLDER_NAME, "—", "—"
+            elif g.is_attached() or st is None:
+                # 培训/彩排没有岗位；老数据里岗位被删了的写场次
+                pos_name = shift_label(g)
+                group = "—"
+                place = g.location or activity.location or "—"
+            else:
+                pos_name = st.name
+                group = st.group_name or "—"
+                place = st.place()
+            recs = checked.get((g.id, u.id), [])
+            outs = [r.checkout_at for r in recs if r.checkout_at]
+            ws.append([u.name, u.student_id, u.gender, u.college, u.phone, u.wechat,
+                       pos_name, span, group, "组长 ★" if enr.is_leader else "",
+                       place, "已到岗 ✓" if recs else "未签到",
+                       max(outs).strftime("%Y-%m-%d %H:%M") if outs else "—"])
+    for idx, w in enumerate((12, 14, 6, 16, 15, 16, 18, 30, 12, 8, 18, 10, 17),
+                            start=1):
+        ws.column_dimensions[get_column_letter(idx)].width = w
 
-        for idx, w in enumerate((12, 14, 6, 16, 15, 16, 18), start=1):
-            ws.column_dimensions[get_column_letter(idx)].width = w
-        for idx in range(8, len(header) + 1):
-            ws.column_dimensions[get_column_letter(idx)].width = 14
-
-        # 未分配名单（有岗位且有人没分到时才有意义）。
-        # 「待分配」占位岗位里的人也算——他们在表里挂着一个岗位名，
-        # 但那不是真岗位，现场按它去点名会找不到地方。
-        if has_positions:
-            holder = g.placeholder()
-            unassigned = [(e, u) for e, u in rows
-                          if not e.position_id
-                          or (holder and e.position_id == holder.id)]
-            if unassigned:
-                start = ws.max_row + 2
-                ws.cell(row=start, column=1,
-                        value="以下人员尚未分配岗位").font = \
-                    Font(bold=True, color="C00000")
-                for i, (_e, u) in enumerate(unassigned, start=start + 1):
-                    ws.cell(row=i, column=1, value=u.name)
-                    ws.cell(row=i, column=2, value=u.student_id)
+    # 还没分岗的人在表底再列一遍：他们挂着「待分配」，现场照它点名找不到地方。
+    # 这几行只有姓名、学号，岗位一格空着，导入排班会跳过
+    if unassigned:
+        start = ws.max_row + 2
+        ws.cell(row=start, column=1,
+                value="以下人员尚未分配岗位").font = Font(bold=True, color="C00000")
+        for i, u in enumerate(unassigned, start=start + 1):
+            ws.cell(row=i, column=1, value=u.name)
+            ws.cell(row=i, column=2, value=u.student_id)
 
     disarm_formulas(wb)
     buf = BytesIO()

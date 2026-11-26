@@ -15,30 +15,59 @@
         </div>
       </div>
 
-      <!-- 各场次报满情况：只列服务场次，培训/彩排不招人。每场一张卡片，
-           宽屏一排三四张，手机上一列 -->
-      <div v-if="!d.record && d.shifts.length" class="ov-shifts">
-        <div class="ov-title">各场次报满情况（{{ fullShifts }}/{{ d.shifts.length }} 场已满）</div>
+      <!-- 各岗位报满情况：只列服务岗位，培训/彩排不招人。同名岗位的几个时段合一张
+           卡，卡里一个时段一行；统一分配一张卡，列它的岗位。宽屏一排三四张，手机上一列 -->
+      <div v-if="!d.record && cards.length" class="ov-shifts">
+        <div class="ov-title">各岗位报满情况（{{ fullSlots }}/{{ slotCount }} 个时段已满）</div>
         <div class="ov-grid">
-          <div v-for="g in d.shifts" :key="g.id" class="ov-shift">
+          <div v-for="c in cards" :key="c.key" class="ov-shift">
             <div class="ov-row">
-              <span class="ov-name"><b>{{ g.name }}</b> <span class="dim">{{ g.time }}</span></span>
+              <span class="ov-name">
+                <b>{{ c.kind === 'assign' ? '统一分配：' : '' }}{{ c.group ? c.group + ' · ' : '' }}{{ c.name }}</b>
+                <span class="dim">{{ c.slots.length > 1 ? ` 共 ${c.slots.length} 个时段` : ' ' + c.slots[0].time }}</span>
+              </span>
               <span class="ov-tags">
-                <el-tag v-if="g.full" size="small" type="success">已满</el-tag>
-                <el-tag v-if="g.paused" size="small" type="warning">暂停报名</el-tag>
-                <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
-                <el-tag v-if="g.waitlist" size="small" type="info">候补 {{ g.waitlist }}</el-tag>
-                <el-tag v-if="g.unassigned" size="small" type="info" effect="plain">
-                  待分配 {{ g.unassigned }}
+                <el-tag v-if="c.full" size="small" type="success">已满</el-tag>
+                <template v-if="c.slots.length === 1">
+                  <el-tag v-if="c.slots[0].paused" size="small" type="warning">暂停报名</el-tag>
+                  <el-tag v-if="c.slots[0].locked" size="small" type="info">名单已锁定</el-tag>
+                </template>
+                <el-tag v-if="c.total.waitlist" size="small" type="info">候补 {{ c.total.waitlist }}</el-tag>
+                <el-tag v-if="c.unassigned" size="small" type="info" effect="plain">
+                  待分配 {{ c.unassigned }}
                 </el-tag>
               </span>
             </div>
             <div class="ov-bar">
-              <el-progress :percentage="pct(g.occupied, g.capacity)" :stroke-width="8"
-                           :status="g.full ? 'success' : ''" :show-text="false" />
-              <span class="ov-num">{{ g.occupied }}/{{ g.capacity }}</span>
+              <el-progress :percentage="pct(c.total.occupied, c.total.capacity)" :stroke-width="8"
+                           :status="c.full ? 'success' : ''" :show-text="false" />
+              <span class="ov-num">{{ c.total.occupied }}/{{ c.total.capacity }}</span>
             </div>
-            <div v-for="p in g.positions" :key="p.id" class="ov-pos">
+            <div v-if="stats(c.total).length" class="ov-stats dim">
+              <span v-for="t in stats(c.total)" :key="t.k" :class="{ warn: t.warn }">{{ t.k }} {{ t.v }}</span>
+            </div>
+            <!-- 几个时段：一个时段一行 -->
+            <template v-if="c.slots.length > 1">
+              <div v-for="g in c.slots" :key="g.shift_id" class="ov-pos">
+                <span class="ov-pname">
+                  {{ g.time }}
+                  <el-tag v-if="g.full" size="small" type="success" effect="plain">满</el-tag>
+                  <el-tag v-if="g.paused" size="small" type="warning" effect="plain">暂停</el-tag>
+                  <el-tag v-if="g.locked" size="small" type="info" effect="plain">锁定</el-tag>
+                  <span v-if="g.waitlist" class="dim">候补 {{ g.waitlist }}</span>
+                </span>
+                <div class="ov-bar">
+                  <el-progress :percentage="pct(g.occupied, g.capacity)" :stroke-width="6"
+                               :status="g.full ? 'success' : ''" :show-text="false" />
+                  <span class="ov-num">{{ g.occupied }}/{{ g.capacity }}</span>
+                </div>
+                <div v-if="stats(g).length" class="ov-stats dim">
+                  <span v-for="t in stats(g)" :key="t.k" :class="{ warn: t.warn }">{{ t.k }} {{ t.v }}</span>
+                </div>
+              </div>
+            </template>
+            <!-- 统一分配：列它的岗位，数的是已分到该岗位的人 -->
+            <div v-for="p in c.positions" :key="p.id" class="ov-pos">
               <span class="ov-pname">
                 {{ p.group ? p.group + ' · ' : '' }}{{ p.name }}
                 <el-tag v-if="p.paused" size="small" type="warning" effect="plain">暂停</el-tag>
@@ -54,8 +83,8 @@
           </div>
         </div>
         <div class="dim ov-note">
-          名额占用含转正待确认的名额；截止后分配的场次按整场名额算，
-          岗位一行是已分到该岗位的人数。
+          名额占用含转正待确认的名额；统一分配按整场名额算，岗位一行是已分到该岗位的人数。
+          签到只算已开始的时段。时长和违规见上方合计，不按时段拆。
         </div>
       </div>
     </template>
@@ -65,7 +94,8 @@
 
 <script setup>
 /**
- * 活动管理页「概览」页签：报名、签到、时长、违规几个数，加各场次报满情况。
+ * 活动管理页「概览」页签：报名、签到、时长、违规几个数，加各岗位报满情况
+ * （同名岗位的几个时段合一张卡，统一分配一张卡）。
  * 口径写在后端接口上（staff_ops.activity_overview）。不自动轮询，跟页上其他
  * 现场数据一样点「刷新」才拉；每次切回这个页签时父组件也会调一次 load。
  */
@@ -96,7 +126,15 @@ defineExpose({ load })
 
 const pct = (n, cap) => (cap ? Math.min(100, Math.round((n / cap) * 100)) : 0)
 const fmtH = h => `${+Number(h).toFixed(2)}`
-const fullShifts = computed(() => d.value?.shifts?.filter(g => g.full).length || 0)
+const cards = computed(() => d.value?.cards || [])
+const slotCount = computed(() => cards.value.reduce((n, c) => n + c.slots.length, 0))
+const fullSlots = computed(() => cards.value.reduce((n, c) => n + c.total.full_slots, 0))
+// 一行（或卡头）上的签到几项：没有的不列，免得满屏的 0
+const stats = x => [
+  x.due ? { k: '签到', v: `${x.arrived}/${x.due}` } : null,
+  x.not_checked_out ? { k: '未签退', v: x.not_checked_out, warn: true } : null,
+  x.locked_quit ? { k: '锁定后退出', v: x.locked_quit, warn: true } : null,
+].filter(Boolean)
 
 const kpis = computed(() => {
   const x = d.value
@@ -156,4 +194,6 @@ const kpis = computed(() => {
 .ov-pos { padding-left: 12px; margin-top: 4px; font-size: 13px; }
 .ov-pname { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .ov-note { font-size: 12px; margin-top: 8px; }
+.ov-stats { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; margin-top: 4px; }
+.ov-stats .warn { color: var(--el-color-danger); }
 </style>
