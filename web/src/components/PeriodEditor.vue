@@ -1,4 +1,5 @@
-<!-- 场次的服务时段：可以有好几段，每段精确到分钟。 -->
+<!-- 服务时段：可以有好几段，每段精确到分钟。下面那句说明由调用方给，
+     报名的人是不是每段都要来，各处说法不一样。 -->
 <template>
   <div class="period-box">
     <div v-for="(p, i) in rows" :key="p.k" class="period-row">
@@ -11,10 +12,7 @@
                  @click="remove(i)">删除</el-button>
     </div>
     <el-button link type="primary" @click="add">+ 添加时段</el-button>
-    <div class="dim tip">
-      服务时段供志愿者查看，报名该场次的志愿者在列出的每个时段都要到场，
-      志愿时长按实际签到签退计算。
-    </div>
+    <div class="dim tip">{{ tip }}</div>
   </div>
 </template>
 
@@ -24,8 +22,12 @@ import { DAY_END, DAY_START } from '../store'
 import DateTimeField from './DateTimeField.vue'
 
 const props = defineProps({
-  // [{start_time, end_time}]：与接口里场次的 periods 同一形状
+  // [{start_time, end_time}]：与接口里的 periods 同一形状
   modelValue: { type: Array, default: () => [] },
+  // 时段下面那句说明
+  tip: { type: String,
+         default: '时段供志愿者查看，报名的人在列出的每个时段都要到场，'
+           + '志愿时长按实际签到签退计算。' },
 })
 const emit = defineEmits(['update:modelValue'])
 

@@ -112,13 +112,13 @@
         </template>
         <el-alert v-if="act.recruit_mode === 'screened'" type="info" :closable="false">
           报名后筛选：志愿者先勾意向岗位、再按岗位填报名问卷，报名截止后你在
-          「志愿者管理」里录取并定岗位。没建岗位的场次，志愿者勾的是「待分配」，
-          录取之后再排。
+          「志愿者管理」里录取并定岗位。报「统一分配」的人勾的是「待分配」，
+          录取之后再排岗位。
         </el-alert>
         <el-alert v-else type="info" :closable="false">
-          先按照时间设置场次，再分配每场的具体岗位。
-          <b>报名即选岗位</b>：分配好各岗位，志愿者直接报名。
-          <b>截止后统一分配</b>：适用于未确定岗位的场次，志愿者先选择时间，后续分配岗位。
+          一条岗位自带自己的服务时段，<b>报名即选岗位</b>：志愿者挑中岗位，时间也就定了。
+          一条岗位的几个时段是同一批人全部要来；不同时段可以换人的，分成几条岗位。
+          分工还没定的用下面的<b>统一分配</b>：志愿者先报时间，截止后你再分岗位。
         </el-alert>
         <div class="toolbar">
           <el-button plain @click="formDlg = true">{{ formLabel }}</el-button>
@@ -140,7 +140,7 @@
         </el-alert>
         <el-alert v-else-if="structureLocked" type="info" show-icon :closable="false">
           <template #title>
-            当前只读——改场次与岗位要先点击右侧按钮进入调整状态，期间将暂停报名
+            当前只读——改岗位要先点击右侧按钮进入调整状态，期间将暂停报名
             <el-button type="warning" size="small" style="margin-left:12px"
                        @click="startEditing">{{ editLabel }}</el-button>
           </template>
@@ -148,47 +148,139 @@
 
         <el-alert v-if="treeAlerts.length" type="error" show-icon
                   :closable="false"
-                  :title="`有 ${treeAlerts.length} 个场次还没排好`">
+                  :title="`有 ${treeAlerts.length} 处还没排好`">
           <div v-for="a in treeAlerts" :key="a.id" style="line-height:1.6">
             <b>{{ a.name }}</b>：{{ a.text }}
           </div>
         </el-alert>
 
         <div class="toolbar">
-          <el-radio-group v-model="treeView" size="small">
-            <el-radio-button value="shift">按场次看</el-radio-button>
-            <el-radio-button value="role">按岗位看</el-radio-button>
-          </el-radio-group>
-          <span class="dim">{{ treeView === 'role'
-            ? '同名岗位合成一张卡，列出它的各个时段；各岗位时间不同的活动看这个更直观'
-            : '每个场次一张卡，列出这段时间里的各个岗位' }}</span>
+          <el-button type="primary" :disabled="structureLocked" @click="openPost(null)">
+            <el-icon><Plus /></el-icon>&nbsp;新建岗位
+          </el-button>
+          <!-- 暂停、锁定都不用进编辑态：只管收不收新报名、候补顶不顶上，不改任何人的安排。
+               调整安排时要的是整个活动先停下来，一个一个点既慢又容易漏掉一个 -->
+          <template v-if="isPublic">
+            <el-popconfirm :width="320" :title="allPaused
+                             ? '恢复全部岗位的报名？解除暂停后按候补顺序补齐空位。'
+                             : '暂停全部岗位的报名？期间不收新报名，候补也不会顶上。'"
+                           @confirm="toggleAllPause">
+              <template #reference>
+                <el-button :disabled="isOver || !shifts.length">
+                  {{ allPaused ? '恢复全部报名' : '暂停全部报名' }}
+                </el-button>
+              </template>
+            </el-popconfirm>
+            <el-popconfirm :width="320" :title="allLocked
+                             ? '解锁全部岗位的名单？解锁后按候补顺序补齐空位。'
+                             : '锁定全部岗位的名单？不再收新报名、候补停止自动转正，此后退出的志愿者会被记录。'"
+                           @confirm="toggleAllLock">
+              <template #reference>
+                <el-button :disabled="isOver || !shifts.length">
+                  {{ allLocked ? '解锁全部名单' : '锁定全部名单' }}
+                </el-button>
+              </template>
+            </el-popconfirm>
+          </template>
+          <span class="dim">岗位按第一个时段的开始时间排</span>
         </div>
-        <template v-if="treeView === 'shift'">
-        <div v-for="g in shifts" :key="g.id" class="group-card"
-             :class="{ 'needs-positions': !g.positions.length }">
+
+        <!-- 一条岗位一张卡：它的时段、名额、条件、状态都在这一行上 -->
+        <div v-for="x in posts" :key="x.p.id" class="group-card">
+          <div class="g-head">
+            <el-link type="primary" underline="never" style="font-weight:600;font-size:14px"
+                     @click="showStationDetail(x.p)">{{ x.p.name }}</el-link>
+            <el-tag v-if="x.p.shift.periods.length > 1" size="small" type="warning"
+                    effect="plain">
+              共 {{ x.p.shift.periods.length }} 个时段 · 需全部参加
+            </el-tag>
+            <span class="dim">{{ x.p.shift.time_text }}</span>
+            <span>{{ x.p.enrolled }} / {{ x.p.quota }} 人</span>
+            <span class="dim">{{ x.p.location || act.location || '地点待定' }}</span>
+            <el-tag v-if="x.p.group_name" size="small" effect="plain" type="warning">
+              {{ x.p.group_name }}
+            </el-tag>
+            <el-tag v-if="x.p.needs_leader" size="small" type="warning" effect="plain">
+              设组长
+            </el-tag>
+            <el-tag v-if="x.p.requirement_desc !== '不限'" size="small" effect="plain">
+              {{ x.p.requirement_desc }}
+            </el-tag>
+            <el-tag v-if="x.p.attire !== 'none'" size="small" effect="plain">
+              {{ x.p.attire_label }}
+            </el-tag>
+            <el-tag v-if="x.p.pay_optional" size="small" effect="plain">可选劳务</el-tag>
+            <el-tag v-if="x.p.shift.flexible_time" size="small" type="success" effect="plain">
+              时间灵活·可多次签到
+            </el-tag>
+            <el-tag v-if="x.p.shift.hours_mode !== 'checkin'" size="small" effect="plain">
+              {{ HOURS_LABEL[x.p.shift.hours_mode] }}
+            </el-tag>
+            <!-- 报了名却没落在岗位上的人（管理员补录留下的）：当场看见，别等分配面板报 -->
+            <el-tooltip v-if="x.g.unassigned_count" placement="top"
+                        content="这些人报了名却没有岗位；到「志愿者管理」手动调岗">
+              <el-tag size="small" type="danger" effect="dark">
+                {{ x.g.unassigned_count }} 人没有岗位
+              </el-tag>
+            </el-tooltip>
+            <el-tag v-if="x.p.shift.enroll_paused" size="small" type="warning" effect="plain">
+              暂停报名
+            </el-tag>
+            <el-tag v-if="x.p.shift.locked" size="small" type="info">名单已锁定</el-tag>
+            <span v-else-if="x.p.shift.lock_hours" class="dim">
+              开场前 {{ x.p.shift.lock_hours }} 小时锁定名单
+            </span>
+            <span class="btn-row" style="margin-left:auto">
+              <el-button v-if="isPublic" size="small" :disabled="isOver"
+                         @click="togglePause('posts', x.p, !x.p.shift.enroll_paused)">
+                {{ x.p.shift.enroll_paused ? '恢复报名' : '暂停报名' }}
+              </el-button>
+              <el-button v-if="isPublic" size="small" :disabled="isOver"
+                         @click="toggleLock('posts', x.p, !x.p.shift.locked)">
+                {{ x.p.shift.locked ? '解锁名单' : '锁定名单' }}
+              </el-button>
+              <el-button size="small" type="primary" plain :disabled="structureLocked"
+                         @click="openPost(x.p)">编辑</el-button>
+              <el-button size="small" plain :disabled="structureLocked"
+                         @click="openCopyPost(x.p)">复制</el-button>
+              <el-popconfirm :title="`删除岗位「${x.p.name}」？它的服务时段一并删除。`"
+                             @confirm="delPost(x.p)" :disabled="structureLocked">
+                <template #reference>
+                  <el-button size="small" type="danger" plain
+                             :disabled="structureLocked">删除</el-button>
+                </template>
+              </el-popconfirm>
+            </span>
+          </div>
+          <div v-if="x.p.service_task" class="dim pre">{{ x.p.service_task }}</div>
+          <div v-if="attachedOf(x.p).length" class="dim">
+            培训/彩排：{{ attachedOf(x.p).map(t => `${t.kind_label}「${t.name}」`).join('、') }}
+          </div>
+        </div>
+        <el-empty v-if="!posts.length" :image-size="60"
+                  description="还没有岗位，点上面的「新建岗位」添加（岗位自带服务时段）" />
+
+        <!-- 统一分配：报名时只锁时段，「待分配」是报名入口，截止后再分具体岗位 -->
+        <div class="section-title">
+          统一分配
+          <span class="dim">分工还没定时用：志愿者先报时间，报名截止后在「志愿者管理」里分岗位</span>
+        </div>
+        <div v-for="g in assignShifts" :key="g.id" class="group-card">
           <div class="g-head">
             <el-link type="primary" underline="never" style="font-weight:600;font-size:14px"
                      @click="showGroupDetail(g)">{{ g.name }}</el-link>
-            <el-tag size="small" effect="plain"
-                    :type="g.mode === 'assign' ? 'warning' : 'info'">
-              {{ g.mode_label }}
-            </el-tag>
+            <span class="dim">{{ g.time_text }}</span>
+            <span>已报 {{ g.enrolled }} / 上限 {{ g.capacity }}</span>
             <el-tag v-if="g.flexible_time" size="small" type="success" effect="plain">
               时间灵活·可多次签到
             </el-tag>
-            <span class="dim">{{ g.time_text }}</span>
-            <span>{{ g.mode === 'assign' ? `上限 ${g.capacity}（待分配）` : `本场合计 ${g.capacity} 人` }}</span>
-            <el-tag v-if="!realPositions(g).length"
-                    size="small" :type="g.mode === 'assign' ? 'info' : 'danger'"
-                    :effect="g.mode === 'assign' ? 'plain' : 'dark'">
-              {{ g.mode === 'assign' ? '岗位后续再创建' : '未设岗位' }}
+            <el-tag v-if="!realPositions(g).length" size="small" type="info" effect="plain">
+              岗位后续再创建
             </el-tag>
-            <!-- 待分配和未设岗位是两件事，别互相遮住：
-                 assign 模式截止前人人待分配是常态，截止后还剩人就是漏排 -->
-            <el-tooltip v-if="g.unassigned_count" placement="top"
-                        :content="unassignedHint(g)">
+            <!-- 报名期人人待分配是常态；截止后还剩人就是漏排 -->
+            <el-tooltip v-if="g.unassigned_count" placement="top" :content="unassignedHint">
               <el-tag size="small" :type="regClosed ? 'danger' : 'warning'"
-                      :effect="regClosed || g.mode === 'pick' ? 'dark' : 'plain'">
+                      :effect="regClosed ? 'dark' : 'plain'">
                 {{ g.unassigned_count }} 人待分配
               </el-tag>
             </el-tooltip>
@@ -196,23 +288,24 @@
               暂停报名
             </el-tag>
             <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
-            <span v-else-if="g.lock_hours" class="dim">开场前 {{ g.lock_hours }} 小时锁定名单</span>
+            <span v-else-if="g.lock_hours" class="dim">
+              开场前 {{ g.lock_hours }} 小时锁定名单
+            </span>
             <span class="btn-row" style="margin-left:auto">
-              <!-- 暂停、锁定都不用进编辑态：只管收不收新报名、候补顶不顶上，不改任何人的安排 -->
               <el-button v-if="isPublic" size="small" :disabled="isOver"
-                         @click="togglePause('shifts', g)">
+                         @click="togglePause('shifts', g, !g.enroll_paused)">
                 {{ g.enroll_paused ? '恢复报名' : '暂停报名' }}
               </el-button>
               <el-button v-if="isPublic" size="small" :disabled="isOver"
                          @click="toggleLock('shifts', g, !g.locked)">
                 {{ g.locked ? '解锁名单' : '锁定名单' }}
               </el-button>
-              <!-- 开放选岗同样不用进编辑态：已报名的人都已在真实岗位上，安排不变 -->
-              <el-tooltip v-if="g.mode === 'assign'" placement="top"
-                          :disabled="!openPickBlock(g)" :content="openPickBlock(g)">
+              <!-- 开放选岗同样不用进编辑态：已报名的人都已在那个岗位上，安排不变 -->
+              <el-tooltip placement="top" :disabled="!openPickBlock(g)"
+                          :content="openPickBlock(g)">
                 <span>
                   <el-popconfirm :width="320" :disabled="!!openPickBlock(g)"
-                                 :title="`「${g.name}」改为报名即选岗位：「待分配」删除，之后新报名的人按各岗位剩余名额自己选岗，已分好岗位的人不动。`"
+                                 :title="`「${g.name}」转成一条普通岗位：「待分配」删除，之后新报名的人按它的剩余名额直接报，已分好岗位的人不动。`"
                                  @confirm="openPick(g)">
                     <template #reference>
                       <el-button size="small" type="warning" plain
@@ -223,11 +316,9 @@
               </el-tooltip>
               <el-button size="small" :disabled="structureLocked"
                          @click="openShift(g)">编辑</el-button>
-              <el-button size="small" plain :disabled="structureLocked"
-                         @click="openCopyPositions(g)">复制岗位到其它场次</el-button>
               <el-button size="small" type="primary" plain :disabled="structureLocked"
                          @click="openStation(null, g)">添加岗位</el-button>
-              <el-popconfirm :title="`删除场次「${g.name}」？`" @confirm="delShift(g)"
+              <el-popconfirm :title="`删除「${g.name}」这批统一分配？`" @confirm="delShift(g)"
                              :disabled="structureLocked">
                 <template #reference>
                   <el-button size="small" type="danger" plain
@@ -238,7 +329,7 @@
           </div>
 
           <DataCards v-if="narrow && g.positions.length" :rows="g.positions"
-                     title-key="name"
+                     title-key="display_name"
                      :fields="[{ key: 'group_name', label: '岗位组', hideEmpty: true },
                                { key: 'location', label: '地点', format: v => v || act.location },
                                { key: 'requirement_desc', label: '要求' },
@@ -249,19 +340,8 @@
                 {{ row.enrolled }}/{{ row.quota }}
               </el-tag>
               <el-tag v-if="row.needs_leader" size="small" type="warning" effect="plain">组长</el-tag>
-              <el-tag v-if="row.enroll_paused" size="small" type="warning" effect="plain">暂停报名</el-tag>
-              <el-tag v-if="row.list_locked" size="small" type="info">名单已锁定</el-tag>
             </template>
             <template #actions="{ row }">
-              <el-button v-if="isPublic && g.mode !== 'assign'" size="small" plain
-                         :disabled="isOver" @click="togglePause('positions', row)">
-                {{ row.enroll_paused ? '恢复报名' : '暂停' }}
-              </el-button>
-              <el-button v-if="isPublic && g.mode !== 'assign'" size="small" plain
-                         :disabled="isOver || g.locked"
-                         @click="toggleLock('positions', row, !row.list_locked)">
-                {{ row.list_locked ? '解锁' : '锁定' }}
-              </el-button>
               <el-button size="small" type="primary" plain :disabled="structureLocked"
                          @click="openStation(row, g)">编辑</el-button>
               <el-button size="small" plain :disabled="structureLocked"
@@ -287,11 +367,9 @@
             <el-table-column label="岗位" min-width="130">
               <template #default="{row}">
                 <el-link type="primary" underline="never"
-                         @click="showStationDetail(g, row)">{{ row.name }}</el-link>
+                         @click="showStationDetail(row, g.name)">{{ row.name }}</el-link>
                 <el-tag v-if="row.is_placeholder" size="small" type="warning" effect="plain"
-                        style="margin-left:8px">默认</el-tag>
-                <el-tag v-if="row.list_locked" size="small" type="info"
-                        style="margin-left:8px">名单已锁定</el-tag>
+                        style="margin-left:8px">报名入口</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="服务地点" min-width="120">
@@ -308,19 +386,9 @@
               </template>
             </el-table-column>
             <el-table-column prop="training_note" label="培训内容" min-width="160" show-overflow-tooltip />
-            <el-table-column label="操作" width="250">
+            <el-table-column label="操作" width="200">
               <template #default="{row}">
                 <div class="btn-row">
-                  <el-button v-if="isPublic && g.mode !== 'assign'" size="small" link
-                             :type="row.enroll_paused ? 'danger' : ''" :disabled="isOver"
-                             @click="togglePause('positions', row)">
-                    {{ row.enroll_paused ? '恢复报名' : '暂停' }}
-                  </el-button>
-                  <el-button v-if="isPublic && g.mode !== 'assign'" size="small" link
-                             :disabled="isOver || g.locked"
-                             @click="toggleLock('positions', row, !row.list_locked)">
-                    {{ row.list_locked ? '解锁' : '锁定' }}
-                  </el-button>
                   <el-button size="small" link type="primary" :disabled="structureLocked"
                              @click="openStation(row, g)">编辑</el-button>
                   <el-button size="small" link :disabled="structureLocked"
@@ -337,100 +405,17 @@
             </el-table-column>
           </el-table>
           <p v-else class="dim" style="margin:8px 0 0">
-            {{ g.mode === 'assign'
-               ? '截止后统一分配：志愿者报名只选时间；分工定下来后直接在本场次下建岗位，再到「志愿者管理」一键分配或导入排班；排完后可点「开放选岗」，剩余名额让大家按岗位自选。'
-               : '还没有岗位，请先设置岗位及名额。' }}
+            志愿者报名只选时间；分工定下来后在这里建岗位，再到「志愿者管理」一键分配或导入排班；
+            排完后可点「开放选岗」，剩余名额让大家直接报。
           </p>
 
         </div>
-        </template>
-        <!-- 按岗位看：同名岗位合成一张卡，列它的各个时段。数据还是「场次下挂岗位」，
-             只是换个排法；加时段 = 在某个场次下复制出同名岗位 -->
-        <template v-else>
-          <div v-for="r in roles" :key="r.name" class="group-card">
-            <div class="g-head">
-              <b style="font-size:14px">{{ r.name }}</b>
-              <span class="dim">{{ r.slots.length }} 个时段 · 共 {{ r.quota }} 人</span>
-              <el-tag v-if="r.needs_leader" size="small" type="warning" effect="plain">设组长</el-tag>
-              <span class="btn-row" style="margin-left:auto">
-                <el-button size="small" :disabled="structureLocked"
-                           @click="editRole(r)">改岗位信息</el-button>
-                <el-button size="small" type="primary" plain :disabled="structureLocked"
-                           @click="openAddSlot(r)">加时段</el-button>
-                <el-button size="small" plain :disabled="structureLocked"
-                           @click="openAttached(null, r.slots.map(x => x.p.id))">加培训</el-button>
-              </span>
-            </div>
-            <div class="dim pre">{{ r.slots[0].p.service_task }}</div>
-            <div v-for="x in r.slots" :key="x.p.id" class="slot-row">
-              <span class="slot-time">{{ x.g.name }} · {{ x.g.time_text }}</span>
-              <span>{{ x.p.enrolled }}/{{ x.p.quota }}</span>
-              <el-tag v-if="x.g.mode === 'assign'" size="small" type="warning" effect="plain">
-                截止后分配
-              </el-tag>
-              <el-tag v-if="x.g.enroll_paused || x.p.enroll_paused" size="small" type="warning"
-                      effect="plain">暂停报名</el-tag>
-              <el-tag v-if="x.g.locked || x.p.list_locked" size="small" type="info">名单已锁定</el-tag>
-              <span class="slot-acts">
-                <el-button v-if="isPublic && x.g.mode !== 'assign'" size="small" link
-                           :disabled="isOver" @click="togglePause('positions', x.p)">
-                  {{ x.p.enroll_paused ? '恢复报名' : '暂停' }}
-                </el-button>
-                <el-button v-if="isPublic && x.g.mode !== 'assign'" size="small" link
-                           :disabled="isOver || x.g.locked"
-                           @click="toggleLock('positions', x.p, !x.p.list_locked)">
-                  {{ x.p.list_locked ? '解锁' : '锁定' }}
-                </el-button>
-                <el-button size="small" link type="primary" :disabled="structureLocked"
-                           @click="openStation(x.p, x.g)">编辑这个时段</el-button>
-                <el-popconfirm title="删除这个时段的岗位？" @confirm="delStation(x.p)"
-                               :disabled="structureLocked">
-                  <template #reference>
-                    <el-button size="small" link type="danger"
-                               :disabled="structureLocked">删除</el-button>
-                  </template>
-                </el-popconfirm>
-              </span>
-            </div>
-            <div v-if="trainingsOf(r).length" class="dim">
-              培训/彩排：{{ trainingsOf(r).map(t => `${t.kind_label}「${t.name}」`).join('、') }}
-            </div>
-          </div>
-          <!-- 截止后统一分配的场次：报名只锁时段，「待分配」是报名入口，不归到哪个岗位下 -->
-          <div v-for="g in shifts.filter(x => x.mode === 'assign')" :key="g.id" class="group-card">
-            <div class="g-head">
-              <b style="font-size:14px">{{ g.name }}</b>
-              <el-tag size="small" type="warning" effect="plain">截止后统一分配</el-tag>
-              <span class="dim">{{ g.time_text }} · 上限 {{ g.capacity }}</span>
-              <el-tag v-if="g.unassigned_count" size="small" type="warning">
-                {{ g.unassigned_count }} 人待分配
-              </el-tag>
-              <el-tag v-if="g.enroll_paused" size="small" type="warning" effect="plain">暂停报名</el-tag>
-              <el-tag v-if="g.locked" size="small" type="info">名单已锁定</el-tag>
-              <span class="btn-row" style="margin-left:auto">
-                <el-button v-if="isPublic" size="small" :disabled="isOver"
-                           @click="togglePause('shifts', g)">
-                  {{ g.enroll_paused ? '恢复报名' : '暂停报名' }}
-                </el-button>
-                <el-button v-if="isPublic" size="small" :disabled="isOver"
-                           @click="toggleLock('shifts', g, !g.locked)">
-                  {{ g.locked ? '解锁名单' : '锁定名单' }}
-                </el-button>
-                <el-button size="small" :disabled="structureLocked"
-                           @click="openShift(g)">编辑场次</el-button>
-                <el-button size="small" type="primary" plain :disabled="structureLocked"
-                           @click="openStation(null, g)">添加岗位</el-button>
-              </span>
-            </div>
-          </div>
-          <el-empty v-if="!roles.length && !shifts.length" description="还没有场次" :image-size="60" />
-        </template>
         <el-button style="width:100%" plain dashed
                    :disabled="structureLocked" @click="openShift(null)">
-          <el-icon><Plus /></el-icon>&nbsp;新建场次
+          <el-icon><Plus /></el-icon>&nbsp;新建统一分配
         </el-button>
 
-        <!-- 培训与彩排：挂在整个活动上，按岗位圈人（可以跨场次），空 = 全体 -->
+        <!-- 培训与彩排：挂在整个活动上，按岗位圈人（可以圈好几条岗位），空 = 全体 -->
         <div class="section-title">
           培训与彩排
           <span class="dim">志愿者报名需要培训的岗位时，自动报名培训，可单独请假。培训与彩排可设置独立的签到码与时长</span>
@@ -1133,59 +1118,43 @@
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 场次对话框 -->
-    <el-dialog v-model="shiftDlg.visible" :title="shiftDlg.editing ? '编辑场次' : '新建场次'" width="620"
+    <!-- 统一分配对话框 -->
+    <el-dialog v-model="shiftDlg.visible"
+               :title="shiftDlg.editing ? '编辑统一分配' : '新建统一分配'" width="620"
                :before-close="guardShift" @opened="guardShift.snap">
+      <p class="dim">
+        分工还没定的时候用它：志愿者报名只选时间，报名截止后你在「志愿者管理」里分具体岗位，
+        分完可以开放选岗。分工已经清楚的直接建岗位，岗位自带时段。
+      </p>
       <el-form label-width="100px">
-        <el-form-item label="名称" required><el-input v-model="groupForm.name" placeholder="如：上午场" /></el-form-item>
-        <el-form-item label="场次模式" required>
-          <el-radio-group v-model="groupForm.mode">
-            <el-radio-button value="pick">报名即选岗位</el-radio-button>
-            <el-radio-button value="assign">截止后统一分配</el-radio-button>
-          </el-radio-group>
-          <div class="dim" style="margin-top:4px">
-            <template v-if="screened">
-              报名后筛选：建好岗位的场次，志愿者按岗位勾意向；没建岗位的场次
-              勾的是「待分配」，录取之后再排岗位。
-            </template>
-            <template v-else-if="groupForm.mode === 'pick'">
-              提前设置岗位分工，志愿者报名时自己挑岗位。
-            </template>
-            <template v-else>
-              适用于未敲定岗位分工的情况，志愿者报名时不挑岗位，分工确定后直接
-              在本场次下创建岗位，再进行分配。分配完成后可以开放选岗，志愿者自行选择。
-            </template>
-            有人报名之后不能再切换模式。
-          </div>
-          <el-alert v-if="modeSwitchCost" type="warning" show-icon :closable="false" :title="modeSwitchCost" />
+        <el-form-item label="名称" required>
+          <el-input v-model="groupForm.name" placeholder="如：上午场" />
         </el-form-item>
         <el-alert type="info" :closable="false">
-          这里只填本场次的<b>服务时间</b>。培训、彩排等在场次建好后用「添加培训/彩排」单独添加。
+          这里只填<b>服务时间</b>。培训、彩排等用下面的「添加培训/彩排」单独添加。
         </el-alert>
         <el-form-item label="服务时段" required>
-          <PeriodEditor v-model="groupForm.periods" />
+          <PeriodEditor v-model="groupForm.periods" :tip="ASSIGN_PERIOD_TIP" />
         </el-form-item>
         <el-form-item label="时间灵活">
           <el-checkbox v-model="groupForm.flexible_time">
             时间灵活 / 待定（可多次签到）
           </el-checkbox>
           <div class="dim">
-            适用于长期招募、具体服务时间报名后协商的场次：每开一张新签到码，志愿者可以再签到、签退一次，
-            时长按每次签到签退累加；某次没签退的，按那张码的截止时间记并待核。时长只能按签到签退计（或不计），不能按场次时长固定计。
+            适用于长期招募、具体服务时间报名后协商：每开一张新签到码，志愿者可以再签到、签退一次，
+            时长按每次签到签退累加；某次没签退的，按那张码的截止时间记并待核。时长只能按签到签退计（或不计），不能按时段总长固定计。
           </div>
           <el-alert v-if="flexibleFixed" type="warning" show-icon :closable="false"
-                    title="本场次时长按场次时长固定计，时间灵活的场次不能这样计；保存时改为按签到签退计" />
+                    title="当前时长按时段总长固定计，时间灵活时不能这样计；保存时改为按签到签退计" />
         </el-form-item>
-        <!-- 名额与候补只属于「截止后统一分配」：报名即选岗位时它们在岗位上 -->
-        <template v-if="groupForm.mode === 'assign'">
-          <el-form-item label="人数上限" required>
-            <el-input-number v-model="groupForm.capacity" :min="1" />
-          </el-form-item>
-          <el-form-item label="候补名额">
-            <el-input-number v-model="groupForm.waitlist_quota" :min="0" />
-            <span class="dim" style="margin-left:12px">0 = 不设候补</span>
-          </el-form-item>
-        </template>
+        <el-form-item label="招募人数" required>
+          <el-input-number v-model="groupForm.capacity" :min="1" />
+          <span class="dim" style="margin-left:12px">这批一共招多少人，分岗位时再分配到各岗位</span>
+        </el-form-item>
+        <el-form-item label="候补名额">
+          <el-input-number v-model="groupForm.waitlist_quota" :min="0" />
+          <span class="dim" style="margin-left:12px">0 = 不设候补</span>
+        </el-form-item>
         <el-form-item label="锁定名单">
           <span class="dim" style="margin-right:8px">开场前</span>
           <el-input-number v-model="groupForm.lock_hours" :min="0" :max="72" />
@@ -1207,6 +1176,7 @@
               <el-option v-for="s in stages" :key="s" :value="s" :label="s" />
             </el-select>
           </div>
+          <div class="dim">报名时还没有岗位可选，只能在这一层筛人；性别、学院等跟着分工的条件在岗位上设</div>
         </el-form-item>
         <el-form-item label="备注"><el-input v-model="groupForm.note" /></el-form-item>
       </el-form>
@@ -1221,7 +1191,7 @@
                :title="(attDlg.editing ? '编辑' : '添加') + '培训 / 彩排'" width="620"
                :before-close="guardAttached" @opened="guardAttached.snap">
       <p class="dim">
-        与需培训岗位绑定报名，可以跨场次，有独立的签到码与时长。
+        与需培训岗位绑定报名，可以圈好几条岗位，有独立的签到码与时长。
       </p>
       <el-form label-width="100px">
         <el-form-item label="类型" required>
@@ -1247,13 +1217,18 @@
             <el-select v-model="attForm.applies_to_positions" multiple collapse-tags
                        collapse-tags-tooltip placeholder="留空 = 本活动所有报上名的人"
                        style="width:100%">
-              <el-option-group v-for="g in shifts" :key="g.id" :label="`${g.name}（${g.time_text}）`">
+              <el-option-group v-if="posts.length" label="岗位">
+                <el-option v-for="x in posts" :key="x.p.id" :value="x.p.id"
+                           :label="`${x.p.name}（${x.p.shift.time_text}）`" />
+              </el-option-group>
+              <el-option-group v-for="g in assignShifts" :key="g.id"
+                               :label="`统一分配：${g.name}（${g.time_text}）`">
                 <el-option v-for="p in g.positions" :key="p.id" :value="p.id"
-                           :label="p.is_placeholder ? `${g.name}·待分配` : `${p.name}（${g.name}）`" />
+                           :label="p.display_name" />
               </el-option-group>
             </el-select>
             <div v-if="roles.length" class="att-quick">
-              <span class="dim">按岗位勾上所有时段：</span>
+              <span class="dim">按岗位勾上同名岗位的所有时段：</span>
               <el-check-tag v-for="r in roles" :key="r.name" :checked="roleChecked(r)"
                             @change="toggleRole(r)">{{ r.name }}</el-check-tag>
             </div>
@@ -1485,14 +1460,48 @@
       </template>
     </el-dialog>
 
-    <!-- 岗位对话框 -->
-    <el-dialog v-model="positionDlg.visible" :title="positionDlg.editing ? '编辑岗位' : '新建岗位'" width="560"
+    <!-- 岗位对话框：普通岗位连它的服务时段一起填；统一分配下的分配岗位没有自己的时段 -->
+    <el-dialog v-model="positionDlg.visible" :title="positionTitle" width="560"
                :before-close="guardPosition" @opened="guardPosition.snap">
       <el-form label-width="100px">
         <!-- maxlength 跟着库里这几列的长度：不在这儿拦，超长要到保存那一下
              才被后端打回来 -->
         <el-form-item label="岗位名称" required><el-input v-model="stationForm.name"
                     maxlength="128" placeholder="如：东门引导" /></el-form-item>
+        <template v-if="isPost">
+          <el-form-item label="服务时段" required>
+            <PeriodEditor v-model="stationForm.periods" :tip="POST_PERIOD_TIP" />
+          </el-form-item>
+          <el-form-item label="时间灵活">
+            <el-checkbox v-model="stationForm.flexible_time">
+              时间灵活 / 待定（可多次签到）
+            </el-checkbox>
+            <div class="dim">
+              适用于长期招募、具体服务时间报名后协商的岗位：每开一张新签到码，志愿者可以再签到、签退一次，
+              时长按每次签到签退累加；某次没签退的，按那张码的截止时间记并待核。
+            </div>
+          </el-form-item>
+          <el-form-item label="时长认定">
+            <el-radio-group v-model="stationForm.hours_mode">
+              <el-radio value="fixed" :disabled="stationForm.flexible_time">固定计时</el-radio>
+              <el-radio value="checkin">扫码计时</el-radio>
+              <el-radio value="none">不计时长</el-radio>
+            </el-radio-group>
+            <div class="dim">{{ HOURS_HINT[stationForm.hours_mode] }}</div>
+            <el-alert v-if="postFlexibleFixed" type="warning" show-icon :closable="false"
+                      title="时间灵活的岗位一人可以签好几轮到，不能按时段总长固定计；保存时改为按签到签退计" />
+          </el-form-item>
+          <el-form-item label="锁定名单">
+            <span class="dim" style="margin-right:8px">开场前</span>
+            <el-input-number v-model="stationForm.lock_hours" :min="0" :max="72" />
+            <span class="dim" style="margin-left:8px">小时自动锁定</span>
+            <div class="dim" style="margin-top:4px">
+              锁定名单后不再接受新报名，停止候补自动转正，此后退出的志愿者会被记录；
+              如需补人请在志愿者管理页面手动转正。
+              上限 72 小时，0 = 不自动锁定，可随时在岗位设置里手动锁定、解锁。
+            </div>
+          </el-form-item>
+        </template>
         <el-form-item label="服务地点"><el-input v-model="stationForm.location"
                     maxlength="128"
                     placeholder="如：世纪馆北门（留空则用活动地点）" /></el-form-item>
@@ -1506,7 +1515,7 @@
         <el-form-item label="岗位组">
           <el-input v-model="stationForm.group_name" style="width:220px"
                     maxlength="64" placeholder="如：东门片区（选填）" />
-          <div class="dim">本活动里组名相同的岗位（跨场次也算）是一个组，共用一名组长；留空则本岗位自成一组</div>
+          <div class="dim">本活动里组名相同的岗位是一个组，共用一名组长；留空则本岗位自成一组</div>
         </el-form-item>
         <el-form-item label="志愿服装">
           <el-radio-group v-model="stationForm.attire">
@@ -1552,6 +1561,17 @@
               <el-option v-for="c in colleges" :key="c" :value="c" :label="c" />
             </el-select>
           </div>
+          <div class="two-col" style="margin-top:8px">
+            <el-select v-model="stationForm.campusReq" multiple clearable collapse-tags
+                       placeholder="校区（不限）">
+              <el-option v-for="c in campuses" :key="c" :value="c" :label="c" />
+            </el-select>
+            <el-select v-model="stationForm.stageReq" multiple clearable collapse-tags
+                       placeholder="学段（不限）">
+              <el-option v-for="s in stages" :key="s" :value="s" :label="s" />
+            </el-select>
+          </div>
+          <div class="dim">报名时系统按这几项拦人，只有这一份条件</div>
         </el-form-item>
         <el-form-item label="服务任务" required><el-input v-model="stationForm.service_task"
                     type="textarea" :rows="2"
@@ -1563,6 +1583,10 @@
         <el-form-item label="培训内容"><el-input v-model="stationForm.training_note"
                     type="textarea" :rows="2"
                     placeholder="选填，可后续添加" /></el-form-item>
+        <el-form-item v-if="isPost" label="备注">
+          <el-input v-model="stationForm.note" maxlength="512"
+                    placeholder="选填，志愿者在活动页看得到：如 雨天顺延" />
+        </el-form-item>
         <el-form-item label="学习材料">
           <!-- 新建时也能传：先攒在本地，保存建出岗位后再一并上传 -->
           <MaterialManager ref="materialMgr" owner-type="position"
@@ -1570,10 +1594,11 @@
                            :items="positionDlg.editing?.attachments || []"
                            @changed="onMaterialChanged" />
         </el-form-item>
-        <!-- 同一个岗位分在好几个时段：改一处，别的时段跟着改；名额各管各的 -->
-        <el-form-item v-if="positionDlg.editing && sameNameOthers.length" label="其他时段">
+        <!-- 同名的几条岗位是同一份安排的几个时段：改一处，别的跟着改；名额与时段各管各的 -->
+        <el-form-item v-if="positionDlg.editing && sameNameOthers.length" label="同名岗位">
           <el-checkbox v-model="positionDlg.syncSame">
-            同时修改其他时段的「{{ positionDlg.editing.name }}」（{{ sameNameOthers.length }} 个，名额各自保留）
+            同时修改同名的其他「{{ positionDlg.editing.name }}」（{{ sameNameOthers.length }}
+            条，名额与时段各自保留）
           </el-checkbox>
         </el-form-item>
       </el-form>
@@ -1583,72 +1608,32 @@
       </template>
     </el-dialog>
 
-    <!-- 按岗位看：给一个岗位加时段 = 在某个场次下复制出同名岗位 -->
-    <el-dialog v-model="slotDlg.visible" :title="`给「${slotDlg.role?.name || ''}」加时段`" width="620"
-               :before-close="guardSlot" @opened="guardSlot.snap">
-      <el-radio-group v-model="slotDlg.mode">
-        <el-radio-button value="existing" :disabled="!slotTargets.length">放进已有场次</el-radio-button>
-        <el-radio-button value="new">新建一个场次</el-radio-button>
-      </el-radio-group>
-      <el-form label-width="88px" style="margin-top:12px">
-        <el-form-item v-if="slotDlg.mode === 'existing'" label="场次" required>
-          <el-select v-model="slotDlg.shiftId" style="width:100%" placeholder="选一个还没有这个岗位的场次">
-            <el-option v-for="g in slotTargets" :key="g.id" :value="g.id"
-                       :label="`${g.name}（${g.time_text}）`" />
-          </el-select>
-        </el-form-item>
-        <template v-else>
-          <el-form-item label="场次名" required><el-input v-model="slotDlg.name" /></el-form-item>
-          <el-form-item label="服务时段" required>
-            <PeriodEditor v-model="slotDlg.periods" />
-          </el-form-item>
-        </template>
-      </el-form>
-      <div class="dim">
-        下一步打开岗位表单，内容照「{{ slotDlg.role?.name }}」填好，改名额等这个时段不一样的地方就行；
-        叫这个岗位的培训/彩排也会叫这个时段的人。
-      </div>
-      <template #footer>
-        <el-button @click="slotDlg.visible = false">取消</el-button>
-        <el-button type="primary" :loading="slotDlg.busy" @click="saveSlot">下一步</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 岗位批量复制到其它场次 -->
-    <el-dialog v-model="copyPosDlg.visible" title="复制岗位到其它场次" width="520"
-               :before-close="guardCopyPos" @opened="guardCopyPos.snap">
+    <!-- 复制岗位：同一份安排换个时间、换一批人 -->
+    <el-dialog v-model="copyDlg.visible"
+               :title="`复制岗位「${copyDlg.source?.name || ''}」`" width="620"
+               :before-close="guardCopy" @opened="guardCopy.snap">
       <p class="dim">
-        从「{{ copyPosDlg.source?.name }}」复制岗位，含名额、条件、组长与材料；同名的跳过。
+        复制出一条新岗位：名额、条件、组长、服装、劳务与学习材料都带过来，报名与签到不带；
+        叫原岗位的培训/彩排也叫它。改一下时段，这个时间就能换另一批人来。
       </p>
-      <el-form label-width="88px">
-        <el-form-item label="复制哪些">
-          <el-select v-model="copyPosDlg.positionIds" multiple collapse-tags
-                     placeholder="留空 = 全部岗位" style="width:100%">
-            <el-option v-for="p in copyPosDlg.source?.positions || []" :key="p.id"
-                       :value="p.id" :label="`${p.name}（${p.quota}人）`" />
-          </el-select>
+      <el-form label-width="100px">
+        <el-form-item label="岗位名称" required>
+          <el-input v-model="copyDlg.name" maxlength="128" />
         </el-form-item>
-        <el-form-item label="复制到" required>
-          <el-select v-model="copyPosDlg.targetIds" multiple style="width:100%"
-                     placeholder="选择目标场次">
-            <el-option v-for="g in shifts.filter(x => x.id !== copyPosDlg.source?.id)"
-                       :key="g.id" :value="g.id" :label="`${g.name}（${g.time_text}）`" />
-          </el-select>
+        <el-form-item label="服务时段" required>
+          <PeriodEditor v-model="copyDlg.periods" :tip="POST_PERIOD_TIP" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="copyPosDlg.visible = false">取消</el-button>
-        <el-button type="primary" :loading="copyPosDlg.busy" @click="doCopyPositions">
-          复制
-        </el-button>
+        <el-button @click="copyDlg.visible = false">取消</el-button>
+        <el-button type="primary" :loading="copyDlg.busy" @click="saveCopyPost">复制</el-button>
       </template>
     </el-dialog>
 
-    <!-- 岗位详情（点击名称） -->
-    <el-dialog v-model="gdVisible" :title="(gdData?.name || '') + ' · 场次详情'" width="460">
+    <!-- 详情（点击名称）：一批统一分配，或一条岗位 -->
+    <el-dialog v-model="gdVisible" :title="(gdData?.name || '') + ' · 统一分配详情'" width="460">
       <el-descriptions v-if="gdData" :column="1" border>
-        <el-descriptions-item label="场次模式">{{ gdData.mode_label }}</el-descriptions-item>
-        <el-descriptions-item label="时间">{{ gdData.time_text }}</el-descriptions-item>
+        <el-descriptions-item label="服务时段">{{ gdData.time_text }}</el-descriptions-item>
         <el-descriptions-item label="人数">已报名 {{ gdData.enrolled }} / {{ gdData.capacity }}
           <span class="dim">（候补 {{ gdData.waitlist_count }} 人）</span></el-descriptions-item>
         <el-descriptions-item label="说明">{{ gdData.note || '—' }}</el-descriptions-item>
@@ -1656,7 +1641,9 @@
     </el-dialog>
     <el-dialog v-model="sdVisible" :title="(sdData?.name || '') + ' · 岗位详情'" width="460">
       <el-descriptions v-if="sdData" :column="1" border>
-        <el-descriptions-item label="所属场次">{{ sdGroupName }}</el-descriptions-item>
+        <el-descriptions-item v-if="sdWhere" label="所属统一分配">{{ sdWhere }}</el-descriptions-item>
+        <el-descriptions-item label="服务时段">{{ sdData.shift.time_text }}</el-descriptions-item>
+        <el-descriptions-item label="时长认定">{{ HOURS_LABEL[sdData.shift.hours_mode] }}</el-descriptions-item>
         <el-descriptions-item label="服务地点">{{ sdData.location || act.location || '待定' }}</el-descriptions-item>
         <el-descriptions-item label="名额">{{ sdData.enrolled }}/{{ sdData.quota }}</el-descriptions-item>
         <el-descriptions-item label="条件要求">{{ sdData.requirement_desc }}</el-descriptions-item>
@@ -1895,7 +1882,13 @@ async function remindBatch(b) {
 // —— 岗位设置 ——
 const shiftDlg = ref({ visible: false, editing: null })
 const groupForm = ref({})
-const positionDlg = ref({ visible: false, editing: null })
+// 岗位对话框一套两用：kind='post' 是普通岗位（自带时段，走 /posts），
+// kind='slot' 是统一分配下的分配岗位（时段是整批的，走 /positions）
+const positionDlg = ref({ visible: false, editing: null, kind: 'post' })
+const isPost = computed(() => positionDlg.value.kind === 'post')
+const positionTitle = computed(() => (isPost.value
+  ? (positionDlg.value.editing ? '编辑岗位' : '新建岗位')
+  : (positionDlg.value.editing ? '编辑分配岗位' : '添加分配岗位')))
 const lockBusy = ref(false)
 const lockHours = ref(2)
 
@@ -1921,7 +1914,7 @@ const publishConfirm = computed(() => act.value?.status === 'approved'
 async function discardChanges() {
   try {
     await ElMessageBox.confirm(
-      '这一轮调整过的场次、岗位和活动信息都会还原成进入调整时的样子，'
+      '这一轮调整过的岗位与活动信息都会还原成进入调整时的样子，'
       + '报名随即恢复。志愿者不会收到改动通知。',
       '放弃这次调整？',
       { type: 'warning', confirmButtonText: '放弃改动', cancelButtonText: '继续调整' })
@@ -1974,8 +1967,9 @@ onBeforeRouteLeave(async () => {
   return true
 })
 
-const copyPosDlg = ref({ visible: false, source: null, positionIds: [],
-                         targetIds: [], busy: false })
+// 复制岗位：原岗位的全部字段带过来，只改名字与时段
+const copyDlg = ref({ visible: false, source: null, name: '', periods: [],
+                      busy: false })
 const stationForm = ref({})
 const editBase = ref(false)
 const baseForm = ref({})
@@ -1984,7 +1978,6 @@ const baseRange = ref([])
 const guardShift = useCloseGuard(() => groupForm.value)
 const guardAttached = useCloseGuard(() => attForm.value)
 const guardPosition = useCloseGuard(() => [stationForm.value, positionDlg.value.copyFrom, positionDlg.value.syncSame])
-const guardSlot = useCloseGuard(() => ({ ...slotDlg.value, visible: 0, busy: 0, role: 0 }))
 const guardNotify = useCloseGuard(() => notifyForm.value)
 const guardBase = useCloseGuard(() => [baseForm.value, baseRange.value])
 const guardApprove = useCloseGuard(() => approveDlg.value.deadline)
@@ -1992,17 +1985,18 @@ const guardLock = useCloseGuard(() => [lockDlg.value.names, lockDlg.value.note])
 const guardSubmit = useCloseGuard(() => [submitDlg.value.deptId, submitDlg.value.note, submitDlg.value.autoPublish])
 const guardReopen = useCloseGuard(() => reopenDlg.value.regEnd)
 const guardResolve = useCloseGuard(() => [resolveDlg.value.hours, resolveDlg.value.reply])
-const guardCopyPos = useCloseGuard(() => [copyPosDlg.value.positionIds, copyPosDlg.value.targetIds])
+const guardCopy = useCloseGuard(() => [copyDlg.value.name, copyDlg.value.periods])
 const gdVisible = ref(false)
 const gdData = ref(null)
 const sdVisible = ref(false)
 const sdData = ref(null)
-const sdGroupName = ref('')
+// 分配岗位是哪一批统一分配下的；普通岗位没有「所属」，这里是空串
+const sdWhere = ref('')
 
 function showGroupDetail(g) { gdData.value = g; gdVisible.value = true }
-function showStationDetail(g, s) {
-  sdData.value = s
-  sdGroupName.value = `${g.name}（${g.time_text}）`
+function showStationDetail(p, where = '') {
+  sdData.value = p
+  sdWhere.value = where
   sdVisible.value = true
 }
 
@@ -2057,40 +2051,40 @@ const regClosed = computed(
 const isOver = computed(
   () => ['finished', 'vb_pending', 'completed'].includes(act.value?.status))
 
-function unassignedHint(g) {
-  if (g.mode === 'pick') {
-    return '这些人报了名却没有岗位（岗位被删或管理员补录）；到「志愿者管理」手动调岗'
-  }
-  return regClosed.value
-    ? '报名已截止，这些人还在待分配；到「志愿者管理」一键分配或导入排班'
-    : '本场次报名只锁时段，截止后再分配岗位'
-}
+const unassignedHint = computed(() => (regClosed.value
+  ? '报名已截止，这些人还在待分配；到「志愿者管理」一键分配或导入排班'
+  : '报名时只锁时段，截止后再分配岗位'))
 
-// 「截止后统一分配」场次里的「待分配」不是岗位，是装还没安排的人的地方
+// 统一分配里的「待分配」不是岗位，是装还没安排的人的地方
 const realPositions = g => g.positions.filter(p => !p.is_placeholder)
 
-// 岗位设置页上的红色感叹号：这里列出的都是「不处理就会出事」的场次。
-// assign 场次报名期没有岗位是设计如此，不报警；截止后还没建、还有人没分才是漏排。
-const treeAlerts = computed(() => shifts.value.flatMap(g => {
-  const real = realPositions(g)
-  const alert = text => [{ id: g.id, name: g.name, text }]
-  if (g.mode === 'pick') {
-    if (!real.length) return alert('还没有岗位，学生无法报名')
-    return g.unassigned_count
-      ? alert(`还有 ${g.unassigned_count} 人没有岗位，到「志愿者管理」调岗`)
-      : []
+// 岗位设置页上的红色感叹号：这里列出的都是「不处理就会出事」的地方。
+// 统一分配在报名期没有岗位是设计如此，不报警；截止后还没建、还有人没分才是漏排。
+const treeAlerts = computed(() => {
+  if (!posts.value.length && !assignShifts.value.length) {
+    return [{ id: 'empty', name: '还没有岗位', text: '学生无法报名，点「新建岗位」添加' }]
   }
-  if (!regClosed.value) return []
-  if (!real.length) {
-    return alert('报名已截止，还没建岗位。在本场次下建好岗位，再到「志愿者管理」一键分配或导入排班。')
-  }
-  if (!g.unassigned_count) return []
-  const room = real.reduce((n, p) => n + Math.max(0, p.quota - p.enrolled), 0)
-  return alert(`还有 ${g.unassigned_count} 人在待分配`
-    + (room < g.unassigned_count
-       ? `，而各岗位空位合计只有 ${room} 个——先加岗位或名额再分配。`
-       : '，到「志愿者管理」一键分配或导入排班。'))
-}))
+  return shifts.value.flatMap(g => {
+    const real = realPositions(g)
+    const alert = text => [{ id: g.id, name: g.name, text }]
+    if (!g.needs_assign) {
+      // 普通岗位一岗一场，岗位不会缺；缺的是「人报了名却没落在岗位上」
+      return g.unassigned_count
+        ? alert(`有 ${g.unassigned_count} 人报了名却没有岗位，到「志愿者管理」调岗`)
+        : []
+    }
+    if (!regClosed.value) return []
+    if (!real.length) {
+      return alert('报名已截止，还没建岗位。在这批统一分配下建好岗位，再到「志愿者管理」一键分配或导入排班。')
+    }
+    if (!g.unassigned_count) return []
+    const room = real.reduce((n, p) => n + Math.max(0, p.quota - p.enrolled), 0)
+    return alert(`还有 ${g.unassigned_count} 人在待分配`
+      + (room < g.unassigned_count
+         ? `，而各岗位空位合计只有 ${room} 个——先加岗位或名额再分配。`
+         : '，到「志愿者管理」一键分配或导入排班。'))
+  })
+})
 
 // 手动补时长时要认得出人：同名同姓靠学号，排在哪儿靠场次与岗位。
 // 一个人报了多个场次也只出现一次，把几段拼在同一行。
@@ -2210,80 +2204,41 @@ const allShifts = computed(() => [
     positions: [] })),
 ])
 
-// —— 按岗位看 ——
-const VIEW_KEY = 'yvruc_tree_view'
-function readView() {
-  try { return localStorage.getItem(VIEW_KEY) === 'role' ? 'role' : 'shift' } catch { return 'shift' }
-}
-const treeView = ref(readView())
-watch(treeView, v => {
-  try { localStorage.setItem(VIEW_KEY, v) } catch { /* 存不了就每次默认按场次看 */ }
-})
-/** 同名岗位合成一个「岗位」，列它的各个时段。占位岗位不是岗位，不算 */
+// —— 岗位清单 ——
+/** 普通岗位：各自带一个场次（一岗一场），平铺成一条条岗位。
+ *
+ * 场次按开始时间排好了（见活动详情接口），所以这份清单就是按第一个时段的
+ * 开始时间排的。带着 g 是为了「有人报了名却没落在岗位上」那个计数——它算在
+ * 场次那一层；岗位自己的时段、计时、暂停与锁定状态都在 p.shift 上。
+ */
+const posts = computed(() => shifts.value
+  .filter(g => !g.needs_assign)
+  .flatMap(g => g.positions.filter(p => !p.is_placeholder).map(p => ({ g, p }))))
+// 统一分配：先报名、截止后再分具体岗位的那几批
+const assignShifts = computed(() => shifts.value.filter(g => g.needs_assign))
+
+/** 同名的几条岗位合成一个「岗位」：培训/彩排按它一次圈上所有时段。 */
 const roles = computed(() => {
   const by = new Map()
-  for (const g of shifts.value) {
-    for (const p of g.positions) {
-      if (p.is_placeholder) continue
-      if (!by.has(p.name)) by.set(p.name, { name: p.name, slots: [], quota: 0, needs_leader: false })
-      const r = by.get(p.name)
-      r.slots.push({ g, p })
-      r.quota += p.quota
-      r.needs_leader ||= p.needs_leader
-    }
+  for (const { g, p } of posts.value) {
+    if (!by.has(p.name)) by.set(p.name, { name: p.name, slots: [] })
+    by.get(p.name).slots.push({ g, p })
   }
-  for (const r of by.values()) r.slots.sort((a, b) => a.g.start_time.localeCompare(b.g.start_time))
   return [...by.values()]
 })
-const trainingsOf = r => (act.value?.trainings || []).filter(t => !t.applies_to_positions.length
-  || r.slots.some(x => t.applies_to_positions.includes(x.p.id)))
+/** 这条岗位的人要去的培训/彩排：圈了它的，加上不圈岗位的（全体都去） */
+const attachedOf = p => (act.value?.trainings || [])
+  .filter(t => !t.applies_to_positions.length
+    || t.applies_to_positions.includes(p.id))
 
-const slotDlg = ref({ visible: false, role: null, mode: 'existing', shiftId: '',
-                      name: '', periods: [{ start_time: '', end_time: '' }],
-                      busy: false })
-// 能放进去的场次：还没有这个岗位的服务场次
-const slotTargets = computed(() => (slotDlg.value.role
-  ? shifts.value.filter(g => !slotDlg.value.role.slots.some(x => x.g.id === g.id)) : []))
-function openAddSlot(r) {
-  slotDlg.value = { visible: true, role: r, mode: 'existing', shiftId: '',
-                    name: r.name, periods: [emptyPeriod()], busy: false }
-  if (!slotTargets.value.length) slotDlg.value.mode = 'new'
-}
-/** 改岗位信息：打开第一个时段的表单，默认勾上「同时修改其他时段」 */
-function editRole(r) {
-  openStation(r.slots[0].p, r.slots[0].g)
-  positionDlg.value.syncSame = true
-}
-async function saveSlot() {
-  const d = slotDlg.value
-  let shiftId = d.shiftId
-  if (d.mode === 'existing' && !shiftId) return ElMessage.warning('请选择场次')
-  if (d.mode === 'new') {
-    if (!d.name.trim()) return ElMessage.warning('请填写场次名')
-    const bad = badPeriods(d.periods)
-    if (bad) return ElMessage.warning(bad)
-    d.busy = true
-    try {
-      shiftId = (await api.post(`/api/staff/activities/${activityId}/shifts`, {
-        name: d.name.trim(), mode: 'pick', capacity: 0,
-        periods: d.periods })).id
-      await loadAll()
-    } finally { d.busy = false }
-  }
-  const src = d.role.slots[0]
-  d.visible = false
-  // 走「复制岗位」那条路：表单照原岗位填好，名字不加「副本」
-  openStation(src.p, shifts.value.find(g => g.id === shiftId))
-  positionDlg.value.editing = null
-  positionDlg.value.copyFrom = src.p.id
-}
-
-// 同名岗位：改一个时段时可以顺手改其他时段（名额各自保留）
+// 同名的其他岗位：改一条时可以顺手改它们（名额与时段各自保留）。
+// 普通岗位与分配岗位各在各自的池子里找，两边走的不是同一组接口
 const sameNameOthers = computed(() => {
   const ed = positionDlg.value.editing
   if (!ed) return []
-  return shifts.value.flatMap(g => g.positions)
-    .filter(p => !p.is_placeholder && p.name === ed.name && p.id !== ed.id)
+  const pool = isPost.value ? posts.value.map(x => x.p)
+    : assignShifts.value.flatMap(g => g.positions)
+  return pool.filter(p => !p.is_placeholder && p.name === ed.name && p.id !== ed.id)
 })
 // 有候补转正待本人确认的场次：页签上的叹号看所有场次，不随下拉框变；下拉框里标出是哪几场
 const promoShiftIds = computed(() => new Set(shifts.value
@@ -2292,7 +2247,13 @@ const promoShiftIds = computed(() => new Set(shifts.value
 // 已经确认下来的时长条数（手动补录的也在各自那一笔里）：有账才谈得上核准
 const confirmedCount = computed(() => hours.value.filter(h => h.confirmed).length)
 
-// —— 场次 CRUD ——
+// —— 时段 ——
+// PeriodEditor 下面那句说明：一条岗位的几个时段是「同一批人全部要来」，
+// 这一点要在填的时候就说清楚，不然会被当成「几个班次任选其一」
+const POST_PERIOD_TIP = '报名这个岗位的人，下面每个时段都要来。'
+  + '不同时段可以换人的，请分成几条岗位（可用复制）。'
+const ASSIGN_PERIOD_TIP = '报名这一批的人，下面每个时段都要来；'
+  + '志愿时长按实际签到签退计算。'
 const emptyPeriod = () => ({ start_time: '', end_time: '' })
 const periodCopy = p => ({ start_time: p.start_time, end_time: p.end_time })
 
@@ -2308,12 +2269,13 @@ function badPeriods(list) {
   return ''
 }
 
+/** 新建 / 编辑一批「统一分配」。普通岗位不走这里，见 openPost。 */
 function openShift(g) {
   shiftDlg.value.editing = g || null
   groupForm.value = g ? {
     name: g.name,
     periods: (g.periods || [emptyPeriod()]).map(periodCopy),
-    capacity: g.capacity, mode: g.mode || 'pick', note: g.note,
+    capacity: g.capacity, note: g.note,
     waitlist_quota: g.waitlist_quota ?? 3,
     lock_hours: g.lock_hours ?? 12,
     flexible_time: !!g.flexible_time,
@@ -2321,33 +2283,27 @@ function openShift(g) {
     campusReq: g.requirement_tags?.校区 || [],
     stageReq: g.requirement_tags?.学段 || [],
   } : { name: '', periods: [emptyPeriod()], capacity: 10, note: '',
-        mode: act.value.recruit_mode === 'screened' ? 'assign' : 'pick',   // 筛选活动多半先不定岗
-        waitlist_quota: 3, lock_hours: 12, flexible_time: false, campusReq: [], stageReq: [] }
+        waitlist_quota: 3, lock_hours: 12, flexible_time: false,
+        hours_mode: 'checkin', campusReq: [], stageReq: [] }
   shiftDlg.value.visible = true
 }
 const screened = computed(() => act.value?.recruit_mode === 'screened')
-// 时间灵活的场次一人可以签好几次到，「按场次时长固定计」会把每次都算成整场
+// 时间灵活时一人可以签好几次到，「按时段总长固定计」会把每次都算成一整场
 const flexibleFixed = computed(() => groupForm.value.flexible_time
   && groupForm.value.hours_mode === 'fixed')
-/** 切模式只在一个人都没报时允许（后端同样拦）：两种场次的人记在不同的账上，
- *  有人之后再切，要么作废大家选好的岗位，要么让还没安排的人无处可放。 */
-const modeSwitchCost = computed(() => {
-  const g = shiftDlg.value.editing
-  if (!g || g.mode === groupForm.value.mode) return ''
-  return g.enrolled || g.waitlist_count
-    ? '本场次已有人报名，不能再切换岗位模式；如确需调整，请新建场次。'
-    : ''
-})
-
+const postFlexibleFixed = computed(() => stationForm.value.flexible_time
+  && stationForm.value.hours_mode === 'fixed')
+/** 保存一批统一分配。 */
 async function saveShift() {
   const f = groupForm.value
-  if (!f.name?.trim()) return ElMessage.warning('请填写场次名称')
+  if (!f.name?.trim()) return ElMessage.warning('请填写名称')
   const bad = badPeriods(f.periods)
   if (bad) return ElMessage.warning(bad)
   savingGroup.value = true
   try {
     const body = {
-      name: f.name, capacity: f.capacity, mode: f.mode, note: f.note,
+      // 这个对话框只管统一分配；分工清楚的直接建岗位（岗位自带时段）
+      name: f.name, capacity: f.capacity, mode: 'assign', note: f.note,
       waitlist_quota: f.waitlist_quota ?? 3, lock_hours: f.lock_hours ?? 12,
       flexible_time: !!f.flexible_time,
       ...(flexibleFixed.value ? { hours_mode: 'checkin' } : {}),
@@ -2385,22 +2341,26 @@ async function delShift(g) {
   loadAll()
 }
 
-// —— 岗位批量复制 ——
-function openCopyPositions(g) {
-  if (!g.positions.length) return ElMessage.warning('该场次下还没有岗位')
-  copyPosDlg.value = { visible: true, source: g, positionIds: [],
-                       targetIds: [], busy: false }
+// —— 复制岗位 ——
+/** 复制一条普通岗位到另一个时段：一条岗位的几个时段是同一批人全部要来，
+ *  要换人就复制成另一条岗位，这是那条快捷方式。 */
+function openCopyPost(p) {
+  copyDlg.value = { visible: true, source: p, name: p.name,
+                    periods: (p.shift.periods || []).map(periodCopy), busy: false }
 }
 
-async function doCopyPositions() {
-  const d = copyPosDlg.value
-  if (!d.targetIds.length) return ElMessage.warning('请选择至少一个目标场次')
+async function saveCopyPost() {
+  const d = copyDlg.value
+  if (!d.name.trim()) return ElMessage.warning('请填写岗位名称')
+  const bad = badPeriods(d.periods)
+  if (bad) return ElMessage.warning(bad)
   d.busy = true
   try {
-    const r = await api.post(`/api/staff/shifts/${d.source.id}/positions/copy`,
-      { position_ids: d.positionIds, target_shift_ids: d.targetIds })
-    ElMessage.success(`已复制 ${r.copied} 个岗位`
-      + (r.skipped.length ? `，同名跳过 ${r.skipped.length} 个` : ''))
+    const r = await api.post(`/api/staff/posts/${d.source.id}/copy`,
+                             { name: d.name.trim(), periods: d.periods })
+    ElMessage.success(`已复制出岗位「${d.name.trim()}」`)
+    // 同组岗位时段不一致：照常保存，提醒一句组长可能顾不全
+    if (r.warning) ElMessage.warning(r.warning)
     d.visible = false
     loadAll()
   } finally { d.busy = false }
@@ -2423,16 +2383,20 @@ async function onMaterialChanged() {
   if (id) positionDlg.value.editing = findPosition(id)
 }
 
-// —— 培训 / 彩排 ——
+// —— 时长认定 ——
 const HOURS_HINT = {
-  fixed: '志愿者扫码签到，不要求签退，时长直接按本场时长计。',
+  fixed: '志愿者扫码签到，不要求签退，时长直接按服务时段的总长计。',
   checkin: '按签到签退时间记时长。',
   none: '不计志愿时长，不建议选择。',
 }
+// 列表与详情里只写短名，长说明在上面
+const HOURS_LABEL = { fixed: '固定计时', checkin: '扫码计时', none: '不计时长' }
+
+// —— 培训 / 彩排 ——
 const attDlg = ref({ visible: false, editing: null, busy: false })
 const attForm = ref({})
 
-// 培训对话框里「按岗位勾上所有时段」
+// 培训对话框里「按岗位勾上同名岗位的所有时段」
 const roleChecked = r => r.slots.every(x => attForm.value.applies_to_positions?.includes(x.p.id))
 function toggleRole(r) {
   const ids = r.slots.map(x => x.p.id)
@@ -2556,17 +2520,19 @@ async function copyPoster() {
 
 const materialMgr = ref(null)
 
-/** 暂停 / 恢复一个场次或岗位的报名。暂停期间名单不动：不收新报名，候补也不顶上，
- *  恢复时按候补顺序补齐空位 */
-async function togglePause(kind, item) {
-  const paused = !item.enroll_paused
+/** 暂停 / 恢复报名。暂停期间名单不动：不收新报名，候补也不顶上，
+ *  恢复时按候补顺序补齐空位。
+ *
+ *  kind 决定调哪组接口：posts 是普通岗位（开关落在它自己那一场上，状态看
+ *  p.shift），shifts 是一批统一分配，positions 是统一分配下的分配岗位。 */
+async function togglePause(kind, item, paused) {
   const d = await api.post(`/api/staff/${kind}/${item.id}/pause`, { paused })
   reopenedMessage(d, paused ? `已暂停「${item.name}」的报名，期间候补不会顶上`
                             : `已恢复「${item.name}」的报名`)
   loadAll()
 }
 
-/** 锁定 / 解锁一个场次或岗位的名单。锁定前说清楚它意味着什么 */
+/** 锁定 / 解锁名单，kind 同 togglePause。锁定前说清楚它意味着什么 */
 async function toggleLock(kind, item, locked) {
   if (locked) {
     try {
@@ -2586,26 +2552,72 @@ function reopenedMessage(d, done) {
   else ElMessage.success(d.promoted ? `${done}，${d.promoted} 位候补已转为待确认` : done)
 }
 
+// 整个活动此刻是不是都停着、都锁着：按钮上写「暂停全部」还是「恢复全部」看它
+const allPaused = computed(() => shifts.value.length > 0
+  && shifts.value.every(g => g.enroll_paused))
+const allLocked = computed(() => shifts.value.length > 0
+  && shifts.value.every(g => g.locked))
+
+/** 一次暂停 / 恢复全部岗位的报名。调整安排时要的是整个活动先停下来，
+ *  一个一个点既慢又容易漏掉一个，漏掉的那一个还在收人。 */
+async function toggleAllPause() {
+  const paused = !allPaused.value
+  const d = await api.post(`/api/staff/activities/${activityId}/pause-all`,
+                           { paused })
+  reopenedMessage(d, paused ? `已暂停全部报名（${d.shifts} 个），期间候补不会顶上`
+                            : `已恢复全部报名（${d.shifts} 个）`)
+  loadAll()
+}
+
+/** 一次锁定 / 解锁全部岗位的名单，口径同单个岗位的锁定 */
+async function toggleAllLock() {
+  const locked = !allLocked.value
+  const d = await api.post(`/api/staff/activities/${activityId}/lock-all`,
+                           { locked })
+  reopenedMessage(d, locked ? `已锁定全部名单（${d.shifts} 个）`
+                            : `已解锁全部名单（${d.shifts} 个）`)
+  loadAll()
+}
+
 /** 「开放选岗」按钮为什么点不了；空串 = 可以点。候补这些页面上数不全的，交给后端判 */
 function openPickBlock(g) {
   if (isOver.value) return '活动已结束'
-  if (!realPositions(g).length) return '还没建岗位：先在本场次下建好岗位'
+  const real = realPositions(g)
+  if (!real.length) return '还没建岗位：先在这批统一分配下建好岗位'
+  if (real.length > 1) {
+    return `这里有 ${real.length} 个岗位，转成普通岗位会让它们共用一份时段与名单；`
+      + '要各自招人请按岗位分别新建（各带自己的时段）'
+  }
   if (g.unassigned_count) {
     return `待分配里还有 ${g.unassigned_count} 人，先一键分配或手动调岗`
   }
   return ''
 }
 
-/** 截止后统一分配的场次排完班，转成报名即选岗位，剩余名额让大家自己选 */
+/** 统一分配排完班，转成那一条普通岗位，剩余名额让新来的人直接报 */
 async function openPick(g) {
   await api.post(`/api/staff/shifts/${g.id}/open-pick`)
   ElMessage.success(`「${g.name}」已开放选岗，新报名的人按岗位名额自选`)
   loadAll()
 }
 
-function openStation(st, g) {
-  positionDlg.value = { visible: true, editing: st, groupId: g.id, copyFrom: '', syncSame: false }
-  stationForm.value = st ? {
+// 岗位表单的空白一份：普通岗位还要填时段与计时，分配岗位用不到那几项
+const emptyStation = () => ({
+  name: '', location: '', quota: 2, waitlist_quota: 3, needs_leader: false,
+  leader_task: '',
+  attire: 'none', attire_note: '',
+  pay_optional: false, pay_note: '',
+  group_name: '',
+  genderReq: '', collegeReq: [], campusReq: [], stageReq: [],
+  service_task: '', position_requirement: '', training_note: '',
+  periods: [emptyPeriod()], lock_hours: 12, hours_mode: 'checkin',
+  flexible_time: false, note: '',
+})
+
+/** 把一个岗位填进表单。时段、计时、自动锁定与备注都在它所属的那一场上。 */
+function stationOf(st) {
+  const g = st.shift || {}
+  return {
     name: st.name, location: st.location, quota: st.quota,
     waitlist_quota: st.waitlist_quota, needs_leader: st.needs_leader,
     leader_task: st.leader_task || '',
@@ -2614,27 +2626,38 @@ function openStation(st, g) {
     group_name: st.group_name || '',
     genderReq: st.requirement_tags?.性别?.[0] || '',   // 存的是 ["女"]，下拉是单选
     collegeReq: st.requirement_tags?.学院 || [],
+    campusReq: st.requirement_tags?.校区 || [],
+    stageReq: st.requirement_tags?.学段 || [],
     service_task: st.service_task, position_requirement: st.position_requirement || '',
     training_note: st.training_note,
-  } : {
-    name: '', location: '', quota: 2, waitlist_quota: 3, needs_leader: false,
-    leader_task: '',
-    attire: 'none', attire_note: '',
-    pay_optional: false, pay_note: '',
-    group_name: '',
-    genderReq: '', collegeReq: [],
-    service_task: '', position_requirement: '', training_note: '',
+    periods: (g.periods?.length ? g.periods : [emptyPeriod()]).map(periodCopy),
+    lock_hours: g.lock_hours ?? 12, hours_mode: g.hours_mode || 'checkin',
+    flexible_time: !!g.flexible_time, note: g.note || '',
   }
 }
-/** 复制一个岗位：把字段预填进「新建岗位」弹窗，改完再保存。
+
+/** 新建 / 编辑一条普通岗位：岗位和它的服务时段在同一个对话框里填完。 */
+function openPost(st) {
+  positionDlg.value = { visible: true, editing: st, kind: 'post', groupId: '',
+                        copyFrom: '', syncSame: false }
+  stationForm.value = st ? stationOf(st) : emptyStation()
+}
+
+/** 新建 / 编辑统一分配下的一个分配岗位：时段是整批的，不在这里填。 */
+function openStation(st, g) {
+  positionDlg.value = { visible: true, editing: st, kind: 'slot', groupId: g.id,
+                        copyFrom: '', syncSame: false }
+  stationForm.value = st ? stationOf(st) : emptyStation()
+}
+/** 复制一个分配岗位：把字段预填进「添加分配岗位」弹窗，改完再保存。
  *
- * 不直接落库生成副本：同场次不允许重名，而且刚复制出来的那份多半要改，
+ * 不直接落库生成副本：同一批里不允许重名，而且刚复制出来的那份多半要改，
  * 先落库等于在名单上先摆一个半成品。
  */
 function copyStation(st, g) {
-  openStation(st, g)
-  positionDlg.value.editing = null
+  openStation(null, g)
   positionDlg.value.copyFrom = st.id      // 学习材料由后端跟着带过来
+  stationForm.value = stationOf(st)
   stationForm.value.name = `${st.name} 副本`
 }
 
@@ -2647,9 +2670,14 @@ async function saveStation() {
   }
   if (f.pay_optional && !f.pay_note?.trim()) return ElMessage.warning('请填写劳务备注')
   if (f.needs_leader && !f.leader_task?.trim()) return ElMessage.warning('请填写组长任务')
+  const post = isPost.value
+  if (post) {
+    const bad = badPeriods(f.periods)
+    if (bad) return ElMessage.warning(bad)
+  }
   savingStation.value = true
   try {
-    const tags = {}
+    const tags = scopeTags(f.campusReq, f.stageReq)
     if (f.genderReq) tags['性别'] = f.genderReq
     if (f.collegeReq?.length) tags['学院'] = f.collegeReq
     const body = {
@@ -2663,27 +2691,38 @@ async function saveStation() {
       position_requirement: f.position_requirement || '',
       training_note: f.training_note,
     }
-    if (positionDlg.value.editing) {
-      const d = await api.patch(
-        `/api/staff/positions/${positionDlg.value.editing.id}`, body)
+    if (post) {
+      Object.assign(body, {
+        periods: f.periods, lock_hours: f.lock_hours ?? 12,
+        // 时间灵活的岗位一人签好几轮到，固定计时会把每轮都算成一整场
+        hours_mode: postFlexibleFixed.value ? 'checkin' : f.hours_mode,
+        flexible_time: !!f.flexible_time, note: f.note || '',
+      })
+    }
+    const group = post ? 'posts' : 'positions'
+    const ed = positionDlg.value.editing
+    if (ed) {
+      const d = await api.patch(`/api/staff/${group}/${ed.id}`, body)
       if (positionDlg.value.syncSame) {
-        const shared = { ...body }        // 名额、候补名额是各时段自己的
+        const shared = { ...body }        // 名额、候补与时段是各条岗位自己的
         delete shared.quota
         delete shared.waitlist_quota
+        delete shared.periods
         for (const o of sameNameOthers.value) {
-          await api.patch(`/api/staff/positions/${o.id}`, shared)
+          await api.patch(`/api/staff/${group}/${o.id}`, shared)
         }
       }
       ElMessage.success(positionDlg.value.syncSame
-        ? `已保存，其他 ${sameNameOthers.value.length} 个时段一并修改` : '已保存')
+        ? `已保存，同名的其他 ${sameNameOthers.value.length} 条岗位一并修改` : '已保存')
       // 同组岗位时段不一致：保存照常，提醒一句组长可能顾不全
       if (d.warning) ElMessage.warning(d.warning)
       positionDlg.value.visible = false
       await loadAll()
     } else {
-      const d = await api.post(
-        `/api/staff/shifts/${positionDlg.value.groupId}/positions`,
-        { ...body, copy_from: positionDlg.value.copyFrom || '' })
+      const d = post
+        ? await api.post(`/api/staff/activities/${activityId}/posts`, body)
+        : await api.post(`/api/staff/shifts/${positionDlg.value.groupId}/positions`,
+                         { ...body, copy_from: positionDlg.value.copyFrom || '' })
       // 建出岗位后才有 id 可挂，这时把弹窗里攒的材料一并传上去
       const failed = await materialMgr.value?.flush(d.id)
       if (failed) {
@@ -2699,6 +2738,27 @@ async function saveStation() {
     savingStation.value = false
   }
 }
+
+/** 删一条普通岗位，连它自己那一场一起删。有人报了名要再确认一次。 */
+async function delPost(st) {
+  try {
+    await api.del(`/api/staff/posts/${st.id}`, { silent: true })
+  } catch (e) {
+    if (e.status !== 409 || !String(e.message).includes('需强制执行')) {
+      ElMessage.error(e.message || '删除失败')
+      return
+    }
+    try {
+      await ElMessageBox.confirm(e.message + '，是否强制删除？', '确认', { type: 'warning' })
+    } catch {
+      return
+    }
+    await api.del(`/api/staff/posts/${st.id}?force=1`)
+  }
+  ElMessage.success('已删除')
+  loadAll()
+}
+
 async function delStation(st) {
   await api.del(`/api/staff/positions/${st.id}`)
   ElMessage.success('已删除')
@@ -2864,7 +2924,7 @@ async function loadApproval() {
 }
 
 async function openSubmit() {
-  // 先验结构再开窗：让人选完部门、写完备注才被告知「场次没岗位」，等于白填
+  // 先验结构再开窗：让人选完部门、写完备注才被告知「还没有岗位」，等于白填
   try {
     await api.get(`/api/staff/activities/${activityId}/submit-check`)
   } catch { return }        // 错误提示由 api 层统一弹出
@@ -3286,11 +3346,6 @@ function toISO(v) {
 .notify-file { display: flex; align-items: center; gap: 8px; line-height: 24px; }
 /* 手机版时长卡片里的一行：标签 + 控件 */
 .mh-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
-/* 按岗位看：一个时段一行 */
-.slot-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-            padding: 8px 0; border-top: 1px dashed #eceef1; }
-.slot-time { min-width: 0; flex: 1 1 200px; }
-.slot-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 /* 培训与彩排：一场一行 */
 .att-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
            padding: 8px 0; border-bottom: 1px dashed #eceef1; }
@@ -3316,7 +3371,6 @@ function toISO(v) {
 .hd-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .hd-meta { margin-top: 4px; }
 
-.needs-positions { border-color: var(--el-color-danger) !important; }
 .group-card { border:1px solid #eceef1; border-radius:4px; padding:12px 14px; margin-bottom:12px; background:#fff; }
 .g-head { display:flex; gap:12px; align-items:center; margin-bottom:8px; font-size:13.5px; flex-wrap:wrap;}
 .side-stack { display: flex; flex-direction: column; gap: 12px; }
