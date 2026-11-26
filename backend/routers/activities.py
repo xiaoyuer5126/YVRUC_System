@@ -425,7 +425,7 @@ def _check_eligibility(db: OrmSession, user: User, act: Activity,
     if t > deadline:
         raise HTTPException(
             409, "报名已截止" if deadline == act.reg_end else
-            f"「{g.volunteer_label()}」已于 {g.start_time:%Y-%m-%d %H:%M} 开始，不再接受报名")
+            f"「{g.volunteer_label()}」已于 {g.start_time:%Y-%m-%d %H:%M} 开场，不再接受报名")
 
     # 老师类型不参与报名（无信用分/时长等个人数据）
     if user.user_type == "teacher":
@@ -523,7 +523,7 @@ def _check_time_conflicts(rows, g: Shift, attached: list[Shift]) -> None:
     if clashes:
         clashes = logic.dedupe_conflicts(clashes)
         raise logic.conflict_error(
-            f"时间与您已报名的安排重叠{where}："
+            f"时间与您已报名的安排冲突{where}："
             f"{logic.conflict_message(clashes, g.activity_id)}", clashes)
 
 
