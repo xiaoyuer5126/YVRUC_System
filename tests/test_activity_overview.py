@@ -191,3 +191,59 @@ def test_概况的条数不随人数涨(client, admin, db, take_student):
         == sql_of(client, admin, path.format(many))
     d = client.get(path.format(many), headers=admin).json()
     assert d["enroll"]["count"] == 16 and d["checkin"]["rate"] == 1
+
+
+def test_概览按岗位合卡_同名岗位按时段分行(client, admin, db, take_student):
+    """同名岗位的几个时段合成一张卡，卡里一个时段一行；统一分配自成一张卡。"""
+    u1, u2, u3, u4, u5 = (student_row(db, take_student()) for _ in range(5))
+    act = _activity(db)
+    day = next(_days)
+    # 引导：一个已开始的时段 + 一个还没开始的时段，各是一个看不见的场次
+    s1 = _shift(db, act, "引导", now() - timedelta(hours=1), sort=0)
+    p1 = _pos(db, s1, "引导", 3)
+    s2 = _shift(db, act, "引导", now() + timedelta(days=day), sort=1)
+    p2 = _pos(db, s2, "引导", 1, enroll_paused=True)
+    s3 = _shift(db, act, "检录", now() + timedelta(days=day, hours=4), sort=2)
+    _pos(db, s3, "检录", 3)
+    s4 = _shift(db, act, "东门统一分配", now() + timedelta(days=day + 1),
+                mode="assign", sort=3)
+    holder = _pos(db, s4, "待分配", 4, is_placeholder=True, sort=-1)
+    _pos(db, s4, "机动", 2, sort=0)
+    _enr(db, act, s1, p1, u1)
+    _enr(db, act, s1, p1, u2)
+    _enr(db, act, s2, p2, u3)
+    _enr(db, act, s2, p2, u5, "cancelled", cancel_type="locked")
+    _enr(db, act, s4, holder, u4)
+    task = CheckinTask(id=uid("ct"), activity_id=act.id, shift_id=s1.id,
+                       period_id=s1.periods[0].id,
+                       token=uid("t")[-12:], created_by=u1.id)
+    db.add(task)
+    db.flush()
+    _checkin(db, act, s1, task, u1)              # 签了到没签退
+    db.commit()
+
+    d = client.get(f"/api/staff/activities/{act.id}/overview", headers=admin).json()
+    cards = d["cards"]
+    assert [(c["kind"], c["name"]) for c in cards] == [
+        ("position", "引导"), ("position", "检录"), ("assign", "东门统一分配")]
+    guide = cards[0]
+    assert [x["shift_id"] for x in guide["slots"]] == [s1.id, s2.id]
+    a, b = guide["slots"]
+    assert (a["enrolled"], a["capacity"], a["due"], a["arrived"], a["rate"],
+            a["not_checked_out"], a["full"], a["started"]) \
+        == (2, 3, 2, 1, 0.5, 1, False, True)
+    # 岗位暂停也算这个时段暂停；还没开始的时段不进签到的分母
+    assert (b["enrolled"], b["capacity"], b["full"], b["paused"], b["due"],
+            b["rate"], b["locked_quit"]) == (1, 1, True, True, 0, None, 1)
+    assert guide["total"] == {"enrolled": 3, "occupied": 3, "capacity": 4,
+                              "waitlist": 0, "due": 2, "arrived": 1, "rate": 0.5,
+                              "not_checked_out": 1, "locked_quit": 1,
+                              "full_slots": 1}
+    assert guide["full"] is False
+    pool = cards[2]
+    assert pool["unassigned"] == 1 and pool["total"]["capacity"] == 4
+    assert [p["name"] for p in pool["positions"]] == ["机动"]
+    # 卡片的数和全活动的合计对得上
+    assert sum(c["total"]["enrolled"] for c in cards) == d["enroll"]["count"]
+    assert sum(c["total"]["not_checked_out"] for c in cards) \
+        == d["checkin"]["not_checked_out"]

@@ -189,15 +189,16 @@ def preview(db: OrmSession, shift: Shift, *, continuity: bool = True) -> dict:
 def plan_from_workbook(db: OrmSession, shift: Shift, data: bytes) -> dict:
     """导入排班：读管理者在 Excel 里改好的排班表，拼成一份和试算同样结构的方案。
 
-    用的就是「导出排班表」那份文件：找这一场对应的工作表，按学号对人，「岗位」
-    列按名称对到本场次的岗位（写「待分配」就是放回待分配），「组长」列不空就是
-    设为组长。岗位留空的行不动。只调本场次已报名的人，不增不减人。
+    用的就是「导出排班表」那份文件：读「排班表」总表，按学号对人，只认这一场
+    的行（「时段」一格和这一场一样，或者空着），「岗位」列按名称对到本场次的
+    岗位（写「待分配」就是放回待分配），「组长」列不空就是设为组长。岗位留空的
+    行不动。只调本场次已报名的人，不增不减人。
     不落库：方案进分配面板给人过目、可改，确认后走 apply_plan，校验与留痕同一键分配。
     另外返回 errors（第几行、什么问题）与 leaders（要设为组长的报名 id）。
     """
     from io import BytesIO
     from openpyxl import load_workbook
-    from .exporter import roster_sheet_names
+    from .exporter import ROSTER_SHEET
 
     if not shift.needs_assign():
         raise ValueError(NOT_ASSIGN_SHIFT)
@@ -205,19 +206,22 @@ def plan_from_workbook(db: OrmSession, shift: Shift, data: bytes) -> dict:
         wb = load_workbook(BytesIO(data), read_only=True, data_only=True)
     except Exception:       # 坏文件、不是 xlsx：openpyxl 抛的异常五花八门
         raise ValueError("读不了这个文件，请上传「导出排班表」导出、改好的 .xlsx 文件")
-    name = roster_sheet_names(shift.activity)[shift.id]
-    if name in wb.sheetnames:
-        ws = wb[name]
+    if ROSTER_SHEET in wb.sheetnames:
+        ws = wb[ROSTER_SHEET]
     elif len(wb.worksheets) == 1:
         ws = wb.worksheets[0]
     else:
-        raise ValueError(f"文件里没有「{name}」这张工作表，请用「导出排班表」导出的文件修改")
+        raise ValueError(f"文件里没有「{ROSTER_SHEET}」这张工作表，请用「导出排班表」导出的文件修改")
     lines = ws.iter_rows(values_only=True)
     header = [str(c or "").strip() for c in next(lines, ())]
     if "学号" not in header or "岗位" not in header:
         raise ValueError(f"工作表「{ws.title}」里找不到「学号」「岗位」两列")
     col_sid, col_pos = header.index("学号"), header.index("岗位")
     col_leader = header.index("组长") if "组长" in header else None
+    # 总表里同一个人报的别的岗位也各占一行：时段对不上这一场的行不归这次导入。
+    # 同一活动里时段重叠的报名是拦着的，所以「学号 + 时段」认得出唯一一行
+    col_span = header.index("时段") if "时段" in header else None
+    span = shift.span_text()
 
     holder = shift.placeholder()
     by_name = {p.name: p for p in shift.real_positions()}
@@ -225,6 +229,12 @@ def plan_from_workbook(db: OrmSession, shift: Shift, data: bytes) -> dict:
             .join(User, Enrollment.user_id == User.id)
             .filter(Enrollment.shift_id == shift.id, Enrollment.status == "enrolled").all())
     enrolled = {u.student_id: (e, u) for e, u in rows}
+    # 同一时段的另一场统一分配里的人也在总表里，他们的行不是写错了，跳过不报
+    elsewhere = {sid for (sid,) in (
+        db.query(User.student_id).join(Enrollment, Enrollment.user_id == User.id)
+        .filter(Enrollment.activity_id == shift.activity_id,
+                Enrollment.shift_id != shift.id,
+                Enrollment.status == "enrolled").all())}
 
     def cell(line, col):
         v = line[col] if col is not None and col < len(line) else None
@@ -237,9 +247,11 @@ def plan_from_workbook(db: OrmSession, shift: Shift, data: bytes) -> dict:
         sid = cell(line, col_sid)
         if not sid:
             continue
+        if cell(line, col_span) not in ("", span):
+            continue
         if sid not in enrolled:
             # 表底「以下人员尚未分配岗位」那几行也有学号，岗位是空的：一并跳过
-            if cell(line, col_pos):
+            if cell(line, col_pos) and sid not in elsewhere:
                 errors.append({"row": no, "message": f"学号 {sid} 不在本场次的已报名名单里"})
             continue
         pos_name = cell(line, col_pos)
