@@ -1,13 +1,13 @@
 """演示数据种子。
 
-活动流程的各个阶段、三种招募方式、两种场次模式都有演示，日期全部相对
+活动流程的各个阶段、三种招募方式、两种报名方式都有演示，日期全部相对
 当前时间生成，保证任何一天跑起来都是"活的"：
-  · 校运动会开幕式（即选即得·报名中·报名即选岗位）——岗位满员→候补、
-    候补转正确认窗口（2小时倒计时）
+  · 校运动会开幕式（即选即得·报名中·报名即选岗位）——七个岗位各带自己的
+    时段，岗位满员→候补、候补转正确认窗口（2小时倒计时）
   · 图书馆图书整理周（即选即得·报名中·截止后统一分配）——报名都落在
     「待分配」，进后台建岗位后一键分配
-  · 校园开放日招生咨询（即选即得·报名中）——一个场次一个岗位的简单活动
-  · 校庆文艺晚会（已截止·签到进行中）——统一+分岗位签到码、实时大屏，
+  · 校园开放日招生咨询（即选即得·报名中）——只有一个岗位的简单活动
+  · 校庆文艺晚会（已截止·签到进行中）——三个岗位共用一张签到码、实时大屏，
     外加管理者手动补录与扣减的段
   · 社区敬老院陪伴服务（已完成）——时长已核准并锁定
   · 新生迎新周（报名后筛选·报名中）——报名问卷与意向场次
@@ -194,26 +194,37 @@ def main() -> None:
         spare = students[11]
         db.commit()
 
-        # ---------- 岗位助手（无时间：职责/地点/名额/要求） ----------
+        # ---------- 岗位助手（职责/地点/名额/要求） ----------
         # 服务地点/要求原文/培训内容都是必填，演示数据也要满足——
         # 否则后台一改岗位就被自己的校验拦下
         def stn(shift, name, loc, quota, tags=None,
                 note="服从现场安排，提前 15 分钟到岗",
                 train="到岗后由负责人统一讲解岗位职责与应急流程",
                 leader=False, waitlist=3, attire="none", attire_note=""):
+            # 需要组长就得写清他带队做什么（接口上这是必填，演示数据也要满足）
             p = Position(id=uid("p"), shift_id=shift.id, name=name,
                          location=loc, quota=quota, waitlist_quota=waitlist,
                          requirement_tags=tags or {}, service_task=note,
                          training_note=train, needs_leader=leader,
+                         leader_task=("带队到岗、清点人数，现场与负责人对接"
+                                      if leader else ""),
                          attire=attire, attire_note=attire_note)
             db.add(p)
             return p
 
-        def enr(user, act, group, days_ago, status="enrolled", position=None,
+        def post(act, name, loc, quota, *, start, end, sort, **kw) -> Position:
+            """一个普通岗位：自带一个只装它的场次，场次名与岗位名一致。"""
+            g = mk_shift(db, id=uid("g"), activity_id=act.id, name=name,
+                         start_time=start, end_time=end, mode="pick", sort=sort)
+            db.flush()
+            return stn(g, name, loc, quota, **kw)
+
+        def enr(user, act, position, days_ago, status="enrolled",
                 assigned=True, allow_reassign=None):
+            """报名一个岗位：场次就是这个岗位自己那一场。"""
             e = Enrollment(id=uid("enr"), activity_id=act.id,
-                           shift_id=group.id, user_id=user.id,
-                           position_id=position.id if position else None,
+                           shift_id=position.shift_id, user_id=user.id,
+                           position_id=position.id,
                            status=status, source="self",
                            # 约四分之一的人不接受调剂，分配面板上能看到提示
                            allow_reassign=(random.random() > 0.25
@@ -222,7 +233,7 @@ def main() -> None:
                            leader_willing=random.random() > 0.6,
                            joined_at=dt(days=-days_ago,
                                         minutes=random.randint(-50, 50)))
-            if status == "enrolled" and assigned and position:
+            if status == "enrolled" and assigned:
                 e.assigned_at = e.joined_at
             db.add(e)
             return e
@@ -242,31 +253,28 @@ def main() -> None:
                          created_by=wang.id, created_at=dt(days=-4))
         db.add(sport)
 
-        m1 = mk_shift(db, id=uid("g"), activity_id=sport.id, name="上午场",
-                      start_time=dt(days=3, base=t0.replace(hour=8)),
-                      end_time=dt(days=3, base=t0.replace(hour=12)),
-                      mode="pick", sort=0)
-        m2 = mk_shift(db, id=uid("g"), activity_id=sport.id, name="下午场",
-                      start_time=dt(days=3, base=t0.replace(hour=14)),
-                      end_time=dt(days=3, base=t0.replace(hour=17, minute=30)),
-                      mode="pick", sort=1)
-        db.add_all([m1, m2])
-        db.flush()
+        # 上午四个岗位、下午三个岗位，各带自己的时段（岗位自带时段，一岗一场）
+        am = {"start": dt(days=3, base=t0.replace(hour=8)),
+              "end": dt(days=3, base=t0.replace(hour=12))}
+        pm = {"start": dt(days=3, base=t0.replace(hour=14)),
+              "end": dt(days=3, base=t0.replace(hour=17, minute=30))}
 
-        s_gate = stn(m1, "东门引导", "校本部东门", 8, {},
-                     "熟悉校园路线，口齿清晰", "提前30分钟到东门集合培训",
-                     attire="own", attire_note="白色上衣、深色长裤、运动鞋")
-        s_check = stn(m1, "检录服务", "田径场检录处", 7, {},
-                      "负责运动员检录与号码布发放")
-        s_etiq = stn(m1, "颁奖礼仪", "主席台前区", 4,
-                     {"性别": "女"}, "颁奖环节礼仪志愿",
-                     "赛前一周 19:00 线上培训会议",
-                     attire="issued", attire_note="当天 8:00 在主席台后物资桌领取，散场归还")
-        s_med = stn(m1, "医疗辅助", "场地东侧医疗点", 4, {},
-                    "协助校医搬运物资、维持秩序", "需参加基础急救常识培训")
-        o_order = stn(m2, "秩序维护", "看台入口", 6)
-        o_gear = stn(m2, "器材协助", "器材室", 5)
-        o_final = stn(m2, "终点服务", "终点线", 5)
+        s_gate = post(sport, "东门引导", "校本部东门", 8, sort=0, **am,
+                      note="熟悉校园路线，口齿清晰",
+                      train="提前30分钟到东门集合培训",
+                      attire="own", attire_note="白色上衣、深色长裤、运动鞋")
+        s_check = post(sport, "检录服务", "田径场检录处", 7, sort=1, **am,
+                       note="负责运动员检录与号码布发放")
+        s_etiq = post(sport, "颁奖礼仪", "主席台前区", 4, sort=2, **am,
+                      tags={"性别": "女"}, note="颁奖环节礼仪志愿",
+                      train="赛前一周 19:00 线上培训会议", attire="issued",
+                      attire_note="当天 8:00 在主席台后物资桌领取，散场归还")
+        s_med = post(sport, "医疗辅助", "场地东侧医疗点", 4, sort=3, **am,
+                     note="协助校医搬运物资、维持秩序",
+                     train="需参加基础急救常识培训")
+        o_order = post(sport, "秩序维护", "看台入口", 6, sort=4, **pm)
+        o_gear = post(sport, "器材协助", "器材室", 5, sort=5, **pm)
+        o_final = post(sport, "终点服务", "终点线", 5, sort=6, **pm)
         db.flush()
 
         pool = students[:]
@@ -282,40 +290,39 @@ def main() -> None:
                 return u
             raise RuntimeError("演示人数不够了")
 
-        # 上午场：东门满8 / 检录 6（名额 7，下面那位锁定后退出空出 1 个）/
+        # 上午四个岗位：东门满8 / 检录 6（名额 7，下面那位锁定后退出空出 1 个）/
         # 礼仪3（女）/ 医疗2
         for _ in range(8):
-            enr(take(), sport, m1, 3, position=s_gate)
+            enr(take(), sport, s_gate, 3)
         for _ in range(6):
-            enr(take(), sport, m1, 2, position=s_check)
+            enr(take(), sport, s_check, 2)
         for _ in range(3):
-            enr(take(lambda u: u.gender == "女"), sport, m1, 2, position=s_etiq)
+            enr(take(lambda u: u.gender == "女"), sport, s_etiq, 2)
         for _ in range(2):
-            enr(take(lambda u: u.gender == "女"), sport, m1, 2, position=s_med)
+            enr(take(lambda u: u.gender == "女"), sport, s_med, 2)
         # 一名候补 + 一名转正待确认（都选了已满员的东门引导）
         wl_user = take()
-        enr(wl_user, sport, m1, 1, status="waitlisted", position=s_gate,
-            assigned=False)
+        enr(wl_user, sport, s_gate, 1, status="waitlisted", assigned=False)
         pc_user = take(lambda u: u.gender == "女")
-        e_pc = enr(pc_user, sport, m1, 1, status="pending_confirm",
-                   position=s_gate, assigned=False)
+        e_pc = enr(pc_user, sport, s_gate, 1, status="pending_confirm",
+                   assigned=False)
         e_pc.promoted_at = dt(hours=-1)
         e_pc.confirm_deadline = dt(hours=1)   # 演示：还有1小时确认窗口
 
         # 一名锁定后退出：扣分，空出的位子等管理者手动转正
         late_user = take()
-        late_enr = enr(late_user, sport, m1, 1, status="cancelled",
-                       position=s_check, assigned=False)
+        late_enr = enr(late_user, sport, s_check, 1, status="cancelled",
+                       assigned=False)
         late_enr.cancel_type = "locked"
         late_enr.cancelled_at = dt(hours=-3)
 
-        # 下午场 13人
+        # 下午三个岗位，共 13 人
         for _ in range(6):
-            enr(take(), sport, m2, 2, position=o_order)
+            enr(take(), sport, o_order, 2)
         for _ in range(4):
-            enr(take(), sport, m2, 2, position=o_gear)
+            enr(take(), sport, o_gear, 2)
         for _ in range(3):
-            enr(take(), sport, m2, 1, position=o_final)
+            enr(take(), sport, o_final, 1)
 
         # ---------- 活动2：图书整理周（报名中·截止后统一分配） ----------
         book = Activity(id=uid("act"), title="图书馆图书整理周·周六专场", organizer="图书馆",
@@ -367,11 +374,11 @@ def main() -> None:
                               joined_at=dt(days=-2, minutes=cnt * 7)))
             cnt += 1
 
-        # ---------- 活动3：招生咨询会（报名中·一个场次一个岗位） ----------
+        # ---------- 活动3：招生咨询会（报名中·只有一个岗位） ----------
         fair = Activity(id=uid("act"), title="校园开放日·招生咨询志愿讲解", organizer="本科生招生办公室",
                         recruit_mode="instant", cover_hue=150,
-                        intro="面向来访考生家长的咨询引导志愿服务。岗位简单，无需分岗位，"
-                              "报名即锁定时段。",
+                        intro="面向来访考生家长的咨询引导志愿服务。只有「校园讲解」一个岗位，"
+                              "报名即锁定它的时段。",
                         location="明德广场",
                         location_point={"lat": 39.96921, "lng": 116.30772},
                         contacts=[{"name": "张远航", "phone": "13950030000"}],
@@ -380,15 +387,12 @@ def main() -> None:
                         reg_end=dt(days=4), created_by=zhang.id,
                         created_at=dt(days=-2))
         db.add(fair)
-        f1 = mk_shift(db, id=uid("g"), activity_id=fair.id, name="下午讲解场",
-                      start_time=dt(days=5, base=t0.replace(hour=13)),
-                      end_time=dt(days=5, base=t0.replace(hour=17)),
-                      mode="pick", sort=0)
-        db.add(f1)
-        db.flush()
-        f1_pos = stn(f1, "校园讲解", "明德主楼北门", 10,
-                     note="带队讲解 2 条校园线路，需提前熟悉讲解词",
-                     train="讲解词与线路图见岗位材料", leader=True)
+        f1_pos = post(fair, "校园讲解", "明德主楼北门", 10, sort=0,
+                      start=dt(days=5, base=t0.replace(hour=13)),
+                      end=dt(days=5, base=t0.replace(hour=17)),
+                      note="带队讲解 2 条校园线路，需提前熟悉讲解词",
+                      train="讲解词与线路图见岗位材料", leader=True)
+        f1 = db.get(Shift, f1_pos.shift_id)
         db.flush()
         # 3 人同时报了图书整理周（时段重叠素材）；其余 4 人正常
         book_rows = db.query(Enrollment).filter(Enrollment.shift_id == b1.id).all()
@@ -421,47 +425,45 @@ def main() -> None:
                         status="closed", reg_start=dt(days=-6), reg_end=dt(days=-2),
                         created_by=zhang.id, created_at=dt(days=-7))
         db.add(gala)
-        c1 = mk_shift(db, id=uid("g"), activity_id=gala.id, name="晚会当日班",
-                      start_time=dt(base=t0.replace(hour=8, minute=0)),
-                      end_time=dt(base=t0.replace(hour=23, minute=30)),
-                      mode="pick", sort=0)
-        db.add(c1)
-        db.flush()
-        c_s1 = stn(c1, "嘉宾引导", "明德堂前厅", 4)
-        c_s2 = stn(c1, "后台秩序", "后台通道", 4)
-        c_s3 = stn(c1, "观众引导", "观众席入口", 4)
+        gala_day = {"start": dt(base=t0.replace(hour=8, minute=0)),
+                    "end": dt(base=t0.replace(hour=23, minute=30))}
+        c_s1 = post(gala, "嘉宾引导", "明德堂前厅", 4, sort=0, **gala_day)
+        c_s2 = post(gala, "后台秩序", "后台通道", 4, sort=1, **gala_day)
+        c_s3 = post(gala, "观众引导", "观众席入口", 4, sort=2, **gala_day)
         db.flush()
         gala_users = students[38:50]
         assigned_map = [c_s1] * 4 + [c_s2] * 4 + [c_s3] * 4
-        task_gala = CheckinTask(id=uid("tsk"), activity_id=gala.id, shift_id=c1.id,
-                                period_id=c1.periods[0].id,
-                                mode="shift", token="GALA01",
-                                valid_from=c1.start_time, valid_to=c1.end_time,
-                                active=True, created_by=wang.id)
-        db.add(task_gala)
+        # 三个岗位共用一张码：一行一格（场次, 时段, 岗位），共用一个 code_group，
+        # 扫码的人报了自己的岗位就记到他那一格（见 checkin.task_of_user）
+        gala_group = uid("cg")
+        gala_tasks = {}
+        for token, pos in (("GALA01", c_s1), ("GALA02", c_s2), ("GALA03", c_s3)):
+            g = db.get(Shift, pos.shift_id)
+            task = CheckinTask(id=uid("tsk"), activity_id=gala.id, shift_id=g.id,
+                               period_id=g.periods[0].id, position_id=pos.id,
+                               mode="position", token=token,
+                               code_group=gala_group,
+                               valid_from=g.start_time, valid_to=g.end_time,
+                               active=True, created_by=wang.id)
+            db.add(task)
+            gala_tasks[pos.id] = task
+        task_gala = gala_tasks[c_s1.id]
         db.flush()
         for i, (u, st_) in enumerate(zip(gala_users, assigned_map)):
             joined = dt(days=-5, minutes=i * 9)
+            shift = db.get(Shift, st_.shift_id)
             db.add(Enrollment(id=uid("enr"), activity_id=gala.id,
-                              shift_id=c1.id, user_id=u.id, status="enrolled",
+                              shift_id=shift.id, user_id=u.id, status="enrolled",
                               position_id=st_.id, assigned_at=joined,
                               joined_at=joined, source="self"))
             if i < 7:   # 前7人已到岗
-                ck_at = max(c1.start_time, t0 - timedelta(minutes=35 + i * 12))
-                db.add(CheckinRecord(id=uid("ckr"), task_id=task_gala.id,
-                                     activity_id=gala.id, shift_id=c1.id,
-                                     period_id=c1.periods[0].id,
+                ck_at = max(shift.start_time, t0 - timedelta(minutes=35 + i * 12))
+                db.add(CheckinRecord(id=uid("ckr"),
+                                     task_id=gala_tasks[st_.id].id,
+                                     activity_id=gala.id, shift_id=shift.id,
+                                     period_id=shift.periods[0].id,
                                      position_id=st_.id, user_id=u.id,
                                      method="scan", checkin_at=ck_at))
-        # 分岗位的码带 code_group：线上建出来的就是一组（这一组只选了一个岗位）
-        task_back = CheckinTask(id=uid("tsk"), activity_id=gala.id,
-                                shift_id=c1.id, period_id=c1.periods[0].id,
-                                position_id=c_s2.id, code_group=uid("cg"),
-                                mode="position", token="BACK02",
-                                valid_from=c1.start_time,
-                                valid_to=c1.end_time, active=True,
-                                created_by=wang.id)
-        db.add(task_back)
 
         # 手动加/扣也走段：签到码扫不上、中途离场这类不进签到记录的账，靠它记
         # 上去。只给已确认报名的人加——没报名的人这场活动里没有他的账
@@ -472,19 +474,20 @@ def main() -> None:
                                  note="签到码扫不上，现场补录",
                                  confirmed_by=wang.id)
         db.add(manual_rec)
-        manual_rec.add_segment(kind="manual", date=day_of(c1.start_time),
+        gala_start = db.get(Shift, c_s1.shift_id).start_time
+        manual_rec.add_segment(kind="manual", date=day_of(gala_start),
                                hours=1.0, label="签到码扫不上，现场补录",
-                               time_text=day_text(c1.start_time))
-        manual_rec.add_segment(kind="manual", date=day_of(c1.start_time),
+                               time_text=day_text(gala_start))
+        manual_rec.add_segment(kind="manual", date=day_of(gala_start),
                                hours=-0.5, label="中途离场 30 分钟",
-                               time_text=day_text(c1.start_time))
+                               time_text=day_text(gala_start))
 
         # ---------- 活动5：敬老院（已完成·时长已锁定） ----------
         elder = Activity(id=uid("act"), title="社区敬老院陪伴服务（秋）", organizer="文学院青年志愿者协会",
                          co_organizer="校青年志愿者协会",
                          recruit_mode="instant", cover_hue=30,
                          intro="每周定期前往附近社区敬老院陪伴老人，聊天读报、组织小活动。"
-                               "岗位简单，仅按场次报名。",
+                               "整场只有「陪伴服务」一个岗位，报上就是它。",
                          location="海淀街道敬老院",
                          contacts=[{"name": "李慕清", "phone": "138xxxx0002"}],
                          contact_group_qr=demo_qr(db),
@@ -495,13 +498,10 @@ def main() -> None:
                          reg_end=dt(days=-12), created_by=limu.id,
                          created_at=dt(days=-22))
         db.add(elder)
-        e1 = mk_shift(db, id=uid("g"), activity_id=elder.id, name="上周六场",
-                      start_time=dt(days=-7, base=t0.replace(hour=9)),
-                      end_time=dt(days=-7, base=t0.replace(hour=12)),
-                      mode="pick", sort=0)
-        db.add(e1)
-        db.flush()
-        e1_pos = stn(e1, "陪伴服务", "海淀区敬老院", 10)
+        e1_pos = post(elder, "陪伴服务", "海淀区敬老院", 10, sort=0,
+                      start=dt(days=-7, base=t0.replace(hour=9)),
+                      end=dt(days=-7, base=t0.replace(hour=12)))
+        e1 = db.get(Shift, e1_pos.shift_id)
         db.flush()
         elder_task = CheckinTask(id=uid("tsk"), activity_id=elder.id,
                                  shift_id=e1.id, period_id=e1.periods[0].id,
@@ -660,11 +660,11 @@ def main() -> None:
             "新建活动「校运动会开幕式志愿服务」", dt(days=-4))
         aud("publish", "activity", sport.id, sport.title, sport.id,
             "发布活动，开始报名", dt(days=-3), visible=True)
-        aud("update", "group", m1.id, "运动会·上午场", sport.id,
+        aud("update", "position", s_gate.id, "运动会·东门引导", sport.id,
             "集合地点由「南门」变更为「东门」",
             dt(days=-1, hours=-6),
-            [{"field": "note", "label": "备注",
-              "old": "志愿者南门集合", "new": "志愿者东门集合"}], visible=True)
+            [{"field": "location", "label": "地点",
+              "old": "校本部南门", "new": "校本部东门"}], visible=True)
         aud("update", "position", s_etiq.id, "运动会·颁奖礼仪", sport.id,
             "礼仪岗增加性别要求（女），并补充线上培训安排",
             dt(days=-2, hours=3),
@@ -677,11 +677,11 @@ def main() -> None:
             dt(days=-3))
         aud("publish", "activity", book.id, book.title, book.id,
             "发布活动，开始报名", dt(days=-2), visible=True)
-        aud("assign", "assignment", c1.id, "晚会·当日班", gala.id,
-            "12 人完成岗位分配（其中强制分配 0 人）", dt(days=-5),
+        aud("assign", "assignment", c_s2.shift_id, "晚会·后台秩序", gala.id,
+            "3 人从「观众引导」调到「后台秩序」（其中强制调岗 0 人）", dt(days=-5),
             actor=users["2025003"])
         aud("create", "checkin", task_gala.id, "晚会签到码 GALA01", gala.id,
-            "生成统一签到码 GALA01", dt(days=-1),
+            "生成签到码 GALA01（3 个岗位共用一张）", dt(days=-1),
             actor=users["2025003"])
         aud("create", "activity", elder.id, elder.title, elder.id,
             "新建活动「社区敬老院陪伴服务（秋）」",
@@ -708,11 +708,11 @@ def main() -> None:
                                 created_at=when))
 
         notify(pc_user, "waitlist_promoted", "候补转正待确认｜校运动会开幕式志愿服务",
-               f"「校运动会开幕式志愿服务」· 上午场 有名额释放，您已按候补顺序转正！\n"
+               f"「校运动会开幕式志愿服务」· 东门引导 有名额释放，您已按候补顺序转正！\n"
                f"请在 {e_pc.confirm_deadline:%Y-%m-%d %H:%M} 前确认，超时名额顺延。",
                dt(hours=-1), act_id=sport.id)
         notify(wl_user, "waitlist_queued", "已加入候补｜校运动会开幕式志愿服务",
-               "「校运动会开幕式志愿服务」· 上午场 名额已满，您已加入候补队列，当前第 2 位。",
+               "「校运动会开幕式志愿服务」· 东门引导 名额已满，您已加入候补队列，当前第 2 位。",
                dt(days=-1))
         for u in students[3:6]:
             notify(u, "signup_success", "志愿活动报名成功｜校运动会开幕式志愿服务",
