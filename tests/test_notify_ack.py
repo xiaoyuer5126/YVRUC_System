@@ -248,7 +248,7 @@ def test_管理者收到的通知也点得进活动(client, admin, db, enrolled_
     """
     act, shift, _u = enrolled_activity
     with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{shift.positions[0].id}",
+        r = client.patch(f"/api/staff/posts/{shift.positions[0].id}",
                          headers=admin,
                          json={"needs_leader": True,
                                "leader_task": "带队进场、清点人数"})

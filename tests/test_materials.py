@@ -7,7 +7,7 @@ from datetime import timedelta
 import pytest
 
 from backend.models import Activity, Attachment, now
-from conftest import POSITION_TEXT, dl_url, editing, login
+from conftest import dl_url, editing, login
 
 
 def _position_of(shift):
@@ -139,9 +139,8 @@ def test_场次内复制岗位带上学习材料(client, admin, db, enrolled_act
                           "title": "岗前须知", "url": "https://example.com/x"})
     assert r.status_code == 200, r.text
     with editing(client, admin, act.id):
-        r = client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
-                        json={"name": f"{src.name} 副本", "quota": 2,
-                              "copy_from": src.id, **POSITION_TEXT})
+        r = client.post(f"/api/staff/posts/{src.id}/copy", headers=admin,
+                        json={"name": f"{src.name} 副本"})
         assert r.status_code == 200, r.text
         new_id = r.json()["id"]
 

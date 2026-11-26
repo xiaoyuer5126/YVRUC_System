@@ -4,18 +4,25 @@ from __future__ import annotations
 from datetime import timedelta
 
 from backend.models import Enrollment, Position, User, uid
-from conftest import ADMIN, POSITION_TEXT, login, mk_shift
+from conftest import ADMIN, POSITION_TEXT, login, mk_post, mk_shift
 
 
 def _group_of(client, admin, db, enrolled_activity, take_student, *,
               group_name="东门片区", n_each=2):
-    """把已有岗位并入一个组，再加一个同组岗位，两边各报几个人。"""
+    """把已有岗位并入一个组，再加一个同组岗位（自带场次、时段相同），
+    两边各报几个人。"""
     act, shift, first = enrolled_activity
     p1 = shift.positions[0]
     p1.group_name = group_name
     p1.needs_leader = True
-    p2 = Position(id=uid("p"), shift_id=shift.id, name="东门检录", quota=5,
-                  waitlist_quota=2, group_name=group_name, sort=1,
+    # 岗位自带时段：同组的第二个岗位在它自己那一场里，时段与第一个相同
+    g2 = mk_shift(id=uid("g"), activity_id=act.id, name="东门检录",
+                  start_time=shift.start_time, end_time=shift.end_time,
+                  mode="pick", sort=1)
+    db.add(g2)
+    db.flush()
+    p2 = Position(id=uid("p"), shift_id=g2.id, name="东门检录", quota=5,
+                  waitlist_quota=2, group_name=group_name, sort=0,
                   **POSITION_TEXT)
     db.add(p2)
     db.commit()
@@ -23,7 +30,8 @@ def _group_of(client, admin, db, enrolled_activity, take_student, *,
     for pos in (p1, p2):
         for _ in range(n_each):
             t = login(client, take_student())
-            r = client.post(f"/api/activities/{act.id}/shifts/{shift.id}/enroll",
+            r = client.post(f"/api/activities/{act.id}/shifts/"
+                            f"{pos.shift_id}/enroll",
                             headers=t, json={"position_id": pos.id,
                                              "leader_willing": True})
             assert r.status_code == 200, r.text
@@ -111,24 +119,19 @@ def test_同组时段不同保存时提醒组长顾不全(client, admin, db, enr
                                    take_student)
     note = "本组岗位时间不完全相同，组长可能无法全程在场"
     with editing(client, admin, act.id):
-        # 同一场次里的两个同组岗位：时段相同，不提醒
-        r = client.patch(f"/api/staff/positions/{p2.id}", headers=admin,
+        # 同组的两个岗位时段相同，不提醒
+        r = client.patch(f"/api/staff/posts/{p2.id}", headers=admin,
                          json={"location": "东门外侧"})
         assert r.status_code == 200 and not r.json()["warning"], r.text
 
-        # 新岗位落在另一个场次、时段不一样：照常建，带上提醒
-        g2 = mk_shift(id=uid("g"), activity_id=act.id, name="下午场",
-                      start_time=shift.start_time + timedelta(hours=6),
-                      end_time=shift.end_time + timedelta(hours=6),
-                      mode="pick", sort=1)
-        db.add(g2)
-        db.commit()
-        r = client.post(f"/api/staff/shifts/{g2.id}/positions", headers=admin,
-                        json={"name": "下午检录", "quota": 2,
-                              "group_name": p1.group_name, **POSITION_TEXT})
+        # 新岗位的时段不一样：照常建，带上提醒
+        r = mk_post(client, admin, act.id, name="下午检录", quota=2,
+                    group_name=p1.group_name,
+                    periods=[{"start_time": (shift.start_time + timedelta(hours=6)).isoformat(),
+                              "end_time": (shift.end_time + timedelta(hours=6)).isoformat()}])
         assert r.status_code == 200 and r.json()["warning"] == note, r.text
         # 改组里已有的岗位也照样提醒
-        r = client.patch(f"/api/staff/positions/{p2.id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{p2.id}", headers=admin,
                          json={"location": "东门内侧"})
         assert r.status_code == 200 and r.json()["warning"] == note, r.text
 
@@ -140,10 +143,10 @@ def test_需要组长就必须写组长任务(client, admin, db, open_group):
     act, g = open_group(2)
     pos_id = g.test_position_id
     with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{pos_id}", headers=admin,
                          json={"needs_leader": True})
         assert r.status_code == 400 and "组长任务" in r.json()["detail"]
-        r = client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{pos_id}", headers=admin,
                          json={"needs_leader": True,
                                "leader_task": "带队进场、清点人数"})
         assert r.status_code == 200, r.text
@@ -177,17 +180,17 @@ def test_组长任务全组共用一份(client, admin, db, enrolled_activity, ta
     act, shift, p1, p2 = _group_of(client, admin, db, enrolled_activity,
                                    take_student)
     with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{p2.id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{p2.id}", headers=admin,
                          json={"leader_task": "带队进场、清点人数"})
         assert r.status_code == 200, r.text
         # 同组另一个岗位跟着对齐，留痕里写明动了几个
         db.expire_all()
         assert db.get(Position, p1.id).leader_task == "带队进场、清点人数"
         # 新加进这个组、自己没写任务的岗位沿用组里那一份
-        r = client.post(f"/api/staff/shifts/{shift.id}/positions", headers=admin,
-                        json={"name": "东门医疗点", "quota": 2,
-                              "group_name": p1.group_name,
-                              "needs_leader": True, **POSITION_TEXT})
+        r = mk_post(client, admin, act.id, name="东门医疗点", quota=2,
+                    group_name=p1.group_name, needs_leader=True,
+                    periods=[{"start_time": shift.start_time.isoformat(),
+                              "end_time": shift.end_time.isoformat()}])
         assert r.status_code == 200, r.text
         p3 = db.get(Position, r.json()["id"])
         assert p3.leader_task == "带队进场、清点人数"
@@ -212,7 +215,7 @@ def test_改组长任务时组长在兄弟岗位上也收得到(client, admin, d
     head = _make_leader(client, admin, db, p1)
     h = login(client, db.get(User, head.user_id).student_id)
     with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{p2.id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{p2.id}", headers=admin,
                          json={"leader_task": "带队进场、清点人数"})
         assert r.status_code == 200, r.text
     notes = client.get("/api/me/notifications", headers=h).json()["items"]

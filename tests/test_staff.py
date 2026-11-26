@@ -11,7 +11,7 @@ from backend.models import (Activity, ActivityManager, CheckinRecord,
 from conftest import set_shift_time, upload_qr
 from conftest import mk_shift
 from conftest import (ADMIN, POSITION_TEXT, QINGXIE, approve, editing,
-                      make_draft, upload_proposal,
+                      make_draft, mk_post, upload_proposal,
                       login, student_row)
 
 
@@ -291,7 +291,7 @@ def test_copy_positions_skips_duplicate_names(client, admin, db,
     other = mk_shift(id=uid("s"), activity_id=act.id, name="第二场",
                   start_time=g.start_time + timedelta(days=1),
                   end_time=g.end_time + timedelta(days=1),
-                  mode="pick", sort=1)
+                  mode="assign", sort=1)
     db.add(other)
     db.commit()
 
@@ -319,49 +319,31 @@ def test_统一分配的场次直接加岗位(client, admin, db, assigned_group)
     assert g.mode == "assign" and len(g.positions) == 3
 
 
-def test_有人报名就不能改回统一分配(client, admin, db, assigned_group,
-                                    take_student):
-    """反向切模式要作废所有人已经选定的岗位，是一次实打实的减损。
-
-    与其做一个带二次确认的破坏性操作，不如干脆不给：建错模式的场次
-    删了重建就是。
+def test_普通岗位不从场次接口动(client, admin, db, open_group):
+    """岗位自带时段：改它、删它、往它那一场里加第二个岗位，都走 /posts，
+    从场次那头动不了——两头各改一半就会让「场次名 = 岗位名、一场一岗」对不上。
     """
-    act, g, p1, _p2 = assigned_group
-    u = db.query(User).filter(User.student_id == take_student()).one()
-    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
-                      user_id=u.id, status="enrolled", position_id=p1.id,
-                      joined_at=now()))
-    g.mode = "pick"
-    db.commit()
-
+    act, g = open_group(3)
     with editing(client, admin, act.id):
         r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
-                         json={"mode": "assign"})
-        assert r.status_code == 409
-        assert "已有 1 人报名" in r.json()["detail"]
-
+                         json={"name": "改个名"})
+        assert r.status_code == 400 and "普通岗位" in r.json()["detail"], r.text
+        r = client.delete(f"/api/staff/shifts/{g.id}", headers=admin)
+        assert r.status_code == 400 and "普通岗位" in r.json()["detail"], r.text
+        r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
+                        json={"name": "第二个岗位", "quota": 1, **POSITION_TEXT})
+        assert r.status_code == 400, r.text
+        assert "一个场次只装一个岗位" in r.json()["detail"]
+        r = client.patch(f"/api/staff/positions/{g.test_position_id}",
+                         headers=admin, json={"quota": 5})
+        assert r.status_code == 400 and "普通岗位" in r.json()["detail"], r.text
+        r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
+                        json={"name": "又一场", "mode": "pick",
+                              "periods": [{"start_time": (now() + timedelta(days=40)).isoformat(),
+                              "end_time": (now() + timedelta(days=40, hours=2)).isoformat()}]})
+        assert r.status_code == 400 and "posts" in r.json()["detail"], r.text
     db.expire_all()
-    assert db.get(Shift, g.id).mode == "pick"
-    enr = db.query(Enrollment).filter(Enrollment.user_id == u.id,
-                                      Enrollment.shift_id == g.id).one()
-    assert enr.position_id == p1.id, "被拦下就不该动任何人的岗位"
-
-
-def test_没人报名时可以切回统一分配(client, admin, db, assigned_group):
-    """建错模式是常事，一个人都还没报的时候不该逼人删了重建。"""
-    act, g, _p1, _p2 = assigned_group
-    g.mode = "pick"
-    db.commit()
-    with editing(client, admin, act.id):
-        # 切成 assign 必须给人数上限：名额记在自动生成的占位岗位上
-        r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
-                         json={"mode": "assign", "capacity": 12})
-        assert r.status_code == 200, r.text
-    db.expire_all()
-    row = db.get(Shift, g.id)
-    assert row.mode == "assign"
-    holder = row.placeholder()
-    assert holder is not None and holder.quota == 12
+    assert db.get(Shift, g.id).name == "测试场次"
 
 
 def test_联络群二维码必填且不公开(client, admin, take_student):
@@ -395,11 +377,6 @@ def test_没有岗位的场次不能发布(client, admin, db):
                           "reg_start": (now() - timedelta(days=1)).isoformat(),
                           "reg_end": (now() + timedelta(days=1)).isoformat()})
     aid = r.json()["id"]
-    r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
-                    json={"name": "上午场", "mode": "pick",
-                          "periods": [{"start_time": (now() + timedelta(days=5)).isoformat(),
-                          "end_time": (now() + timedelta(days=5, hours=3)).isoformat()}]})
-    shift_id = r.json()["id"]
 
     # 结构不全在**提交审批**就被拦下，不必等到发布，也不该让审批人替他查
     dept = client.get("/api/staff/departments", headers=admin).json()[0]
@@ -411,8 +388,8 @@ def test_没有岗位的场次不能发布(client, admin, db):
     r = client.post(f"/api/staff/activities/{aid}/publish", headers=admin)
     assert r.status_code == 409 and "先提交校青协审批" in r.json()["detail"]
 
-    client.post(f"/api/staff/shifts/{shift_id}/positions", headers=admin,
-                json={"name": "引导", "quota": 3, **POSITION_TEXT})
+    assert mk_post(client, admin, aid, name="引导", quota=3,
+                   days=5).status_code == 200
     approve(client, admin, aid)
     assert client.get(f"/api/activities/{aid}",
                       headers=admin).json()["status"] == "published"
@@ -499,7 +476,7 @@ def test_岗位名额不能降到已报名人数以下(client, admin, db, open_g
         assert r.status_code == 200, r.text
 
     with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
+        r = client.patch(f"/api/staff/posts/{pos_id}", headers=admin,
                          json={"quota": 2})
         assert r.status_code == 400, r.text
         assert "已报名的 3 人" in r.json()["detail"]
@@ -507,7 +484,7 @@ def test_岗位名额不能降到已报名人数以下(client, admin, db, open_g
         db.expire_all()
         assert db.get(Position, pos_id).quota == 3
         for quota in (3, 4):
-            r = client.patch(f"/api/staff/positions/{pos_id}", headers=admin,
+            r = client.patch(f"/api/staff/posts/{pos_id}", headers=admin,
                              json={"quota": quota})
             assert r.status_code == 200, r.text
 
@@ -532,14 +509,7 @@ def test_删除草稿要连带清干净引用(client, admin, db):
 
     # 场次、岗位、问卷、被驳回过的审批流水都在，一并要能删掉。
     # 每一步都得真的建成——哪步悄悄失败了，删除时就少验一种引用
-    r = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
-                    json={"name": "上午场", "mode": "pick",
-                          "periods": [{"start_time": (now() + timedelta(days=6)).isoformat(),
-                          "end_time": (now() + timedelta(days=6, hours=3)).isoformat()}]})
-    assert r.status_code == 200, r.text
-    g = r.json()["id"]
-    r = client.post(f"/api/staff/shifts/{g}/positions", headers=admin,
-                    json={"name": "引导", "quota": 2, **POSITION_TEXT})
+    r = mk_post(client, admin, aid, name="引导", quota=2, days=6)
     assert r.status_code == 200, r.text
     r = client.put(f"/api/staff/activities/{aid}/form", headers=admin,
                    json={"questions": [{"id": "", "kind": "text", "title": "为什么报名",
@@ -827,7 +797,7 @@ def test_改活动超长字段直接400不写库(client, admin, db):
 
 
 def test_改场次超长或错名额直接400(client, admin, db, open_group):
-    act, g = open_group(3)
+    act, g = open_group(3, mode="assign")
     with editing(client, admin, act.id):
         r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
                          json={"name": "n" * 129})

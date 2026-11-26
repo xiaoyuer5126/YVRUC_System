@@ -14,7 +14,7 @@ import pytest
 
 from backend import config
 from backend.models import Activity, Shift, User, now, uid
-from conftest import POSITION_TEXT, login, student_row, upload_qr
+from conftest import login, mk_post, student_row, upload_qr
 
 CAMPUS_A, CAMPUS_B = config.CAMPUSES[0], config.CAMPUSES[1]
 STAGE_A, STAGE_B = config.STAGES[0], config.STAGES[1]
@@ -249,11 +249,10 @@ def test_学院选项汇总已有用户的学院并上兜底清单(client, admin
 
 
 def test_岗位条件的学院也不卡演示清单(client, admin, db, scoped):
-    act, g, _u, _h = scoped
+    act, _g, _u, _h = scoped
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
-                    json={"name": "新岗", "quota": 2, **POSITION_TEXT,
-                          "requirement_tags": {"学院": [REAL_COLLEGE]}})
+    r = mk_post(client, admin, act.id, name="新岗", quota=2,
+                requirement_tags={"学院": [REAL_COLLEGE]})
     assert r.status_code == 200, r.text
 
 
@@ -293,32 +292,48 @@ def test_招募范围只认清单里的值(client, admin, db, scoped):
     assert r.status_code == 400 and "不在可选范围内" in r.json()["detail"]
 
 
+def _assign_shift(client, admin, act) -> str:
+    """「截止后统一分配」的场次：条件只能设在它这一层（报名时还没有岗位可选）。"""
+    r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
+                    json={"name": "统一分配场", "mode": "assign", "capacity": 3,
+                          "periods": [{"start_time": (now() + timedelta(days=20)).isoformat(),
+                                       "end_time": (now() + timedelta(days=20, hours=3)).isoformat()}]})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
 def test_场次条件只认已知标签(client, admin, db, scoped):
-    act, g, _u, _h = scoped
+    act, _g, _u, _h = scoped
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+    gid = _assign_shift(client, admin, act)
+    r = client.patch(f"/api/staff/shifts/{gid}", headers=admin,
                      json={"requirement_tags": {"星座": ["天秤"]}})
     assert r.status_code == 400 and "未知的条件标签" in r.json()["detail"]
 
 
 def test_岗位条件也走同一套校验(client, admin, db, scoped):
-    act, g, _u, _h = scoped
+    act, _g, _u, _h = scoped
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
-                    json={"name": "新岗", "quota": 2, **POSITION_TEXT,
-                          "requirement_tags": {"性别": ["不限男女"]}})
+    r = mk_post(client, admin, act.id, name="新岗", quota=2,
+                requirement_tags={"性别": ["不限男女"]})
     assert r.status_code == 400 and "不在可选范围内" in r.json()["detail"]
 
 
-def test_场次岗位各设各的条件(client, admin, db, scoped):
-    """和两个表单一致：校区、学段设在场次上，性别、学院设在岗位上。
-    放错层的话页面上改不了也看不见，只在报名时莫名其妙地拦人。"""
-    act, g, _u, _h = scoped
+def test_岗位收四种条件_统一分配的场次只收校区学段(client, admin, db, scoped):
+    """普通岗位自带时段，条件就全在岗位上；「截止后统一分配」的场次报名时还
+    没有岗位可选，只能在它那一层按校区、学段筛人。放错层的话页面上改不了
+    也看不见，只在报名时莫名其妙地拦人。"""
+    act, _g, _u, _h = scoped
     client.post(f"/api/staff/activities/{act.id}/edit-lock", headers=admin)
-    r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
-                    json={"name": "新岗", "quota": 2, **POSITION_TEXT,
-                          "requirement_tags": {"校区": [CAMPUS_A]}})
-    assert r.status_code == 400 and "请设在场次上" in r.json()["detail"]
-    r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin,
+    r = mk_post(client, admin, act.id, name="新岗", quota=2,
+                requirement_tags={"校区": [CAMPUS_A], "性别": ["女"]})
+    assert r.status_code == 200, r.text
+    pid = r.json()["id"]
+    assert client.patch(f"/api/staff/posts/{pid}", headers=admin,
+                        json={"requirement_tags": {"学段": [STAGE_A]}}
+                        ).status_code == 200
+
+    gid = _assign_shift(client, admin, act)
+    r = client.patch(f"/api/staff/shifts/{gid}", headers=admin,
                      json={"requirement_tags": {"性别": ["女"]}})
     assert r.status_code == 400 and "请设在岗位上" in r.json()["detail"]

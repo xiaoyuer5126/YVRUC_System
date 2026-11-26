@@ -11,7 +11,7 @@ from datetime import timedelta
 
 from backend.models import Enrollment, Position, Shift, now, uid
 from conftest import mk_shift
-from conftest import POSITION_TEXT, inbox, login
+from conftest import POSITION_TEXT, inbox, login, mk_post
 
 
 def _enroll(client, act, g, sid, pid=None):
@@ -64,7 +64,7 @@ def _raise_quota(client, admin, act, g, quota):
     """管理者加名额：进编辑态、改岗位、保存并发布。返回发布接口的结果。"""
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    r = client.patch(f"/api/staff/positions/{g.test_position_id}", headers=admin,
+    r = client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
                      json={"quota": quota})
     assert r.status_code == 200, r.text
     r = client.post(f"/api/staff/activities/{act.id}/publish-changes", headers=admin)
@@ -108,7 +108,8 @@ def test_过了锁定点手动解锁后不会被自动锁回去(client, admin, d
     # 只改了场次名：不碰锁定状态
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin, json={"name": "改个名"})
+    r = client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
+                     json={"name": "改个名"})
     assert r.status_code == 200, r.text
     client.post(f"/api/staff/activities/{act.id}/publish-changes", headers=admin)
     assert _enroll(client, act, g, take_student()).status_code == 200
@@ -119,34 +120,37 @@ def test_改N后锁定点已过的立即锁定_已锁的改小不自动解锁(cl
     act, g = open_group(3, day_offset=0, start_in_hours=20, lock_hours=12)
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin, json={"lock_hours": 24})
+    r = client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
+                     json={"lock_hours": 24})
     assert r.status_code == 200, r.text
     db.expire_all()
     from backend.enroll_logic import shift_locked
     assert shift_locked(db.get(Shift, g.id))
 
     # 已经锁上的，把 N 改小（锁定点挪到将来）也不会自己解开
-    r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin, json={"lock_hours": 2})
+    r = client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
+                     json={"lock_hours": 2})
     assert r.status_code == 200, r.text
     db.expire_all()
     assert shift_locked(db.get(Shift, g.id))
 
-    r = client.patch(f"/api/staff/shifts/{g.id}", headers=admin, json={"lock_hours": 73})
+    r = client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
+                     json={"lock_hours": 73})
     assert r.status_code == 400
 
 
-def test_新建场次带N_超出范围拒绝(client, admin, db, open_group):
+def test_新建岗位带N_超出范围拒绝(client, admin, db, open_group):
     act, g = open_group(3)
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    body = {"name": "晚场",
-            "periods": [{"start_time": (g.start_time + timedelta(days=1)).isoformat(),
-            "end_time": (g.end_time + timedelta(days=1)).isoformat()}], "lock_hours": 30}
-    r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin, json=body)
+    periods = [{"start_time": (g.start_time + timedelta(days=1)).isoformat(),
+                "end_time": (g.end_time + timedelta(days=1)).isoformat()}]
+    r = mk_post(client, admin, act.id, name="晚场", periods=periods,
+                lock_hours=30)
     assert r.status_code == 200, r.text
-    assert db.get(Shift, r.json()["id"]).lock_hours == 30
-    r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
-                    json={**body, "lock_hours": 80})
+    assert db.get(Shift, r.json()["shift_id"]).lock_hours == 30
+    r = mk_post(client, admin, act.id, name="晚场", periods=periods,
+                lock_hours=80)
     assert r.status_code == 422
 
 
@@ -460,7 +464,7 @@ def test_发布时补位排不上锁_汇总照发并提示(client, admin, db, op
     assert _enroll(client, act, g, take_student()).json()["status"] == "waitlisted"
     assert client.post(f"/api/staff/activities/{act.id}/edit-lock",
                        headers=admin).status_code == 200
-    assert client.patch(f"/api/staff/positions/{g.test_position_id}", headers=admin,
+    assert client.patch(f"/api/staff/posts/{g.test_position_id}", headers=admin,
                         json={"quota": 2}).status_code == 200
 
     def busy(*_a, **_k):

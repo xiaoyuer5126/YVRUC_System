@@ -39,7 +39,7 @@ def _enrolled(db, g) -> int:
 
 def _set_quota(client, admin, act, g, quota):
     with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{g.test_position_id}",
+        r = client.patch(f"/api/staff/posts/{g.test_position_id}",
                          headers=admin, json={"quota": quota})
         assert r.status_code == 200, r.text
 

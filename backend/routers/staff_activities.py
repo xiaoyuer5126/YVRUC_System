@@ -1,8 +1,12 @@
-"""教师/青协端：活动筹备（活动与岗位树 CRUD）、报名名单、二次分配。
+"""教师/青协端：活动筹备（活动与岗位 CRUD）、报名名单、二次分配。
 
-岗位树校验：
-  · 岗位时间必须被包裹在场次时间范围内；
-  · 场次总人数需大于等于下属岗位人数之和。
+岗位自带时段：一个普通岗位 = 一个只装它的服务场次（mode=pick、场次名与岗位名
+一致、场次的时段就是这个岗位的时段）。管理端只管「岗位」，场次那一层由
+`/activities/{id}/posts`、`/posts/{position_id}` 这组接口连带维护。
+挂多个岗位的场次只有「截止后统一分配」（mode=assign，含占位岗位「待分配」），
+它走 `/activities/{id}/shifts` 与 `/shifts/{id}/positions`；培训/彩排同样走
+场次接口。
+
 所有增删改走审计留痕；影响志愿者的时间/地点类修改会推送「活动变更警告」，
 附变更前后对比摘要。
 """
@@ -338,8 +342,11 @@ def list_colleges(db: OrmSession = Depends(db_session),
 
 # 场次、岗位各管各的条件，和两个表单上能填的一致：校区、学段跟着时段走（哪个
 # 校区的人能来这一场），性别、学院跟着分工走。None = 学院，按学院清单校验
+# 「截止后统一分配」的场次报名时还没有岗位可选，只能在场次这一层筛人，
+# 收校区与学段；普通岗位的条件全在岗位上（岗位自带时段）
 SHIFT_TAGS = {"校区": config.CAMPUSES, "学段": config.STAGES}
-POSITION_TAGS = {"性别": ["男", "女"], "学院": None}
+POSITION_TAGS = {"性别": ["男", "女"], "学院": None,
+                 "校区": config.CAMPUSES, "学段": config.STAGES}
 
 
 def _clean_requirement_tags(raw: dict, level: str) -> dict:
@@ -867,10 +874,19 @@ class CopyPositionsBody(BaseModel):
 def copy_positions_route(shift_id: str, body: CopyPositionsBody,
                          db: OrmSession = Depends(db_session),
                          user: User = Depends(require_manager)):
-    """把本场次的岗位批量复制到同一活动的其它场次。"""
+    """把一个「截止后统一分配」场次的岗位批量复制到本活动别的统一分配场次。
+
+    整周排班的活动（图书整理周）每天一场统一分配，坑位表一模一样，一天一天
+    重建既慢又容易漏。普通岗位自带时段，换时段再招一批人用
+    POST /posts/{id}/copy。
+    """
     src = _shift(db, shift_id)
     ensure_activity_manager(db, user, src.activity_id)
     _ensure_editing(db, src.activity_id)
+    if not src.needs_assign():
+        raise HTTPException(
+            400, "只有「截止后统一分配」的场次能批量复制岗位；普通岗位换时段"
+                 "再招一批人请用 POST /api/staff/posts/{id}/copy")
     sources = sorted(src.positions, key=lambda p: p.sort)
     if body.position_ids:
         wanted = set(body.position_ids)
@@ -885,6 +901,10 @@ def copy_positions_route(shift_id: str, body: CopyPositionsBody,
             raise HTTPException(400, "目标场次不属于本活动")
         if target.id == src.id:
             continue
+        if not target.needs_assign():
+            raise HTTPException(
+                400, f"「{target.name}」不是「截止后统一分配」的场次，一个场次"
+                     f"只装一个岗位，复制不进去")
         targets.append(target)
     if not targets:
         raise HTTPException(400, "请选择至少一个目标场次")
@@ -1375,6 +1395,38 @@ def _prune_questions(db: OrmSession, act_id: str, s: Position,
             q.applies_to_positions = left
 
 
+def is_post_shift(g: Shift) -> bool:
+    """这一场是不是「一个普通岗位自带的场次」：服务场次 + 报名即选岗位。
+
+    这种场次恰好挂一个岗位，时段、地点、条件都当作那个岗位自己的，由
+    `/posts` 那组接口连带维护。
+    """
+    return g.kind == "service" and g.mode == "pick"
+
+
+def _refuse_post_shift(g: Shift) -> None:
+    """普通岗位的场次不从场次接口动：时段和岗位要一起改，分两头改会把
+    「场次名 = 岗位名、一场一岗」这条对不上。"""
+    if is_post_shift(g):
+        raise HTTPException(
+            400, f"「{g.name}」是一个普通岗位（岗位自带时段），"
+                 f"请用岗位接口 /api/staff/posts 修改或删除")
+
+
+def _ensure_single_post(g: Shift) -> None:
+    """要变成普通岗位的场次只能剩一个真实岗位。
+
+    几个岗位共用一个场次就等于共用一份时段、一份名单锁，想换人、换时段都得
+    连坐；真要分头安排就各建一个岗位，各带自己的时段。
+    """
+    real = g.real_positions()
+    if len(real) > 1:
+        raise HTTPException(
+            409, f"「{g.name}」下有 {len(real)} 个岗位，改成「报名即选岗位」会让它们"
+                 f"共用一份时段与名单；请按岗位分别新建（各自带时段），"
+                 f"或保持「截止后统一分配」")
+
+
 def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
     """切换场次模式：只在这一场一个人都没报（含候补）时允许。
 
@@ -1385,13 +1437,16 @@ def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
 
     「截止后统一分配」的场次不用切模式就能建岗位：直接建，再一键分配或导入。
     切到 pick 时占位岗位用不上了，删掉；它上面有过报名记录（报了又退的）
-    就删不掉，也就不让切。
+    就删不掉，也就不让切。切过去就是一个普通岗位，所以场次只能剩一个岗位，
+    场次名也跟着对齐到岗位名。
     """
     if mode not in SHIFT_MODES:
         raise HTTPException(400, "场次模式必须是 pick 或 assign")
     if mode == g.mode:
         return
     if g.id:
+        if mode == "pick":
+            _ensure_single_post(g)
         rows = db.query(Enrollment).filter(Enrollment.shift_id == g.id)
         live = rows.filter(Enrollment.status.in_(logic.ACTIVE)).count()
         if live:
@@ -1408,6 +1463,11 @@ def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
                              [p.id for p in g.real_positions()])
             g.positions.remove(holder)
             db.delete(holder)
+        if mode == "pick":
+            # 场次名跟岗位名保持一致：这一场从此就是那个岗位
+            real = g.real_positions()
+            if real:
+                g.name = real[0].name
         if mode == "assign":
             # 暂停、锁定在 assign 场次里只按整场算（见 _toggle_target），
             # 岗位上留着的开关没有入口能关掉
@@ -1420,10 +1480,18 @@ def _apply_shift_mode(db: OrmSession, g: Shift, mode: str) -> None:
 def create_shift(activity_id: str, body: ShiftBody, bg: BackgroundTasks,
                  db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager)):
+    """新建「截止后统一分配」场次，或培训/彩排。
+
+    普通岗位自带时段，不单独建场次：走 POST /activities/{id}/posts。
+    """
     ensure_activity_manager(db, user, activity_id)
     act = _ensure_editing(db, activity_id)
     if act.is_record():
         raise HTTPException(409, "补记录活动不设场次与岗位，时长在审批通过后导入名单")
+    if body.kind == "service" and body.mode == "pick":
+        raise HTTPException(
+            400, "普通岗位自带时段，请用 POST /api/staff/activities/{id}/posts "
+                 "新建岗位；场次接口只用来建「截止后统一分配」的场次和培训/彩排")
     periods = _clean_periods(body.periods)
     g = Shift(id=uid("g"), activity_id=act.id, name=body.name.strip(),
                       note=body.note.strip(), sort=len(act.shifts),
@@ -1465,14 +1533,22 @@ SHIFT_LABELS = {**SHIFT_FIELDS, "periods": "时间"}
 _SHIFT_MAX = {"name": 128, "location": 128, "note": 512}
 
 
-@router.patch("/shifts/{shift_id}")
-def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
-                 db: OrmSession = Depends(db_session),
-                 user: User = Depends(require_manager)):
-    g = _shift(db, shift_id)
-    ensure_activity_manager(db, user, g.activity_id)
-    act = _ensure_editing(db, g.activity_id)
-    before_raw = {k: getattr(g, k) for k in SHIFT_FIELDS}
+def _shift_value_text(v):
+    if isinstance(v, datetime):
+        return v.strftime("%Y-%m-%d %H:%M")
+    if isinstance(v, bool):
+        return "是" if v else "否"
+    return v
+
+
+def _apply_shift_body(db: OrmSession, g: Shift, body: dict,
+                      fields: dict[str, str]) -> list[dict]:
+    """把 body 里给到的场次级字段落到 g 上，返回变更明细。
+
+    fields 是这条路径允许改的字段（场次接口给全套；岗位接口只给时段、计时、
+    自动锁定这几项——岗位的名称、地点、条件由岗位那一层说了算）。
+    """
+    before_raw = {k: getattr(g, k) for k in fields}
     before_periods = g.span_text()
     new_periods = (_clean_periods([PeriodBody(**x) for x in body["periods"]])
                    if "periods" in body else None)
@@ -1487,7 +1563,7 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
         logic.set_lock_hours(g, new_hours)
     if new_periods is not None:
         _set_periods(db, g, new_periods)
-    for key in SHIFT_FIELDS:
+    for key in fields:
         if key not in body or key == "lock_hours":
             continue
         v = body[key]
@@ -1506,12 +1582,31 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
                 raise HTTPException(400, "场次名不能为空")
             limit = _SHIFT_MAX.get(key)
             if limit and len(str(v or "")) > limit:
-                raise HTTPException(400, f"「{SHIFT_FIELDS[key]}」不能超过 {limit} 个字")
+                raise HTTPException(400, f"「{fields[key]}」不能超过 {limit} 个字")
             setattr(g, key, str(v or "") if key == "location" else v)
+    _validate_flexible_hours(g)
+    fmt = _shift_value_text
+    return diff_changes(
+        {"periods": before_periods,
+         **{k: fmt(v) for k, v in before_raw.items()}},
+        {"periods": g.span_text(),
+         **{k: fmt(getattr(g, k)) for k in fields}},
+        {**fields, "periods": "时间"})
+
+
+@router.patch("/shifts/{shift_id}")
+def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
+                 db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_manager)):
+    """修改「截止后统一分配」场次或培训/彩排。普通岗位走 PATCH /posts/{id}。"""
+    g = _shift(db, shift_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = _ensure_editing(db, g.activity_id)
+    _refuse_post_shift(g)
+    changes = _apply_shift_body(db, g, body, SHIFT_FIELDS)
     if "applies_to_positions" in body and g.is_attached():
         g.applies_to_positions = _clean_applies(act, body["applies_to_positions"])
         _resync_training(db, act, g)
-    _validate_flexible_hours(g)
     # 名额与候补落到占位岗位上；没传就沿用它当前的值。非整数直接 int() 会抛
     # ValueError，管理者看到的是 500，所以先过一道校验
     holder = g.placeholder()
@@ -1523,19 +1618,6 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
     if capacity < 0 or waitlist_quota < 0:
         raise HTTPException(400, "人数上限与候补名额不能是负数")
     _sync_placeholder(db, g, capacity, waitlist_quota)
-
-    def fmt(v):
-        if isinstance(v, datetime):
-            return v.strftime("%Y-%m-%d %H:%M")
-        if isinstance(v, bool):
-            return "是" if v else "否"
-        return v
-    changes = diff_changes(
-        {"periods": before_periods,
-         **{k: fmt(v) for k, v in before_raw.items()}},
-        {"periods": g.span_text(),
-         **{k: fmt(getattr(g, k)) for k in SHIFT_FIELDS}},
-        SHIFT_LABELS)
     audit_log(db, actor=user, action="update", target_type="group",
               target_id=g.id, target_label=f"{act.title}·{g.name}",
               activity_id=act.id,
@@ -1547,13 +1629,13 @@ def update_shift(shift_id: str, body: dict, bg: BackgroundTasks,
     return {"ok": True, "changes": changes}
 
 
-@router.delete("/shifts/{shift_id}")
-def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
-                 db: OrmSession = Depends(db_session),
-                 user: User = Depends(require_manager)):
-    g = _shift(db, shift_id)
-    ensure_activity_manager(db, user, g.activity_id)
-    act = _ensure_editing(db, g.activity_id)
+def _drop_shift(db: OrmSession, act: Activity, g: Shift,
+                force: int) -> tuple[int, list[str]]:
+    """删掉一个场次连同它的岗位、时段与报名记录。
+
+    返回（有效报名条数, 受影响的人）。不留痕、不提交，由调用方按「删的是场次
+    还是岗位」各写各的那句话。
+    """
     # 签到记录挂在场次上（checkin_records / checkin_geos 都随签到任务走），
     # 场次没了它们没处安放：生成过签到码的场次一律不删，签到历史不能跟着没
     if db.query(CheckinTask).filter(CheckinTask.shift_id == g.id).first():
@@ -1585,11 +1667,25 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
             logic.sync_attached(db, e, attached)
         db.delete(e)
     db.flush()
-    label = f"{act.title}·{g.name}"
     db.delete(g)
+    return n_active, affected
+
+
+@router.delete("/shifts/{shift_id}")
+def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
+                 db: OrmSession = Depends(db_session),
+                 user: User = Depends(require_manager)):
+    """删除「截止后统一分配」场次或培训/彩排。普通岗位走 DELETE /posts/{id}。"""
+    g = _shift(db, shift_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = _ensure_editing(db, g.activity_id)
+    _refuse_post_shift(g)
+    label = f"{act.title}·{g.name}"
+    name = g.name
+    n_active, affected = _drop_shift(db, act, g, force)
     audit_log(db, actor=user, action="delete", target_type="group",
-              target_id=g.id, target_label=label, activity_id=act.id,
-              summary=f"删除场次「{g.name}」" +
+              target_id=shift_id, target_label=label, activity_id=act.id,
+              summary=f"删除场次「{name}」" +
                       (f"（含 {n_active} 条报名记录）" if n_active else ""),
               visible=True, affected=affected)
     db.commit()
@@ -1598,8 +1694,12 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
 
 # ======================= 岗位 =======================
 
-class PositionBody(BaseModel):
-    """岗位没有时间——时间随场次。名额、候补、条件、组长都在这一层。"""
+class PositionFields(BaseModel):
+    """岗位自己的字段：名额、候补、条件、组长、服装、劳务，与三段给志愿者看的文字。
+
+    时间不在这里：普通岗位的时段记在它自己那一场上（见 PostBody），
+    「截止后统一分配」场次里的岗位用的是整场的时段。
+    """
     # 带 max_length 的几项对着库里 String(n) 的长度：不拦下来就是插入时报错，
     # 管理者看到的是一个 500。service_task 这些是 Text，不限
     name: str = Field(max_length=128)
@@ -1620,6 +1720,10 @@ class PositionBody(BaseModel):
     pay_optional: bool = False           # 可选劳务
     # 可选劳务时必填：标准与发放方式
     pay_note: str = Field(default="", max_length=256)
+
+
+class PositionBody(PositionFields):
+    """「截止后统一分配」场次里的一个岗位。"""
     copy_from: str = ""                  # 复制自哪个岗位：学习材料跟着带过来
 
 
@@ -1716,16 +1820,10 @@ def _validate_position(db: OrmSession, g: Shift, s: Position):
         raise HTTPException(400, f"岗位名额不能小于已报名的 {enrolled} 人")
 
 
-@router.post("/shifts/{shift_id}/positions")
-def create_position(shift_id: str, body: PositionBody,
-                   db: OrmSession = Depends(db_session),
-                   user: User = Depends(require_manager)):
-    g = _shift(db, shift_id)
-    ensure_activity_manager(db, user, g.activity_id)
-    act = _ensure_editing(db, g.activity_id)
-    source = db.get(Position, body.copy_from) if body.copy_from else None
-    if source is not None and source.shift.activity_id != g.activity_id:
-        raise HTTPException(400, "只能复制本活动的岗位")
+def _build_position(db: OrmSession, g: Shift, body: PositionFields) -> Position:
+    """按 body 建一个岗位并落库。"""
+    if not body.name.strip():
+        raise HTTPException(400, "请填写岗位名称")
     s = Position(id=uid("s"), shift_id=g.id, name=body.name.strip(),
                 location=body.location.strip(), quota=body.quota,
                 waitlist_quota=body.waitlist_quota,
@@ -1745,14 +1843,39 @@ def create_position(shift_id: str, body: PositionBody,
     _require_position_text(s)
     db.add(s)
     db.flush()   # 让 group 关系可用，供 time_text() 使用
+    return s
+
+
+def _inherit_trainings(act: Activity, source: Position, s: Position) -> None:
+    """复制出来的是同一个岗位的另一个时段：叫原岗位的培训/彩排也叫它。"""
+    for t in act.trainings():
+        if source.id in (t.applies_to_positions or []):
+            t.applies_to_positions = [*t.applies_to_positions, s.id]
+
+
+@router.post("/shifts/{shift_id}/positions")
+def create_position(shift_id: str, body: PositionBody,
+                   db: OrmSession = Depends(db_session),
+                   user: User = Depends(require_manager)):
+    """往「截止后统一分配」的场次里加一个分配用的岗位。
+
+    普通岗位自带时段，各占一个场次：走 POST /activities/{id}/posts。
+    """
+    g = _shift(db, shift_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = _ensure_editing(db, g.activity_id)
+    if not g.needs_assign():
+        raise HTTPException(
+            400, f"「{g.name}」不是「截止后统一分配」的场次，一个场次只装一个岗位；"
+                 f"请用 POST /api/staff/activities/{{id}}/posts 新建岗位")
+    source = db.get(Position, body.copy_from) if body.copy_from else None
+    if source is not None and source.shift.activity_id != g.activity_id:
+        raise HTTPException(400, "只能复制本活动的岗位")
+    s = _build_position(db, g, body)
     copied = (copying.copy_attachments(db, "position", source.id, s.id,
                                        act.id, user) if source else 0)
-    # 复制出来的是同一个岗位的另一个时段（「按岗位看」里的加时段）：叫原岗位
-    # 的培训/彩排也叫它
     if source is not None:
-        for t in act.trainings():
-            if source.id in (t.applies_to_positions or []):
-                t.applies_to_positions = [*t.applies_to_positions, s.id]
+        _inherit_trainings(act, source, s)
     audit_log(db, actor=user, action="create", target_type="position",
               target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
               activity_id=act.id,
@@ -1769,16 +1892,20 @@ def create_position(shift_id: str, body: PositionBody,
     return {"id": s.id, "warning": logic.group_time_warning(db, s)}
 
 
-@router.patch("/positions/{position_id}")
-def update_position(position_id: str, body: dict, bg: BackgroundTasks,
-                   db: OrmSession = Depends(db_session),
-                   user: User = Depends(require_manager)):
-    s = db.get(Position, position_id)
-    if s is None:
-        raise HTTPException(404, "岗位不存在")
-    g = _shift(db, s.shift_id)
-    ensure_activity_manager(db, user, g.activity_id)
-    act = _ensure_editing(db, g.activity_id)
+def _position_value_text(k, v):
+    if isinstance(v, datetime):
+        return v.strftime("%Y-%m-%d %H:%M")
+    if k == "attire":
+        return Position.ATTIRE_LABELS.get(v, v)
+    return v
+
+
+def _apply_position_body(db: OrmSession, g: Shift, s: Position,
+                         body: dict) -> tuple[list[dict], int, tuple[int, int]]:
+    """把 body 里给到的岗位级字段落到 s 上。
+
+    返回（变更明细, 组长任务同步到了几个兄弟岗位, 改之前的名额与候补名额）。
+    """
     before_raw = {k: getattr(s, k) for k in POSITION_FIELDS}
     for key in POSITION_FIELDS:
         if key not in body:
@@ -1791,6 +1918,8 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
             setattr(s, key, _as_int(body[key], POSITION_FIELDS[key]))
         else:
             value = body[key]
+            if key == "name" and not str(value or "").strip():
+                raise HTTPException(400, "岗位名称不能为空")
             limit = _POSITION_MAX.get(key)
             if limit and len(str(value or "")) > limit:
                 raise HTTPException(400, f"「{POSITION_FIELDS[key]}」最多 {limit} 个字")
@@ -1812,15 +1941,31 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
                      Enrollment.is_leader.is_(True))
              .update({"is_leader": False}, synchronize_session=False))
 
-    def fmt(k, v):
-        if isinstance(v, datetime):
-            return v.strftime("%Y-%m-%d %H:%M")
-        if k == "attire":
-            return Position.ATTIRE_LABELS.get(v, v)
-        return v
+    fmt = _position_value_text
     changes = diff_changes({k: fmt(k, v) for k, v in before_raw.items()},
                            {k: fmt(k, getattr(s, k)) for k in POSITION_FIELDS},
                            POSITION_FIELDS)
+    return changes, synced, (before_raw["quota"], before_raw["waitlist_quota"])
+
+
+def _position(db: OrmSession, position_id: str) -> Position:
+    s = db.get(Position, position_id)
+    if s is None:
+        raise HTTPException(404, "岗位不存在")
+    return s
+
+
+@router.patch("/positions/{position_id}")
+def update_position(position_id: str, body: dict, bg: BackgroundTasks,
+                   db: OrmSession = Depends(db_session),
+                   user: User = Depends(require_manager)):
+    """修改「截止后统一分配」场次里的一个岗位。普通岗位走 PATCH /posts/{id}。"""
+    s = _position(db, position_id)
+    g = _shift(db, s.shift_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = _ensure_editing(db, g.activity_id)
+    _refuse_post_shift(g)
+    changes, synced, before_quota = _apply_position_body(db, g, s, body)
     audit_log(db, actor=user, action="update", target_type="position",
               target_id=s.id, target_label=f"{act.title}·{g.name}·{s.name}",
               activity_id=act.id,
@@ -1836,8 +1981,7 @@ def update_position(position_id: str, body: dict, bg: BackgroundTasks,
                         if synced and (lead := logic.group_leader(db, s)) else None),
               visible=True)
     db.commit()
-    if (s.quota, s.waitlist_quota) != (before_raw["quota"],
-                                       before_raw["waitlist_quota"]):
+    if (s.quota, s.waitlist_quota) != before_quota:
         # 名额在闸门之外变了：作废计数器，下一个报名按数据库重新对齐。
         # 不作废的话，加了名额之后要等核库限流窗口过去才报得上
         invalidate_gates(g.id, s.id)
@@ -1908,6 +2052,11 @@ def _reopened(db: OrmSession, g: Shift, s: Position | None) -> dict:
             "hint": f"{why}，候补要等暂停和锁定都解除后才会补位。"}
 
 
+def _shift_word(g: Shift) -> str:
+    """留痕里怎么称呼这一场：普通岗位自带场次，对管理者来说它就是「岗位」。"""
+    return "岗位" if is_post_shift(g) else "场次"
+
+
 def _toggle_done(db: OrmSession, user: User, act: Activity, g: Shift,
                  s: Position | None, reopened: bool, summary: str) -> dict:
     """留痕、补位、提交、作废闸门计数。场次锁随 commit 放掉。"""
@@ -1942,7 +2091,8 @@ def pause_shift(shift_id: str, body: PauseBody,
         logic.reload_shift(db, g)
         g.enroll_paused = body.paused
         out = _toggle_done(db, user, act, g, None, not body.paused,
-                           f"{'暂停' if body.paused else '恢复'}场次「{g.name}」的报名")
+                           f"{'暂停' if body.paused else '恢复'}"
+                           f"{_shift_word(g)}「{g.name}」的报名")
     return {"ok": True, "paused": g.enroll_paused, **out}
 
 
@@ -1981,7 +2131,8 @@ def lock_shift(shift_id: str, body: LockBody,
         if body.locked and not was_locked:
             logic.notify_shift_leader_vacancies(db, g)
         out = _toggle_done(db, user, act, g, None, not body.locked,
-                           f"{'锁定' if body.locked else '解锁'}场次「{g.name}」的名单")
+                           f"{'锁定' if body.locked else '解锁'}"
+                           f"{_shift_word(g)}「{g.name}」的名单")
     return {"ok": True, "locked": logic.shift_locked(g), **out}
 
 
@@ -1998,6 +2149,127 @@ def lock_position(position_id: str, body: LockBody,
         out = _toggle_done(db, user, act, g, s, not body.locked,
                            f"{'锁定' if body.locked else '解锁'}岗位「{s.name}」的名单")
     return {"ok": True, "locked": s.list_locked, **out}
+
+
+@router.post("/posts/{position_id}/pause")
+def pause_post(position_id: str, body: PauseBody,
+               db: OrmSession = Depends(db_session),
+               user: User = Depends(require_manager)):
+    """暂停 / 恢复一个岗位的报名。
+
+    普通岗位自带场次，暂停就落在那一场上：自动锁定、候补补位本来就按场次算，
+    分两层各记一个开关只会出现「岗位开着、场次关着」这种自己拦自己的状态。
+    """
+    s = _position(db, position_id)
+    g = _shift(db, s.shift_id)
+    _require_post_shift(g)
+    return pause_shift(shift_id=g.id, body=body, db=db, user=user)
+
+
+@router.post("/posts/{position_id}/lock")
+def lock_post(position_id: str, body: LockBody,
+              db: OrmSession = Depends(db_session),
+              user: User = Depends(require_manager)):
+    """手动锁定 / 解锁一个岗位的名单，落在它自己那一场上，口径同 lock_shift。"""
+    s = _position(db, position_id)
+    g = _shift(db, s.shift_id)
+    _require_post_shift(g)
+    return lock_shift(shift_id=g.id, body=body, db=db, user=user)
+
+
+def _toggle_all_target(db: OrmSession, user: User,
+                       activity_id: str) -> tuple[Activity, list[Shift]]:
+    """全部暂停 / 全部锁定共用的取对象与校验：本活动的全部服务场次。
+
+    培训/彩排不在内：它们跟着服务场次的报名走，自己不招人。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    act = _act(db, activity_id)
+    _pause_target_check(act)
+    shifts = sorted(act.main_shifts(), key=lambda g: g.sort)
+    if not shifts:
+        raise HTTPException(409, "本活动还没有岗位")
+    return act, shifts
+
+
+def _toggle_all_done(db: OrmSession, user: User, act: Activity,
+                     shifts: list[Shift], summary: str,
+                     promoted: int, hints: list[str]) -> dict:
+    """一条汇总留痕、提交、作废闸门计数。场次锁随 commit 一起放掉。"""
+    audit_log(db, actor=user, action="update", target_type="activity",
+              target_id=act.id, target_label=act.title, activity_id=act.id,
+              summary=summary + (f"，递补 {promoted} 人" if promoted else ""))
+    db.commit()
+    for g in shifts:
+        for p in g.positions:
+            invalidate_gates(g.id, p.id)
+    return {"ok": True, "shifts": len(shifts), "promoted": promoted,
+            "hint": "；".join(hints)}
+
+
+@router.post("/activities/{activity_id}/pause-all")
+def pause_all(activity_id: str, body: PauseBody,
+              db: OrmSession = Depends(db_session),
+              user: User = Depends(require_manager)):
+    """一次暂停 / 恢复本活动全部岗位的报名，规则同 pause_shift。
+
+    调整岗位时要的是「整个活动先停下来」，一个一个点既慢又容易漏掉一个，
+    漏掉的那一个还在收人。恢复时逐场按候补顺序补齐空位，汇总成一条留痕。
+    """
+    act, shifts = _toggle_all_target(db, user, activity_id)
+    db.commit()          # 还连接再排锁，理由同 enroll
+    promoted, hints = 0, []
+    with shift_lock(db, *[g.id for g in shifts]):
+        for g in shifts:
+            logic.reload_shift(db, g)
+            g.enroll_paused = body.paused
+        db.flush()
+        if not body.paused:
+            for g in shifts:
+                out = _reopened(db, g, None)
+                promoted += out["promoted"]
+                if out["hint"]:
+                    hints.append(f"「{g.name}」：{out['hint']}")
+        out = _toggle_all_done(
+            db, user, act, shifts,
+            f"{'暂停' if body.paused else '恢复'}全部岗位的报名"
+            f"（{len(shifts)} 个）", promoted, hints)
+    return {"paused": body.paused, **out}
+
+
+@router.post("/activities/{activity_id}/lock-all")
+def lock_all(activity_id: str, body: LockBody,
+             db: OrmSession = Depends(db_session),
+             user: User = Depends(require_manager)):
+    """一次锁定 / 解锁本活动全部岗位的名单，规则同 lock_shift。
+
+    缺组长的组合成一条提醒管理者（发给管理者的活动通知一律一个活动一条）；
+    解锁时逐场按候补顺序补齐空位，汇总成一条留痕。
+    """
+    act, shifts = _toggle_all_target(db, user, activity_id)
+    db.commit()
+    promoted, hints, labels = 0, [], []
+    with shift_lock(db, *[g.id for g in shifts]):
+        for g in shifts:
+            logic.reload_shift(db, g)
+            was_locked = logic.shift_locked(g)
+            logic.set_shift_locked(g, body.locked)
+            if body.locked and not was_locked:
+                labels += logic.shift_leader_vacancy_labels(db, g)
+        db.flush()
+        if labels:
+            logic.send_leader_vacancy(db, act.id, labels)
+        if not body.locked:
+            for g in shifts:
+                out = _reopened(db, g, None)
+                promoted += out["promoted"]
+                if out["hint"]:
+                    hints.append(f"「{g.name}」：{out['hint']}")
+        out = _toggle_all_done(
+            db, user, act, shifts,
+            f"{'锁定' if body.locked else '解锁'}全部岗位的名单"
+            f"（{len(shifts)} 个）", promoted, hints)
+    return {"locked": body.locked, **out}
 
 
 def _holder_occupants(db: OrmSession, holder: Position) -> str:
@@ -2025,12 +2297,12 @@ def _holder_occupants(db: OrmSession, holder: Position) -> str:
 @router.post("/shifts/{shift_id}/open-pick")
 def open_pick(shift_id: str, db: OrmSession = Depends(db_session),
               user: User = Depends(require_manager)):
-    """「截止后统一分配」的场次开放选岗：转成「报名即选岗位」，之后按各岗位名额自选。
+    """「截止后统一分配」的场次开放选岗：转成一个普通岗位，按它的名额自行报名。
 
-    条件：已建了真实岗位，且「待分配」里一个人都不挂（正式、候补、待确认、
-    待筛选都算）。这时这一场的每个人都已经站在某个真实岗位上，
-    转成 pick 之后他们各自占着自己岗位的名额，账一笔不乱；剩下的空位
-    就是各岗位的「名额 − 已占」，新来的人自己挑。
+    条件：这一场只有一个真实岗位，且「待分配」里一个人都不挂（正式、候补、
+    待确认、待筛选都算）。这时这一场的每个人都已经站在那个岗位上，转过去
+    他们各自占着它的名额，账一笔不乱；剩下的空位就是「名额 − 已占」，
+    新来的人自己报。几个岗位要各自招人的，按岗位分别新建（各带自己的时段）。
 
     和暂停报名一样不用进编辑态：它不改任何已报名的人的安排，只改新来的人
     从哪个口子进。判定和改动都在场次锁里做，锁外读到的状态只用来早拒——
@@ -2053,6 +2325,7 @@ def open_pick(shift_id: str, db: OrmSession = Depends(db_session),
         if not real:
             raise HTTPException(409, f"「{g.name}」还没建岗位：先在这一场下建好岗位，"
                                      f"再开放选岗")
+        _ensure_single_post(g)
         holder = g.placeholder()
         if holder is not None:
             busy = _holder_occupants(db, holder)
@@ -2080,11 +2353,14 @@ def open_pick(shift_id: str, db: OrmSession = Depends(db_session),
             g.positions.remove(holder)
             db.delete(holder)
         g.mode = "pick"
+        # 转过去就是一个普通岗位（岗位自带时段），场次名跟岗位名对齐
+        was = g.name
+        g.name = real[0].name
         audit_log(db, actor=user, action="update", target_type="group",
                   target_id=g.id, target_label=f"{act.title}·{g.name}",
                   activity_id=act.id,
-                  summary=f"场次「{g.name}」开放选岗：改为「报名即选岗位」，"
-                          f"按 {len(real)} 个岗位的名额自选",
+                  summary=f"场次「{was}」开放选岗：改为岗位「{real[0].name}」"
+                          f"（{real[0].quota} 人）自行报名",
                   changes=[{"field": "mode", "label": "岗位模式",
                             "old": Shift.MODE_LABELS["assign"],
                             "new": Shift.MODE_LABELS["pick"]}],
@@ -2103,12 +2379,12 @@ def open_pick(shift_id: str, db: OrmSession = Depends(db_session),
 def delete_position(position_id: str,
                    db: OrmSession = Depends(db_session),
                    user: User = Depends(require_manager)):
-    s = db.get(Position, position_id)
-    if s is None:
-        raise HTTPException(404, "岗位不存在")
+    """删除「截止后统一分配」场次里的一个岗位。普通岗位走 DELETE /posts/{id}。"""
+    s = _position(db, position_id)
     g = _shift(db, s.shift_id)
     ensure_activity_manager(db, user, g.activity_id)
     act = _ensure_editing(db, g.activity_id)
+    _refuse_post_shift(g)
     if s.is_placeholder:
         raise HTTPException(409, "「待分配」是这一场报名的入口，不能删；"
                                  "名额改在场次的「人数上限」里")
@@ -2143,6 +2419,205 @@ def delete_position(position_id: str,
               visible=True)
     db.commit()
     return {"ok": True}
+
+
+# ======================= 岗位（自带时段） =======================
+#
+# 一个普通岗位 = 一个只装它的服务场次（mode=pick），场次名与岗位名一致，
+# 场次的时段就是这个岗位的时段。下面这组接口一次请求把两层一起处理，
+# 管理端只需要「岗位」这一个概念。
+
+# 岗位接口里落在场次那一层的字段。地点与条件只认岗位上的那份（见 Position），
+# 名额与候补在岗位上，场次名跟着岗位名走，所以这三样都不在这里
+POST_SHIFT_FIELDS = {"note": "备注", "hours_mode": "时长认定",
+                     "lock_hours": "开场前自动锁定（小时）",
+                     "flexible_time": "时间灵活（可多次签到）"}
+
+
+class PostBody(PositionFields):
+    """一个岗位：岗位自己的字段，加上它那一场的时段与计时方式。"""
+    periods: list[PeriodBody] = []
+    # 开场前多少小时自动锁定名单，0 = 不自动锁定
+    lock_hours: int = Field(default=config.LOCK_HOURS_DEFAULT, ge=0,
+                            le=config.LOCK_HOURS_MAX)
+    hours_mode: str = "checkin"
+    # 时间灵活/待定的岗位：每张签到码各签一次到、一次退，可以签好几轮
+    flexible_time: bool = False
+    note: str = Field(default="", max_length=512)
+
+
+def _require_post_shift(g: Shift) -> None:
+    """岗位接口只管普通岗位。"""
+    if g.is_attached():
+        raise HTTPException(400, f"「{g.name}」是{g.kind_label()}，跟着服务场次走，"
+                                 f"请用场次接口 /api/staff/shifts 修改")
+    if not is_post_shift(g):
+        raise HTTPException(
+            400, f"「{g.name}」是「{g.mode_label()}」的场次，岗位是分配用的坑位、"
+                 f"没有自己的时段，请用 /api/staff/positions 接口修改")
+
+
+def _new_post_shift(db: OrmSession, act: Activity, *, name: str, note: str,
+                    lock_hours: int, hours_mode: str, flexible_time: bool,
+                    periods: list[dict]) -> Shift:
+    """给一个岗位建它自己的那一场。"""
+    if hours_mode not in HOURS_MODES:
+        raise HTTPException(400, "时长认定方式不合法")
+    g = Shift(id=uid("g"), activity_id=act.id, name=name, note=note,
+              sort=len(act.shifts), mode="pick", kind="service",
+              lock_hours=_clean_lock_hours(lock_hours), hours_mode=hours_mode,
+              flexible_time=bool(flexible_time))
+    _validate_flexible_hours(g)
+    db.add(g)
+    _set_periods(db, g, periods)
+    return g
+
+
+def _post_summary(act: Activity, s: Position, g: Shift) -> str:
+    return (f"（{s.time_text()}，{s.location or act.location or '地点待定'}，"
+            f"{s.quota} 人，{g.hours_label()}）")
+
+
+@router.post("/activities/{activity_id}/posts")
+def create_post(activity_id: str, body: PostBody,
+                db: OrmSession = Depends(db_session),
+                user: User = Depends(require_manager)):
+    """新建一个岗位：同一个事务里建好它自己的那一场和岗位本身。
+
+    返回岗位 id、场次 id，以及同组岗位时段不一致时的那句 warning
+    （组长只有一个人，照常保存）。
+    """
+    ensure_activity_manager(db, user, activity_id)
+    act = _ensure_editing(db, activity_id)
+    if act.is_record():
+        raise HTTPException(409, "补记录活动不设场次与岗位，时长在审批通过后导入名单")
+    periods = _clean_periods(body.periods)
+    g = _new_post_shift(db, act, name=body.name.strip(), note=body.note.strip(),
+                        lock_hours=body.lock_hours, hours_mode=body.hours_mode,
+                        flexible_time=body.flexible_time, periods=periods)
+    s = _build_position(db, g, body)
+    audit_log(db, actor=user, action="create", target_type="position",
+              target_id=s.id, target_label=f"{act.title}·{s.name}",
+              activity_id=act.id,
+              summary=f"新建岗位「{s.name}」{_post_summary(act, s, g)}",
+              visible=True)
+    db.commit()
+    return {"id": s.id, "shift_id": g.id,
+            "warning": logic.group_time_warning(db, s)}
+
+
+@router.patch("/posts/{position_id}")
+def update_post(position_id: str, body: dict, bg: BackgroundTasks,
+                db: OrmSession = Depends(db_session),
+                user: User = Depends(require_manager)):
+    """改一个岗位的任意字段：场次级的落到那一场，岗位级的落到岗位。
+
+    改名时场次名跟着改；改时段连带重算自动锁定时刻（见 logic.set_lock_hours），
+    这一次改了什么写成一条留痕，保存并发布时按人汇总发给志愿者。
+    """
+    s = _position(db, position_id)
+    g = _shift(db, s.shift_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = _ensure_editing(db, g.activity_id)
+    _require_post_shift(g)
+    shift_changes = _apply_shift_body(db, g, body, POST_SHIFT_FIELDS)
+    changes, synced, before_quota = _apply_position_body(db, g, s, body)
+    # 场次名与岗位名一致：这一场就是这个岗位，签到面板、导出表都按场次名找它
+    g.name = s.name
+    changes = changes + shift_changes
+    audit_log(db, actor=user, action="update", target_type="position",
+              target_id=s.id, target_label=f"{act.title}·{s.name}",
+              activity_id=act.id,
+              summary=f"修改岗位「{s.name}」："
+                      f"{'、'.join(c['label'] for c in changes) or '无实质变化'}"
+                      + (f"（组长任务已同步到同组另 {synced} 个岗位）"
+                         if synced else ""),
+              changes=changes,
+              # 组长任务改的是「这一组」的事，留痕却挂在被编辑的那个岗位上
+              # （兄弟岗位是静默同步的）。组长可能正好在兄弟岗位上，按岗位发
+              # 他就收不到，把他的 id 记进 affected，通知那一层照发
+              affected=([lead.user_id]
+                        if synced and (lead := logic.group_leader(db, s)) else None),
+              visible=True)
+    db.commit()
+    if (s.quota, s.waitlist_quota) != before_quota:
+        # 名额在闸门之外变了：作废计数器，下一个报名按数据库重新对齐
+        invalidate_gates(g.id, s.id)
+    return {"ok": True, "changes": changes,
+            "warning": logic.group_time_warning(db, s)}
+
+
+@router.delete("/posts/{position_id}")
+def delete_post(position_id: str, force: int = 0,
+                db: OrmSession = Depends(db_session),
+                user: User = Depends(require_manager)):
+    """删一个岗位，连同它自己的那一场。
+
+    有人有效报名时要 force=1，那些报名一起取消，受影响的人记进留痕，
+    保存并发布时通知到他们。
+    """
+    s = _position(db, position_id)
+    g = _shift(db, s.shift_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = _ensure_editing(db, g.activity_id)
+    _require_post_shift(g)
+    name, label = s.name, f"{act.title}·{s.name}"
+    _prune_questions(db, act.id, s)
+    n_active, affected = _drop_shift(db, act, g, force)
+    audit_log(db, actor=user, action="delete", target_type="position",
+              target_id=position_id, target_label=label, activity_id=act.id,
+              summary=f"删除岗位「{name}」" +
+                      (f"（含 {n_active} 条报名记录）" if n_active else ""),
+              visible=True, affected=affected)
+    db.commit()
+    return {"ok": True}
+
+
+class CopyPostBody(BaseModel):
+    periods: list[PeriodBody] = []   # 空 = 沿用原岗位的时段
+    name: str = Field(default="", max_length=128)   # 空 = 沿用原岗位的名字
+
+
+@router.post("/posts/{position_id}/copy")
+def copy_post(position_id: str, body: CopyPostBody,
+              db: OrmSession = Depends(db_session),
+              user: User = Depends(require_manager)):
+    """复制一个岗位到新的时段：同一份安排换个时间、可以换一批人。
+
+    全部字段与学习材料都带过来，报名、签到、时长不带；叫原岗位的培训/彩排
+    也叫它。一条岗位的几个时段是「同一批人全部要来」，要换人就复制成另一条
+    岗位，这就是那条快捷方式。
+    """
+    s = _position(db, position_id)
+    g = _shift(db, s.shift_id)
+    ensure_activity_manager(db, user, g.activity_id)
+    act = _ensure_editing(db, g.activity_id)
+    _require_post_shift(g)
+    periods = (_clean_periods(body.periods) if body.periods
+               else [{"start_time": p.start_time, "end_time": p.end_time}
+                     for p in g.sorted_periods()])
+    name = body.name.strip() or s.name
+    n_materials = (db.query(Attachment)
+                   .filter(Attachment.owner_type == "position",
+                           Attachment.owner_id == s.id).count())
+    new_g = _new_post_shift(db, act, name=name, note=g.note,
+                            lock_hours=g.lock_hours, hours_mode=g.hours_mode,
+                            flexible_time=g.flexible_time, periods=periods)
+    new_s = copying.copy_position(db, s, new_g, user, sort=0)
+    new_s.name = name
+    _inherit_trainings(act, s, new_s)
+    db.flush()
+    audit_log(db, actor=user, action="copy", target_type="position",
+              target_id=new_s.id, target_label=f"{act.title}·{name}",
+              activity_id=act.id,
+              summary=f"新建岗位「{name}」{_post_summary(act, new_s, new_g)}"
+                      f"（复制自「{s.name}」"
+                      + (f"，含 {n_materials} 份学习材料" if n_materials else "")
+                      + "）",
+              visible=True)
+    db.commit()
+    return {"id": new_s.id, "shift_id": new_g.id,
+            "warning": logic.group_time_warning(db, new_s)}
 
 
 # ======================= 活动管理者 =======================

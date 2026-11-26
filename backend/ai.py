@@ -216,20 +216,20 @@ def activity_draft(text: str, images: list[str] = ()) -> dict:
             "notes": _notes(data.get("notes"), missing + ["联络群二维码"])}
 
 
-# ======================= 场次与岗位 =======================
+# ======================= 岗位（自带时段） =======================
 
-STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草一场活动的「场次」和「岗位」。
-场次 = 一次报名对应的一份服务安排，可以含一个或多个服务时段；岗位 = 这些时段里的一种分工，带名额（如「检录引导 6 人」）。
-报名按场次算：写进同一个场次的人，要在它列出的每个时段都到场。
-原文说「10.25–28、10.31–11.3 都要同一批人」这类跨几个不连续日期、要求同一批人的，写成一个场次、多个时段，
-不要为了日期不连续拆成两个场次；每天的服务时间不同的，每个时段各写各的时间。
-同一时间段的不同分工是同一个场次下的多个岗位，不要拆成多个场次。
-场次时间必须严格按照岗位的时间来定：只有时段完全相同的岗位才能放进同一个场次；
-岗位时间不同（哪怕只差几分钟、或者一段包含另一段）就分成不同的场次，不要合并，也不要取并集或按大致时段归并。
+STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草一场活动的「岗位」。
+岗位 = 一种分工，带名额和自己的服务时段（如「检录引导 6 人，10-25 上午」）。
+报名按岗位算：报了一个岗位的人，要在它列出的每个时段都到场。
+原文说「10.25–28、10.31–11.3 都要同一批人」这类跨几个不连续日期、要求同一批人的，写成一个岗位、多个时段，
+不要为了日期不连续拆成两个岗位；每天的服务时间不同的，每个时段各写各的时间。
+同一份分工在不同时段换人做（上午一批、下午一批），每个时段各写一个岗位。
+岗位按时段分组写在 shifts 里：时段完全相同的岗位放进同一组，
+时段不同（哪怕只差几分钟、或者一段包含另一段）就分成不同的组，不要合并，也不要取并集或按大致时段归并。
 每个时段写起止时间「YYYY-MM-DD HH:MM」。原文只说上午 / 下午 / 全天的，按
 08:00-12:00 / 13:00-18:00 / 08:00-18:00 写一个大概的钟点，管理者会自己改；
 「10.25–28 上午」要写成 10-25、10-26、10-27、10-28 四段，不要合成一段。
-培训、彩排不是服务场次：原文给了具体时间的，写进它所服务的那个场次的 attached（时间同样用 periods 写）；
+培训、彩排不是服务岗位：原文给了具体时间的，写进它所服务的那一组的 attached（时间同样用 periods 写）；
 没有具体时间、只是到岗前要知道的培训内容，写进岗位的 training_note。
 原文可能含上传文件转出的表格（一行一行，单元格用「 | 」隔开）和图片，排班常常就在表里。
 只根据原文提取，原文没有的留空，不要编造。今天是 {today}；时间按北京时间，
@@ -241,15 +241,14 @@ STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草�
 只输出一个 json 对象：
 {{
   "shifts": [{{
-    "name": "场次名，如「开幕式当天」「赛会全程」",
+    "name": "这一组岗位的说法，如「开幕式当天」「赛会全程」",
     "periods": [{{"start_time": "开始时间", "end_time": "结束时间"}}],
-    "requirement_tags": {{"校区": ["只能从这些里选：{campuses}"], "学段": ["只能从这些里选：{stages}"]}},
     "lock_hours": 开场前多少小时锁定名单（0～{lock_max} 的整数，按第一个时段算）。原文说了「提前多久确定名单 / 之后不能退出」就按原文换算成小时，如「活动前一天」写 24；没说写 {lock_default},
     "positions": [{{
       "name": "岗位名",
       "quota": 名额（正整数，原文没写就按分工合理估一个）,
       "group_name": "岗位组（几个岗位同属一组时写，如「场内组」），没有就空",
-      "location": "岗位地点，和场次/活动地点一样就空",
+      "location": "岗位地点，和活动地点一样就空",
       "service_task": "服务任务：到岗做什么，一两句话，必须写",
       "position_requirement": "岗位特有的要求（身高、外语、经验等），没有就空",
       "training_note": "到岗前要知道的培训内容、集合安排，没有就空",
@@ -259,7 +258,7 @@ STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草�
       "attire_note": "服装说明：发放的写领取和归还方式，自备的写样式；attire 为 none 时空",
       "pay_optional": true 或 false（原文说志愿者可以选领劳务报酬的写 true，其余写 false）,
       "pay_note": "劳务报酬的标准，如「100 元/天，按具体服务时间计算」；pay_optional 为 false 时空",
-      "requirement_tags": {{"性别": ["男" 或 "女"]}}
+      "requirement_tags": {{"性别": ["男" 或 "女"], "校区": ["只能从这些里选：{campuses}"], "学段": ["只能从这些里选：{stages}"]}}
     }}],
     "attached": [{{
       "kind": "training 或 rehearsal：培训写 training，彩排写 rehearsal",
@@ -267,21 +266,21 @@ STRUCTURE_PROMPT = """你帮中国人民大学的志愿服务管理平台起草�
       "periods": [{{"start_time": "开始时间", "end_time": "结束时间"}}],
       "location": "和活动地点一样就空",
       "note": "备注，没有就空",
-      "positions": ["需要参加的岗位名，和上面 positions 里的岗位名一字不差；这个场次的人都要参加就给空数组"],
+      "positions": ["需要参加的岗位名，和上面 positions 里的岗位名一字不差；这一组的人都要参加就给空数组"],
       "hours_mode": "fixed / checkin / none：一般写 fixed（到场即按这一场的时长计）；原文说按签到签退计时写 checkin；原文说不计时长、或者是线上培训写 none"
     }}]
   }}],
   "notes": ["原文里没说清、需要管理者确认的事，每条一句，最多 5 条；估了名额的岗位合成一条写。缺时间、缺服务任务不用写，平台会自己列出来"]
 }}
-条件只在原文明确限定时才写，不限就给空对象 {{}}：岗位上只写性别；校区、学段写在场次上，而且只在原文说
-「这一场只要某校区/学段的人」时才写——整个活动的招募范围已经在活动信息里设好了，不要重复。"""
+条件只在原文明确限定时才写，不限就给空对象 {{}}，而且只在原文说「这个岗位只要某类人」时才写——
+整个活动的招募范围已经在活动信息里设好了，不要重复。"""
 
 ATTIRES = ("none", "issued", "own")
 ATTACHED_KINDS = ("training", "rehearsal")
 ATTACHED_HOURS = ("fixed", "checkin", "none")
-# 场次、岗位各自能设的条件，和手建时两个表单上的一致
-SHIFT_TAGS = {"校区": config.CAMPUSES, "学段": config.STAGES}
-POSITION_TAGS = {"性别": ["男", "女"]}
+# 岗位能设的条件，和手建岗位时表单上的一致（见 staff_activities.POSITION_TAGS）
+POSITION_TAGS = {"性别": ["男", "女"], "校区": config.CAMPUSES,
+                 "学段": config.STAGES}
 
 
 def _activity_brief(act: Activity) -> str:
@@ -291,7 +290,7 @@ def _activity_brief(act: Activity) -> str:
     if act.reg_end:
         lines.append(f"报名截止：{act.reg_end:%Y-%m-%d %H:%M}")
     if act.main_shifts():
-        lines.append("已经建好的场次（不要重复）：" + "；".join(
+        lines.append("已经建好的岗位与场次（不要重复）：" + "；".join(
             f"{g.name} {g.span_text()}" for g in act.main_shifts()))
     return "\n".join(lines)
 
@@ -413,7 +412,6 @@ def structure_draft(act: Activity, text: str, images: list[str] = ()) -> dict:
         shifts.append({
             "name": _text(g.get("name"), 128) or f"场次 {len(shifts) + 1}",
             "periods": _periods(g.get("periods")),
-            "requirement_tags": _tags(g.get("requirement_tags"), SHIFT_TAGS),
             "lock_hours": _lock_hours(g.get("lock_hours")),
             "positions": positions,
             "attached": attached,
@@ -470,7 +468,9 @@ def _form_brief(act: Activity) -> str:
                 (p.service_task or "").strip()[:150],
                 f"岗位要求：{p.position_requirement.strip()[:150]}"
                 if (p.position_requirement or "").strip() else "") if x)
-            lines.append(f"- {p.name}（{g.name}，{p.quota} 人）{'：' + extra if extra else ''}")
+            # 岗位名重名是常事（同一份活儿两个时段各招一批），带上时段才认得出
+            lines.append(f"- {p.name}（{g.span_text()}，{p.quota} 人）"
+                         f"{'：' + extra if extra else ''}")
     if lines[-1] == "岗位：":
         lines[-1] = "岗位：还没建"
     return "\n".join(lines)

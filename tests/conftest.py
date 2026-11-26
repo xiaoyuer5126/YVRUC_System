@@ -188,6 +188,23 @@ POSITION_TEXT = {"location": "北门", "service_task": "无特殊要求",
                  "training_note": "现场由负责人统一讲解"}
 
 
+def mk_post(client, headers, activity_id, *, days=9, hours=3, **fields):
+    """建一个岗位（岗位自带时段）：POST /posts 一次把场次和岗位都建好。
+
+    不传 periods 就给一段 days 天后、长 hours 小时的时段；其余字段照 PostBody。
+    返回接口的响应，用例要 id / shift_id / warning 自己取。
+    """
+    from datetime import timedelta
+    from backend.models import now
+
+    body = {"name": "引导", "quota": 3, **POSITION_TEXT, **fields}
+    body.setdefault("periods", [
+        {"start_time": (now() + timedelta(days=days)).isoformat(),
+         "end_time": (now() + timedelta(days=days, hours=hours)).isoformat()}])
+    return client.post(f"/api/staff/activities/{activity_id}/posts",
+                       headers=headers, json=body)
+
+
 @pytest.fixture(scope="session")
 def open_group_days():
     """open_group 默认场次日期的发生器，整个会话共用一个。
@@ -428,7 +445,7 @@ def editing(client: TestClient, headers: dict, activity_id: str):
     """已发布的活动要改结构，必须先进编辑态。
 
     with editing(client, admin, act.id):
-        client.patch(f"/api/staff/positions/{p.id}", ...)
+        client.patch(f"/api/staff/posts/{p.id}", ...)
     """
     r = client.post(f"/api/staff/activities/{activity_id}/edit-lock",
                     headers=headers)
@@ -522,13 +539,7 @@ def make_draft(client, headers, *, proposal: bool = True) -> str:
                           "reg_end": (now() + timedelta(days=5)).isoformat()})
     assert r.status_code == 200, r.text
     aid = r.json()["id"]
-    r = client.post(f"/api/staff/activities/{aid}/shifts", headers=headers,
-                    json={"name": "上午场", "mode": "pick",
-                          "periods": [{"start_time": (now() + timedelta(days=9)).isoformat(),
-                          "end_time": (now() + timedelta(days=9, hours=3)).isoformat()}]})
-    assert r.status_code == 200, r.text
-    r = client.post(f"/api/staff/shifts/{r.json()['id']}/positions", headers=headers,
-                    json={"name": "引导", "quota": 3, **POSITION_TEXT})
+    r = mk_post(client, headers, aid, name="引导", quota=3)
     assert r.status_code == 200, r.text
     if proposal:
         upload_proposal(client, headers, aid)

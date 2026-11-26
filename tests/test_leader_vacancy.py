@@ -48,7 +48,7 @@ def _quit(client, db, enr_id):
 def test_打开需要组长开关不提醒(client, admin, db, open_group):
     act, g = open_group(5)
     with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{g.test_position_id}",
+        r = client.patch(f"/api/staff/posts/{g.test_position_id}",
                          headers=admin,
                          json={"needs_leader": True,
                                "leader_task": "带队进场、清点人数"})
@@ -115,7 +115,7 @@ def test_锁定后才打开需要组长立即提醒(client, admin, db, open_grou
     _enroll(client, act, g, take_student())
     _lock(client, admin, g)
     with editing(client, admin, act.id):
-        r = client.patch(f"/api/staff/positions/{g.test_position_id}",
+        r = client.patch(f"/api/staff/posts/{g.test_position_id}",
                          headers=admin,
                          json={"needs_leader": True,
                                "leader_task": "带队进场、清点人数"})

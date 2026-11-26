@@ -11,7 +11,7 @@ import pytest
 
 from backend import ai, ai_files, config, locks
 from backend.models import Activity
-from conftest import POSITION_TEXT, login, make_draft
+from conftest import login, make_draft, mk_post
 
 
 class _Resp:
@@ -148,7 +148,7 @@ def test_场次草稿_岗位字段收拾好(client, admin, db, model):
     # 活动信息与已有场次带给了模型
     title = db.get(Activity, aid).title
     assert title in calls[0]["body"]["messages"][0]["content"]
-    assert "上午场" in calls[0]["body"]["messages"][0]["content"]
+    assert "已经建好的岗位与场次" in calls[0]["body"]["messages"][0]["content"]
 
 
 def test_场次草稿_组长任务跟组长一起读(client, admin, db, model):
@@ -225,14 +225,12 @@ def test_问卷草稿_不写原文也行_岗位名对回岗位(client, admin, db
     aid = make_draft(client, admin)
     act = db.get(Activity, aid)
     first = next(p for g in act.main_shifts() for p in g.positions)       # 上午场「引导」
-    g2 = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
-                     json={"name": "下午场", "mode": "pick",
-                           "periods": [{"start_time": "2026-12-01 13:00",
-                                        "end_time": "2026-12-01 17:00"}]}).json()["id"]
-    second = client.post(f"/api/staff/shifts/{g2}/positions", headers=admin,
-                         json={"name": "引导", "quota": 2, **POSITION_TEXT}).json()["id"]
-    trans = client.post(f"/api/staff/shifts/{g2}/positions", headers=admin,
-                        json={"name": "翻译", "quota": 1, **POSITION_TEXT}).json()["id"]
+    afternoon = [{"start_time": "2026-12-01 13:00",
+                  "end_time": "2026-12-01 17:00"}]
+    second = mk_post(client, admin, aid, name="引导", quota=2,
+                     periods=afternoon).json()["id"]
+    trans = mk_post(client, admin, aid, name="翻译", quota=1,
+                    periods=afternoon).json()["id"]
     replies.append((200, json.dumps({"questions": [
         {"kind": "single", "title": "参加过类似活动吗", "options": ["是", "否", "是"],
          "required": True, "positions": []},
@@ -256,7 +254,8 @@ def test_问卷草稿_不写原文也行_岗位名对回岗位(client, admin, db
     assert sorted(q3["applies_to_positions"]) == sorted([first.id, second])
     assert q4["kind"] == "text"
     prompt = calls[0]["body"]["messages"][0]["content"]
-    assert "报名即录取" in prompt and "- 翻译（下午场，1 人）" in prompt
+    assert "报名即录取" in prompt
+    assert "- 翻译（2026-12-01（周二）13:00-17:00，1 人）" in prompt
     assert "不要再出题问" in prompt
     # 草稿原样就能保存：前端把它加进题目列表，管理者点保存走的是这个接口
     r = client.put(f"/api/staff/activities/{aid}/form", headers=admin, json={"questions": [

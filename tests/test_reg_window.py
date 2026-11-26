@@ -14,7 +14,7 @@ import pytest
 from backend.models import Activity, Shift, now, uid
 from conftest import set_shift_time, upload_qr
 from conftest import mk_shift
-from conftest import POSITION_TEXT, login
+from conftest import POSITION_TEXT, login, mk_post
 
 
 @pytest.fixture
@@ -28,13 +28,8 @@ def two_shifts(client, admin, db):
                           "reg_end": (now() + timedelta(days=5)).isoformat()})
     aid = r.json()["id"]
     for day in (3, 9):
-        g = client.post(f"/api/staff/activities/{aid}/shifts", headers=admin,
-                        json={"name": f"第 {day} 天", "mode": "pick",
-                              "periods": [{"start_time": (now() + timedelta(days=day)).isoformat(),
-                              "end_time": (now() + timedelta(days=day, hours=3)).isoformat()}]}
-                        ).json()["id"]
-        client.post(f"/api/staff/shifts/{g}/positions", headers=admin,
-                    json={"name": "引导", "quota": 3, **POSITION_TEXT})
+        r = mk_post(client, admin, aid, name=f"第 {day} 天", quota=3, days=day)
+        assert r.status_code == 200, r.text
     return aid
 
 
@@ -212,7 +207,6 @@ def test_已结束的活动改不了任何东西(client, admin, db, two_shifts):
     act = db.get(Activity, two_shifts)
     act.status = "finished"
     db.commit()
-    gid = act.shifts[0].id
     pid = act.shifts[0].positions[0].id
 
     def refused(r):
@@ -223,14 +217,10 @@ def test_已结束的活动改不了任何东西(client, admin, db, two_shifts):
     # 连「调整岗位」的入口都不给：不进编辑态就动不了结构，这一层先堵死
     assert refused(client.post(f"/api/staff/activities/{two_shifts}/edit-lock",
                                headers=admin))
-    assert refused(client.patch(f"/api/staff/shifts/{gid}", headers=admin,
-                                json={"name": "改场次"}))
-    assert refused(client.patch(f"/api/staff/positions/{pid}", headers=admin,
+    assert refused(client.patch(f"/api/staff/posts/{pid}", headers=admin,
                                 json={"quota": 9}))
-    assert refused(client.post(f"/api/staff/shifts/{gid}/positions",
-                               headers=admin,
-                               json={"name": "新岗", "quota": 1, **POSITION_TEXT}))
-    assert refused(client.delete(f"/api/staff/positions/{pid}", headers=admin))
+    assert refused(mk_post(client, admin, two_shifts, name="新岗", quota=1))
+    assert refused(client.delete(f"/api/staff/posts/{pid}", headers=admin))
 
 
 # ======================= 报名截止不能早于此刻、不能早于报名开始 =======================
