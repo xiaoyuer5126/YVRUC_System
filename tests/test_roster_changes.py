@@ -90,7 +90,7 @@ def test_人员变动日报每天一条(client, db, open_group, take_student, mo
 
     def digests():
         return (db.query(Notification)
-                .filter(Notification.title == f"[人员变动] {act.title} · {g.name}")
+                .filter(Notification.title == f"[人员变动] {act.title}")
                 .count())
 
     scheduled.send_roster_digests(db)
@@ -121,17 +121,28 @@ def test_放弃候补转正不算退出(client, db, open_group, take_student, mo
     monkeypatch.setattr(config, "ROSTER_DIGEST_HOUR", 0)
 
     scheduled.send_roster_digests(db)
-    [body] = _digest_bodies(db, act, g)
+    body = _digest_section(db, act, g)
     # 正式那位退选算「退出」；放弃转正的那位从没进过名单，只进自己那一行
     assert "新增 1 人，退出 1 人" in body, body
     assert "放弃候补转正：1 人。" in body, body
     assert "当前 0/1 人，缺 1 人。" in body, body
 
 
-def _digest_bodies(db, act, g) -> list[str]:
+def _digest_bodies(db, act) -> list[str]:
+    """发给管理者的日报：一个活动一条（这里的活动只有 admin 一个管理者）。"""
     return [n.content for n in db.query(Notification)
-            .filter(Notification.title == f"[人员变动] {act.title} · {g.name}")
+            .filter(Notification.title == f"[人员变动] {act.title}")
             .all()]
+
+
+def _digest_section(db, act, g) -> str:
+    """日报正文里这一场那一段（以场次名开头）；没有这一段就是空串。"""
+    bodies = _digest_bodies(db, act)
+    assert len(bodies) <= 1, bodies
+    for block in (bodies[0].split("\n\n") if bodies else []):
+        if block.startswith(f"{g.name}（"):
+            return block
+    return ""
 
 
 def _second_shift(db, act, g, name: str, *, hours_later: float) -> Shift:
@@ -175,8 +186,10 @@ def _excuse(client, db, shift_id, sid, excused, reason=""):
     return u
 
 
-def test_日报按场次分开统计(client, db, open_group, take_student, monkeypatch):
-    """同一活动两场：各报各的增减，不把整个活动的数字抄给每一场。"""
+def test_日报一个活动一条按场次分段(client, db, open_group, take_student,
+                             monkeypatch):
+    """同一活动两场：合成一条通知，正文按场次分段，各报各的增减——
+    不把整个活动的数字抄给每一场，也不按场次各发一条。"""
     act, g = open_group(3, day_offset=0, start_in_hours=30)
     g2 = _second_shift(db, act, g, "第二场", hours_later=10)
     quiet = _second_shift(db, act, g, "第三场", hours_later=20)
@@ -190,12 +203,14 @@ def test_日报按场次分开统计(client, db, open_group, take_student, monke
     monkeypatch.setattr(config, "ROSTER_DIGEST_HOUR", 0)
 
     scheduled.send_roster_digests(db)
-    [first] = _digest_bodies(db, act, g)
+    # 一个活动一条，正文按场次分段
+    assert len(_digest_bodies(db, act)) == 1
+    first = _digest_section(db, act, g)
     assert "新增 2 人，退出 0 人" in first and "当前 2/3 人，缺 1 人" in first
-    [second] = _digest_bodies(db, act, g2)
+    second = _digest_section(db, act, g2)
     assert "新增 2 人，退出 1 人" in second and "当前 1/3 人，缺 2 人" in second
     assert "请假" not in first + second     # 没有请假销假就没有这一段
-    assert _digest_bodies(db, act, quiet) == [], "没变动的场次不发"
+    assert _digest_section(db, act, quiet) == "", "没变动的场次不占一段"
 
 
 def test_培训请假进日报(client, admin, db, open_group, take_student,
@@ -213,8 +228,8 @@ def test_培训请假进日报(client, admin, db, open_group, take_student,
 
     scheduled.send_roster_digests(db)
     training = db.get(Shift, tid)
-    [body] = _digest_bodies(db, act, training)
-    assert body.split("\n")[:4] == [
+    body = _digest_section(db, act, training)
+    assert body.split("\n")[1:5] == [
         "请假/销假：",
         f"· {ua.name}（{ua.student_id}）请假「岗前培训」：与专业课冲突",
         f"· {ub.name}（{ub.student_id}）请假「岗前培训」：临时有事",
@@ -223,7 +238,7 @@ def test_培训请假进日报(client, admin, db, open_group, take_student,
     assert "新增" not in body and "退出" not in body
     assert "当前在册 3 人，其中请假 1 人。" in body
     # 服务场次照常报增减，培训的请假不混进来
-    [service] = _digest_bodies(db, act, g)
+    service = _digest_section(db, act, g)
     assert "新增 3 人，退出 0 人" in service and "请假" not in service
 
 
@@ -239,7 +254,7 @@ def test_日报没有变动不发(client, db, open_group, take_student, monkeypa
     monkeypatch.setattr(config, "ROSTER_DIGEST_HOUR", 0)
 
     scheduled.send_roster_digests(db)
-    assert _digest_bodies(db, act, g) == []
+    assert _digest_bodies(db, act) == []
 
 
 def test_请假不即时通知管理者(client, admin, db, open_group, take_student):
