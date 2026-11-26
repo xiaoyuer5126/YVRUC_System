@@ -113,40 +113,36 @@ def test_活动草稿_全选等于不限_缺项一条写完(client, admin, model
 def test_岗位草稿_岗位字段收拾好(client, admin, db, model):
     calls, replies = model
     aid = make_draft(client, admin)
-    replies.append((200, json.dumps({"groups": [{
-        "name": "开幕式当天",
-        "periods": [{"start_time": "2026-10-18 07:30", "end_time": "不知道"}],
-        "location": "世纪馆北门",                      # 一组岗位没有地点字段：丢掉
-        "requirement_tags": {"校区": ["中关村校区"]},   # 条件全在岗位上：丢掉
-        "positions": [
-            {"name": "检录引导", "quota": "6", "service_task": "引导运动员检录",
-             "attire": "issued", "attire_note": "",            # 发服装却没说怎么领：按不需要放
-             "needs_leader": "yes",                             # 不是 true 就当 false
-             "pay_optional": True, "pay_note": "",              # 说可选劳务却没写标准：按只记时长放
-             # 学院不在草稿收的条件里：丢掉；学段全选 = 不限
-             "requirement_tags": {"性别": "女", "学院": ["文学院"],
-                                  "校区": ["中关村校区"], "学段": config.STAGES}},
-            {"name": "", "quota": 0, "service_task": "",
-             "pay_optional": True, "pay_note": "100 元/天，活动后统一发放"},
-        ]}], "notes": []}, ensure_ascii=False)))
+    replies.append((200, json.dumps({"posts": [
+        {"no": 1, "name": "检录引导", "quota": "6", "service_task": "引导运动员检录",
+         "periods": [{"start_time": "2026-10-18 07:30", "end_time": "不知道"}],
+         "lock_hours": 100,                                 # 超出 0～72：用默认值
+         "attire": "issued", "attire_note": "",            # 发服装却没说怎么领：按不需要放
+         "needs_leader": "yes",                             # 不是 true 就当 false
+         "pay_optional": True, "pay_note": "",              # 说可选劳务却没写标准：按只记时长放
+         # 学院不在草稿收的条件里：丢掉；学段全选 = 不限
+         "requirement_tags": {"性别": "女", "学院": ["文学院"],
+                              "校区": ["中关村校区"], "学段": config.STAGES}},
+        {"no": 2, "name": "", "quota": 0, "service_task": "", "lock_hours": 24,
+         "periods": [{"start_time": "2026-10-18 13:00", "end_time": "2026-10-18 17:00"}],
+         "pay_optional": True, "pay_note": "100 元/天，活动后统一发放"},
+    ], "notes": []}, ensure_ascii=False)))
     r = client.post(f"/api/staff/ai/activities/{aid}/structure-draft", headers=admin,
                     data={"text": TEXT})
     assert r.status_code == 200, r.text
-    g = r.json()["groups"][0]
-    assert g["name"] == "开幕式当天"
+    d = r.json()
+    assert d["trainings"] == []
+    p1, p2 = d["posts"]
     # 开始认出来了、结束没认出来：留半截让人补，不替它猜钟点
-    assert g["periods"] == [{"start_time": "2026-10-18T07:30", "end_time": ""}]
-    assert "location" not in g, "一组岗位不带地点：地点在岗位与活动上"
-    assert "requirement_tags" not in g, "条件在岗位上：这一组只管时段"
-    assert g["attached"] == []
-    p1, p2 = g["positions"]
+    assert p1["periods"] == [{"start_time": "2026-10-18T07:30", "end_time": ""}]
+    assert p1["lock_hours"] == config.LOCK_HOURS_DEFAULT and p2["lock_hours"] == 24
+    assert "no" not in p1, "序号只用来让培训指认岗位，不进草稿"
     assert p1["quota"] == 6 and p1["attire"] == "none" and p1["needs_leader"] is False
     assert p1["pay_optional"] is False and p1["pay_note"] == ""
-    # 岗位自带时段，条件也都收在岗位上：性别、校区、学段
     assert p1["requirement_tags"] == {"性别": ["女"], "校区": ["中关村校区"]}
     assert p2["name"] == "志愿者" and p2["quota"] == 1 and p2["service_task"] == ""
     assert p2["pay_optional"] is True and p2["pay_note"] == "100 元/天，活动后统一发放"
-    assert r.json()["notes"] == ["还需要自己补上：「开幕式当天」的时段起止时间、岗位「志愿者」的服务任务"]
+    assert d["notes"] == ["还需要自己补上：「检录引导」的时段起止时间、岗位「志愿者」的服务任务"]
     # 活动信息与已有岗位带给了模型
     title = db.get(Activity, aid).title
     assert title in calls[0]["body"]["messages"][0]["content"]
@@ -157,69 +153,70 @@ def test_岗位草稿_组长任务跟组长一起读(client, admin, db, model):
     """要组长就要写任务，写不出任务就当没要组长——落库时后端会拦。"""
     calls, replies = model
     aid = make_draft(client, admin)
-    replies.append((200, json.dumps({"groups": [{
-        "name": "开幕式当天",
-        "periods": [{"start_time": "2026-10-18 07:30", "end_time": "不知道"}],
-        "positions": [
-            {"name": "带队", "quota": 3, "service_task": "带队入场",
-             "needs_leader": True, "leader_task": "带队进场、清点人数、结束后对账"},
-            {"name": "引导", "quota": 3, "service_task": "引导入座",
-             "needs_leader": True},                        # 要组长却没写任务：按不需要组长放
-        ]}], "notes": []}, ensure_ascii=False)))
+    when = [{"start_time": "2026-10-18 07:30", "end_time": "2026-10-18 12:00"}]
+    replies.append((200, json.dumps({"posts": [
+        {"no": 1, "name": "带队", "quota": 3, "service_task": "带队入场", "periods": when,
+         "needs_leader": True, "leader_task": "带队进场、清点人数、结束后对账"},
+        {"no": 2, "name": "引导", "quota": 3, "service_task": "引导入座", "periods": when,
+         "needs_leader": True},                        # 要组长却没写任务：按不需要组长放
+    ], "notes": []}, ensure_ascii=False)))
     r = client.post(f"/api/staff/ai/activities/{aid}/structure-draft", headers=admin,
                     data={"text": TEXT})
     assert r.status_code == 200, r.text
-    p1, p2 = r.json()["groups"][0]["positions"]
+    p1, p2 = r.json()["posts"]
     assert p1["needs_leader"] is True
     assert p1["leader_task"] == "带队进场、清点人数、结束后对账"
     assert p2["needs_leader"] is False and p2["leader_task"] == ""
 
 
-def test_岗位草稿_培训彩排挂在一组岗位下(client, admin, model):
+def test_岗位草稿_培训彩排按序号圈岗位_同名岗位的时段分得开(client, admin, model):
     _calls, replies = model
     aid = make_draft(client, admin)
-    replies.append((200, json.dumps({"groups": [{
-        "name": "比赛日",
-        "periods": [{"start_time": "2026-10-25 07:00", "end_time": "2026-10-25 12:00"}],
-        "positions": [{"name": "补给站", "quota": 8, "service_task": "发水"},
-                      {"name": "终点引导", "quota": 4, "service_task": "引导完赛选手"}],
-        "attached": [
-            {"kind": "rehearsal", "name": "终点走台",
-             "periods": [{"start_time": "2026-10-24 16:00",
-                          "end_time": "2026-10-24 17:00"}],
-             "positions": ["终点引导", "不存在的岗"],
-             "hours_mode": "none", "location": "终点拱门"},
-            {"kind": "meeting", "name": "",
-             "positions": ["查无此岗"], "hours_mode": "weird"},
-        ]}], "notes": []}, ensure_ascii=False)))
+    day = lambda d: [{"start_time": f"2026-10-{d} 07:00", "end_time": f"2026-10-{d} 12:00"}]
+    replies.append((200, json.dumps({"posts": [
+        {"no": 1, "name": "终点引导", "quota": 4, "service_task": "引导完赛选手",
+         "periods": day(25)},
+        {"no": 2, "name": "终点引导", "quota": 4, "service_task": "引导完赛选手",
+         "periods": day(26)},
+        {"no": "3", "name": "补给站", "quota": 8, "service_task": "发水", "periods": day(25)},
+    ], "trainings": [
+        {"kind": "rehearsal", "name": "终点走台",
+         "periods": [{"start_time": "2026-10-24 16:00", "end_time": "2026-10-24 17:00"}],
+         "posts": [2, "3", 9], "hours_mode": "none", "location": "终点拱门"},
+        {"kind": "meeting", "name": "", "posts": [99], "hours_mode": "weird"},
+        {"name": "全体大会", "posts": [],
+         "periods": [{"start_time": "2026-10-20 19:00", "end_time": "2026-10-20 20:00"}]},
+    ], "notes": []}, ensure_ascii=False)))
     r = client.post(f"/api/staff/ai/activities/{aid}/structure-draft", headers=admin,
                     data={"text": TEXT})
     assert r.status_code == 200, r.text
-    a1, a2 = r.json()["groups"][0]["attached"]
+    a1, a2, a3 = r.json()["trainings"]
+    # 序号换成岗位在 posts 里的下标：只叫第二天的终点引导和补给站
     assert a1 == {"kind": "rehearsal", "name": "终点走台",
                   "periods": [{"start_time": "2026-10-24T16:00",
                                "end_time": "2026-10-24T17:00"}],
                   "location": "终点拱门", "note": "",
-                  "positions": ["终点引导"], "hours_mode": "none"}
-    assert (a2["kind"], a2["name"], a2["positions"], a2["hours_mode"]) == \
+                  "posts": [1, 2], "hours_mode": "none"}
+    assert (a2["kind"], a2["name"], a2["posts"], a2["hours_mode"]) == \
         ("training", "集中培训", [], "fixed")
-    # 点了岗位却一个没对上：按这一组全部岗位放了，必须说出来
+    assert a3["posts"] == []
+    # 点了岗位却一个没对上：按全体放了，必须说出来；没点岗位的就是全体，不用提
     assert r.json()["notes"] == ["还需要自己补上：「集中培训」的服务时段",
-                                 "「集中培训」要参加的岗位没对上，先按这一组的全部岗位放，请核对"]
+                                 "「集中培训」要参加的岗位没对上，先按全体参加放，请核对"]
 
 
 def test_岗位草稿_结构不对也不报错(client, admin, model):
     _calls, replies = model
     aid = make_draft(client, admin)
-    replies.append((200, json.dumps({"groups": {"name": "不是数组"}})))
-    replies.append((200, json.dumps({"groups": [{"name": "A", "positions": "x",
-                                                 "attached": {"k": 1}}]})))
+    replies.append((200, json.dumps({"posts": {"name": "不是数组"}})))
+    replies.append((200, json.dumps({"posts": ["x", {"name": "A", "periods": "x"}],
+                                     "trainings": {"k": 1}})))
     url = f"/api/staff/ai/activities/{aid}/structure-draft"
     r = client.post(url, headers=admin, data={"text": TEXT})
-    assert r.status_code == 200 and r.json()["groups"] == []
+    assert r.status_code == 200 and r.json()["posts"] == [] and r.json()["trainings"] == []
     r = client.post(url, headers=admin, data={"text": TEXT})
-    g = r.json()["groups"][0]
-    assert g["positions"] == [] and g["attached"] == []
+    [p] = r.json()["posts"]
+    assert p["name"] == "A" and p["periods"] == [] and r.json()["trainings"] == []
 
 
 def test_问卷草稿_不写原文也行_岗位名对回岗位(client, admin, db, model):
