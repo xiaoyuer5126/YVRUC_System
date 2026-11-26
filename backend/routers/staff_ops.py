@@ -36,7 +36,8 @@ from ..models import (Activity, ActivitySubscription, CheckinGeo, CheckinRecord,
                       span_text, uid)
 from ..serializers import (applies_text, iso_of, recruit_scope_phrase,
                            reg_started)
-from .checkin import active_period, checkout_open, find_record
+from .checkin import (active_period, checkout_open, find_record,
+                      group_head, group_tasks, task_of_user)
 from .geo import tiles_configured
 
 router = APIRouter(prefix="/api/staff", tags=["staff-ops"])
@@ -109,6 +110,17 @@ def _conflict_message(db: OrmSession, t: CheckinTask, g: Shift) -> str:
     st = db.get(Position, t.position_id) if t.position_id else None
     return (f"本场次已经有开启的签到码（"
             f"{st.name if st else '整场统一签到'}），请先把它关掉再开新的")
+
+
+def _code_label(db: OrmSession, rows: list[CheckinTask]) -> str:
+    """留痕里怎么称呼这一张码：分岗位的写岗位名（一张码管几个就都写上），
+    整场统一的写「场次名·统一签到」。"""
+    names = [db.get(Position, t.position_id).name for t in rows
+             if t.position_id]
+    if names:
+        return "、".join(names)
+    g = db.get(Shift, rows[0].shift_id)
+    return f"{g.name}·统一签到"
 
 
 @router.post("/shifts/{shift_id}/checkin-tasks")
@@ -403,11 +415,14 @@ GEO_SOURCE_TEXT = {
 def set_geo(task_id: str, body: GeoBody,
             db: OrmSession = Depends(db_session),
             user: User = Depends(require_manager)):
-    """把这个任务改成定位签到（已有锚点则改半径/位置）。
+    """把这张码改成定位签到（已有锚点则改半径/位置）。
 
     坐标就是「人在哪儿算到场」的唯一依据，所以最好由管理者**在现场**用手机量。
     图上点的、校区预设的也收，但审计里写明来源（见 GeoBody）：日后有人质疑
     签到判定，得查得出这个点是不是坐办公室定的。
+
+    一张码管好几个岗位时，锚点落到组里每一行：对外是一张码，组里一半扫码
+    一半定位的话，志愿者看到的「该怎么签」就各不相同了。
     """
     task = db.get(CheckinTask, task_id)
     if task is None:
@@ -426,54 +441,55 @@ def set_geo(task_id: str, body: GeoBody,
             400, f"签到范围请填 {config.GEO_RADIUS_MIN_M}~"
                  f"{config.GEO_RADIUS_MAX_M} 米")
 
-    geo = (db.query(CheckinGeo).filter(CheckinGeo.task_id == task.id).first())
-    if geo is None:
-        geo = CheckinGeo(id=uid("geo"), task_id=task.id, set_by=user.id)
-        db.add(geo)
-    geo.lat, geo.lng = round(body.lat, 6), round(body.lng, 6)
-    geo.radius_m = body.radius_m
-    geo.accuracy_m = round(body.accuracy, 1)
-    geo.set_by, geo.set_at = user.id, now()
+    lat, lng = round(body.lat, 6), round(body.lng, 6)
+    accuracy = round(body.accuracy, 1)
+    rows = group_tasks(db, task)
+    for t in rows:
+        geo = (db.query(CheckinGeo).filter(CheckinGeo.task_id == t.id).first())
+        if geo is None:
+            geo = CheckinGeo(id=uid("geo"), task_id=t.id, set_by=user.id)
+            db.add(geo)
+        geo.lat, geo.lng = lat, lng
+        geo.radius_m = body.radius_m
+        geo.accuracy_m = accuracy
+        geo.set_by, geo.set_at = user.id, now()
 
-    g = db.get(Shift, task.shift_id)
-    st = db.get(Position, task.position_id) if task.position_id else None
+    label = _code_label(db, rows)
     audit_log(db, actor=user, action="checkin_geo", target_type="checkin",
-              target_id=task.id,
-              target_label=f"{_act(db, task.activity_id).title}·"
-                           f"{st.name if st else g.name}",
+              target_id=rows[0].id,
+              target_label=f"{_act(db, task.activity_id).title}·{label}",
               activity_id=task.activity_id,
-              summary=f"把「{st.name if st else g.name}」改成定位签到："
-                      f"({geo.lat:.5f}, {geo.lng:.5f})，半径 {geo.radius_m} 米"
-                      + (f"，量点时误差 ±{geo.accuracy_m:.0f} 米"
-                         if geo.accuracy_m else "")
+              summary=f"把「{label}」改成定位签到："
+                      f"({lat:.5f}, {lng:.5f})，半径 {body.radius_m} 米"
+                      + (f"，量点时误差 ±{accuracy:.0f} 米" if accuracy else "")
                       + "；" + GEO_SOURCE_TEXT.get(body.source, GEO_SOURCE_TEXT["gps"]))
     db.commit()
-    return {"ok": True, "geo": {"lat": geo.lat, "lng": geo.lng,
-                               "radius_m": geo.radius_m,
-                               "accuracy_m": geo.accuracy_m}}
+    return {"ok": True, "geo": {"lat": lat, "lng": lng,
+                               "radius_m": body.radius_m,
+                               "accuracy_m": accuracy}}
 
 
 @router.delete("/checkin-tasks/{task_id}/geo")
 def clear_geo(task_id: str, db: OrmSession = Depends(db_session),
               user: User = Depends(require_manager)):
-    """撤销定位签到，改回扫码。"""
+    """撤销定位签到，改回扫码；一张码管好几个岗位时整组一起改回。"""
     task = db.get(CheckinTask, task_id)
     if task is None:
         raise HTTPException(404, "任务不存在")
     ensure_activity_manager(db, user, task.activity_id)
     ensure_not_finished(_act(db, task.activity_id))
-    geo = (db.query(CheckinGeo).filter(CheckinGeo.task_id == task.id).first())
-    if geo is not None:
-        g = db.get(Shift, task.shift_id)
-        st = db.get(Position, task.position_id) if task.position_id else None
+    rows = group_tasks(db, task)
+    geos = (db.query(CheckinGeo)
+            .filter(CheckinGeo.task_id.in_([t.id for t in rows])).all())
+    if geos:
+        label = _code_label(db, rows)
         audit_log(db, actor=user, action="checkin_geo", target_type="checkin",
-                  target_id=task.id,
-                  target_label=f"{_act(db, task.activity_id).title}·"
-                               f"{st.name if st else g.name}",
+                  target_id=rows[0].id,
+                  target_label=f"{_act(db, task.activity_id).title}·{label}",
                   activity_id=task.activity_id,
-                  summary=f"取消定位签到，改回扫码："
-                          f"「{st.name if st else g.name}」")
-        db.delete(geo)
+                  summary=f"取消定位签到，改回扫码：「{label}」")
+        for geo in geos:
+            db.delete(geo)
         db.commit()
     return {"ok": True}
 
@@ -481,17 +497,20 @@ def clear_geo(task_id: str, db: OrmSession = Depends(db_session),
 @router.get("/checkin-tasks/{task_id}/code")
 def checkin_code(task_id: str, db: OrmSession = Depends(db_session),
                  user: User = Depends(require_manager)):
-    """取该任务此刻的动态签到码（没有就发一张），管理端每 30 秒来取一次。
+    """取这张码此刻的动态签到码（没有就发一张），管理端每 30 秒来取一次。
 
     **换码不删旧码**：新码发出后旧码还有一段寿命，留给正在排队扫码的人。
     所以前端拿到 expires_in 后照着它定时刷新即可，不必自己算时间。
+
+    一张码管好几个岗位时按组里第一行发：那块屏上只有一张码，组里每行各发
+    一张的话，现场就得摆几块屏，扫到哪张全凭运气。
     """
     task = db.get(CheckinTask, task_id)
     if task is None:
         raise HTTPException(404, "任务不存在")
     ensure_activity_manager(db, user, task.activity_id)
     code, expires_in = current_checkin_code(
-        task.id, config.CHECKIN_CODE_TTL_SECONDS,
+        group_head(db, task).id, config.CHECKIN_CODE_TTL_SECONDS,
         config.CHECKIN_CODE_REFRESH_SECONDS)
     # refresh 一并返回：前端照着它说明「多久换一张」，节奏只在 config 里写一份
     return {"code": code, "expires_in": expires_in,
@@ -507,17 +526,25 @@ def toggle_task(task_id: str, body: dict,
 
     开启时同样要查冲突：关掉一张、再打开另一张，很容易凑出两张同时开着的
     （同一个岗位的两张、或者一张整场的一张分岗位的），现场就说不清该扫哪张了。
+
+    一张码管好几个岗位时整组一起改：对外只有一张码，开一半关一半的话，
+    现场没人说得清这张码到底还能不能扫。手动设的可签时段也整组统一——
+    管理者填的那一段就是这张码的那一段，各行各按自己时段算的是默认窗。
     """
     task = db.get(CheckinTask, task_id)
     if task is None:
         raise HTTPException(404, "任务不存在")
     ensure_activity_manager(db, user, task.activity_id)
     ensure_not_finished(_act(db, task.activity_id))
+    rows = group_tasks(db, task)
+    head = rows[0]
+    label = _code_label(db, rows)
 
     if "valid_from" in body or "valid_to" in body:
         # 现场最常见的意外是场次提前或拖堂。关掉重建会让已经扫过的那张码
         # 作废（记录还挂在老任务下），所以时段要能直接改
-        for key in ("valid_from", "valid_to"):
+        window = {"valid_from": head.valid_from, "valid_to": head.valid_to}
+        for key in window:
             if key in body:
                 raw = (body[key] or "").strip()
                 # 起止都不许留空：截止同时是签退截止，过了它没签退的人按场次
@@ -528,43 +555,41 @@ def toggle_task(task_id: str, body: dict,
                         400, "开放和停止签到的时间都要填" if key == "valid_from"
                         else "停止签到时间必填：过了它还没签退的人按场次结束时间记时长")
                 try:
-                    setattr(task, key, parse_local_dt(raw))
+                    window[key] = parse_local_dt(raw)
                 except ValueError:
                     raise HTTPException(400, "时间格式不对") from None
-        if task.valid_from and task.valid_to and task.valid_to <= task.valid_from:
+        if window["valid_to"] <= window["valid_from"]:
             raise HTTPException(400, "结束时间要晚于开始时间")
-        g = db.get(Shift, task.shift_id)
-        st = db.get(Position, task.position_id) if task.position_id else None
+        for t in rows:
+            t.valid_from, t.valid_to = window["valid_from"], window["valid_to"]
         audit_log(db, actor=user, action="checkin_task", target_type="checkin",
-                  target_id=task.id,
-                  target_label=f"{_act(db, task.activity_id).title}·"
-                               f"{st.name if st else (g.name + '·统一签到')}",
+                  target_id=head.id,
+                  target_label=f"{_act(db, task.activity_id).title}·{label}",
                   activity_id=task.activity_id,
-                  summary=f"改可签时段：{_hm(task.valid_from)} ~ {_hm(task.valid_to)}")
+                  summary=f"改可签时段：{_hm(head.valid_from)} ~ {_hm(head.valid_to)}")
 
     if "active" in body:
         want = bool(body["active"])
         if want:
-            live = live_task_conflict(db, task.shift_id, task.period_id,
-                                      task.position_id, exclude_id=task.id)
-            if live is not None:
-                raise HTTPException(
-                    409, _conflict_message(db, live, db.get(Shift, task.shift_id)))
+            for t in rows:
+                live = live_task_conflict(db, t.shift_id, t.period_id,
+                                          t.position_id, exclude_id=t.id)
+                if live is not None:
+                    raise HTTPException(
+                        409, _conflict_message(db, live, db.get(Shift, t.shift_id)))
         # 开/关一张码是现场的分水岭：开着才有人能签。改这一次也一样留痕，
         # 事后才说得清某一刻哪张码是开的
-        if want != task.active:
-            g = db.get(Shift, task.shift_id)
-            st = db.get(Position, task.position_id) if task.position_id else None
-            loc = st.name if st else f"{g.name}·统一签到"
+        if want != head.active:
             audit_log(db, actor=user, action="checkin_task", target_type="checkin",
-                      target_id=task.id,
-                      target_label=f"{_act(db, task.activity_id).title}·{loc}",
+                      target_id=head.id,
+                      target_label=f"{_act(db, task.activity_id).title}·{label}",
                       activity_id=task.activity_id,
-                      summary=f"{'开启' if want else '关闭'}签到码：{task.token}")
-        task.active = want
+                      summary=f"{'开启' if want else '关闭'}签到码：{head.token}")
+        for t in rows:
+            t.active = want
     db.commit()
-    return {"ok": True, "active": task.active,
-            "valid_from": iso(task.valid_from), "valid_to": iso(task.valid_to)}
+    return {"ok": True, "active": head.active,
+            "valid_from": iso(head.valid_from), "valid_to": iso(head.valid_to)}
 
 
 class ReminderBody(BaseModel):
