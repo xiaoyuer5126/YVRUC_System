@@ -238,6 +238,7 @@ LABELS = {
     'decide_hours_request': '处理时长修改审批',
     'send_reminder': '手动提醒签到',
     'create_task': '生成签到码',
+    'create_group_task': '生成分岗位签到码',
     'export_activities_summary': '导出活动汇总',
     'create_violation': '登记违规记录',
     'delete_violation': '撤销违规登记',

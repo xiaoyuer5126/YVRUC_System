@@ -50,8 +50,11 @@ def test_固定签到码撞上已有的会换一个(client, admin, open_group, m
     assert [t["token"] for t in act1] == [taken]
 
 
-def test_一次生成多张码时彼此也不撞(client, admin, open_group, db, monkeypatch):
-    """分岗位多选一次开好几张：第二张抽到第一张刚生成的码，也得换掉。"""
+def test_一次生成多行码时彼此也不撞(client, admin, open_group, db, monkeypatch):
+    """多选岗位一次建好几行：第二行抽到第一行刚生成的码，也得换掉。
+
+    一组对外只用第一行的码，但每行的 token 都落库、都占着唯一约束。
+    """
     _act, g = open_group(5)
     p2 = Position(id=uid("p"), shift_id=g.id, name="第二岗位", quota=3, sort=1,
                   **POSITION_TEXT)
@@ -59,9 +62,9 @@ def test_一次生成多张码时彼此也不撞(client, admin, open_group, db, 
     db.commit()
     a, b = _fresh(), _fresh()
     monkeypatch.setattr(staff_ops, "new_checkin_token", _feed([a, a, b]))
-    r = client.post(f"/api/staff/shifts/{g.id}/checkin-tasks", headers=admin,
-                    json={"mode": "position",
-                          "position_ids": [g.test_position_id, p2.id]})
+    r = client.post(f"/api/staff/activities/{g.activity_id}/checkin-tasks",
+                    headers=admin,
+                    json={"position_ids": [g.test_position_id, p2.id]})
     assert r.status_code == 200, r.text
     assert sorted(t["token"] for t in r.json()["tasks"]) == sorted([a, b])
 

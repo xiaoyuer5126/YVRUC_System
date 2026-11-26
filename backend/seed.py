@@ -453,9 +453,10 @@ def main() -> None:
                                      period_id=c1.periods[0].id,
                                      position_id=st_.id, user_id=u.id,
                                      method="scan", checkin_at=ck_at))
+        # 分岗位的码带 code_group：线上建出来的就是一组（这一组只选了一个岗位）
         task_back = CheckinTask(id=uid("tsk"), activity_id=gala.id,
                                 shift_id=c1.id, period_id=c1.periods[0].id,
-                                position_id=c_s2.id,
+                                position_id=c_s2.id, code_group=uid("cg"),
                                 mode="position", token="BACK02",
                                 valid_from=c1.start_time,
                                 valid_to=c1.end_time, active=True,

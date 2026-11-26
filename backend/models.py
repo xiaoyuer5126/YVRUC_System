@@ -1313,10 +1313,16 @@ class Enrollment(Base):
 # ======================= 签到 =======================
 
 class CheckinTask(Base):
-    """签到任务：一个时段一张码，可以整场统一，也可以每个岗位一张。
+    """签到任务：一行管（场次, 时段, 岗位）这一格的签到，可以整场统一，
+    也可以一个岗位一行。
 
     场次有多个时段时，每个时段各建一张码：志愿者到场扫当天那张，签到签退
     各算各的，时长按段累加。同一时段里再分不分岗位，是 mode 决定的。
+
+    **一张码可以管好几个岗位**：多选岗位建出来的几行共用一个 code_group，
+    对外只有一张码（组里第一行的 token 和它的动态码）。扫码的人报了自己的
+    岗位，就由组里他那一行落记录——签退判定、未签退兜底、时长、大屏仍按
+    （场次, 时段, 岗位）一行一行算，不必为「一张码管几个岗位」另立一套。
 
     token 是**固定码**——建任务时生成、一直在册，可以打印出来贴到现场。
     日常用的动态码不落这张表，它只活在 Redis 里（见 locks.py 那一节）。
@@ -1330,6 +1336,10 @@ class CheckinTask(Base):
         ForeignKey("shift_periods.id"), nullable=True, index=True)
     position_id: Mapped[str | None] = mapped_column(ForeignKey("positions.id"), nullable=True)
     mode: Mapped[str] = mapped_column(String(12), default="shift")   # shift / position
+    # 共用一张码的那几行（多选岗位时一次建出来，可以跨场次）；独享一张码的行
+    # 留空。扫码解析、开关、改时段、锚点、动态码、大屏、补签都按它成组处理
+    code_group: Mapped[str | None] = mapped_column(String(32), nullable=True,
+                                                   index=True)
     token: Mapped[str] = mapped_column(String(16), unique=True)
     valid_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     valid_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
