@@ -1172,3 +1172,347 @@ def test_时间灵活场次时长不能按场次时长固定计(client, admin, d
                               "hours_mode": "fixed"}).status_code == 200
     r = client.patch(f"/api/staff/shifts/{gid}", headers=admin, json={"flexible_time": True})
     assert r.status_code == 400
+
+
+# ======================= 一张码管好几个岗位 =======================
+#
+# 岗位自带时段（一岗一场），所以多选岗位的码必然跨场次：对外一张码，库里
+# 仍是一行一格（场次, 时段, 岗位），共用一个 code_group。扫码的人报的是
+# 自己的岗位，就落到他那一格——时段、可签时间、名单、时长全按那一格算。
+
+
+def _enroll(db, act, g, pos, sid):
+    db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                      user_id=student_row(db, sid).id, position_id=pos.id,
+                      status="enrolled", joined_at=now() - timedelta(days=1)))
+
+
+@pytest.fixture
+def two_pos_act(client, db, admin, take_student):
+    """一个活动 + 两个正在进行的场次，各一个岗位、各一名已确认志愿者。"""
+    admin_user = db.query(User).filter(User.student_id == ADMIN).one()
+    act = Activity(id=uid("act"), title=f"组码测试 {uid('t')}",
+                   intro="x", location="世纪馆", organizer="校青协",
+                   contacts=[{"name": "测试", "phone": "13900000000"}],
+                   contact_group_qr="x", status="published",
+                   reg_start=now() - timedelta(days=1),
+                   reg_end=now() + timedelta(days=1), created_by=admin_user.id)
+    db.add(act)
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                           user_id=admin_user.id, added_by=admin_user.id))
+    shifts, positions, heads = [], [], []
+    for i, name in enumerate(("甲场次", "乙场次")):
+        g = mk_shift(id=uid("g"), activity_id=act.id, name=name,
+                     start_time=now() - timedelta(minutes=20),
+                     end_time=now() + timedelta(hours=2), mode="pick", sort=i)
+        db.add(g)
+        db.flush()
+        p = Position(id=uid("p"), shift_id=g.id, name=f"{name[0]}岗位",
+                     location="集合点", quota=5, sort=0)
+        db.add(p)
+        db.flush()
+        sid = take_student()
+        heads.append((login(client, sid), student_row(db, sid)))
+        _enroll(db, act, g, p, sid)
+        shifts.append(g)
+        positions.append(p)
+    db.commit()
+    return act, shifts, positions, heads
+
+
+def iso_min(t: datetime) -> str:
+    """接口里的时间串（到分钟），和 models.iso 一个口径。"""
+    return t.isoformat(timespec="minutes")
+
+
+def make_group(client, admin, act, ids, **body):
+    """照前端的路径建一张多岗位共用的码。"""
+    r = client.post(f"/api/staff/activities/{act.id}/checkin-tasks",
+                    headers=admin, json={"position_ids": ids, **body})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_一张码管两个场次的岗位_各记到自己那一格(client, admin, db, two_pos_act):
+    """甲岗位的人扫出来的记录在甲的场次和时段上，乙的在乙的——两个人扫的是
+    同一串字符，但记的不是同一格。"""
+    act, (a, b), (pa, pb), ((ha, ua), (hb, ub)) = two_pos_act
+    d = make_group(client, admin, act, [pa.id, pb.id])
+    token = d["token"]
+    assert len(d["tasks"]) == 2
+
+    for h in (ha, hb):
+        assert client.post(f"/api/checkin/task/{token}",
+                           headers=h).json()["action"] == "checkin"
+    db.expire_all()
+    recs = {r.user_id: r for r in db.query(CheckinRecord)
+            .filter(CheckinRecord.activity_id == act.id).all()}
+    assert recs[ua.id].shift_id == a.id
+    assert recs[ua.id].period_id == a.periods[0].id
+    assert recs[ua.id].position_id == pa.id
+    assert recs[ub.id].shift_id == b.id
+    assert recs[ub.id].period_id == b.periods[0].id
+    assert recs[ub.id].position_id == pb.id
+    # 两条记录挂在组里各自那一行上，不是都挂在对外那一张上
+    assert recs[ua.id].task_id != recs[ub.id].task_id
+
+
+def test_签到页也按人给出他自己那一格(client, admin, two_pos_act):
+    """页面上写的时段、可签时间必须和点下去真正算的那一格是同一个。"""
+    act, (a, b), (pa, pb), ((ha, _ua), (hb, _ub)) = two_pos_act
+    token = make_group(client, admin, act, [pa.id, pb.id])["token"]
+    info_a = client.get(f"/api/checkin/task/{token}", headers=ha).json()
+    info_b = client.get(f"/api/checkin/task/{token}", headers=hb).json()
+    assert info_a["shift_name"] == a.name and info_a["position"]["name"] == pa.name
+    assert info_b["shift_name"] == b.name and info_b["position"]["name"] == pb.name
+    assert info_a["period_id"] == a.periods[0].id
+    assert info_b["period_id"] == b.periods[0].id
+
+
+def test_不在这张码里的岗位扫了挡回去(client, admin, db, two_pos_act,
+                                 take_student):
+    """这张码只管选中的那几个岗位：别的岗位的人扫了，记录就落到不属于他的
+    那一格上。完全没报名的人同样挡回去。"""
+    act, (a, _b), (pa, pb), _who = two_pos_act
+    other = Position(id=uid("p"), shift_id=a.id, name="丙岗位", quota=3, sort=1)
+    db.add(other)
+    db.flush()
+    sid = take_student()
+    hc = login(client, sid)
+    _enroll(db, act, a, other, sid)
+    db.commit()
+    token = make_group(client, admin, act, [pa.id, pb.id])["token"]
+
+    r = client.post(f"/api/checkin/task/{token}", headers=hc)
+    assert r.status_code == 403 and "不包含您报名的岗位" in r.json()["detail"]
+    outsider = login(client, take_student())
+    assert client.post(f"/api/checkin/task/{token}",
+                       headers=outsider).status_code == 403
+
+
+def test_没手动设时段时各岗位按自己那一段算(client, admin, db, two_pos_act):
+    """甲场次正在进行、乙场次在明天：同一张码，甲签得上，乙还没开始。
+
+    一张码管好几个岗位，可签时间要按各人自己那一段外扩，否则要么卡住先
+    开始的那一摊，要么提前半天就能替后面那一摊签到。
+    """
+    act, (a, b), (pa, pb), ((ha, _ua), (hb, _ub)) = two_pos_act
+    b.periods[0].start_time = now() + timedelta(days=1)
+    b.periods[0].end_time = now() + timedelta(days=1, hours=2)
+    db.commit()
+    token = make_group(client, admin, act, [pa.id, pb.id])["token"]
+
+    assert client.post(f"/api/checkin/task/{token}",
+                       headers=ha).json()["action"] == "checkin"
+    r = client.post(f"/api/checkin/task/{token}", headers=hb)
+    assert r.status_code == 409 and "签到未开始" in r.json()["detail"]
+    assert client.get(f"/api/checkin/task/{token}",
+                      headers=hb).json()["state"] == "early"
+    # 码表里这一行是整张码的范围，并标明各岗位各算
+    row = client.get(f"/api/staff/activities/{act.id}/checkin-tasks",
+                     headers=admin).json()[0]
+    assert row["window_varies"] is True
+    assert row["valid_from"] < row["valid_to"]
+    pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
+    assert row["valid_from"] == iso_min(a.periods[0].start_time - pad)
+    assert row["valid_to"] == iso_min(b.periods[0].end_time + pad)
+
+
+def test_手动设了时段整张码统一按它算(client, admin, db, two_pos_act):
+    """管理者填的那一段就是这张码的那一段：组里每一行都按它，
+    明天那一摊今天也签得上（现场把两摊挪到一起了）。"""
+    act, (a, b), (pa, pb), ((_ha, _ua), (hb, _ub)) = two_pos_act
+    b.periods[0].start_time = now() + timedelta(days=1)
+    b.periods[0].end_time = now() + timedelta(days=1, hours=2)
+    db.commit()
+    f = (now() - timedelta(hours=1)).replace(second=0, microsecond=0)
+    t = (now() + timedelta(hours=1)).replace(second=0, microsecond=0)
+    d = make_group(client, admin, act, [pa.id, pb.id],
+                   valid_from=f.isoformat(), valid_to=t.isoformat())
+    db.expire_all()
+    rows = [db.get(CheckinTask, x["id"]) for x in d["tasks"]]
+    assert {(r.valid_from, r.valid_to) for r in rows} == {(f, t)}
+    assert client.post(f"/api/checkin/task/{d['token']}",
+                       headers=hb).json()["action"] == "checkin"
+    row = client.get(f"/api/staff/activities/{act.id}/checkin-tasks",
+                     headers=admin).json()[0]
+    assert row["window_varies"] is False
+
+
+def test_改可签时段也是整张码一起改(client, admin, db, two_pos_act):
+    act, (_a, _b), (pa, pb), _who = two_pos_act
+    d = make_group(client, admin, act, [pa.id, pb.id])
+    f = (now() - timedelta(hours=2)).replace(second=0, microsecond=0)
+    t = (now() + timedelta(hours=5)).replace(second=0, microsecond=0)
+    r = client.patch(f"/api/staff/checkin-tasks/{d['id']}", headers=admin,
+                     json={"valid_from": f.isoformat(), "valid_to": t.isoformat()})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    rows = [db.get(CheckinTask, x["id"]) for x in d["tasks"]]
+    assert {(x.valid_from, x.valid_to) for x in rows} == {(f, t)}
+
+
+def test_关掉一行等于关掉整张码(client, admin, db, two_pos_act):
+    """对外是一张码，开一半关一半的话，现场没人说得清它还能不能扫。"""
+    act, (_a, _b), (pa, pb), ((ha, _ua), (hb, _ub)) = two_pos_act
+    d = make_group(client, admin, act, [pa.id, pb.id])
+    # 对组里第二行发起关闭，整组都关
+    second = d["tasks"][1]["id"]
+    assert client.patch(f"/api/staff/checkin-tasks/{second}", headers=admin,
+                        json={"active": False}).status_code == 200
+    db.expire_all()
+    assert not any(db.get(CheckinTask, x["id"]).active for x in d["tasks"])
+    for h in (ha, hb):
+        r = client.post(f"/api/checkin/task/{d['token']}", headers=h)
+        assert r.status_code == 409 and "已关闭" in r.json()["detail"]
+
+    assert client.patch(f"/api/staff/checkin-tasks/{d['id']}", headers=admin,
+                        json={"active": True}).status_code == 200
+    db.expire_all()
+    assert all(db.get(CheckinTask, x["id"]).active for x in d["tasks"])
+    assert client.post(f"/api/checkin/task/{d['token']}",
+                       headers=hb).json()["action"] == "checkin"
+
+
+def test_补签落到他在组里那一行(client, admin, db, two_pos_act):
+    """补签要和他自己扫出来的记录落在同一格上，否则时长按别人的时段算。"""
+    act, (_a, b), (pa, pb), ((_ha, _ua), (_hb, ub)) = two_pos_act
+    d = make_group(client, admin, act, [pa.id, pb.id])
+    r = client.post(f"/api/staff/checkin-tasks/{d['id']}/batch", headers=admin,
+                    json={"action": "checkin", "student_ids": [ub.student_id]})
+    assert r.status_code == 200 and r.json()["done"] == 1
+    db.expire_all()
+    rec = db.query(CheckinRecord).filter(CheckinRecord.user_id == ub.id).one()
+    assert rec.shift_id == b.id and rec.period_id == b.periods[0].id
+    assert rec.position_id == pb.id
+    assert rec.task_id == next(x["id"] for x in d["tasks"]
+                               if x["position_id"] == pb.id)
+
+
+def test_码表把一张码合成一行(client, admin, db, two_pos_act):
+    """一组几行对外是一张码：岗位名连起来、人数相加，组内各行放在 members 里。"""
+    act, (a, b), (pa, pb), ((ha, _ua), (_hb, _ub)) = two_pos_act
+    d = make_group(client, admin, act, [pa.id, pb.id])
+    client.post(f"/api/checkin/task/{d['token']}", headers=ha)
+
+    rows = client.get(f"/api/staff/activities/{act.id}/checkin-tasks",
+                      headers=admin).json()
+    assert len(rows) == 1
+    (row,) = rows
+    assert row["id"] == d["id"] and row["token"] == d["token"]
+    assert row["code_group"] == d["code_group"]
+    assert row["position_name"] == f"{pa.name}、{pb.name}"
+    assert row["shift_name"] == f"{a.name}、{b.name}"
+    assert row["count"] == 1
+    assert {m["shift_id"] for m in row["members"]} == {a.id, b.id}
+
+
+def test_大屏把组里各行的名单合在一起(client, admin, db, two_pos_act):
+    """现场盯的是这张码前面排的队，不是某一个岗位。"""
+    act, (_a, _b), (pa, pb), ((ha, ua), (_hb, ub)) = two_pos_act
+    d = make_group(client, admin, act, [pa.id, pb.id])
+    client.post(f"/api/checkin/task/{d['token']}", headers=ha)
+
+    board = client.get(f"/api/staff/checkin-tasks/{d['id']}/board",
+                       headers=admin).json()
+    assert board["expected"] == 2 and board["checked"] == 1
+    assert {r["name"] for r in board["records"]} == {ua.name, ub.name}
+    assert {c["name"] for c in board["positions"]} == {pa.name, pb.name}
+
+
+def test_定位锚点也是整张码一起设(client, admin, db, two_pos_act):
+    """组里一半扫码一半定位的话，志愿者看到的「该怎么签」就各不相同了。"""
+    from backend.models import CheckinGeo
+
+    act, (_a, _b), (pa, pb), _who = two_pos_act
+    d = make_group(client, admin, act, [pa.id, pb.id])
+    r = client.put(f"/api/staff/checkin-tasks/{d['id']}/geo", headers=admin,
+                   json={"lat": LAT, "lng": LNG, "radius_m": 200})
+    assert r.status_code == 200, r.text
+    ids = [x["id"] for x in d["tasks"]]
+    assert db.query(CheckinGeo).filter(CheckinGeo.task_id.in_(ids)).count() == 2
+    assert client.delete(f"/api/staff/checkin-tasks/{ids[1]}/geo",
+                         headers=admin).status_code == 200
+    db.expire_all()
+    assert db.query(CheckinGeo).filter(CheckinGeo.task_id.in_(ids)).count() == 0
+
+
+def test_占位岗位不能进分岗位的码(client, admin, db, two_pos_act):
+    """「待分配」不是岗位，是「这一场还没分岗」：那些人扫的是整场统一码。"""
+    act, (a, _b), (pa, _pb), _who = two_pos_act
+    holder = Position(id=uid("p"), shift_id=a.id, name=Position.PLACEHOLDER_NAME,
+                      is_placeholder=True, quota=5, sort=-1)
+    db.add(holder)
+    db.commit()
+    r = client.post(f"/api/staff/activities/{act.id}/checkin-tasks",
+                    headers=admin, json={"position_ids": [pa.id, holder.id]})
+    assert r.status_code == 400 and "不是具体岗位" in r.json()["detail"]
+
+
+# ---------- 多时段的场次：这张码管哪一天那一段 ----------
+
+@pytest.fixture
+def multi_period_act(db, admin):
+    """一个活动 + 一个两段的场次（今天、后天）+ 一个岗位。"""
+    admin_user = db.query(User).filter(User.student_id == ADMIN).one()
+    act = Activity(id=uid("act"), title=f"多段组码 {uid('t')}",
+                   intro="x", location="世纪馆", organizer="校青协",
+                   contacts=[{"name": "测试", "phone": "13900000000"}],
+                   contact_group_qr="x", status="published",
+                   reg_start=now() - timedelta(days=1),
+                   reg_end=now() + timedelta(days=1), created_by=admin_user.id)
+    db.add(act)
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                           user_id=admin_user.id, added_by=admin_user.id))
+    base = now().replace(second=0, microsecond=0)
+    g = mk_shift(id=uid("g"), activity_id=act.id, name="两段场次", mode="pick",
+                 sort=0, periods=[
+                     {"start_time": base + timedelta(hours=1),
+                      "end_time": base + timedelta(hours=3)},
+                     {"start_time": base + timedelta(days=2),
+                      "end_time": base + timedelta(days=2, hours=3)}])
+    db.add(g)
+    db.flush()
+    p = Position(id=uid("p"), shift_id=g.id, name="引导", quota=5, sort=0)
+    db.add(p)
+    db.commit()
+    return act, g, p
+
+
+def test_多时段的场次按日期取那一段(client, admin, db, multi_period_act):
+    act, g, p = multi_period_act
+    want = g.periods[1]
+    d = make_group(client, admin, act, [p.id],
+                   date=f"{want.start_time:%Y-%m-%d}")
+    (row,) = d["tasks"]
+    task = db.get(CheckinTask, row["id"])
+    pad = timedelta(minutes=config.CHECKIN_WINDOW_PAD_MINUTES)
+    assert task.period_id == want.id
+    assert task.valid_from == want.start_time - pad
+    assert task.valid_to == want.end_time + pad
+
+
+def test_定不出时段就说清是哪个岗位(client, admin, multi_period_act):
+    """猜一段出来，现场扫的是哪天的码就没人说得清了。"""
+    act, g, p = multi_period_act
+    r = client.post(f"/api/staff/activities/{act.id}/checkin-tasks",
+                    headers=admin, json={"position_ids": [p.id]})
+    assert r.status_code == 400, r.text
+    assert p.name in r.json()["detail"] and "日期" in r.json()["detail"]
+
+    away = (g.periods[1].start_time + timedelta(days=5)).strftime("%Y-%m-%d")
+    r = client.post(f"/api/staff/activities/{act.id}/checkin-tasks",
+                    headers=admin, json={"position_ids": [p.id], "date": away})
+    assert r.status_code == 400 and "没有服务时段" in r.json()["detail"]
+
+
+def test_没给日期时按手填的可签时段套那一段(client, admin, db,
+                                      multi_period_act):
+    """填了后天 9:00~12:00，就是后天那一段——日期已经写在时间里了。"""
+    act, g, p = multi_period_act
+    want = g.periods[1]
+    d = make_group(client, admin, act, [p.id],
+                   valid_from=(want.start_time - timedelta(minutes=30)).isoformat(),
+                   valid_to=(want.end_time + timedelta(minutes=30)).isoformat())
+    (row,) = d["tasks"]
+    assert db.get(CheckinTask, row["id"]).period_id == want.id
