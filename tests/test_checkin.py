@@ -1200,7 +1200,7 @@ def two_pos_act(client, db, admin, take_student):
     db.add(act)
     db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
                            user_id=admin_user.id, added_by=admin_user.id))
-    shifts, positions, heads = [], [], []
+    shifts, positions, people = [], [], []
     for i, name in enumerate(("甲场次", "乙场次")):
         g = mk_shift(id=uid("g"), activity_id=act.id, name=name,
                      start_time=now() - timedelta(minutes=20),
@@ -1212,12 +1212,12 @@ def two_pos_act(client, db, admin, take_student):
         db.add(p)
         db.flush()
         sid = take_student()
-        heads.append((login(client, sid), student_row(db, sid)))
+        people.append((login(client, sid), student_row(db, sid)))
         _enroll(db, act, g, p, sid)
         shifts.append(g)
         positions.append(p)
     db.commit()
-    return act, shifts, positions, heads
+    return act, shifts, positions, people
 
 
 def iso_min(t: datetime) -> str:
@@ -1387,6 +1387,21 @@ def test_补签落到他在组里那一行(client, admin, db, two_pos_act):
     assert rec.position_id == pb.id
     assert rec.task_id == next(x["id"] for x in d["tasks"]
                                if x["position_id"] == pb.id)
+
+
+def test_动态码按组里第一行出(client, admin, db, two_pos_act):
+    """那块屏上只有一张码：对组里任一行取码，取到的都是同一张；
+    扫它的人照样各记到自己那一格。"""
+    act, (_a, b), (pa, pb), ((_ha, _ua), (hb, ub)) = two_pos_act
+    d = make_group(client, admin, act, [pa.id, pb.id])
+    codes = {client.get(f"/api/staff/checkin-tasks/{x['id']}/code",
+                        headers=admin).json()["code"] for x in d["tasks"]}
+    assert len(codes) == 1
+    assert client.post(f"/api/checkin/task/{codes.pop()}",
+                       headers=hb).json()["action"] == "checkin"
+    db.expire_all()
+    rec = db.query(CheckinRecord).filter(CheckinRecord.user_id == ub.id).one()
+    assert rec.shift_id == b.id
 
 
 def test_码表把一张码合成一行(client, admin, db, two_pos_act):
