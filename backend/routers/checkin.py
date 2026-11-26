@@ -11,6 +11,11 @@
 各轮累加；某一轮没签退的，按那张码的截止时间兜底并标记待核。别的场次一人一场
 只有一条记录，换码也还是那一条。
 
+**一张码可以管好几个岗位**（CheckinTask.code_group，可以跨场次）：扫码的人
+由他的正式报名解析到组里自己那一行（task_of_user），记录、时段、可签时间窗
+都按那一行算。管理者没手动设时间窗时，各行各按自己那一段起止外扩——甲岗位
+上午那一段已经能签时，乙岗位下午那一段还不能。
+
 **两类签到码都从这个入口进**：
   · 动态码——管理端每 30 秒换一张，只活在 Redis 里（见 locks.py）。默认用这个，
     因为固定码拍张照发群里就能代签；
@@ -57,6 +62,71 @@ def _load_task(db: OrmSession, code: str) -> tuple[CheckinTask, Activity, Shift]
     act = db.get(Activity, task.activity_id)
     g = db.get(Shift, task.shift_id)
     return task, act, g
+
+
+def group_tasks(db: OrmSession, task: CheckinTask) -> list[CheckinTask]:
+    """共用一张码的那几行，按建的先后排；独享一张码的行只有它自己。
+
+    一张码管好几个岗位（可以跨场次）：组里每行仍是（场次, 时段, 岗位）一格，
+    按组做的事（开关、改时段、锚点、动态码、大屏）都从这一份名单出发。
+    """
+    if not task.code_group:
+        return [task]
+    return (db.query(CheckinTask)
+            .filter(CheckinTask.code_group == task.code_group)
+            .order_by(CheckinTask.created_at, CheckinTask.id).all())
+
+
+def group_head(db: OrmSession, task: CheckinTask) -> CheckinTask:
+    """对外的那一行：固定码、动态码都按组里第一行出。
+
+    一张码只能有一串字符——组里每行各出一串的话，现场那块屏要么同时亮几张，
+    要么谁扫到哪张全凭运气。
+    """
+    return group_tasks(db, task)[0]
+
+
+def task_of_user(db: OrmSession, task: CheckinTask,
+                 user_id: str) -> CheckinTask:
+    """扫到这张码的人落在组里哪一行：他在那一场有正式报名、岗位又对得上的那行。
+
+    一张码管好几个岗位时，记录要落到**他自己的岗位**那一格上：时段、可签时间
+    窗、到岗名单、时长全按那一格算。独享一张码的行原样返回（岗位对不上由
+    _apply_checkin 说明是哪个岗位的码）。
+    组里一行都对不上他，就是拿错了码——这张码上没有他该签的那一格。
+    """
+    if not task.code_group:
+        return task
+    mine = []
+    for x in group_tasks(db, task):
+        enr = (db.query(Enrollment)
+               .filter(Enrollment.shift_id == x.shift_id,
+                       Enrollment.user_id == user_id,
+                       Enrollment.status == "enrolled").first())
+        if enr is None:
+            continue
+        if x.position_id is not None and enr.position_id != x.position_id:
+            continue
+        mine.append(x)
+    if not mine:
+        raise HTTPException(403, "这张签到码不包含您报名的岗位")
+    # 开着的优先；都关着时给关着的那一行，好让下面按「已关闭」说清楚，
+    # 而不是说成「不包含您的岗位」
+    return next((x for x in mine if x.active), mine[0])
+
+
+def load_for_user(db: OrmSession, code: str,
+                  user_id: str) -> tuple[CheckinTask, Activity, Shift]:
+    """扫到的码 → 这个人该签的那一行，以及它所属的活动和场次。
+
+    组里几行可以跨场次，所以场次必须按解析出来的那一行取：拿扫到的那行的
+    场次去找名单、算时段，签到就记到别人的岗位上去了。
+    """
+    task, act, g = _load_task(db, code)
+    mine = task_of_user(db, task, user_id)
+    if mine.id == task.id:
+        return task, act, g
+    return mine, db.get(Activity, mine.activity_id), db.get(Shift, mine.shift_id)
 
 
 def active_period(g: Shift, t: datetime):
@@ -257,7 +327,12 @@ def _apply_checkin(db: OrmSession, task: CheckinTask, act: Activity, g: Shift,
 @router.get("/task/{token}")
 def task_info(token: str, db: OrmSession = Depends(db_session),
               user: User = Depends(current_user)):
-    task, act, g = _load_task(db, token)
+    """签到落地页要显示的一切：这张码是哪一场哪一段的、现在能不能签、他签过没有。
+
+    一张码管好几个岗位时，显示的是**他自己那一格**（见 task_of_user）：页面上
+    写的时段、可签时间和下面按钮按的必须是同一行。
+    """
+    task, act, g = load_for_user(db, token, user.id)
     position = db.get(Position, task.position_id) if task.position_id else None
     t = now()
     period = g.period_of(task.period_id)
@@ -309,11 +384,14 @@ def do_checkin(token: str, db: OrmSession = Depends(db_session),
 
     但「已签未退」里分两种：刚签完又扫一遍（手滑）和散场回来签退。前者挡回去，
     见下面 CHECKOUT_MIN_GAP_MINUTES。
+
+    一张码管好几个岗位时，先解析出扫码人自己那一行（见 task_of_user），后面的
+    判定全按那一行走：他的时段、他的可签时间窗、他那一格的记录。
     """
-    task, act, g = _load_task(db, token)
+    task, act, g = load_for_user(db, token, user.id)
     # 这个任务已经改成定位签到了：码要是还能用，定位那道「人在不在场」的
     # 判定当场作废——谁都会挑松的那条路走（老二维码打印件、截图都还在传）。
-    # 判的是**扫到的这个任务**有没有锚点，不是这一场有没有：同一场次里
+    # 判的是**他解析到的那一行**有没有锚点，不是这一场有没有：同一场次里
     # 「东门那三个用定位、其余人扫统一码」是正当安排，那种统一码不该被误伤。
     if geo_anchor(db, task):
         raise HTTPException(409, "本场次是定位签到，请在「我的报名」里点「签到」")
