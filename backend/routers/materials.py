@@ -153,8 +153,12 @@ def delete_material(material_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(404, "材料不存在")
     ensure_activity_manager(db, user, row.activity_id)
     ensure_not_finished(db.get(Activity, row.activity_id))
-    # 复制活动时文件是各存一份的，删记录就可以把文件一起删掉
-    if row.kind == "file":
+    # 复制活动时文件各存一份；拆分多岗位场次的迁移给每个新场次复制的是材料
+    # 记录、文件共用一份。所以只有没有别的记录再指着这个文件时才删文件，
+    # 否则删一场的材料会让另几场的同一份材料打不开
+    if row.kind == "file" and not (db.query(Attachment.id)
+                                   .filter(Attachment.stored_name == row.stored_name,
+                                           Attachment.id != row.id).first()):
         (MATERIAL_DIR / row.stored_name).unlink(missing_ok=True)
     title, activity_id = row.title, row.activity_id
     db.delete(row)

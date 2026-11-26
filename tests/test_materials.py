@@ -98,6 +98,30 @@ def test_删除材料会把文件一起删掉(client, admin, db, enrolled_activi
     assert not (MATERIAL_DIR / stored).exists()
 
 
+def test_几条材料共用一个文件时_删一条不删文件(client, admin, db, enrolled_activity):
+    """拆分多岗位场次时，新场次复制的是材料记录、文件共用一份：删掉其中一条，
+    别的那几条还要打得开；最后一条删掉时文件才跟着删。"""
+    from backend.models import uid
+    from backend.routers.materials import MATERIAL_DIR
+    _act, shift, _u = enrolled_activity
+    mid = _upload(client, admin, shift).json()["id"]
+    src = db.get(Attachment, mid)
+    twin = Attachment(id=uid("att"), owner_type=src.owner_type,
+                      owner_id=src.owner_id, activity_id=src.activity_id,
+                      kind=src.kind, title=src.title, stored_name=src.stored_name,
+                      size=src.size, uploaded_by=src.uploaded_by)
+    db.add(twin)
+    db.commit()
+    stored, twin_id = src.stored_name, twin.id
+
+    assert client.delete(f"/api/staff/materials/{mid}",
+                         headers=admin).status_code == 200
+    assert (MATERIAL_DIR / stored).is_file()
+    assert client.delete(f"/api/staff/materials/{twin_id}",
+                         headers=admin).status_code == 200
+    assert not (MATERIAL_DIR / stored).exists()
+
+
 def test_删除只认学习材料别家的删不掉(client, admin, db, enrolled_activity):
     """这条接口只该删挂在岗位上的学习材料。问卷附件是报名者自己传的，
     反馈截图归提交人，立项书/结项书一格只能换不能空——从这条接口删要么
