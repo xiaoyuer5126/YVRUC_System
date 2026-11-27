@@ -206,7 +206,7 @@ function notNeeded(forImport) {
     return true
   }
   if (!props.shift.positions.some(s => !s.is_placeholder)) {
-    ElMessage.warning('请先在「岗位设置」里为这一批统一分配建好岗位')
+    ElMessage.warning('请先在「岗位设置」里为这一批报名后统一分配建好岗位')
     return true
   }
   if (!forImport && !props.shift.unassigned_count) {

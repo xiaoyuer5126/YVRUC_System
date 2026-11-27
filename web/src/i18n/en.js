@@ -863,7 +863,7 @@ export default {
   '待外联确认': 'Awaiting liaison confirmation',
   '已完成': 'Completed',
   '报名即选岗位': 'Choose position at sign-up',
-  '截止后统一分配': 'Assigned after sign-up closes',
+  '报名后统一分配': 'Assigned after sign-up closes',
   '服务': 'Service',
   '培训': 'Training',
   '彩排': 'Rehearsal',

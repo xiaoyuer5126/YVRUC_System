@@ -938,7 +938,7 @@ class Shift(Base):
         back_populates="shift", order_by="Position.sort",
         cascade="all, delete-orphan")
 
-    MODE_LABELS = {"pick": "报名即选岗位", "assign": "截止后统一分配"}
+    MODE_LABELS = {"pick": "报名即选岗位", "assign": "报名后统一分配"}
     KIND_LABELS = {"service": "服务", "training": "培训", "rehearsal": "彩排"}
     HOURS_LABELS = {"checkin": "扫码计时（签退−签到）",
                     "fixed": "固定计时（到场即按场次时长）",

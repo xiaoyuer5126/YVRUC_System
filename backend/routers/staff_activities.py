@@ -1778,6 +1778,10 @@ def _validate_position(db: OrmSession, g: Shift, s: Position):
     enrolled = logic.position_enrolled_count(db, s.id) if s.id else 0
     if s.quota < enrolled:
         raise HTTPException(400, f"岗位名额不能小于已报名的 {enrolled} 人")
+    # 同一批报名后统一分配里岗位名不能重复：导入排班按岗位名对应，重名就认不出是哪一个
+    if g.needs_assign() and any(p.name == s.name and p.id != s.id for p in g.positions):
+        raise HTTPException(400, f"这一批报名后统一分配里已有「{s.name}」这个岗位，"
+                                 "同一批里岗位名不能重复")
 
 
 def _build_position(db: OrmSession, g: Shift, body: PositionFields) -> Position:

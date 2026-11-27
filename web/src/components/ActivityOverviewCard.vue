@@ -23,7 +23,7 @@
           <div v-for="c in cards" :key="c.key" class="ov-shift">
             <div class="ov-row">
               <span class="ov-name">
-                <b>{{ c.kind === 'assign' ? '统一分配：' : '' }}{{ c.group ? c.group + ' · ' : '' }}{{ c.name }}</b>
+                <b>{{ c.kind === 'assign' ? '报名后统一分配：' : '' }}{{ c.group ? c.group + ' · ' : '' }}{{ c.name }}</b>
                 <span class="dim">{{ c.slots.length > 1 ? ` 共 ${c.slots.length} 个时段` : ' ' + c.slots[0].time }}</span>
               </span>
               <span class="ov-tags">
@@ -83,7 +83,7 @@
           </div>
         </div>
         <div class="dim ov-note">
-          名额占用含转正待确认的名额；统一分配按整场名额算，岗位一行是已分到该岗位的人数。
+          名额占用含转正待确认的名额；报名后统一分配按整场名额算，岗位一行是已分到该岗位的人数。
           签到只算已开始的时段。时长和违规见上方合计，不按时段拆。
         </div>
       </div>
