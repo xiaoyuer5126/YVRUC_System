@@ -633,7 +633,7 @@ const roles = computed(() => {  // vuecheck: script-only（表格行与卡片由
 
 /** 培训/彩排：活动上的那份没有「我要不要去、请没请假」，这些在各场次的
  * attached 里；取我要去的那一份，没有就取任一份 */
-const trainings = computed(() => {
+const trainings = computed(() => {  // vuecheck: script-only
   const m = new Map((act.value?.trainings || []).map(x => [x.id, x]))
   for (const g of act.value?.shifts || []) {
     for (const s of g.attached || []) {
