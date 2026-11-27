@@ -177,9 +177,9 @@ TEMPLATE_PAGE: dict[str, str] = {
 ROUTE_PAGES = ("hours", "approvals", "feedback")
 # 不能直接当路径的落点。反馈回复是弹窗不是页面：去消息中心，前端读到这个
 # 查询串再把「我的反馈」弹窗打开。少了它，这条通知点开只是标已读。
-ROUTE_QUERY_PAGES = {"feedback_mine": "/messages?feedback=mine"}
-# route="approvals"：data.tab 指定打开「活动审批」的哪个页签（志愿者反馈）
-APPROVAL_TABS = ("feedback",)
+# 志愿反馈的处理端是「意见反馈」页的「志愿者反馈」页签。
+ROUTE_QUERY_PAGES = {"feedback_mine": "/messages?feedback=mine",
+                     "vb_feedback": "/feedback?tab=volunteer"}
 # route="manage"：发给活动管理者的，进活动管理页；data.tab 指定直接打开哪个页签
 MANAGE_TABS = ("tree", "roster", "hours", "review")
 
@@ -201,8 +201,9 @@ def page_for(template_key: str, data: dict | None) -> str:
     activity_id = data.get("activity_id")
     if template_key in TEMPLATE_PAGE:
         return TEMPLATE_PAGE[template_key]
-    if data.get("route") == "approvals" and data.get("tab") in APPROVAL_TABS:
-        return f"/approvals?tab={data['tab']}"
+    # 早先的志愿反馈通知记的是「活动审批」页签，那个页签已挪进「意见反馈」
+    if data.get("route") == "approvals" and data.get("tab") == "feedback":
+        return ROUTE_QUERY_PAGES["vb_feedback"]
     if data.get("route") in ROUTE_PAGES:
         return "/" + data["route"]
     if data.get("route") in ROUTE_QUERY_PAGES:

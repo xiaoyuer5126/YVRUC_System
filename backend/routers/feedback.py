@@ -253,14 +253,14 @@ def vb_feedback_contacts(db: OrmSession) -> list[User]:
 
 
 def _notify_vb_handlers(db: OrmSession, fb: Feedback, submitter: User) -> None:
-    """新的志愿反馈通知对外联络部值班人（没人值班发部长），点开进「活动审批」。
+    """新的志愿反馈通知对外联络部值班人（没人值班发部长），点开进「意见反馈」的志愿者反馈页签。
 
     匿名的：正文写「匿名志愿者」，并让这条通知不记触发人（anon_trigger），
     否则管理端「通知记录」的触发人一栏就是提交人。提交在先、通知单独一个事务，
     通知出岔子只记日志。
     """
     who = ANON_NAME if fb.anonymous else f"{submitter.name}（{submitter.student_id}）"
-    data = {"feedback_id": fb.id, "route": "approvals", "tab": "feedback"}
+    data = {"feedback_id": fb.id, "route": "vb_feedback"}
     if fb.anonymous:
         data["anon_trigger"] = True
     try:
@@ -269,7 +269,7 @@ def _notify_vb_handlers(db: OrmSession, fb: Feedback, submitter: User) -> None:
                 continue
             notify(db, u, f"新的志愿者反馈｜{fb.kind_label()}",
                    f"{who} 提交了一条志愿者反馈【{fb.kind_label()}】：「{_brief(fb.content)}」\n"
-                   f"请到「活动审批 → 志愿者反馈」回复。", data=data)
+                   f"请到「意见反馈 → 志愿者反馈」回复。", data=data)
         db.commit()
     except Exception:
         db.rollback()

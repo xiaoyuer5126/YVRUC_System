@@ -217,7 +217,7 @@ def test_新反馈发值班人_没人值班发部长(client, db, take_student, l
     assert not _notes_for(db, LIAISON_CORE, fid)
     from backend.integrations import msgcenter
     n = head_notes[0]
-    assert msgcenter.page_for(n.template_key, n.data) == "/approvals?tab=feedback"
+    assert msgcenter.page_for(n.template_key, n.data) == "/feedback?tab=volunteer"
 
     head = login(client, LIAISON_HEAD)
     lin = student_row(db, LIAISON_CORE)

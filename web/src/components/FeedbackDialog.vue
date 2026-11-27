@@ -3,8 +3,10 @@
      （处理方看不到是谁，但平台记着提交人以便把回复送回来，弹窗里如实写明；完全
      不想留身份的引到校青协的匿名表单）。 -->
 <template>
+  <!-- 弹窗限高（见文末不带 scoped 的样式）：标题和页签固定在上面，
+       只有页签里的内容在弹窗内滚动，反馈再多也不会超出屏幕 -->
   <el-dialog v-model="visible" :title="t('意见反馈')" :width="narrow ? '94%' : '560px'"
-             append-to-body @closed="reset"
+             top="10vh" class="feedback-dialog" append-to-body @closed="reset"
              :before-close="guardFeedback" @opened="guardFeedback.snap">
     <el-tabs v-model="tab" @tab-change="onTab">
       <el-tab-pane :label="t('提交反馈')" name="new">
@@ -242,7 +244,11 @@ defineExpose({ open })
 .anon { margin-top: 8px; }
 .anon-note { line-height: 1.6; }
 .full :deep(.el-upload--picture-card) { display: none; }
-.foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.foot {
+  display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px;
+  /* 提交按钮贴在滚动区底部，内容多时不用滚到最下面才能提交 */
+  position: sticky; bottom: 0; z-index: 2; background: var(--el-bg-color, #fff); padding: 8px 0;
+}
 .mine { min-height: 120px; }
 .item { border-bottom: 1px dashed #eceef1; padding: 12px 0; }
 .item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -250,5 +256,24 @@ defineExpose({ open })
 .reply { background: #f5f7fa; border-radius: 4px; padding: 8px 12px; margin-top: 8px; }
 @media (max-width: 860px) {
   .kinds { grid-template-columns: 1fr; }
+}
+</style>
+
+<style>
+/* el-dialog 挂在 body 下，scoped 样式够不着，用类名限定。
+   整体最高 80% 屏高（top 10vh 上下各留一成）；页签头不动，页签内容滚动 */
+.feedback-dialog {
+  display: flex; flex-direction: column;
+  max-height: 80vh; margin-bottom: 0;
+}
+.feedback-dialog .el-dialog__body {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+}
+.feedback-dialog .el-tabs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.feedback-dialog .el-tabs__header { flex: none; }
+.feedback-dialog .el-tabs__content { flex: 1; min-height: 0; overflow-y: auto; }
+@supports (height: 100dvh) {
+  /* 手机浏览器地址栏伸缩时 vh 偏大，用动态视口高度 */
+  .feedback-dialog { max-height: 80dvh; }
 }
 </style>

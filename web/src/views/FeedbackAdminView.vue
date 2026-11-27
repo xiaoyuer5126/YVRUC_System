@@ -1,8 +1,10 @@
 <template>
   <div class="page page-wide">
     <h2>意见反馈</h2>
+    <!-- 管理员两个页签都有；会长团与对外联络部骨干、部长只处理志愿者反馈，
+         平台问题的接口也只给管理员 -->
     <el-tabs v-model="tab">
-      <el-tab-pane label="平台问题" name="platform" />
+      <el-tab-pane v-if="isAdmin" label="平台问题" name="platform" />
       <el-tab-pane label="志愿者反馈" name="volunteer" />
     </el-tabs>
     <el-card v-if="tab === 'volunteer'" shadow="never">
@@ -69,7 +71,8 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, fmtDT } from '../api'
 import { useNarrow } from '../composables/useNarrow'
@@ -78,10 +81,17 @@ import FeedbackShots from '../components/FeedbackShots.vue'
 import Pager from '../components/Pager.vue'
 import VolunteerFeedbackPanel from '../components/VolunteerFeedbackPanel.vue'
 import { feedbackReplies } from '../replyTemplates'
+import { auth } from '../store'
 
 const SIZE = 20
 const narrow = useNarrow()
-const tab = ref('platform')
+const route = useRoute()
+const isAdmin = computed(() => auth.activeIdentity === 'admin')
+// 志愿反馈的通知点开带 ?tab=volunteer；不是管理员的只有这一个页签
+const tab = ref(!isAdmin.value || route.query.tab === 'volunteer' ? 'volunteer' : 'platform')
+watch(() => route.query.tab, v => { if (v === 'volunteer') tab.value = 'volunteer' })
+// 切身份后页面不重开：失去管理员身份就退到志愿者反馈
+watch(isAdmin, v => { if (!v) tab.value = 'volunteer' })
 const items = ref([])
 const total = ref(0)
 const openCount = ref(0)
@@ -95,6 +105,7 @@ const guardReply = useCloseGuard(() => reply.value)
 const saving = ref(false)
 
 async function load() {
+  if (!isAdmin.value) return
   loading.value = true
   try {
     const d = await api.get(`/api/staff/feedback?page=${page.value}&size=${SIZE}`
@@ -127,6 +138,8 @@ async function save() {
 }
 
 onMounted(load)
+// 从志愿者反馈切回平台问题时，页面打开时若没加载过就补一次
+watch(tab, v => { if (v === 'platform' && !items.value.length) load() })
 
 function goPage(p) {
   page.value = p
