@@ -424,14 +424,14 @@
           </el-button>
           <!-- 用主题色（人大红）而不是 danger：平台把 primary 覆盖成了 #ae0b2a，
                danger 那个亮红在这一屏里显得突兀 -->
-          <el-button v-if="formCount" type="primary" plain @click="openAnswersExport"
-                     style="margin-left:auto">
-            <el-icon><Download /></el-icon>&nbsp;导出问卷结果
-          </el-button>
-          <el-button type="primary" @click="doExport"
-                     :style="formCount ? '' : 'margin-left:auto'">
-            <el-icon><Download /></el-icon>&nbsp;导出排班表
-          </el-button>
+          <span class="btn-row" style="margin-left:auto">
+            <el-button v-if="formCount" type="primary" plain @click="openAnswersExport">
+              <el-icon><Download /></el-icon>&nbsp;导出问卷结果
+            </el-button>
+            <el-button type="primary" @click="doExport">
+              <el-icon><Download /></el-icon>&nbsp;导出排班表
+            </el-button>
+          </span>
         </div>
 
         <!-- 报名后筛选：先录取，录取的人才进下面的名单 -->
