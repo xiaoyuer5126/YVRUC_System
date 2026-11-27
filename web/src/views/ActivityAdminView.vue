@@ -424,7 +424,8 @@
           </el-button>
           <!-- 用主题色（人大红）而不是 danger：平台把 primary 覆盖成了 #ae0b2a，
                danger 那个亮红在这一屏里显得突兀 -->
-          <span class="btn-row" style="margin-left:auto">
+          <!-- 宽屏靠右；手机上不撑开，余下的几像素空白会把按钮间距拉歪 -->
+          <span class="btn-row" :style="narrow ? '' : 'margin-left:auto'">
             <el-button v-if="formCount" type="primary" plain @click="openAnswersExport">
               <el-icon><Download /></el-icon>&nbsp;导出问卷结果
             </el-button>
