@@ -1,10 +1,20 @@
 <template>
   <div class="page page-wide">
     <h2>意见反馈</h2>
-    <p class="dim page-note">
-      用户提交的平台问题，处理并回复后，反馈者会收到通知。志愿工作相关的问题已引导到校青协志愿工作反馈平台。
-    </p>
-    <el-card shadow="never">
+    <el-tabs v-model="tab">
+      <el-tab-pane label="平台问题" name="platform" />
+      <el-tab-pane label="志愿者反馈" name="volunteer" />
+    </el-tabs>
+    <el-card v-if="tab === 'volunteer'" shadow="never">
+      <p class="dim page-note">
+        志愿者在平台上提交的志愿工作意见，由对外联络部和管理员回复。匿名提交的不显示姓名学号。
+      </p>
+      <VolunteerFeedbackPanel />
+    </el-card>
+    <el-card v-else shadow="never">
+      <p class="dim page-note">
+        用户提交的平台问题，处理并回复后，反馈者会收到通知。
+      </p>
       <div class="toolbar">
         <el-radio-group v-model="status" @change="reload">
           <el-radio-button value="open">待处理</el-radio-button>
@@ -13,7 +23,6 @@
         </el-radio-group>
         <span class="dim">共 {{ total }} 条 · 待处理 {{ openCount }} 条</span>
       </div>
-
       <div v-loading="loading" class="list">
         <el-empty v-if="!items.length && !loading" description="暂无反馈" />
         <div v-for="f in items" :key="f.id" class="item">
@@ -67,10 +76,12 @@ import { useNarrow } from '../composables/useNarrow'
 import { useCloseGuard } from '../composables/closeGuard'
 import FeedbackShots from '../components/FeedbackShots.vue'
 import Pager from '../components/Pager.vue'
+import VolunteerFeedbackPanel from '../components/VolunteerFeedbackPanel.vue'
 import { feedbackReplies } from '../replyTemplates'
 
 const SIZE = 20
 const narrow = useNarrow()
+const tab = ref('platform')
 const items = ref([])
 const total = ref(0)
 const openCount = ref(0)

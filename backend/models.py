@@ -2075,27 +2075,55 @@ class Announcement(Base):
 
 
 class Feedback(Base):
-    """用户对**平台本身**的意见反馈（bug、用不顺手的地方）。
+    """意见反馈，分两类（category）：
 
-    志愿工作上的问题（活动安排、时长、组织）不在这里收，前端把人引到校青协的
-    志愿工作反馈平台去——两件事归不同的人管，混在一起两边都处理不好。
+    - platform：平台本身的问题（bug、用不顺手的地方），管理员处理；
+    - volunteer：志愿工作上的意见（活动问题、咨询、建议），对外联络部（志愿北京
+      对接部门）的部长、骨干和管理员处理，通知与催办照活动审批走值班那一套。
+
+    两类归不同的人管，列表、权限、通知各走各的，只是共用这张表和截图那一套。
     截图挂在 Attachment 上（owner_type="feedback"，owner_id = 本条 id）。
+
+    匿名（anonymous）只对志愿反馈有意义：处理方看不到提交人是谁，但 user_id
+    照样记着——回复要送回本人，「我的反馈」也要列得出来。处理方的接口、通知、
+    日报、通知记录都不能把 user_id 带出去。
     """
     __tablename__ = "feedbacks"
 
     STATUS_LABELS = {"open": "待处理", "handled": "已处理"}
+    CATEGORIES = ("platform", "volunteer")
+    # 志愿反馈的意见类型，照校青协反馈表单的选项
+    KIND_LABELS = {
+        "nature": "存在不符合志愿性质的活动",
+        "issue": "反映某志愿活动中存在的问题",
+        "ask": "询问志愿相关问题",
+        "suggest": "提出对于青协工作的改进建议或想法",
+        "resource": "推荐校内外志愿服务资源、活动创意等",
+        "other": "其他",
+    }
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    category: Mapped[str] = mapped_column(String(12), default="platform", index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="")
+    activity_id: Mapped[str | None] = mapped_column(
+        ForeignKey("activities.id", ondelete="SET NULL"), nullable=True, index=True)
+    anonymous: Mapped[bool] = mapped_column(Boolean, default=False)
+    contact: Mapped[str] = mapped_column(String(64), default="")
     content: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(12), default="open", index=True)
     reply: Mapped[str] = mapped_column(Text, default="")
     handled_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
     handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 志愿反馈放太久没处理时催过一次的时间（见 scheduled.remind_stale_feedback）
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
 
     def status_label(self) -> str:
         return self.STATUS_LABELS.get(self.status, self.status)
+
+    def kind_label(self) -> str:
+        return self.KIND_LABELS.get(self.kind, self.kind)
 
 
 # ======================= 活动上的服务场次跨度 =======================

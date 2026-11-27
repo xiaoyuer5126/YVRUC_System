@@ -160,14 +160,29 @@ def duty_eligible(db: OrmSession, user: User, *, real: bool = False) -> bool:
     return duty_enabled(db.get(Department, user.department_id))
 
 
+def feedback_handler(db: OrmSession, user: User, *, real: bool = False) -> bool:
+    """能处理志愿者反馈：管理员，或志愿北京对接部门（对外联络部）的骨干、部长。
+
+    跟当前身份（real=False）：切到别的身份只收窄。普通部门成员、活动主办方不行。
+    下发给前端的是身份事实，session_user 传 real=True。
+    """
+    if user.is_admin(real=real):
+        return True
+    dept = vb_dept(db)
+    return eligible(user, dept, real=real) if dept is not None else False
+
+
 def session_user(db: OrmSession, user: User) -> dict:
     """登录、刷新个人信息时下发的用户信息：full() 再加上值班资格和对接部门名。
 
     值班资格要查部门，放不进 User.full()——那个方法在名册列表里逐行调用，
     多一次查询就是多几百次。
     """
+    dept = vb_dept(db)
     return {**user.full(), "duty_eligible": duty_eligible(db, user, real=True),
-            "vb_dept_name": vb_dept_name(db)}
+            "vb_dept_name": dept.name if dept is not None else "校青协",
+            # 对外联络部的骨干、部长：前端据此在「活动审批」露出「志愿者反馈」页签
+            "vb_feedback": dept is not None and eligible(user, dept)}
 
 
 # ======================= 二级团体活动与立项书 =======================

@@ -178,6 +178,8 @@ ROUTE_PAGES = ("hours", "approvals", "feedback")
 # 不能直接当路径的落点。反馈回复是弹窗不是页面：去消息中心，前端读到这个
 # 查询串再把「我的反馈」弹窗打开。少了它，这条通知点开只是标已读。
 ROUTE_QUERY_PAGES = {"feedback_mine": "/messages?feedback=mine"}
+# route="approvals"：data.tab 指定打开「活动审批」的哪个页签（志愿者反馈）
+APPROVAL_TABS = ("feedback",)
 # route="manage"：发给活动管理者的，进活动管理页；data.tab 指定直接打开哪个页签
 MANAGE_TABS = ("tree", "roster", "hours", "review")
 
@@ -199,6 +201,8 @@ def page_for(template_key: str, data: dict | None) -> str:
     activity_id = data.get("activity_id")
     if template_key in TEMPLATE_PAGE:
         return TEMPLATE_PAGE[template_key]
+    if data.get("route") == "approvals" and data.get("tab") in APPROVAL_TABS:
+        return f"/approvals?tab={data['tab']}"
     if data.get("route") in ROUTE_PAGES:
         return "/" + data["route"]
     if data.get("route") in ROUTE_QUERY_PAGES:
@@ -276,8 +280,10 @@ def send_user(db: OrmSession, user: User, template_key: str,
                        # 演示模式没有外部推送，通道记 "site"（仅站内）；
                        # 真实模式走企业微信，记 "wecom"
                        channel="wecom" if real else "site",
-                       # 请求里发出的通知记下触发人；定时任务没有请求上下文，留空
-                       triggered_by=oplog.current_actor_id(),
+                       # 请求里发出的通知记下触发人；定时任务没有请求上下文，留空。
+                       # 匿名志愿反馈的通知（data.anon_trigger）不记：触发人就是提交人
+                       triggered_by=(None if (data or {}).get("anon_trigger")
+                                     else oplog.current_actor_id()),
                        # 真实推送先记未送达，推成功了再改；进程在中间死掉的话，
                        # 库里说的「没送到」至少不是假话
                        delivered=not real,

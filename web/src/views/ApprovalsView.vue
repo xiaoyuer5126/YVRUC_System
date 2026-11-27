@@ -1,6 +1,13 @@
 <template>
   <div class="page page-wide">
     <h2>活动审批</h2>
+    <!-- 对外联络部骨干、部长另有「志愿者反馈」页签；别人只看到审批本身 -->
+    <el-tabs v-if="showFeedback" v-model="pageTab">
+      <el-tab-pane label="审批" name="approvals" />
+      <el-tab-pane label="志愿者反馈" name="feedback" />
+    </el-tabs>
+    <VolunteerFeedbackPanel v-if="showFeedback && pageTab === 'feedback'" />
+    <div v-show="pageTab !== 'feedback'">
     <el-alert type="info" :closable="false">
       通过可以附意见（选填），驳回、退回与转交须写明理由；意见随通知发给申请人，审核页签里也看得到。
     </el-alert>
@@ -337,6 +344,8 @@
       </template>
     </el-dialog>
 
+    </div>
+
     <!-- 三种审批共用一个意见对话框：通过选填、驳回/退回必填 -->
     <ApprovalCommentDialog v-model="cd.visible" :approve="cd.approve" :title="cd.title"
                            :subject="cd.subject" :audience="cd.audience"
@@ -393,7 +402,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, download, fmtDT } from '../api'
@@ -401,6 +410,7 @@ import ApprovalCommentDialog from '../components/ApprovalCommentDialog.vue'
 import DataCards from '../components/DataCards.vue'
 import HoursClaimQueue from '../components/HoursClaimQueue.vue'
 import ProjectFileSlot from '../components/ProjectFileSlot.vue'
+import VolunteerFeedbackPanel from '../components/VolunteerFeedbackPanel.vue'
 import { closingApproved, closingRejected, projectApproved, projectRejected, vbConfirmed }
   from '../replyTemplates'
 import { useNarrow } from '../composables/useNarrow'
@@ -551,6 +561,11 @@ async function load() {
 // 通过、驳回就在那张卡片上点
 const route = useRoute()
 const focusId = ref(String(route.query.activity || ''))
+// 志愿者反馈页签：以青协身份操作的对外联络部骨干、部长才有；
+// 「新的志愿者反馈」通知点开带 ?tab=feedback 直接打开它
+const showFeedback = computed(() => auth.activeIdentity === 'qingxie' && !!auth.user?.vb_feedback)
+const pageTab = ref(route.query.tab === 'feedback' ? 'feedback' : 'approvals')
+watch(() => route.query.tab, v => { if (v === 'feedback') pageTab.value = 'feedback' })
 onMounted(async () => {
   await load()
   if (!focusId.value) return
