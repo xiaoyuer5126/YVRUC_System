@@ -315,7 +315,7 @@ export default {
   '本岗位设组长，报名后可见组长信息':
     'This position has a team leader. Details are visible after you sign up.',
   '尚未任命': 'Not appointed yet',
-  '不需要': 'Not required',
+  '无要求': 'No requirement',
   '候补名额': 'Waitlist spots',
   '岗位模式': 'Position mode',
   '{0} · 岗位详情': '{0} · position details',

@@ -1756,7 +1756,7 @@ def _require_position_text(s: Position) -> None:
     if not (s.service_task or "").strip():
         raise HTTPException(400, f"请填写岗位「{s.name}」的服务任务")
     if s.attire not in Position.ATTIRE_LABELS:
-        raise HTTPException(400, "志愿服装只能是 不需要 / 统一发放 / 志愿者自备")
+        raise HTTPException(400, "志愿服装只能是 无要求 / 统一发放 / 志愿者自备")
     if s.attire != "none" and not (s.attire_note or "").strip():
         raise HTTPException(400, f"请填写岗位「{s.name}」的服装备注"
                                  "（领取与归还方式，或自备的样式要求）")

@@ -116,9 +116,9 @@
           录取之后再排岗位。
         </el-alert>
         <el-alert v-else type="info" :closable="false">
-          每个岗位自带服务时段，新建时选类型。<b>报名即选岗位</b>：志愿者挑中岗位，时间也就定了；
-          一条岗位的几个时段是同一批人全部要来，不同时段可以换人的分成几条岗位。
-          <b>报名后统一分配</b>：分工还没定时用，志愿者先报时间，截止后你在「志愿者管理」里分岗位。
+          <b>报名即选岗位</b>：志愿者直接挑选岗位；<b>报名后统一分配</b>：还没敲定岗位具体分工，
+          志愿者先报时间，之后在「志愿者管理」分岗位。一条岗位的几个时段要求同一批人，
+          不同时段分别招募的分成几条岗位。
         </el-alert>
         <div class="toolbar">
           <el-button plain @click="formDlg = true">{{ formLabel }}</el-button>
@@ -153,37 +153,6 @@
             <b>{{ a.name }}</b>：{{ a.text }}
           </div>
         </el-alert>
-
-        <div class="toolbar">
-          <el-button type="primary" :disabled="structureLocked" @click="openPost(null)">
-            <el-icon><Plus /></el-icon>&nbsp;新建岗位
-          </el-button>
-          <!-- 暂停、锁定都不用进编辑态：只管收不收新报名、候补顶不顶上，不改任何人的安排。
-               调整安排时要的是整个活动先停下来，一个一个点既慢又容易漏掉一个 -->
-          <template v-if="isPublic">
-            <el-popconfirm :width="320" :title="allPaused
-                             ? '恢复全部岗位的报名？解除暂停后按候补顺序补齐空位。'
-                             : '暂停全部岗位的报名？期间不收新报名，候补也不会顶上。'"
-                           @confirm="toggleAllPause">
-              <template #reference>
-                <el-button :disabled="isOver || !shifts.length">
-                  {{ allPaused ? '恢复全部报名' : '暂停全部报名' }}
-                </el-button>
-              </template>
-            </el-popconfirm>
-            <el-popconfirm :width="320" :title="allLocked
-                             ? '解锁全部岗位的名单？解锁后按候补顺序补齐空位。'
-                             : '锁定全部岗位的名单？不再收新报名、候补停止自动转正，此后退出的志愿者会被记录。'"
-                           @confirm="toggleAllLock">
-              <template #reference>
-                <el-button :disabled="isOver || !shifts.length">
-                  {{ allLocked ? '解锁全部名单' : '锁定全部名单' }}
-                </el-button>
-              </template>
-            </el-popconfirm>
-          </template>
-          <span class="dim">岗位按第一个时段的开始时间排</span>
-        </div>
 
         <!-- 一张岗位表，按开始时间排：普通岗位一行；报名后统一分配一行，截止后分好的
              岗位缩进列在它下面。窄屏同一份行数据铺成卡片 -->
@@ -359,7 +328,11 @@
           </el-table-column>
         </el-table>
         <el-empty v-else :image-size="60"
-                  description="还没有岗位，点上面的「新建岗位」添加（岗位自带服务时段）" />
+                  description="还没有岗位，点下面的「新建岗位」添加（岗位自带服务时段）" />
+        <el-button style="width:100%;margin-top:12px" plain dashed
+                   :disabled="structureLocked" @click="openPost(null)">
+          <el-icon><Plus /></el-icon>&nbsp;新建岗位
+        </el-button>
 
         <!-- 培训与彩排：挂在整个活动上，按岗位圈人（可以圈好几条岗位），空 = 全体 -->
         <div class="section-title">
@@ -1156,7 +1129,7 @@
             <el-radio value="fixed">固定计时</el-radio>
             <el-radio value="none">不计时长</el-radio>
           </el-radio-group>
-          <div class="dim">
+          <div class="dim" style="width:100%">
             {{ HOURS_HINT[attForm.hours_mode] }}
           </div>
         </el-form-item>
@@ -1419,7 +1392,7 @@
               <el-radio value="fixed" :disabled="groupForm.flexible_time">固定计时</el-radio>
               <el-radio value="none">不计时长</el-radio>
             </el-radio-group>
-            <div class="dim">{{ HOURS_HINT[groupForm.hours_mode] }}这一批分好的各岗位都按这一项记。</div>
+            <div class="dim" style="width:100%">{{ HOURS_HINT[groupForm.hours_mode] }}这一批分好的各岗位都按这一项记。</div>
             <el-alert v-if="flexibleFixed" type="warning" show-icon :closable="false"
                       title="时间灵活时一人可以签好几轮到，不能按时段总长固定计；保存时改为按签到签退计" />
           </el-form-item>
@@ -1481,7 +1454,7 @@
               <el-radio value="fixed" :disabled="stationForm.flexible_time">固定计时</el-radio>
               <el-radio value="none">不计时长</el-radio>
             </el-radio-group>
-            <div class="dim">{{ HOURS_HINT[stationForm.hours_mode] }}</div>
+            <div class="dim" style="width:100%">{{ HOURS_HINT[stationForm.hours_mode] }}</div>
             <el-alert v-if="postFlexibleFixed" type="warning" show-icon :closable="false"
                       title="时间灵活的岗位一人可以签好几轮到，不能按时段总长固定计；保存时改为按签到签退计" />
           </el-form-item>
@@ -1506,14 +1479,25 @@
           <el-input-number v-model="stationForm.waitlist_quota" :min="0" />
           <span class="dim" style="margin-left:12px">满员后可排队的人数，0 = 不设候补</span>
         </el-form-item>
+        <el-form-item label="组长">
+          <el-checkbox v-model="stationForm.needs_leader">本组需要一名组长</el-checkbox>
+          <div class="dim" style="width:100%">在「志愿者管理」页面指定，报名时志愿者可表态供你参考。</div>
+        </el-form-item>
+        <el-form-item v-if="stationForm.needs_leader" label="组长任务" required>
+          <el-input v-model="stationForm.leader_task" maxlength="256" show-word-limit
+                    placeholder="组长要带队做什么：如 带队进场、清点人数、结束后对账" />
+          <div v-if="stationForm.group_name?.trim()" class="dim">
+            一个岗位组共用一名组长，也共用这一份任务：保存时会同步到本活动里同组的其他岗位
+          </div>
+        </el-form-item>
         <el-form-item label="岗位组">
           <el-input v-model="stationForm.group_name" style="width:220px"
                     maxlength="64" placeholder="如：东门片区（选填）" />
-          <div class="dim">本活动里组名相同的岗位是一个组，共用一名组长；留空则本岗位自成一组</div>
+          <div class="dim">组名相同的岗位是一个组，共用一名组长（如有）；留空则本岗位自成一组</div>
         </el-form-item>
         <el-form-item label="志愿服装">
           <el-radio-group v-model="stationForm.attire">
-            <el-radio value="none">不需要</el-radio>
+            <el-radio value="none">无要求</el-radio>
             <el-radio value="issued">统一发放</el-radio>
             <el-radio value="own">志愿者自备</el-radio>
           </el-radio-group>
@@ -1534,28 +1518,8 @@
           <el-input v-model="stationForm.pay_note" maxlength="256" show-word-limit
                     placeholder="标准与发放方式：如 60元/小时，活动后一周内发放" />
         </el-form-item>
-        <el-form-item label="组长">
-          <el-checkbox v-model="stationForm.needs_leader">本组需要一名组长</el-checkbox>
-          <div class="dim">在「志愿者管理」页面指定，报名时志愿者可表态供你参考。</div>
-        </el-form-item>
-        <el-form-item v-if="stationForm.needs_leader" label="组长任务" required>
-          <el-input v-model="stationForm.leader_task" maxlength="256" show-word-limit
-                    placeholder="组长要带队做什么：如 带队进场、清点人数、结束后对账" />
-          <div v-if="stationForm.group_name?.trim()" class="dim">
-            一个岗位组共用一名组长，也共用这一份任务：保存时会同步到本活动里同组的其他岗位
-          </div>
-        </el-form-item>
         <el-form-item label="条件要求">
           <div class="two-col">
-            <el-select v-model="stationForm.genderReq" clearable placeholder="性别（不限）">
-              <el-option value="女" label="限女生" /><el-option value="男" label="限男生" />
-            </el-select>
-            <el-select v-model="stationForm.collegeReq" multiple clearable collapse-tags
-                       filterable placeholder="学院（不限）">
-              <el-option v-for="c in colleges" :key="c" :value="c" :label="c" />
-            </el-select>
-          </div>
-          <div class="two-col" style="margin-top:8px">
             <el-select v-model="stationForm.campusReq" multiple clearable collapse-tags
                        placeholder="校区（不限）">
               <el-option v-for="c in campuses" :key="c" :value="c" :label="c" />
@@ -1565,7 +1529,15 @@
               <el-option v-for="s in stages" :key="s" :value="s" :label="s" />
             </el-select>
           </div>
-          <div class="dim">报名时系统按这几项拦人，只有这一份条件</div>
+          <div class="two-col" style="margin-top:8px">
+            <el-select v-model="stationForm.genderReq" clearable placeholder="性别（不限）">
+              <el-option value="女" label="限女生" /><el-option value="男" label="限男生" />
+            </el-select>
+            <el-select v-model="stationForm.collegeReq" multiple clearable collapse-tags
+                       filterable placeholder="学院（不限）">
+              <el-option v-for="c in colleges" :key="c" :value="c" :label="c" />
+            </el-select>
+          </div>
         </el-form-item>
         <el-form-item label="服务任务" required><el-input v-model="stationForm.service_task"
                     type="textarea" :rows="2"
@@ -1646,7 +1618,7 @@
         <el-descriptions-item label="条件要求">{{ sdData.requirement_desc }}</el-descriptions-item>
         <el-descriptions-item label="服务任务"><span class="pre">{{ sdData.service_task || '—' }}</span></el-descriptions-item>
         <el-descriptions-item label="岗位要求"><span class="pre">{{ sdData.position_requirement || '—' }}</span></el-descriptions-item>
-        <el-descriptions-item label="志愿服装">{{ sdData.attire_text || '不需要' }}</el-descriptions-item>
+        <el-descriptions-item label="志愿服装">{{ sdData.attire_text || '无要求' }}</el-descriptions-item>
         <el-descriptions-item label="报酬方式">{{ sdData.pay_text || '志愿时长' }}</el-descriptions-item>
         <el-descriptions-item label="培训内容"><span class="pre">{{ sdData.training_note || '—' }}</span></el-descriptions-item>
       </el-descriptions>
@@ -2405,8 +2377,7 @@ const confirmedCount = computed(() => hours.value.filter(h => h.confirmed).lengt
 // —— 时段 ——
 // PeriodEditor 下面那句说明：一条岗位的几个时段是「同一批人全部要来」，
 // 这一点要在填的时候就说清楚，不然会被当成「几个班次任选其一」
-const POST_PERIOD_TIP = '报名这个岗位的人，下面每个时段都要来。'
-  + '不同时段可以换人的，请分成几条岗位（可用复制）。'
+const POST_PERIOD_TIP = '所有时段同一批志愿者，如果是分别招募，可以复制为多个岗位。'
 const ASSIGN_PERIOD_TIP = '报名这一批的人，下面每个时段都要来；'
   + '志愿时长按实际签到签退计算。'
 const emptyPeriod = () => ({ start_time: '', end_time: '' })
@@ -2712,33 +2683,6 @@ async function toggleLock(kind, item, locked) {
 function reopenedMessage(d, done) {
   if (d.hint) ElMessage.warning(`${done}。${d.hint}`)
   else ElMessage.success(d.promoted ? `${done}，${d.promoted} 位候补已转为待确认` : done)
-}
-
-// 整个活动此刻是不是都停着、都锁着：按钮上写「暂停全部」还是「恢复全部」看它
-const allPaused = computed(() => shifts.value.length > 0
-  && shifts.value.every(g => g.enroll_paused))
-const allLocked = computed(() => shifts.value.length > 0
-  && shifts.value.every(g => g.locked))
-
-/** 一次暂停 / 恢复全部岗位的报名。调整安排时要的是整个活动先停下来，
- *  一个一个点既慢又容易漏掉一个，漏掉的那一个还在收人。 */
-async function toggleAllPause() {
-  const paused = !allPaused.value
-  const d = await api.post(`/api/staff/activities/${activityId}/pause-all`,
-                           { paused })
-  reopenedMessage(d, paused ? `已暂停全部报名（${d.shifts} 个），期间候补不会顶上`
-                            : `已恢复全部报名（${d.shifts} 个）`)
-  loadAll()
-}
-
-/** 一次锁定 / 解锁全部岗位的名单，口径同单个岗位的锁定 */
-async function toggleAllLock() {
-  const locked = !allLocked.value
-  const d = await api.post(`/api/staff/activities/${activityId}/lock-all`,
-                           { locked })
-  reopenedMessage(d, locked ? `已锁定全部名单（${d.shifts} 个）`
-                            : `已解锁全部名单（${d.shifts} 个）`)
-  loadAll()
 }
 
 /** 「开放选岗」按钮为什么点不了；空串 = 可以点。候补这些页面上数不全的，交给后端判 */

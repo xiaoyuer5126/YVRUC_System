@@ -365,7 +365,7 @@
         <el-descriptions-item :label="t('条件要求')">{{ tTags(stationDetail.data.requirement_desc) }}</el-descriptions-item>
         <el-descriptions-item :label="t('服务任务')"><span class="pre">{{ stationDetail.data.service_task || '—' }}</span></el-descriptions-item>
         <el-descriptions-item :label="t('岗位要求')"><span class="pre">{{ stationDetail.data.position_requirement || '—' }}</span></el-descriptions-item>
-        <el-descriptions-item :label="t('志愿服装')">{{ attireText(stationDetail.data) || t('不需要') }}</el-descriptions-item>
+        <el-descriptions-item :label="t('志愿服装')">{{ attireText(stationDetail.data) || t('无要求') }}</el-descriptions-item>
         <el-descriptions-item :label="t('报酬方式')">{{ payText(stationDetail.data) || t('志愿时长') }}</el-descriptions-item>
         <el-descriptions-item :label="t('培训内容')">
           <template v-if="stationDetail.data.training_visible">
