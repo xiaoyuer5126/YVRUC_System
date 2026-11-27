@@ -434,3 +434,47 @@ def test_迁移_场次级材料与条件地点收口到岗位(split_result):
                                      "校区": ["中关村校区", "苏州校区"]}
     assert kept.location == "北门", "岗位没写地点，搬场次那一份过来"
     assert shifts["乙"].positions[0].location == "南门", "岗位自己写了的不动"
+
+
+# ================== 0025：只挂一个岗位的普通场次改用岗位名 ==================
+
+def test_迁移_单岗位场次的旧场次名改成岗位名():
+    """0024 没拆的单岗位场次还叫「上午场」，升级后场次名跟岗位名一致；
+    统一分配的场次不动。"""
+    from datetime import timedelta
+
+    from sqlalchemy.orm import Session
+
+    from backend.models import Activity, Position, Shift, User, now, uid
+
+    with scratch_db("rename") as eng:
+        upgrade_to(eng, "0024")
+        with Session(eng) as session:
+            u = User(id=uid("u"), student_id="7100001", name="改名",
+                     user_type="student", roles=["student"])
+            session.add(u)
+            session.flush()
+            base = now().replace(microsecond=0) + timedelta(days=20)
+            act = Activity(id=uid("act"), title="改名测试", intro="x",
+                           location="世纪馆",
+                           contacts=[{"name": "王", "phone": "13900000000"}],
+                           contact_group_qr="x", status="published",
+                           reg_start=base - timedelta(days=10),
+                           reg_end=base - timedelta(days=1), created_by=u.id)
+            session.add(act)
+            pick = Shift(id=uid("g"), activity_id=act.id, name="10月24日上午场",
+                         mode="pick", kind="service", sort=0)
+            assign = Shift(id=uid("g"), activity_id=act.id, name="统一分配组",
+                           mode="assign", kind="service", sort=1)
+            session.add_all([pick, assign])
+            session.flush()
+            session.add(Position(id=uid("p"), shift_id=pick.id, name="志愿者裁判",
+                                 quota=2, sort=0))
+            session.add(Position(id=uid("p"), shift_id=assign.id, name="引导",
+                                 quota=2, sort=0))
+            session.commit()
+            ids = (pick.id, assign.id)
+        migrate.upgrade(eng)
+        with Session(eng) as session:
+            assert session.get(Shift, ids[0]).name == "志愿者裁判"
+            assert session.get(Shift, ids[1]).name == "统一分配组"
