@@ -195,3 +195,17 @@ def test_圈着待分配的题换成圈这一场的岗位(client, admin, db, pub
     db.expire_all()
     assert db.get(FormQuestion, mine.id).applies_to_positions == [a]
     assert db.get(FormQuestion, other.id).applies_to_positions == ["p_elsewhere"]
+
+
+def test_同一批统一分配里岗位不能重名(client, admin, published):
+    """导入排班按岗位名对应，同一批里两个同名岗位就认不出是哪一个。"""
+    aid, g = published
+    _position(client, admin, aid, g, "引导", 2)
+    other = _position(client, admin, aid, g, "签到", 2)
+    with editing(client, admin, aid):
+        r = client.post(f"/api/staff/shifts/{g.id}/positions", headers=admin,
+                        json={"name": "引导", "quota": 2, **POSITION_TEXT})
+        assert r.status_code == 400 and "不能重复" in r.json()["detail"]
+        r = client.patch(f"/api/staff/positions/{other}", headers=admin,
+                         json={"name": "引导"})
+        assert r.status_code == 400 and "不能重复" in r.json()["detail"]

@@ -219,21 +219,8 @@
     <!-- 窄屏：竖排卡片。手机上选岗位是最要紧的动作，按钮直接铺开 -->
     <div v-if="narrow" class="m-shifts">
       <template v-for="row in cardRows" :key="row.key">
-        <!-- 全体参加的培训/彩排：不在每个岗位下重复，单独一张 -->
-        <el-card v-if="row.type === 'trainings-all'" shadow="never" class="m-shift">
-          <div class="m-shift-head"><b>{{ t('全体参加') }}</b></div>
-          <div class="att-list">
-            <TrainingItem v-for="tr in row.list" :key="tr.id" :s="tr"
-                          :location="act.location" @excuse="toggleExcuse" />
-          </div>
-        </el-card>
-        <!-- 按时间看里的培训/彩排：按时间插在岗位之间 -->
-        <div v-else-if="row.type === 'training'" class="att-list">
-          <TrainingItem :s="row.tr" :location="act.location" :who="row.who"
-                        @excuse="toggleExcuse" />
-        </div>
-        <!-- 一张卡：按时间看是一条岗位，按岗位看是同名的几条 -->
-        <el-card v-else shadow="never" class="m-shift">
+        <!-- 一张卡：按时间看是一条岗位，按岗位看是同名的几条；培训/彩排挂在叫到的岗位下面 -->
+        <el-card shadow="never" class="m-shift">
           <div class="m-shift-head">
             <el-link class="m-shift-name" type="primary" underline="never"
                      @click="showDetail(row.slots[0])">{{ row.name }}</el-link>
@@ -272,19 +259,15 @@
     </div>
 
     <!-- 宽屏：一张长表，一条岗位一行。按岗位看时同名岗位的岗位格上下合并，
-         培训/彩排整行插在它叫的那几行下面（合并格之内）；按时间看是平表 -->
+         培训/彩排整行插在它叫的那几行下面（合并格之内）；按时间看是平表，
+         每条岗位下面挂它要参加的培训/彩排 -->
     <el-card v-else-if="items.length" shadow="never">
       <el-table :data="tableRows" row-key="key" :span-method="rowSpan"
                 :row-class-name="rowClass" size="small" border>
         <el-table-column :label="t('岗位')" min-width="170">
           <template #default="{ row }">
-            <div v-if="row.type === 'trainings-all'" class="att-list att-in-row">
-              <b>{{ t('全体参加') }}</b>
-              <TrainingItem v-for="tr in row.list" :key="tr.id" :s="tr" full
-                            :location="act.location" @excuse="toggleExcuse" />
-            </div>
-            <div v-else-if="row.type === 'training'" class="att-list att-in-row">
-              <TrainingItem :s="row.tr" full :who="row.who" :location="act.location"
+            <div v-if="row.type === 'training'" class="att-list att-in-row">
+              <TrainingItem :s="row.tr" full :location="act.location"
                             @excuse="toggleExcuse" />
             </div>
             <template v-else>
@@ -650,7 +633,7 @@ const roles = computed(() => {  // vuecheck: script-only（表格行与卡片由
 
 /** 培训/彩排：活动上的那份没有「我要不要去、请没请假」，这些在各场次的
  * attached 里；取我要去的那一份，没有就取任一份 */
-const trainings = computed(() => {
+const trainings = computed(() => {  // vuecheck: script-only
   const m = new Map((act.value?.trainings || []).map(x => [x.id, x]))
   for (const g of act.value?.shifts || []) {
     for (const s of g.attached || []) {
@@ -660,21 +643,20 @@ const trainings = computed(() => {
   }
   return [...m.values()].sort((a, b) => a.start_time.localeCompare(b.start_time))
 })
-/** 这场培训叫不叫这条岗位的人（统一分配：圈了其中任一岗位就算） */
+/** 这场培训叫不叫这条岗位的人：没圈岗位 = 全体；统一分配圈了其中任一岗位就算 */
 function calls(tr, it) {
   const ids = tr.applies_to_positions
+  if (!ids.length) return true
   return it.assign ? it.g.positions.some(p => ids.includes(p.id)) : ids.includes(it.p.id)
 }
-const wholeTrainings = computed(  // vuecheck: script-only
-  () => trainings.value.filter(x => !x.applies_to_positions.length))
+const callsOf = it => trainings.value.filter(tr => calls(tr, it))
 
-/** 按岗位看时培训挂在哪：只叫组里某几个时段的，跟在那几个时段后面；叫整组的，
- * 放在组的最后；全体参加的单独一行放在最前，不在每个岗位下重复 */
+/** 按岗位看时培训挂在哪：只叫组里某几个时段的，跟在那几个时段后面；叫整组的
+ * （含全体参加）放在组的最后 */
 function roleLayout(r) {
   const partial = new Map(r.slots.map(x => [x.key, []]))
   const whole = []
   for (const tr of trainings.value) {
-    if (!tr.applies_to_positions.length) continue
     const hit = r.slots.filter(x => calls(tr, x))
     if (!hit.length) continue
     if (hit.length === r.slots.length) whole.push(tr)
@@ -683,22 +665,18 @@ function roleLayout(r) {
   return { partial, whole }
 }
 
-/** 宽屏表格的行。type：slot 一条岗位；training 一场培训；trainings-all 全体参加。
+/** 宽屏表格的行。type：slot 一条岗位；training 一场培训，挂在叫到的岗位下面。
  * 按岗位看时组的第一行带 span（岗位格往下合并几行），其余行 span 为 0 */
 const tableRows = computed(() => {
   if (detailView.value === 'time') {
-    const rows = items.value.map(it => ({ type: 'slot', key: it.key, it, name: it.name,
-                                          count: 1, at: it.g.start_time }))
-    for (const tr of trainings.value) {
-      rows.push({ type: 'training', key: `tr:${tr.id}`, tr, at: tr.start_time,
-                  who: trainingWho(tr) })
+    const rows = []
+    for (const it of [...items.value].sort((a, b) => a.g.start_time.localeCompare(b.g.start_time))) {
+      rows.push({ type: 'slot', key: it.key, it, name: it.name, count: 1 })
+      for (const tr of callsOf(it)) rows.push({ type: 'training', key: `${it.key}:${tr.id}`, tr })
     }
-    return rows.sort((a, b) => a.at.localeCompare(b.at))
+    return rows
   }
   const rows = []
-  if (wholeTrainings.value.length) {
-    rows.push({ type: 'trainings-all', key: 'tr:all', list: wholeTrainings.value })
-  }
   for (const r of roles.value) {
     const { partial, whole } = roleLayout(r)
     const first = rows.length
@@ -713,17 +691,15 @@ const tableRows = computed(() => {
   }
   return rows
 })
-/** 手机卡片：按时间看一条岗位一张卡（slots 只有它自己），培训按时间插在中间；
+/** 手机卡片：按时间看一条岗位一张卡，下面挂它要参加的培训；
  * 按岗位看一组一张卡，培训的位置同宽屏 */
 const cardRows = computed(() => {
   if (detailView.value === 'time') {
-    return tableRows.value.map(row => (row.type === 'slot'
-      ? { type: 'card', key: row.key, name: row.name, slots: [row.it] } : row))
+    return tableRows.value.filter(row => row.type === 'slot').map(row => (
+      { type: 'card', key: row.key, name: row.name,
+        slots: [{ ...row.it, trainings: callsOf(row.it) }] }))
   }
   const rows = []
-  if (wholeTrainings.value.length) {
-    rows.push({ type: 'trainings-all', key: 'tr:all', list: wholeTrainings.value })
-  }
   for (const r of roles.value) {
     const { partial, whole } = roleLayout(r)
     rows.push({ type: 'card', key: r.key, name: r.name, trainings: whole,
@@ -731,16 +707,10 @@ const cardRows = computed(() => {
   }
   return rows
 })
-/** 按时间看时培训插在岗位之间，要写明叫谁；按岗位看时挂在谁下面就是叫谁 */
-function trainingWho(tr) {
-  return tr.applies_to_positions.length ? t('参加：{0}', [tr.applies_text]) : t('全体参加')
-}
-
 // 老师不报名，没有「操作」列
 const ncols = computed(() => (isTeacher.value ? 5 : 6))  // vuecheck: script-only
 /** 培训行横跨整行：按时间看从第一列起，按岗位看从时段列起（左边是合并的岗位格） */
 function rowSpan({ row, columnIndex }) {
-  if (row.type === 'trainings-all') return columnIndex === 0 ? [1, ncols.value] : [0, 0]
   if (detailView.value === 'role') {
     if (columnIndex === 0) return row.span ? [row.span, 1] : [0, 0]
     if (row.type === 'training') return columnIndex === 1 ? [1, ncols.value - 1] : [0, 0]

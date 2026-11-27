@@ -6,7 +6,7 @@
   <div v-loading="loading">
     <div class="fb-head">
       <span class="dim">
-        {{ screened ? '志愿者申请时填写，意向场次、个人信息无需出题询问'
+        {{ screened ? '志愿者申请时填写，意向岗位、个人信息无需出题询问'
                     : '选填。志愿者报名时填写，个人信息无需出题询问，答案在「志愿者管理」中查看' }}
       </span>
       <el-button v-if="editable" type="primary" size="small" :loading="saving"
