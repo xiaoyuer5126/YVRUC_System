@@ -161,12 +161,12 @@ def duty_eligible(db: OrmSession, user: User, *, real: bool = False) -> bool:
 
 
 def feedback_handler(db: OrmSession, user: User, *, real: bool = False) -> bool:
-    """能处理志愿者反馈：管理员，或志愿北京对接部门（对外联络部）的骨干、部长。
+    """能处理志愿者反馈：管理员、会长团，或志愿北京对接部门（对外联络部）的骨干、部长。
 
     跟当前身份（real=False）：切到别的身份只收窄。普通部门成员、活动主办方不行。
     下发给前端的是身份事实，session_user 传 real=True。
     """
-    if user.is_admin(real=real):
+    if user.is_admin(real=real) or user.is_council(real=real):
         return True
     dept = vb_dept(db)
     return eligible(user, dept, real=real) if dept is not None else False
@@ -181,8 +181,9 @@ def session_user(db: OrmSession, user: User) -> dict:
     dept = vb_dept(db)
     return {**user.full(), "duty_eligible": duty_eligible(db, user, real=True),
             "vb_dept_name": dept.name if dept is not None else "校青协",
-            # 对外联络部的骨干、部长：前端据此在「活动审批」露出「志愿者反馈」页签
-            "vb_feedback": dept is not None and eligible(user, dept)}
+            # 会长团与对外联络部的骨干、部长：前端据此在「活动审批」露出「志愿者反馈」页签
+            "vb_feedback": user.is_council(real=True)
+                           or (dept is not None and eligible(user, dept))}
 
 
 # ======================= 二级团体活动与立项书 =======================

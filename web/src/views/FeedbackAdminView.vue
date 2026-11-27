@@ -7,7 +7,7 @@
     </el-tabs>
     <el-card v-if="tab === 'volunteer'" shadow="never">
       <p class="dim page-note">
-        志愿者在平台上提交的志愿工作意见，由对外联络部和管理员回复。匿名提交的不显示姓名学号。
+        志愿者在平台上提交的志愿工作意见，由对外联络部、会长团和管理员回复。匿名提交的不显示姓名学号。
       </p>
       <VolunteerFeedbackPanel />
     </el-card>

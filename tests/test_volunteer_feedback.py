@@ -81,12 +81,13 @@ def test_只有外联部骨干部长和管理员能看(client, admin, take_stude
     for sid in (LIAISON_HEAD, LIAISON_CORE):
         ids = [x["id"] for x in _items(client, login(client, sid))]
         assert fid in ids and pid not in ids
-    ids = [x["id"] for x in _items(client, admin)]
-    assert fid in ids and pid not in ids
+    # 管理员、会长团（张远航不在外联部）也能看
+    for h in (admin, login(client, QINGXIE)):
+        ids = [x["id"] for x in _items(client, h)]
+        assert fid in ids and pid not in ids
 
-    # 部门成员、会长团（非外联部）、活动发起方、普通学生都不行
-    for h in (login(client, LIAISON_MEMBER), login(client, QINGXIE),
-              login(client, INITIATOR), me):
+    # 部门成员、活动发起方、普通学生都不行
+    for h in (login(client, LIAISON_MEMBER), login(client, INITIATOR), me):
         assert client.get("/api/staff/volunteer-feedback", headers=h).status_code == 403
         assert client.post(f"/api/staff/volunteer-feedback/{fid}/reply", headers=h,
                            json={"reply": "x"}).status_code == 403
@@ -137,7 +138,7 @@ def test_匿名时处理方接口不返回身份(client, admin, db, take_student
     assert r.status_code == 200, r.text
     fid = r.json()["id"]
 
-    for h in (admin, login(client, LIAISON_HEAD)):
+    for h in (admin, login(client, LIAISON_HEAD), login(client, QINGXIE)):
         resp = client.get("/api/staff/volunteer-feedback?size=100", headers=h)
         item = [x for x in resp.json()["items"] if x["id"] == fid][0]
         assert item["anonymous"] is True and item["user"] is None
@@ -363,6 +364,7 @@ def test_截图下载权限覆盖外联部(client, admin, take_student, liaison)
     assert client.get(dl_url(client, core, vpath)).status_code == 200
     assert client.get(dl_url(client, me, vpath)).status_code == 200
     assert client.get(dl_url(client, admin, vpath)).status_code == 200
+    assert client.get(dl_url(client, login(client, QINGXIE), vpath)).status_code == 200
     # 平台问题的截图外联部看不到；部门成员、别人看不到志愿反馈的截图
     assert client.get(ppath, headers=core).status_code == 404
     assert client.get(vpath, headers=login(client, LIAISON_MEMBER)).status_code == 404

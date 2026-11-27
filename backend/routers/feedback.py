@@ -1,7 +1,7 @@
 """意见反馈：任何登录用户都能提，分平台问题与志愿反馈两类（见 models.Feedback）。
 
 - 平台问题：管理员处理并回复，新反馈通知全体管理员。
-- 志愿反馈：对外联络部（志愿北京对接部门）的骨干、部长和管理员处理。通知照
+- 志愿反馈：对外联络部（志愿北京对接部门）的骨干、部长，会长团和管理员处理。通知照
   活动审批：新反馈发值班人、没人值班发部长；放太久没处理由定时任务催一次并抄送
   会长团（scheduled.remind_stale_feedback）；列进部长的每晚日报。可以匿名：处理方
   的接口一律不返回提交人，通知与通知记录里也不出现（见 _notify_vb_handlers）。
@@ -377,12 +377,12 @@ def handle_feedback(feedback_id: str, body: HandleBody,
     return _out(db, fb, shots[fb.id], submitter=submitter, handler=user)
 
 
-# ======================= 对外联络部与管理员：志愿反馈 =======================
+# ======================= 对外联络部、会长团与管理员：志愿反馈 =======================
 
 def require_vb_feedback(user: User = Depends(current_user),
                         db: OrmSession = Depends(db_session)) -> User:
     if not liaison.feedback_handler(db, user):
-        raise HTTPException(403, f"需要 {liaison.vb_dept_name(db)}骨干、部长或管理员 身份")
+        raise HTTPException(403, f"需要 {liaison.vb_dept_name(db)}骨干、部长或会长团、管理员 身份")
     return user
 
 

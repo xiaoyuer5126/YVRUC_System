@@ -1,7 +1,7 @@
 <template>
   <div class="page page-wide">
     <h2>活动审批</h2>
-    <!-- 对外联络部骨干、部长另有「志愿者反馈」页签；别人只看到审批本身 -->
+    <!-- 会长团与对外联络部骨干、部长另有「志愿者反馈」页签；别人只看到审批本身 -->
     <el-tabs v-if="showFeedback" v-model="pageTab">
       <el-tab-pane label="审批" name="approvals" />
       <el-tab-pane label="志愿者反馈" name="feedback" />
@@ -561,7 +561,7 @@ async function load() {
 // 通过、驳回就在那张卡片上点
 const route = useRoute()
 const focusId = ref(String(route.query.activity || ''))
-// 志愿者反馈页签：以青协身份操作的对外联络部骨干、部长才有；
+// 志愿者反馈页签：以青协身份操作的会长团与对外联络部骨干、部长才有；
 // 「新的志愿者反馈」通知点开带 ?tab=feedback 直接打开它
 const showFeedback = computed(() => auth.activeIdentity === 'qingxie' && !!auth.user?.vb_feedback)
 const pageTab = ref(route.query.tab === 'feedback' ? 'feedback' : 'approvals')
