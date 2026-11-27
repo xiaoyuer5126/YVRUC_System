@@ -245,11 +245,11 @@ def _notify_admins(db: OrmSession, fb: Feedback, submitter: User) -> None:
 
 def vb_feedback_contacts(db: OrmSession) -> list[User]:
     """新的志愿反馈通知谁：对外联络部的值班人，没人值班发部长（同活动审批）。
-    对外联络部没设、或者没有部长时兜底发会长团，不然这条反馈没人知道。"""
-    from .staff_ops import council_members
+    对外联络部没设、或者没有部长时兜底发分管会长，不然这条反馈没人知道。"""
+    from .staff_ops import dept_council
     dept = liaison.vb_dept(db)
     contacts = liaison.approval_contacts(db, dept.id) if dept is not None else []
-    return contacts or council_members(db, dept.id if dept is not None else None)
+    return contacts or dept_council(db, dept.id if dept is not None else None)
 
 
 def _notify_vb_handlers(db: OrmSession, fb: Feedback, submitter: User) -> None:

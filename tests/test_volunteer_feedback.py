@@ -269,7 +269,7 @@ def test_回复模板按类型填充(client, admin, take_student, liaison):
 
 # ======================= 48 小时催办 =======================
 
-def test_超时没回复只催一次并抄送会长团(client, db, take_student, liaison):
+def test_超时没回复只催一次并抄送分管会长(client, db, take_student, liaison, council_reset):
     fid = _submit(client, login(client, take_student()), anonymous=True).json()["id"]
     assert scheduled.remind_stale_feedback(db) >= 0
     assert not _notes_for(db, LIAISON_HEAD, fid, "志愿者反馈已等待")   # 还没到 48 小时
@@ -280,7 +280,8 @@ def test_超时没回复只催一次并抄送会长团(client, db, take_student,
     assert scheduled.remind_stale_feedback(db) >= 1
     head = _notes_for(db, LIAISON_HEAD, fid, "志愿者反馈已等待")
     assert len(head) == 1
-    assert len(_notes_for(db, QINGXIE, fid, "志愿者反馈已等待")) == 1   # 会长团抄送
+    assert len(_notes_for(db, QINGXIE, fid, "志愿者反馈已等待")) == 1   # 没人分管，抄送会长
+    assert not _notes_for(db, ADMIN, fid, "志愿者反馈已等待")   # 会长团里不分管的不收
     assert not _notes_for(db, LIAISON_CORE, fid, "志愿者反馈已等待")
 
     scheduled.remind_stale_feedback(db)

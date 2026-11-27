@@ -81,7 +81,7 @@
             <span v-if="row.department" class="dim">· {{ row.department }}</span>
             <span v-if="row.supervisor" class="dim">· 归属 {{ row.supervisor }}</span>
             <span v-if="row.qingxie_post === 'council'" class="dim">
-              · 催办：{{ remindText(row) }}
+              · 分管：{{ remindText(row) }}
             </span>
           </template>
           <span v-else class="dim">—</span>
@@ -138,11 +138,11 @@
             </el-checkbox>
             <div class="dim">只标一位；换届时改标到新会长名下。其他会长团成员照样能审批。</div>
           </el-form-item>
-          <el-form-item v-if="dlg.post === 'council'" label="催办部门">
+          <el-form-item v-if="dlg.post === 'council'" label="分管部门">
             <el-checkbox-group v-model="dlg.remindDeptIds">
               <el-checkbox v-for="d in depts" :key="d.id" :value="d.id">{{ d.name }}</el-checkbox>
             </el-checkbox-group>
-            <div class="dim">勾选要接收超时催办通知的部门；全部不勾表示接收全部部门的超时催办</div>
+            <div class="dim">勾选你分管的部门，这些部门的审批超时未处理时会抄送给你；不勾表示不分管。没有人分管的部门抄送给会长</div>
           </el-form-item>
           <el-form-item v-if="dlg.post !== 'council'" label="所属部门" required>
             <el-select v-model="dlg.deptId" placeholder="选择部门" style="width:100%"
@@ -283,13 +283,13 @@ const dlg = ref({ visible: false, row: null, roles: [], post: 'member', deptId: 
 function deptName(id) {
   return depts.value.find(d => d.id === id)?.name || id
 }
-// 催办部门范围：只认现有部门，一个都不剩就是全部部门
+// 分管部门：只认现有部门，一个都不剩就是不分管
 function remindIds(row) {
   return (row.remind_dept_ids || []).filter(id => depts.value.some(d => d.id === id))
 }
 function remindText(row) {
   const ids = remindIds(row)
-  return ids.length ? ids.map(deptName).join('、') : '全部部门'
+  return ids.length ? ids.map(deptName).join('、') : '无'
 }
 // 部长视角：只能在本部门里设骨干/成员；骨干视角：只认领本部门成员
 const headOnly = computed(() =>

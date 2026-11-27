@@ -201,7 +201,7 @@ def delete_department(dept_id: str, db: OrmSession = Depends(db_session),
     if d.vb_liaison:
         raise HTTPException(409, f"「{d.name}」是志愿北京对接部门，"
                                  "请先把对接部门换成别的部门再删除")
-    # 会长团的催办范围里去掉这个部门；去掉后空了就是接收全部部门
+    # 会长团各人的分管部门里去掉这个部门
     for u in db.query(User).filter(User.qingxie_post == "council").all():
         if d.id in (u.remind_dept_ids or []):
             u.remind_dept_ids = [x for x in u.remind_dept_ids if x != d.id]

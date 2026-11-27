@@ -260,7 +260,7 @@ def remind_stale_approvals(db: OrmSession) -> int:
                     Activity.submitted_at < deadline,
                     Activity.approval_reminded_at.is_(None)).all())
     from . import liaison
-    from .routers.staff_ops import council_members
+    from .routers.staff_ops import council_members, dept_council
     for act in rows:
         who = (db.get(User, act.approval_assignee_id)
                if act.approval_assignee_id else None)
@@ -283,7 +283,7 @@ def remind_stale_approvals(db: OrmSession) -> int:
             targets = [u for u in council if u.is_president] or council
         else:
             targets = contacts + [
-                p for p in council_members(db, act.approval_dept_id)
+                p for p in dept_council(db, act.approval_dept_id)
                 if p is not None and p.id not in copied
             ]
         for t in targets:
@@ -302,12 +302,12 @@ def remind_stale_approvals(db: OrmSession) -> int:
 
 def remind_stale_feedback(db: OrmSession) -> int:
     """志愿反馈放太久没回复就催一次，同活动审批（remind_stale_approvals）：
-    催对外联络部值班人（没人值班催全体部长），抄送会长团；每条只催一次。
+    催对外联络部值班人（没人值班催全体部长），抄送分管会长；每条只催一次。
     匿名的不写提交人。
     """
     from . import liaison
     from .routers.feedback import vb_feedback_contacts
-    from .routers.staff_ops import council_members
+    from .routers.staff_ops import dept_council
 
     deadline = now() - timedelta(hours=config.APPROVAL_REMIND_HOURS)
     rows = (db.query(Feedback)
@@ -320,7 +320,7 @@ def remind_stale_feedback(db: OrmSession) -> int:
     dept = liaison.vb_dept(db)
     contacts = vb_feedback_contacts(db)
     seen = {u.id for u in contacts}
-    targets = contacts + [p for p in council_members(db, dept.id if dept else None)
+    targets = contacts + [p for p in dept_council(db, dept.id if dept else None)
                           if p.id not in seen]
     for fb in rows:
         waited = int((now() - fb.created_at).total_seconds() // 3600)
@@ -341,7 +341,7 @@ def remind_stale_feedback(db: OrmSession) -> int:
 
 
 def remind_stale_claims(db: OrmSession) -> int:
-    """时长补登放着没人审批：催志愿北京对接部门的对接人，抄送会长团。
+    """时长补登放着没人审批：催志愿北京对接部门的对接人，抄送分管会长。
 
     时限与别处的催办同源（config.APPROVAL_REMIND_HOURS）。每条只催一次，
     先用条件更新把 reminded_at 占下来再发，多进程也只发一遍。
@@ -349,7 +349,7 @@ def remind_stale_claims(db: OrmSession) -> int:
     from sqlalchemy import update
 
     from . import liaison
-    from .routers.staff_ops import council_members
+    from .routers.staff_ops import dept_council
 
     t = now()
     deadline = t - timedelta(hours=config.APPROVAL_REMIND_HOURS)
@@ -375,7 +375,7 @@ def remind_stale_claims(db: OrmSession) -> int:
         contacts = (liaison.claim_contacts(db, submitter) if submitter
                     else liaison.vb_contacts(db))
         copied = {u.id for u in contacts} | {claim.user_id}
-        for u in contacts + [p for p in council_members(db, dept.id if dept else None)
+        for u in contacts + [p for p in dept_council(db, dept.id if dept else None)
                              if p.id not in copied]:
             msgcenter.send_user(
                 db, u, "custom", data={"route": "approvals"},
@@ -389,7 +389,7 @@ def remind_stale_claims(db: OrmSession) -> int:
 
 
 def remind_stale_hours_requests(db: OrmSession) -> int:
-    """时长锁定/解锁审批放太久没人处理：催归口部门的对接人，抄送会长团。
+    """时长锁定/解锁审批放太久没人处理：催归口部门的对接人，抄送分管会长。
 
     每条只催一次，**永不自动通过**。
 
@@ -400,7 +400,7 @@ def remind_stale_hours_requests(db: OrmSession) -> int:
     """
     from sqlalchemy import update
     from . import liaison
-    from .routers.staff_ops import council_members
+    from .routers.staff_ops import dept_council
 
     t = now()
     deadline = t - timedelta(hours=config.APPROVAL_REMIND_HOURS)
@@ -425,7 +425,7 @@ def remind_stale_hours_requests(db: OrmSession) -> int:
         contacts = liaison.approval_contacts(db, act.approval_dept_id)
         copied = {u.id for u in contacts}
         targets = contacts + [
-            p for p in council_members(db, act.approval_dept_id)
+            p for p in dept_council(db, act.approval_dept_id)
             if p.id not in copied]
         waited = int((t - req.created_at).total_seconds() // 3600)
         text = (f"「{act.title}」的时长{req.kind_label()}申请已提交 {waited} 小时未处理。\n"
