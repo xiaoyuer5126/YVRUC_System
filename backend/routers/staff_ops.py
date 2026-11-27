@@ -1324,36 +1324,42 @@ def _hours_approvers(db: OrmSession, act: Activity) -> list[User]:
     return uniq
 
 
-def council_members(db: OrmSession, dept_id: str | None = None) -> list[User]:
-    """会长团。按真实身份：问的是这些人是谁，不是当前操作者此刻的视角。
-    传入 dept_id 时，按每个人的 remind_dept_ids 过滤（空列表 = 接收全部部门）。
-    范围里已经不存在的部门先去掉，去掉后为空同样按全部部门算：要是不去掉，
-    一个只勾了已删部门的人就哪个部门的催办都收不到了。"""
-    rows = [u for u in db.query(User).filter(User.qingxie_post == "council").all()
+def council_members(db: OrmSession) -> list[User]:
+    """全体会长团。按真实身份：问的是这些人是谁，不是当前操作者此刻的视角。"""
+    return [u for u in db.query(User).filter(User.qingxie_post == "council").all()
             if u.is_council(real=True)]
-    if not dept_id:
-        return rows
-    valid = {d.id for d in db.query(Department.id).all()}
 
-    def wants(u: User) -> bool:
-        scope = [d for d in (u.remind_dept_ids or []) if d in valid]
-        return not scope or dept_id in scope
-    return [u for u in rows if wants(u)]
+
+def dept_council(db: OrmSession, dept_id: str | None) -> list[User]:
+    """某个部门的事抄送会长团里的谁（超时催办、找不到对接人时的兜底）。
+
+    发给分管这个部门的会长团成员（角色管理里勾的「分管部门」，remind_dept_ids）。
+    一个都没勾的人不分管任何部门，哪个部门的都不收。
+    这个部门没有人分管（或者压根没有部门）时发给标为会长的那位；连会长都没标
+    （换届空档），才发全体会长团，保证总有人收到。
+    分管范围里已经删掉的部门不算数：只勾了已删部门的人等于没勾。
+    """
+    rows = council_members(db)
+    if dept_id and db.get(Department, dept_id) is not None:
+        mine = [u for u in rows if dept_id in (u.remind_dept_ids or [])]
+        if mine:
+            return mine
+    return [u for u in rows if u.is_president] or rows
 
 
 def _hours_notify_targets(db: OrmSession, act: Activity) -> list[User]:
     """时长审批（锁定与解锁）逐条通知谁：只发归口部门的对接人——有值班人发
     值班人，否则发部长。会长团与管理员照样能在审批页拍板，但不逐条收通知：
     时长审批量大，逐条抄送的结果是他们把通知关掉；放太久没人处理，另有
-    scheduled.remind_stale_hours_requests 催对接人并抄送会长团。
+    scheduled.remind_stale_hours_requests 催对接人并抄送分管会长。
 
-    对接人找不到（没有归口部门、部门没设部长）就兜底发会长团：这时候没有
+    对接人找不到（没有归口部门、部门没设部长）就兜底发分管会长：这时候没有
     别人会收到这条审批，不发就只能等超时催办才有人知道。
     """
     contacts = liaison.approval_contacts(db, act.approval_dept_id)
     if contacts:
         return contacts
-    return council_members(db, act.approval_dept_id)
+    return dept_council(db, act.approval_dept_id)
 
 
 def effective_checkout(rec: CheckinRecord, g: Shift, still_open: bool,

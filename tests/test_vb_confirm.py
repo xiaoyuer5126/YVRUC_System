@@ -17,7 +17,7 @@ import pytest
 
 from backend import config, scheduled
 from backend.models import (Activity, ActivityManager, AuditLog, Department,
-                            HoursRequest, Notification, VbConfirm, now, uid)
+                            HoursRequest, Notification, User, VbConfirm, now, uid)
 from conftest import (ADMIN, INITIATOR, LIAISON_CORE, LIAISON_HEAD, inbox,
                       is_approval_todo, login, make_draft, student_row,
                       upload_proposal, upload_stamped)
@@ -555,16 +555,31 @@ def test_时长审批只通知对接人_不抄送会长团与管理员(client, a
                        ).status_code == 200
 
 
-def test_找不到对接人就兜底发会长团(client, admin, db):
-    """办公室没有部长；没归口部门的活动也一样。"""
+def test_找不到对接人就兜底发分管会长(client, admin, db, council_reset):
+    """办公室没有部长；没归口部门的活动也一样。没人分管发会长（张）；
+    会长也没标才发全体会长团（管理员 2025001 同时在会长团）。"""
     for dept_id in (_office(db).id, None):
         act = _approved_act(db, dept_id, names=NAMES)
         assert _submit(client, admin, act).status_code == 200
-        # 管理员 2025001 同时在会长团，所以两人都收到
-        assert _who_got(db, f"时长锁定审批｜{act.title}") == {ADMIN, COUNCIL}
+        assert _who_got(db, f"时长锁定审批｜{act.title}") == {COUNCIL}
+
+    office = _office(db)
+    student_row(db, ADMIN).remind_dept_ids = [office.id]
+    db.commit()
+    act = _approved_act(db, office.id, names=NAMES)
+    assert _submit(client, admin, act).status_code == 200
+    assert _who_got(db, f"时长锁定审批｜{act.title}") == {ADMIN}
+
+    db.query(User).filter(User.qingxie_post == "council").update(
+        {"is_president": False, "remind_dept_ids": []}, synchronize_session=False)
+    db.commit()
+    act = _approved_act(db, office.id, names=NAMES)
+    assert _submit(client, admin, act).status_code == 200
+    assert _who_got(db, f"时长锁定审批｜{act.title}") == {ADMIN, COUNCIL}
 
 
-def test_时长审批超时催对接人抄送会长团_只催一次(client, admin, db, liaison):
+def test_时长审批超时催对接人抄送分管会长_只催一次(client, admin, db, liaison,
+                                                council_reset):
     act = _approved_act(db, liaison.id)
     admin_id = student_row(db, ADMIN).id
     stale = HoursRequest(id=uid("hrq"), activity_id=act.id, kind="lock",
@@ -583,9 +598,8 @@ def test_时长审批超时催对接人抄送会长团_只催一次(client, admi
                       .filter(Notification.title.like("时长锁定审批已等待%"),
                               Notification.title.endswith(a.title)).all())
 
-    from backend.routers.staff_ops import council_members
-    expected = sorted({student_row(db, LIAISON_HEAD).id}
-                      | {u.id for u in council_members(db)})
+    # 外联部没人分管：抄送会长（张）
+    expected = sorted({student_row(db, LIAISON_HEAD).id, student_row(db, COUNCIL).id})
     scheduled.remind_stale_hours_requests(db)
     assert reminded(act) == expected
     assert reminded(fresh_act) == [], "没满 24 小时不催"

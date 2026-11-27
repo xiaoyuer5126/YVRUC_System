@@ -156,7 +156,7 @@ class User(Base):
     # 会长团里标一位「会长」：会长团审批的待办通知只发他，其他会长团成员照样
     # 能在审批页看到并批。换届时在角色管理里改标；不标就通知全体会长团。
     is_president: Mapped[bool] = mapped_column(Boolean, default=False)
-    # 会长团可配置的超时催办接收部门范围（空列表 = 全部部门）
+    # 会长团成员分管的部门：这些部门的超时催办抄送给他（空列表 = 不分管）
     remind_dept_ids: Mapped[list] = mapped_column(JSON, default=list)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
@@ -1817,7 +1817,7 @@ class HoursRequest(Base):
     reply: Mapped[str] = mapped_column(String(512), default="")
     handled_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
     handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    # 放太久没人处理就催一次（抄送会长团），催过记下时间，只催这一次
+    # 放太久没人处理就催一次（抄送分管会长），催过记下时间，只催这一次
     reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     def status_label(self) -> str:

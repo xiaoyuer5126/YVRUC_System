@@ -353,7 +353,7 @@ class RoleBody(BaseModel):
     qingxie_post: str = "member"
     department_id: str = ""
     supervisor_id: str = ""     # 部门成员归属哪位骨干
-    remind_dept_ids: list[str] = []  # 会长团超时催办接收部门范围（空列表=全部部门）
+    remind_dept_ids: list[str] = []  # 会长团成员分管的部门（空列表=不分管，见 staff_ops.dept_council）
     is_president: bool = False       # 会长团里的会长标记（只标一位）
 
 
@@ -580,8 +580,8 @@ def batch_roles(body: BatchRoleBody, db: OrmSession = Depends(db_session),
                 u.supervisor_id = supervisor
             else:
                 u.qingxie_post, u.department_id, u.supervisor_id = "member", None, None
-            # 催办部门范围只对会长团有意义；批量不设这个范围，调整后不是会长团的
-            # 一律清空，免得以后再设成会长团时带着一份旧范围
+            # 分管部门只对会长团有意义；批量不设这一项，调整后不是会长团的
+            # 一律清空，免得以后再设成会长团时带着一份旧的分管部门
             if not ("qingxie" in roles and post == "council"):
                 u.remind_dept_ids = []
                 u.is_president = False

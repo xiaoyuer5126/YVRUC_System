@@ -360,8 +360,8 @@ def test_学生志愿者身份与教师活动发起方身份不可清除(client,
     assert r.status_code == 400 and "教师的「活动发起方」身份不可清除" in r.json()["detail"]
 
 
-def test_会长团可配置催办接收部门范围(client, admin, db, take_student):
-    from backend.routers.staff_ops import council_members
+def test_会长团可配置分管部门(client, admin, db, take_student, council_reset):
+    from backend.routers.staff_ops import dept_council
     depts = db.query(Department).order_by(Department.sort).limit(2).all()
     d1, d2 = depts[0], depts[1]
     u = student_row(db, take_student())
@@ -373,17 +373,16 @@ def test_会长团可配置催办接收部门范围(client, admin, db, take_stud
         assert r.status_code == 200
         db.expire_all()
         assert db.get(User, u.id).remind_dept_ids == [d1.id]
-        assert u.id in {m.id for m in council_members(db, d1.id)}
-        assert u.id not in {m.id for m in council_members(db, d2.id)}
+        assert {m.id for m in dept_council(db, d1.id)} == {u.id}
+        assert u.id not in {m.id for m in dept_council(db, d2.id)}
     finally:
         client.put(f"/api/staff/roles/{u.id}", headers=admin,
                    json={"roles": ["student"]})
 
 
-
-def test_批量调整后不是会长团就清掉催办范围(client, admin, db, take_student):
-    """催办范围只对会长团有意义。批量撤下青协后留着旧范围，下次再设成会长团
-    就会莫名其妙只收一部分部门的催办；仍是会长团的（只动发起方身份）不受影响。"""
+def test_批量调整后不是会长团就清掉分管部门(client, admin, db, take_student):
+    """分管部门只对会长团有意义。批量撤下青协后留着旧的，下次再设成会长团
+    就会莫名其妙分管着几个部门；仍是会长团的（只动发起方身份）不受影响。"""
     d1 = db.query(Department).order_by(Department.sort).first()
     a, b = student_row(db, take_student()), student_row(db, take_student())
     for u in (a, b):
@@ -405,13 +404,13 @@ def test_批量调整后不是会长团就清掉催办范围(client, admin, db, 
     client.put(f"/api/staff/roles/{b.id}", headers=admin, json={"roles": ["student"]})
 
 
-def test_催办范围里已删的部门不算数(client, admin, db, take_student):
-    """范围里只剩已删部门的会长团按「全部部门」收催办，列表也不露出原始 id；
-    删部门时顺手把它从各人的范围里去掉。"""
-    from backend.routers.staff_ops import council_members
+def test_分管部门里已删的部门不算数(client, admin, db, take_student, council_reset):
+    """只勾了已删部门的人等于没勾：哪个部门的催办都不收，列表也不露出原始 id；
+    删部门时顺手把它从各人的分管部门里去掉。"""
+    from backend.routers.staff_ops import dept_council
     d1 = db.query(Department).order_by(Department.sort).first()
     gone = client.post("/api/staff/departments", headers=admin,
-                       json={"name": "测试催办待删部门"}).json()["id"]
+                       json={"name": "测试分管待删部门"}).json()["id"]
     u = student_row(db, take_student())
     try:
         assert client.put(f"/api/staff/roles/{u.id}", headers=admin,
@@ -419,26 +418,27 @@ def test_催办范围里已删的部门不算数(client, admin, db, take_student
                                 "qingxie_post": "council",
                                 "remind_dept_ids": [gone]}).status_code == 200
         db.expire_all()
-        assert u.id not in {m.id for m in council_members(db, d1.id)}
+        assert u.id not in {m.id for m in dept_council(db, d1.id)}
         assert client.delete(f"/api/staff/departments/{gone}",
                              headers=admin).status_code == 200
         db.expire_all()
         assert db.get(User, u.id).remind_dept_ids == []
-        assert u.id in {m.id for m in council_members(db, d1.id)}
+        assert u.id not in {m.id for m in dept_council(db, d1.id)}
 
-        # 库里残留的失效 id（删部门之外的途径留下的）：照样按全部部门算、不往外给
+        # 库里残留的失效 id（删部门之外的途径留下的）：不算分管、不往外给，
+        # 也不让那个已删部门的事落到他头上
         row = db.get(User, u.id)
         row.remind_dept_ids = ["dep_gone_long_ago"]
         db.commit()
         db.expire_all()
-        assert u.id in {m.id for m in council_members(db, d1.id)}
+        assert u.id not in {m.id for m in dept_council(db, d1.id)}
+        assert u.id not in {m.id for m in dept_council(db, "dep_gone_long_ago")}
         items = client.get("/api/staff/roles", headers=admin,
                            params={"q": u.student_id}).json()["items"]
         mine = next(x for x in items if x["id"] == u.id)
         assert mine["remind_dept_ids"] == []
     finally:
         client.put(f"/api/staff/roles/{u.id}", headers=admin, json={"roles": ["student"]})
-
 
 def test_导出角色名单_范围与列表一致(client, admin, initiator, db, take_student):
     from io import BytesIO

@@ -502,6 +502,30 @@ def liaison(db):
 
 
 @pytest.fixture
+def council_reset(db):
+    """会长团的分管部门和会长标记是全库共享的状态：先摆成演示数据的样子
+    （谁都不分管，会长是张远航），用例结束（无论成败）再恢复原样，
+    免得催办抄送谁随别的用例的改动漂移。"""
+    from backend.models import User
+
+    def rows():
+        return db.query(User).filter(User.qingxie_post == "council").all()
+    saved = {u.id: (list(u.remind_dept_ids or []), bool(u.is_president))
+             for u in rows()}
+    for u in rows():
+        u.remind_dept_ids = []
+        u.is_president = u.student_id == QINGXIE
+    db.commit()
+    yield
+    db.rollback()
+    db.expire_all()
+    for u in rows():
+        if u.id in saved:
+            u.remind_dept_ids, u.is_president = saved[u.id]
+    db.commit()
+
+
+@pytest.fixture
 def extra_core(db, take_student, liaison):
     """再来一位对外联络部骨干（交接班要有第二个人）。用完调离本部门。"""
     from backend.models import User
