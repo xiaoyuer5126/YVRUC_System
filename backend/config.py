@@ -41,6 +41,7 @@ check_data_dir(DATA_DIR, Path(__file__).resolve().parent)
 # 用户上传的文件都存这里：学习材料、立项书与结项书、报名问卷附件、反馈截图、
 # 时长补登的证明材料与活动照片、活动联络群二维码。一个目录一个卷，备份整卷备。
 # 谁能看不由目录决定，由各接口自己的鉴权判断（见 routers/materials.py）。
+# 文件名是内容的指纹，同内容只存一份、几条记录共用（见 filestore）。
 MATERIAL_DIR = DATA_DIR / "files"
 
 # —— 基础设施 ——

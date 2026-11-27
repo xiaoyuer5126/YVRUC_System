@@ -12,14 +12,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
                      UploadFile)
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, enroll_logic as logic, scoring
+from .. import config, enroll_logic as logic, filestore, scoring
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import current_user, require_manager
@@ -28,7 +27,7 @@ from ..locks import shift_lock, user_lock
 from ..models import (Activity, Application, Attachment, Enrollment, FormQuestion, Position, Shift, User, now, uid)
 from ..perm import ensure_activity_manager, is_activity_manager
 from ..serializers import answer_attachments, application_out, reg_started
-from .materials import ANSWER_FILE_TYPES, MATERIAL_DIR, VIDEO_TYPES, is_video
+from .materials import ANSWER_FILE_TYPES, VIDEO_TYPES, is_video
 
 router = APIRouter(prefix="/api", tags=["screening"])
 
@@ -312,7 +311,7 @@ def drop_unused_attachments(db: OrmSession, activity_id: str, user_id: str,
     for att in _pending_attachments(db, activity_id, user_id):
         if att.id in keep:
             continue
-        (MATERIAL_DIR / att.stored_name).unlink(missing_ok=True)
+        filestore.release(db, att.stored_name)
         db.delete(att)
         dropped += 1
     return dropped
@@ -351,9 +350,7 @@ async def upload_answer_file(activity_id: str, file: UploadFile = File(...),
     if ext in VIDEO_TYPES and not is_video(data):
         raise HTTPException(400, "这个文件不是视频（改后缀也不行）")
     _ensure_upload_quota(db, act, user, len(data))
-    MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
-    stored = f"{uuid4().hex}.{ext}"
-    (MATERIAL_DIR / stored).write_bytes(data)
+    stored = filestore.store(db, data, ext)
     row = Attachment(id=uid("att"), owner_type="application", owner_id=user.id,
                      activity_id=act.id, kind="file",
                      title=(file.filename or stored)[:160], stored_name=stored,

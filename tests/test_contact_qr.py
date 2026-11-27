@@ -186,7 +186,8 @@ def test_别的附件不走这条路(client, admin, db):
 
 def test_文件真丢了就说重新上传(client, admin, db):
     """卷被换掉、文件没跟着来时，别回一个空白图：说清要重新上传。"""
-    att = _upload(client, admin)
+    # 内容要独一份：同内容只存一个文件，删了它别的用例的二维码也跟着没了
+    att = _upload(client, admin, PNG + uid("t").encode())
     url = _url(att)
     row = db.get(Attachment, att)
     (config.MATERIAL_DIR / row.stored_name).unlink()

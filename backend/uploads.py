@@ -9,12 +9,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session as OrmSession
 
-from . import config
+from . import filestore
 from .models import Attachment, uid
 
 # 扩展名 → 下载时回给浏览器的类型
@@ -78,13 +77,11 @@ def _title(name: str) -> str:
 
 def save_files(db: OrmSession, files, *, owner_type: str, owner_id: str,
                activity_id: str = "", uploaded_by: str) -> list[Attachment]:
-    """落盘并写 Attachment（不 commit，由调用方决定事务边界）。"""
+    """落盘并写 Attachment（不 commit，由调用方决定事务边界）。
+    内容相同的文件只存一份，见 filestore。"""
     rows: list[Attachment] = []
-    if files:
-        config.MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
-    for ext, title, data in files:
-        stored = f"{uuid4().hex}.{ext}"
-        config.MATERIAL_DIR.joinpath(stored).write_bytes(data)
+    names = filestore.store_many(db, [(data, ext) for ext, _title, data in files])
+    for (_ext, title, data), stored in zip(files, names):
         row = Attachment(id=uid("att"), owner_type=owner_type, owner_id=owner_id,
                          activity_id=activity_id, kind="file", title=title,
                          stored_name=stored, size=len(data), uploaded_by=uploaded_by)

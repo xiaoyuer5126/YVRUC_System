@@ -196,12 +196,13 @@ def project_file(db: OrmSession, activity_id: str, slot: str) -> Attachment | No
 
 
 def drop_attachment(db: OrmSession, row: Attachment | None) -> Attachment | None:
-    """删掉一份文件（记录与磁盘文件一起），原样返回传进来的那条。不提交事务。"""
-    from .routers.materials import MATERIAL_DIR
+    """删掉一份文件记录，原样返回传进来的那条。不提交事务。
+    提交后没有别的记录再指着这个文件，磁盘文件跟着删（见 filestore）。"""
+    from . import filestore
 
     if row is None:
         return None
-    (MATERIAL_DIR / row.stored_name).unlink(missing_ok=True)
+    filestore.release(db, row.stored_name)
     db.delete(row)
     return row
 

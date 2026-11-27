@@ -1015,8 +1015,8 @@ def purge_orphan_attachments(db: OrmSession) -> int:
     联络群二维码同样是先传图、后保存活动：传完就没再回来（关掉表单、活动删掉
     了）的那些，这里一并清掉。
     """
+    from . import filestore
     from .models import Application, Attachment, Enrollment
-    from .routers.materials import MATERIAL_DIR
     from .routers.staff_activities import QR_OWNER, qr_activity
 
     cutoff = now() - timedelta(days=config.ORPHAN_ATTACHMENT_DAYS)
@@ -1045,7 +1045,7 @@ def purge_orphan_attachments(db: OrmSession) -> int:
         # 只看有没有归属就会把管理者刚传好还没保存的那张删掉
         if att.owner_type == QR_OWNER and qr_activity(db, att.id) is not None:
             continue
-        (MATERIAL_DIR / att.stored_name).unlink(missing_ok=True)
+        filestore.release(db, att.stored_name)
         db.delete(att)
         n += 1
     if n:
@@ -1060,8 +1060,8 @@ def purge_unsent_notify_files(db: OrmSession) -> int:
     管理者在发通知弹窗里选了文件就先传上来，之后移除或干脆没发，文件就没挂到
     任何通知上。没发出去的 owner_id 还是活动 id（发出后改成发送编号）。
     """
+    from . import filestore
     from .models import Attachment
-    from .routers.materials import MATERIAL_DIR
 
     cutoff = now() - timedelta(hours=config.NOTIFY_FILE_KEEP_HOURS)
     rows = (db.query(Attachment)
@@ -1069,7 +1069,7 @@ def purge_unsent_notify_files(db: OrmSession) -> int:
                     Attachment.owner_id == Attachment.activity_id,
                     Attachment.created_at <= cutoff).all())
     for att in rows:
-        (MATERIAL_DIR / att.stored_name).unlink(missing_ok=True)
+        filestore.release(db, att.stored_name)
         db.delete(att)
     if rows:
         db.commit()

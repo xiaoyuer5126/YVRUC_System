@@ -296,7 +296,7 @@ def _restore_questions(db: OrmSession, act: Activity, rows: dict) -> int:
 
 
 def _restore_attachments(db: OrmSession, act: Activity, rows: list[dict]) -> int:
-    from .routers.materials import MATERIAL_DIR
+    from . import filestore
 
     keep = {r["id"] for r in rows}
     changed = 0
@@ -304,8 +304,8 @@ def _restore_attachments(db: OrmSession, act: Activity, rows: list[dict]) -> int
         if a.id in keep:
             continue
         # 编辑期间新加的：记录和文件一起撤掉，与删除材料时一致
-        if a.kind == "file" and a.stored_name:
-            (MATERIAL_DIR / a.stored_name).unlink(missing_ok=True)
+        if a.kind == "file":
+            filestore.release(db, a.stored_name)
         db.delete(a)
         changed += 1
     return changed

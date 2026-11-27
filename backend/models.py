@@ -1105,7 +1105,7 @@ class Position(Base):
 
 
 class Attachment(Base):
-    """学习材料：培训文档挂场次或岗位，志愿者在活动页下载。
+    """用户上传的文件（学习材料、问卷附件、立项书、反馈截图等），以及学习材料的外部链接。
 
     视频不自托管——大文件的上传成功率、带宽和备份代价都不划算，
     走 url 字段指向学校平台/网盘的链接。
@@ -1120,8 +1120,10 @@ class Attachment(Base):
     activity_id: Mapped[str] = mapped_column(String(32), index=True)
     kind: Mapped[str] = mapped_column(String(8), default="file")   # file / link
     title: Mapped[str] = mapped_column(String(160))
-    # kind=file：存盘文件名与大小；kind=link：外部地址
-    stored_name: Mapped[str] = mapped_column(String(160), default="")
+    # kind=file：存盘文件名与大小；kind=link：外部地址。
+    # 存盘文件名是内容指纹，内容相同的几条记录指向同一个文件，没有记录再指着
+    # 它才删文件（见 filestore）；索引给删除时数引用用
+    stored_name: Mapped[str] = mapped_column(String(160), default="", index=True)
     size: Mapped[int] = mapped_column(Integer, default=0)
     url: Mapped[str] = mapped_column(String(512), default="")
     uploaded_by: Mapped[str] = mapped_column(String(32), default="")
