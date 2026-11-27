@@ -268,14 +268,16 @@
       </el-card>
     </template>
 
-    <!-- 生成签到码：只有一种，选这张码管哪些签到对象。岗位自带时段，统一分配的
-         一批要整批签（还没分到岗位的人也在里面），培训/彩排也在这里选 -->
+    <!-- 生成签到码：一张码只管一个签到对象（2026-11-27 马霄宇定：可签时段每张码
+         各调各的）。即选岗位一个一张；统一分配的一批整批一张（还没分到岗位的人
+         也在里面）；培训/彩排一项一张 -->
     <el-dialog v-model="creating" title="生成签到码" :width="narrow ? '94%' : '520px'"
                :before-close="guardCreate" @opened="guardCreate.snap">
       <el-form label-width="90px">
         <el-form-item label="签到对象" required>
-          <el-select v-model="form.targets" multiple filterable style="width:100%"
-                     placeholder="可多选，选中的共用一张码" @change="onPickTargets">
+          <el-select v-model="form.target" filterable style="width:100%"
+                     placeholder="选一个岗位、统一分配的一批或培训/彩排"
+                     @change="onPickTarget">
             <el-option-group v-for="grp in targetGroups" :key="grp.label" :label="grp.label">
               <el-option v-for="o in grp.options" :key="o.value" :value="o.value"
                          :label="o.name">
@@ -286,11 +288,11 @@
               </el-option>
             </el-option-group>
           </el-select>
-          <div class="dim">扫码的人按自己报上的那一项记录。</div>
+          <div class="dim">一张码管一项；统一分配的一批整批签，还没分到岗位的人也能扫。</div>
         </el-form-item>
-        <!-- 选中的里有多时段的：这一天开始的那一段才是这张码管的 -->
+        <!-- 多时段的：这一天开始的那一段才是这张码管的 -->
         <el-form-item v-if="needDate" label="签到日期" required>
-          <el-select v-model="form.date" style="width:100%">
+          <el-select v-model="form.date" style="width:100%" @change="fillRange">
             <el-option v-for="d in dateOptions" :key="d" :value="d" :label="d" />
           </el-select>
         </el-form-item>
@@ -302,7 +304,7 @@
                            @update:model-value="setWindowEnd" />
           </div>
           <div class="dim">
-            留空：各自按自己的时段起止各放宽 {{ WINDOW_PAD }} 分钟；填了就整张码统一按填的算。
+            默认是所选这一项的时段起止各放宽 {{ WINDOW_PAD }} 分钟，可以改。
           </div>
         </el-form-item>
       </el-form>
@@ -489,8 +491,8 @@ const actId = computed(() => props.activityId)   // vuecheck: script-only
 const creating = ref(false)
 const genBusy = ref(false)
 const batchBusy = ref('')
-// targets 里每项是 "p:岗位 id"（即选岗位）或 "s:组 id"（统一分配的一批、培训/彩排，整组签）
-const form = ref({ targets: [], date: '', range: [] })
+// target 是 "p:岗位 id"（即选岗位）或 "s:组 id"（统一分配的一批、培训/彩排，整组签）
+const form = ref({ target: '', date: '', range: [] })
 const guardCreate = useCloseGuard(() => form.value)
 const guardWin = useCloseGuard(() => winDlg.value.range)
 const guardGeo = useCloseGuard(() => geoForm.value)
@@ -528,26 +530,26 @@ const targetGroups = computed(() => {
   ].filter(grp => grp.options.length)
 })
 
-/** 选中的对象各属于哪一组时段：日期选项、截止提醒都看它们。 */
-const pickedShifts = computed(() => {   // vuecheck: script-only，供下面几处用
-  const picked = new Set(form.value.targets)
-  const out = new Map()
+/** 选中的对象所在那一组时段：日期选项、默认可签时段、截止提醒都看它。 */
+const pickedShift = computed(() => {   // vuecheck: script-only，供下面几处用
   for (const grp of targetGroups.value) {
-    for (const o of grp.options) if (picked.has(o.value)) out.set(o.shift.id, o.shift)
+    for (const o of grp.options) if (o.value === form.value.target) return o.shift
   }
-  return [...out.values()]
+  return null
 })
 
-// 选中的里有多时段的，必须说清是哪一天那一段：后端定不出来会 400
-const needDate = computed(
-  () => pickedShifts.value.some(g => (g.periods || []).length > 1))
+// 多时段的必须说清是哪一天那一段：后端定不出来会 400
+const needDate = computed(() => (pickedShift.value?.periods || []).length > 1)
 
-const dateOptions = computed(() => {
-  const days = new Set()
-  for (const g of pickedShifts.value) {
-    for (const p of g.periods || []) days.add(String(p.start_time).slice(0, 10))
-  }
-  return [...days].sort()
+const dateOptions = computed(() => [...new Set((pickedShift.value?.periods || [])
+  .map(p => String(p.start_time).slice(0, 10)))].sort())
+
+/** 这张码管的那一段：单时段就是它；多时段按选的日期，当天只有一段才定得下。 */
+const pickedPeriod = computed(() => {   // vuecheck: script-only
+  const periods = pickedShift.value?.periods || []
+  if (periods.length <= 1) return periods[0] || null
+  const day = periods.filter(p => String(p.start_time).slice(0, 10) === form.value.date)
+  return day.length === 1 ? day[0] : null
 })
 
 // 本页自己持有的场次选择，与「志愿者管理」互不影响
@@ -744,57 +746,65 @@ onMounted(async () => {
   await loadBoard()
 })
 
-/** 打开时先选上大屏正在看的那一项：整组的选整组，即选岗位选它的岗位。
- *  可签时段留空，各自按自己的时段放宽。 */
+/** 打开时先选上大屏正在看的那一项：整组的选整组，即选岗位选它的岗位。 */
 function openCreate() {
   const g = boardShift.value || shiftOptions.value[0]
   const pos = g && g.kind === 'service' && g.mode !== 'assign' ? realPositions(g)[0] : null
-  const targets = !g ? [] : pos ? [`p:${pos.id}`] : g.kind !== 'service' || g.mode === 'assign'
-    ? [`s:${g.id}`] : []
+  const target = !g ? '' : pos ? `p:${pos.id}` : g.kind !== 'service' || g.mode === 'assign'
+    ? `s:${g.id}` : ''
   const period = boardPeriodId.value && g?.periods?.find(p => p.id === boardPeriodId.value)
-  form.value = { targets, date: period ? String(period.start_time).slice(0, 10) : '',
+  form.value = { target, date: period ? String(period.start_time).slice(0, 10) : '',
                  range: [] }
-  onPickTargets()
+  onPickTarget()
   creating.value = true
 }
 
-/** 改了签到对象：日期选项跟着变，选过的日期不在里面就换成第一天。 */
-function onPickTargets() {
+/** 改了签到对象：日期选项跟着变，选过的日期不在里面就换成第一天；
+ *  可签时段换成这一项的默认值。 */
+function onPickTarget() {
   if (!needDate.value) {
     form.value.date = ''
   } else if (!dateOptions.value.includes(form.value.date)) {
     form.value.date = dateOptions.value[0] || ''
   }
+  fillRange()
 }
 
-/** 选中的对象里最晚的结束时间：手动设的截止早于它就要先提醒。 */
+/** 默认可签时段：这张码那一段的起止各放宽 WINDOW_PAD 分钟。
+ *  卡着时间开闸的话，提前到岗的人签不了、拖堂散场的人也签不了。
+ *  当天有几段、定不下是哪段时留空，交给后端报清楚。 */
+function fillRange() {
+  const p = pickedPeriod.value
+  const s = parseLocal(p?.start_time)
+  const e = parseLocal(p?.end_time)
+  const pad = WINDOW_PAD * 60 * 1000
+  form.value.range = s && e ? [new Date(s.getTime() - pad), new Date(e.getTime() + pad)] : []
+}
+
+/** 这张码那一段的结束时间：手动设的截止早于它就要先提醒。 */
 function pickedEnd() {
-  const ends = pickedShifts.value.map(g => parseLocal(g.end_time))
-    .filter(Boolean).map(d => d.getTime())
-  return ends.length ? new Date(Math.max(...ends)) : ''
+  return pickedPeriod.value?.end_time || pickedShift.value?.end_time || ''
 }
 
 async function createTask() {
   if (genBusy.value) return
   const [f1, f2] = form.value.range || []
-  const targets = form.value.targets
-  if (!targets.length) return ElMessage.warning('请选择签到对象')
+  const target = form.value.target
+  if (!target) return ElMessage.warning('请选择签到对象')
   if (needDate.value && !form.value.date) return ElMessage.warning('请选择签到日期')
-  // 一端留空的话另一端按各自的默认算，一张码上两种口径，没人说得清
+  // 一端留空的话另一端按默认算，同一张码两种口径，没人说得清
   if (!f1 !== !f2) return ElMessage.warning('可签时段要么都留空，要么起止都填')
-  const body = {
-    position_ids: targets.filter(v => v.startsWith('p:')).map(v => v.slice(2)),
-    shift_ids: targets.filter(v => v.startsWith('s:')).map(v => v.slice(2)),
-  }
+  if (f1 && f2 && f2 <= f1) return ElMessage.warning('结束时间要晚于开始时间')
+  const id = target.slice(2)
+  const body = target.startsWith('p:') ? { position_ids: [id] } : { shift_ids: [id] }
   if (needDate.value) body.date = form.value.date
   if (f1) body.valid_from = toISO(f1)
   if (f2) body.valid_to = toISO(f2)
   genBusy.value = true
   try {
     if (f2 && !await confirmEarlyDeadline(f2, pickedEnd())) return
-    const d = await api.post(`/api/staff/activities/${actId.value}/checkin-tasks`, body)
-    const n = d.tasks?.length || 1
-    ElMessage.success(n > 1 ? `已生成 1 张签到码，管 ${n} 项` : '已生成 1 张签到码')
+    await api.post(`/api/staff/activities/${actId.value}/checkin-tasks`, body)
+    ElMessage.success('已生成签到码')
     creating.value = false
     await loadTasks()
   } finally {
