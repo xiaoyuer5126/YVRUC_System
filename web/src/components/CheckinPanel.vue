@@ -14,13 +14,11 @@
       </span>
     </div>
 
-    <!-- 场次与岗位放到 #body 里一起讲（要带培训/彩排标记），不单列字段 -->
-    <DataCards v-if="narrow" :rows="tasks" title-key="shift_name"
+    <!-- 标题是这张码管的签到对象；培训/彩排标在旁边 -->
+    <DataCards v-if="narrow" :rows="tasks" title-key="target_name"
                style="margin-bottom:16px" :fields="[]" empty="还没有签到码">
       <template #extra="{ row }">
-        <el-tag v-if="row.shift_kind !== 'service'" size="small" effect="plain">
-          {{ row.shift_kind_label }}
-        </el-tag>
+        <el-tag v-for="k in kindTags(row)" :key="k" size="small" effect="plain">{{ k }}</el-tag>
         <el-tag size="small" :type="row.active ? 'success' : 'info'">
           {{ row.active ? '开启' : '已关闭' }}
         </el-tag>
@@ -29,10 +27,9 @@
         <div v-if="row.period_count > 1" class="dim">{{ row.period_text }}</div>
         <div class="dim">
           <template v-if="coversBoard(row)">当前大屏 · </template>
-          {{ row.mode === 'position' ? `分岗位·${row.position_name}` : '统一签到' }} ·
           {{ fmtDT(row.valid_from) }} ~ {{ fmtDT(row.valid_to) }} · 已签 {{ row.count }} 人
         </div>
-        <div v-if="row.window_varies" class="dim">可签时段各岗位按自己那一段算</div>
+        <div v-if="row.window_varies" class="dim">可签时段各自按自己的时段算</div>
         <div class="dim">
           {{ row.geo ? `定位签到：半径 ${row.geo.radius_m} 米`
                      : '扫码签到：到场出示二维码' }}
@@ -51,22 +48,14 @@
     <el-table v-else :data="tasks" size="small" style="margin-bottom:16px">
       <!-- 不列码：列出来就能被念给群里、抄进聊天框，代签的门槛只剩一张嘴。
            要看码只有一条路——打开二维码弹窗，把那一屏亮在来签到的人面前。
-           这张表是整个活动的签到任务，所以场次必须单独成列，否则分不出哪行是哪一场 -->
-      <el-table-column label="场次" min-width="150">
+           这张表是整个活动的签到码，所以每张码管哪些签到对象要单独成列 -->
+      <el-table-column label="签到对象" min-width="220">
         <template #default="{row}">
-          {{ row.shift_name }}
+          {{ row.target_name }}
           <div v-if="row.period_count > 1" class="dim">{{ row.period_text }}</div>
-          <el-tag v-if="row.shift_kind !== 'service'" size="small" effect="plain">
-            {{ row.shift_kind_label }}
-          </el-tag>
+          <el-tag v-for="k in kindTags(row)" :key="k" size="small" effect="plain">{{ k }}</el-tag>
           <el-tag v-if="coversBoard(row)" size="small" type="success"
                   effect="plain">当前大屏</el-tag>
-        </template>
-      </el-table-column>
-      <!-- 一张码可以管好几个岗位（跨场次也行），岗位名在这一格里连着写 -->
-      <el-table-column label="模式" min-width="150">
-        <template #default="{row}">
-          {{ row.mode === 'position' ? `岗位·${row.position_name}` : '统一签到' }}
         </template>
       </el-table-column>
       <el-table-column label="有效时段" min-width="180">
@@ -74,7 +63,7 @@
           {{ fmtDT(row.valid_from) }} ~ {{ fmtDT(row.valid_to) }}
           <!-- 各岗位按自己那一段算时，这一栏是整张码的范围，不是谁都能
                从头签到尾 -->
-          <div v-if="row.window_varies" class="dim">各岗位按自己那一段算</div>
+          <div v-if="row.window_varies" class="dim">各自按自己的时段算</div>
         </template>
       </el-table-column>
       <el-table-column label="已签/应签" width="100">
@@ -114,7 +103,7 @@
          本页自己管场次，不跟着「志愿者管理」走：那边在排人，这边在盯现场，
          两件事同时在做，共用一个选择等于互相打架。 -->
     <div class="toolbar">
-      <span>大屏场次</span>
+      <span>大屏显示</span>
       <el-select v-model="boardShiftId" style="width:280px" @change="onSwitchShift">
         <el-option v-for="g in shiftOptions" :key="g.id" :value="g.id"
                    :label="`${g.name}（${g.time_text}）`">
@@ -155,7 +144,7 @@
             <div class="dim" style="margin-top:4px">已签退 {{ board.checked_out }} 人</div>
             <div v-if="board.excused" class="dim">已请假 {{ board.excused }} 人（不计入应到岗）</div>
             <!-- 时间灵活的场次一张码一轮：到岗、签退数的是开着的那张码这一轮 -->
-            <div v-if="board.flexible_time" class="dim">时间灵活场次：按当前开着的签到码这一轮统计</div>
+            <div v-if="board.flexible_time" class="dim">时间灵活：按当前开着的签到码这一轮统计</div>
             <el-progress type="circle" :percentage="pct" :width="86"
                          :color="pct === 100 ? '#67c23a' : '#ae0b2a'" style="margin-top:8px" />
           </el-card>
@@ -279,69 +268,32 @@
       </el-card>
     </template>
 
-    <!-- 生成签到码 -->
-    <el-dialog v-model="creating" title="生成签到码" width="460"
+    <!-- 生成签到码：只有一种，选这张码管哪些签到对象。岗位自带时段，统一分配的
+         一批要整批签（还没分到岗位的人也在里面），培训/彩排也在这里选 -->
+    <el-dialog v-model="creating" title="生成签到码" :width="narrow ? '94%' : '520px'"
                :before-close="guardCreate" @opened="guardCreate.snap">
-      <el-form label-width="110px">
-        <el-form-item label="签到模式">
-          <el-radio-group v-model="form.mode" @change="onPickMode">
-            <el-radio value="shift">整场统一</el-radio>
-            <el-radio value="position" :disabled="!positionShifts.length">
-              分岗位签到
-            </el-radio>
-          </el-radio-group>
-          <div v-if="!positionShifts.length" class="dim">
-            本活动还没有岗位，只能整场统一签到
-          </div>
-          <div v-else-if="form.mode === 'position'" class="dim">
-            一张码可以管好几个岗位，跨场次也行；扫码的人报自己的岗位，
-            记到他那一段。
-          </div>
-        </el-form-item>
-        <template v-if="form.mode === 'shift'">
-          <!-- 整场统一的码只属于一个场次，所以场次要在这里选定，
-               不能跟着别的页签走 -->
-          <el-form-item label="签到场次" required>
-            <el-select v-model="form.shift_id" style="width:100%" @change="onPickShift">
-              <el-option v-for="g in shiftOptions" :key="g.id" :value="g.id"
-                         :label="`${g.name}（${g.time_text}）`">
-                <span>{{ g.name }}</span>
-                <el-tag v-if="g.kind !== 'service'" size="small" effect="plain"
-                        style="margin-left:8px">{{ g.kind_label }}</el-tag>
-                <span class="dim" style="margin-left:8px">{{ g.time_text }}</span>
+      <el-form label-width="90px">
+        <el-form-item label="签到对象" required>
+          <el-select v-model="form.targets" multiple filterable style="width:100%"
+                     placeholder="可多选，选中的共用一张码" @change="onPickTargets">
+            <el-option-group v-for="grp in targetGroups" :key="grp.label" :label="grp.label">
+              <el-option v-for="o in grp.options" :key="o.value" :value="o.value"
+                         :label="o.name">
+                <span>{{ o.name }}</span>
+                <el-tag v-if="o.kindLabel" size="small" effect="plain"
+                        style="margin-left:8px">{{ o.kindLabel }}</el-tag>
+                <span class="dim" style="margin-left:8px">{{ o.time }}</span>
               </el-option>
-            </el-select>
-          </el-form-item>
-          <el-form-item v-if="(formShift?.periods || []).length > 1"
-                        label="签到时段" required>
-            <el-select v-model="form.period_id" style="width:100%"
-                       @change="onPickPeriod">
-              <el-option v-for="p in formShift.periods" :key="p.id" :value="p.id"
-                         :label="p.text" />
-            </el-select>
-          </el-form-item>
-        </template>
-        <template v-else>
-          <el-form-item label="选择岗位" required>
-            <!-- 岗位自带时段，所以按场次分组列、每个岗位标上它的时段：
-                 多选往往就是跨场次 -->
-            <el-select v-model="form.position_ids" multiple style="width:100%"
-                       placeholder="可多选，这些岗位共用一张码"
-                       @change="onPickPositions">
-              <el-option-group v-for="g in positionShifts" :key="g.id"
-                               :label="`${g.name}（${g.time_text}）`">
-                <el-option v-for="s in realPositions(g)" :key="s.id" :value="s.id"
-                           :label="`${s.name}（${s.time_text}）`" />
-              </el-option-group>
-            </el-select>
-          </el-form-item>
-          <!-- 所选岗位里有多时段的场次：这一天开始的那一段才是这张码管的 -->
-          <el-form-item v-if="needDate" label="签到日期" required>
-            <el-select v-model="form.date" style="width:100%">
-              <el-option v-for="d in dateOptions" :key="d" :value="d" :label="d" />
-            </el-select>
-          </el-form-item>
-        </template>
+            </el-option-group>
+          </el-select>
+          <div class="dim">扫码的人按自己报上的那一项记录。</div>
+        </el-form-item>
+        <!-- 选中的里有多时段的：这一天开始的那一段才是这张码管的 -->
+        <el-form-item v-if="needDate" label="签到日期" required>
+          <el-select v-model="form.date" style="width:100%">
+            <el-option v-for="d in dateOptions" :key="d" :value="d" :label="d" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="可签时段">
           <div class="two-col">
             <DateTimeField :model-value="form.range[0]" placeholder="开放签到"
@@ -350,9 +302,7 @@
                            @update:model-value="setWindowEnd" />
           </div>
           <div class="dim">
-            {{ form.mode === 'position'
-               ? `留空：每个岗位按自己那一段起止各放宽 ${WINDOW_PAD} 分钟；填了就整张码统一按填的算。`
-               : `默认比场次起止各放宽 ${WINDOW_PAD} 分钟，可自行调整。` }}
+            留空：各自按自己的时段起止各放宽 {{ WINDOW_PAD }} 分钟；填了就整张码统一按填的算。
           </div>
         </el-form-item>
       </el-form>
@@ -369,7 +319,7 @@
              说清楚该干什么，别让现场的人对着一块空屏瞎猜 -->
         <el-alert v-if="qrTask.geo" type="info" :closable="false" style="text-align:left">
           <p style="margin:0;line-height:1.6">
-            本场次用<b>定位签到</b>，不需要二维码。<br>
+            这张码用<b>定位签到</b>，不需要二维码。<br>
             志愿者到场后在「我的报名」里点「签到」，平台比对距离
             （半径 {{ qrTask.geo.radius_m }} 米）。<br>
             定位取不到时，由负责人在下面的名单里手动补签。
@@ -387,23 +337,16 @@
         <template v-if="!qrTask.geo">
           <img v-if="qrSrc" :src="qrSrc" width="280" height="280" alt="签到二维码" />
           <div v-else class="qr-blank">正在取码…</div>
-          <!-- 这张码是哪一场、哪个岗位的：打印出来贴到现场，光看码分不出 -->
+          <!-- 这张码管谁：打印出来贴到现场，光看码分不出 -->
           <div class="qr-who">
-            <b>{{ qrTask.shift_name }}</b>
-            <el-tag v-if="qrTask.shift_kind !== 'service'" size="small" effect="plain">
-              {{ qrTask.shift_kind_label }}
-            </el-tag>
-            <template v-if="qrTask.mode === 'position'">
-              <span class="sep">·</span><b>{{ qrTask.position_name }}</b>
-              <el-tag size="small" effect="plain">分岗位</el-tag>
-            </template>
-            <el-tag v-else size="small" effect="plain">统一签到</el-tag>
+            <b>{{ qrTask.target_name }}</b>
+            <el-tag v-for="k in kindTags(qrTask)" :key="k" size="small" effect="plain">{{ k }}</el-tag>
           </div>
           <div class="dim">可签 {{ fmtDT(qrTask.valid_from) }} ~ {{ fmtDT(qrTask.valid_to) }}</div>
           <!-- 一张码管几个岗位、各按自己那一段算时，这一行是整张码的范围：
                现场要知道「早到的那个岗位还签不了」不是码坏了 -->
           <div v-if="qrTask.window_varies" class="dim">
-            每个岗位按自己那一段算，上面是整张码的范围
+            各自按自己的时段算，上面是整张码的范围
           </div>
           <div class="dim">首次扫码签到，再次扫码签退</div>
           <template v-if="isDynamic">
@@ -420,8 +363,7 @@
           </div>
         </template>
         <div v-else class="dim" style="margin-top:12px">
-          {{ qrTask.shift_name }}
-          <template v-if="qrTask.mode === 'position'">· {{ qrTask.position_name }}</template>
+          {{ qrTask.target_name }}
           · 可签 {{ fmtDT(qrTask.valid_from) }} ~ {{ fmtDT(qrTask.valid_to) }}
         </div>
       </div>
@@ -431,11 +373,9 @@
     <el-dialog v-model="winDlg.visible" title="改可签时段" width="440"
                :before-close="guardWin" @opened="guardWin.snap">
       <p class="dim" style="margin:0 0 12px">
-        {{ winDlg.task?.shift_name }}<template
-          v-if="winDlg.task?.mode === 'position'"> · {{ winDlg.task?.position_name }}</template>
-        。改时段不影响已经扫过的记录，码也还是同一张。
+        {{ winDlg.task?.target_name }}。改时段不影响已经扫过的记录，码也还是同一张。
         <template v-if="(winDlg.task?.members || []).length > 1">
-          这张码管 {{ winDlg.task.members.length }} 个岗位，保存后整张码统一按这个时段算。
+          这张码管 {{ winDlg.task.members.length }} 项，保存后整张码统一按这个时段算。
         </template>
       </p>
       <div class="two-col">
@@ -549,37 +489,56 @@ const actId = computed(() => props.activityId)   // vuecheck: script-only
 const creating = ref(false)
 const genBusy = ref(false)
 const batchBusy = ref('')
-const form = ref({ shift_id: '', mode: 'shift', position_ids: [], date: '',
-                   range: [] })
+// targets 里每项是 "p:岗位 id"（即选岗位）或 "s:组 id"（统一分配的一批、培训/彩排，整组签）
+const form = ref({ targets: [], date: '', range: [] })
 const guardCreate = useCloseGuard(() => form.value)
 const guardWin = useCloseGuard(() => winDlg.value.range)
 const guardGeo = useCloseGuard(() => geoForm.value)
 const guardReminder = useCloseGuard(() => [reminderScope.value, reminderGroup.value, reminderPositions.value, reminderAck.value])
 
 const shiftOptions = computed(() => props.allShifts)
-const formShift = computed(
-  () => shiftOptions.value.find(g => g.id === form.value.shift_id))
 
-/** 分岗位的码能选的岗位：本活动各服务场次下的真实岗位。
- *
- * 培训/彩排不单设岗位（用 applies_to_positions 圈人），占位岗位「待分配」
- * 不是岗位而是「这一场还没分岗」——那一场的人扫的是整场统一码。
- */
+/** 即选岗位的真实岗位。占位岗位「待分配」不是岗位，是「这一批还没分岗」。 */
 function realPositions(g) {
   return (g.positions || []).filter(p => !p.is_placeholder)
 }
 
-const positionShifts = computed(() => shiftOptions.value.filter(
-  g => g.kind === 'service' && realPositions(g).length))
-
-/** 勾中的岗位分布在哪几个场次：日期选项、默认时间都看它们。 */
-const pickedShifts = computed(() => {   // vuecheck: script-only，供下面几处用
-  const ids = new Set(form.value.position_ids)
-  return positionShifts.value.filter(
-    g => realPositions(g).some(p => ids.has(p.id)))
+/** 签到对象分三组列：即选岗位、报名后统一分配的批次、培训/彩排，各标时段。 */
+const targetGroups = computed(() => {
+  const pick = []
+  const batch = []
+  const train = []
+  for (const g of shiftOptions.value) {
+    if (g.kind !== 'service') {
+      train.push({ value: `s:${g.id}`, shift: g, name: g.name,
+                   kindLabel: g.kind_label, time: g.time_text })
+    } else if (g.mode === 'assign') {
+      batch.push({ value: `s:${g.id}`, shift: g, name: g.name, time: g.time_text })
+    } else {
+      for (const p of realPositions(g)) {
+        pick.push({ value: `p:${p.id}`, shift: g, name: p.name,
+                    time: p.time_text || g.time_text })
+      }
+    }
+  }
+  return [
+    { label: '岗位', options: pick },
+    { label: '报名后统一分配（还没分到岗位的人也能签）', options: batch },
+    { label: '培训 / 彩排', options: train },
+  ].filter(grp => grp.options.length)
 })
 
-// 所选岗位里有多时段的场次时，必须说清是哪一天那一段：后端定不出来会 400
+/** 选中的对象各属于哪一组时段：日期选项、截止提醒都看它们。 */
+const pickedShifts = computed(() => {   // vuecheck: script-only，供下面几处用
+  const picked = new Set(form.value.targets)
+  const out = new Map()
+  for (const grp of targetGroups.value) {
+    for (const o of grp.options) if (picked.has(o.value)) out.set(o.shift.id, o.shift)
+  }
+  return [...out.values()]
+})
+
+// 选中的里有多时段的，必须说清是哪一天那一段：后端定不出来会 400
 const needDate = computed(
   () => pickedShifts.value.some(g => (g.periods || []).length > 1))
 
@@ -785,60 +744,22 @@ onMounted(async () => {
   await loadBoard()
 })
 
-/** 默认可签时段：场次起止各外扩 WINDOW_PAD 分钟。
- *
- * 卡着场次时间开闸的话，提前到岗的人签不了、拖堂散场的人也签不了。
- */
-function defaultRange(g, period) {
-  const pad = WINDOW_PAD * 60 * 1000
-  const s = new Date((period?.start_time || g?.start_time || '').replace(' ', 'T'))
-  const e = new Date((period?.end_time || g?.end_time || '').replace(' ', 'T'))
-  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return []
-  return [new Date(s.getTime() - pad), new Date(e.getTime() + pad)]
-}
-
-function formPeriod() {
-  const g = formShift.value
-  if (!g) return null
-  if (form.value.period_id) return g.periods.find(p => p.id === form.value.period_id)
-  return g.periods.length === 1 ? g.periods[0] : null
-}
-
+/** 打开时先选上大屏正在看的那一项：整组的选整组，即选岗位选它的岗位。
+ *  可签时段留空，各自按自己的时段放宽。 */
 function openCreate() {
   const g = boardShift.value || shiftOptions.value[0]
-  const period = boardPeriodId.value
-    ? g?.periods?.find(p => p.id === boardPeriodId.value)
-    : g?.periods?.[0]
-  form.value = { shift_id: g?.id || '', period_id: period?.id || '',
-                 mode: 'shift', position_ids: [], date: '',
-                 range: defaultRange(g, period) }
+  const pos = g && g.kind === 'service' && g.mode !== 'assign' ? realPositions(g)[0] : null
+  const targets = !g ? [] : pos ? [`p:${pos.id}`] : g.kind !== 'service' || g.mode === 'assign'
+    ? [`s:${g.id}`] : []
+  const period = boardPeriodId.value && g?.periods?.find(p => p.id === boardPeriodId.value)
+  form.value = { targets, date: period ? String(period.start_time).slice(0, 10) : '',
+                 range: [] }
+  onPickTargets()
   creating.value = true
 }
 
-/** 换模式：整场统一按场次那一段给默认时间窗；分岗位时留空——
- *  各岗位的时段不一样，填一个统一的反而把别的岗位卡在外面。 */
-function onPickMode() {
-  if (form.value.mode === 'position') {
-    form.value.range = []
-    return
-  }
-  form.value.range = defaultRange(formShift.value, formPeriod())
-}
-
-/** 换了场次：时段跟着换。 */
-function onPickShift() {
-  const g = formShift.value
-  form.value.period_id = g?.periods?.[0]?.id || ''
-  form.value.range = defaultRange(g, formPeriod())
-}
-
-/** 换时段：可签时段跟着那一段走，别把上午的默认值带到下午。 */
-function onPickPeriod() {
-  form.value.range = defaultRange(formShift.value, formPeriod())
-}
-
-/** 改了岗位：日期选项跟着变，选过的日期不在里面就换成第一天。 */
-function onPickPositions() {
+/** 改了签到对象：日期选项跟着变，选过的日期不在里面就换成第一天。 */
+function onPickTargets() {
   if (!needDate.value) {
     form.value.date = ''
   } else if (!dateOptions.value.includes(form.value.date)) {
@@ -846,7 +767,7 @@ function onPickPositions() {
   }
 }
 
-/** 所选岗位里最晚的那个场次结束时间：手动设的截止早于它就要先提醒。 */
+/** 选中的对象里最晚的结束时间：手动设的截止早于它就要先提醒。 */
 function pickedEnd() {
   const ends = pickedShifts.value.map(g => parseLocal(g.end_time))
     .filter(Boolean).map(d => d.getTime())
@@ -856,33 +777,24 @@ function pickedEnd() {
 async function createTask() {
   if (genBusy.value) return
   const [f1, f2] = form.value.range || []
-  const body = {}
-  let url = ''
-  if (form.value.mode === 'position') {
-    if (!form.value.position_ids.length) return ElMessage.warning('请选择岗位')
-    if (needDate.value && !form.value.date)
-      return ElMessage.warning('请选择签到日期')
-    // 一端留空的话另一端按各岗位的默认算，一张码上两种口径，没人说得清
-    if (!f1 !== !f2) return ElMessage.warning('可签时段要么都留空，要么起止都填')
-    url = `/api/staff/activities/${actId.value}/checkin-tasks`
-    body.position_ids = form.value.position_ids
-    if (needDate.value) body.date = form.value.date
-  } else {
-    if (!form.value.shift_id) return ElMessage.warning('请选择签到场次')
-    url = `/api/staff/shifts/${form.value.shift_id}/checkin-tasks`
-    body.period_id = form.value.period_id || undefined
+  const targets = form.value.targets
+  if (!targets.length) return ElMessage.warning('请选择签到对象')
+  if (needDate.value && !form.value.date) return ElMessage.warning('请选择签到日期')
+  // 一端留空的话另一端按各自的默认算，一张码上两种口径，没人说得清
+  if (!f1 !== !f2) return ElMessage.warning('可签时段要么都留空，要么起止都填')
+  const body = {
+    position_ids: targets.filter(v => v.startsWith('p:')).map(v => v.slice(2)),
+    shift_ids: targets.filter(v => v.startsWith('s:')).map(v => v.slice(2)),
   }
+  if (needDate.value) body.date = form.value.date
   if (f1) body.valid_from = toISO(f1)
   if (f2) body.valid_to = toISO(f2)
   genBusy.value = true
   try {
-    const end = form.value.mode === 'position'
-      ? pickedEnd() : formPeriod()?.end_time
-    if (f2 && !await confirmEarlyDeadline(f2, end)) return
-    const d = await api.post(url, body)
-    ElMessage.success(form.value.mode === 'position'
-      ? `已生成 1 张签到码，管 ${d.tasks?.length || 1} 个岗位`
-      : '已生成 1 张签到码')
+    if (f2 && !await confirmEarlyDeadline(f2, pickedEnd())) return
+    const d = await api.post(`/api/staff/activities/${actId.value}/checkin-tasks`, body)
+    const n = d.tasks?.length || 1
+    ElMessage.success(n > 1 ? `已生成 1 张签到码，管 ${n} 项` : '已生成 1 张签到码')
     creating.value = false
     await loadTasks()
   } finally {
@@ -918,9 +830,9 @@ async function confirmEarlyDeadline(deadline, shiftEnd) {
   const e = parseLocal(shiftEnd)
   if (!d || !e || d >= e) return true
   return ElMessageBox.confirm(
-    `截止时间 ${hm(d)} 早于场次结束（${hm(e)}）。码过期后志愿者无法再签到、签退，`
-    + '届时尚未签退的人将按场次结束时间记时长，并标记待核。确定吗？',
-    '截止早于场次结束', { type: 'warning' }).then(() => true).catch(() => false)
+    `截止时间 ${hm(d)} 早于服务时段结束（${hm(e)}）。码过期后志愿者无法再签到、签退，`
+    + '届时尚未签退的人将按服务时段结束时间记时长，并标记待核。确定吗？',
+    '截止早于服务时段结束', { type: 'warning' }).then(() => true).catch(() => false)
 }
 
 function toISO(v) {
@@ -1063,15 +975,21 @@ async function toggle(row) {
   const early = row.active && e && new Date() < e
   const msg = !row.active ? '重新开启这张签到码？'
     : early
-      ? `场次还没结束（${hm(e)} 结束）。关闭后志愿者无法再用这张码签到、签退，`
-        + '尚未签退的人将按场次结束时间记时长，并标记待核。确定关闭吗？'
-      : '关闭后无法继续扫码签到、签退；尚未签退的人按场次结束时间记时长并标记待核。确定吗？'
+      ? `服务时段还没结束（${hm(e)} 结束）。关闭后志愿者无法再用这张码签到、签退，`
+        + '尚未签退的人将按服务时段结束时间记时长，并标记待核。确定关闭吗？'
+      : '关闭后无法继续扫码签到、签退；尚未签退的人按服务时段结束时间记时长并标记待核。确定吗？'
   const ok = await ElMessageBox.confirm(
     msg, row.active ? '关闭签到码' : '开启签到码',
     { type: row.active ? 'warning' : 'info' }).then(() => true).catch(() => false)
   if (!ok) return
   await api.patch(`/api/staff/checkin-tasks/${row.id}`, { active: !row.active })
   loadTasks(); loadBoard()
+}
+
+/** 码里的培训/彩排标记：一张码可能混着服务岗位和培训，只标出非服务的那几种。 */
+function kindTags(row) {
+  return [...new Set((row?.members || [])
+    .filter(m => m.kind && m.kind !== 'service').map(m => m.kind_label))]
 }
 
 function setWindowStart(v) { form.value.range = [v || '', form.value.range[1] || ''] }

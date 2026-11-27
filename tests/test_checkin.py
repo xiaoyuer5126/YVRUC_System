@@ -217,7 +217,7 @@ def test_分岗位签到只认本活动服务场次的岗位(client, admin, two_
                          headers=admin).json()["positions"][0]["id"]
     r = client.post(f"/api/staff/activities/{act.id}/checkin-tasks",
                     headers=admin, json={"position_ids": [mine, outside]})
-    assert r.status_code == 400 and "本活动服务场次" in r.json()["detail"]
+    assert r.status_code == 400 and "本活动的服务岗位" in r.json()["detail"]
     assert other_act.id != act.id
 
 
@@ -1531,3 +1531,119 @@ def test_没给日期时按手填的可签时段套那一段(client, admin, db,
                    valid_to=(want.end_time + timedelta(minutes=30)).isoformat())
     (row,) = d["tasks"]
     assert db.get(CheckinTask, row["id"]).period_id == want.id
+
+
+# ---------- 一张码混着管岗位、统一分配的一批、培训/彩排 ----------
+
+@pytest.fixture
+def mixed_targets_act(client, db, admin, take_student):
+    """一个活动：即选岗位（一人）、统一分配的一批（一人已分岗、一人还在待分配）、
+    培训（一人），都正在进行。"""
+    admin_user = db.query(User).filter(User.student_id == ADMIN).one()
+    act = Activity(id=uid("act"), title=f"混合签到对象 {uid('t')}",
+                   intro="x", location="世纪馆", organizer="校青协",
+                   contacts=[{"name": "测试", "phone": "13900000000"}],
+                   contact_group_qr="x", status="published",
+                   reg_start=now() - timedelta(days=1),
+                   reg_end=now() + timedelta(days=1), created_by=admin_user.id)
+    db.add(act)
+    db.add(ActivityManager(id=uid("mgr"), activity_id=act.id,
+                           user_id=admin_user.id, added_by=admin_user.id))
+    span = {"start_time": now() - timedelta(minutes=20),
+            "end_time": now() + timedelta(hours=2)}
+    pick = mk_shift(id=uid("g"), activity_id=act.id, name="引导", mode="pick",
+                    sort=0, **span)
+    batch = mk_shift(id=uid("g"), activity_id=act.id, name="上午场志愿者",
+                     mode="assign", sort=1, **span)
+    train = mk_shift(id=uid("g"), activity_id=act.id, name="岗前培训",
+                     kind="training", mode="pick", hours_mode="checkin",
+                     sort=2, **span)
+    db.add_all([pick, batch, train])
+    db.flush()
+    p_pick = Position(id=uid("p"), shift_id=pick.id, name="引导", quota=5, sort=0)
+    p_real = Position(id=uid("p"), shift_id=batch.id, name="检票", quota=5, sort=0)
+    holder = Position(id=uid("p"), shift_id=batch.id,
+                      name=Position.PLACEHOLDER_NAME, is_placeholder=True,
+                      quota=5, sort=-1)
+    db.add_all([p_pick, p_real, holder])
+    db.flush()
+    people = {}
+    for key, g, pos in (("pick", pick, p_pick), ("placed", batch, p_real),
+                        ("waiting", batch, holder), ("train", train, None)):
+        sid = take_student()
+        db.add(Enrollment(id=uid("enr"), activity_id=act.id, shift_id=g.id,
+                          user_id=student_row(db, sid).id,
+                          position_id=pos.id if pos else None,
+                          status="enrolled", joined_at=now() - timedelta(days=1)))
+        people[key] = (login(client, sid), student_row(db, sid))
+    db.commit()
+    return act, (pick, batch, train), (p_pick, p_real), people
+
+
+def test_一张码同时管岗位_统一分配的一批和培训(client, admin, db, mixed_targets_act):
+    """签到对象可以混着选：统一分配里还没分到岗位的人也能扫这张码，
+    每人的记录落在自己那一组上。"""
+    act, (pick, batch, train), (p_pick, _p_real), people = mixed_targets_act
+    d = make_group(client, admin, act, [p_pick.id],
+                   shift_ids=[batch.id, train.id])
+    assert len(d["tasks"]) == 3
+    whole = [x for x in d["tasks"] if x["position_id"] is None]
+    assert {x["shift_id"] for x in whole} == {batch.id, train.id}
+
+    for key in ("pick", "placed", "waiting", "train"):
+        h, _u = people[key]
+        r = client.post(f"/api/checkin/task/{d['token']}", headers=h)
+        assert r.status_code == 200, (key, r.text)
+        assert r.json()["action"] == "checkin"
+    db.expire_all()
+    recs = {r.user_id: r for r in db.query(CheckinRecord)
+            .filter(CheckinRecord.activity_id == act.id).all()}
+    assert recs[people["pick"][1].id].shift_id == pick.id
+    assert recs[people["placed"][1].id].shift_id == batch.id
+    assert recs[people["waiting"][1].id].shift_id == batch.id
+    assert recs[people["train"][1].id].shift_id == train.id
+
+    rows = client.get(f"/api/staff/activities/{act.id}/checkin-tasks",
+                      headers=admin).json()
+    (row,) = rows
+    assert set(row["target_name"].split("、")) == {"上午场志愿者", "岗前培训", "引导"}
+    assert row["count"] == 4
+
+
+def test_整批选了就不用再单选其中的岗位(client, admin, mixed_targets_act):
+    """整批和它里面的岗位同时挂上，同一个人在码里有两行，记到哪行说不清。"""
+    act, (_pick, batch, _train), (_p_pick, p_real), _people = mixed_targets_act
+    r = client.post(f"/api/staff/activities/{act.id}/checkin-tasks", headers=admin,
+                    json={"position_ids": [p_real.id], "shift_ids": [batch.id]})
+    assert r.status_code == 400 and "已包含在" in r.json()["detail"]
+
+
+def test_整组的签到对象只认本活动(client, admin, mixed_targets_act, live_group):
+    act, _shifts, (p_pick, _p_real), _people = mixed_targets_act
+    _other_act, other_g, _h, _token = live_group
+    r = client.post(f"/api/staff/activities/{act.id}/checkin-tasks", headers=admin,
+                    json={"position_ids": [p_pick.id], "shift_ids": [other_g.id]})
+    assert r.status_code == 400 and "不属于本活动" in r.json()["detail"]
+
+
+def test_整组的码和已开的统一码冲突(client, admin, mixed_targets_act):
+    """同一段已经有开着的码，再开一张管同一批人的，现场不知道扫哪张。"""
+    act, (_pick, batch, _train), _pos, _people = mixed_targets_act
+    assert client.post(f"/api/staff/shifts/{batch.id}/checkin-tasks", headers=admin,
+                       json={}).status_code == 200
+    r = client.post(f"/api/staff/activities/{act.id}/checkin-tasks", headers=admin,
+                    json={"shift_ids": [batch.id]})
+    assert r.status_code == 409 and "已经有开启的签到码" in r.json()["detail"]
+
+
+def test_旧的整场统一码照常列出和扫码(client, admin, db, mixed_targets_act):
+    """改版前建的统一码：码表里按那一组的名字称呼，扫码照旧。"""
+    act, (_pick, batch, _train), _pos, people = mixed_targets_act
+    d = client.post(f"/api/staff/shifts/{batch.id}/checkin-tasks", headers=admin,
+                    json={}).json()
+    (row,) = client.get(f"/api/staff/activities/{act.id}/checkin-tasks",
+                        headers=admin).json()
+    assert row["mode"] == "shift" and row["target_name"] == batch.name
+    h, _u = people["waiting"]
+    assert client.post(f"/api/checkin/task/{d['token']}",
+                       headers=h).json()["action"] == "checkin"
