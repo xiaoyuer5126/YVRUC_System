@@ -122,7 +122,8 @@ router.beforeEach((to) => {
   // 当前视角不够 → 若持有对应身份则自动切换视角放行
   const adminOr = hasIdentity('admin') ? 'admin' : 'qingxie'
   const wanted = {
-    feedback: 'admin', announcement: 'admin', oplogs: 'admin', notifyLog: 'admin',
+    feedback: hasIdentity('admin') ? 'admin' : auth.user?.vb_feedback ? 'qingxie' : '',
+    announcement: 'admin', oplogs: 'admin', notifyLog: 'admin',
     dashboard: adminOr, roles: adminOr, users: adminOr, approvals: adminOr,
     manage: hasIdentity('admin') ? 'admin' : hasIdentity('initiator') ? 'initiator' : 'qingxie',
     audit: hasIdentity('admin') ? 'admin' : hasIdentity('initiator') ? 'initiator' : 'qingxie',

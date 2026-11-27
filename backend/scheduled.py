@@ -325,7 +325,7 @@ def remind_stale_feedback(db: OrmSession) -> int:
     for fb in rows:
         waited = int((now() - fb.created_at).total_seconds() // 3600)
         brief = fb.content if len(fb.content) <= 60 else fb.content[:60] + "…"
-        data = {"feedback_id": fb.id, "route": "approvals", "tab": "feedback"}
+        data = {"feedback_id": fb.id, "route": "vb_feedback"}
         for t in targets:
             if t.id == fb.user_id:
                 continue
@@ -333,7 +333,7 @@ def remind_stale_feedback(db: OrmSession) -> int:
                 db, t, "custom", data=data,
                 title=f"志愿者反馈已等待 {waited} 小时｜{fb.kind_label()}",
                 content=(f"一条志愿者反馈【{fb.kind_label()}】已提交 {waited} 小时未回复："
-                         f"「{brief}」\n请到「活动审批 → 志愿者反馈」回复。"))
+                         f"「{brief}」\n请到「意见反馈 → 志愿者反馈」回复。"))
         fb.reminded_at = now()
     db.commit()
     logger.info("志愿反馈超时未回复，已提醒 %d 条", len(rows))

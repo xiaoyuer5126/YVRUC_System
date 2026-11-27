@@ -52,6 +52,10 @@ def test_点开去哪页只有一份规则():
     assert page("custom", {"activity_id": "a1", "route": "approvals"}) == "/approvals"
     assert page("custom", {"route": "hours"}) == "/hours"
     assert page("custom", {"route": "feedback", "feedback_id": "f1"}) == "/feedback"
+    # 志愿反馈进「意见反馈」的志愿者反馈页签；早先记成活动审批页签的旧通知也跳过去
+    assert page("custom", {"route": "vb_feedback", "feedback_id": "f1"}) == "/feedback?tab=volunteer"
+    assert (page("custom", {"route": "approvals", "tab": "feedback", "feedback_id": "f1"})
+            == "/feedback?tab=volunteer")
     # 反馈回复：去消息中心并把「我的反馈」弹窗打开（弹窗没有自己的路由）
     assert (page("custom", {"route": "feedback_mine", "feedback_id": "f1"})
             == "/messages?feedback=mine")

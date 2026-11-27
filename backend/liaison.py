@@ -181,7 +181,7 @@ def session_user(db: OrmSession, user: User) -> dict:
     dept = vb_dept(db)
     return {**user.full(), "duty_eligible": duty_eligible(db, user, real=True),
             "vb_dept_name": dept.name if dept is not None else "校青协",
-            # 会长团与对外联络部的骨干、部长：前端据此在「活动审批」露出「志愿者反馈」页签
+            # 会长团与对外联络部的骨干、部长：前端据此在侧栏露出「意见反馈」（只有志愿者反馈页签）
             "vb_feedback": user.is_council(real=True)
                            or (dept is not None and eligible(user, dept))}
 
