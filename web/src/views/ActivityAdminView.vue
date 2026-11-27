@@ -1102,80 +1102,6 @@
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 统一分配对话框 -->
-    <el-dialog v-model="shiftDlg.visible"
-               :title="shiftDlg.editing ? '编辑报名后统一分配' : '新建岗位'" width="620"
-               :before-close="guardShift" @opened="guardShift.snap">
-      <el-form label-width="100px">
-        <el-form-item v-if="!shiftDlg.editing" label="类型">
-          <el-radio-group :model-value="'assign'" @change="switchToPick">
-            <el-radio value="pick">报名即选岗位</el-radio>
-            <el-radio value="assign">报名后统一分配</el-radio>
-          </el-radio-group>
-          <div class="dim">
-            志愿者报名只选时间，报名截止后你在「志愿者管理」里分具体岗位，分完可以开放选岗。
-            分好的岗位建完后在表里这一行点「添加岗位」。
-          </div>
-        </el-form-item>
-        <el-form-item label="名称" required>
-          <el-input v-model="groupForm.name" placeholder="如：会场服务" />
-        </el-form-item>
-        <el-alert type="info" :closable="false">
-          这里只填<b>服务时间</b>。培训、彩排等用下面的「添加培训/彩排」单独添加。
-        </el-alert>
-        <el-form-item label="服务时段" required>
-          <PeriodEditor v-model="groupForm.periods" :tip="ASSIGN_PERIOD_TIP" />
-        </el-form-item>
-        <el-form-item label="时间灵活">
-          <el-checkbox v-model="groupForm.flexible_time">
-            时间灵活 / 待定（可多次签到）
-          </el-checkbox>
-          <div class="dim">
-            适用于长期招募、具体服务时间报名后协商：每开一张新签到码，志愿者可以再签到、签退一次，
-            时长按每次签到签退累加；某次没签退的，按那张码的截止时间记并待核。时长只能按签到签退计（或不计），不能按时段总长固定计。
-          </div>
-          <el-alert v-if="flexibleFixed" type="warning" show-icon :closable="false"
-                    title="当前时长按时段总长固定计，时间灵活时不能这样计；保存时改为按签到签退计" />
-        </el-form-item>
-        <el-form-item label="招募人数" required>
-          <el-input-number v-model="groupForm.capacity" :min="1" />
-          <span class="dim" style="margin-left:12px">这批一共招多少人，分岗位时再分配到各岗位</span>
-        </el-form-item>
-        <el-form-item label="候补名额">
-          <el-input-number v-model="groupForm.waitlist_quota" :min="0" />
-          <span class="dim" style="margin-left:12px">0 = 不设候补</span>
-        </el-form-item>
-        <el-form-item label="锁定名单">
-          <span class="dim" style="margin-right:8px">开场前</span>
-          <el-input-number v-model="groupForm.lock_hours" :min="0" :max="72" />
-          <span class="dim" style="margin-left:8px">小时自动锁定</span>
-          <div class="dim" style="margin-top:4px">
-            锁定名单后不再接受新报名，停止候补自动转正，此后退出的志愿者会被记录；
-            如需补人请在志愿者管理页面手动转正。
-            上限 72 小时，0 = 不自动锁定，可随时在岗位设置里按需求手动锁定、解锁。
-          </div>
-        </el-form-item>
-        <el-form-item label="条件要求">
-          <div class="two-col">
-            <el-select v-model="groupForm.campusReq" multiple clearable collapse-tags
-                       placeholder="校区（不限）">
-              <el-option v-for="c in campuses" :key="c" :value="c" :label="c" />
-            </el-select>
-            <el-select v-model="groupForm.stageReq" multiple clearable collapse-tags
-                       placeholder="学段（不限）">
-              <el-option v-for="s in stages" :key="s" :value="s" :label="s" />
-            </el-select>
-          </div>
-          <div class="dim">报名时还没有岗位可选，只能在这一层筛人；性别、学院等跟着分工的条件在岗位上设</div>
-        </el-form-item>
-        <el-form-item label="备注"><el-input v-model="groupForm.note" /></el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="shiftDlg.visible = false">取消</el-button>
-        <el-button type="primary" :loading="savingGroup" @click="saveShift">保存</el-button>
-      </template>
-    </el-dialog>
-
     <!-- 培训 / 彩排：挂在整个活动上 -->
     <el-dialog v-model="attDlg.visible"
                :title="(attDlg.editing ? '编辑' : '添加') + '培训 / 彩排'" width="620"
@@ -1226,8 +1152,8 @@
         </el-form-item>
         <el-form-item label="时长认定">
           <el-radio-group v-model="attForm.hours_mode">
-            <el-radio value="fixed">固定计时</el-radio>
             <el-radio value="checkin">扫码计时</el-radio>
+            <el-radio value="fixed">固定计时</el-radio>
             <el-radio value="none">不计时长</el-radio>
           </el-radio-group>
           <div class="dim">
@@ -1450,17 +1376,88 @@
       </template>
     </el-dialog>
 
-    <!-- 岗位对话框：普通岗位连它的服务时段一起填；统一分配下的分配岗位没有自己的时段 -->
-    <el-dialog v-model="positionDlg.visible" :title="positionTitle" width="560"
+    <!-- 岗位对话框，三种用法：
+         kind='post'   报名即选岗位，岗位连它的服务时段一起填；
+         kind='assign' 报名后统一分配的一批，只填时段和总名额，岗位截止后再往里加；
+         kind='slot'   统一分配下的一个分配岗位，时段是整批的，不在这里填。
+         新建时 post 与 assign 在顶部切换，同一个弹窗里换字段，填过的公共字段带过去 -->
+    <el-dialog v-model="positionDlg.visible" :title="positionTitle" width="620"
                :before-close="guardPosition" @opened="guardPosition.snap">
       <el-form label-width="100px">
-        <!-- 新建时先选类型：选「报名后统一分配」换到那一批的弹窗，填好的名称带过去 -->
-        <el-form-item v-if="isPost && !positionDlg.editing" label="类型">
-          <el-radio-group :model-value="'pick'" @change="switchToAssign">
+        <el-form-item v-if="(isPost || isAssign) && !positionDlg.editing" label="类型">
+          <el-radio-group :model-value="isAssign ? 'assign' : 'pick'" @change="switchKind">
             <el-radio value="pick">报名即选岗位</el-radio>
             <el-radio value="assign">报名后统一分配</el-radio>
           </el-radio-group>
+          <div v-if="isAssign" class="dim">
+            志愿者报名只选时间，报名截止后你在「志愿者管理」里分具体岗位，分完可以开放选岗。
+            分好的岗位建完后在表里这一行点「添加岗位」。
+          </div>
         </el-form-item>
+        <template v-if="isAssign">
+          <el-form-item label="名称" required>
+            <el-input v-model="groupForm.name" maxlength="128" placeholder="如：会场服务" />
+          </el-form-item>
+          <el-alert type="info" :closable="false">
+            这里只填<b>服务时间</b>。培训、彩排等用下面的「添加培训/彩排」单独添加。
+          </el-alert>
+          <el-form-item label="服务时段" required>
+            <PeriodEditor v-model="groupForm.periods" :tip="ASSIGN_PERIOD_TIP" />
+          </el-form-item>
+          <el-form-item label="时间灵活">
+            <el-checkbox v-model="groupForm.flexible_time">
+              时间灵活 / 待定（可多次签到）
+            </el-checkbox>
+            <div class="dim">
+              适用于长期招募、具体服务时间报名后协商：每开一张新签到码，志愿者可以再签到、签退一次，
+              时长按每次签到签退累加；某次没签退的，按那张码的截止时间记并待核。
+            </div>
+          </el-form-item>
+          <el-form-item label="时长认定">
+            <el-radio-group v-model="groupForm.hours_mode">
+              <el-radio value="checkin">扫码计时</el-radio>
+              <el-radio value="fixed" :disabled="groupForm.flexible_time">固定计时</el-radio>
+              <el-radio value="none">不计时长</el-radio>
+            </el-radio-group>
+            <div class="dim">{{ HOURS_HINT[groupForm.hours_mode] }}这一批分好的各岗位都按这一项记。</div>
+            <el-alert v-if="flexibleFixed" type="warning" show-icon :closable="false"
+                      title="时间灵活时一人可以签好几轮到，不能按时段总长固定计；保存时改为按签到签退计" />
+          </el-form-item>
+          <el-form-item label="招募人数" required>
+            <el-input-number v-model="groupForm.capacity" :min="1" />
+            <span class="dim" style="margin-left:12px">这批一共招多少人，分岗位时再分配到各岗位</span>
+          </el-form-item>
+          <el-form-item label="候补名额">
+            <el-input-number v-model="groupForm.waitlist_quota" :min="0" />
+            <span class="dim" style="margin-left:12px">0 = 不设候补</span>
+          </el-form-item>
+          <el-form-item label="锁定名单">
+            <span class="dim" style="margin-right:8px">开场前</span>
+            <el-input-number v-model="groupForm.lock_hours" :min="0" :max="72" />
+            <span class="dim" style="margin-left:8px">小时自动锁定</span>
+            <div class="dim" style="margin-top:4px">
+              锁定名单后不再接受新报名，停止候补自动转正，此后退出的志愿者会被记录；
+              如需补人请在志愿者管理页面手动转正。
+              上限 72 小时，0 = 不自动锁定，可随时在岗位设置里按需求手动锁定、解锁。
+            </div>
+          </el-form-item>
+          <el-form-item label="条件要求">
+            <div class="two-col">
+              <el-select v-model="groupForm.campusReq" multiple clearable collapse-tags
+                         placeholder="校区（不限）">
+                <el-option v-for="c in campuses" :key="c" :value="c" :label="c" />
+              </el-select>
+              <el-select v-model="groupForm.stageReq" multiple clearable collapse-tags
+                         placeholder="学段（不限）">
+                <el-option v-for="s in stages" :key="s" :value="s" :label="s" />
+              </el-select>
+            </div>
+            <div class="dim">报名时还没有岗位可选，只能在这一层筛人；性别、学院等跟着分工的条件在岗位上设</div>
+          </el-form-item>
+          <el-form-item label="备注"><el-input v-model="groupForm.note" /></el-form-item>
+        </template>
+        <!-- v-show 不 v-if：新建时来回切类型，已填的岗位字段和攒下的学习材料不丢 -->
+        <div v-if="!(isAssign && positionDlg.editing)" v-show="!isAssign">
         <!-- maxlength 跟着库里这几列的长度：不在这儿拦，超长要到保存那一下
              才被后端打回来 -->
         <el-form-item label="岗位名称" required><el-input v-model="stationForm.name"
@@ -1480,8 +1477,8 @@
           </el-form-item>
           <el-form-item label="时长认定">
             <el-radio-group v-model="stationForm.hours_mode">
-              <el-radio value="fixed" :disabled="stationForm.flexible_time">固定计时</el-radio>
               <el-radio value="checkin">扫码计时</el-radio>
+              <el-radio value="fixed" :disabled="stationForm.flexible_time">固定计时</el-radio>
               <el-radio value="none">不计时长</el-radio>
             </el-radio-group>
             <div class="dim">{{ HOURS_HINT[stationForm.hours_mode] }}</div>
@@ -1598,10 +1595,13 @@
             条，名额与时段各自保留）
           </el-checkbox>
         </el-form-item>
+        </div>
       </el-form>
       <template #footer>
         <el-button @click="positionDlg.visible = false">取消</el-button>
-        <el-button type="primary" :loading="savingStation" @click="saveStation">保存</el-button>
+        <el-button v-if="isAssign" type="primary" :loading="savingGroup"
+                   @click="saveShift">保存</el-button>
+        <el-button v-else type="primary" :loading="savingStation" @click="saveStation">保存</el-button>
       </template>
     </el-dialog>
 
@@ -1965,15 +1965,19 @@ async function remindBatch(b) {
 }
 
 // —— 岗位设置 ——
-const shiftDlg = ref({ visible: false, editing: null })
 const groupForm = ref({})
-// 岗位对话框一套两用：kind='post' 是普通岗位（自带时段，走 /posts），
+// 岗位对话框一套三用：kind='post' 是普通岗位（自带时段，走 /posts），
+// kind='assign' 是一批统一分配（走 /shifts，表单是 groupForm），
 // kind='slot' 是统一分配下的分配岗位（时段是整批的，走 /positions）
 const positionDlg = ref({ visible: false, editing: null, kind: 'post' })
 const isPost = computed(() => positionDlg.value.kind === 'post')
-const positionTitle = computed(() => (isPost.value
-  ? (positionDlg.value.editing ? '编辑岗位' : '新建岗位')
-  : (positionDlg.value.editing ? '编辑分配岗位' : '添加分配岗位')))
+const isAssign = computed(() => positionDlg.value.kind === 'assign')
+const positionTitle = computed(() => {
+  const ed = positionDlg.value.editing
+  if (isPost.value) return ed ? '编辑岗位' : '新建岗位'
+  if (isAssign.value) return ed ? '编辑报名后统一分配' : '新建岗位'
+  return ed ? '编辑分配岗位' : '添加分配岗位'
+})
 const lockBusy = ref(false)
 const lockHours = ref(2)
 
@@ -2060,9 +2064,10 @@ const editBase = ref(false)
 const baseForm = ref({})
 const baseRange = ref([])
 // 表单弹窗有改动没保存时，点叉或按 Esc 先问一句（见 composables/closeGuard.js）
-const guardShift = useCloseGuard(() => groupForm.value)
 const guardAttached = useCloseGuard(() => attForm.value)
-const guardPosition = useCloseGuard(() => [stationForm.value, positionDlg.value.copyFrom, positionDlg.value.syncSame])
+// 新建时切过类型也算改动：两份表单连同类型一起比
+const guardPosition = useCloseGuard(() => [positionDlg.value.kind, stationForm.value,
+  groupForm.value, positionDlg.value.copyFrom, positionDlg.value.syncSame])
 const guardNotify = useCloseGuard(() => notifyForm.value)
 const guardMove = useCloseGuard(() => moveForm.value)
 const guardWalkin = useCloseGuard(() => walkinForm.value)
@@ -2386,7 +2391,7 @@ const attachedOf = p => (act.value?.trainings || [])
 // 普通岗位与分配岗位各在各自的池子里找，两边走的不是同一组接口
 const sameNameOthers = computed(() => {
   const ed = positionDlg.value.editing
-  if (!ed) return []
+  if (!ed || isAssign.value) return []
   const pool = isPost.value ? posts.value.map(x => x.p)
     : assignShifts.value.flatMap(g => g.positions)
   return pool.filter(p => !p.is_placeholder && p.name === ed.name && p.id !== ed.id)
@@ -2419,23 +2424,28 @@ function badPeriods(list) {
   return ''
 }
 
-/** 新建 / 编辑一批「统一分配」。普通岗位不走这里，见 openPost。 */
+const emptyGroup = () => ({
+  name: '', periods: [emptyPeriod()], capacity: 10, note: '',
+  waitlist_quota: 3, lock_hours: 12, flexible_time: false,
+  hours_mode: 'checkin', campusReq: [], stageReq: [],
+})
+
+/** 编辑一批「统一分配」。新建走 openPost(null) 再在弹窗顶部切类型。 */
 function openShift(g) {
-  shiftDlg.value.editing = g || null
-  groupForm.value = g ? {
+  positionDlg.value = { visible: true, editing: g, kind: 'assign', groupId: '',
+                        copyFrom: '', syncSame: false }
+  stationForm.value = emptyStation()
+  groupForm.value = {
     name: g.name,
     periods: (g.periods || [emptyPeriod()]).map(periodCopy),
     capacity: g.capacity, note: g.note,
     waitlist_quota: g.waitlist_quota ?? 3,
     lock_hours: g.lock_hours ?? 12,
     flexible_time: !!g.flexible_time,
-    hours_mode: g.hours_mode,
+    hours_mode: g.hours_mode || 'checkin',
     campusReq: g.requirement_tags?.校区 || [],
     stageReq: g.requirement_tags?.学段 || [],
-  } : { name: '', periods: [emptyPeriod()], capacity: 10, note: '',
-        waitlist_quota: 3, lock_hours: 12, flexible_time: false,
-        hours_mode: 'checkin', campusReq: [], stageReq: [] }
-  shiftDlg.value.visible = true
+  }
 }
 const screened = computed(() => act.value?.recruit_mode === 'screened')
 // 时间灵活时一人可以签好几次到，「按时段总长固定计」会把每次都算成一整场
@@ -2456,17 +2466,19 @@ async function saveShift() {
       name: f.name, capacity: f.capacity, mode: 'assign', note: f.note,
       waitlist_quota: f.waitlist_quota ?? 3, lock_hours: f.lock_hours ?? 12,
       flexible_time: !!f.flexible_time,
-      ...(flexibleFixed.value ? { hours_mode: 'checkin' } : {}),
+      // 时间灵活一人签好几轮到，固定计时会把每轮都算成一整场
+      hours_mode: flexibleFixed.value ? 'checkin' : (f.hours_mode || 'checkin'),
       periods: f.periods,
       requirement_tags: scopeTags(f.campusReq, f.stageReq),
     }
-    if (shiftDlg.value.editing) {
-      await api.patch(`/api/staff/shifts/${shiftDlg.value.editing.id}`, body)
+    const ed = positionDlg.value.editing
+    if (ed) {
+      await api.patch(`/api/staff/shifts/${ed.id}`, body)
     } else {
       await api.post(`/api/staff/activities/${activityId}/shifts`, body)
     }
     ElMessage.success('已保存（操作留痕）')
-    shiftDlg.value.visible = false
+    positionDlg.value.visible = false
     loadAll()
   } catch { /* 错误提示由 api 层统一弹出 */ } finally {
     savingGroup.value = false
@@ -2787,23 +2799,24 @@ function stationOf(st) {
 }
 
 /** 新建 / 编辑一条普通岗位：岗位和它的服务时段在同一个对话框里填完。 */
-/** 新建弹窗里切类型：两种类型各用一个弹窗，名称带过去 */
-function switchToAssign() {
-  const name = stationForm.value.name
-  positionDlg.value.visible = false
-  openShift(null)
-  groupForm.value.name = name
-}
-function switchToPick() {
-  const name = groupForm.value.name
-  shiftDlg.value.visible = false
-  openPost(null)
-  stationForm.value.name = name
+// 两种类型都有的字段：新建时切类型原样带到另一边，其余字段各留各的
+const SHARED_KEYS = ['name', 'periods', 'flexible_time', 'lock_hours', 'hours_mode',
+                     'waitlist_quota', 'campusReq', 'stageReq', 'note']
+/** 新建弹窗顶部切类型：同一个弹窗换一组字段，公共字段带过去。 */
+function switchKind(v) {
+  const toAssign = v === 'assign'
+  const src = toAssign ? stationForm.value : groupForm.value
+  const dst = toAssign ? groupForm.value : stationForm.value
+  for (const k of SHARED_KEYS) {
+    if (src[k] !== undefined) dst[k] = JSON.parse(JSON.stringify(src[k]))
+  }
+  positionDlg.value.kind = toAssign ? 'assign' : 'post'
 }
 function openPost(st) {
   positionDlg.value = { visible: true, editing: st, kind: 'post', groupId: '',
                         copyFrom: '', syncSame: false }
   stationForm.value = st ? stationOf(st) : emptyStation()
+  groupForm.value = emptyGroup()
 }
 
 /** 新建 / 编辑统一分配下的一个分配岗位：时段是整批的，不在这里填。 */

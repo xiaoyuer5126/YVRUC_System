@@ -681,3 +681,46 @@ def test_场次结束后补招_通知写补记而不叫人来(client, admin, db,
     assert n["title"] == f"已补记为志愿者｜{act.title}"
     assert "时长以负责人登记为准" in n["content"]
     assert "如无法参加" not in n["content"] and n["page"] == "/my"
+
+
+def test_统一分配的时长认定管这一批分好的岗位(client, admin, db, act_with_positions,
+                                            take_student):
+    """建统一分配时选了固定计时：分到这一批里的岗位签到即按时段总长记，不要求签退。"""
+    from backend.models import CheckinRecord, CheckinTask, new_checkin_token
+
+    act, _g, _east, _check = act_with_positions
+    start = now().replace(microsecond=0) + timedelta(days=6)
+    with editing(client, admin, act.id):
+        r = client.post(f"/api/staff/activities/{act.id}/shifts", headers=admin,
+                        json={"name": "会场服务", "mode": "assign", "capacity": 5,
+                              "hours_mode": "fixed",
+                              "periods": [{"start_time": start.isoformat(),
+                              "end_time": (start + timedelta(hours=3)).isoformat()}]})
+    assert r.status_code == 200, r.text
+    gid = r.json()["id"]
+    g = db.get(Shift, gid)
+    db.refresh(g)
+    assert g.hours_mode == "fixed"
+    pos = Position(id=uid("p"), shift_id=gid, name="引导", quota=3, sort=1,
+                   **POSITION_TEXT)
+    db.add(pos)
+    db.flush()
+
+    u = student_row(db, take_student())
+    admin_u = db.query(User).filter(User.student_id == ADMIN).one()
+    task = CheckinTask(id=uid("tsk"), activity_id=act.id, shift_id=gid,
+                       period_id=g.periods[0].id, mode="shift",
+                       token=new_checkin_token(), created_by=admin_u.id,
+                       valid_from=g.start_time, valid_to=g.end_time)
+    db.add(task)
+    db.flush()
+    db.add(CheckinRecord(id=uid("ckr"), task_id=task.id, activity_id=act.id,
+                         shift_id=gid, period_id=g.periods[0].id,
+                         position_id=pos.id, user_id=u.id, method="manual"))
+    db.commit()
+
+    row = next(x for x in client.get(f"/api/staff/activities/{act.id}/hours",
+                                     headers=admin).json()["items"]
+               if x["user"]["student_id"] == u.student_id)
+    assert row["hours"] == 3.0
+    assert not row["pending"] and not row["auto_checkout"]
