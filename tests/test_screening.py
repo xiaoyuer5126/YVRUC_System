@@ -1212,6 +1212,8 @@ def test_报名问卷导出只给excel附件另外打包(client, admin, db, take
 
 def test_报名问卷没有附件时附件包404(client, admin, db, take_student):
     """没有文件答案、或文件在磁盘上已经不在了：数目为 0，附件包 404，表照常导出。"""
+    from uuid import uuid4
+
     from backend.exporter import MATERIAL_DIR
     from backend.models import Attachment
 
@@ -1227,7 +1229,9 @@ def test_报名问卷没有附件时附件包404(client, admin, db, take_student
     assert r.status_code == 404
 
     # 文件被删了：跳过，不报错
-    att_id = _apply_with_file(client, db, act_id, ids, q, take_student())
+    # 内容要独一份：同内容只存一个文件，删了它别的用例的附件也跟着没了
+    att_id = _apply_with_file(client, db, act_id, ids, q, take_student(),
+                              data=f"%PDF-1.4 {uuid4().hex}".encode())
     (MATERIAL_DIR / db.get(Attachment, att_id).stored_name).unlink()
     assert client.get(f"{base}/applications/attachments",
                       headers=admin).json() == {"count": 0}

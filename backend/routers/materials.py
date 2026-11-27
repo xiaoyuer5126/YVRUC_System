@@ -7,13 +7,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, downloads
+from .. import config, downloads, filestore
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import current_user_download, require_manager
@@ -31,6 +30,22 @@ MATERIAL_DIR = config.MATERIAL_DIR
 # claim_photo、签到二维码、立项书/结项书（PROJECT_SLOTS）、模板 template、
 # 通知附件 notify（upload_notify_file）。
 MATERIAL_OWNER_TYPES = frozenset({"position"})
+
+
+def drop_orphan_materials(db: OrmSession, activity_id: str) -> int:
+    """删掉本活动里岗位已经不在了的学习材料记录，文件交给保留期（见 filestore）。
+
+    删岗位、删场次时不当场删材料：编辑态里删了岗位还能「放弃改动」，岗位按原
+    编号还原，材料要还挂在上面。所以等编辑态结束（保存发布、超时解冻）、或者
+    活动没在编辑态时再清。不提交事务。
+    """
+    db.flush()
+    rows = (db.query(Attachment)
+            .filter(Attachment.activity_id == activity_id,
+                    Attachment.owner_type.in_(MATERIAL_OWNER_TYPES),
+                    ~Attachment.owner_id.in_(db.query(Position.id)))
+            .all())
+    return filestore.drop_attachments(db, rows)
 EXT_TYPES = {
     "pdf": "application/pdf",
     "doc": "application/msword",
@@ -69,8 +84,9 @@ def _owner(db: OrmSession, owner_type: str, owner_id: str) -> tuple[str, str]:
     raise HTTPException(400, "学习材料只能挂在岗位上")
 
 
-async def _store(file: UploadFile, hint: str = "") -> tuple[str, bytes]:
-    """校验类型和大小后存进 MATERIAL_DIR，返回 (存盘文件名, 内容)。"""
+async def _store(db: OrmSession, file: UploadFile,
+                 hint: str = "") -> tuple[str, bytes]:
+    """校验类型和大小后存进 MATERIAL_DIR（同内容只存一份），返回 (存盘文件名, 内容)。"""
     ext = Path(file.filename or "").suffix.lower().lstrip(".")
     if ext not in EXT_TYPES:
         raise HTTPException(400, f"不支持的文件类型（可上传 "
@@ -79,10 +95,7 @@ async def _store(file: UploadFile, hint: str = "") -> tuple[str, bytes]:
     if len(data) > config.MAX_MATERIAL_BYTES:
         limit = config.MAX_MATERIAL_BYTES // (1024 * 1024)
         raise HTTPException(400, f"文件不能超过 {limit}MB{hint}")
-    MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
-    stored = f"{uuid4().hex}.{ext}"
-    (MATERIAL_DIR / stored).write_bytes(data)
-    return stored, data
+    return filestore.store(db, data, ext), data
 
 
 @router.post("/staff/materials")
@@ -94,7 +107,7 @@ async def upload_material(owner_type: str = Form(...), owner_id: str = Form(...)
     ensure_activity_manager(db, user, activity_id)
     ensure_not_finished(db.get(Activity, activity_id))
 
-    stored, data = await _store(file, "；视频请改用「添加链接」")
+    stored, data = await _store(db, file, "；视频请改用「添加链接」")
 
     row = Attachment(id=uid("att"), owner_type=owner_type, owner_id=owner_id,
                      activity_id=activity_id, kind="file",
@@ -153,13 +166,10 @@ def delete_material(material_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(404, "材料不存在")
     ensure_activity_manager(db, user, row.activity_id)
     ensure_not_finished(db.get(Activity, row.activity_id))
-    # 复制活动时文件各存一份；拆分多岗位场次的迁移给每个新场次复制的是材料
-    # 记录、文件共用一份。所以只有没有别的记录再指着这个文件时才删文件，
-    # 否则删一场的材料会让另几场的同一份材料打不开
-    if row.kind == "file" and not (db.query(Attachment.id)
-                                   .filter(Attachment.stored_name == row.stored_name,
-                                           Attachment.id != row.id).first()):
-        (MATERIAL_DIR / row.stored_name).unlink(missing_ok=True)
+    # 同一个文件可能被好几条记录共用（同内容上传、复制岗位）：没有记录再指着
+    # 它、过了保留期才删文件，见 filestore
+    if row.kind == "file":
+        filestore.release(db, row.stored_name)
     title, activity_id = row.title, row.activity_id
     db.delete(row)
     audit_log(db, actor=user, action="material", target_type="material",
@@ -181,7 +191,7 @@ async def upload_notify_file(activity_id: str, file: UploadFile = File(...),
     ensure_activity_manager(db, user, activity_id)
     if db.get(Activity, activity_id) is None:
         raise HTTPException(404, "活动不存在")
-    stored, data = await _store(file)
+    stored, data = await _store(db, file)
     row = Attachment(id=uid("att"), owner_type="notify", owner_id=activity_id,
                      activity_id=activity_id, kind="file",
                      title=(file.filename or stored)[:160],

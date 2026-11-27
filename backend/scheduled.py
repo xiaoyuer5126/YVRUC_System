@@ -55,6 +55,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("sessions", purge_expired_sessions),
                       ("orphan_files", purge_orphan_attachments),
                       ("unsent_notify_files", purge_unsent_notify_files),
+                      ("stored_files", purge_unused_files),
                       ("oplogs", purge_oplogs),
                       ("error_alerts", alert_frequent_errors)):
         try:
@@ -707,6 +708,8 @@ def release_stale_edit_locks(db: OrmSession) -> int:
     管理者点了「调整岗位」转头去开会，学生一下午都报不了名，而这件事
     没有任何外部表现——除了学生以为活动黄了。
     """
+    from .routers.materials import drop_orphan_materials
+
     deadline = now() - timedelta(hours=config.EDIT_LOCK_HOURS)
     # 行锁同「保存并发布」（staff_activities.finish_editing）：管理者恰好这时
     # 点了发布就让给他，跳过这一行，志愿者不会收到两份汇总
@@ -721,6 +724,7 @@ def release_stale_edit_locks(db: OrmSession) -> int:
         act.editing_since = None
         act.editing_by = None
         act.editing_snapshot = None
+        drop_orphan_materials(db, act.id)
         # 改到一半的东西也已经生效了：和「保存并发布」一样按人告诉志愿者
         if not act.is_unpublished():
             notify_edit_changes(db, act, since)
@@ -1006,7 +1010,7 @@ def purge_expired_sessions(db: OrmSession) -> int:
 
 
 def purge_orphan_attachments(db: OrmSession) -> int:
-    """清掉没人引用的问卷附件与联络群二维码：文件与记录一起删。
+    """清掉没人引用的问卷附件与联络群二维码的记录，文件交给保留期（见 filestore）。
 
     报名问卷的文件题是先传文件、再提交答案。填到一半关掉页面，文件就留在
     磁盘上，没有任何申请或报名指向它。提交与撤回时会当场清一遍，这里管的是
@@ -1015,8 +1019,8 @@ def purge_orphan_attachments(db: OrmSession) -> int:
     联络群二维码同样是先传图、后保存活动：传完就没再回来（关掉表单、活动删掉
     了）的那些，这里一并清掉。
     """
+    from . import filestore
     from .models import Application, Attachment, Enrollment
-    from .routers.materials import MATERIAL_DIR
     from .routers.staff_activities import QR_OWNER, qr_activity
 
     cutoff = now() - timedelta(days=config.ORPHAN_ATTACHMENT_DAYS)
@@ -1045,7 +1049,7 @@ def purge_orphan_attachments(db: OrmSession) -> int:
         # 只看有没有归属就会把管理者刚传好还没保存的那张删掉
         if att.owner_type == QR_OWNER and qr_activity(db, att.id) is not None:
             continue
-        (MATERIAL_DIR / att.stored_name).unlink(missing_ok=True)
+        filestore.release(db, att.stored_name)
         db.delete(att)
         n += 1
     if n:
@@ -1060,8 +1064,8 @@ def purge_unsent_notify_files(db: OrmSession) -> int:
     管理者在发通知弹窗里选了文件就先传上来，之后移除或干脆没发，文件就没挂到
     任何通知上。没发出去的 owner_id 还是活动 id（发出后改成发送编号）。
     """
+    from . import filestore
     from .models import Attachment
-    from .routers.materials import MATERIAL_DIR
 
     cutoff = now() - timedelta(hours=config.NOTIFY_FILE_KEEP_HOURS)
     rows = (db.query(Attachment)
@@ -1069,12 +1073,22 @@ def purge_unsent_notify_files(db: OrmSession) -> int:
                     Attachment.owner_id == Attachment.activity_id,
                     Attachment.created_at <= cutoff).all())
     for att in rows:
-        (MATERIAL_DIR / att.stored_name).unlink(missing_ok=True)
+        filestore.release(db, att.stored_name)
         db.delete(att)
     if rows:
         db.commit()
         logger.info("清理没发出去的通知附件 %d 个", len(rows))
     return len(rows)
+
+
+def purge_unused_files(db: OrmSession) -> int:
+    """删掉没有任何记录再用、过了保留期的上传文件（见 filestore.sweep）。
+
+    排在两个附件清理后面：它们这一轮删掉的记录只是开始计保留期，不会当场删文件。
+    """
+    from . import filestore
+
+    return filestore.sweep(db)
 
 
 def purge_oplogs(db: OrmSession) -> int:

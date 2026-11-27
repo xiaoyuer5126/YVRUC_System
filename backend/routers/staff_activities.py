@@ -23,8 +23,8 @@ from sqlalchemy.orm import Session as OrmSession
 
 from .. import enroll_logic as logic
 from .. import watch
-from .. import (assign, config, copying, downloads, editing, hours as hours_flow,
-                scoring, uploads)
+from .. import (assign, config, copying, downloads, editing, filestore,
+                hours as hours_flow, scoring, uploads)
 from ..stage import ensure_hours_editable, ensure_not_finished
 from ..audit import diff_changes, log as audit_log, value_text
 from ..database import db_session
@@ -36,6 +36,7 @@ from ..perm import (activity_manager_ids, add_manager,
                      ensure_activity_manager, is_activity_manager,
                      managed_activity_ids, remove_manager)
 from ..integrations import msgcenter
+from .materials import drop_orphan_materials
 from ..models import (Activity, ActivityManager, ActivitySubscription,
                       Application,
                       ApprovalEvent, Attachment, AttireRecord, AttireTask,
@@ -726,6 +727,7 @@ def finish_editing(activity_id: str, bg: BackgroundTasks,
     act.editing_since = None
     act.editing_by = None
     act.editing_snapshot = None
+    drop_orphan_materials(db, act.id)
 
     rows = (db.query(AuditLog)
             .filter(AuditLog.activity_id == act.id,
@@ -1168,10 +1170,10 @@ def delete_activity(activity_id: str, db: OrmSession = Depends(db_session),
                   FormQuestion, VbConfirm):
         (db.query(model).filter(model.activity_id == activity_id)
          .delete(synchronize_session=False))
-    # 立项书没有外键拦着，不清就是磁盘上一份没人指向的文件
-    from ..liaison import SLOTS, drop_project_file
-    for slot in SLOTS:
-        drop_project_file(db, activity_id, slot)
+    # 挂在活动上的文件记录（学习材料、立项书、通知附件）没有外键拦着，不清就
+    # 一直占着文件；记录删掉，文件交给保留期（见 filestore）
+    filestore.drop_attachments(
+        db, db.query(Attachment).filter(Attachment.activity_id == activity_id).all())
     db.flush()
     db.delete(act)
     audit_log(db, actor=user, action="delete", target_type="activity",
@@ -1643,6 +1645,8 @@ def delete_shift(shift_id: str, force: int = 0, bg: BackgroundTasks = None,
     label = f"{act.title}·{g.name}"
     name, word = g.name, _shift_word(g)
     n_active, affected = _drop_shift(db, act, g, force)
+    if act.editing_since is None:
+        drop_orphan_materials(db, act.id)
     audit_log(db, actor=user, action="delete", target_type="group",
               target_id=shift_id, target_label=label, activity_id=act.id,
               summary=f"删除{word}「{name}」" +
@@ -2383,6 +2387,8 @@ def delete_position(position_id: str,
     _prune_trainings(db, act, {s.id})
     label = f"{act.title}·{g.name}·{s.name}"
     db.delete(s)
+    if act.editing_since is None:
+        drop_orphan_materials(db, act.id)
     audit_log(db, actor=user, action="delete", target_type="position",
               target_id=s.id, target_label=label, activity_id=act.id,
               summary=f"删除岗位「{s.name}」",
@@ -2534,6 +2540,8 @@ def delete_post(position_id: str, force: int = 0,
     name, label = s.name, f"{act.title}·{s.name}"
     _prune_questions(db, act.id, s)
     n_active, affected = _drop_shift(db, act, g, force)
+    if act.editing_since is None:
+        drop_orphan_materials(db, act.id)
     audit_log(db, actor=user, action="delete", target_type="position",
               target_id=position_id, target_label=label, activity_id=act.id,
               summary=f"删除岗位「{name}」" +

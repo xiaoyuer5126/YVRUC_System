@@ -151,6 +151,18 @@ def db():
         s.close()
 
 
+def file_released(db, stored_name: str) -> bool:
+    """这个文件已经没有记录在用、进了保留期（文件表里记了 orphaned_at）。
+
+    没人用的文件不当场删，留 config.FILE_KEEP_DAYS 天再由定时任务删（见
+    backend/filestore.py）；用例验「删记录后文件会被清」看的就是这一步。
+    """
+    from backend.models import StoredFile
+    db.expire_all()
+    row = db.get(StoredFile, stored_name)
+    return row is not None and row.orphaned_at is not None
+
+
 def dl_url(client: TestClient, headers: dict, path: str) -> str:
     """下载直链：先换一张一次性票据，再拼进地址。
 

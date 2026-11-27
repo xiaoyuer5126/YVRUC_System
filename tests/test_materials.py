@@ -7,19 +7,26 @@ from datetime import timedelta
 import pytest
 
 from backend.models import Activity, Attachment, now
-from conftest import dl_url, editing, login
+from conftest import dl_url, editing, file_released, login
 
 
 def _position_of(shift):
     return shift.positions[0].id
 
 
-def _upload(client, headers, shift, name="培训.pdf", size=1024):
+def _upload(client, headers, shift, name="培训.pdf", size=1024, data=None):
     return client.post("/api/staff/materials", headers=headers,
                        data={"owner_type": "position", "owner_id": _position_of(shift),
                              "title": "岗前培训"},
-                       files={"file": (name, io.BytesIO(b"x" * size),
+                       files={"file": (name, io.BytesIO(b"x" * size if data is None
+                                                        else data),
                                        "application/pdf")})
+
+
+def _unique() -> bytes:
+    """别的用例没传过的内容。同内容只存一份，要验「文件删没删」就不能和别人撞。"""
+    from backend.models import uid
+    return f"%PDF {uid('t')}".encode()
 
 
 def test_上传下载全流程(client, admin, db, enrolled_activity, take_student):
@@ -86,25 +93,25 @@ def test_链接必须是http开头(client, admin, enrolled_activity):
     assert r.status_code == 400
 
 
-def test_删除材料会把文件一起删掉(client, admin, db, enrolled_activity):
+def test_删除材料后文件进入保留期(client, admin, db, enrolled_activity):
     from backend.routers.materials import MATERIAL_DIR
     _act, shift, _u = enrolled_activity
-    mid = _upload(client, admin, shift).json()["id"]
+    mid = _upload(client, admin, shift, data=_unique()).json()["id"]
     stored = db.get(Attachment, mid).stored_name
     assert (MATERIAL_DIR / stored).is_file()
 
     assert client.delete(f"/api/staff/materials/{mid}",
                          headers=admin).status_code == 200
-    assert not (MATERIAL_DIR / stored).exists()
+    assert file_released(db, stored)
 
 
 def test_几条材料共用一个文件时_删一条不删文件(client, admin, db, enrolled_activity):
-    """拆分多岗位场次时，新场次复制的是材料记录、文件共用一份：删掉其中一条，
-    别的那几条还要打得开；最后一条删掉时文件才跟着删。"""
+    """几条材料记录共用一个文件：删掉其中一条，别的那几条还要打得开；
+    最后一条删掉时文件才进入保留期。"""
     from backend.models import uid
     from backend.routers.materials import MATERIAL_DIR
     _act, shift, _u = enrolled_activity
-    mid = _upload(client, admin, shift).json()["id"]
+    mid = _upload(client, admin, shift, data=_unique()).json()["id"]
     src = db.get(Attachment, mid)
     twin = Attachment(id=uid("att"), owner_type=src.owner_type,
                       owner_id=src.owner_id, activity_id=src.activity_id,
@@ -116,10 +123,10 @@ def test_几条材料共用一个文件时_删一条不删文件(client, admin, 
 
     assert client.delete(f"/api/staff/materials/{mid}",
                          headers=admin).status_code == 200
-    assert (MATERIAL_DIR / stored).is_file()
+    assert (MATERIAL_DIR / stored).is_file() and not file_released(db, stored)
     assert client.delete(f"/api/staff/materials/{twin_id}",
                          headers=admin).status_code == 200
-    assert not (MATERIAL_DIR / stored).exists()
+    assert file_released(db, stored)
 
 
 def test_删除只认学习材料别家的删不掉(client, admin, db, enrolled_activity):

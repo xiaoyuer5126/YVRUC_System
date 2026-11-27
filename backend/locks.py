@@ -524,6 +524,7 @@ _SLOTS = threading.BoundedSemaphore(config.LOCK_SLOTS)
 _LOCK_NS = 1
 _USER_NS = 2
 _URGENT_NS = 3
+_FILE_NS = 4         # 上传文件锁，见 file_lock
 _USER_LOCKED = "yvruc_user_locked"       # 会话上记着：本事务已经拿了用户锁
 _SLOT_DEPTH = "yvruc_shift_lock_depth"     # 会话上记着：这一个请求已经占了名额
 
@@ -700,6 +701,20 @@ def urgent_lock(db: OrmSession, wait: float | None = None) -> None:
             raise _busy() from exc
         raise
     db.execute(text("SET LOCAL lock_timeout TO DEFAULT"))
+
+
+# —— 上传文件锁 ——
+#
+# 同一份内容只存一个文件、被多条记录共用（见 filestore）。「再加一条引用」和
+# 「数到没人用就删文件」必须串行：不然删除方数的时候新记录还没提交，会把刚被
+# 引用的文件删掉。一个文件名一把（命名空间 4），随事务放。等的只是别人一次
+# 上传或删除的那一下，不设超时、不占进程名额。
+
+
+def file_lock(db: OrmSession, stored_name: str) -> None:
+    """在 db 当前事务里锁住这个文件名，直到事务结束。"""
+    db.execute(text("SELECT pg_advisory_xact_lock(:ns, hashtext(:k))"),
+               {"ns": _FILE_NS, "k": stored_name})
 
 
 # —— 天地图瓦片的每日额度 ——

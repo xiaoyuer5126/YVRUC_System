@@ -6,13 +6,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as OrmSession
 
-from .. import config, hours as hours_flow, liaison
+from .. import config, filestore, hours as hours_flow, liaison
 from ..audit import log as audit_log
 from ..database import db_session
 from ..deps import require_manager
@@ -21,7 +20,6 @@ from ..models import (Activity, Attachment, Department, DutyHandover, HoursReque
 from ..notify import notify, notify_managers
 from ..perm import ensure_activity_manager, is_activity_manager
 from .staff_ops import save_vb_names, vb_names_block
-from .materials import MATERIAL_DIR
 
 router = APIRouter(prefix="/api/staff", tags=["liaison"])
 
@@ -457,7 +455,7 @@ async def upload_project_file(activity_id: str, slot: str,
         raise HTTPException(409, block)
     label = liaison.SLOTS[slot]
     ext, data = await _read_upload(file, label, liaison.SLOT_EXTS[slot])
-    stored = _store(data, ext)
+    stored = filestore.store(db, data, ext)
     old = liaison.drop_project_file(db, act.id, slot)
     row = Attachment(id=uid("att"), owner_type=slot, owner_id=act.id,
                      activity_id=act.id, kind="file",
@@ -487,13 +485,6 @@ async def _read_upload(file: UploadFile, label: str,
     return ext, data
 
 
-def _store(data: bytes, ext: str) -> str:
-    MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
-    stored = f"{uuid4().hex}.{ext}"
-    (MATERIAL_DIR / stored).write_bytes(data)
-    return stored
-
-
 # ======================= 立项书、结项书模板 =======================
 
 @router.get("/doc-templates")
@@ -518,7 +509,7 @@ async def upload_doc_template(slot: str, file: UploadFile = File(...),
         raise HTTPException(403, f"模板由{liaison.vb_dept_name(db)}部长更换")
     label = liaison.DOC_TEMPLATES[slot]
     ext, data = await _read_upload(file, label, liaison.DOC_TEMPLATE_EXTS)
-    stored = _store(data, ext)
+    stored = filestore.store(db, data, ext)
     old = liaison.drop_attachment(db, liaison.doc_template(db, slot))
     row = Attachment(id=uid("att"), owner_type="template", owner_id=slot,
                      activity_id="", kind="file",

@@ -4,41 +4,39 @@
 复制**只带结构**：活动信息、场次、岗位、学习材料。报名、签到、时长、留痕、
 管理者名单一概不带——那些属于上一次活动，跟着复制过来就是脏数据。
 
-学习材料的物理文件是各存一份的（不共用），删原件不会把副本弄坏。
+学习材料只新建记录、和原岗位共用同一个物理文件（见 filestore）：文件要等
+没有任何记录指着它才删，删原岗位的材料不会让副本打不开。
 """
 from __future__ import annotations
 
 from datetime import timedelta
-from shutil import copyfile
-from uuid import uuid4
 
 from sqlalchemy.orm import Session as OrmSession
 
+from . import filestore
 from .models import (Activity, ActivityManager, Attachment, FormQuestion,
                      Position, Shift, ShiftPeriod, User, iso, parse_local_dt, uid)
 
 
 def copy_attachments(db: OrmSession, src_type: str, src_id: str,
                       dst_id: str, activity_id: str, operator: User) -> int:
-    from .routers.materials import MATERIAL_DIR
-
     rows = (db.query(Attachment)
             .filter(Attachment.owner_type == src_type,
                     Attachment.owner_id == src_id).all())
+    # 先按文件名顺序把锁拿齐，两个请求同时复制同一批材料时不会互相等成死锁
+    for name in sorted({a.stored_name for a in rows if a.kind == "file"}):
+        filestore.share(db, name)
+    n = 0
     for a in rows:
-        stored = a.stored_name
-        if a.kind == "file" and stored:
-            src = MATERIAL_DIR / stored
-            if not src.is_file():
-                continue          # 原件已丢，跳过而不是复制出一条死记录
-            stored = f"{uuid4().hex}.{stored.rsplit('.', 1)[-1]}"
-            MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
-            copyfile(src, MATERIAL_DIR / stored)
+        # share 拿着文件锁直到本事务提交：这期间原记录被删，也删不掉这个文件
+        if a.kind == "file" and not filestore.share(db, a.stored_name):
+            continue          # 原件已丢，跳过而不是复制出一条死记录
         db.add(Attachment(id=uid("att"), owner_type=src_type, owner_id=dst_id,
                           activity_id=activity_id, kind=a.kind, title=a.title,
-                          stored_name=stored, size=a.size, url=a.url,
+                          stored_name=a.stored_name, size=a.size, url=a.url,
                           uploaded_by=operator.id))
-    return len(rows)
+        n += 1
+    return n
 
 
 def copy_position(db: OrmSession, src: Position, target: Shift,

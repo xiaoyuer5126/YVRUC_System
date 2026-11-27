@@ -9,8 +9,8 @@ from datetime import timedelta
 from backend import liaison as liaison_files, scheduled
 from backend.models import (Activity, ActivityManager, Attachment, Department,
                             HoursRequest, Notification, now, uid)
-from backend.routers.materials import MATERIAL_DIR
-from conftest import (ADMIN, INITIATOR, LIAISON_CORE, LIAISON_HEAD, dl_url, inbox,
+from conftest import (ADMIN, INITIATOR, LIAISON_CORE, LIAISON_HEAD, dl_url,
+                      file_released, inbox,
                       login, make_draft, student_row, upload_proposal, upload_stamped)
 
 STAMPED = liaison_files.SLOTS["stamped"]
@@ -23,10 +23,17 @@ def _files(client, headers, aid):
     return r.json()
 
 
-def _upload(client, headers, aid, slot, name="x.pdf"):
+def _upload(client, headers, aid, slot, name="x.pdf", data=b"%PDF content"):
     return client.post(f"/api/staff/activities/{aid}/project-files/{slot}",
                        headers=headers,
-                       files={"file": (name, b"%PDF content", "application/pdf")})
+                       files={"file": (name, data, "application/pdf")})
+
+
+def _upload_unique(client, headers, aid, slot="proposal"):
+    """传一份别的用例没传过的内容。同内容只存一份，要验「文件删没删」就不能和别人撞。"""
+    r = _upload(client, headers, aid, slot, data=f"%PDF {uid('t')}".encode())
+    assert r.status_code == 200, r.text
+    return r
 
 
 def _submit(client, headers, aid, dept_id):
@@ -44,8 +51,9 @@ def test_提交对外联络部必须带立项书(client, admin, db, liaison):
     # 只有管理者能传
     assert _upload(client, login(client, INITIATOR), aid, "proposal").status_code == 403
     assert _upload(client, admin, aid, "proposal", "a.exe").status_code == 400
-    assert _upload(client, admin, aid, "proposal", "v1.pdf").status_code == 200
-    # 再传就是替换，只留一份，旧文件从磁盘上删掉
+    assert _upload(client, admin, aid, "proposal", "v1.pdf",
+                   data=f"%PDF {uid('t')}".encode()).status_code == 200
+    # 再传就是替换，只留一份，旧文件进入保留期
     old = db.query(Attachment).filter(Attachment.owner_type == "proposal",
                                       Attachment.owner_id == aid).one().stored_name
     assert _upload(client, admin, aid, "proposal", "v2.pdf").status_code == 200
@@ -53,7 +61,7 @@ def test_提交对外联络部必须带立项书(client, admin, db, liaison):
     rows = db.query(Attachment).filter(Attachment.owner_type == "proposal",
                                        Attachment.owner_id == aid).all()
     assert [r.title for r in rows] == ["v2.pdf"]
-    assert not (MATERIAL_DIR / old).exists()
+    assert file_released(db, old)
     assert _submit(client, admin, aid, liaison.id).status_code == 200
 
 
@@ -89,6 +97,7 @@ def test_审批期间能换_通过后锁死(client, admin, db, liaison):
 
 def test_驳回即作废立项书(client, admin, db, liaison):
     aid = make_draft(client, admin)
+    _upload_unique(client, admin, aid)
     stored = db.query(Attachment).filter(Attachment.owner_type == "proposal",
                                          Attachment.owner_id == aid).one().stored_name
     assert _submit(client, admin, aid, liaison.id).status_code == 200
@@ -96,7 +105,7 @@ def test_驳回即作废立项书(client, admin, db, liaison):
     assert client.post(f"/api/staff/activities/{aid}/decide", headers=head,
                        json={"approve": False, "comment": "立项书缺预算"}).status_code == 200
     assert _files(client, admin, aid)["proposal"] is None
-    assert not (MATERIAL_DIR / stored).exists()
+    assert file_released(db, stored)
     title = db.get(Activity, aid).title
     assert "上传新的立项书" in inbox(db, ADMIN, f"审批未通过｜{title}")[0].content
     # 重新提交得再传一份
@@ -335,6 +344,7 @@ def test_模板由外联部长更换_发起方下载(client, admin, db, liaison)
 
 def test_删草稿连立项书一起删(client, admin, db, liaison):
     aid = make_draft(client, admin)
+    _upload_unique(client, admin, aid)
     stored = db.query(Attachment).filter(Attachment.owner_type == "proposal",
                                          Attachment.owner_id == aid).one().stored_name
     assert client.put(f"/api/staff/activities/{aid}/vb-names", headers=admin,
@@ -342,7 +352,7 @@ def test_删草稿连立项书一起删(client, admin, db, liaison):
     assert client.delete(f"/api/staff/activities/{aid}", headers=admin).status_code == 200
     db.expire_all()
     assert not db.query(Attachment).filter(Attachment.owner_id == aid).count()
-    assert not (MATERIAL_DIR / stored).exists()
+    assert file_released(db, stored)
 
 
 def test_审核页签能看到时长审核的历史(client, admin, db, liaison, take_student):
