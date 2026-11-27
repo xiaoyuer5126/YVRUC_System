@@ -63,6 +63,8 @@ def _staff_write_routes():
 STRICTER_GATE = {"create_department", "update_department", "delete_department",
                  "pin", "set_roles", "batch_roles",
                  "handle_feedback", "put_announcement",
+                 # 志愿者反馈的回复：对外联络部骨干/部长 + 管理员
+                 "reply_volunteer_feedback",
                  # 校外时长补登的拍板：对外联络部值班人/部长 + 会长团/管理员
                  "decide_claim", "revoke_claim"}
 

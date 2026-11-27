@@ -382,7 +382,7 @@ def handle_feedback(feedback_id: str, body: HandleBody,
 def require_vb_feedback(user: User = Depends(current_user),
                         db: OrmSession = Depends(db_session)) -> User:
     if not liaison.feedback_handler(db, user):
-        raise HTTPException(403, "只有对外联络部的骨干、部长和管理员能处理志愿者反馈")
+        raise HTTPException(403, f"需要 {liaison.vb_dept_name(db)}骨干、部长或管理员 身份")
     return user
 
 

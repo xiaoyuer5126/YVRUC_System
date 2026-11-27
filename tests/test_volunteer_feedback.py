@@ -193,12 +193,10 @@ def test_匿名时通知和通知记录不露身份(client, admin, db, take_stud
 
 
 def _records(client, admin, **params):
-    day = now().strftime("%Y-%m-%d")
     out, page = [], 1
     while page <= 50:
         r = client.get("/api/staff/notifications", headers=admin,
-                       params={"start": day, "end": day, "size": 100, "page": page,
-                               **params})
+                       params={"size": 100, "page": page, **params})
         assert r.status_code == 200, r.text
         d = r.json()
         out += d["items"]
@@ -297,7 +295,9 @@ def test_有人值班时催值班人(client, db, take_student, liaison):
     fb = db.get(Feedback, fid)
     fb.created_at = now() - timedelta(hours=config.APPROVAL_REMIND_HOURS + 1)
     db.commit()
-    scheduled.remind_stale_feedback(db)
+    # 值班人是接口在另一个会话里设的，这个会话里的部门对象还是旧的
+    db.expire_all()
+    assert scheduled.remind_stale_feedback(db) >= 1
     assert len(_notes_for(db, LIAISON_CORE, fid, "志愿者反馈已等待")) == 1
     assert not _notes_for(db, LIAISON_HEAD, fid, "志愿者反馈已等待")
 
