@@ -633,8 +633,6 @@
                         <el-button size="small" link type="primary" :disabled="isOver">转正</el-button>
                       </template>
                     </el-popconfirm>
-                    <el-button size="small" link type="danger"
-                               @click="violationDlg.open(w.user)">登记违规</el-button>
                   </span>
                 </div>
                 <div class="wl-row wl-sub dim">
