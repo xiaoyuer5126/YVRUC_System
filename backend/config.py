@@ -447,6 +447,8 @@ FEEDBACK_MAX_CHARS = 2000
 FEEDBACK_MAX_IMAGES = 3
 FEEDBACK_MAX_IMAGE_BYTES = 5 * 1024 * 1024
 FEEDBACK_PER_HOUR = 5
+# 志愿反馈的联系方式（选填）最多几个字
+FEEDBACK_CONTACT_MAX = 64
 
 # 校外时长补登（本人申报、志愿北京对接部门审批）：单条时长上限、每小时条数、
 # 服务描述字数、证明材料与照片的份数与单份大小。

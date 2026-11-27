@@ -1,5 +1,5 @@
 """定时任务：候补清扫、活动状态自动流转、报名开始提醒、签到提醒、组长空缺提醒、人员变动日报、编辑解冻、
-值班日报、审批超时催办、志愿北京外联确认催办与重提提醒。
+值班日报、审批与志愿反馈超时催办、志愿北京外联确认催办与重提提醒。
 
 由 main.py 的协程每分钟驱动一次。几件事互不依赖，一件出错不影响其余——
 任何一件长期不跑都没有外部表现，直到有人发现名额空转或提醒没发出去。
@@ -17,7 +17,7 @@ from .audit import log as audit_log
 from .enroll_logic import close_waitlists_at_start, expire_stale_promotions
 from .integrations import msgcenter
 from .models import (Activity, ActivitySubscription, ApprovalEvent, AuditLog,
-                     Department, DutyHandover,
+                     Department, DutyHandover, Feedback,
                      Enrollment, HoursClaim, HoursRequest, Position, Shift,
                      ShiftPeriod,
                      User, VbConfirm, now)
@@ -44,6 +44,7 @@ def run_once(db: OrmSession) -> dict[str, int]:
                       ("leader_vacancies", send_leader_vacancy_alerts),
                       ("digests", send_roster_digests),
                       ("approvals", remind_stale_approvals),
+                      ("volunteer_feedback", remind_stale_feedback),
                       ("hours_approvals", remind_stale_hours_requests),
                       ("hours_claims", remind_stale_claims),
                       ("vb_confirms", remind_stale_vb_confirms),
@@ -296,6 +297,46 @@ def remind_stale_approvals(db: OrmSession) -> int:
         logger.info("活动「%s」审批超时未处理，已提醒", act.title)
     if rows:
         db.commit()
+    return len(rows)
+
+
+def remind_stale_feedback(db: OrmSession) -> int:
+    """志愿反馈放太久没回复就催一次，同活动审批（remind_stale_approvals）：
+    催对外联络部值班人（没人值班催全体部长），抄送会长团；每条只催一次。
+    匿名的不写提交人。
+    """
+    from . import liaison
+    from .routers.feedback import vb_feedback_contacts
+    from .routers.staff_ops import council_members
+
+    deadline = now() - timedelta(hours=config.APPROVAL_REMIND_HOURS)
+    rows = (db.query(Feedback)
+            .filter(Feedback.category == "volunteer",
+                    Feedback.status == "open",
+                    Feedback.created_at < deadline,
+                    Feedback.reminded_at.is_(None)).all())
+    if not rows:
+        return 0
+    dept = liaison.vb_dept(db)
+    contacts = vb_feedback_contacts(db)
+    seen = {u.id for u in contacts}
+    targets = contacts + [p for p in council_members(db, dept.id if dept else None)
+                          if p.id not in seen]
+    for fb in rows:
+        waited = int((now() - fb.created_at).total_seconds() // 3600)
+        brief = fb.content if len(fb.content) <= 60 else fb.content[:60] + "…"
+        data = {"feedback_id": fb.id, "route": "approvals", "tab": "feedback"}
+        for t in targets:
+            if t.id == fb.user_id:
+                continue
+            msgcenter.send_user(
+                db, t, "custom", data=data,
+                title=f"志愿者反馈已等待 {waited} 小时｜{fb.kind_label()}",
+                content=(f"一条志愿者反馈【{fb.kind_label()}】已提交 {waited} 小时未回复："
+                         f"「{brief}」\n请到「活动审批 → 志愿者反馈」回复。"))
+        fb.reminded_at = now()
+    db.commit()
+    logger.info("志愿反馈超时未回复，已提醒 %d 条", len(rows))
     return len(rows)
 
 
@@ -622,7 +663,8 @@ def _duty_digest_lines(db: OrmSession, dept: Department, since
     """日报的三栏：今日新增 / 今日处理 / 尚未处理，各是一串人话。
 
     这个部门的审批 = 归口它的活动审批与时长锁定/解锁；志愿北京对接部门另加
-    志愿北京外联确认（不分活动归口哪个部门，都由对接部门确认）和校外时长补登。
+    志愿北京外联确认（不分活动归口哪个部门，都由对接部门确认）、志愿者反馈和
+    校外时长补登。
     """
     from . import liaison
 
@@ -683,6 +725,21 @@ def _duty_digest_lines(db: OrmSession, dept: Department, since
             done.append(f"{what}{v.status_label()}（{name(v.handled_by)}）")
         if v.status == "pending":
             waiting.append(f"{what}（{v.submitted_at:%Y-%m-%d %H:%M} 推送）")
+
+    # 志愿者反馈：匿名的不写提交人
+    for f in (db.query(Feedback)
+              .filter(Feedback.category == "volunteer")
+              .filter((Feedback.created_at >= since)
+                      | (Feedback.handled_at >= since)
+                      | (Feedback.status == "open"))
+              .order_by(Feedback.created_at).all()):
+        what = f"志愿者反馈【{f.kind_label()}】"
+        if f.created_at >= since:
+            new.append(f"{what}（{'匿名志愿者' if f.anonymous else name(f.user_id)} 提交）")
+        if f.handled_at and f.handled_at >= since:
+            done.append(f"{what}已回复（{name(f.handled_by)}）")
+        if f.status == "open":
+            waiting.append(f"{what}（{f.created_at:%Y-%m-%d %H:%M} 提交）")
 
     # 校外时长补登：值班人提交的自己那条，部长在这里也看得到谁批的
     for c in (db.query(HoursClaim)

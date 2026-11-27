@@ -172,8 +172,11 @@ def _notify_query(db: OrmSession, start: str, end: str, person: str,
          .filter(Notification.created_at >= lo, Notification.created_at <= hi))
     person = person.strip()
     if person:
+        # 回给匿名志愿反馈提交人的通知不让按人搜出来：搜得到就知道是谁提的
         q = q.filter(or_(recipient.student_id == person,
-                         recipient.name.like(like_pattern(person), escape="\\")))
+                         recipient.name.like(like_pattern(person), escape="\\")),
+                     func.coalesce(Notification.data["anon_recipient"].as_boolean(),
+                                   False).is_(False))
     activity_ids = _activity_ids(db, activity)
     if activity_ids is not None:
         q = q.filter(Notification.data["activity_id"].as_string().in_(activity_ids))
@@ -197,10 +200,20 @@ def _notify_titles(db: OrmSession, rows) -> dict[str, str]:
     return _titles(db, ids - {""})
 
 
+def _recipient(row: Notification, sid: str | None,
+               name: str | None) -> tuple[str | None, str | None]:
+    """收件人学号、姓名。回给匿名志愿反馈提交人的通知（data.anon_recipient）
+    不显示是谁：页面和导出都按这里来。"""
+    if (row.data or {}).get("anon_recipient"):
+        return "", "匿名志愿者"
+    return sid, name
+
+
 def _notify_out(row: Notification, rec_sid: str | None, rec_name: str | None,
                 trg_sid: str | None, trg_name: str | None,
                 titles: dict[str, str]) -> dict:
     """一条通知摊成前端要的字段。"""
+    rec_sid, rec_name = _recipient(row, rec_sid, rec_name)
     activity_id = str((row.data or {}).get("activity_id") or "")
     status = _notify_status(row)
     return {
@@ -223,6 +236,7 @@ def _notify_excel_row(row: Notification, rec_sid: str | None,
                       rec_name: str | None, trg_sid: str | None,
                       trg_name: str | None, titles: dict[str, str]) -> list:
     """一条通知摊平成表格的一行，顺序与表头一致。"""
+    rec_sid, rec_name = _recipient(row, rec_sid, rec_name)
     activity_id = str((row.data or {}).get("activity_id") or "")
     status = _notify_status(row)
     if not row.need_ack:
