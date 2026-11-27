@@ -1,4 +1,4 @@
-"""上传文件的物理存储：按内容去重，引用数降到 0 才删。
+"""上传文件的物理存储：按内容去重；没人用满保留期、且库里登记过的文件才删。
 
 磁盘上的文件名是「内容的 SHA-256 + 扩展名」，内容相同的上传只存一份，各条
 Attachment 的 stored_name 指向同一个文件。复制岗位、复制活动也只是新建记录
@@ -11,27 +11,27 @@ Attachment 的 stored_name 指向同一个文件。复制岗位、复制活动�
 别人能试探某个文件在不在平台上。接口返回里也不带「是否命中」。
 
 **引用只有 Attachment.stored_name 一处。** 别的表要挂文件，存 Attachment 的
-编号，不要另存文件名；否则这里数不到那份引用，删最后一条 Attachment 时会把
-还在用的文件删掉。
+编号，不要另存文件名；否则这里数不到那份引用，文件会被当成没人用删掉。
 
-并发：同一个文件名的「存入 / 共用」和「删除」用一把事务级咨询锁串起来
-（locks.file_lock）。
-  · store / share 在调用方的会话上拿锁，一直拿到调用方提交或回滚。这期间
-    新记录还没提交，别的会话数不到它，所以删除方必须等这把锁。
-  · release 只登记，等删掉记录的事务提交之后，另开一个会话拿锁、重新数一遍
-    引用，确实是 0 才删文件。在提交之后数：删除方的事务回滚了，文件不会已经
-    被删；拿到锁之后数：正在共用这个文件的上传要么已经提交（数得到），要么
-    还没进锁（进锁时发现文件不在，会重新写一份）。
-  · 存入文件之后事务回滚的，回滚后照样数一遍，没人用就删，不留孤儿文件。
+删文件分两步：
+  1. 删记录的事务提交后（release），另开会话数引用，数到 0 就在 StoredFile 上
+     记下 orphaned_at，文件不动。
+  2. 定时任务（sweep）只看 StoredFile 里 orphaned_at 早于 config.FILE_KEEP_DAYS
+     天前的那几行，逐个再数一遍，仍是 0 才删文件和那一行。
+保留期里文件一直在：哪处代码删错了记录，还找得回来。只删 StoredFile 登记过的
+文件：数据库连错（连到空库、测试库）时那里一行也没有，什么都不会删。不扫目录。
 
-没有按目录扫描、删掉「库里查不到的文件」的清理：数据库连错一次（连到空库、
-测试库），那种清理会把整个卷删光。
+并发：同一个文件名的「存入 / 共用」和「数引用」用一把事务级咨询锁串起来
+（locks.file_lock）。store / share 在调用方的会话上拿锁，一直拿到调用方提交或
+回滚；数引用的一方拿到锁之后再数，正在共用这个文件的上传要么已经提交（数得到），
+要么还没进锁（进锁时会把 orphaned_at 清掉、文件不在就重新写一份）。
 """
 from __future__ import annotations
 
 import hashlib
 import logging
 import os
+from datetime import timedelta
 from uuid import uuid4
 
 from sqlalchemy import event, text
@@ -45,6 +45,23 @@ logger = logging.getLogger(__name__)
 
 _NEW = "filestore_new"        # 本事务存入的文件名：回滚后要数一遍
 _DROP = "filestore_drop"      # 本事务删掉引用的文件名：提交后要数一遍
+
+# 登记或重新启用一个文件：有人在用，orphaned_at 清空
+_IN_USE = text(
+    "INSERT INTO stored_files (name, size, created_at, orphaned_at) "
+    "VALUES (:n, :s, :t, NULL) "
+    "ON CONFLICT (name) DO UPDATE SET orphaned_at = NULL")
+# 没人用了：记下从什么时候起（已经记过的不改，保留期从第一次没人用算）
+_UNUSED = text(
+    "INSERT INTO stored_files (name, size, created_at, orphaned_at) "
+    "VALUES (:n, :s, :t, :t) "
+    "ON CONFLICT (name) DO UPDATE SET orphaned_at = "
+    "COALESCE(stored_files.orphaned_at, EXCLUDED.orphaned_at)")
+
+
+def _now():
+    from .models import now
+    return now()
 
 
 def digest_name(data: bytes, ext: str) -> str:
@@ -77,6 +94,7 @@ def _store_locked(db: OrmSession, data: bytes, name: str) -> str:
     # 指纹，写回去的一定是对的内容
     if not path.is_file() or path.stat().st_size != len(data):
         _write_atomic(name, data)
+    db.execute(_IN_USE, {"n": name, "s": len(data), "t": _now()})
     db.info.setdefault(_NEW, set()).add(name)
     return name
 
@@ -99,19 +117,34 @@ def store_many(db: OrmSession, items: list[tuple[bytes, str]]) -> list[str]:
 def share(db: OrmSession, name: str) -> bool:
     """准备再加一条指向 name 的记录（复制材料）。文件还在返回 True。
 
-    锁拿到调用方提交为止：这期间别的会话删掉最后一条原记录，也要等新记录
-    提交后再数，不会把文件删掉。
+    锁拿到调用方提交为止：这期间别的会话删掉最后一条原记录、或者定时清理
+    轮到它，都要等新记录提交后再数，不会把文件删掉。
     """
     if not _safe(name):
         return False
     file_lock(db, name)
-    return (config.MATERIAL_DIR / name).is_file()
+    path = config.MATERIAL_DIR / name
+    if not path.is_file():
+        return False
+    db.execute(_IN_USE, {"n": name, "s": path.stat().st_size, "t": _now()})
+    return True
 
 
 def release(db: OrmSession, name: str) -> None:
-    """调用方在这个事务里删掉了一条指向 name 的记录。提交后没有记录再指向它，就删文件。"""
+    """调用方在这个事务里删掉了一条指向 name 的记录。提交后没人用了就开始计保留期。"""
     if _safe(name):
         db.info.setdefault(_DROP, set()).add(name)
+
+
+def drop_attachments(db: OrmSession, rows) -> int:
+    """删掉这些附件记录，文件交给保留期和定时清理。不提交事务。"""
+    n = 0
+    for row in rows:
+        if row.kind == "file":
+            release(db, row.stored_name)
+        db.delete(row)
+        n += 1
+    return n
 
 
 def ref_count(db: OrmSession, name: str) -> int:
@@ -119,9 +152,8 @@ def ref_count(db: OrmSession, name: str) -> int:
                       {"n": name}).scalar_one()
 
 
-def purge(names) -> int:
-    """逐个文件拿锁、数引用，是 0 才删。返回删掉几个。每个文件一个短事务。"""
-    n = 0
+def _mark_unused(names) -> None:
+    """逐个文件拿锁、数引用，是 0 就记下 orphaned_at。每个文件一个短事务。"""
     for name in sorted(names):
         if not _safe(name):
             continue
@@ -131,28 +163,70 @@ def purge(names) -> int:
             if ref_count(s, name) == 0:
                 path = config.MATERIAL_DIR / name
                 if path.is_file():
-                    path.unlink()
-                    n += 1
+                    s.execute(_UNUSED, {"n": name, "s": path.stat().st_size,
+                                        "t": _now()})
+                else:
+                    s.execute(text("DELETE FROM stored_files WHERE name = :n"),
+                              {"n": name})
             s.commit()
-        except Exception:  # noqa: BLE001  删不掉只是多留一个文件，不能让已提交的业务变成 500
+        except Exception:  # noqa: BLE001  记不上只是这个文件多留着，不能让已提交的业务变成 500
+            logger.exception("登记没人用的文件 %s 失败", name)
+            s.rollback()
+        finally:
+            s.close()
+
+
+def sweep(db: OrmSession) -> int:
+    """定时任务：删掉没人用满 config.FILE_KEEP_DAYS 天的文件。返回删了几个。
+
+    只按 StoredFile 的 orphaned_at 索引取那几行，不扫目录、不碰没登记的文件。
+    每个文件拿锁后再数一遍引用：期间又有人用上了的，清掉 orphaned_at 留着。
+    """
+    cutoff = _now() - timedelta(days=config.FILE_KEEP_DAYS)
+    names = [n for (n,) in db.execute(
+        text("SELECT name FROM stored_files WHERE orphaned_at <= :c"),
+        {"c": cutoff}).all()]
+    db.commit()
+    removed = 0
+    for name in names:
+        s = SessionLocal()
+        try:
+            file_lock(s, name)
+            if ref_count(s, name):
+                s.execute(text("UPDATE stored_files SET orphaned_at = NULL "
+                               "WHERE name = :n"), {"n": name})
+            else:
+                if _safe(name):
+                    path = config.MATERIAL_DIR / name
+                    if path.is_file():
+                        path.unlink()
+                        removed += 1
+                s.execute(text("DELETE FROM stored_files WHERE name = :n "
+                               "AND orphaned_at <= :c"), {"n": name, "c": cutoff})
+            s.commit()
+        except Exception:  # noqa: BLE001  一个文件删不掉不该挡住后面的
             logger.exception("清理文件 %s 失败", name)
             s.rollback()
         finally:
             s.close()
-    return n
+    if removed:
+        logger.info("清理没人用满 %d 天的文件 %d 个", config.FILE_KEEP_DAYS, removed)
+    return removed
 
 
 @event.listens_for(SessionLocal, "after_commit")
-def _purge_after_commit(session) -> None:
+def _after_commit(session) -> None:
     session.info.pop(_NEW, None)
     names = session.info.pop(_DROP, None)
     if names:
-        purge(names)
+        _mark_unused(names)
 
 
 @event.listens_for(SessionLocal, "after_rollback")
-def _purge_after_rollback(session) -> None:
+def _after_rollback(session) -> None:
+    # 回滚时登记的 StoredFile 也一起没了：新写的文件没人用，按没人用登记回去，
+    # 不然它就成了库里没登记、永远不会被清理的文件
     session.info.pop(_DROP, None)
     names = session.info.pop(_NEW, None)
     if names:
-        purge(names)
+        _mark_unused(names)

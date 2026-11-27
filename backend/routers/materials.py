@@ -30,6 +30,22 @@ MATERIAL_DIR = config.MATERIAL_DIR
 # claim_photo、签到二维码、立项书/结项书（PROJECT_SLOTS）、模板 template、
 # 通知附件 notify（upload_notify_file）。
 MATERIAL_OWNER_TYPES = frozenset({"position"})
+
+
+def drop_orphan_materials(db: OrmSession, activity_id: str) -> int:
+    """删掉本活动里岗位已经不在了的学习材料记录，文件交给保留期（见 filestore）。
+
+    删岗位、删场次时不当场删材料：编辑态里删了岗位还能「放弃改动」，岗位按原
+    编号还原，材料要还挂在上面。所以等编辑态结束（保存发布、超时解冻）、或者
+    活动没在编辑态时再清。不提交事务。
+    """
+    db.flush()
+    rows = (db.query(Attachment)
+            .filter(Attachment.activity_id == activity_id,
+                    Attachment.owner_type.in_(MATERIAL_OWNER_TYPES),
+                    ~Attachment.owner_id.in_(db.query(Position.id)))
+            .all())
+    return filestore.drop_attachments(db, rows)
 EXT_TYPES = {
     "pdf": "application/pdf",
     "doc": "application/msword",
@@ -150,8 +166,8 @@ def delete_material(material_id: str, db: OrmSession = Depends(db_session),
         raise HTTPException(404, "材料不存在")
     ensure_activity_manager(db, user, row.activity_id)
     ensure_not_finished(db.get(Activity, row.activity_id))
-    # 同一个文件可能被好几条记录共用（同内容上传、复制岗位），提交后没有记录
-    # 再指着它才删文件，见 filestore
+    # 同一个文件可能被好几条记录共用（同内容上传、复制岗位）：没有记录再指着
+    # 它、过了保留期才删文件，见 filestore
     if row.kind == "file":
         filestore.release(db, row.stored_name)
     title, activity_id = row.title, row.activity_id

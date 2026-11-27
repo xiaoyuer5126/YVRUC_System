@@ -467,6 +467,9 @@ MAX_PENDING_ATTACHMENT_BYTES = 50 * 1024 * 1024
 # 没有被任何答案引用的附件留这么久就清掉：填到一半关掉页面很常见，
 # 给足重来的时间，但不能永远留着。
 ORPHAN_ATTACHMENT_DAYS = 7
+# 上传的文件没有任何记录再用之后，在磁盘上再留这么多天才删（见 filestore）：
+# 万一哪处代码删错了记录，这段时间里文件还在，能找回来
+FILE_KEEP_DAYS = 7
 # 发通知的附件是先传后发：传上来过了这么久还没随通知发出去的，定时任务删掉
 NOTIFY_FILE_KEEP_HOURS = 24
 

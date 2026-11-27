@@ -303,7 +303,7 @@ def _ensure_upload_quota(db: OrmSession, act: Activity, user: User,
 
 def drop_unused_attachments(db: OrmSession, activity_id: str, user_id: str,
                             keep: set[str]) -> int:
-    """清掉这个人在这个活动里没被答案引用的附件：文件与记录一起删。
+    """清掉这个人在这个活动里没被答案引用的附件记录，文件交给保留期（见 filestore）。
 
     传了又重选、填到一半改主意，都会留下没人用的文件。
     """

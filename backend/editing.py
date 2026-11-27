@@ -142,7 +142,7 @@ def _check_attachments(db: OrmSession, act: Activity, rows: list[dict]) -> None:
         first = next(iter(missing.values()))
         raise HTTPException(
             409, f"调整期间删掉了《{first['title']}》等 {len(missing)} 份学习材料，"
-                 f"文件在删除时已经清掉，放弃改动找不回来；请重新上传，或保存发布")
+                 f"删除时记录已经清掉，放弃改动找不回来；请重新上传，或保存发布")
 
 
 def _check_positions(db: OrmSession, g: Shift, rows: list[dict],
@@ -303,7 +303,7 @@ def _restore_attachments(db: OrmSession, act: Activity, rows: list[dict]) -> int
     for a in _attachments(db, act.id):
         if a.id in keep:
             continue
-        # 编辑期间新加的：记录和文件一起撤掉，与删除材料时一致
+        # 编辑期间新加的：记录撤掉，文件交给保留期，与删除材料时一致
         if a.kind == "file":
             filestore.release(db, a.stored_name)
         db.delete(a)

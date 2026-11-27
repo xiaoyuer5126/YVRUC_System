@@ -1121,13 +1121,30 @@ class Attachment(Base):
     kind: Mapped[str] = mapped_column(String(8), default="file")   # file / link
     title: Mapped[str] = mapped_column(String(160))
     # kind=file：存盘文件名与大小；kind=link：外部地址。
-    # 存盘文件名是内容指纹，内容相同的几条记录指向同一个文件，没有记录再指着
-    # 它才删文件（见 filestore）；索引给删除时数引用用
+    # 存盘文件名是内容指纹，内容相同的几条记录指向同一个文件（登记在
+    # StoredFile），没有记录再指着它、过了保留期才删文件；索引给数引用用
     stored_name: Mapped[str] = mapped_column(String(160), default="", index=True)
     size: Mapped[int] = mapped_column(Integer, default=0)
     url: Mapped[str] = mapped_column(String(512), default="")
     uploaded_by: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class StoredFile(Base):
+    """磁盘上的一个上传文件（config.MATERIAL_DIR 下），名字是内容指纹。
+
+    「谁在用」看 Attachment.stored_name；这张表记的是「数据库知道有这个文件」。
+    定时清理只删这里登记过、没人用满 config.FILE_KEEP_DAYS 天的文件，库里没有
+    登记的文件一律不碰：数据库连错（空库、测试库）时什么也不会删。见 filestore。
+    """
+    __tablename__ = "stored_files"
+
+    name: Mapped[str] = mapped_column(String(160), primary_key=True)
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    # 最后一条引用删掉的时刻；还有人用时为空
+    orphaned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True,
+                                                         index=True)
 
 
 class VbConfirm(Base):
